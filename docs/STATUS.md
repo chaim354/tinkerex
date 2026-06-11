@@ -25,8 +25,14 @@
   of the same chunk hash raced on the rename (loser hit ENOENT). Now uses a unique temp
   name + treats a lost race as the dedup win. Load-bearing once the daemon writes the
   store from multiple threads.
-- **Remaining on step 1:** the ActionCable `{head_seq}` nudge (server already
-  broadcasts it) to cut pull latency below the 2 s poll; the Tauri supervision wrapper.
+- **ActionCable nudge wired.** `ServerClient::watch_library` (blocking tungstenite WS)
+  subscribes to `LibraryChannel`; the daemon runs it on its own thread and feeds an mpsc
+  channel the sync loop waits on via `recv_timeout(poll)` — so a `{head_seq}` broadcast
+  wakes the loop in ~39 ms while the 2 s poll stays as the correctness fallback. Verified
+  in `client/sync-client/examples/nudge.rs`. Required `disable_request_forgery_protection`
+  for ActionCable (a browser-CSRF defense; our cable auth is a query-string device token,
+  not cookies, so it doesn't apply and would 404 the native client).
+- **Remaining on step 1:** only the Tauri supervision wrapper around the daemon threads.
 
 ---
 

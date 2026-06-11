@@ -188,6 +188,10 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
   retries (`fs-fuse::Hydrate` → `EngineHydrator`). Driven end-to-end vs the live server
   in `client/sync-engine/examples/daemon_loop.rs`. The `maker-syncd` binary mounts FUSE +
   runs the loop in a background thread sharing one `Arc<SqliteProvider>`.
+- **The ActionCable nudge is wired** (§12 step 1): `ServerClient::watch_library`
+  subscribes to `LibraryChannel`; each `{head_seq}` broadcast wakes the sync loop
+  instantly (~39 ms vs the 2 s poll fallback). Verified in
+  `client/sync-client/examples/nudge.rs`.
 - **Live SeaweedFS round-trip DONE** (§12 step 2): real bytes through presigned PUT/GET
   to `192.168.1.7:8333`, verified byte-for-byte on a fresh device
   (`client/sync-engine/examples/presigned_roundtrip.rs`). No longer "URLs only".
@@ -207,16 +211,22 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    - **Read → hydrate:** ✅ `fs-fuse::Hydrate` hook — a `read` on a `ChunkMissing` calls
      `EngineHydrator::hydrate` (presigned GET) then retries. Doubles as
      placeholder-dehydration after a pull (new manifest → cache miss → hydrate).
-   - **`maker-syncd` binary** mounts FUSE + runs `sync_tick` in a background thread,
-     sharing one `Arc<SqliteProvider>` (new `impl Provider for Arc<P>`). Compiles +
-     supervises the thread cleanly; the live kernel-mount leg needs an **interactive**
-     session (FUSE-T doesn't hold a mount from a detached process — same as
-     `maker-mount`, verify manually in Finder).
-   - **Remaining for this step:** the **ActionCable `LibraryChannel` nudge** (the server
-     already broadcasts `{head_seq}`) to cut pull latency — today pull is a cursor-delta
-     **poll** every 2 s, which is the correctness backbone every production client relies
-     on (Dropbox long-poll / OneDrive delta-token / Nextcloud `notify_push`); the nudge
-     is a latency optimization on top. And the Tauri-app supervision wrapper.
+   - **Nudge → pull:** ✅ `ServerClient::watch_library` subscribes to the ActionCable
+     `LibraryChannel` (`ws://…/cable?token=<device>`); each `{head_seq}` broadcast wakes
+     the sync loop instantly (verified **~39 ms** vs the 2 s poll —
+     `client/sync-client/examples/nudge.rs`). The loop waits on a `recv_timeout(poll)`,
+     so the nudge is the fast path and the cursor-delta poll is the correctness fallback
+     (the backbone every prod client relies on — Dropbox long-poll / OneDrive
+     delta-token / Nextcloud `notify_push`). Required disabling ActionCable
+     request-forgery protection (browser-CSRF defense; irrelevant to our token-authed,
+     cookieless cable connection).
+   - **`maker-syncd` binary** mounts FUSE + runs `sync_tick` in a background thread, with
+     a second thread feeding nudges, all sharing one `Arc<SqliteProvider>` (new
+     `impl Provider for Arc<P>`). Compiles + supervises the threads cleanly; the live
+     kernel-mount leg needs an **interactive** session (FUSE-T doesn't hold a mount from
+     a detached process — same as `maker-mount`, verify manually in Finder).
+   - **Remaining for this step:** only the Tauri-app supervision wrapper (wrap the two
+     daemon threads in `maker-app-core`'s supervision shape) — the sync logic is done.
 2. ~~**Live SeaweedFS/R2 round-trip.**~~ **DONE** (2026-06-11). Real bytes through
    presigned PUT/GET to SeaweedFS (`192.168.1.7:8333`, bucket `my-bucket`), byte-for-byte
    on a fresh device — `examples/presigned_roundtrip.rs` with the `STORAGE_BACKEND=s3`
@@ -251,6 +261,7 @@ STORAGE_BACKEND=memory bin/rails server -p 3001
 (cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
 (cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)      # real bytes
 (cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example daemon_loop)     # the loop: outbox→push→pull→hydrate
+(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example nudge)           # ActionCable {head_seq} push (~39ms)
 
 # Server with real S3/SeaweedFS storage (presigned PUT/GET):
 STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket \
