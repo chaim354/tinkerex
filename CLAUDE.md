@@ -302,6 +302,14 @@ pkg-config alias (`client/fs-fuse/BUILD.md`); macOS keeps creating `" 2"`-suffix
 duplicate files in the repo (some sync client?) — they broke a build once; `find . -name
 '* 2.*' -delete` to sweep.
 
+**Mount gotchas (hit live on real hardware):** on **macOS 26+**, FUSE-T's **FSKit**
+build can't mount (silent fail; needs a System-Settings extension toggle that's
+greyed) — install the **NFS-based** FUSE-T instead, or use the Linux client
+(`client/fs-fuse/BUILD.md`, `client/maker-app/SETUP.md`). On **Linux**, `auto_unmount`
+needs `user_allow_other` in `/etc/fuse.conf` and `/dev/fuse` access (`SETUP.md`).
+Verified live: a file pasted into the Linux mount → deployed Rails on the Unraid VM →
+content-addressed chunk in SeaweedFS, hash-matched on read-back.
+
 ---
 
 ## 14. Hard-won learnings (don't relitigate)
