@@ -2,6 +2,22 @@
 
 **Updated:** 2026-06-11 (daemon loop wired + live SeaweedFS round-trip)
 
+## Live deployment (2026-06-11): full stack on an Unraid VM via Kamal
+
+The Rails sync server is **deployed and verified** on an Ubuntu 26.04 Unraid VM
+(`192.168.1.95`) via Kamal 2.11, all-on-one-box: Docker + a local htpasswd registry on
+`127.0.0.1:5000`, image built in the host dockerd (`builder.driver: docker`), app behind
+kamal-proxy on `:80`, Solid Cache/Queue/Cable on SQLite on a persistent volume. Chunk
+storage is **SeaweedFS** (`STORAGE_BACKEND=s3`). Runbook: `docs/DEPLOY.md`.
+
+**All three cross-stack demos pass against the deployed server** (`SERVER_URL=http://192.168.1.95`):
+`e2e` (control plane), `nudge` (ActionCable `{head_seq}` via deployed Solid Cable through
+kamal-proxy, ~130 ms), and `presigned_roundtrip` (real 40 KB file pushed to SeaweedFS via
+presigned PUT, hydrated on a fresh device byte-for-byte). Two fixes were needed and are
+committed: `config.solid_queue.connects_to` (Solid Queue was hitting the primary DB and
+crash-looping Puma) and the single-host Kamal registry/builder config (127.0.0.1 + auth +
+`driver: docker` to avoid the localhost reverse-tunnel + isolated-buildkit traps).
+
 ## Latest (2026-06-11, afternoon): §12 steps 1 & 2 landed
 
 - **Continuous sync loop wired.** `fs-provider` gained an `outbox` + `sync_state`

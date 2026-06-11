@@ -19,25 +19,39 @@ read from your shell (`CHUNK_SECRET_ACCESS_KEY`) so it never lands in git.
 ```sh
 ssh kamal1@192.168.1.95
 
-# system deps: Docker, Ruby (for the kamal gem), git, curl
-sudo apt update
-sudo apt install -y curl git ruby-full build-essential
+# Docker (only hard requirement). After this, log out/in so the group applies.
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker kamal1
-exit                       # log out/in so the docker group takes effect
+exit
 ```
 ```sh
-ssh kamal1@192.168.1.95    # back in, now in the docker group
+ssh kamal1@192.168.1.95    # back in, in the docker group
 docker run hello-world     # sanity: docker works without sudo
 
-sudo gem install kamal -v '~> 2.11'
-kamal version
+# Run Kamal via its official image — no Ruby needed on the host. Save this wrapper:
+cat > ~/kamalw <<'WRAP'
+#!/bin/bash
+exec docker run --rm \
+  -v "$HOME/tinkerex:/workdir" -w /workdir \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$HOME/.ssh:/root/.ssh" \
+  -e CHUNK_SECRET_ACCESS_KEY="${CHUNK_SECRET_ACCESS_KEY:-secret}" \
+  -e KAMAL_REGISTRY_PASSWORD="${KAMAL_REGISTRY_PASSWORD:-kamalpass}" \
+  ghcr.io/basecamp/kamal:latest "$@"
+WRAP
+chmod +x ~/kamalw && ~/kamalw version
 
-# local image registry (localhost ⇒ Docker treats it as insecure-OK automatically)
-docker run -d -p 5000:5000 --restart always --name registry registry:2
+# Local registry on 127.0.0.1:5000 WITH htpasswd auth (see the registry note in
+# config/deploy.yml for why 127.0.0.1 + auth, not bare localhost):
+mkdir -p ~/registry-auth
+docker run --rm --entrypoint htpasswd httpd:2 -Bbn kamal kamalpass > ~/registry-auth/htpasswd
+docker run -d -p 127.0.0.1:5000:5000 --restart always --name registry \
+  -v ~/registry-auth:/auth -e REGISTRY_AUTH=htpasswd \
+  -e REGISTRY_AUTH_HTPASSWD_REALM=Registry \
+  -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd registry:2
 
-# Kamal SSHes to the "server" (192.168.1.95) — even though that's this same box — so
-# kamal1 needs key auth to itself:
+# Kamal SSHes to the "server" (192.168.1.95) — the same box — so kamal1 needs key auth
+# to itself:
 [ -f ~/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
 cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
 ssh -o StrictHostKeyChecking=accept-new kamal1@192.168.1.95 true   # prime known_hosts
@@ -49,20 +63,22 @@ From your **Mac** (the repo includes `config/master.key`, which is *not* in git,
 copy the working tree rather than `git clone`; `target/` and `node_modules` are skipped):
 
 ```sh
-rsync -az --exclude '**/target' --exclude '**/node_modules' \
+rsync -az --exclude 'target' --exclude 'node_modules' --exclude '.DS_Store' \
+  --exclude '.claude' --exclude 'app/.kamal' --exclude 'app/config' \
   /Users/charlesschwartz/Desktop/tinkerex/ kamal1@192.168.1.95:~/tinkerex/
 ```
-(`.git` is included so Kamal can tag the image by revision; the tree is committed/clean.)
+(`.git` is included so Kamal can tag the image by revision; the tree must be committed/
+clean. `app/.kamal` + `app/config` are stray scaffold and are excluded.)
 
 ## 3. Deploy (on the VM)
 
 ```sh
 cd ~/tinkerex
-export CHUNK_SECRET_ACCESS_KEY=secret      # the SeaweedFS secret key
+export CHUNK_SECRET_ACCESS_KEY=secret KAMAL_REGISTRY_PASSWORD=kamalpass
 
-kamal setup     # first run: builds the image, pushes to localhost:5000, boots
-                # kamal-proxy + the app on :80, runs db:prepare (migrates the 4 SQLite
-                # DBs incl. Solid Cable for the nudge). Later deploys: `kamal deploy`.
+~/kamalw setup   # first run: builds (host dockerd, driver: docker), pushes to
+                 # 127.0.0.1:5000, boots kamal-proxy + the app on :80, runs db:prepare
+                 # (the 4 SQLite DBs incl. Solid Cable for the nudge). Later: `~/kamalw deploy`.
 ```
 
 ## 4. Verify
