@@ -29,12 +29,21 @@ ssh:
 #   host: app.example.com
 
 # Where you keep your container images. We run Kamal *on the VM* and push to a local
-# registry:2 container on the same box — no cloud account, and Docker treats a
-# `localhost:` registry as insecure-OK automatically (no daemon config needed).
-# Start it once:  docker run -d -p 5000:5000 --restart always --name registry registry:2
+# registry:2 container on the same box — no cloud account, no sudo.
+#
+# Why 127.0.0.1 (not localhost): Kamal treats a `^localhost` registry as "local" and
+# opens an SSH reverse-tunnel on each server bound to the registry port — which
+# collides with the registry already listening there when builder == server (single
+# host). Using 127.0.0.1 skips that tunnel, and Docker still treats 127.0.0.1 as
+# insecure-OK automatically. A non-localhost registry requires a username, so the
+# registry runs with htpasswd auth (see docs/DEPLOY.md). Paired with `builder.driver:
+# docker` below so the build runs in the host dockerd (which can reach 127.0.0.1:5000)
+# rather than an isolated buildkit container (which cannot).
 registry:
-  server: localhost:5000
-  # No username/password — the local registry is unauthenticated.
+  server: 127.0.0.1:5000
+  username: kamal
+  password:
+    - KAMAL_REGISTRY_PASSWORD
 
 # Inject ENV variables into containers (secrets come from .kamal/secrets).
 env:
@@ -91,6 +100,9 @@ asset_path: /rails/public/assets
 
 # Configure the image builder.
 builder:
+  # Build in the host dockerd (not an isolated buildkit container) so the build can
+  # reach the 127.0.0.1:5000 registry on this same box. See the registry note above.
+  driver: docker
   arch: amd64
 
   # # Build image via remote server (useful for faster amd64 builds on arm64 computers)

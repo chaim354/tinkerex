@@ -52,6 +52,13 @@ Rails.application.configure do
   # Don't log any deprecations.
   config.active_support.report_deprecations = false
 
+  # Background jobs run on Solid Queue, backed by its own SQLite database (the `queue`
+  # entry in database.yml). Without this, Solid Queue connects to the primary DB — which
+  # has no `solid_queue_*` tables — and the in-Puma supervisor (SOLID_QUEUE_IN_PUMA)
+  # crashes the process on boot.
+  config.active_job.queue_adapter = :solid_queue
+  config.solid_queue.connects_to = { database: { writing: :queue } }
+
   # Replace the default in-process memory cache store with a durable alternative.
   # config.cache_store = :mem_cache_store
 
