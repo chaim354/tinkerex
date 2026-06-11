@@ -171,23 +171,125 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 
 ---
 
-## 11. Status & what's next (see `docs/STATUS.md`)
+## 11. Status (see `docs/STATUS.md` for detail)
 
-Built + tested: the four client crates, the Rails server, end-to-end push/pull/hydrate
-with real bytes, multi-device convergence. **Next:** wire the daemon into a running
-loop against the FUSE mount (watch → push; changelog → pull → apply; read → hydrate),
-point chunk transfer at a real R2/SeaweedFS bucket (presigned path is built + verified
-to generate correct URLs), add the Windows winfsp adapter, real OAuth, and the maker
-app layer (projects/inventory/preview) on top.
+**Built + verified (≈40 tests green + 3 live cross-stack demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. 10 tests.
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`. 8 tests.
+- `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
+- `sync-client`: API + chunk transfer + pull-apply. 5 tests.
+- `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once`.
+- **End-to-end daemon roundtrip with real bytes**: A creates a file → push → B pull +
+  hydrate + read, byte-for-byte identical (`client/sync-engine/examples/roundtrip.rs`).
+- S3/SeaweedFS presigning wired + verified (correct URLs); not round-tripped on *live*
+  SeaweedFS (the box was unreachable from the build env).
 
 ---
 
-## 12. Working agreements for the coding agent
+## 12. Next steps — the plan (do roughly in order)
+
+1. **Wire the continuous daemon loop into the client** (the main remaining integration).
+   Today `SyncEngine::push/pull/hydrate` are invoked explicitly; make them run as a loop
+   against the live FUSE mount:
+   - **Watch → push:** on FUSE `flush`/`release` (a save), mark the node dirty and
+     enqueue; the engine pushes (chunk → commit → upload missing → finalize). Add an
+     `outbox` + `sync_cursor` to `fs-provider`'s SQLite (sketched in
+     `docs/architecture-sync-engine.md`) so push is incremental, not whole-tree.
+   - **Nudge → pull:** subscribe to ActionCable `LibraryChannel` (`?token=<device>`);
+     on `{head_seq}` → `pull_changes(cursor)` → `apply_remote`; mark changed files'
+     placeholders dehydrated.
+   - **Read → hydrate:** in the FUSE `read` path, on a chunk-cache miss call
+     `SyncEngine::hydrate` before serving.
+   - Make it a small supervised background task in the Tauri app (reuse
+     `maker-app-core`'s supervision shape).
+2. **Live SeaweedFS/R2 round-trip.** Bring SeaweedFS up (`192.168.1.7:8333`,
+   bucket `my-bucket`, `admin`/`secret`), run the server with `STORAGE_BACKEND=s3`
+   (see §13), and use `PresignedIO` (not `SharedDirIO`) in the daemon. This is config +
+   a transport swap — no new code.
+3. **`delete`/`move` apply on pull** — `sync-engine::change_to_sync` currently skips
+   `delete`; add a `fs-provider` tombstone/move apply so removals propagate.
+4. **Windows `winfsp-rs` mount adapter** (Linux/macOS already work via `fuser`).
+5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
+   (`V1::AuthController#register`). The device-token mechanism itself stays.
+6. **Writeback + robustness hardening:** atomic saves (write-temp-then-rename),
+   FUSE-T's *deferred `release`* (flush-on-close isn't synchronous), reconnect/offline
+   reconcile + the changelog-pruned → full-resync backstop, `Sync::Changes` N+1
+   preloading.
+7. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
+   is config — see `docs/SYNC_SERVER.md`).
+8. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
+   concern from file sync; references files by `node_id`.
+
+---
+
+## 13. Build & run cheatsheet (for a fresh context)
+
+```sh
+# Server tests (SQLite; proves adapter-agnosticism)
+bin/rails test
+
+# Boot the server for the live demos (memory chunk store = control-plane only)
+STORAGE_BACKEND=memory bin/rails server -p 3001
+
+# Live cross-stack demos (server must be running):
+(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example e2e)
+(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
+(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)  # real bytes
+
+# Server with real S3/SeaweedFS storage (presigned PUT/GET):
+STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket \
+CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
+  bin/rails server -p 3001
+
+# Rust crate tests
+(cd client/fs-provider && cargo test)   # + sync-client, maker-app-core, juicefs-backend
+
+# fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see client/fs-fuse/BUILD.md.
+# Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
+```
+
+**Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev
+& test run on SQLite); FUSE-T is installed but `fuser` needs an `osxfuse`→`fuse-t`
+pkg-config alias (`client/fs-fuse/BUILD.md`); macOS keeps creating `" 2"`-suffixed
+duplicate files in the repo (some sync client?) — they broke a build once; `find . -name
+'* 2.*' -delete` to sweep.
+
+---
+
+## 14. Hard-won learnings (don't relitigate)
+
+- **A remote-mounted filesystem does NOT work over the WAN.** rclone/JuiceFS mount =
+  synchronous metadata round-trips → ~1 s/file (Phase 0, measured). Every production
+  system (Dropbox/Google/OneDrive) uses **local metadata + async sync + on-demand
+  hydration**. That pivot is the whole reason this architecture exists. Do not go back
+  to a remote mount.
+- **JuiceFS was abandoned** for this use case: chatty metadata over the WAN (slow), no
+  internal ACL (multi-tenancy needs a gateway/volume-per-tenant), and FUSE-driver
+  licensing. The `client/juicefs-backend` + `maker-app-core` crates are leftovers from
+  that path — reference only.
+- **Edge-SQLite (Cloudflare D1, Turso) can't back JuiceFS** — no driver + chatty-metadata
+  latency. They *would* fit the coarse-manifest model (this one), but we use Rails +
+  Postgres/SQLite to stay self-hostable (D1/DO are Cloudflare-locked → break self-host).
+- **The sync model makes multi-tenancy SIMPLE** (coarse API + `user_id` scoping) —
+  the opposite of the mount model's gateway/credential gymnastics. Tenant = user for v1.
+- **Permissive licensing is a hard constraint** (§9). The hard capability (block-delta +
+  versioning) is available as permissive libraries: **fastcdc-rs (MIT)**, **desync
+  (BSD-3)**, **restic/chunker (BSD-2)** — we build on FastCDC. SeaweedFS (Apache) is the
+  self-host S3 backend, not MinIO (AGPL).
+- **DB: Postgres managed, SQLite self-host, one adapter-agnostic codebase** — validated
+  by 37signals' multi-tenancy writeup (db-per-tenant pattern, engine per deployment).
+  No PG-only SQL in the hot path; `next_seq!`'s row lock is correct on both.
+- **Server presigning is local** (HMAC) — you can verify chunk URLs are correct without
+  the storage being reachable.
+
+---
+
+## 15. Working agreements for the coding agent
 
 - Permissive licenses only (§9); check new deps.
 - **Keep bytes out of Rails** — presigned URLs, control plane only.
 - **Local-first**: metadata reads hit local SQLite, never the WAN.
-- Content-addressed chunks + immutable versions everywhere; keep versions for restore.
-- Adapter-agnostic server code (runs on SQLite and Postgres) without perf compromise.
+- Content-addressed chunks + immutable versions everywhere; **keep versions** for restore.
+- Adapter-agnostic server code (SQLite + Postgres) without perf compromise.
 - Write tests; verify end-to-end against the live server when wiring sync.
-- Update this file (and `docs/STATUS.md`) when the architecture moves.
+- Update this file **and** `docs/STATUS.md` when the architecture moves.
