@@ -36,3 +36,6 @@
 
 # macOS
 .DS_Store
+
+# Local agent tooling/plans
+.claude/
