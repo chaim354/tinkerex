@@ -58,9 +58,9 @@ content-addressed manifest sharing chunks).
 | Component | Path | Role |
 |---|---|---|
 | **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
-| **fs-fuse** | `client/fs-fuse` | FUSE adapter (Linux libfuse / macOS FUSE-T) over `Provider`. |
-| **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (Windows) over the **same** `Provider`. Written against winfsp 0.13; **unverified — needs a Windows build pass** (CI job + `BUILD.md`). |
-| **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) over the **same** `Provider` — the **macOS** mount path (native `mount_webdav`, no FUSE/kext/FSKit). Cross-platform; verified live mounting on macOS 26. |
+| **fs-fuse** | `client/fs-fuse` | FUSE adapter (**Linux** mount path) over `Provider`. Verified live. (macOS uses `fs-webdav` — FUSE-T can't mount on macOS 26.) |
+| **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (**Windows** mount path) over the **same** `Provider`. **Verified: mounts a drive letter + syncs** via the app. Needs `winfsp-x64.dll` on PATH at runtime (or bundled). |
+| **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) over the **same** `Provider` — the **macOS** mount path (native `mount_webdav`, no FUSE/kext/FSKit). Cross-platform; verified live on macOS 26. |
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
@@ -80,8 +80,8 @@ the live server changelog. Multi-device convergence demonstrated. ~40 tests gree
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
-| Client | **Tauri** (Rust core), `fs-provider` + `fs-fuse` + `sync-engine` |
-| Mount | FUSE (Linux/macOS FUSE-T) now; CfAPI/File Provider later. Driver user-installed (keeps copyleft drivers out of our binaries). |
+| Client | **Tauri** (Rust core), `fs-provider` + per-OS mount (`fs-fuse`/`fs-winfsp`/`fs-webdav`) + `sync-engine` |
+| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** WinFsp, **macOS** WebDAV (native `mount_webdav`, no kext). CfAPI / macOS File Provider are later native polish. Drivers user-installed (keeps copyleft drivers out of our binaries). |
 | Change notification | **ActionCable** → `{head_seq}` on commit |
 | Preview (later) | Three.js (browser) + FreeCAD/CadQuery (server jobs) |
 
@@ -164,18 +164,29 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 ## 10. Repo layout
 
 ```
-/                Rails 8 sync server (app/, config/, db/) + docs/
-/client          Rust crates: fs-provider, fs-fuse, sync-client, sync-engine,
-                 (+ maker-app, maker-app-core, juicefs-backend from the prior path)
+/                Rails 8 sync server (app/, config/, db/) + docs/ (incl. DEPLOY.md)
+/client          Rust crates: fs-provider, fs-fuse (Linux), fs-winfsp (Windows),
+                 fs-webdav (macOS), sync-client, sync-engine, maker-app (Tauri)
+                 (+ maker-app-core, juicefs-backend from the prior path)
 /docs            architecture-sync-engine.md, sync-protocol.md, SYNC_SERVER.md,
-                 STATUS.md, adr/
+                 STATUS.md, DEPLOY.md, adr/
 ```
 
 ---
 
 ## 11. Status (see `docs/STATUS.md` for detail)
 
-**Built + verified (≈40 tests green + 3 live cross-stack demos):**
+> **Headline (2026-06-11):** the full stack runs **on real hardware**. The Rails server
+> is **deployed via Kamal** on an Unraid VM (`192.168.1.95`, SeaweedFS chunk storage —
+> `docs/DEPLOY.md`), and the client **mounts + syncs against it on all three OSes**, each
+> via its native filesystem layer over the *same* `Provider` + sync loop + nudge:
+> **macOS = WebDAV** (`fs-webdav`, native `mount_webdav`), **Linux = FUSE** (`fs-fuse`),
+> **Windows = WinFsp** (`fs-winfsp`, drive letter) — all verified live (a file written
+> through the mount → pushed to the deployed server → content-addressed chunk in
+> SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
+> backend per-OS via a `Mount` type alias; commands are identical everywhere.
+
+**Built + verified (≈40 tests green + live cross-stack + cross-OS demos):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. 10 tests.
 - `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`. 8 tests.
 - `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
@@ -241,14 +252,16 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    server (§13). Presign worked first try (no path-style/SigV4 surprises).
 3. **`delete`/`move` apply on pull** — `sync-engine::change_to_sync` currently skips
    `delete`; add a `fs-provider` tombstone/move apply so removals propagate.
-4. **Windows `winfsp-rs` mount adapter** — *in progress.* `client/fs-winfsp` implements
-   WinFsp's `FileSystemContext` over the same `Provider` (path↔inode resolution), with a
-   `maker-mount-win` standalone binary. Written against winfsp 0.13 but **not yet built
-   on Windows** (the build box is macOS, where `winfsp` won't compile). The
-   `winfsp-windows` CI job (`.github/workflows/rust-client.yml`) compiles it; verify +
-   iterate per `client/fs-winfsp/BUILD.md`. Then a small follow-up wires it into the
-   `Daemon`/Tauri app (swap FUSE→winfsp under `cfg(windows)`; drop the app's
-   `cfg(not(windows))` gate). Known gap: `Provider` has no truncate (overwrite/shrink).
+4. ~~**Windows `winfsp-rs` mount adapter.**~~ **DONE.** `client/fs-winfsp` implements
+   WinFsp's `FileSystemContext` over the same `Provider` (path↔inode + hydrate hook),
+   wired into `sync_engine::WinfspMount` and the Tauri app (per-OS `Mount` alias). Built
+   + verified live on a real Windows box: a drive letter mounts and **syncs to the
+   deployed server**. Remaining polish: **runtime needs `winfsp-x64.dll` on PATH** (the
+   `winfsp` `system` feature would load it from the registry InstallDir but requires the
+   WinFsp SDK headers to build — a runtime-only WinFsp install lacks them; for a
+   distributable `.exe`, bundle the DLL next to it). Build/run: `client/fs-winfsp/BUILD.md`,
+   `client/maker-app/SETUP.md`. Shared gap (all adapters): `Provider` has no truncate
+   (overwrite-with-shorter leaves a stale tail).
 5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
    (`V1::AuthController#register`). The device-token mechanism itself stays.
 6. **Writeback + robustness hardening:** atomic saves (write-temp-then-rename),
@@ -303,17 +316,22 @@ pkg-config alias (`client/fs-fuse/BUILD.md`); macOS keeps creating `" 2"`-suffix
 duplicate files in the repo (some sync client?) — they broke a build once; `find . -name
 '* 2.*' -delete` to sweep.
 
-**Mount gotchas (hit live on real hardware):** on **macOS 26+**, FUSE-T's **FSKit**
-build can't mount (silent fail; greyed System-Settings extension toggle) — so the app
-mounts via **WebDAV** on macOS (`client/fs-webdav` + `sync_engine::WebdavMount`, native
-`mount_webdav`, no FUSE). The mount backend is per-OS (`Mount` alias in the Tauri app):
-WebDAV on macOS, FUSE on Linux. macOS still *compiles* `fuser` (used on Linux), so the
-FUSE-T pkg-config alias is needed to **build** on macOS, not to run. On **Linux**,
-`auto_unmount` needs `user_allow_other` in `/etc/fuse.conf` and `/dev/fuse` access
-(`SETUP.md`). Verified live: a file written through the **macOS WebDAV mount** → sync
-push → deployed Rails on the Unraid VM (`examples/webdav_live.rs`); and a file pasted
-into the **Linux FUSE mount** → content-addressed chunk in SeaweedFS, hash-matched on
-read-back.
+**Mount: per-OS backend, gated cleanly in `sync-engine` (`Mount` alias in the Tauri
+app).** Each platform uses its native layer over the same `Provider`; the deps are
+strictly target-gated so each OS compiles only its own:
+- **macOS → WebDAV** (`fs-webdav`, native `mount_webdav`). FUSE-T's **FSKit** build can't
+  mount on macOS 26 (silent fail; the System-Settings extension toggle is greyed), so
+  macOS uses WebDAV instead. `fuser` is **`cfg(target_os = "linux")`**, so macOS builds
+  with **zero FUSE** — no FUSE-T, no pkg-config alias, nothing fuse-linked.
+- **Linux → FUSE** (`fs-fuse`/`fuser`). `auto_unmount` needs `user_allow_other` in
+  `/etc/fuse.conf` + `/dev/fuse` access (`SETUP.md`).
+- **Windows → WinFsp** (`fs-winfsp`, drive letter like `Z:`). Build needs LLVM/libclang
+  (winfsp-sys bindgen) + WinFsp; **runtime needs `winfsp-x64.dll` on PATH** (set PATH to
+  `<WinFsp>\bin`, or bundle the DLL). Mount point is a **drive letter**, not a path.
+
+Verified live on all three: a file written through the mount → sync push → deployed
+Rails on the Unraid VM → content-addressed chunk in SeaweedFS, hash-matched on read-back
+(`examples/webdav_live.rs` for macOS; the Tauri app on Linux + Windows).
 
 ---
 
