@@ -42,6 +42,13 @@
 - **Step 1 is functionally complete** (watch→push, nudge/poll→pull, read→hydrate,
   supervised, GUI-driven). The only unverified leg is the live kernel mount, which needs
   an interactive desktop session (FUSE-T won't hold a mount headless).
+- **Windows mount adapter started (§12 step 4).** New `client/fs-winfsp` implements
+  WinFsp's `FileSystemContext` over the same `Provider` (+ a `maker-mount-win` binary),
+  written against winfsp 0.13. It is **unverified** — the build box is macOS, where
+  `winfsp` can't compile; the non-Windows path is an inert empty crate (confirmed). A
+  `winfsp-windows` CI job (`.github/workflows/rust-client.yml`) compiles it on Windows —
+  that's the verification gate. See `client/fs-winfsp/BUILD.md`. Once it builds + mounts
+  via `maker-mount-win`, wiring it into the `Daemon`/Tauri app is a small follow-up.
 
 ---
 

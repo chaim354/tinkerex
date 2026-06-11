@@ -1,0 +1,45 @@
+name: Rust client
+
+# The Rust client crates have no CI yet. Two jobs:
+#  - unix: build/test the verified crates on Linux (fast feedback).
+#  - winfsp-windows: actually COMPILE the Windows mount adapter (`fs-winfsp`), which
+#    can't be built on the maintainer's macOS box — this is its real verification gate.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: FUSE dev headers (for fs-fuse / sync-engine)
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev pkg-config
+      - name: Test fs-provider
+        run: cargo test --manifest-path client/fs-provider/Cargo.toml
+      - name: Test sync-client
+        run: cargo test --manifest-path client/sync-client/Cargo.toml
+      - name: Build fs-fuse
+        run: cargo build --manifest-path client/fs-fuse/Cargo.toml
+      - name: Build sync-engine (Daemon + maker-syncd)
+        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+      - name: Build fs-winfsp on non-Windows (must be an inert empty crate)
+        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml
+
+  winfsp-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WinFsp (driver + SDK headers/libs)
+        run: choco install winfsp -y --no-progress
+      - name: Install LLVM (libclang, for winfsp-sys bindgen)
+        run: choco install llvm -y --no-progress
+      - name: Build fs-winfsp + maker-mount-win
+        env:
+          # bindgen needs libclang; choco installs LLVM here.
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins

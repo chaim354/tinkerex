@@ -58,7 +58,8 @@ content-addressed manifest sharing chunks).
 | Component | Path | Role |
 |---|---|---|
 | **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
-| **fs-fuse** | `client/fs-fuse` | FUSE adapter (one impl: Linux libfuse / macOS FUSE-T; Windows winfsp-rs later). |
+| **fs-fuse** | `client/fs-fuse` | FUSE adapter (Linux libfuse / macOS FUSE-T) over `Provider`. |
+| **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (Windows) over the **same** `Provider`. Written against winfsp 0.13; **unverified — needs a Windows build pass** (CI job + `BUILD.md`). |
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
@@ -239,7 +240,14 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    server (§13). Presign worked first try (no path-style/SigV4 surprises).
 3. **`delete`/`move` apply on pull** — `sync-engine::change_to_sync` currently skips
    `delete`; add a `fs-provider` tombstone/move apply so removals propagate.
-4. **Windows `winfsp-rs` mount adapter** (Linux/macOS already work via `fuser`).
+4. **Windows `winfsp-rs` mount adapter** — *in progress.* `client/fs-winfsp` implements
+   WinFsp's `FileSystemContext` over the same `Provider` (path↔inode resolution), with a
+   `maker-mount-win` standalone binary. Written against winfsp 0.13 but **not yet built
+   on Windows** (the build box is macOS, where `winfsp` won't compile). The
+   `winfsp-windows` CI job (`.github/workflows/rust-client.yml`) compiles it; verify +
+   iterate per `client/fs-winfsp/BUILD.md`. Then a small follow-up wires it into the
+   `Daemon`/Tauri app (swap FUSE→winfsp under `cfg(windows)`; drop the app's
+   `cfg(not(windows))` gate). Known gap: `Provider` has no truncate (overwrite/shrink).
 5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
    (`V1::AuthController#register`). The device-token mechanism itself stays.
 6. **Writeback + robustness hardening:** atomic saves (write-temp-then-rename),
