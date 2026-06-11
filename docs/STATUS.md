@@ -58,12 +58,13 @@ pulling the changelog (`seq > cursor`); changes propagate via ActionCable.
 1. **fs-provider ⇄ sync-client integration (the daemon).** The two halves are
    built and individually tested; the connective `SyncEngine` that (a) watches the
    FUSE mount and *pushes* on write, (b) *pulls* the changelog and applies it to the
-   local SQLite, (c) *hydrates* chunks on read — is not yet wired. The pure
-   pull-apply algorithm exists and is tested (`LocalTree`); the real apply against
-   `fs-provider`'s SQLite mirrors it.
-   - **Design note:** needs a `node_id` (server UUID) column added to
-     `fs-provider`'s local `nodes` (today it keys by integer inode). That ino↔node_id
-     mapping is the main glue to add.
+   local SQLite, (c) *hydrates* chunks on read — is not yet wired into a loop.
+   - **Glue now in place:** `fs-provider` carries a stable `node_id` (server UUID)
+     per node and exposes `export_tree()` (sync-ready descriptors: node_id,
+     parent_node_id, name, kind, manifest) + `node_id_for(ino)`. The pull-apply
+     algorithm exists and is tested (`sync-client::LocalTree`). Remaining: the
+     `apply_remote` write-back into `fs-provider`'s SQLite, and the push/pull daemon
+     loop driving both crates + chunk upload/download.
 2. **Real chunk transfer to R2.** `sync-client` has `upload_chunk`/`download_chunk`
    (presigned PUT/GET via HTTP) — the mechanism is there but only the *control plane*
    was exercised live (the memory store returns non-HTTP URLs). Needs a real R2
