@@ -178,34 +178,49 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 - `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`. 8 tests.
 - `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
 - `sync-client`: API + chunk transfer + pull-apply. 5 tests.
-- `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once`.
+- `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
+  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`.
 - **End-to-end daemon roundtrip with real bytes**: A creates a file → push → B pull +
   hydrate + read, byte-for-byte identical (`client/sync-engine/examples/roundtrip.rs`).
-- S3/SeaweedFS presigning wired + verified (correct URLs); not round-tripped on *live*
-  SeaweedFS (the box was unreachable from the build env).
+- **The continuous sync loop is wired** (§12 step 1): a local write enqueues an
+  `outbox` in `fs-provider`'s SQLite (incremental, not whole-tree); `sync_tick` drains it
+  (push) then pulls the changelog delta; a FUSE read on a chunk-cache miss hydrates +
+  retries (`fs-fuse::Hydrate` → `EngineHydrator`). Driven end-to-end vs the live server
+  in `client/sync-engine/examples/daemon_loop.rs`. The `maker-syncd` binary mounts FUSE +
+  runs the loop in a background thread sharing one `Arc<SqliteProvider>`.
+- **Live SeaweedFS round-trip DONE** (§12 step 2): real bytes through presigned PUT/GET
+  to `192.168.1.7:8333`, verified byte-for-byte on a fresh device
+  (`client/sync-engine/examples/presigned_roundtrip.rs`). No longer "URLs only".
 
 ---
 
 ## 12. Next steps — the plan (do roughly in order)
 
-1. **Wire the continuous daemon loop into the client** (the main remaining integration).
-   Today `SyncEngine::push/pull/hydrate` are invoked explicitly; make them run as a loop
-   against the live FUSE mount:
-   - **Watch → push:** on FUSE `flush`/`release` (a save), mark the node dirty and
-     enqueue; the engine pushes (chunk → commit → upload missing → finalize). Add an
-     `outbox` + `sync_cursor` to `fs-provider`'s SQLite (sketched in
-     `docs/architecture-sync-engine.md`) so push is incremental, not whole-tree.
-   - **Nudge → pull:** subscribe to ActionCable `LibraryChannel` (`?token=<device>`);
-     on `{head_seq}` → `pull_changes(cursor)` → `apply_remote`; mark changed files'
-     placeholders dehydrated.
-   - **Read → hydrate:** in the FUSE `read` path, on a chunk-cache miss call
-     `SyncEngine::hydrate` before serving.
-   - Make it a small supervised background task in the Tauri app (reuse
-     `maker-app-core`'s supervision shape).
-2. **Live SeaweedFS/R2 round-trip.** Bring SeaweedFS up (`192.168.1.7:8333`,
-   bucket `my-bucket`, `admin`/`secret`), run the server with `STORAGE_BACKEND=s3`
-   (see §13), and use `PresignedIO` (not `SharedDirIO`) in the daemon. This is config +
-   a transport swap — no new code.
+1. ~~**Wire the continuous daemon loop into the client.**~~ **DONE** (2026-06-11). The
+   loop primitives are built and proven end-to-end vs the live server
+   (`examples/daemon_loop.rs`):
+   - **Watch → push:** ✅ FUSE `flush`/`mkdir`/`unlink`/`rmdir`/`rename` enqueue the
+     node into `fs-provider`'s `outbox` table (atomic with the tree change);
+     `SyncEngine::push_outbox` drains it incrementally (commit → upload missing →
+     finalize), never holding the SQLite lock across WAN I/O. `sync_cursor` lives in a
+     `sync_state` table.
+   - **Read → hydrate:** ✅ `fs-fuse::Hydrate` hook — a `read` on a `ChunkMissing` calls
+     `EngineHydrator::hydrate` (presigned GET) then retries. Doubles as
+     placeholder-dehydration after a pull (new manifest → cache miss → hydrate).
+   - **`maker-syncd` binary** mounts FUSE + runs `sync_tick` in a background thread,
+     sharing one `Arc<SqliteProvider>` (new `impl Provider for Arc<P>`). Compiles +
+     supervises the thread cleanly; the live kernel-mount leg needs an **interactive**
+     session (FUSE-T doesn't hold a mount from a detached process — same as
+     `maker-mount`, verify manually in Finder).
+   - **Remaining for this step:** the **ActionCable `LibraryChannel` nudge** (the server
+     already broadcasts `{head_seq}`) to cut pull latency — today pull is a cursor-delta
+     **poll** every 2 s, which is the correctness backbone every production client relies
+     on (Dropbox long-poll / OneDrive delta-token / Nextcloud `notify_push`); the nudge
+     is a latency optimization on top. And the Tauri-app supervision wrapper.
+2. ~~**Live SeaweedFS/R2 round-trip.**~~ **DONE** (2026-06-11). Real bytes through
+   presigned PUT/GET to SeaweedFS (`192.168.1.7:8333`, bucket `my-bucket`), byte-for-byte
+   on a fresh device — `examples/presigned_roundtrip.rs` with the `STORAGE_BACKEND=s3`
+   server (§13). Presign worked first try (no path-style/SigV4 surprises).
 3. **`delete`/`move` apply on pull** — `sync-engine::change_to_sync` currently skips
    `delete`; add a `fs-provider` tombstone/move apply so removals propagate.
 4. **Windows `winfsp-rs` mount adapter** (Linux/macOS already work via `fuser`).
@@ -234,12 +249,20 @@ STORAGE_BACKEND=memory bin/rails server -p 3001
 # Live cross-stack demos (server must be running):
 (cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example e2e)
 (cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
-(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)  # real bytes
+(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)      # real bytes
+(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example daemon_loop)     # the loop: outbox→push→pull→hydrate
 
 # Server with real S3/SeaweedFS storage (presigned PUT/GET):
 STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket \
 CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
   bin/rails server -p 3001
+# …then push/hydrate real bytes through SeaweedFS via presigned URLs:
+(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example presigned_roundtrip)
+
+# The daemon (mount + continuous loop). Needs a device token (register via the API) and
+# the FUSE-T pkg-config alias + rpath (sync-engine has its own .cargo/config.toml now):
+# PKG_CONFIG_PATH=/tmp/fuse-pc:/usr/local/lib/pkgconfig cargo build --bin maker-syncd
+# ./target/debug/maker-syncd <mnt> <db> <chunks> http://localhost:3001 <device_token>
 
 # Rust crate tests
 (cd client/fs-provider && cargo test)   # + sync-client, maker-app-core, juicefs-backend

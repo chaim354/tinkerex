@@ -1,6 +1,36 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (overnight autonomous build)
+**Updated:** 2026-06-11 (daemon loop wired + live SeaweedFS round-trip)
+
+## Latest (2026-06-11, afternoon): §12 steps 1 & 2 landed
+
+- **Continuous sync loop wired.** `fs-provider` gained an `outbox` + `sync_state`
+  (cursor) table; FUSE mutations (`flush`/`mkdir`/`unlink`/`rmdir`/`rename`) enqueue the
+  dirty `node_id` atomically with the tree change. `sync-engine` gained
+  `push_outbox` (incremental, drains the outbox without holding the SQLite lock across
+  WAN I/O), `sync_tick` (the loop body = push_outbox + pull_changes), and
+  `EngineHydrator`. `fs-fuse` gained a `Hydrate` hook: a `read` on a chunk-cache miss
+  hydrates + retries. Proven end-to-end vs the live server in
+  `client/sync-engine/examples/daemon_loop.rs`.
+- **`maker-syncd` binary** (`client/sync-engine/src/bin/`) mounts FUSE and runs the loop
+  in a background thread sharing one `Arc<SqliteProvider>` (`impl Provider for Arc<P>`).
+  Compiles + supervises the thread cleanly; the live kernel mount needs an interactive
+  session (FUSE-T won't hold a mount from a detached process — same limitation as the
+  existing `maker-mount`; verify in Finder).
+- **Live SeaweedFS round-trip DONE.** Real bytes through presigned PUT/GET to
+  `192.168.1.7:8333` (bucket `my-bucket`), byte-for-byte on a fresh device —
+  `client/sync-engine/examples/presigned_roundtrip.rs` against the `STORAGE_BACKEND=s3`
+  server. Presigning worked first try.
+- **Bonus fix:** `LocalChunkStore::put` used a fixed temp filename → concurrent writers
+  of the same chunk hash raced on the rename (loser hit ENOENT). Now uses a unique temp
+  name + treats a lost race as the dedup win. Load-bearing once the daemon writes the
+  store from multiple threads.
+- **Remaining on step 1:** the ActionCable `{head_seq}` nudge (server already
+  broadcasts it) to cut pull latency below the 2 s poll; the Tauri supervision wrapper.
+
+---
+
+**Original overnight build:**
 
 The local-first sync architecture (`docs/architecture-sync-engine.md` +
 `docs/sync-protocol.md`) is now real, working code across all three tiers, with the
