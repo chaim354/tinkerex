@@ -15,13 +15,22 @@ server). Below: what exists, what's proven, how to run it, what's next.
 | **FUSE mount** | `client/fs-fuse` | ✅ Mounts via FUSE-T; **verified in Finder**; persists across remount. |
 | **Sync server** | Rails app (`app/`, `db/`) | ✅ Full protocol. 10 tests green on SQLite. |
 | **Sync client** | `client/sync-client` | ✅ Typed API + chunk transfer + pull-apply. 5 tests. |
-| **End-to-end** | `examples/e2e`, `examples/multi_device` | ✅ **Run live against the Rails server.** |
+| **Sync daemon** | `client/sync-engine` | ✅ push / pull / hydrate / sync_once; pluggable `ChunkIO` (shared-dir + presigned). |
+| **End-to-end** | `examples/e2e`, `multi_device`, `roundtrip` | ✅ **Run live against the Rails server, incl. real chunk bytes.** |
+| **S3/SeaweedFS storage** | server `STORAGE_BACKEND=s3` | ✅ Wired (`aws-sdk-s3`); presign verified against the SeaweedFS creds. Not round-tripped live (SeaweedFS unreachable from build env). |
 
 ### Proven end-to-end (Rust client → live Rails server)
-- **Single device:** register → mkdir → commit(begin/finalize) → changes → tree → restore.
-- **Multi-device:** device A builds a tree; device B (second device, same user)
-  initial-syncs via the snapshot, then **converges on A's delete via a delta pull**.
-  Cursor advances to `head_seq`. This is the core sync claim, demonstrated.
+- **Single device** (`e2e`): register → mkdir → commit(begin/finalize) → changes →
+  tree → restore.
+- **Multi-device** (`multi_device`): device A builds a tree; device B (second device,
+  same user) initial-syncs via the snapshot, then **converges on A's delete via a
+  delta pull**.
+- **Full daemon roundtrip with real bytes** (`roundtrip`): device A creates a 40 KB
+  file → `SyncEngine::push` chunks it + uploads to a cloud store → device B
+  `pull_snapshot` + `hydrate` + read → **byte-for-byte identical**. Data plane (chunks)
+  *and* control plane (changelog) both proven. The cloud store is a shared local dir
+  standing in for SeaweedFS/R2 (unreachable from the build env); the presigned
+  transport (`PresignedIO`) is built and the server presigns correct SeaweedFS URLs.
 
 ## How to run it yourself
 
@@ -55,20 +64,21 @@ pulling the changelog (`seq > cursor`); changes propagate via ActionCable.
 
 ## What's NOT done yet (next session)
 
-1. **fs-provider ⇄ sync-client integration (the daemon).** The two halves are
-   built and individually tested; the connective `SyncEngine` that (a) watches the
-   FUSE mount and *pushes* on write, (b) *pulls* the changelog and applies it to the
-   local SQLite, (c) *hydrates* chunks on read — is not yet wired into a loop.
-   - **Glue now in place:** `fs-provider` carries a stable `node_id` (server UUID)
-     per node and exposes `export_tree()` (sync-ready descriptors: node_id,
-     parent_node_id, name, kind, manifest) + `node_id_for(ino)`. The pull-apply
-     algorithm exists and is tested (`sync-client::LocalTree`). Remaining: the
-     `apply_remote` write-back into `fs-provider`'s SQLite, and the push/pull daemon
-     loop driving both crates + chunk upload/download.
-2. **Real chunk transfer to R2.** `sync-client` has `upload_chunk`/`download_chunk`
-   (presigned PUT/GET via HTTP) — the mechanism is there but only the *control plane*
-   was exercised live (the memory store returns non-HTTP URLs). Needs a real R2
-   bucket to round-trip bytes.
+1. **The running daemon loop.** `SyncEngine` (`push`/`pull_snapshot`/`pull_changes`/
+   `hydrate`/`sync_once`) is **built and verified end-to-end with real bytes**
+   (`roundtrip`). What's left is wiring it into a *continuous* loop on the client:
+   (a) **watch the FUSE mount** (a write/flush → enqueue → push), (b) react to the
+   **ActionCable** nudge (pull → apply), (c) hydrate on FUSE read (mount's `read`
+   callback → `SyncEngine::hydrate`). Today push/pull are invoked explicitly; the
+   loop + the mount↔engine wiring is the remaining integration.
+2. **Real chunk bytes through S3/SeaweedFS.** The presigned transport (`PresignedIO`)
+   is built, `aws-sdk-s3` is wired, and the server presigns correct SeaweedFS URLs
+   (verified). Bytes were round-tripped end-to-end via a shared-dir stand-in, not live
+   SeaweedFS (the box at `192.168.1.7:8333` was unreachable from the build env). To go
+   live: start SeaweedFS, run the server with `STORAGE_BACKEND=s3
+   CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket
+   CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret`, and use `PresignedIO`
+   in the daemon instead of `SharedDirIO`.
 3. **Windows `winfsp-rs`** FUSE adapter (Linux + macOS work via `fuser`).
 4. **Postgres deploy** — code is adapter-agnostic and tested on SQLite; switching is
    config only (see `docs/SYNC_SERVER.md`). No Postgres available in the build env.
