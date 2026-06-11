@@ -60,6 +60,7 @@ content-addressed manifest sharing chunks).
 | **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
 | **fs-fuse** | `client/fs-fuse` | FUSE adapter (Linux libfuse / macOS FUSE-T) over `Provider`. |
 | **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (Windows) over the **same** `Provider`. Written against winfsp 0.13; **unverified — needs a Windows build pass** (CI job + `BUILD.md`). |
+| **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) over the **same** `Provider` — the **macOS** mount path (native `mount_webdav`, no FUSE/kext/FSKit). Cross-platform; verified live mounting on macOS 26. |
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
@@ -303,12 +304,16 @@ duplicate files in the repo (some sync client?) — they broke a build once; `fi
 '* 2.*' -delete` to sweep.
 
 **Mount gotchas (hit live on real hardware):** on **macOS 26+**, FUSE-T's **FSKit**
-build can't mount (silent fail; needs a System-Settings extension toggle that's
-greyed) — install the **NFS-based** FUSE-T instead, or use the Linux client
-(`client/fs-fuse/BUILD.md`, `client/maker-app/SETUP.md`). On **Linux**, `auto_unmount`
-needs `user_allow_other` in `/etc/fuse.conf` and `/dev/fuse` access (`SETUP.md`).
-Verified live: a file pasted into the Linux mount → deployed Rails on the Unraid VM →
-content-addressed chunk in SeaweedFS, hash-matched on read-back.
+build can't mount (silent fail; greyed System-Settings extension toggle) — so the app
+mounts via **WebDAV** on macOS (`client/fs-webdav` + `sync_engine::WebdavMount`, native
+`mount_webdav`, no FUSE). The mount backend is per-OS (`Mount` alias in the Tauri app):
+WebDAV on macOS, FUSE on Linux. macOS still *compiles* `fuser` (used on Linux), so the
+FUSE-T pkg-config alias is needed to **build** on macOS, not to run. On **Linux**,
+`auto_unmount` needs `user_allow_other` in `/etc/fuse.conf` and `/dev/fuse` access
+(`SETUP.md`). Verified live: a file written through the **macOS WebDAV mount** → sync
+push → deployed Rails on the Unraid VM (`examples/webdav_live.rs`); and a file pasted
+into the **Linux FUSE mount** → content-addressed chunk in SeaweedFS, hash-matched on
+read-back.
 
 ---
 
