@@ -32,7 +32,16 @@
   in `client/sync-client/examples/nudge.rs`. Required `disable_request_forgery_protection`
   for ActionCable (a browser-CSRF defense; our cable auth is a query-string device token,
   not cookies, so it doesn't apply and would 404 the native client).
-- **Remaining on step 1:** only the Tauri supervision wrapper around the daemon threads.
+- **Supervised daemon + Tauri app.** `sync_engine::Daemon` (`src/daemon.rs`) mounts via
+  `spawn_mount2` (non-blocking) and supervises the sync + nudge threads on one shared
+  `Arc<SqliteProvider>`; `start`/`stop`/`is_running`/`run_until_unmounted`. `maker-syncd`
+  is now a thin wrapper. `client/maker-app` (Tauri) drives it via `sync_start`/`sync_stop`/
+  `sync_status` with a mount form — see `client/maker-app/SETUP.md`. The native-mount dep
+  is `cfg(not(windows))`-gated (FUSE is Unix-only): the app builds + launches on Windows
+  with the mount disabled until the winfsp-rs adapter (step 4).
+- **Step 1 is functionally complete** (watch→push, nudge/poll→pull, read→hydrate,
+  supervised, GUI-driven). The only unverified leg is the live kernel mount, which needs
+  an interactive desktop session (FUSE-T won't hold a mount headless).
 
 ---
 

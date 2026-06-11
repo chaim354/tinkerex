@@ -220,13 +220,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
      delta-token / Nextcloud `notify_push`). Required disabling ActionCable
      request-forgery protection (browser-CSRF defense; irrelevant to our token-authed,
      cookieless cable connection).
-   - **`maker-syncd` binary** mounts FUSE + runs `sync_tick` in a background thread, with
-     a second thread feeding nudges, all sharing one `Arc<SqliteProvider>` (new
-     `impl Provider for Arc<P>`). Compiles + supervises the threads cleanly; the live
-     kernel-mount leg needs an **interactive** session (FUSE-T doesn't hold a mount from
-     a detached process — same as `maker-mount`, verify manually in Finder).
-   - **Remaining for this step:** only the Tauri-app supervision wrapper (wrap the two
-     daemon threads in `maker-app-core`'s supervision shape) — the sync logic is done.
+   - **Supervised daemon:** ✅ `sync_engine::Daemon` (`src/daemon.rs`) wraps it all —
+     `start()` mounts via `spawn_mount2` (non-blocking; FUSE session on its own thread)
+     + spawns the sync & nudge threads sharing one `Arc<SqliteProvider>` (new
+     `impl Provider for Arc<P>`); `stop()`/`Drop` unmount + join; `is_running()` for
+     status. `maker-syncd` is a thin CLI wrapper (`run_until_unmounted`).
+   - **Tauri app:** ✅ `client/maker-app` drives the `Daemon` via `sync_start`/
+     `sync_stop`/`sync_status` commands (register device → mount → sync) with a mount
+     form. The native-mount dep is `cfg(not(windows))`-gated: the app builds + launches
+     on Windows but the mount returns a "needs winfsp-rs (§12 step 4)" message. **Run it:
+     `client/maker-app/SETUP.md`.**
+   - **Step 1 is functionally complete.** Caveat: the live kernel-mount leg needs an
+     **interactive** session (FUSE-T won't hold a mount from a detached/headless process
+     — same as `maker-mount`; verify in Finder via the app).
 2. ~~**Live SeaweedFS/R2 round-trip.**~~ **DONE** (2026-06-11). Real bytes through
    presigned PUT/GET to SeaweedFS (`192.168.1.7:8333`, bucket `my-bucket`), byte-for-byte
    on a fresh device — `examples/presigned_roundtrip.rs` with the `STORAGE_BACKEND=s3`
