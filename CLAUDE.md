@@ -188,7 +188,7 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 
 **Built + verified (≈40 tests green + live cross-stack + cross-OS demos):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. 10 tests.
-- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`. 8 tests.
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. 15 tests (incl. a multi-device convergence harness + the overwrite-with-shorter / grow-shrink truncate tests).
 - `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
 - `sync-client`: API + chunk transfer + pull-apply. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
@@ -250,8 +250,17 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    presigned PUT/GET to SeaweedFS (`192.168.1.7:8333`, bucket `my-bucket`), byte-for-byte
    on a fresh device — `examples/presigned_roundtrip.rs` with the `STORAGE_BACKEND=s3`
    server (§13). Presign worked first try (no path-style/SigV4 surprises).
-3. **`delete`/`move` apply on pull** — `sync-engine::change_to_sync` currently skips
-   `delete`; add a `fs-provider` tombstone/move apply so removals propagate.
+3. ~~**`delete`/`move` apply on pull**~~ **DONE** (2026-06-11). `pull_changes` now
+   applies deletes via `fs_provider::apply_remote_delete` (recursive subtree sweep, so a
+   dir delete can't orphan children; idempotent; never re-enqueues to the outbox). Moves
+   were already correct — the server models a move as op `move`/`put` on the **same**
+   stable `node_id` with a new parent/name, so `apply_remote` updates the row in place
+   (no delete, no duplicate). Verified end-to-end vs the live server in
+   `client/sync-engine/examples/delete_move.rs` (B converges on A's delete + move via a
+   delta pull). Backed by a `fs-provider` **convergence harness**
+   (`convergence_under_random_ops`) that drives a pseudo-random create/overwrite/delete/
+   move stream and asserts the source and replica trees stay identical after every op —
+   the mechanical backstop that catches dropped-delete / duplicated-move regressions.
 4. ~~**Windows `winfsp-rs` mount adapter.**~~ **DONE.** `client/fs-winfsp` implements
    WinFsp's `FileSystemContext` over the same `Provider` (path↔inode + hydrate hook),
    wired into `sync_engine::WinfspMount` and the Tauri app (per-OS `Mount` alias). Built
@@ -260,8 +269,16 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    `winfsp` `system` feature would load it from the registry InstallDir but requires the
    WinFsp SDK headers to build — a runtime-only WinFsp install lacks them; for a
    distributable `.exe`, bundle the DLL next to it). Build/run: `client/fs-winfsp/BUILD.md`,
-   `client/maker-app/SETUP.md`. Shared gap (all adapters): `Provider` has no truncate
-   (overwrite-with-shorter leaves a stale tail).
+   `client/maker-app/SETUP.md`. ~~Shared gap (all adapters): `Provider` has no truncate
+   (overwrite-with-shorter leaves a stale tail).~~ **CLOSED** (2026-06-11): `Provider`
+   now has `truncate(ino, size)` — shrink drops chunks past the new EOF, grow zero-fills.
+   The kernel's `O_TRUNC` reaches it via **FUSE `setattr(size)`**, **WinFsp
+   `set_file_size`**, and a **truncating WebDAV PUT open** (`options.truncate`), so an
+   overwrite-with-shorter leaves no stale tail on any of the three OSes. Covered by
+   `overwrite_with_shorter_leaves_no_stale_tail` + a grow/shrink test, and the
+   `convergence_under_random_ops` harness now overwrites via truncate-then-write and
+   asserts the source has no stale tail (replica content convergence is proven by the
+   content-addressed `manifest_id`).
 5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
    (`V1::AuthController#register`). The device-token mechanism itself stays.
 6. **Writeback + robustness hardening:** atomic saves (write-temp-then-rename),

@@ -1,6 +1,36 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (daemon loop wired + live SeaweedFS round-trip)
+**Updated:** 2026-06-11 (truncate gap closed — no more stale tail on overwrite-with-shorter)
+
+## Latest (2026-06-11): §12.4 truncate gap closed
+
+The `Provider` trait had **no truncate**, so overwriting a file with fewer bytes than
+before left the old manifest's trailing chunks past the new EOF — reads returned a stale
+tail / wrong size (CLAUDE.md §12.4, a gap shared by all three mount adapters).
+
+- **`Provider::truncate(ino, size)`** (impl on `SqliteProvider`): if the file is open for
+  write, it resizes the in-memory staging buffer in place (the eventual `flush` commits
+  the new length); otherwise it seeds from committed content, resizes, and commits
+  immediately so a bare `truncate(2)` (and its outbox entry) is durable with no following
+  write. Shrink drops the tail; grow zero-fills. Mirrored on `impl Provider for Arc<P>`.
+- **Wired through every OS's truncate signal:** FUSE **`setattr(size)`** (`fs-fuse`),
+  WinFsp **`set_file_size`** *and* the **`overwrite` disposition** (CREATE_ALWAYS /
+  FILE_OVERWRITE — the common Windows "save a smaller file" path; both call
+  `Provider::truncate`, `fs-winfsp`), and a **truncating WebDAV PUT open** (`fs-webdav`
+  now honors `options.truncate`). The kernel issues `setattr(size=0)` on an `O_TRUNC`
+  open before the shorter `write`, so the save-a-smaller-file path is now correct on
+  macOS, Linux, and Windows. Caveat: `fs-winfsp` is `#![cfg(windows)]`, so the Windows
+  legs compile only under the `windows-mount` CI job — unverified on the macOS build host.
+- **Tests:** `overwrite_with_shorter_leaves_no_stale_tail` (reproduces the §12.4 bug —
+  2000 bytes → truncate → 100 bytes → reads exactly 100) plus a grow/shrink test. The
+  `convergence_under_random_ops` harness now overwrites via **truncate-then-write** (small
+  length ceiling → shrink is the common case) and asserts the source committed exactly the
+  new bytes (no stale tail); replica content convergence stays proven by the
+  content-addressed `manifest_id` in the snapshot. fs-provider is now **15 tests** green.
+- **Re-verified:** `(cd client/sync-engine && cargo run --example roundtrip)` against
+  `STORAGE_BACKEND=memory` on `localhost:3001` — real bytes A→cloud→B, byte-for-byte.
+
+## Earlier (2026-06-11): daemon loop wired + live SeaweedFS round-trip
 
 ## Live deployment (2026-06-11): full stack on an Unraid VM via Kamal
 
@@ -17,6 +47,33 @@ presigned PUT, hydrated on a fresh device byte-for-byte). Two fixes were needed 
 committed: `config.solid_queue.connects_to` (Solid Queue was hitting the primary DB and
 crash-looping Puma) and the single-host Kamal registry/builder config (127.0.0.1 + auth +
 `driver: docker` to avoid the localhost reverse-tunnel + isolated-buildkit traps).
+
+## Latest (2026-06-11, evening): §12 step 3 — delete/move propagation
+
+Closed the correctness hole where the **delta pull dropped deletes** (`pull_changes`
+had a literal `NOTE: 'delete' tombstones are not yet applied locally`): a file deleted on
+device A was never removed on device B, and a move duplicated the file at both the old and
+new path.
+
+- **`fs_provider::apply_remote_delete(node_id)`** — removes the node and its whole subtree
+  via a recursive CTE (a dir delete can't orphan children even if per-child deletes arrive
+  out of order or not at all), idempotent (no-op on an already-gone or never-seen id), and
+  does **not** touch the outbox (inbound change must never echo back to the server).
+- **`SyncEngine::pull_changes`** now routes a change to `apply_remote_delete` when
+  `op == "delete"` **or** the (soft-deleted) node carries `deleted: true`; everything else
+  flows through `apply_remote`. **Moves needed no new code** — the server models a move as
+  op `move`/`put` on the **same** stable `node_id` with a new parent/name, and
+  `commit_begin` already carries parent/name, so `apply_remote` updates the row in place.
+- **Verified end-to-end vs the live server**: `client/sync-engine/examples/delete_move.rs`
+  — A deletes `trash.txt` and moves `note.txt` Inbox→Archive, B converges via a changelog
+  **delta pull** (seq 4→6): deleted file gone, moved file at the new path only, trees
+  identical. Passed against `STORAGE_BACKEND=memory` on `localhost:3001`.
+- **Convergence harness** (`fs-provider` test `convergence_under_random_ops`): drives a
+  deterministic pseudo-random stream of create/overwrite/delete/move ops on a source
+  provider, replicates each step's outbox to a replica exactly as the daemon's pull does,
+  and asserts the two trees stay byte-identical after **every** op. This is the mechanical
+  backstop CLAUDE.md called for — it would have caught the dropped-delete/duplicated-move
+  bugs. fs-provider is now **13 tests** green (15 after the truncate fix above).
 
 ## Latest (2026-06-11, afternoon): §12 steps 1 & 2 landed
 
