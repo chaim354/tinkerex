@@ -51,5 +51,22 @@ module V1
       LibraryChannel.broadcast_change(current_user, seq)
       render json: { version_id: version.version_id, seq: }
     end
+
+    # POST /v1/nodes/:node_id/resolve_conflict
+    #   { keep_version_id }  -> keep one side as current (the other stays in history)
+    #   { split: true }      -> keep both (incoming becomes a new sibling file)
+    def resolve_conflict
+      if ActiveModel::Type::Boolean.new.cast(params[:split])
+        new_node_id, seq = Sync::Conflicts.split(user: current_user, node_id: params[:node_id])
+        LibraryChannel.broadcast_change(current_user, seq)
+        render json: { split_node_id: new_node_id, seq: }
+      else
+        seq = Sync::Conflicts.keep(
+          user: current_user, node_id: params[:node_id], version_id: params.require(:keep_version_id)
+        )
+        LibraryChannel.broadcast_change(current_user, seq)
+        render json: { seq: }
+      end
+    end
   end
 end

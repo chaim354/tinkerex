@@ -22,6 +22,10 @@ Rails.application.routes.draw do
     post "nodes/:node_id/move", to: "nodes#move"
     get "nodes/:node_id/versions", to: "nodes#versions"
     post "nodes/:node_id/restore", to: "nodes#restore"
+    post "nodes/:node_id/resolve_conflict", to: "nodes#resolve_conflict"
+
+    # conflicts (offline-edit divergence)
+    get "conflicts", to: "conflicts#index"
 
     # hydration
     post "chunks/download", to: "chunks#download"

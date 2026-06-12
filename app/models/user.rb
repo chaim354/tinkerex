@@ -6,6 +6,7 @@ class User < ApplicationRecord
   has_many :changelog_entries, dependent: :destroy
   has_many :pending_commits, dependent: :destroy
   has_many :device_pairings, dependent: :destroy
+  has_many :conflicts, dependent: :destroy
 
   validates :email, presence: true, uniqueness: true
 

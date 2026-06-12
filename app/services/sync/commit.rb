@@ -61,6 +61,7 @@ module Sync
         upsert_chunks!(user, manifest)
 
         node = user.nodes.find_or_initialize_by(node_id: pending.node_id)
+        prior_current = node.current_version_id
         node.assign_attributes(
           parent_node_id: pending.parent_node_id, name: pending.name,
           kind: "file", deleted: false
@@ -71,13 +72,31 @@ module Sync
           size: pending.size, device_id: pending.device_id,
           parent_version_id: pending.base_version_id, created_at: Time.current
         )
-        node.current_version_id = version.version_id
+
+        # Conflict iff the client based this edit on a version that is no longer current
+        # (someone committed in between — e.g. edited offline, then reconnected). Instead
+        # of silently last-writer-wins, keep the node pointed at the existing version,
+        # record the divergence, and emit a `conflict` change so every device learns to
+        # ask the user. Both versions are stored regardless (chunks are content-addressed
+        # + refcounted, so the extra cost is just the delta).
+        is_conflict = node.persisted? && prior_current.present? &&
+                      pending.base_version_id.present? && pending.base_version_id != prior_current
+
+        if is_conflict
+          c = user.conflicts.unresolved.find_or_initialize_by(node_id: pending.node_id)
+          c.assign_attributes(current_version_id: prior_current, incoming_version_id: version.version_id)
+          c.save!
+          op = "conflict"
+        else
+          node.current_version_id = version.version_id
+          op = "put"
+        end
 
         seq = user.next_seq!
         node.updated_seq = seq
         node.save!
         user.changelog_entries.create!(
-          seq:, node_id: pending.node_id, op: "put",
+          seq:, node_id: pending.node_id, op:,
           version_id: version.version_id, created_at: Time.current
         )
         pending.destroy!
