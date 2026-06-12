@@ -351,6 +351,11 @@ CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret 
 STORAGE_BACKEND=memory bin/rails server -p 3001 &   # then:
 (cd client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
 
+# External conformance (battle-tested tools vs our real mounts — client/test-conformance/):
+client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (macOS+Linux)
+client/test-conformance/fsx-fuse.sh           # fsx data-integrity exerciser ⇄ FUSE (Linux)
+client/test-conformance/pjdfstest-fuse.sh     # pjdfstest POSIX map ⇄ FUSE (Linux, informational)
+
 # fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see client/fs-fuse/BUILD.md.
 # Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
 ```

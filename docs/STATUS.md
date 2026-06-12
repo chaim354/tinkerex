@@ -1,6 +1,30 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (offline/resync hardening — changelog pagination fix + full-resync backstop)
+**Updated:** 2026-06-11 (external conformance suites wired — rclone / fsx / pjdfstest)
+
+## Latest (2026-06-11): external conformance suites
+
+Added independent, battle-tested external tools pointed at our real mount surfaces — the
+same suites JuiceFS/CephFS gate on — so robustness isn't only self-authored tests.
+`client/test-conformance/` + a `mount-conformance` CI job (`rust-client.yml`):
+
+- **`webdav-rclone.sh`** (gating, cross-platform) — drives `fs-webdav` with **rclone**:
+  `copy` a tree in, `check --download` every file byte-for-byte, then modify/append/delete
+  + `sync` + re-check. **Verified locally on macOS** (0 differences, initial 8 files +
+  post-delta 7 files). Exercises read+write through chunking + the content store with an
+  independent client.
+- **`fsx-fuse.sh`** (gating, Linux) — **fsx** (xfstests) against `fs-fuse`: a long
+  randomized write/read/**truncate** stream verified against an in-memory model — the
+  strongest adversarial check of the data plane. CI-verified on first run (no FUSE on the
+  macOS build host, same as fs-winfsp).
+- **`pjdfstest-fuse.sh`** (informational, Linux) — **pjdfstest** POSIX semantics for the
+  ops we implement (rename/unlink/mkdir/rmdir/truncate/open); perms/owner/link tests are
+  out of scope, so it's a conformance *map*, not a gate (`continue-on-error`).
+
+These cover the **mount**; distributed-sync convergence stays the job of the
+`fs-provider/tests/convergence.rs` FakeFolder harness (no external suite exists for that).
+
+## Earlier (2026-06-11): offline/reconnect hardening (§12.6)
 
 ## Latest (2026-06-11): offline/reconnect hardening (§12.6)
 

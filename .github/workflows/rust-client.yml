@@ -60,6 +60,31 @@ jobs:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
 
+  mount-conformance:
+    # External, battle-tested suites pointed at our real mount surfaces (what JuiceFS/
+    # CephFS gate on). rclone⇄WebDAV and fsx⇄FUSE gate the build; pjdfstest is an
+    # informational POSIX conformance map (continue-on-error). See
+    # client/test-conformance/README.md.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System deps (FUSE, rclone, build tools, autotools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfuse-dev fuse pkg-config build-essential \
+            rclone curl git autoconf automake libtool
+          # AutoUnmount on the maker-mount needs user_allow_other.
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+      - name: rclone ⇄ WebDAV round-trip (gating)
+        run: client/test-conformance/webdav-rclone.sh
+      - name: fsx ⇄ FUSE data-integrity exerciser (gating)
+        run: client/test-conformance/fsx-fuse.sh 100000
+      - name: pjdfstest ⇄ FUSE POSIX conformance map (informational)
+        continue-on-error: true
+        run: client/test-conformance/pjdfstest-fuse.sh
+
   winfsp-windows:
     runs-on: windows-latest
     steps:
