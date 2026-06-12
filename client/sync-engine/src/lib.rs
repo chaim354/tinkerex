@@ -271,7 +271,9 @@ fn push_node(
                 node_id: node.node_id.clone(),
                 parent_node_id: node.parent_node_id.clone(),
                 name: node.name.clone(),
-                base_version_id: None,
+                // The version this edit was based on — the server flags a conflict if it's
+                // no longer current (a concurrent edit slipped in, e.g. while offline).
+                base_version_id: node.version_id.clone(),
                 size,
                 manifest,
             })?;
@@ -279,7 +281,10 @@ fn push_node(
                 let bytes = provider.chunk_get(hash)?;
                 io.put(hash, &begin.put_urls, bytes)?;
             }
-            client.commit_finalize(&commit_id)?;
+            let fin = client.commit_finalize(&commit_id)?;
+            // Record the new server version so a follow-up edit bases on it (not the now
+            // stale prior version, which would falsely conflict with our own push).
+            provider.set_node_version(&node.node_id, &fin.version_id)?;
         }
     }
     Ok(())
@@ -378,6 +383,7 @@ fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
         kind: if n.kind == "dir" { Kind::Dir } else { Kind::File },
         manifest_id,
         chunks,
+        version_id: n.version_id.clone(),
     }
 }
 
@@ -387,6 +393,12 @@ fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
 /// server models it as op `move` on the same stable node_id with a new parent/name, so it
 /// falls through to `apply_remote` and updates the existing row in place (no duplicate).
 fn apply_change(provider: &SqliteProvider, ch: &Change) -> Result<()> {
+    // A `conflict` change records a divergent version that is NOT current — the node's
+    // content is unchanged, so it must not be applied to the tree. It's surfaced to the
+    // user via GET /v1/conflicts and resolved there.
+    if ch.op == "conflict" {
+        return Ok(());
+    }
     let deleted = ch.node.as_ref().is_some_and(|n| n.deleted);
     if ch.op == "delete" || deleted {
         provider.apply_remote_delete(&ch.node_id)?;
@@ -416,5 +428,6 @@ fn change_to_sync(ch: &Change) -> Option<SyncNode> {
         kind: if view.kind == "dir" { Kind::Dir } else { Kind::File },
         manifest_id,
         chunks,
+        version_id: ch.version.as_ref().map(|v| v.version_id.clone()),
     })
 }

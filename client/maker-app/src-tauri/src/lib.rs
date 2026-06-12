@@ -238,6 +238,62 @@ fn restore_version(
     Ok("restored".into())
 }
 
+// ---- conflicts (divergent offline edits) -------------------------------------------
+
+#[derive(serde::Serialize)]
+struct ConflictSideOut {
+    version_id: String,
+    size: u64,
+    created_at: String,
+    device_name: String,
+}
+
+#[derive(serde::Serialize)]
+struct ConflictOut {
+    node_id: String,
+    name: Option<String>,
+    current: Option<ConflictSideOut>,
+    incoming: Option<ConflictSideOut>,
+}
+
+fn side(s: sync_client::ConflictSide) -> ConflictSideOut {
+    ConflictSideOut { version_id: s.version_id, size: s.size, created_at: s.created_at, device_name: s.device_name }
+}
+
+/// Unresolved conflicts, with both sides' device + time + size, for the resolution prompt.
+#[tauri::command]
+fn conflicts(server_url: String, email: String) -> Result<Vec<ConflictOut>, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+    let cs = client.conflicts().map_err(|e| format!("conflicts failed: {e}"))?;
+    Ok(cs
+        .conflicts
+        .into_iter()
+        .map(|c| ConflictOut { node_id: c.node_id, name: c.name, current: c.current.map(side), incoming: c.incoming.map(side) })
+        .collect())
+}
+
+/// Resolve a conflict: keep one version as current (the other stays in history).
+#[tauri::command]
+fn resolve_conflict_keep(server_url: String, email: String, node_id: String, version_id: String) -> Result<String, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+    client.resolve_conflict_keep(&node_id, &version_id).map_err(|e| format!("resolve failed: {e}"))?;
+    Ok("kept".into())
+}
+
+/// Resolve a conflict: keep both — the incoming side becomes a new sibling file.
+#[tauri::command]
+fn resolve_conflict_split(server_url: String, email: String, node_id: String) -> Result<String, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+    client.resolve_conflict_split(&node_id).map_err(|e| format!("split failed: {e}"))?;
+    Ok("split".into())
+}
+
 #[tauri::command]
 fn sync_stop(state: State<AppState>) -> Result<String, String> {
     let mut guard = state.0.lock().unwrap();
@@ -279,7 +335,10 @@ pub fn run() {
             platform,
             browse,
             file_versions,
-            restore_version
+            restore_version,
+            conflicts,
+            resolve_conflict_keep,
+            resolve_conflict_split
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

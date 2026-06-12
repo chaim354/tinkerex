@@ -122,47 +122,33 @@ fn delete_and_move_converge_via_delta() {
     assert!(b.lookup(b_inbox, "note.txt").is_err(), "no duplicate at old path");
 }
 
-// ---- last-writer-wins ---------------------------------------------------------------
+// ---- sequential edits fast-forward (no false conflict) -----------------------------
 
 #[test]
-fn concurrent_edits_resolve_last_writer_wins() {
+fn sequential_edits_fast_forward_without_a_conflict() {
+    // The non-conflict path now that the client tracks base versions: an edit whose base
+    // IS current is a clean put (no conflict). Conflicts only fire on a *stale* base
+    // (see offline_divergent_edit_raises_a_conflict). This guards against false positives.
     let url = server_url!();
     let (ca, cb, cloud) = two_devices(&url);
 
-    // A creates a file and both devices sync to it.
     let a = dev();
-    let f = a.create(ROOT_INO, "shared.txt").unwrap();
-    a.write(f.ino, 0, b"original").unwrap();
+    let f = a.create(ROOT_INO, "notes.txt").unwrap();
+    a.write(f.ino, 0, b"v1").unwrap();
     a.flush(f.ino).unwrap();
-    SyncEngine::push_outbox(&a, &ca, &cloud).expect("A push");
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
 
-    let b = dev();
-    let b_cur = SyncEngine::pull_snapshot(&b, &cb).expect("B snapshot");
-    let bf = b.lookup(ROOT_INO, "shared.txt").unwrap();
-
-    // Both edit the *same* node, A first then B → B is the last writer.
+    // Edit again on the SAME device (base is current after set_node_version) → clean.
     a.truncate(f.ino, 0).unwrap();
-    a.write(f.ino, 0, b"edited by A").unwrap();
+    a.write(f.ino, 0, b"v2 sequential").unwrap();
     a.flush(f.ino).unwrap();
-    SyncEngine::push_outbox(&a, &ca, &cloud).expect("A push edit");
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
 
-    b.truncate(bf.ino, 0).unwrap();
-    b.write(bf.ino, 0, b"edited by B is the winner").unwrap();
-    b.flush(bf.ino).unwrap();
-    SyncEngine::push_outbox(&b, &cb, &cloud).expect("B push edit");
-
-    // A pulls the changelog delta since its snapshot point. The delta carries A's own
-    // edit then B's (later) edit in seq order, so the node converges onto B's version.
-    // LWW is a *metadata* property — assert A's manifest now equals B's winning
-    // manifest (content-addressed, so equal manifest_id ⇒ identical bytes). The
-    // data-plane (hydrate→read) is covered separately by the roundtrip/hydrate tests.
-    SyncEngine::pull_changes(&a, &ca, b_cur).expect("A pulls B's edit");
-    let a_node = a.node_id_for(f.ino).unwrap().unwrap();
-    let a_manifest = a.sync_node(&a_node).unwrap().unwrap().manifest_id;
-    let b_manifest = b.sync_node(&a_node).unwrap().unwrap().manifest_id;
-    assert_eq!(a_manifest, b_manifest, "LWW: A converged onto B's later (winning) version");
-    // Sanity: B (the winner) can read its own content directly.
-    assert_eq!(read_all(&b, bf.ino), b"edited by B is the winner");
+    assert!(cb.conflicts().unwrap().conflicts.is_empty(), "sequential edits don't conflict");
+    // A second device sees the latest, no conflict.
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    assert!(b.lookup(ROOT_INO, "notes.txt").is_ok());
 }
 
 // ---- hydration: only-missing + idempotent ------------------------------------------
@@ -255,6 +241,50 @@ fn pairing_adds_a_device_to_an_existing_library() {
 
     // A reused code can't pair again (single-use).
     assert!(ServerClient::new(&url).pair(&email, &code, "device-C").is_err(), "code is single-use");
+}
+
+// ---- conflict: a divergent offline edit is flagged, not silently dropped ----------
+
+#[test]
+fn offline_divergent_edit_raises_a_conflict() {
+    let url = server_url!();
+    let (ca, cb, cloud) = two_devices(&url);
+
+    // A creates a file and pushes (its local node now tracks version V1).
+    let a = dev();
+    let f = a.create(ROOT_INO, "design.scad").unwrap();
+    a.write(f.ino, 0, b"base design").unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // B (second device) pulls the snapshot — its local node also tracks V1.
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    let bf = b.lookup(ROOT_INO, "design.scad").unwrap();
+
+    // A edits + pushes → server's current is now V2.
+    a.truncate(f.ino, 0).unwrap();
+    a.write(f.ino, 0, b"A's online change").unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // B edits its copy — still based on V1 (it never saw V2) — and pushes.
+    b.truncate(bf.ino, 0).unwrap();
+    b.write(bf.ino, 0, b"B's offline change").unwrap();
+    b.flush(bf.ino).unwrap();
+    SyncEngine::push_outbox(&b, &cb, &cloud).unwrap();
+
+    // The server flagged a conflict (base V1 != current V2) instead of LWW-dropping a edit.
+    let conflicts = cb.conflicts().unwrap().conflicts;
+    assert_eq!(conflicts.len(), 1, "B's stale-based edit raised a conflict");
+    let c = &conflicts[0];
+    assert_eq!(c.name.as_deref(), Some("design.scad"));
+    assert!(c.current.is_some() && c.incoming.is_some(), "both sides reported (device + time)");
+
+    // Resolve by splitting → a new sibling conflicted-copy node, conflict cleared.
+    let split = cb.resolve_conflict_split(&c.node_id).unwrap();
+    assert!(!split.split_node_id.is_empty());
+    assert!(cb.conflicts().unwrap().conflicts.is_empty(), "resolved after split");
 }
 
 // ---- freshness-on-access (the on-open catch-up pull) -------------------------------

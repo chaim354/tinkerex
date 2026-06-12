@@ -117,8 +117,12 @@ to storage** (chunk bytes via presigned URLs).
 - **Pull:** changelog delta since cursor → `apply_remote` into local SQLite →
   dehydrate changed placeholders.
 - **Hydrate:** on read, fetch missing chunks via presigned GET → local cache.
-- v1: **last-writer-wins** (conflict-copies deferred). Tenant = user, full tree on
-  every device.
+- **Conflict detection** (replaced v1 last-writer-wins, 2026-06-12): each commit sends its
+  `base_version_id`; if it's no longer current (a concurrent/offline edit slipped in), the
+  server records a **conflict** (both versions kept) instead of silently dropping an edit,
+  and the client prompts the user to keep one or split into two files (`Sync::Conflicts`,
+  `GET /v1/conflicts`, `POST /v1/nodes/:id/resolve_conflict`). A base that IS current is a
+  clean fast-forward. Tenant = user, full tree on every device.
 
 ---
 

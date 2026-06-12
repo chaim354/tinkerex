@@ -2,7 +2,31 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): auth, security, caching, freshness-on-access, file browser
+## Latest (2026-06-12): file locking + conflict detection & resolution
+
+Local-first concurrency = local advisory locks + cross-device conflict detection (NOT
+distributed locks — can't hold a WAN lock offline; the synchronous model we rejected).
+
+- **Local advisory locking** — `fs-provider::LockManager` (POSIX byte-range advisory
+  locks, owner-tracked, conflict = different owners + overlapping range + ≥1 exclusive,
+  released per owner on close; 7 unit tests). Provider trait gains
+  `set_lock`/`test_lock`/`unlock`/`release_locks`; `fs-fuse` wires `setlk`/`getlk`/release.
+  Non-blocking (F_SETLKW retry-wait is a TODO).
+- **Conflict detection** — each commit now sends `base_version_id` (the client tracks the
+  server version each node reflects: a new `version_id` column in `fs-provider`, populated
+  on pull, advanced after a push, sent on the next commit). When the base is no longer
+  current (a divergent offline edit), `Sync::Commit` records a **conflict** (keeps both
+  versions, emits a `conflict` changelog op) instead of last-writer-wins dropping an edit.
+- **Resolution** — `Sync::Conflicts`: keep one side current, or **split** (the incoming
+  side becomes a new sibling "foo (conflict from <device> <when>).ext", reusing its
+  manifest → zero new blocks). `GET /v1/conflicts` returns both sides with device + time +
+  size; the app shows a resolution **popup** (keep this / keep that / keep both).
+- Tests: server 41→47 (`conflicts_test.rb`), sync-engine integration +2
+  (`offline_divergent_edit_raises_a_conflict`, `sequential_edits_fast_forward_without_a_conflict`),
+  fs-provider +7 lock tests. The old LWW integration test is replaced (concurrent edits now
+  conflict by design).
+
+## Earlier (2026-06-12): auth, security, caching, freshness-on-access, file browser
 
 Branch `auth-caching-security`. Areas:
 

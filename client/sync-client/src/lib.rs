@@ -116,6 +116,33 @@ pub struct VersionsResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ConflictSide {
+    pub version_id: String,
+    pub size: u64,
+    pub created_at: String,
+    pub device_name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConflictInfo {
+    pub node_id: String,
+    pub name: Option<String>,
+    pub current: Option<ConflictSide>,
+    pub incoming: Option<ConflictSide>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConflictsResponse {
+    pub conflicts: Vec<ConflictInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SplitResponse {
+    pub split_node_id: String,
+    pub seq: i64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NodeView {
     pub node_id: String,
     pub parent_node_id: Option<String>,
@@ -306,6 +333,30 @@ impl ServerClient {
     pub fn versions(&self, node_id: &str) -> Result<VersionsResponse> {
         let resp = self
             .authed(self.http.get(self.url(&format!("/v1/nodes/{node_id}/versions"))))?
+            .send()?;
+        Self::json(resp)
+    }
+
+    /// Unresolved conflicts (divergent offline edits) with both sides' device + time.
+    pub fn conflicts(&self) -> Result<ConflictsResponse> {
+        let resp = self.authed(self.http.get(self.url("/v1/conflicts")))?.send()?;
+        Self::json(resp)
+    }
+
+    /// Resolve a conflict by keeping one side as current.
+    pub fn resolve_conflict_keep(&self, node_id: &str, keep_version_id: &str) -> Result<SeqResponse> {
+        let resp = self
+            .authed(self.http.post(self.url(&format!("/v1/nodes/{node_id}/resolve_conflict"))))?
+            .json(&serde_json::json!({ "keep_version_id": keep_version_id }))
+            .send()?;
+        Self::json(resp)
+    }
+
+    /// Resolve a conflict by keeping both — the incoming side becomes a new sibling file.
+    pub fn resolve_conflict_split(&self, node_id: &str) -> Result<SplitResponse> {
+        let resp = self
+            .authed(self.http.post(self.url(&format!("/v1/nodes/{node_id}/resolve_conflict"))))?
+            .json(&serde_json::json!({ "split": true }))
             .send()?;
         Self::json(resp)
     }

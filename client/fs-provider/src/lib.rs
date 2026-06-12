@@ -93,6 +93,11 @@ pub struct SyncNode {
     pub kind: Kind,
     pub manifest_id: Option<String>,
     pub chunks: Vec<ChunkLoc>,
+    /// The server version this node currently reflects. On **pull** it's the version the
+    /// server reports (stored locally); on **push** it's sent as the commit's
+    /// `base_version_id` so the server can detect a conflicting concurrent edit. `None`
+    /// for dirs and never-synced nodes.
+    pub version_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -214,7 +219,8 @@ impl SqliteProvider {
                 size        INTEGER NOT NULL DEFAULT 0,
                 mtime       INTEGER NOT NULL DEFAULT 0,
                 manifest_id TEXT,
-                node_id     TEXT
+                node_id     TEXT,
+                version_id  TEXT          -- server version this node reflects (commit base)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_parent_name ON nodes(parent_ino, name);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_node_id ON nodes(node_id);
@@ -240,6 +246,8 @@ impl SqliteProvider {
                 value INTEGER NOT NULL
             );",
         )?;
+        // Migrate older DBs that predate the version_id column (ignore "duplicate column").
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN version_id TEXT", []);
         // Ensure the root directory (ino 1) exists.
         conn.execute(
             "INSERT OR IGNORE INTO nodes(ino, parent_ino, name, kind, node_id) VALUES (?1, NULL, '', 'dir', 'root')",
@@ -349,6 +357,18 @@ impl SqliteProvider {
         })
     }
 
+    /// Record the server version a node now reflects — called after a successful push
+    /// (the finalize response's version_id) so the next edit's commit `base` is current
+    /// and the node doesn't conflict with its own just-pushed version.
+    pub fn set_node_version(&self, node_id: &str, version_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE nodes SET version_id = ?1 WHERE node_id = ?2",
+            params![version_id, node_id],
+        )?;
+        Ok(())
+    }
+
     /// The stable server id for a local inode (`None` if the inode is gone).
     pub fn node_id_for(&self, ino: u64) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
@@ -363,7 +383,7 @@ impl SqliteProvider {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.node_id, n.name, n.kind, n.manifest_id,
-                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END
+                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id
              FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
              WHERE n.ino != ?1
              ORDER BY n.ino",
@@ -375,11 +395,12 @@ impl SqliteProvider {
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (node_id, name, kind_s, manifest_id, parent_node_id) = row?;
+            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id) = row?;
             let chunks = match &manifest_id {
                 Some(m) => Self::manifest_rows(&conn, m)?,
                 None => Vec::new(),
@@ -391,6 +412,7 @@ impl SqliteProvider {
                 kind: Kind::from_str(&kind_s),
                 manifest_id,
                 chunks,
+                version_id,
             });
         }
         Ok(out)
@@ -447,14 +469,14 @@ impl SqliteProvider {
         )?;
         if exists {
             conn.execute(
-                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6 WHERE node_id=?7",
-                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.node_id],
+                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7 WHERE node_id=?8",
+                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.version_id, node.node_id],
             )?;
         } else {
             conn.execute(
-                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs()],
+                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs(), node.version_id],
             )?;
         }
         Ok(())
@@ -583,7 +605,7 @@ impl SqliteProvider {
         let row = conn
             .query_row(
                 "SELECT n.name, n.kind, n.manifest_id,
-                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END
+                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id
                  FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
                  WHERE n.node_id = ?1",
                 params![node_id, ROOT_INO as i64],
@@ -593,11 +615,12 @@ impl SqliteProvider {
                         r.get::<_, String>(1)?,
                         r.get::<_, Option<String>>(2)?,
                         r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
                     ))
                 },
             )
             .optional()?;
-        let (name, kind_s, manifest_id, parent_node_id) = match row {
+        let (name, kind_s, manifest_id, parent_node_id, version_id) = match row {
             Some(r) => r,
             None => return Ok(None),
         };
@@ -612,6 +635,7 @@ impl SqliteProvider {
             kind: Kind::from_str(&kind_s),
             manifest_id,
             chunks,
+            version_id,
         }))
     }
 }
