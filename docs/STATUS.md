@@ -2,7 +2,31 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): Windows CfAPI mount — **verified live** (populate + hydrate)
+## Latest (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
+
+Building on the verified-live populate+hydrate (below), the CfAPI mount now runs the full
+read **and** write loop on real Windows 11, and behaves correctly offline. Detailed handoff
++ remaining plan: **`docs/plan-windows-cfapi-migration.md`**.
+- **Remote-change invalidation** live: a file edited on another device refreshes on next open
+  (`CfUpdatePlaceholder` + `CfDehydratePlaceholder` via the engine `Invalidate` seam; updates
+  the new size+mtime, then dehydrates so the next read re-fetches).
+- **Phase 2 (edits)** live: a local edit to an existing file is captured via
+  `NOTIFY_FILE_CLOSE_COMPLETION` + a content-compare self-write filter →
+  `Provider::ingest_bytes` → the sync loop pushes it. (New files / deletes / renames = Phase 2b.)
+- **Offline availability** (cross-platform): hydrated files persist on unmount (CfAPI Drop now
+  only disconnects — no unregister/delete), and because the content-addressed chunk cache
+  persists and the engine only fetches *missing* chunks, a hydrated file reads with **no
+  network** on macOS/Windows/Linux. Test `hydrated_file_stays_readable_offline` (dead server +
+  erroring transport → still reads from cache).
+- **Stale-DB guard:** `Provider::bind_library(hash(server, token))` wipes a *different*
+  library's stale tree/cursor on mount (keeps the chunk cache) — wired into **all four** mounts
+  (FUSE/WebDAV/WinFsp/CfAPI). Fixes the reused-DB "cursor ahead of head_seq → remote edits never
+  apply" + duplicate-placeholder bug. Tested (`bind_library_wipes_a_different_librarys_stale_state`).
+- Three live-bring-up bugs fixed (each caught by the doctor/log workflow): on-demand population
+  (empty-tree-at-mount + missing FETCH_PLACEHOLDERS → hang), always-answer FETCH_DATA, and a
+  null-`FileIdentity` `from_raw_parts` panic on root enumeration. See the plan's "gotchas".
+
+## Earlier (2026-06-12): Windows CfAPI mount — **verified live** (populate + hydrate)
 
 The driverless CfAPI mount **runs on real Windows 11 hardware**: a sync root registers, Explorer
 enumerates it, and files hydrate on open (no GPL driver — the §9 win, on actual hardware). Three

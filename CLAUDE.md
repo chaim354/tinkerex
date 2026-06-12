@@ -60,7 +60,7 @@ content-addressed manifest sharing chunks).
 | **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
 | **fs-fuse** | `client/fs-fuse` | FUSE adapter (**Linux** mount path) over `Provider`. Verified live. (macOS uses `fs-webdav` — FUSE-T can't mount on macOS 26.) |
 | **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (**Windows** mount path) over the **same** `Provider`. **Verified: mounts a drive letter + syncs** via the app. Needs `winfsp-x64.dll` on PATH at runtime (or bundled). |
-| **fs-cfapi** | `client/fs-cfapi` | **CfAPI** adapter — the **driverless** Windows path (Cloud Filter API, no GPL driver; the OneDrive model: sync-root folder + on-demand hydration). **Verified live on Windows 11**: register + on-demand enumerate (FETCH_PLACEHOLDERS) + hydrate-on-open (FETCH_DATA). Successor to `fs-winfsp` (kept as fallback). Phase 2 = local-edit capture. |
+| **fs-cfapi** | `client/fs-cfapi` | **CfAPI** adapter — the **driverless** Windows path (Cloud Filter API, no GPL driver; the OneDrive model: sync-root folder + on-demand hydration). **Verified live on Windows 11**: register + on-demand enumerate (FETCH_PLACEHOLDERS) + hydrate-on-open (FETCH_DATA) + remote-change invalidation + **local-edit capture** (NOTIFY_FILE_CLOSE → ingest → push) + offline-persistent hydrated files. Successor to `fs-winfsp` (still the default until flipped). **Phase 2b** (new files/deletes/renames) + making it default: `docs/plan-windows-cfapi-migration.md`. |
 | **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) over the **same** `Provider` — the **macOS** mount path (native `mount_webdav`, no FUSE/kext/FSKit). Cross-platform; verified live on macOS 26. |
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
@@ -331,15 +331,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    `convergence_under_random_ops` harness now overwrites via truncate-then-write and
    asserts the source has no stale tail (replica content convergence is proven by the
    content-addressed `manifest_id`).
-   **CfAPI migration UNDERWAY** (2026-06-12): `client/fs-cfapi` — the **driverless** Windows
-   path (Cloud Filter API; no GPL driver — §9). **Phase 1** (populate placeholders + hydrate
-   on FETCH_DATA + invalidate via `CfUpdatePlaceholder`) authored over the same `Provider`,
-   wired as `sync_engine::CfApiMount` + `maker-cfsyncd` (WinFsp kept as the default fallback).
-   Reuses the Option-B seams: the `Invalidate` trait → `CfUpdatePlaceholder`+dehydrate, real
-   nanos mtime → `FILETIME`. Pure logic unit-tested cross-platform; FFI compiled by the
-   `cfapi-windows` CI job; runtime-UNVERIFIED (smoke: `client/fs-cfapi/BUILD.md`). **Phase 2**
-   (local-edit→upload capture via a USN watcher → `Provider::ingest_bytes` → push) is next.
-   Plan: `docs/plan-windows-cfapi-migration.md`.
+   **CfAPI migration — read+write loop VERIFIED LIVE** (2026-06-12): `client/fs-cfapi` — the
+   **driverless** Windows path (Cloud Filter API; no GPL driver — §9), over the same `Provider`,
+   wired as `sync_engine::CfApiMount` + `maker-cfsyncd`. Live on Windows 11: register +
+   on-demand `FETCH_PLACEHOLDERS` + hydrate-on-open `FETCH_DATA` + remote-change invalidation
+   (`CfUpdatePlaceholder`+`CfDehydratePlaceholder` via the Option-B `Invalidate` seam) +
+   **local-edit capture** (`NOTIFY_FILE_CLOSE_COMPLETION` + content-compare →
+   `Provider::ingest_bytes` → push). Hydrated files persist offline (Drop disconnects only).
+   `Provider::bind_library` guards reused-DB library-mixing across all mounts. Reuses the
+   Option-B seams (real nanos mtime → `FILETIME`). Pure logic unit-tested; FFI typechecks for the
+   Windows target + compiled by the `cfapi-windows` CI job. **WinFsp is still the default**
+   Windows backend. **Remaining (detailed handoff + per-step plan):
+   `docs/plan-windows-cfapi-migration.md`** — Phase 2b (new files/deletes/renames),
+   remote-files-while-mounted, flip CfAPI to default, pin/unpin + lifecycle polish.
 5. ~~**Real OAuth/OIDC** replacing the placeholder device-token bootstrap~~ **PARTLY DONE**
    (2026-06-12): the account-takeover hole is closed — `register` is new-account-only and
    additional devices join via a **single-use pairing code** (`DevicePairing`); the app

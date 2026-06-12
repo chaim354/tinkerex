@@ -1,143 +1,206 @@
-# Plan: migrate the Windows mount from WinFsp to CfAPI (Cloud Filter API)
+# Windows CfAPI mount — status + handoff plan
 
-**Status:** sketch / design intent (not started). Companion to the per-OS mount story in
-`CLAUDE.md` §4 + §12 step 4 (WinFsp, done) and the forward-compat notes in
-`docs/plan-real-mtime-and-invalidation.md` (the `Invalidate` seam was built to land here).
+The driverless Windows mount (Cloud Filter API / `cldapi.dll` — the OneDrive model: a
+registered sync-root folder with on-demand placeholders and hydrate-on-read), replacing the
+GPL-WinFsp path (CLAUDE.md §9). **Verified live on Windows 11.** This doc is the source of
+truth for the next agent: what's done, where it lives, how to debug it, the gotchas we hit
+bringing it up, and the detailed plan for what's left.
 
-## Why
+---
 
-WinFsp works and is shipped (`fs-winfsp`, a drive letter), but it has two costs CfAPI removes:
+## Status (2026-06-12)
 
-1. **Licensing (§9, the real driver).** WinFsp's kernel driver is **GPL**; we keep it out of
-   our binaries by making it user-installed, but that's a worse install story (user fetches
-   WinFsp, `winfsp-x64.dll` must be on PATH) and a permanent footnote. **CfAPI is part of
-   Windows** (`cldapi.dll`, the API OneDrive itself uses) — **no driver, no copyleft, nothing
-   to bundle or ask the user to install.** This is the §9 win and the stated Windows
-   preference ("on Windows prefer native CfAPI (no driver)").
-2. **Native UX.** CfAPI files live in a normal folder under the user's profile (not a drive
-   letter), with first-class Explorer integration: per-file **availability** (online-only vs
-   always-on-device), sync-state overlays, "Free up space" / "Always keep on this device",
-   and progress UI — the OneDrive/Dropbox experience, for free.
+**Working + verified live on Windows 11:**
+- Register sync root + connect callbacks; **on-demand population** (`FETCH_PLACEHOLDERS`) so
+  Explorer enumerates the library; **hydrate on open** (`FETCH_DATA` → presigned GET from
+  SeaweedFS → `CfExecute(TRANSFER_DATA)`).
+- **Remote-change invalidation** (`CfUpdatePlaceholder` + dehydrate, via the engine's
+  `Invalidate` seam) — a file edited on another device refreshes on next open.
+- **Phase 2 (edits):** local edits to existing files captured via
+  `NOTIFY_FILE_CLOSE_COMPLETION` + content-compare → `Provider::ingest_bytes` → push.
+- **Offline availability:** hydrated files persist on unmount (Drop disconnects but does **not**
+  unregister or delete the folder); the persistent content-addressed chunk cache means a
+  hydrated file reads with no network (cross-platform — test
+  `hydrated_file_stays_readable_offline`).
+- **Stale-DB protection:** `Provider::bind_library(id)` wipes a *different* library's stale tree
+  on mount (keeps the chunk cache). Wired into all four mounts (Daemon/WebdavMount/WinfspMount/
+  CfApiMount), keyed by `hash(server, token)`.
 
-This is **another adapter over the same `Provider`** — the architecture's whole point — but
-CfAPI **inverts the data-plane model**, which is the substance of the work (see Design §0).
+**Verification posture:** the FFI **typechecks for the Windows target** on macOS (`cargo check
+--target x86_64-pc-windows-gnu`) and **compiles+links on `windows-latest`** (CI job
+`cfapi-windows`); pure logic is unit-tested everywhere; the *runtime* callbacks were brought up
+live with the doctor/log workflow below. WinFsp (`fs-winfsp`) is still the **default** Windows
+backend until CfAPI is flipped on (next step #3).
 
-## Design
+---
 
-### 0. The model inversion (read this first)
+## Where the code lives
 
-| | FUSE / WinFsp (today) | CfAPI |
-|---|---|---|
-| Files on disk | virtual — **we serve every** `read`/`write`/`getattr` | **real NTFS files**; the OS serves hydrated reads/writes directly |
-| We are asked for | every op, synchronously | only: **fetch data** (hydrate), **enumerate** (populate), and **notifications** of change |
-| Local writes reach us via | `write`/`flush` callbacks | we **detect** them (dirty placeholder state / change notifications) and pull bytes off disk |
-| Remote change applied by | repoint manifest + `invalidate(ino)` | `CfUpdatePlaceholder` (+ dehydrate) — *the same idea, different call* |
+| Piece | Location |
+|---|---|
+| Pure logic (cross-platform, unit-tested) | `client/fs-cfapi/src/lib.rs` — `FileIdentity` (node_id↔blob), `unix_nanos_to_filetime`/`filetime_to_unix_nanos`, `PlaceholderAction`/`decide_action` |
+| Windows FFI | `client/fs-cfapi/src/win.rs` (`#[cfg(windows)]`) — `mount()`, register/connect, the 3 callbacks, `CfApiInvalidate` |
+| Engine wiring | `client/sync-engine/src/daemon.rs` — `CfApiMount` (+ `EngineCfInvalidate`, `library_id_for`, the pre-mount snapshot + cursor reset) |
+| Write-path primitive | `fs_provider::SqliteProvider::ingest_bytes(ino, &[u8])` |
+| Stale-DB guard | `fs_provider::SqliteProvider::bind_library(id) -> wiped: bool` |
+| Runner | `client/sync-engine/src/bin/maker-cfsyncd.rs` |
+| Test helpers | `client/sync-engine/examples/{mac_host,doctor,push_update}.rs` |
+| Build/smoke doc | `client/fs-cfapi/BUILD.md` |
 
-So `fs-cfapi` is **not** a drop-in like `fs-winfsp` was. The `Provider` stays the metadata +
-content-addressed chunk authority, but the read/write halves of the seam change shape: the OS
-owns the on-disk bytes; we own the *truth* (tree, versions, chunks) and *bridge* the two.
-What maps cleanly is the part we already built; what's new is **local-change capture**.
+The callbacks reach shared state via the connection's callback context (a `Box::into_raw`'d
+`CfState { provider, hydrate, connection_key }`, reclaimed on Drop). `node_id` is carried as
+the placeholder's opaque `FileIdentity`; the sync root itself has a **null** identity (handled
+by `callback_node_id` → `None` → treated as `ROOT_INO`).
 
-### 1. Sync-root registration + connection lifecycle
-- Register the library folder as a **sync root**: `StorageProviderSyncRootManager.Register`
-  (WinRT, `windows::Storage::Provider`) — display name, version, `HydrationPolicy` (e.g.
-  `Full` or `Progressive`), `PopulationPolicy` (`Full` vs `AlwaysFull`/on-demand),
-  `InSyncPolicy`, icon, and a **provider id** (per user/library). This is also what lights up
-  the Explorer integration.
-- Connect callbacks: `CfConnectSyncRoot` (`windows::Win32::Storage::CloudFilters`) with a
-  `CF_CALLBACK_REGISTRATION` table → a connection key held for the session (the `Daemon`'s
-  Windows equivalent owns it, like the FUSE `BackgroundSession`). `CfDisconnectSyncRoot` +
-  `CfUnregisterSyncRoot` on stop.
+---
 
-### 2. Populate the tree as placeholders (from the local SQLite Provider)
-- Walk `Provider::export_tree`/`readdir`; `CfCreatePlaceholders` for each node carrying:
-  - **`FileIdentity`** = our stable `node_id` (opaque blob CfAPI hands back on every callback
-    — this is the node_id↔path bridge, replacing `fs-winfsp`'s path↔inode map).
-  - **`FsMetadata`** = `FILE_BASIC_INFO` with **size** + **`LastWriteTime` from our real
-    nanos mtime** — reuse the `unix_to_filetime` helper already in `fs-winfsp` (Option B
-    widened mtime to nanos *and* fixed that helper to nanos→100ns-ticks for exactly this).
-  - file mode → there is no POSIX mode on NTFS; the executable bit is a non-goal here (Windows
-    keys off extension), consistent with the "perms gaps deliberate" stance.
-- On-demand population: handle `CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS` to create child
-  placeholders lazily when Explorer opens a dir (cheaper first-run than full populate).
+## How to debug it (the workflow that worked)
 
-### 3. Hydrate on FETCH_DATA (reuse the existing hydration path)
-- `CF_CALLBACK_TYPE_FETCH_DATA` fires on a read of a dehydrated file. Resolve `FileIdentity`
-  → `node_id`, run the **existing** `SyncEngine::hydrate` (node_manifest_hashes → presigned
-  GET → chunk cache), assemble the requested byte range, and feed it back with
-  `CfExecuteOperation(CF_OPERATION_TYPE_TRANSFER_DATA)` in chunks, reporting progress via the
-  range params. This is the direct analogue of today's `Hydrate` hook (`fs-fuse`/`fs-webdav`
-  closures) — the transport underneath is identical.
-- Handle `CANCEL_FETCH_DATA` (user cancelled / app shutting down) by aborting the transfer.
+Live CfAPI behavior can't be tested on macOS, so bring-up is iterative against a real Windows
+box. What made it fast:
 
-### 4. Apply remote changes → placeholder update + invalidation (the seam we pre-built)
-- The pull path already returns `ApplyOutcome { ino, content_changed }` and calls
-  `Invalidate::invalidate` (see `plan-real-mtime-and-invalidation.md`). The **Windows impl of
-  that trait** becomes: `CfUpdatePlaceholder` with the new `FsMetadata` (new size + real
-  mtime) and, when content changed, **`CF_UPDATE_FLAG_DEHYDRATE`** (or mark not-in-sync) so the
-  next read re-raises FETCH_DATA and pulls the new manifest. New nodes →
-  `CfCreatePlaceholders`; deletes → delete the placeholder; moves → rename on disk. This is the
-  `notify_inval_inode` equivalent the Option B seam was designed to host — **no new plumbing in
-  the engine, just a new `Invalidate` implementor + a placeholder mutator.**
+1. **Compile-verify on macOS without Windows** — `cargo check --target x86_64-pc-windows-gnu`
+   typechecks the whole `cfg(windows)` path (needs `rustup target add x86_64-pc-windows-gnu` +
+   `brew install mingw-w64` for the sqlite build script). **Do this before every push.**
+2. **Resolve windows-rs API specifics from the generated source**, not by guessing:
+   `~/.cargo/registry/src/index.crates.io-*/windows-0.61.3/src/Windows/Win32/Storage/CloudFilters/mod.rs`
+   — grep for the exact fn signature, struct fields, required `#[cfg(feature = …)]`, and const
+   names. This is how every "cannot find X" / wrong-arity error was fixed.
+3. **The `doctor` example** isolates the failing layer (no CfAPI, runs anywhere):
+   `cargo run --example doctor -- <server> <token>` checks control-plane (pull tree) then
+   storage (hydrate first file). Tells you "server/token wrong" vs "chunk store unreachable from
+   this box" vs "purely a CfAPI issue."
+4. **Per-callback `eprintln!` + capture to a file** on Windows:
+   `… maker-cfsyncd … 2>&1 | Tee-Object cfapi.log` with `$env:RUST_BACKTRACE="1"`. The logs
+   pinpointed every runtime bug (null-pointer panic line, the cursor mismatch, etc.).
+5. **Test fixtures:** `mac_host` seeds a library + mints a token; `push_update <server> <token>
+   <file> <content>` pushes a *new version* of a file (for invalidation tests).
 
-### 5. Capture LOCAL changes → outbox (the genuinely new engineering)
-The OS no longer routes writes through us, so we must observe them:
-- **New/modified files:** a placeholder the user edits (or a brand-new file dropped in) is a
-  real, dirty file. Detect via **CfAPI in-sync state** + directory change notifications
-  (`ReadDirectoryChangesW`) or the **NTFS USN journal** (robust, survives app-down gaps).
-- On a detected local change: read the on-disk bytes, run them through `Provider` (chunk +
-  manifest, the existing write/flush/`truncate` logic but sourced from the file, not a FUSE
-  buffer), enqueue the `outbox` entry, let `push_outbox` upload, then **`CfSetInSyncState` +
-  `CfConvertToPlaceholder`** to mark it synced and reclaimable.
-- Deletes/renames: `CF_CALLBACK_TYPE_NOTIFY_DELETE`/`NOTIFY_RENAME` (or USN) → `unlink`/
-  `rename` on the Provider → outbox.
-- **This is where a `Provider` extension is likely needed:** a "ingest an on-disk file as this
-  node_id's new content" entry point (vs today's staging-buffer `write`/`flush`).
+---
 
-### 6. Wire into the per-OS mount selector
-- New crate `client/fs-cfapi` over the same `Provider`; `sync-engine` gains a Windows
-  `CfApiMount` with the same `start`/`stop`/`is_running`/`mountpoint` shape as
-  `Daemon`/`WebdavMount`/`WinfspMount`, so the Tauri app's `Mount` alias just points at it.
-- Keep `fs-winfsp` as a **fallback** (config flag) during rollout — both compile under
-  `cfg(windows)`; default flips to CfAPI once proven.
+## Hard-won gotchas (don't relitigate — these bit us live)
 
-## Edit checklist (rough, layer by layer)
-- [ ] `fs-cfapi`: sync-root register/connect lifecycle; `node_id`↔path via `FileIdentity`;
-      placeholder create/update/dehydrate; FETCH_DATA + FETCH_PLACEHOLDERS callbacks.
-- [ ] hydration: route FETCH_DATA through `SyncEngine::hydrate` + `CfExecuteOperation`.
-- [ ] invalidation: implement `sync_engine::Invalidate` for CfAPI (`CfUpdatePlaceholder`
-      [+ dehydrate]); reuse `unix_to_filetime` for the mtime field.
-- [ ] local-change capture: USN-journal/`ReadDirectoryChangesW` watcher → Provider ingest →
-      outbox → push → `CfSetInSyncState`. Add a `Provider` "ingest on-disk file" method.
-- [ ] `sync-engine`: `CfApiMount` (+ feature flag vs `WinfspMount`); deferred-notifier-style
-      wiring if a connection key must reach the invalidator (mirror the FUSE `OnceLock` break).
-- [ ] deps: `windows` crate features `Win32_Storage_CloudFilters` + `Storage_Provider`
-      (first-party Microsoft bindings — **permissive, no GPL driver**; deletes the
-      `winfsp-x64.dll`-on-PATH runtime requirement).
-- [ ] packaging: register the provider on install (sync-root + Explorer integration); MSIX or
-      a registration step on first run.
+- **windows-rs feature gating.** CfAPI items are split across features. We need
+  `Win32_Storage_CloudFilters` + `Win32_Storage_FileSystem` + `Win32_Foundation` +
+  **`Win32_System_CorrelationVector`** (gates `CF_CALLBACK_*`/`CF_OPERATION_INFO` +
+  `CfConnectSyncRoot`) + **`Win32_System_IO`** (OVERLAPPED → `CfUpdatePlaceholder`) +
+  **`Win32_Security`** (SECURITY_ATTRIBUTES → `CreateFileW`).
+- **Names that aren't what you'd guess:** the execute fn is **`CfExecute`** (not
+  `CfExecuteOperation`); `CfConnectSyncRoot` **returns** `CF_CONNECTION_KEY` (4 args, no
+  out-param); `CfCreatePlaceholders` takes a **`&mut [CF_PLACEHOLDER_CREATE_INFO]`** slice;
+  TRANSFER_DATA is the `CF_OPERATION_PARAMETERS_0_0` union member (it *does* carry `Buffer`);
+  hydration/population policy fields take the typed consts directly (no `i16` wrapping).
+- **Null `FileIdentity` on the root** → `slice::from_raw_parts(null, 0)` is UB and panics the
+  callback thread → Explorer hangs to a timeout. Always guard (`callback_node_id`).
+- **Empty-tree-at-mount.** `populate()` at mount ran against the not-yet-pulled local tree (0
+  placeholders) and there was no `FETCH_PLACEHOLDERS` handler → enumeration hung. Fix:
+  **on-demand population** (PARTIAL policy + `FETCH_PLACEHOLDERS` reading the provider's *live*
+  tree) + a **pre-mount snapshot pull**.
+- **Every FETCH_* callback must answer** (success *or* error completion via `CfExecute`). An
+  unanswered callback hangs the requesting app.
+- **Reused local DB across libraries** → mixed trees + a cursor ahead of `head_seq` (so the
+  delta pull returns nothing and remote edits never apply). Fixed by `bind_library` + resetting
+  the cursor to the snapshot head **before** the sync thread reads it.
+- **Invalidate must update metadata AND dehydrate.** `CfUpdatePlaceholder` with `None` metadata
+  left the old size; the dedicated `CfDehydratePlaceholder` is the reliable "force re-fetch."
+- **Hydrated files must persist** (offline goal): on unmount, **disconnect only** — do NOT
+  `CfUnregisterSyncRoot` or delete the folder.
+- General: **NTFS only**; **no drive letter** (a profile folder); don't sync POSIX mode/uid/gid;
+  app-must-be-running for *online-only* files (hydrated ones open offline).
 
-## Testing
-- Unit-testable: `node_id`↔`FileIdentity` round-trip, FsMetadata/mtime conversion (FILETIME),
-  the placeholder-mutation decisions (create vs update vs dehydrate vs delete) as pure logic
-  over `ApplyOutcome`.
-- **Not** unit-testable (like FUSE invalidation): the live kernel callbacks. Needs a Windows
-  host + the registered sync root — a manual smoke + a CI `windows` job that registers a root,
-  drops a file, reads it back, edits on another device, and asserts the placeholder
-  re-hydrates. Extend the existing `winfsp-windows` CI job.
-- Reuse the cross-platform conformance idea: drive the populated folder with robocopy / a
-  byte-diff harness, the Windows analogue of `rclone⇄WebDAV` / `fsx⇄FUSE`.
+---
 
-## Gotchas / risks
-- **Local-change capture is the hard part** — it's a model inversion, not a port. Budget most
-  of the work here; the hydrate/invalidate halves are largely already built.
-- **App-must-be-running** for online-only files (same as OneDrive). "Always keep on device"
-  (pinned/hydrated) files are readable offline; online-only ones error when the provider's
-  disconnected. Set a sane default hydration policy.
-- **NTFS only** (CfAPI requirement). Network/removable targets aren't sync roots.
-- **No drive letter** — the mount is a profile folder. The Tauri UI's "mountpoint" wording +
-  the `DaemonConfig` shape should accommodate a path, not a `Z:` (already a `PathBuf`).
-- **Don't sync POSIX mode/uid/gid** (no meaning on NTFS) — consistent with the existing
-  deliberate non-goals.
-- Keep WinFsp shippable until CfAPI is proven on real hardware (the project's bar: "verified
-  live, file written through the mount → server → chunk in storage, hash-matched on read-back").
+## Plan for the remaining work (priority order)
+
+### 1. Phase 2b — finish local-change capture
+Edits to existing files work; the rest of the write side is missing. All via CfAPI NOTIFY
+callbacks (register in the table in `mount()`), each small + testable with the doctor/log loop:
+
+- **New files** dropped into the folder. On `NOTIFY_FILE_CLOSE_COMPLETION` with **no** known
+  `FileIdentity`: derive the path from `VolumeDosName + NormalizedPath`, strip the sync-root
+  prefix to get the library-relative path, resolve/create parent dirs in the `Provider`
+  (`mkdir` chain), `Provider::create(parent_ino, name)` + `ingest_bytes`, then
+  `CfConvertToPlaceholder` (give the new on-disk file our `node_id` identity) + `CfSetInSyncState`.
+  The push happens via the outbox/sync loop.
+- **Deletes:** `NOTIFY_DELETE` (pre-op; must **ACK** via `CfExecute(ACK_DELETE)` to allow it) →
+  resolve `node_id` → a `Provider` "delete by node_id" (add one; today `unlink` needs parent+name)
+  → enqueue a `delete` outbox entry → push. Use the COMPLETION variant if a post-op signal is
+  enough, but deletes usually want the pre-op ACK so you can veto/observe.
+- **Renames/moves:** `NOTIFY_RENAME` (pre-op ACK) → `Provider::rename` → outbox. CfAPI gives
+  source + target paths in the params.
+- **Provider additions likely needed:** `delete_by_node_id`, maybe `rename_by_node_id`, and a
+  helper to resolve a library-relative path → parent ino (mirror `CfApiInvalidate::path_for` but
+  for the inbound direction). Keep them cross-platform + unit-tested.
+- **Self-write filter** stays the content-compare already used for edits (our hydration writes
+  leave bytes equal → skipped). For new files there's nothing to compare against, so gate on
+  "is this path inside the sync root and not one we just created."
+
+**Test:** drop a file in `MakerCF`, delete one, rename one; assert each via `doctor`/the Mac
+app on another device. Add hermetic `Provider` tests for the new `delete_by_node_id`/path
+resolution.
+
+### 2. New remote files appearing while mounted
+Today a directory is marked **fully populated** after the first `FETCH_PLACEHOLDERS`
+(`DISABLE_ON_DEMAND_POPULATION`), so a file added on another device *while* you're browsing
+won't show until you re-navigate. Fix: when the sync loop's pull creates a **new** node (an
+`apply_remote` insert, not just a content change), have the engine create a placeholder for it
+in its parent directory via `CfCreatePlaceholders` (a new adapter hook alongside `Invalidate`,
+or extend `Invalidate` to an enum of {invalidate, create, delete}). Plumb the parent path the
+same way the invalidator resolves paths. Low risk once the path-resolution helper from #1 exists.
+
+### 3. Make CfAPI the default Windows backend
+Flip the Tauri app's per-OS `Mount` alias from `sync_engine::WinfspMount` to
+`sync_engine::CfApiMount` (`client/maker-app/src-tauri/src/lib.rs`, the `#[cfg(target_os =
+"windows")] type Mount = …`). Keep WinFsp reachable behind a setting/cargo-feature for one
+release. Update `maker-app/SETUP.md` (no WinFsp/`winfsp-x64.dll` needed; the mount point is a
+folder, not a drive letter). This is the dogfooding milestone — once it's the default, the GUI
+drives CfAPI like Mac/Linux.
+
+### 4. Harden + polish
+- **Pin/unpin** ("Always keep on this device" vs "Free up space") → tie Explorer's pin state to
+  hydrate/dehydrate (we already have both primitives). Handle `CF_PIN_STATE` + the
+  dehydrate-policy modifiers; respect a pinned file (don't auto-dehydrate it on invalidate —
+  re-hydrate instead).
+- **Registration lifecycle** — a real "remove this library" action that *does*
+  `CfUnregisterSyncRoot` + cleans the folder (the opposite of the offline default). Surface it in
+  the app, not on every stop.
+- **Large-file `FETCH_DATA`** — currently one transfer of the whole required range; stream in
+  chunks + report progress (`CfReportProviderProgress`) for big maker files; honor
+  `CANCEL_FETCH_DATA`.
+- **ino→path index** — `CfApiInvalidate::path_for` and the close-callback path resolution are
+  O(tree) walks; build an index during `FETCH_PLACEHOLDERS` for O(1).
+- **`FETCH_DATA` size** — `provider.read(ino, off, len as u32)` caps at 4 GB per call; fine for
+  now, revisit for >4 GB files.
+
+### 5. CI / runtime regression net
+The pure logic is unit-tested and the FFI compiles in CI, but live behavior is manual. If you
+want it gated: a **self-hosted Windows runner** smoke that registers a root, enumerates,
+hydrates, edits, and asserts the round-trip (the Windows analogue of the `mount-conformance`
+job). Until then, the `doctor` + `BUILD.md` smoke is the manual gate.
+
+---
+
+## Test command reference
+
+```sh
+# Mac: seed a library + mint a Windows token
+SERVER_URL=http://192.168.1.95 cargo run --example mac_host        # in client/sync-engine
+# Mac: isolate a failure layer (no CfAPI)
+cargo run --example doctor -- http://192.168.1.95 <token>
+# Mac: push a new version of a file (invalidation fixture)
+cargo run --example push_update -- http://192.168.1.95 <token> hello.txt "new content"
+```
+```powershell
+# Windows: build + run the mount with logging
+cargo run --manifest-path client\sync-engine\Cargo.toml --bin maker-cfsyncd -- `
+  "$env:USERPROFILE\MakerCF" "$env:TEMP\maker-cf.db" "$env:TEMP\maker-cf-chunks" `
+  http://192.168.1.95 <token> 2>&1 | Tee-Object "$env:USERPROFILE\cfapi.log"
+```
+```sh
+# macOS: typecheck the whole Windows FFI before pushing
+cargo check --target x86_64-pc-windows-gnu   # in client/fs-cfapi
+```
+
+Server is deployed via Kamal on `192.168.1.95` (port 80, SeaweedFS at `192.168.1.7:8333`).
+Redeploy: `rsync` the tree to `kamal1@192.168.1.95:~/tinkerex/` then `~/kamalw deploy` on the VM
+(`docs/DEPLOY.md`).
