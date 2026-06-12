@@ -320,6 +320,50 @@ impl fs_fuse::Hydrate for EngineHydrator {
     }
 }
 
+/// Freshness-on-access: on a file open, pull the changelog delta so the local tree
+/// reflects the latest before serving (the read then hydrates the new manifest's chunks
+/// on miss). Throttled so frequent opens don't hammer the server — the background loop +
+/// nudge already keep us mostly current, so this only matters in the gap between ticks.
+#[cfg(target_os = "linux")]
+pub struct EngineFreshness {
+    provider: Arc<SqliteProvider>,
+    client: ServerClient,
+    throttle: std::time::Duration,
+    last: std::sync::Mutex<Option<std::time::Instant>>,
+}
+
+#[cfg(target_os = "linux")]
+impl EngineFreshness {
+    pub fn new(provider: Arc<SqliteProvider>, client: ServerClient) -> Self {
+        Self { provider, client, throttle: std::time::Duration::from_millis(750), last: std::sync::Mutex::new(None) }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl fs_fuse::Freshness for EngineFreshness {
+    fn refresh(&self) {
+        {
+            // Skip if we pulled very recently — the loop/nudge has us covered.
+            let mut last = self.last.lock().unwrap();
+            if last.is_some_and(|t| t.elapsed() < self.throttle) {
+                return;
+            }
+            *last = Some(std::time::Instant::now());
+        }
+        let cursor = self.provider.cursor().unwrap_or(0);
+        match SyncEngine::pull_changes(&self.provider, &self.client, cursor) {
+            // Advance the cursor monotonically — the sync loop may also be advancing it
+            // concurrently; a regression would just re-pull an already-applied (idempotent)
+            // delta, so max() is the safe reconciliation.
+            Ok(new) => {
+                let cur = self.provider.cursor().unwrap_or(0);
+                let _ = self.provider.set_cursor(cur.max(new));
+            }
+            Err(e) => eprintln!("freshness: catch-up pull failed: {e}"),
+        }
+    }
+}
+
 fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
     let manifest = n.manifest.clone().unwrap_or_default();
     let manifest_id = (!manifest.is_empty()).then(|| sync_client::manifest_id(&manifest));

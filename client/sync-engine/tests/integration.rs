@@ -257,6 +257,46 @@ fn pairing_adds_a_device_to_an_existing_library() {
     assert!(ServerClient::new(&url).pair(&email, &code, "device-C").is_err(), "code is single-use");
 }
 
+// ---- freshness-on-access (the on-open catch-up pull) -------------------------------
+
+#[test]
+fn freshness_check_on_access_serves_latest_after_remote_change() {
+    // Red-green: this is exactly what the adapter's open-hook freshness check does
+    // (EngineFreshness::refresh → pull_changes). RED = a reader that hasn't synced
+    // serves a stale copy of a file another device just changed; GREEN = the catch-up
+    // pull brings it current before the read.
+    let url = server_url!();
+    let (ca, cb, cloud) = two_devices(&url);
+
+    // A publishes v1; B snapshots, hydrates, reads v1.
+    let a = dev();
+    let f = a.create(ROOT_INO, "live.txt").unwrap();
+    a.write(f.ino, 0, b"version one").unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    let b = dev();
+    let cursor = SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    let bf = b.lookup(ROOT_INO, "live.txt").unwrap();
+    let node = b.node_id_for(bf.ino).unwrap().unwrap();
+    SyncEngine::hydrate(&b, &cb, &cloud, &node).unwrap();
+    assert_eq!(read_all(&b, bf.ino), b"version one");
+
+    // A overwrites to v2 and pushes; B's cursor is now behind.
+    a.truncate(f.ino, 0).unwrap();
+    a.write(f.ino, 0, b"version two is newer").unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // RED: with no freshness check, B keeps serving the stale local copy.
+    assert_eq!(read_all(&b, bf.ino), b"version one", "stale until B catches up (the gap freshness-on-open closes)");
+
+    // GREEN: the on-access catch-up pull (+ lazy re-hydrate of the new manifest) → latest.
+    SyncEngine::pull_changes(&b, &cb, cursor).expect("freshness catch-up pull");
+    SyncEngine::hydrate(&b, &cb, &cloud, &node).expect("hydrate the new manifest");
+    assert_eq!(read_all(&b, bf.ino), b"version two is newer", "fresh after the on-access pull");
+}
+
 // ---- offline reconnect: paging through a large backlog -----------------------------
 
 #[test]

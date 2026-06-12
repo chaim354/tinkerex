@@ -68,21 +68,37 @@ pub trait Hydrate: Send + Sync {
     fn hydrate(&self, ino: u64);
 }
 
+/// Freshness-on-access: a quick catch-up pull when a file is opened, so an open never
+/// serves a copy another device has already changed. The sync engine implements this as
+/// a (throttled) changelog delta pull — cheap when already in sync. Belt-and-suspenders
+/// over the background poll + ActionCable nudge, closing the sub-tick staleness window.
+pub trait Freshness: Send + Sync {
+    /// Best-effort: bring the local tree up to date before serving the open.
+    fn refresh(&self);
+}
+
 pub struct FuseAdapter<P: Provider> {
     provider: P,
     hydrator: Option<Arc<dyn Hydrate>>,
+    freshness: Option<Arc<dyn Freshness>>,
 }
 
 impl<P: Provider> FuseAdapter<P> {
     /// A mount with no hydrator — reads serve only what's already in the local cache
     /// (a cache miss is `EIO`). Used by the plain `maker-mount` binary and tests.
     pub fn new(provider: P) -> Self {
-        Self { provider, hydrator: None }
+        Self { provider, hydrator: None, freshness: None }
     }
 
     /// A mount whose read path hydrates missing chunks on demand (the sync daemon).
     pub fn with_hydrator(provider: P, hydrator: Arc<dyn Hydrate>) -> Self {
-        Self { provider, hydrator: Some(hydrator) }
+        Self { provider, hydrator: Some(hydrator), freshness: None }
+    }
+
+    /// Add a freshness checker: every open first does a quick catch-up pull.
+    pub fn with_freshness(mut self, freshness: Arc<dyn Freshness>) -> Self {
+        self.freshness = Some(freshness);
+        self
     }
 }
 
@@ -278,10 +294,17 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
     }
 
     fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
+        // Freshness-on-access: a quick catch-up pull so an open never serves a copy
+        // another device already changed (closes the window between background sync
+        // ticks). Throttled + cheap-when-in-sync inside the implementor.
+        if let Some(f) = &self.freshness {
+            f.refresh();
+        }
         // Opening for write: pull the whole file local first, so random writes — which
         // seed the staging buffer from the committed content — never hit a chunk-cache
         // miss (a `write` has no hydrate-retry, unlike `read`). A read-only open needs
-        // nothing here; reads hydrate lazily on miss.
+        // nothing here; reads hydrate lazily on miss (and freshness above already pulled
+        // any new manifest, so that lazy hydrate fetches the latest chunks).
         const O_ACCMODE: i32 = 0o3;
         if (flags & O_ACCMODE) != 0 {
             if let Some(h) = &self.hydrator {

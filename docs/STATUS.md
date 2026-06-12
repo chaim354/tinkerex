@@ -2,9 +2,22 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): auth, security, caching, app file browser
+## Latest (2026-06-12): auth, security, caching, freshness-on-access, file browser
 
-Branch `auth-caching-security`. Four areas:
+Branch `auth-caching-security`. Areas:
+
+### Freshness-on-access (the on-open catch-up pull)
+A file open now does a quick, **throttled** changelog catch-up pull before serving, so an
+open never returns a copy another device already changed — closing the window between
+background sync ticks. `fs-fuse` gained a `Freshness` hook in `open`; `sync-engine`
+`EngineFreshness` implements it as `pull_changes` throttled to ≥750 ms (the loop + nudge
+keep us mostly current, so this only matters in the sub-tick gap), wired into the `Daemon`.
+Red-green integration test `freshness_check_on_access_serves_latest_after_remote_change`:
+RED = stale read before catch-up, GREEN = latest after. Versioning/restore design sketched
+in `docs/versioning.md` (near-delta-per-version via CDC + dedup; restore reuses a manifest
+for zero new blocks; retention/GC policy to bound growth).
+
+
 
 ### Auth + cross-user security (server 30→41 tests)
 Audited the client↔sync-engine and ↔bucket-storage auth. **Cross-user isolation was
