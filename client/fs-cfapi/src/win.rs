@@ -97,6 +97,8 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
     let callbacks: &'static [CF_CALLBACK_REGISTRATION] = Box::leak(Box::new([
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, Callback: Some(fetch_placeholders_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(fetch_data_callback) },
+        // Phase 2: a file handle closed — capture a local edit (content changed) and push it.
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION, Callback: Some(notify_file_close_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NONE, Callback: None },
     ]));
 
@@ -364,6 +366,80 @@ unsafe extern "system" fn fetch_placeholders_callback(
     };
     if let Err(e) = CfExecute(&op_info, &mut op_params) {
         eprintln!("cfapi: CfExecute(TRANSFER_PLACEHOLDERS) failed: {e}");
+    }
+}
+
+/// Read a `PCWSTR` (NUL-terminated wide string) into a Rust `String` (lossy). Empty on null.
+unsafe fn pcwstr_string(p: PCWSTR) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    p.to_string().unwrap_or_default()
+}
+
+/// PHASE 2 — local-edit capture: a file handle closed. If it's a known synced file whose
+/// on-disk content now differs from what the provider holds, the **user edited it** — re-ingest
+/// the bytes (which enqueues the outbox; the sync loop pushes) and mark the placeholder back
+/// in-sync. The content comparison is the self-write filter: our own hydration writes and plain
+/// reads leave the on-disk bytes equal to the provider's, so they're skipped (no push loop).
+/// New files / deletes / renames are PHASE 2b (logged, not yet captured).
+unsafe extern "system" fn notify_file_close_callback(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let state = info.CallbackContext as *const CfState;
+    if state.is_null() {
+        return;
+    }
+    let state = &*state;
+
+    // Only existing synced files (placeholders carry their node_id). A new file has no
+    // identity → PHASE 2b.
+    let node_id = match callback_node_id(info) {
+        Some(n) => n,
+        None => return,
+    };
+    let ino = match state.provider.ino_for_node_id(&node_id) {
+        Ok(Some(i)) => i,
+        _ => return,
+    };
+
+    // Full on-disk path = VolumeDosName ("C:") + NormalizedPath ("\Users\…\file").
+    let path = format!("{}{}", pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
+    let on_disk = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return, // gone/unreadable (or still a dehydrated placeholder)
+    };
+
+    // Compare against the provider's current content; only a real change is a user edit.
+    let size = state.provider.getattr(ino).map(|a| a.size).unwrap_or(0);
+    let current = state.provider.read(ino, 0, size as u32).ok();
+    if current.as_deref() == Some(on_disk.as_slice()) {
+        return; // unchanged — our own hydration write or a plain read
+    }
+    eprintln!("cfapi: local edit captured node={node_id} ({} bytes) → ingest + push", on_disk.len());
+    if let Err(e) = state.provider.ingest_bytes(ino, &on_disk) {
+        eprintln!("cfapi: ingest_bytes(node={node_id}) failed: {e}");
+        return;
+    }
+    // Mark the placeholder back in-sync (captured locally; the sync loop pushes it).
+    let path_w = path_wide(Path::new(&path));
+    if let Ok(handle) = CreateFileW(
+        PCWSTR(path_w.as_ptr()),
+        (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAGS_AND_ATTRIBUTES(FILE_ATTRIBUTE_NORMAL.0),
+        None,
+    ) {
+        let mut usn: i64 = 0;
+        let _ = CfSetInSyncState(handle, CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAG_NONE, Some(&mut usn));
+        let _ = CloseHandle(handle);
     }
 }
 

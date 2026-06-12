@@ -65,8 +65,13 @@ What to verify (Phase 1):
 > populate in isolation.
 
 ## Known gaps (flagged in `src/win.rs`)
-- **Phase 2:** local edits/creates/deletes made in Explorer are not yet captured back to the
-  server (CfAPI doesn't route writes through us; needs the USN watcher → `ingest_bytes`).
+- **Phase 2 (edits) — DONE:** editing an existing synced file is captured via
+  `NOTIFY_FILE_CLOSE_COMPLETION` (content-compared against the provider to filter our own
+  hydration writes) → `Provider::ingest_bytes` → the sync loop pushes it. To test: open a
+  synced file in `MakerCF`, edit + save, and confirm it appears on another device. The console
+  prints `cfapi: local edit captured …`.
+- **Phase 2b (not yet):** *new* files dropped into the folder, *deletes*, and *renames* aren't
+  captured yet (new files have no node identity; delete/rename need the pre-op ACK callbacks).
 - On-demand directory population (`FETCH_PLACEHOLDERS`) is disabled — Phase 1 fully populates
   the tree up front (simpler; fine for typical maker libraries).
 - The Ctrl-C handler is a stub; use the Enter prompt (or kill the process — `Drop` still
