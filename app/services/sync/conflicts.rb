@@ -23,7 +23,7 @@ module Sync
     # device converges — the device holding the other version overwrites its local copy).
     def self.keep(user:, node_id:, version_id:)
       c = user.conflicts.unresolved.find_by!(node_id:)
-      unless [c.current_version_id, c.incoming_version_id].include?(version_id)
+      unless [ c.current_version_id, c.incoming_version_id ].include?(version_id)
         raise ArgumentError, "version is not part of this conflict"
       end
       seq = nil
@@ -63,7 +63,7 @@ module Sync
         user.changelog_entries.create!(seq:, node_id: new_node_id, op: "put", version_id: v.version_id, created_at: Time.current)
         c.update!(resolved_at: Time.current)
       end
-      [new_node_id, seq]
+      [ new_node_id, seq ]
     end
 
     def self.version_detail(user, version_id)

@@ -16,7 +16,7 @@ module Sync
     # Commit a version of @node_id from `device`, based on `base`. Returns the version.
     def commit!(device:, body:, base: nil)
       cid = SecureRandom.uuid
-      chunks = [{ "hash" => Digest::SHA256.hexdigest(body), "offset" => 0, "length" => body.bytesize }]
+      chunks = [ { "hash" => Digest::SHA256.hexdigest(body), "offset" => 0, "length" => body.bytesize } ]
       Sync::Commit.begin(user: @user, device:, commit_id: cid, node_id: @node_id,
                          parent_node_id: nil, name: "part.scad", base_version_id: base,
                          size: body.bytesize, manifest: chunks)

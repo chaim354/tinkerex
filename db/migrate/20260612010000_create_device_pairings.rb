@@ -7,7 +7,7 @@ class CreateDevicePairings < ActiveRecord::Migration[8.1]
       t.datetime :claimed_at               # single-use: set when redeemed
       t.timestamps
     end
-    add_index :device_pairings, [:user_id, :code_digest], unique: true
-    add_index :device_pairings, [:user_id, :expires_at]
+    add_index :device_pairings, [ :user_id, :code_digest ], unique: true
+    add_index :device_pairings, [ :user_id, :expires_at ]
   end
 end

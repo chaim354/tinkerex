@@ -27,12 +27,12 @@ module V1
       began = JSON.parse(response.body)
       post "/v1/commit/#{cid}/finalize", params: {}, as: :json, headers: auth(token)
       assert_response :success
-      [began, JSON.parse(response.body), node_id]
+      [ began, JSON.parse(response.body), node_id ]
     end
 
     test "register -> commit -> finalize -> changes -> tree" do
       token = register["device_token"]
-      chunks = [{ hash: "a" * 64, offset: 0, length: 100 }, { hash: "b" * 64, offset: 100, length: 50 }]
+      chunks = [ { hash: "a" * 64, offset: 0, length: 100 }, { hash: "b" * 64, offset: 100, length: 50 } ]
 
       began, fin, node_id = commit_file(token, name: "part.stl", chunks:)
       assert_equal 2, began["missing"].size
@@ -61,16 +61,16 @@ module V1
     test "dedup: shared chunk reported as not-missing on the second file" do
       token = register["device_token"]
       x, y, z = "x" * 64, "y" * 64, "z" * 64
-      commit_file(token, name: "a.bin", chunks: [{ hash: x, offset: 0, length: 10 }, { hash: y, offset: 10, length: 10 }])
+      commit_file(token, name: "a.bin", chunks: [ { hash: x, offset: 0, length: 10 }, { hash: y, offset: 10, length: 10 } ])
 
       cid = SecureRandom.uuid
       post "/v1/commit",
            params: { commit_id: cid, node_id: SecureRandom.uuid, name: "b.bin", size: 20,
-                     manifest: [{ hash: y, offset: 0, length: 10 }, { hash: z, offset: 10, length: 10 }] },
+                     manifest: [ { hash: y, offset: 0, length: 10 }, { hash: z, offset: 10, length: 10 } ] },
            as: :json, headers: auth(token)
       assert_response :success
       began = JSON.parse(response.body)
-      assert_equal [z], began["missing"], "only the new chunk z is missing; y is deduped"
+      assert_equal [ z ], began["missing"], "only the new chunk z is missing; y is deduped"
     end
 
     test "mkdir, move, delete, versions, and restore" do
@@ -85,9 +85,9 @@ module V1
       # commit two versions of the same file
       node_id = SecureRandom.uuid
       _, fin1, _ = commit_file(token, name: "box.lbrn2", node_id:, parent: dir_id,
-                               chunks: [{ hash: "1" * 64, offset: 0, length: 5 }])
+                               chunks: [ { hash: "1" * 64, offset: 0, length: 5 } ])
       _, _fin2, _ = commit_file(token, name: "box.lbrn2", node_id:, parent: dir_id, base: fin1["version_id"],
-                                chunks: [{ hash: "2" * 64, offset: 0, length: 7 }])
+                                chunks: [ { hash: "2" * 64, offset: 0, length: 7 } ])
 
       get "/v1/nodes/#{node_id}/versions", headers: auth(token)
       assert_response :success

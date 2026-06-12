@@ -17,8 +17,8 @@ module Sync
     end
 
     test "commit creates node, version, manifest, changelog and bumps head_seq" do
-      chunks = [{ "hash" => "a" * 64, "offset" => 0, "length" => 10 },
-                { "hash" => "b" * 64, "offset" => 10, "length" => 20 }]
+      chunks = [ { "hash" => "a" * 64, "offset" => 0, "length" => 10 },
+                { "hash" => "b" * 64, "offset" => 10, "length" => 20 } ]
       nid = SecureRandom.uuid
       version, seq = commit!(name: "f.bin", node_id: nid, chunks:)
 
@@ -36,7 +36,7 @@ module Sync
       cid = SecureRandom.uuid
       Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id: nid,
                          parent_node_id: nil, name: "run.sh", base_version_id: nil, size: 5,
-                         manifest: [{ "hash" => "a" * 64, "offset" => 0, "length" => 5 }], mode: 0o755)
+                         manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 5 } ], mode: 0o755)
       Sync::Commit.finalize(user: @user, commit_id: cid)
 
       assert_equal 0o755, @user.nodes.find_by(node_id: nid).mode
@@ -52,7 +52,7 @@ module Sync
       mtime = 1_000_000_000 * 1_000_000_000
       Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id: nid,
                          parent_node_id: nil, name: "old.txt", base_version_id: nil, size: 5,
-                         manifest: [{ "hash" => "a" * 64, "offset" => 0, "length" => 5 }], mtime: mtime)
+                         manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 5 } ], mtime: mtime)
       _, seq = Sync::Commit.finalize(user: @user, commit_id: cid)
 
       assert_equal mtime, @user.nodes.find_by(node_id: nid).mtime, "stored verbatim (bigint nanos)"
@@ -65,9 +65,9 @@ module Sync
     test "refcounts: shared chunk increments, new chunk starts at 1" do
       x, y, z = "x" * 64, "y" * 64, "z" * 64
       commit!(name: "a", node_id: SecureRandom.uuid,
-              chunks: [{ "hash" => x, "offset" => 0, "length" => 5 }, { "hash" => y, "offset" => 5, "length" => 5 }])
+              chunks: [ { "hash" => x, "offset" => 0, "length" => 5 }, { "hash" => y, "offset" => 5, "length" => 5 } ])
       commit!(name: "b", node_id: SecureRandom.uuid,
-              chunks: [{ "hash" => y, "offset" => 0, "length" => 5 }, { "hash" => z, "offset" => 5, "length" => 5 }])
+              chunks: [ { "hash" => y, "offset" => 0, "length" => 5 }, { "hash" => z, "offset" => 5, "length" => 5 } ])
 
       assert_equal 1, @user.chunks.find_by(chunk_hash: x).refcount
       assert_equal 2, @user.chunks.find_by(chunk_hash: y).refcount, "y referenced by both files"
@@ -75,7 +75,7 @@ module Sync
     end
 
     test "identical content dedups the manifest (same manifest_id)" do
-      same = [{ "hash" => "c" * 64, "offset" => 0, "length" => 9 }]
+      same = [ { "hash" => "c" * 64, "offset" => 0, "length" => 9 } ]
       v1, = commit!(name: "a", node_id: SecureRandom.uuid, chunks: same)
       v2, = commit!(name: "b", node_id: SecureRandom.uuid, chunks: same)
       assert_equal v1.manifest_id, v2.manifest_id
@@ -87,15 +87,15 @@ module Sync
       cid = SecureRandom.uuid
       args = { user: @user, device: @device, commit_id: cid, node_id: SecureRandom.uuid,
                parent_node_id: nil, name: "f", base_version_id: nil, size: 5,
-               manifest: [{ "hash" => "d" * 64, "offset" => 0, "length" => 5 }] }
+               manifest: [ { "hash" => "d" * 64, "offset" => 0, "length" => 5 } ] }
       Sync::Commit.begin(**args)
       Sync::Commit.begin(**args)
       assert_equal 1, @user.pending_commits.where(commit_id: cid).count
     end
 
     test "next_seq! is monotonic across commits" do
-      3.times { |i| commit!(name: "f#{i}", node_id: SecureRandom.uuid, chunks: [{ "hash" => (i.to_s * 64)[0, 64], "offset" => 0, "length" => 1 }]) }
-      assert_equal [1, 2, 3], @user.changelog_entries.order(:seq).pluck(:seq)
+      3.times { |i| commit!(name: "f#{i}", node_id: SecureRandom.uuid, chunks: [ { "hash" => (i.to_s * 64)[0, 64], "offset" => 0, "length" => 1 } ]) }
+      assert_equal [ 1, 2, 3 ], @user.changelog_entries.order(:seq).pluck(:seq)
     end
   end
 end

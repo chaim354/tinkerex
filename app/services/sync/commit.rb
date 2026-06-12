@@ -102,7 +102,7 @@ module Sync
         )
         pending.destroy!
       end
-      [version, seq]
+      [ version, seq ]
     end
 
     # ---- helpers -------------------------------------------------------------

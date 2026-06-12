@@ -8,7 +8,7 @@ class CreateConflicts < ActiveRecord::Migration[8.1]
       t.datetime :resolved_at                       # nil while the user still needs to decide
       t.timestamps
     end
-    add_index :conflicts, [:user_id, :node_id]
-    add_index :conflicts, [:user_id, :resolved_at]
+    add_index :conflicts, [ :user_id, :node_id ]
+    add_index :conflicts, [ :user_id, :resolved_at ]
   end
 end

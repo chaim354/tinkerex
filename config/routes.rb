@@ -5,7 +5,7 @@ Rails.application.routes.draw do
   namespace :v1 do
     post "auth/register", to: "auth#register"
     post "auth/pair", to: "auth#pair"
-    resources :devices, only: [:create]
+    resources :devices, only: [ :create ]
     post "devices/pairing", to: "devices#pairing"
 
     # content commits (two-phase)

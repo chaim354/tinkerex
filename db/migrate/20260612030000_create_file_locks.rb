@@ -7,7 +7,7 @@ class CreateFileLocks < ActiveRecord::Migration[8.1]
       t.datetime :expires_at, null: false # TTL: a disconnected/crashed holder's lock auto-frees
       t.timestamps
     end
-    add_index :file_locks, [:user_id, :node_id], unique: true
-    add_index :file_locks, [:user_id, :expires_at]
+    add_index :file_locks, [ :user_id, :node_id ], unique: true
+    add_index :file_locks, [ :user_id, :expires_at ]
   end
 end
