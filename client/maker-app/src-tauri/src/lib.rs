@@ -158,6 +158,86 @@ fn create_pairing(server_url: String, email: String) -> Result<String, String> {
     Ok(p.code)
 }
 
+// ---- file browser + versioning (queries the server's synced tree) ------------------
+
+#[derive(serde::Serialize)]
+struct BrowseEntry {
+    node_id: String,
+    parent_node_id: Option<String>,
+    name: String,
+    kind: String,
+    size: u64,
+}
+
+/// List the whole library tree (paginated server-side, flattened here). The frontend
+/// builds the folder hierarchy from parent_node_id.
+#[tauri::command]
+fn browse(server_url: String, email: String) -> Result<Vec<BrowseEntry>, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+
+    let mut out = Vec::new();
+    let mut after = 0;
+    loop {
+        let tree = client.tree(after).map_err(|e| format!("browse failed: {e}"))?;
+        if tree.nodes.is_empty() {
+            break;
+        }
+        for n in &tree.nodes {
+            out.push(BrowseEntry {
+                node_id: n.node_id.clone(),
+                parent_node_id: n.parent_node_id.clone(),
+                name: n.name.clone(),
+                kind: n.kind.clone(),
+                size: n.size.unwrap_or(0),
+            });
+        }
+        match tree.next_after_id {
+            Some(id) => after = id,
+            None => break,
+        }
+    }
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
+struct VersionEntry {
+    version_id: String,
+    size: u64,
+    created_at: String,
+}
+
+/// Version history of a file (newest first) — the basis for restore.
+#[tauri::command]
+fn file_versions(server_url: String, email: String, node_id: String) -> Result<Vec<VersionEntry>, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+    let vs = client.versions(&node_id).map_err(|e| format!("versions failed: {e}"))?;
+    Ok(vs
+        .versions
+        .into_iter()
+        .map(|v| VersionEntry { version_id: v.version_id, size: v.size, created_at: v.created_at })
+        .collect())
+}
+
+/// Restore a file to an earlier version (creates a new version reusing the old
+/// manifest — lossless). The sync loop then propagates it to every device.
+#[tauri::command]
+fn restore_version(
+    server_url: String,
+    email: String,
+    node_id: String,
+    version_id: String,
+) -> Result<String, String> {
+    use sync_client::ServerClient;
+    let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
+    let client = ServerClient::with_token(&server_url, token);
+    client.restore(&node_id, &version_id).map_err(|e| format!("restore failed: {e}"))?;
+    Ok("restored".into())
+}
+
 #[tauri::command]
 fn sync_stop(state: State<AppState>) -> Result<String, String> {
     let mut guard = state.0.lock().unwrap();
@@ -196,7 +276,10 @@ pub fn run() {
             create_pairing,
             sync_stop,
             sync_status,
-            platform
+            platform,
+            browse,
+            file_versions,
+            restore_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

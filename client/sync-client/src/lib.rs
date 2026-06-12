@@ -102,6 +102,20 @@ pub struct PairingResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct NodeVersion {
+    pub version_id: String,
+    pub manifest_id: String,
+    pub size: u64,
+    pub parent_version_id: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VersionsResponse {
+    pub versions: Vec<NodeVersion>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NodeView {
     pub node_id: String,
     pub parent_node_id: Option<String>,
@@ -283,6 +297,15 @@ impl ServerClient {
         let resp = self
             .authed(self.http.post(self.url(&format!("/v1/nodes/{node_id}/restore"))))?
             .json(&serde_json::json!({ "version_id": version_id }))
+            .send()?;
+        Self::json(resp)
+    }
+
+    /// The version history of a node (newest first) — for the file browser's
+    /// versions/restore UI.
+    pub fn versions(&self, node_id: &str) -> Result<VersionsResponse> {
+        let resp = self
+            .authed(self.http.get(self.url(&format!("/v1/nodes/{node_id}/versions"))))?
             .send()?;
         Self::json(resp)
     }
