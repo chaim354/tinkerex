@@ -2,7 +2,27 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): best-effort cross-device lock
+## Latest (2026-06-12): file mode / executable-bit preservation
+
+The one POSIX-fidelity gap that actually bites makers (scripts/binaries losing `+x` after
+sync — see the conformance dig): file mode is now preserved end-to-end.
+- `fs-provider`: `mode` column (+ ALTER) defaulted 0644/0755; `Attr.mode`; `set_mode`
+  (chmod, enqueues sync); `getattr` reports it; `SyncNode.mode` round-trips through
+  `apply_remote`/export/sync_node. Persists across reopen.
+- `fs-fuse`: `file_attr.perm` from mode; `setattr(mode)` → chmod; `create` captures the
+  create-time mode.
+- Server: `nodes.mode` (+ `pending_commits.mode`); `Commit`/mkdir store it;
+  tree + changes serialize it; commit/mkdir params permit it.
+- Client: `CommitBegin.mode`, `mkdir(mode)`, `NodeView`/`TreeNode.mode`; `push_node` sends
+  it, the converters read it.
+- Tests: fs-provider (mode set/sync/reopen), server (commit stores + tree exposes),
+  integration `executable_bit_propagates_across_devices` (chmod +x on A → 0755 on B).
+
+This is mode *preservation*, not enforcement (ownership/uid-gid deliberately not synced —
+meaningless across devices). Remaining POSIX gaps (symlinks/hardlinks/special files,
+ctime/atime) are intentional non-goals for a personal sync drive.
+
+## Earlier (2026-06-12): best-effort cross-device lock
 
 Layered on the local locks + conflict detection: a **best-effort advisory edit lock**
 across devices. On open-for-write the client (when connected) acquires a server lock so

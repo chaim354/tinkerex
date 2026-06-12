@@ -243,6 +243,28 @@ fn pairing_adds_a_device_to_an_existing_library() {
     assert!(ServerClient::new(&url).pair(&email, &code, "device-C").is_err(), "code is single-use");
 }
 
+// ---- file mode (executable bit) propagation ----------------------------------------
+
+#[test]
+fn executable_bit_propagates_across_devices() {
+    let url = server_url!();
+    let (ca, cb, cloud) = two_devices(&url);
+
+    // A creates a script and chmod +x it.
+    let a = dev();
+    let f = a.create(ROOT_INO, "flash.sh").unwrap();
+    a.write(f.ino, 0, b"#!/bin/sh\necho flashing").unwrap();
+    a.flush(f.ino).unwrap();
+    a.set_mode(f.ino, 0o755).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // B pulls → the executable bit came across.
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    let bf = b.lookup(ROOT_INO, "flash.sh").unwrap();
+    assert_eq!(b.getattr(bf.ino).unwrap().mode, 0o755, "chmod +x on A is visible on B");
+}
+
 // ---- best-effort cross-device advisory lock ----------------------------------------
 
 #[test]

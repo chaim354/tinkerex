@@ -19,14 +19,14 @@ module Sync
 
     # ---- Phase 1 -------------------------------------------------------------
     def self.begin(user:, device:, commit_id:, node_id:, parent_node_id:, name:,
-                   base_version_id:, size:, manifest:)
+                   base_version_id:, size:, manifest:, mode: nil)
       manifest = normalize(manifest)
       manifest_id = manifest_id_for(manifest)
       hashes = manifest.map { |c| c["hash"] }.uniq
 
       pending = user.pending_commits.find_or_initialize_by(commit_id:)
       pending.assign_attributes(
-        device_id: device&.id, node_id:, parent_node_id:, name:,
+        device_id: device&.id, node_id:, parent_node_id:, name:, mode: mode&.to_i,
         base_version_id:, manifest_id:, size: size.to_i, manifest_json: manifest.to_json
       )
       pending.save!
@@ -64,7 +64,7 @@ module Sync
         prior_current = node.current_version_id
         node.assign_attributes(
           parent_node_id: pending.parent_node_id, name: pending.name,
-          kind: "file", deleted: false
+          kind: "file", deleted: false, mode: pending.mode || node.mode || 0o644
         )
 
         version = user.versions.create!(

@@ -68,6 +68,8 @@ pub struct CommitBegin {
     pub base_version_id: Option<String>,
     pub size: u64,
     pub manifest: Vec<ChunkRef>,
+    /// POSIX permission bits to persist on the node (preserves the executable bit).
+    pub mode: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -165,6 +167,8 @@ pub struct NodeView {
     pub kind: String,
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub mode: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +210,8 @@ pub struct TreeNode {
     pub size: Option<u64>,
     #[serde(default)]
     pub manifest: Option<Vec<ChunkRef>>,
+    #[serde(default)]
+    pub mode: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -322,10 +328,10 @@ impl ServerClient {
         Self::json(resp)
     }
 
-    pub fn mkdir(&self, node_id: &str, parent_node_id: Option<&str>, name: &str) -> Result<SeqResponse> {
+    pub fn mkdir(&self, node_id: &str, parent_node_id: Option<&str>, name: &str, mode: u32) -> Result<SeqResponse> {
         let resp = self
             .authed(self.http.post(self.url("/v1/nodes")))?
-            .json(&serde_json::json!({ "node_id": node_id, "parent_node_id": parent_node_id, "name": name }))
+            .json(&serde_json::json!({ "node_id": node_id, "parent_node_id": parent_node_id, "name": name, "mode": mode }))
             .send()?;
         Self::json(resp)
     }

@@ -5,7 +5,7 @@ module V1
       node = current_user.nodes.find_or_initialize_by(node_id: params.require(:node_id))
       node.assign_attributes(
         parent_node_id: params[:parent_node_id], name: params.require(:name),
-        kind: "dir", deleted: false
+        kind: "dir", deleted: false, mode: params[:mode] || node.mode || 0o755
       )
       seq = Sync::Mutation.apply(user: current_user, node:, op: "mkdir")
       LibraryChannel.broadcast_change(current_user, seq)

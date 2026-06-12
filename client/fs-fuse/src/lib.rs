@@ -48,7 +48,7 @@ fn file_attr(a: &Attr) -> FileAttr {
         ctime: t,
         crtime: t,
         kind,
-        perm: if a.kind == Kind::Dir { 0o755 } else { 0o644 },
+        perm: a.mode as u16,
         nlink: 1,
         uid,
         gid,
@@ -138,7 +138,7 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         &mut self,
         _req: &Request,
         ino: u64,
-        _mode: Option<u32>,
+        mode: Option<u32>,
         _uid: Option<u32>,
         _gid: Option<u32>,
         size: Option<u64>,
@@ -152,12 +152,17 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         _flags: Option<u32>,
         reply: ReplyAttr,
     ) {
-        // The only attribute we persist is size: a `size` change is a truncate (the
-        // kernel issues `setattr(size=0)` on an `O_TRUNC` open, then writes the new,
-        // possibly shorter, body). Drop the old tail past the new EOF here. Other
-        // attrs (mode/owner/times) are accepted as no-ops and we echo current state.
+        // We persist size (truncate — the kernel issues `setattr(size=0)` on an `O_TRUNC`
+        // open) and mode (chmod — so the executable bit sticks + syncs). Owner/times are
+        // accepted as no-ops and we echo current state.
         if let Some(sz) = size {
             if let Err(e) = self.provider.truncate(ino, sz) {
+                reply.error(errno(&e));
+                return;
+            }
+        }
+        if let Some(m) = mode {
+            if let Err(e) = self.provider.set_mode(ino, m) {
                 reply.error(errno(&e));
                 return;
             }
@@ -248,13 +253,21 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         _req: &Request,
         parent: u64,
         name: &OsStr,
-        _mode: u32,
+        mode: u32,
         _umask: u32,
         _flags: i32,
         reply: ReplyCreate,
     ) {
         match self.provider.create(parent, &name.to_string_lossy()) {
-            Ok(a) => reply.created(&TTL, &file_attr(&a), 0, 0, 0),
+            Ok(a) => {
+                // Capture the create-time mode (e.g. a tool creating a 0755 file) — the
+                // default is 0644, so only override when it differs.
+                if (mode & 0o7777) != a.mode {
+                    let _ = self.provider.set_mode(a.ino, mode);
+                }
+                let a = self.provider.getattr(a.ino).unwrap_or(a);
+                reply.created(&TTL, &file_attr(&a), 0, 0, 0)
+            }
             Err(e) => reply.error(errno(&e)),
         }
     }

@@ -256,7 +256,7 @@ fn push_node(
 ) -> Result<()> {
     match node.kind {
         Kind::Dir => {
-            client.mkdir(&node.node_id, node.parent_node_id.as_deref(), &node.name)?;
+            client.mkdir(&node.node_id, node.parent_node_id.as_deref(), &node.name, node.mode)?;
         }
         Kind::File => {
             let manifest: Vec<ChunkRef> = node
@@ -276,6 +276,7 @@ fn push_node(
                 base_version_id: node.version_id.clone(),
                 size,
                 manifest,
+                mode: node.mode,
             })?;
             for hash in &begin.missing {
                 let bytes = provider.chunk_get(hash)?;
@@ -422,6 +423,7 @@ fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
         manifest_id,
         chunks,
         version_id: n.version_id.clone(),
+        mode: n.mode.unwrap_or(if n.kind == "dir" { 0o755 } else { 0o644 }),
     }
 }
 
@@ -467,5 +469,6 @@ fn change_to_sync(ch: &Change) -> Option<SyncNode> {
         manifest_id,
         chunks,
         version_id: ch.version.as_ref().map(|v| v.version_id.clone()),
+        mode: view.mode.unwrap_or(if view.kind == "dir" { 0o755 } else { 0o644 }),
     })
 }

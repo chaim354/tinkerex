@@ -45,6 +45,40 @@ fn remote_update_bumps_mtime_and_serves_fresh_content() {
 }
 
 #[test]
+fn mode_is_preserved_set_and_synced() {
+    // The executable bit must stick through chmod, be exported for sync, and round-trip
+    // to another device via apply_remote (so `chmod +x` on one device shows up on others).
+    let (a, b, _dir) = shared_store_pair();
+    let ino = write_file(&a, ROOT, "build.sh", b"#!/bin/sh\necho hi");
+    assert_eq!(a.getattr(ino).unwrap().mode, 0o644, "default file mode");
+
+    a.set_mode(ino, 0o755).unwrap();
+    assert_eq!(a.getattr(ino).unwrap().mode, 0o755, "chmod +x sticks locally");
+    assert_eq!(node_named(&a, "build.sh").mode, 0o755, "mode is exported for sync");
+
+    replicate_tree(&a, &b);
+    let b_ino = b.lookup(ROOT, "build.sh").unwrap().ino;
+    assert_eq!(b.getattr(b_ino).unwrap().mode, 0o755, "executable bit synced to device B");
+}
+
+#[test]
+fn mode_survives_a_reopen() {
+    use fs_provider::{LocalChunkStore, SqliteProvider};
+    let dir = tempdir::Dir::new();
+    let db = dir.path().join("m.db");
+    let chunks = dir.path().join("chunks");
+    std::fs::create_dir_all(&chunks).unwrap();
+    {
+        let p = SqliteProvider::open(&db, Box::new(LocalChunkStore::new(&chunks).unwrap())).unwrap();
+        let ino = write_file(&p, ROOT, "run", b"x");
+        p.set_mode(ino, 0o755).unwrap();
+    }
+    let p2 = SqliteProvider::open(&db, Box::new(LocalChunkStore::new(&chunks).unwrap())).unwrap();
+    let ino = p2.lookup(ROOT, "run").unwrap().ino;
+    assert_eq!(p2.getattr(ino).unwrap().mode, 0o755, "mode persists across restart");
+}
+
+#[test]
 fn random_mid_file_write_works_on_a_hydrated_file() {
     // Once the file's chunks are local (the adapter hydrates the whole file on
     // open-for-write), a seek-and-write into the middle reconstructs correctly — the

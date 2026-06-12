@@ -29,6 +29,15 @@ pub const ROOT_INO: u64 = 1;
 /// the kernel detect "this file changed" primarily via mtime (especially when the new
 /// size equals the old), so every local commit and every pulled remote update must bump
 /// it, or a reader can keep serving stale cached content.
+/// The default permission bits for a freshly created node (no umask modeling — the
+/// mount runs as the user, who owns everything).
+fn default_mode(kind: Kind) -> u32 {
+    match kind {
+        Kind::Dir => 0o755,
+        Kind::File => 0o644,
+    }
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -65,6 +74,9 @@ pub struct Attr {
     pub kind: Kind,
     pub size: u64,
     pub mtime: i64,
+    /// POSIX permission bits (e.g. `0o644`, `0o755`). Preserved + synced so the
+    /// executable bit (and other mode bits) survive a chmod and propagate across devices.
+    pub mode: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +110,8 @@ pub struct SyncNode {
     /// `base_version_id` so the server can detect a conflicting concurrent edit. `None`
     /// for dirs and never-synced nodes.
     pub version_id: Option<String>,
+    /// POSIX permission bits, synced so the executable bit survives across devices.
+    pub mode: u32,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -220,7 +234,8 @@ impl SqliteProvider {
                 mtime       INTEGER NOT NULL DEFAULT 0,
                 manifest_id TEXT,
                 node_id     TEXT,
-                version_id  TEXT          -- server version this node reflects (commit base)
+                version_id  TEXT,         -- server version this node reflects (commit base)
+                mode        INTEGER       -- POSIX permission bits (preserved + synced)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_parent_name ON nodes(parent_ino, name);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_node_id ON nodes(node_id);
@@ -246,8 +261,9 @@ impl SqliteProvider {
                 value INTEGER NOT NULL
             );",
         )?;
-        // Migrate older DBs that predate the version_id column (ignore "duplicate column").
+        // Migrate older DBs that predate these columns (ignore "duplicate column").
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN version_id TEXT", []);
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN mode INTEGER", []);
         // Ensure the root directory (ino 1) exists.
         conn.execute(
             "INSERT OR IGNORE INTO nodes(ino, parent_ino, name, kind, node_id) VALUES (?1, NULL, '', 'dir', 'root')",
@@ -264,14 +280,16 @@ impl SqliteProvider {
 
     fn attr_row(conn: &Connection, ino: u64) -> Result<Attr> {
         conn.query_row(
-            "SELECT ino, kind, size, mtime FROM nodes WHERE ino = ?1",
+            "SELECT ino, kind, size, mtime, mode FROM nodes WHERE ino = ?1",
             params![ino as i64],
             |r| {
+                let kind = Kind::from_str(&r.get::<_, String>(1)?);
                 Ok(Attr {
                     ino: r.get::<_, i64>(0)? as u64,
-                    kind: Kind::from_str(&r.get::<_, String>(1)?),
+                    kind,
                     size: r.get::<_, i64>(2)? as u64,
                     mtime: r.get::<_, i64>(3)?,
+                    mode: r.get::<_, Option<i64>>(4)?.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
                 })
             },
         )
@@ -333,9 +351,10 @@ impl SqliteProvider {
             return Err(FsError::NotADirectory);
         }
         let node_id = uuid::Uuid::new_v4().to_string();
+        let mode = default_mode(kind);
         let res = conn.execute(
-            "INSERT INTO nodes(parent_ino, name, kind, node_id) VALUES (?1, ?2, ?3, ?4)",
-            params![parent as i64, name, kind.as_str(), node_id],
+            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![parent as i64, name, kind.as_str(), node_id, mode as i64],
         );
         match res {
             Ok(_) => {}
@@ -354,7 +373,30 @@ impl SqliteProvider {
             kind,
             size: 0,
             mtime: 0,
+            mode,
         })
+    }
+
+    /// Set a node's permission bits (the kernel's `chmod`/`setattr(mode)`). Persisted +
+    /// enqueued for sync so the mode (notably the executable bit) propagates across
+    /// devices. Masked to the standard permission/setuid/sticky bits.
+    pub fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let node_id: Option<String> = conn
+            .query_row("SELECT node_id FROM nodes WHERE ino = ?1", params![ino as i64], |r| r.get(0))
+            .optional()?;
+        let n = conn.execute(
+            "UPDATE nodes SET mode = ?1 WHERE ino = ?2",
+            params![(mode & 0o7777) as i64, ino as i64],
+        )?;
+        if n == 0 {
+            return Err(FsError::NotFound);
+        }
+        // Propagate the metadata change (re-commit/re-mkdir carries the new mode).
+        if let Some(id) = node_id {
+            Self::enqueue(&conn, &id, "upsert")?;
+        }
+        Ok(())
     }
 
     /// Record the server version a node now reflects — called after a successful push
@@ -383,7 +425,7 @@ impl SqliteProvider {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.node_id, n.name, n.kind, n.manifest_id,
-                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id
+                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id, n.mode
              FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
              WHERE n.ino != ?1
              ORDER BY n.ino",
@@ -396,11 +438,13 @@ impl SqliteProvider {
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, Option<String>>(4)?,
                 r.get::<_, Option<String>>(5)?,
+                r.get::<_, Option<i64>>(6)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id) = row?;
+            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id, mode) = row?;
+            let kind = Kind::from_str(&kind_s);
             let chunks = match &manifest_id {
                 Some(m) => Self::manifest_rows(&conn, m)?,
                 None => Vec::new(),
@@ -409,10 +453,11 @@ impl SqliteProvider {
                 node_id,
                 parent_node_id,
                 name,
-                kind: Kind::from_str(&kind_s),
+                kind,
                 manifest_id,
                 chunks,
                 version_id,
+                mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
             });
         }
         Ok(out)
@@ -469,14 +514,14 @@ impl SqliteProvider {
         )?;
         if exists {
             conn.execute(
-                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7 WHERE node_id=?8",
-                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.version_id, node.node_id],
+                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8 WHERE node_id=?9",
+                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.version_id, (node.mode & 0o7777) as i64, node.node_id],
             )?;
         } else {
             conn.execute(
-                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs(), node.version_id],
+                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id, mode)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs(), node.version_id, (node.mode & 0o7777) as i64],
             )?;
         }
         Ok(())
@@ -605,7 +650,7 @@ impl SqliteProvider {
         let row = conn
             .query_row(
                 "SELECT n.name, n.kind, n.manifest_id,
-                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id
+                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id, n.mode
                  FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
                  WHERE n.node_id = ?1",
                 params![node_id, ROOT_INO as i64],
@@ -616,14 +661,16 @@ impl SqliteProvider {
                         r.get::<_, Option<String>>(2)?,
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, Option<String>>(4)?,
+                        r.get::<_, Option<i64>>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let (name, kind_s, manifest_id, parent_node_id, version_id) = match row {
+        let (name, kind_s, manifest_id, parent_node_id, version_id, mode) = match row {
             Some(r) => r,
             None => return Ok(None),
         };
+        let kind = Kind::from_str(&kind_s);
         let chunks = match &manifest_id {
             Some(m) => Self::manifest_rows(&conn, m)?,
             None => Vec::new(),
@@ -632,10 +679,11 @@ impl SqliteProvider {
             node_id: node_id.to_string(),
             parent_node_id,
             name,
-            kind: Kind::from_str(&kind_s),
+            kind,
             manifest_id,
             chunks,
             version_id,
+            mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
         }))
     }
 }
