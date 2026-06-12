@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use fs_provider::{Kind, Provider, SqliteProvider, ROOT_INO};
 use widestring::U16CString;
 use windows::core::{GUID, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, STATUS_SUCCESS};
+use windows::Win32::Foundation::{CloseHandle, STATUS_SUCCESS, STATUS_UNSUCCESSFUL};
 use windows::Win32::Storage::CloudFilters::*;
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_FLAGS_AND_ATTRIBUTES,
@@ -90,8 +90,10 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
-    // Terminated by a CF_CALLBACK_TYPE_NONE entry.
+    // Terminated by a CF_CALLBACK_TYPE_NONE entry. On-demand population: the platform raises
+    // FETCH_PLACEHOLDERS when Explorer opens a directory, and FETCH_DATA when a file is read.
     let callbacks: &'static [CF_CALLBACK_REGISTRATION] = Box::leak(Box::new([
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, Callback: Some(fetch_placeholders_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(fetch_data_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NONE, Callback: None },
     ]));
@@ -107,8 +109,7 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         .map_err(win_err)?;
         (*state).connection_key.lock().unwrap().replace(key);
     }
-
-    populate(&provider, root)?;
+    eprintln!("cfapi: connected sync root at {}", root.display());
 
     Ok(CfApiMountHandle { root: root.to_path_buf(), state, stop: Arc::new(AtomicBool::new(false)) })
 }
@@ -127,8 +128,10 @@ fn register_sync_root(root: &Path) -> std::io::Result<()> {
         ProviderId: PROVIDER_ID,
         ..Default::default()
     };
-    // Full hydration + full population: every placeholder is created up front (Phase 1
-    // skips on-demand FETCH_PLACEHOLDERS), and a read fully hydrates the file.
+    // Full hydration (a read fetches the whole file) + **partial/on-demand** population: the
+    // platform raises FETCH_PLACEHOLDERS as Explorer opens each directory, and we answer from
+    // the provider's *current* tree — so we don't depend on the local tree being populated at
+    // mount time (the sync loop fills it asynchronously).
     let policies = CF_SYNC_POLICIES {
         StructSize: std::mem::size_of::<CF_SYNC_POLICIES>() as u32,
         Hydration: CF_HYDRATION_POLICY {
@@ -136,7 +139,7 @@ fn register_sync_root(root: &Path) -> std::io::Result<()> {
             Modifier: CF_HYDRATION_POLICY_MODIFIER_NONE,
         },
         Population: CF_POPULATION_POLICY {
-            Primary: CF_POPULATION_POLICY_FULL,
+            Primary: CF_POPULATION_POLICY_PARTIAL,
             Modifier: CF_POPULATION_POLICY_MODIFIER_NONE,
         },
         InSync: CF_INSYNC_POLICY_NONE,
@@ -151,41 +154,26 @@ fn register_sync_root(root: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Create a (dehydrated) placeholder for every node, directories before their children, so
-/// the whole tree is browsable in Explorer immediately. Each placeholder carries the
-/// `node_id` as its `FileIdentity` and the real mtime as `LastWriteTime`.
-fn populate(provider: &SqliteProvider, root: &Path) -> std::io::Result<()> {
-    // BFS the tree so a parent's on-disk directory exists before its children are created.
-    let mut queue: Vec<(u64, PathBuf)> = vec![(ROOT_INO, root.to_path_buf())];
-    while let Some((ino, dir)) = queue.pop() {
-        let children = provider.readdir(ino).map_err(fs_err)?;
-        // Backing storage for the placeholder pointers (names + identities) must outlive the
-        // CfCreatePlaceholders call, so hold the holders for this whole directory.
-        let mut holders: Vec<PlaceholderHolder> = Vec::new();
-        for c in &children {
-            let attr = provider.getattr(c.ino).map_err(fs_err)?;
-            let node_id = provider.node_id_for(c.ino).map_err(fs_err)?.unwrap_or_default();
-            holders.push(PlaceholderHolder::new(&c.name, &node_id, attr.size, attr.mtime, c.kind == Kind::Dir));
-            if c.kind == Kind::Dir {
-                queue.push((c.ino, dir.join(&c.name)));
-            }
+/// Build the placeholder holders for the direct children of `dir_ino` from the provider's
+/// current tree. Each carries the child's `node_id` as `FileIdentity` and its real mtime.
+/// The returned holders own the name/identity backing storage the `CF_PLACEHOLDER_CREATE_INFO`
+/// pointers reference, so they must outlive the CfAPI call that consumes them.
+fn placeholders_for_dir(provider: &SqliteProvider, dir_ino: u64) -> Vec<PlaceholderHolder> {
+    let children = match provider.readdir(dir_ino) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("cfapi: readdir(ino {dir_ino}) failed: {e}");
+            return Vec::new();
         }
-        if !holders.is_empty() {
-            let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = holders.iter().map(|h| h.info()).collect();
-            let dir_w = path_wide(&dir);
-            let mut processed = 0u32;
-            unsafe {
-                CfCreatePlaceholders(
-                    PCWSTR(dir_w.as_ptr()),
-                    &mut infos,
-                    CF_CREATE_FLAG_NONE,
-                    Some(&mut processed),
-                )
-                .map_err(win_err)?;
-            }
-        }
+    };
+    let mut holders = Vec::new();
+    for c in &children {
+        let size = provider.getattr(c.ino).map(|a| a.size).unwrap_or(0);
+        let mtime = provider.getattr(c.ino).map(|a| a.mtime).unwrap_or(0);
+        let node_id = provider.node_id_for(c.ino).ok().flatten().unwrap_or_default();
+        holders.push(PlaceholderHolder::new(&c.name, &node_id, size, mtime, c.kind == Kind::Dir));
     }
-    Ok(())
+    holders
 }
 
 /// Owns the wide-string + identity backing storage for one `CF_PLACEHOLDER_CREATE_INFO`
@@ -234,8 +222,23 @@ impl PlaceholderHolder {
     }
 }
 
+/// Build a `CF_OPERATION_INFO` for answering a callback (shared by the transfer ops).
+unsafe fn op_info_for(info: &CF_CALLBACK_INFO, op_type: CF_OPERATION_TYPE) -> CF_OPERATION_INFO {
+    CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: op_type,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: info.CorrelationVector as *const _,
+        SyncStatus: std::ptr::null(),
+        RequestKey: info.RequestKey,
+    }
+}
+
 /// FETCH_DATA: the kernel needs bytes for a dehydrated placeholder. Resolve node → hydrate →
-/// read the requested range → hand it back with `CfExecute(TRANSFER_DATA)`.
+/// read the requested range → hand it back with `CfExecute(TRANSFER_DATA)`. **Always** answers
+/// (success or an error completion) — an unanswered FETCH_DATA hangs the reading app to a
+/// timeout.
 unsafe extern "system" fn fetch_data_callback(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
@@ -251,53 +254,109 @@ unsafe extern "system" fn fetch_data_callback(
     }
     let state = &*state;
 
-    // Recover the node_id from the placeholder's FileIdentity.
-    let identity = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
-    let node_id = match FileIdentity(identity.to_vec()).to_node_id() {
-        Some(n) => n,
-        None => return,
-    };
-
-    // Ensure the chunks are local (presigned GET), then read the required range.
-    if let Some(h) = &state.hydrate {
-        h(&node_id);
-    }
     let fetch = params.Anonymous.FetchData;
     let offset = fetch.RequiredFileOffset;
     let length = fetch.RequiredLength;
 
-    let ino = match state.provider.ino_for_node_id(&node_id) {
-        Ok(Some(i)) => i,
-        _ => return,
+    // Try to produce the bytes; on any failure, answer with an error status so the app's read
+    // fails fast instead of hanging.
+    let data: Option<Vec<u8>> = (|| {
+        let identity = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
+        let node_id = FileIdentity(identity.to_vec()).to_node_id()?;
+        eprintln!("cfapi: FETCH_DATA node={node_id} off={offset} len={length}");
+        if let Some(h) = &state.hydrate {
+            h(&node_id);
+        }
+        let ino = state.provider.ino_for_node_id(&node_id).ok().flatten()?;
+        state.provider.read(ino, offset as u64, length as u32).ok()
+    })();
+
+    let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_DATA);
+    let mut op_params = match &data {
+        Some(bytes) => CF_OPERATION_PARAMETERS {
+            ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+            Anonymous: CF_OPERATION_PARAMETERS_0 {
+                TransferData: CF_OPERATION_PARAMETERS_0_0 {
+                    Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+                    CompletionStatus: STATUS_SUCCESS,
+                    Buffer: bytes.as_ptr() as *const c_void,
+                    Offset: offset,
+                    Length: bytes.len() as i64,
+                },
+            },
+        },
+        None => {
+            eprintln!("cfapi: FETCH_DATA failed off={offset} len={length} — reporting error");
+            CF_OPERATION_PARAMETERS {
+                ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+                Anonymous: CF_OPERATION_PARAMETERS_0 {
+                    TransferData: CF_OPERATION_PARAMETERS_0_0 {
+                        Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+                        CompletionStatus: STATUS_UNSUCCESSFUL,
+                        Buffer: std::ptr::null(),
+                        Offset: offset,
+                        Length: 0,
+                    },
+                },
+            }
+        }
     };
-    let data = match state.provider.read(ino, offset as u64, length as u32) {
-        Ok(d) => d,
-        Err(_) => return, // a fuller impl reports an error completion status instead
+    if let Err(e) = CfExecute(&op_info, &mut op_params) {
+        eprintln!("cfapi: CfExecute(TRANSFER_DATA) failed: {e}");
+    }
+}
+
+/// FETCH_PLACEHOLDERS: Explorer opened a directory — enumerate its children from the
+/// provider's *current* tree and hand them back as placeholders via
+/// `CfExecute(TRANSFER_PLACEHOLDERS)`. Resolving the directory: a child dir carries its
+/// `node_id` as `FileIdentity`; the sync root itself has no node identity, so an
+/// unrecognized identity means the root (`ROOT_INO`). Always answers (an unanswered
+/// enumeration hangs Explorer to a timeout).
+unsafe extern "system" fn fetch_placeholders_callback(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let state = info.CallbackContext as *const CfState;
+    if state.is_null() {
+        return;
+    }
+    let state = &*state;
+
+    // Which directory? Root unless the FileIdentity maps to a known node.
+    let dir_ino = {
+        let identity = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
+        FileIdentity(identity.to_vec())
+            .to_node_id()
+            .and_then(|nid| state.provider.ino_for_node_id(&nid).ok().flatten())
+            .unwrap_or(ROOT_INO)
     };
 
-    // Hand the bytes to the kernel.
-    let op_info = CF_OPERATION_INFO {
-        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
-        Type: CF_OPERATION_TYPE_TRANSFER_DATA,
-        ConnectionKey: info.ConnectionKey,
-        TransferKey: info.TransferKey,
-        CorrelationVector: info.CorrelationVector as *const _,
-        SyncStatus: std::ptr::null(),
-        RequestKey: info.RequestKey,
-    };
+    let holders = placeholders_for_dir(&state.provider, dir_ino);
+    let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = holders.iter().map(|h| h.info()).collect();
+    eprintln!("cfapi: FETCH_PLACEHOLDERS dir_ino={dir_ino} → {} entries", infos.len());
+
+    let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS);
     let mut op_params = CF_OPERATION_PARAMETERS {
         ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
         Anonymous: CF_OPERATION_PARAMETERS_0 {
-            TransferData: CF_OPERATION_PARAMETERS_0_0 {
-                Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+            TransferPlaceholders: CF_OPERATION_PARAMETERS_0_4 {
+                // Mark the dir fully populated so the platform won't re-ask.
+                Flags: CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
                 CompletionStatus: STATUS_SUCCESS,
-                Buffer: data.as_ptr() as *const c_void,
-                Offset: offset,
-                Length: data.len() as i64,
+                PlaceholderTotalCount: infos.len() as i64,
+                PlaceholderArray: infos.as_mut_ptr(),
+                PlaceholderCount: infos.len() as u32,
+                EntriesProcessed: 0,
             },
         },
     };
-    let _ = CfExecute(&op_info, &mut op_params);
+    if let Err(e) = CfExecute(&op_info, &mut op_params) {
+        eprintln!("cfapi: CfExecute(TRANSFER_PLACEHOLDERS) failed: {e}");
+    }
 }
 
 impl CfApiMountHandle {
@@ -409,7 +468,4 @@ impl CfApiInvalidate {
 
 fn win_err(e: windows::core::Error) -> std::io::Error {
     std::io::Error::other(format!("cfapi: {e}"))
-}
-fn fs_err(e: fs_provider::FsError) -> std::io::Error {
-    std::io::Error::other(format!("provider: {e}"))
 }

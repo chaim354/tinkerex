@@ -484,7 +484,16 @@ impl CfApiMount {
             })
         };
 
-        // Register + connect + populate. The handle keeps the sync root alive.
+        // Pull the current tree before mounting so the first Explorer enumeration shows the
+        // library (the background loop keeps it fresh after; on-demand FETCH_PLACEHOLDERS reads
+        // whatever the provider has by then, so this is best-effort).
+        match SyncEngine::pull_snapshot(&provider, &client) {
+            Ok(head) => println!("cfapi: initial pull complete (head_seq {head})"),
+            Err(e) => eprintln!("cfapi: initial pull failed (will populate as the loop catches up): {e}"),
+        }
+
+        // Register + connect (on-demand population via FETCH_PLACEHOLDERS). The handle keeps
+        // the sync root alive.
         let handle = fs_cfapi::win::mount(provider.clone(), &cfg.mountpoint, Some(hydrate))?;
         println!("CfAPI sync root at {}", cfg.mountpoint.display());
 
