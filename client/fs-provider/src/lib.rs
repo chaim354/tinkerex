@@ -168,6 +168,11 @@ pub trait Provider: Send + Sync {
     fn write(&self, ino: u64, offset: u64, data: &[u8]) -> Result<u32>;
     /// Finalize writeback: chunk the staged content, store + dedup, update the tree.
     fn flush(&self, ino: u64) -> Result<()>;
+    /// Set permission bits (the kernel's `chmod`). Default no-op; `SqliteProvider`
+    /// persists + syncs it so the executable bit survives and propagates.
+    fn set_mode(&self, _ino: u64, _mode: u32) -> Result<()> {
+        Ok(())
+    }
     /// Resize the file to exactly `size` bytes (the kernel's `setattr`/`O_TRUNC`).
     /// Shrinking drops any content past the new EOF (so an overwrite-with-shorter
     /// leaves no stale tail); growing zero-fills. The new length is what `flush`
@@ -375,28 +380,6 @@ impl SqliteProvider {
             mtime: 0,
             mode,
         })
-    }
-
-    /// Set a node's permission bits (the kernel's `chmod`/`setattr(mode)`). Persisted +
-    /// enqueued for sync so the mode (notably the executable bit) propagates across
-    /// devices. Masked to the standard permission/setuid/sticky bits.
-    pub fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let node_id: Option<String> = conn
-            .query_row("SELECT node_id FROM nodes WHERE ino = ?1", params![ino as i64], |r| r.get(0))
-            .optional()?;
-        let n = conn.execute(
-            "UPDATE nodes SET mode = ?1 WHERE ino = ?2",
-            params![(mode & 0o7777) as i64, ino as i64],
-        )?;
-        if n == 0 {
-            return Err(FsError::NotFound);
-        }
-        // Propagate the metadata change (re-commit/re-mkdir carries the new mode).
-        if let Some(id) = node_id {
-            Self::enqueue(&conn, &id, "upsert")?;
-        }
-        Ok(())
     }
 
     /// Record the server version a node now reflects — called after a successful push
@@ -952,6 +935,25 @@ impl Provider for SqliteProvider {
         Ok(())
     }
 
+    fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let node_id: Option<String> = conn
+            .query_row("SELECT node_id FROM nodes WHERE ino = ?1", params![ino as i64], |r| r.get(0))
+            .optional()?;
+        let n = conn.execute(
+            "UPDATE nodes SET mode = ?1 WHERE ino = ?2",
+            params![(mode & 0o7777) as i64, ino as i64],
+        )?;
+        if n == 0 {
+            return Err(FsError::NotFound);
+        }
+        // Propagate the metadata change (re-commit/re-mkdir carries the new mode).
+        if let Some(id) = node_id {
+            Self::enqueue(&conn, &id, "upsert")?;
+        }
+        Ok(())
+    }
+
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         self.locks.set(ino, lock).map_err(|_| FsError::WouldBlock)
     }
@@ -1007,6 +1009,9 @@ impl<P: Provider + ?Sized> Provider for std::sync::Arc<P> {
     }
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()> {
         (**self).rename(parent, name, newparent, newname)
+    }
+    fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
+        (**self).set_mode(ino, mode)
     }
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         (**self).set_lock(ino, lock)
