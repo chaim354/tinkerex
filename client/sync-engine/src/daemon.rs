@@ -96,6 +96,12 @@ impl Daemon {
     pub fn start(cfg: DaemonConfig) -> crate::Result<Self> {
         let store = Box::new(LocalChunkStore::new(&cfg.chunk_dir)?);
         let provider = Arc::new(SqliteProvider::open(&cfg.db, store)?);
+        // Bind the local DB to this (server, token) library; if it last served a DIFFERENT
+        // library, wipe its stale tree/cursor so a reused DB path can't mix two (the chunk
+        // cache is kept — content-addressed, so hydrated files stay available offline).
+        if provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)).unwrap_or(false) {
+            eprintln!("sync: local DB was a different library — wiped, re-syncing fresh");
+        }
         let client = ServerClient::with_token(&cfg.server_url, &cfg.token);
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
@@ -203,6 +209,12 @@ impl WebdavMount {
     pub fn start(cfg: DaemonConfig) -> crate::Result<Self> {
         let store = Box::new(LocalChunkStore::new(&cfg.chunk_dir)?);
         let provider = Arc::new(SqliteProvider::open(&cfg.db, store)?);
+        // Bind the local DB to this (server, token) library; if it last served a DIFFERENT
+        // library, wipe its stale tree/cursor so a reused DB path can't mix two (the chunk
+        // cache is kept — content-addressed, so hydrated files stay available offline).
+        if provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)).unwrap_or(false) {
+            eprintln!("sync: local DB was a different library — wiped, re-syncing fresh");
+        }
         let client = ServerClient::with_token(&cfg.server_url, &cfg.token);
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
@@ -312,6 +324,12 @@ impl WinfspMount {
     pub fn start(cfg: DaemonConfig) -> crate::Result<Self> {
         let store = Box::new(LocalChunkStore::new(&cfg.chunk_dir)?);
         let provider = Arc::new(SqliteProvider::open(&cfg.db, store)?);
+        // Bind the local DB to this (server, token) library; if it last served a DIFFERENT
+        // library, wipe its stale tree/cursor so a reused DB path can't mix two (the chunk
+        // cache is kept — content-addressed, so hydrated files stay available offline).
+        if provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)).unwrap_or(false) {
+            eprintln!("sync: local DB was a different library — wiped, re-syncing fresh");
+        }
         let client = ServerClient::with_token(&cfg.server_url, &cfg.token);
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
@@ -447,18 +465,15 @@ impl CfApiMount {
     pub fn start(cfg: DaemonConfig) -> crate::Result<Self> {
         let store = Box::new(LocalChunkStore::new(&cfg.chunk_dir)?);
         let provider = Arc::new(SqliteProvider::open(&cfg.db, store)?);
+        // Bind the local DB to this (server, token) library; if it last served a DIFFERENT
+        // library, wipe its stale tree/cursor so a reused DB path can't mix two (the chunk
+        // cache is kept — content-addressed, so hydrated files stay available offline).
+        if provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)).unwrap_or(false) {
+            eprintln!("sync: local DB was a different library — wiped, re-syncing fresh");
+        }
         let client = ServerClient::with_token(&cfg.server_url, &cfg.token);
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
-
-        // Bind the local DB to this library; if it was last used by a *different* one, wipe the
-        // stale tree (the reused-DB-mixes-libraries bug → duplicate placeholders + stale
-        // cursor). Keeps the cache when remounting the same library.
-        match provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)) {
-            Ok(true) => println!("cfapi: local DB was a different library — wiped, re-syncing fresh"),
-            Ok(false) => {}
-            Err(e) => eprintln!("cfapi: library bind failed: {e}"),
-        }
 
         // Pull the current tree before mounting (so the first enumeration shows the library)
         // and **reset the cursor to the snapshot head**. This must happen before the sync
@@ -542,7 +557,6 @@ impl Drop for CfApiMount {
 /// A stable id for "the library this (server, token) points at", used to bind a local DB to
 /// one library so a reused DB path can't mix two. (Keyed by token, so each device's cache is
 /// its own — which is correct; cross-device sharing of a local cache is never wanted.)
-#[cfg(target_os = "windows")]
 fn library_id_for(server: &str, token: &str) -> i64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
