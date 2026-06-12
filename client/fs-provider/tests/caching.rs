@@ -132,6 +132,32 @@ fn mode_survives_a_reopen() {
 }
 
 #[test]
+fn ingest_bytes_replaces_content_and_enqueues_sync() {
+    // The CfAPI local-edit capture path: the OS owns the on-disk bytes, so the adapter
+    // re-ingests an edited file's whole content as the node's new version. Must replace
+    // the content (no stale tail), bump mtime, and enqueue the outbox like a flush.
+    let p = provider();
+    let ino = write_file(&p, ROOT, "doc.txt", b"the original, longer content");
+    let node_id = node_named(&p, "doc.txt").node_id;
+    let m1 = p.getattr(ino).unwrap().mtime;
+    p.outbox_clear(&node_id).unwrap(); // drain the create
+
+    p.ingest_bytes(ino, b"shorter").unwrap();
+
+    assert_eq!(read_all(&p, ino), b"shorter", "content replaced, no stale tail");
+    assert_eq!(p.getattr(ino).unwrap().size, 7);
+    assert!(p.getattr(ino).unwrap().mtime >= m1, "mtime advances on ingest");
+    assert_eq!(
+        p.outbox_list().unwrap(),
+        vec![(node_id, "upsert".to_string())],
+        "ingest enqueues the node for push"
+    );
+
+    // A bad inode is an error, not a silent no-op.
+    assert!(p.ingest_bytes(999_999, b"x").is_err());
+}
+
+#[test]
 fn random_mid_file_write_works_on_a_hydrated_file() {
     // Once the file's chunks are local (the adapter hydrates the whole file on
     // open-for-write), a seek-and-write into the middle reconstructs correctly — the

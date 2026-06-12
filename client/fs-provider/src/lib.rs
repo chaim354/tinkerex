@@ -721,6 +721,21 @@ impl SqliteProvider {
             mtime,
         }))
     }
+
+    /// Replace a node's entire content with `data`, then commit it (chunk + manifest +
+    /// outbox), as if the file had been written and flushed. This is the **CfAPI
+    /// local-edit capture** entry point: under Cloud Filter API the OS owns the on-disk
+    /// bytes, so when a watcher detects the user edited a (real) file, the adapter reads
+    /// those bytes off disk and re-ingests them here as the node's new version — the
+    /// counterpart to a FUSE `write`+`flush`, which CfAPI never routes through us. Stamps a
+    /// fresh real mtime and enqueues the outbox, so the normal push path uploads it.
+    pub fn ingest_bytes(&self, ino: u64, data: &[u8]) -> Result<()> {
+        // Validate the inode exists first — `flush` is a no-op on a missing stage entry, so
+        // a bad ino would otherwise silently do nothing.
+        self.getattr(ino)?;
+        self.staging.lock().unwrap().insert(ino, data.to_vec());
+        self.flush(ino)
+    }
 }
 
 impl Provider for SqliteProvider {

@@ -411,6 +411,110 @@ impl Drop for WinfspMount {
     }
 }
 
+/// Adapts `fs_cfapi::CfApiInvalidate` to the engine's [`crate::Invalidate`] seam: a pulled
+/// content change → `CfUpdatePlaceholder` + dehydrate, so the next read re-fetches (the CfAPI
+/// analogue of FUSE `notify_inval_inode`). (The trait lives in the engine, so the adapter
+/// crate can't implement it directly — this newtype bridges them.)
+#[cfg(target_os = "windows")]
+struct EngineCfInvalidate(fs_cfapi::CfApiInvalidate);
+
+#[cfg(target_os = "windows")]
+impl crate::Invalidate for EngineCfInvalidate {
+    fn invalidate(&self, ino: u64) {
+        self.0.invalidate(ino);
+    }
+}
+
+/// The **CfAPI** mount path (Windows) — the driverless successor to [`WinfspMount`] (the
+/// OneDrive model: a registered sync-root folder, on-demand hydration, native Explorer
+/// integration; no GPL driver). Same `start`/`stop`/`is_running`/`mountpoint` shape so a host
+/// can alias it in place of WinFsp. Phase 1: populate + hydrate + invalidate (the download
+/// half); local-edit capture is Phase 2 (see `docs/plan-windows-cfapi-migration.md`).
+///
+/// Unlike WinFsp, the CfAPI callbacks run on the OS's own threads against a registered root,
+/// so there's no FUSE-style session thread — we hold the `CfApiMountHandle` (Drop disconnects
+/// + unregisters). The sync + nudge loops are identical to the other backends.
+#[cfg(target_os = "windows")]
+pub struct CfApiMount {
+    stop: Arc<AtomicBool>,
+    handle: Option<fs_cfapi::CfApiMountHandle>,
+    sync_handle: Option<JoinHandle<()>>,
+    mountpoint: PathBuf,
+}
+
+#[cfg(target_os = "windows")]
+impl CfApiMount {
+    pub fn start(cfg: DaemonConfig) -> crate::Result<Self> {
+        let store = Box::new(LocalChunkStore::new(&cfg.chunk_dir)?);
+        let provider = Arc::new(SqliteProvider::open(&cfg.db, store)?);
+        let client = ServerClient::with_token(&cfg.server_url, &cfg.token);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
+
+        // Cache-invalidation hook over CfUpdatePlaceholder (no construction cycle here — CfAPI
+        // resolves paths + opens handles itself, so it needs no post-mount notifier).
+        let inval: Arc<dyn crate::Invalidate> = Arc::new(EngineCfInvalidate(
+            fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone()),
+        ));
+
+        let sync_handle = {
+            let provider = provider.clone();
+            let client = client.clone();
+            let stop = stop.clone();
+            let poll = cfg.poll;
+            let inval = inval.clone();
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval)))
+        };
+        {
+            let client = client.clone();
+            let stop = stop.clone();
+            thread::spawn(move || nudge_loop(client, stop, nudge_tx));
+        }
+
+        // Hydrate-on-FETCH_DATA: CfAPI hands us the node_id (placeholder FileIdentity); pull
+        // its missing chunks via presigned GET into the local cache.
+        let hydrate: fs_cfapi::Hydrate = {
+            let p = provider.clone();
+            let c = client.clone();
+            Arc::new(move |node_id: &str| {
+                let io = PresignedIO::new(&c);
+                if let Err(e) = SyncEngine::hydrate(&p, &c, &io, node_id) {
+                    eprintln!("cfapi hydrate {node_id}: {e}");
+                }
+            })
+        };
+
+        // Register + connect + populate. The handle keeps the sync root alive.
+        let handle = fs_cfapi::win::mount(provider.clone(), &cfg.mountpoint, Some(hydrate))?;
+        println!("CfAPI sync root at {}", cfg.mountpoint.display());
+
+        Ok(Self { stop, handle: Some(handle), sync_handle: Some(sync_handle), mountpoint: cfg.mountpoint })
+    }
+
+    pub fn mountpoint(&self) -> &Path {
+        &self.mountpoint
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.handle.as_ref().is_some_and(|h| h.is_running())
+    }
+
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.handle.take(); // Drop disconnects + unregisters the sync root
+        if let Some(h) = self.sync_handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for CfApiMount {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// Push the outbox + pull the changelog delta on each nudge or poll-timeout. `inval`, when
 /// present (the FUSE `Daemon`), drops the kernel cache for any inode a pull repoints at new
 /// content; the WebDAV/WinFsp mounts pass `None` (no strong push-invalidation yet).

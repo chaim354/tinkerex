@@ -21,7 +21,7 @@ pub use daemon::{DaemonConfig, WebdavMount, DEFAULT_POLL};
 #[cfg(target_os = "linux")]
 pub use daemon::Daemon;
 #[cfg(target_os = "windows")]
-pub use daemon::WinfspMount;
+pub use daemon::{CfApiMount, WinfspMount};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -25,3 +25,7 @@ libc = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 fs-winfsp = { path = "../fs-winfsp" }
+# CfAPI is the driverless successor to WinFsp (the OneDrive model). Both compile on
+# Windows; the active backend is chosen at the call site (WinfspMount stays the default
+# until CfApiMount is proven on real hardware — see docs/plan-windows-cfapi-migration.md).
+fs-cfapi = { path = "../fs-cfapi" }

@@ -2,7 +2,28 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): real-mtime preservation + active cache invalidation (Option B)
+## Latest (2026-06-12): Windows CfAPI migration — Phase 1 (driverless mount)
+
+`client/fs-cfapi` — the **driverless** Windows mount (Cloud Filter API; no GPL WinFsp driver,
+the OneDrive model: a registered sync-root folder with on-demand hydration + native Explorer
+integration). **Phase 1** = the download/read half: register the root, **populate** every node
+as a dehydrated placeholder from the local `Provider` tree, **hydrate** on the FETCH_DATA
+callback (presigned GET → chunk cache → `CfExecuteOperation(TRANSFER_DATA)`), and **invalidate**
+on a remote content change (`CfUpdatePlaceholder` + dehydrate). Wired as
+`sync_engine::CfApiMount` + the `maker-cfsyncd` bin; **WinFsp stays the default fallback**.
+- Reuses the Option-B seams directly: the engine's `Invalidate` trait → `CfUpdatePlaceholder`
+  (an `EngineCfInvalidate` newtype bridges them), and real nanos mtime → `FILETIME`.
+- New `Provider::ingest_bytes` (the Phase-2 local-edit primitive: re-ingest an edited on-disk
+  file as a node's new version) — tested.
+- Pure logic (`FileIdentity` node_id↔blob, nanos↔FILETIME, placeholder-action decision) is
+  **unit-tested cross-platform** (6 tests, green on macOS/CI). The Windows FFI is authored on
+  macOS (like `fs-winfsp` was), compiled by the new `cfapi-windows` CI job, **runtime-UNVERIFIED**
+  — smoke steps in `client/fs-cfapi/BUILD.md`.
+- **Phase 2** (next): capture local edits/creates/deletes (CfAPI doesn't route writes through
+  us) via a USN-journal / `ReadDirectoryChangesW` watcher → `ingest_bytes` → push →
+  `CfSetInSyncState`. Plan: `docs/plan-windows-cfapi-migration.md`.
+
+## Earlier (2026-06-12): real-mtime preservation + active cache invalidation (Option B)
 
 Replaces the `mtime = now`-on-pull freshness hack (which destroyed the true modification
 time — breaking `make`/`ninja`/`cargo` incremental builds) by splitting mtime's two jobs:

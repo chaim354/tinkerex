@@ -30,6 +30,8 @@ jobs:
         run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
       - name: Build fs-winfsp on non-Windows (must be an inert empty crate)
         run: cargo build --manifest-path client/fs-winfsp/Cargo.toml
+      - name: Test fs-cfapi pure logic (cross-platform; the CfAPI FFI is cfg(windows))
+        run: cargo test --manifest-path client/fs-cfapi/Cargo.toml
 
   engine-integration:
     # The sync-engine talks to the server over HTTP; this job stands up the real Rails
@@ -99,3 +101,22 @@ jobs:
           # bindgen needs libclang; choco installs LLVM here.
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins
+
+  cfapi-windows:
+    # COMPILE the CfAPI mount adapter (`fs-cfapi`) + its sync-engine wiring — the real
+    # verification gate for the driverless Windows path, which can't build on the
+    # maintainer's macOS box. No driver/SDK needed (cldapi.dll ships with Windows; the
+    # `windows` crate provides the bindings — no LLVM/bindgen unlike WinFsp).
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build fs-cfapi (lib + maker-cfapi)
+        run: cargo build --manifest-path client/fs-cfapi/Cargo.toml --bins
+      - name: Build sync-engine on Windows (CfApiMount + WinfspMount + maker-cfsyncd)
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: |
+          choco install llvm -y --no-progress
+          choco install winfsp -y --no-progress
+          cargo build --manifest-path client/sync-engine/Cargo.toml --bins
