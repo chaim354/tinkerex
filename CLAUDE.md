@@ -142,12 +142,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 - **Tenant = user** (one library, the user's own devices). Isolation = ordinary
   Rails `user_id` scoping — *not* the JuiceFS no-ACL problem (that's why the sync
   model is simpler than the mount model).
-- **Client holds only a device token.** No storage credentials — it gets short-lived,
-  per-object **presigned URLs**. Chunks under `chunks/<user>/`.
+- **Client holds only a device token** (256-bit, SHA256-digested at rest). No storage
+  credentials — it gets short-lived, per-object **presigned URLs**, SigV4-signed for a
+  per-user key `chunks/<user>/<hash>` (untamperable → cross-user chunk access impossible;
+  storage + dedup are per-user). `/v1/chunks/download` additionally only mints URLs for
+  chunks the requester owns.
 - **Bytes never flow through Rails.** Rails is the control plane + presigned-URL
   minter only.
-- Auth today is a **placeholder device-token bootstrap**; real OAuth/OIDC is a later
-  workstream. (If multi-user/db-per-tenant is wanted later, the 37signals
+- **Registration creates a new account only** (no `find_or_create_by` takeover); a new
+  device joins an existing library via a **single-use, expiring pairing code** issued by
+  an authenticated device (`DevicePairing`, `POST /v1/devices/pairing` → `/v1/auth/pair`;
+  Syncthing/Plex model). Real OAuth/OIDC (email verification) is the later upgrade; the
+  device-token + pairing mechanism downstream stays. (If multi-user/db-per-tenant is
+  wanted later, the 37signals
   `active_record_tenanted` pattern slots over the same models.)
 
 ---
@@ -188,11 +195,12 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
 > backend per-OS via a `Mount` type alias; commands are identical everywhere.
 
-**Built + verified (~94 tests green + live cross-stack + cross-OS demos):**
-- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **30 tests** (commit/
+**Built + verified (~110 tests green + live cross-stack + cross-OS demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **41 tests** (commit/
   refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog
-  pagination / `oldest_seq` backstop signal, tenant isolation).
-- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **50 tests** across hermetic suites (`tests/`): **chunking**
+  pagination / `oldest_seq` backstop signal, tenant isolation, **auth: register
+  hardening + device pairing**).
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **53 tests** across hermetic suites (`tests/`): **caching** (mtime-freshness + random-write-on-hydrated), **chunking**
   (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
   **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
   **convergence** (3-replica FakeFolder-style random op stream + durability + idempotency),
@@ -298,8 +306,13 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    `convergence_under_random_ops` harness now overwrites via truncate-then-write and
    asserts the source has no stale tail (replica content convergence is proven by the
    content-addressed `manifest_id`).
-5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
-   (`V1::AuthController#register`). The device-token mechanism itself stays.
+5. ~~**Real OAuth/OIDC** replacing the placeholder device-token bootstrap~~ **PARTLY DONE**
+   (2026-06-12): the account-takeover hole is closed — `register` is new-account-only and
+   additional devices join via a **single-use pairing code** (`DevicePairing`); the app
+   persists its token instead of re-registering. Cross-user isolation audited + tested
+   (presigned URLs are per-user SigV4 keys; chunk-download is ownership-gated). Remaining:
+   real **OAuth/OIDC email verification** so the bootstrap proves email ownership (the
+   device-token + pairing mechanism stays underneath).
 6. **Writeback + robustness hardening:** ~~atomic saves (write-temp-then-rename)~~ **DONE**
    (`Provider::rename` POSIX-replaces + tombstones the displaced node; `truncate(0)` no
    longer needs hydration). ~~reconnect/offline reconcile + the changelog-pruned →

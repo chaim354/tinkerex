@@ -1,8 +1,44 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (external conformance suites wired — rclone / fsx / pjdfstest)
+**Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-11): external conformance suites
+## Latest (2026-06-12): auth, security, caching, app file browser
+
+Branch `auth-caching-security`. Four areas:
+
+### Auth + cross-user security (server 30→41 tests)
+Audited the client↔sync-engine and ↔bucket-storage auth. **Cross-user isolation was
+structurally sound** — presigned URLs are SigV4-signed for a per-user key
+(`chunks/<user_id>/<hash>`, untamperable), chunk storage/metadata + dedup are per-user,
+and every node mutation scopes through `current_user.nodes`. **The one real hole was the
+bootstrap:** `register` did `find_or_create_by!(email)` and handed out a device token for
+*any* email → account takeover. Fixes:
+- `register` creates a **new account only** (409 on an existing email).
+- Additional devices join via a **single-use, 10-min pairing code** issued by an
+  authenticated device (`DevicePairing`; `POST /v1/devices/pairing` → `POST /v1/auth/pair`).
+  SHA256-digested, atomic single-use claim, generic error (no account enumeration). The
+  Syncthing/Plex model — secure multi-device without external OAuth (the later
+  email-verification upgrade, §12.5).
+- Defense in depth: `/v1/chunks/download` only mints URLs for chunks the requester owns.
+- Client: `create_pairing()`/`pair()` on `ServerClient`; **maker-app persists the device
+  token** (register/pair once, reuse) instead of re-registering each start.
+- Tests: `auth_test.rb`, expanded `tenant_isolation_test.rb`, live pairing integration.
+
+### Client caching / freshness (fs-provider 50→53)
+- **`mtime` was permanently 0** — never written on commit or pull, so a same-size edit on
+  another device was invisible (open a minute later → stale cached copy). `flush` and
+  `apply_remote` now stamp `mtime = now` → readers re-read + re-hydrate the new manifest.
+- **Random writes could miss** (write seeds from committed content; only `read` had a
+  hydrate-retry). `fs-fuse`/`fs-winfsp` `open` now hydrate the whole file on write-intent.
+  WebDAV (whole-file PUT/GET) is unaffected. Tests in `tests/caching.rs`.
+
+### App: file browser + versioning
+`sync-client::versions()`; maker-app `browse`/`file_versions`/`restore_version` commands;
+frontend rebuilt — status pill, "this is my device" vs "pair with a code" tabs, an
+"add a device" pairing-code panel, and a file tree that expands per-file version history
+with one-click restore.
+
+## Earlier (2026-06-11): external conformance suites
 
 Added independent, battle-tested external tools pointed at our real mount surfaces — the
 same suites JuiceFS/CephFS gate on — so robustness isn't only self-authored tests.
