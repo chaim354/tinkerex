@@ -451,6 +451,15 @@ impl CfApiMount {
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
 
+        // Bind the local DB to this library; if it was last used by a *different* one, wipe the
+        // stale tree (the reused-DB-mixes-libraries bug → duplicate placeholders + stale
+        // cursor). Keeps the cache when remounting the same library.
+        match provider.bind_library(library_id_for(&cfg.server_url, &cfg.token)) {
+            Ok(true) => println!("cfapi: local DB was a different library — wiped, re-syncing fresh"),
+            Ok(false) => {}
+            Err(e) => eprintln!("cfapi: library bind failed: {e}"),
+        }
+
         // Pull the current tree before mounting (so the first enumeration shows the library)
         // and **reset the cursor to the snapshot head**. This must happen before the sync
         // thread starts (it reads the cursor once). A reused DB can carry a cursor from a
@@ -528,6 +537,18 @@ impl Drop for CfApiMount {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// A stable id for "the library this (server, token) points at", used to bind a local DB to
+/// one library so a reused DB path can't mix two. (Keyed by token, so each device's cache is
+/// its own — which is correct; cross-device sharing of a local cache is never wanted.)
+#[cfg(target_os = "windows")]
+fn library_id_for(server: &str, token: &str) -> i64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    server.hash(&mut h);
+    token.hash(&mut h);
+    h.finish() as i64
 }
 
 /// Push the outbox + pull the changelog delta on each nudge or poll-timeout. `inval`, when

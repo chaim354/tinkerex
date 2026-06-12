@@ -158,6 +158,33 @@ fn ingest_bytes_replaces_content_and_enqueues_sync() {
 }
 
 #[test]
+fn bind_library_wipes_a_different_librarys_stale_state() {
+    // A reused local DB must not mix two libraries: binding it to a different library_id
+    // wipes the stale tree (the bug behind the Windows "cursor 14 > head_seq 5" + duplicate
+    // placeholders). Same id → kept; different id → wiped; chunk cache untouched.
+    let p = provider();
+    let _ = write_file(&p, ROOT, "a.bin", b"library one file");
+    p.set_cursor(42).unwrap();
+
+    // First bind → no prior library tag, but there's data → reports a wipe and clears it.
+    assert!(p.bind_library(1001).unwrap(), "data present, no tag → wiped to adopt the library");
+    assert!(p.export_tree().unwrap().is_empty(), "tree wiped");
+    assert_eq!(p.cursor().unwrap(), 0, "cursor reset");
+
+    // Re-bind to the SAME library → no wipe.
+    let _ = write_file(&p, ROOT, "b.bin", b"library 1001 file");
+    p.set_cursor(7).unwrap();
+    assert!(!p.bind_library(1001).unwrap(), "same library → kept as-is");
+    assert_eq!(p.export_tree().unwrap().len(), 1, "tree preserved");
+    assert_eq!(p.cursor().unwrap(), 7, "cursor preserved");
+
+    // Bind to a DIFFERENT library → wipe.
+    assert!(p.bind_library(2002).unwrap(), "different library → wiped");
+    assert!(p.export_tree().unwrap().is_empty(), "stale tree gone");
+    assert_eq!(p.cursor().unwrap(), 0, "cursor reset for the new library");
+}
+
+#[test]
 fn random_mid_file_write_works_on_a_hydrated_file() {
     // Once the file's chunks are local (the adapter hydrates the whole file on
     // open-for-write), a seek-and-write into the middle reconstructs correctly — the

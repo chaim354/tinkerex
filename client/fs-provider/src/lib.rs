@@ -666,6 +666,30 @@ impl SqliteProvider {
             .unwrap_or(0))
     }
 
+    /// Bind this local DB to a `library_id` (a stable per-library/account id). If the DB was
+    /// last used by a **different** library, its stale tree state — nodes, manifests, outbox,
+    /// and the cursor — is wiped so a reused DB path can't mix two libraries (which produced
+    /// duplicate/colliding placeholders + a stale cursor). The content-addressed chunk store
+    /// is left intact (safe to share — keyed by hash). Returns `true` if it wiped a different
+    /// library's state, `false` if the DB already belonged to this library (kept as-is).
+    pub fn bind_library(&self, library_id: i64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let current: Option<i64> = conn
+            .query_row("SELECT value FROM sync_state WHERE key = 'library'", [], |r| r.get(0))
+            .optional()?;
+        if current == Some(library_id) {
+            return Ok(false); // same library — keep the local cache + cursor
+        }
+        let had_nodes: i64 =
+            conn.query_row("SELECT COUNT(*) FROM nodes WHERE parent_ino IS NOT NULL", [], |r| r.get(0))?;
+        conn.execute("DELETE FROM nodes WHERE parent_ino IS NOT NULL", [])?;
+        conn.execute("DELETE FROM manifest_chunks", [])?;
+        conn.execute("DELETE FROM outbox", [])?;
+        conn.execute("DELETE FROM sync_state", [])?; // clears the old cursor too
+        conn.execute("INSERT INTO sync_state(key, value) VALUES ('library', ?1)", params![library_id])?;
+        Ok(had_nodes > 0)
+    }
+
     pub fn set_cursor(&self, cursor: i64) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

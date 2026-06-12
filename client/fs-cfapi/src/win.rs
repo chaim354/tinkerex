@@ -472,6 +472,14 @@ impl Drop for CfApiMountHandle {
             // Reclaim the leaked state.
             drop(Box::from_raw(self.state));
         }
+        // Tear down the on-disk sync root: once unregistered, the placeholders are orphaned
+        // regular files (and any hydrated bytes sit on disk). Remove the folder so a stop
+        // leaves no stale mount behind — the library lives on the server and re-appears on the
+        // next mount. (The data is never lost: it's pulled fresh from the server.)
+        match std::fs::remove_dir_all(&self.root) {
+            Ok(()) => eprintln!("cfapi: removed sync-root folder {}", self.root.display()),
+            Err(e) => eprintln!("cfapi: could not remove {} (remove it manually): {e}", self.root.display()),
+        }
     }
 }
 
