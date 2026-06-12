@@ -560,7 +560,7 @@ impl CfApiInvalidate {
                 }
             };
             // Update the placeholder to the new version's metadata AND dehydrate the stale
-            // data, so the next read re-raises FETCH_DATA and pulls the new content.
+            // data in one call, so the next read re-raises FETCH_DATA and pulls the new content.
             let mut usn: i64 = 0;
             let r = CfUpdatePlaceholder(
                 handle,
@@ -573,23 +573,19 @@ impl CfApiInvalidate {
                 None,
             );
             match &r {
-                Ok(()) => eprintln!("cfapi: invalidated ino={ino} ({}) size={} — dehydrated", ino, attr.size),
+                Ok(()) => eprintln!("cfapi: invalidated ino={ino} size={} — update+dehydrate OK", attr.size),
                 Err(e) => {
-                    eprintln!("cfapi: invalidate ino={ino} CfUpdatePlaceholder failed: {e} — retrying metadata-only");
-                    // DEHYDRATE can fail if the file is open/pinned; at least update metadata
-                    // so the size/mtime reflect the new version.
+                    // The combined flag can be rejected depending on the file's state. Fall back
+                    // to the dedicated steps: stamp metadata, then dehydrate explicitly — the
+                    // dehydrate is what actually forces the re-fetch, so it must run.
+                    eprintln!("cfapi: invalidate ino={ino} update+dehydrate failed: {e} — splitting");
                     let mut usn2: i64 = 0;
-                    let r2 = CfUpdatePlaceholder(
-                        handle,
-                        Some(&metadata),
-                        None,
-                        0,
-                        None,
-                        CF_UPDATE_FLAG_MARK_IN_SYNC,
-                        Some(&mut usn2),
-                        None,
+                    let r_meta = CfUpdatePlaceholder(
+                        handle, Some(&metadata), None, 0, None, CF_UPDATE_FLAG_MARK_IN_SYNC, Some(&mut usn2), None,
                     );
-                    eprintln!("cfapi: invalidate ino={ino} metadata-only retry: {r2:?}");
+                    eprintln!("cfapi: invalidate ino={ino} metadata update: {r_meta:?}");
+                    let r_dehy = CfDehydratePlaceholder(handle, 0, attr.size as i64, CF_DEHYDRATE_FLAG_NONE, None);
+                    eprintln!("cfapi: invalidate ino={ino} CfDehydratePlaceholder: {r_dehy:?}");
                 }
             }
             let _ = CloseHandle(handle);
