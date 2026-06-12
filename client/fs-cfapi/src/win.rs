@@ -222,6 +222,17 @@ impl PlaceholderHolder {
     }
 }
 
+/// Recover the `node_id` from a callback's `FileIdentity`, **safely**: the sync root itself
+/// has a null/empty identity (`from_raw_parts` on a null pointer is UB — it must not be
+/// called), so this returns `None` there rather than dereferencing null.
+unsafe fn callback_node_id(info: &CF_CALLBACK_INFO) -> Option<String> {
+    if info.FileIdentity.is_null() || info.FileIdentityLength == 0 {
+        return None;
+    }
+    let bytes = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
+    FileIdentity(bytes.to_vec()).to_node_id()
+}
+
 /// Build a `CF_OPERATION_INFO` for answering a callback (shared by the transfer ops).
 unsafe fn op_info_for(info: &CF_CALLBACK_INFO, op_type: CF_OPERATION_TYPE) -> CF_OPERATION_INFO {
     CF_OPERATION_INFO {
@@ -261,8 +272,7 @@ unsafe extern "system" fn fetch_data_callback(
     // Try to produce the bytes; on any failure, answer with an error status so the app's read
     // fails fast instead of hanging.
     let data: Option<Vec<u8>> = (|| {
-        let identity = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
-        let node_id = FileIdentity(identity.to_vec()).to_node_id()?;
+        let node_id = callback_node_id(info)?;
         eprintln!("cfapi: FETCH_DATA node={node_id} off={offset} len={length}");
         if let Some(h) = &state.hydrate {
             h(&node_id);
@@ -326,14 +336,10 @@ unsafe extern "system" fn fetch_placeholders_callback(
     }
     let state = &*state;
 
-    // Which directory? Root unless the FileIdentity maps to a known node.
-    let dir_ino = {
-        let identity = std::slice::from_raw_parts(info.FileIdentity as *const u8, info.FileIdentityLength as usize);
-        FileIdentity(identity.to_vec())
-            .to_node_id()
-            .and_then(|nid| state.provider.ino_for_node_id(&nid).ok().flatten())
-            .unwrap_or(ROOT_INO)
-    };
+    // Which directory? Root (null/empty identity) unless the FileIdentity maps to a known node.
+    let dir_ino = callback_node_id(info)
+        .and_then(|nid| state.provider.ino_for_node_id(&nid).ok().flatten())
+        .unwrap_or(ROOT_INO);
 
     let holders = placeholders_for_dir(&state.provider, dir_ino);
     let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = holders.iter().map(|h| h.info()).collect();
