@@ -34,6 +34,31 @@ fn app_base() -> PathBuf {
     std::env::temp_dir().join("maker-app")
 }
 
+/// Normalize a user-entered mount path: expand a leading `~`/`~/…` to `$HOME`, and resolve a
+/// relative path against `$HOME` (not the `.app`'s `/` working directory). A Windows drive
+/// letter (`Z:`) or an already-absolute path passes through unchanged.
+#[cfg(not(target_os = "windows"))]
+fn expand_mountpoint(input: &str) -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    if input == "~" {
+        PathBuf::from(home)
+    } else if let Some(rest) = input.strip_prefix("~/") {
+        PathBuf::from(home).join(rest)
+    } else {
+        let p = PathBuf::from(input);
+        if p.is_absolute() {
+            p
+        } else {
+            PathBuf::from(home).join(p)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn expand_mountpoint(input: &str) -> PathBuf {
+    PathBuf::from(input) // a drive letter like "Z:" — no expansion
+}
+
 fn creds_path() -> PathBuf {
     app_base().join("credentials.json")
 }
@@ -81,11 +106,15 @@ fn mount_with_token(
     let db = app_base().join("tree.db");
     let chunks = app_base().join("chunks");
     std::fs::create_dir_all(&chunks).map_err(|e| format!("chunk dir: {e}"))?;
+    // Expand a leading `~` and make the path absolute. The `.app`'s working directory is `/`,
+    // so a bare `~/Maker` (which the UI suggests) or a relative path resolves under the
+    // read-only root volume → EROFS ("Read-only file system"). Expand it first.
+    let mountpoint = expand_mountpoint(mountpoint);
     // On Windows the mount point is a drive letter (e.g. "Z:"), not a directory to create.
     #[cfg(not(target_os = "windows"))]
-    std::fs::create_dir_all(mountpoint).map_err(|e| format!("mountpoint: {e}"))?;
+    std::fs::create_dir_all(&mountpoint).map_err(|e| format!("mountpoint: {e}"))?;
 
-    let cfg = DaemonConfig::new(mountpoint, db, chunks, server_url, token);
+    let cfg = DaemonConfig::new(&mountpoint, db, chunks, server_url, token);
     let mount = Mount::start(cfg).map_err(|e| format!("mount failed: {e}"))?;
     let mp = mount.mountpoint().display().to_string();
     *guard = Some(mount);
