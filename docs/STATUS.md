@@ -1,6 +1,35 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (comprehensive sync-foundation test suite — ~90 tests across 4 tiers)
+**Updated:** 2026-06-11 (offline/resync hardening — changelog pagination fix + full-resync backstop)
+
+## Latest (2026-06-11): offline/reconnect hardening (§12.6)
+
+Hardened the path real usage hits but the demos never did — a device going offline and
+reconnecting far behind. Found and fixed a concrete data-loss bug.
+
+- **Changelog pagination data-loss bug — FIXED.** `pull_changes` made a *single*
+  `changes(cursor)` call then advanced the cursor to the global `head_seq` — so a device
+  more than one server page (500) behind applied only the first page yet jumped its cursor
+  past everything, **silently dropping every entry beyond page 1**. The exact
+  offline-reconnect failure. `pull_changes` now **loops**, advancing the cursor to the
+  *last applied entry's seq* each round until caught up. Regression-tested
+  (`pull_changes_pages_through_a_backlog_without_dropping_entries`, forces multi-page via a
+  small page size).
+- **Full-resync backstop.** The changes endpoint now reports `oldest_seq` (the lowest
+  retained changelog seq); `Sync::Gc.prune_changelog!(user, keep_after:)` is the retention
+  op that moves it. If a client's cursor falls below the retained floor (`oldest_seq >
+  cursor + 1`), the entries it needs were pruned, so `pull_changes` falls back to a full
+  `pull_snapshot` instead of skipping the hole. Server contract tested in
+  `test/services/sync/changes_test.rb` (pagination order/limit, oldest_seq floor, the
+  pruned-gap signal, snapshot stays complete after a full prune).
+- **Offline reconcile + hydrate-after-conflict verified.** New integration tests: a device
+  that queues writes offline while another pushes converges on reconnect (push-then-pull),
+  and `hydrate` correctly follows a manifest swapped in by a conflict pull (reads the
+  winning version's bytes — the path the LWW test had sidestepped).
+
+Tests: server 26→**30**, sync-engine integration 6→**9**. (~90 → ~94 total.)
+
+## Earlier (2026-06-11): comprehensive sync-foundation test suite
 
 ## Latest (2026-06-11): comprehensive foundation test suite
 

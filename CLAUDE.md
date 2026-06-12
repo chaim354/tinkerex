@@ -188,9 +188,10 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
 > backend per-OS via a `Mount` type alias; commands are identical everywhere.
 
-**Built + verified (~90 tests green + live cross-stack + cross-OS demos):**
-- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **26 tests** (commit/
-  refcounts/dedup + GC prune/sweep, restore chains, tree pagination, tenant isolation).
+**Built + verified (~94 tests green + live cross-stack + cross-OS demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **30 tests** (commit/
+  refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog
+  pagination / `oldest_seq` backstop signal, tenant isolation).
 - `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **50 tests** across hermetic suites (`tests/`): **chunking**
   (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
   **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
@@ -201,9 +202,11 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 - `sync-client`: API + chunk transfer + pull-apply. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
   daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`. **Server-backed
-  integration suite** (`tests/integration.rs`, 6 tests: roundtrip, delete/move delta,
-  last-writer-wins, hydrate-only-missing, push dedup, cursor monotonicity) — skips when no
-  server, run in CI against a booted `STORAGE_BACKEND=memory` Rails (`rust-client.yml`).
+  integration suite** (`tests/integration.rs`, **9 tests**: roundtrip, delete/move delta,
+  last-writer-wins, hydrate-only-missing + hydrate-after-conflict, push dedup, cursor
+  monotonicity, **changelog paging through a backlog**, **offline reconcile on reconnect**)
+  — skips when no server, run in CI against a booted `STORAGE_BACKEND=memory` Rails
+  (`rust-client.yml`).
 - **Two foundation bugs the suite caught + fixed:** (1) `rename` over an existing name hit
   the unique index instead of POSIX-replacing → **atomic saves (write-temp-then-rename)
   were broken**; now replaces + tombstones the displaced node. (2) `truncate(ino, 0)` read
@@ -297,12 +300,15 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    content-addressed `manifest_id`).
 5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
    (`V1::AuthController#register`). The device-token mechanism itself stays.
-6. **Writeback + robustness hardening:** ~~atomic saves (write-temp-then-rename)~~ **the
-   `rename`-replace half is DONE** (2026-06-11, found by the new test suite — `Provider::
-   rename` now POSIX-replaces + tombstones the displaced node; `truncate(0)` no longer
-   needs hydration); still open: FUSE-T's *deferred `release`* (flush-on-close isn't
-   synchronous), reconnect/offline reconcile + the changelog-pruned → full-resync
-   backstop, `Sync::Changes` N+1 preloading.
+6. **Writeback + robustness hardening:** ~~atomic saves (write-temp-then-rename)~~ **DONE**
+   (`Provider::rename` POSIX-replaces + tombstones the displaced node; `truncate(0)` no
+   longer needs hydration). ~~reconnect/offline reconcile + the changelog-pruned →
+   full-resync backstop~~ **DONE** (2026-06-11): `pull_changes` now **pages** the delta
+   (was a single call that dropped every entry past page 1 on a far-behind device — a
+   silent data-loss bug) and **full-resyncs** when its cursor is below the server's
+   reported `oldest_seq` (pruned-gap detection; `Sync::Gc.prune_changelog!` is the
+   retention op). Still open: FUSE-T's *deferred `release`* (flush-on-close isn't
+   synchronous), `Sync::Changes` N+1 preloading.
 7. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
    is config — see `docs/SYNC_SERVER.md`).
 8. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
