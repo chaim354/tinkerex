@@ -20,6 +20,9 @@ use sha2::{Digest, Sha256};
 pub mod chunkstore;
 pub use chunkstore::{ChunkStore, LocalChunkStore};
 
+pub mod locks;
+pub use locks::{LockManager, LockRange};
+
 pub const ROOT_INO: u64 = 1;
 
 /// Wall-clock seconds since the epoch — the `mtime` stamp for a content change. Apps and
@@ -106,6 +109,8 @@ pub enum FsError {
     NotEmpty,
     #[error("chunk missing: {0}")]
     ChunkMissing(String),
+    #[error("locked (would block)")]
+    WouldBlock,
     #[error("db: {0}")]
     Db(#[from] rusqlite::Error),
     #[error("io: {0}")]
@@ -152,6 +157,27 @@ pub trait Provider: Send + Sync {
     fn unlink(&self, parent: u64, name: &str) -> Result<()>;
     fn rmdir(&self, parent: u64, name: &str) -> Result<()>;
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()>;
+
+    // ---- advisory locking (POSIX byte-range; local to this device) -------------------
+    // Defaults are a no-op "always succeeds" — a provider without lock support behaves as
+    // if nothing is ever locked. `SqliteProvider` overrides with real tracking.
+
+    /// `F_SETLK`: acquire `lock`. `Err(WouldBlock)` if another owner holds a conflict.
+    fn set_lock(&self, _ino: u64, _lock: LockRange) -> Result<()> {
+        Ok(())
+    }
+    /// `F_GETLK`: the conflicting lock a `set_lock` would hit, or `None` if free.
+    fn test_lock(&self, _ino: u64, _probe: LockRange) -> Result<Option<LockRange>> {
+        Ok(None)
+    }
+    /// `F_UNLCK`: release the owner's locks over `[start, end]`.
+    fn unlock(&self, _ino: u64, _owner: u64, _start: u64, _end: u64) -> Result<()> {
+        Ok(())
+    }
+    /// Release every lock an owner holds on `ino` (on file close).
+    fn release_locks(&self, _ino: u64, _owner: u64) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// SQLite-backed [`Provider`]. Tree in SQLite, bytes in a [`ChunkStore`].
@@ -162,6 +188,9 @@ pub struct SqliteProvider {
     /// staging file; in-memory keeps the foundation simple and fully testable.)
     staging: Mutex<HashMap<u64, Vec<u8>>>,
     chunk_cfg: ChunkConfig,
+    /// Local advisory file locks (POSIX byte-range), honored between processes on this
+    /// device. Lives in memory: locks are inherently per-mount and released on close.
+    locks: LockManager,
 }
 
 impl SqliteProvider {
@@ -221,6 +250,7 @@ impl SqliteProvider {
             store,
             staging: Mutex::new(HashMap::new()),
             chunk_cfg,
+            locks: LockManager::new(),
         })
     }
 
@@ -849,6 +879,21 @@ impl Provider for SqliteProvider {
         tx.commit()?;
         Ok(())
     }
+
+    fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
+        self.locks.set(ino, lock).map_err(|_| FsError::WouldBlock)
+    }
+    fn test_lock(&self, ino: u64, probe: LockRange) -> Result<Option<LockRange>> {
+        Ok(self.locks.test(ino, probe))
+    }
+    fn unlock(&self, ino: u64, owner: u64, start: u64, end: u64) -> Result<()> {
+        self.locks.unlock(ino, owner, start, end);
+        Ok(())
+    }
+    fn release_locks(&self, ino: u64, owner: u64) -> Result<()> {
+        self.locks.release_owner(ino, owner);
+        Ok(())
+    }
 }
 
 /// Shared ownership of a provider. The FUSE mount (`fuser::mount2` takes the adapter by
@@ -890,6 +935,18 @@ impl<P: Provider + ?Sized> Provider for std::sync::Arc<P> {
     }
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()> {
         (**self).rename(parent, name, newparent, newname)
+    }
+    fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
+        (**self).set_lock(ino, lock)
+    }
+    fn test_lock(&self, ino: u64, probe: LockRange) -> Result<Option<LockRange>> {
+        (**self).test_lock(ino, probe)
+    }
+    fn unlock(&self, ino: u64, owner: u64, start: u64, end: u64) -> Result<()> {
+        (**self).unlock(ino, owner, start, end)
+    }
+    fn release_locks(&self, ino: u64, owner: u64) -> Result<()> {
+        (**self).release_locks(ino, owner)
     }
 }
 

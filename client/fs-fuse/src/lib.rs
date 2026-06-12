@@ -9,10 +9,10 @@ use std::ffi::OsStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fs_provider::{Attr, FsError, Kind, Provider};
+use fs_provider::{Attr, FsError, Kind, LockRange, Provider};
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    ReplyEntry, ReplyLock, ReplyOpen, ReplyWrite, Request, TimeOrNow,
 };
 
 const TTL: Duration = Duration::from_secs(1);
@@ -327,13 +327,71 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         ino: u64,
         _fh: u64,
         _flags: i32,
-        _lock_owner: Option<u64>,
+        lock_owner: Option<u64>,
         _flush: bool,
         reply: ReplyEmpty,
     ) {
         // Ensure writeback is finalized on close even if the app didn't flush.
         let _ = self.provider.flush(ino);
+        // POSIX: a process's locks are released when it closes the file.
+        if let Some(owner) = lock_owner {
+            let _ = self.provider.release_locks(ino, owner);
+        }
         reply.ok();
+    }
+
+    // Advisory POSIX byte-range locks routed through the provider's lock manager, so
+    // lock state is explicit + uniform across our adapters (the Linux kernel would also
+    // do local locking for free, but routing it here makes it visible to the app and
+    // consistent with the WebDAV/WinFsp paths). Non-blocking: a conflicting `F_SETLK`
+    // returns EAGAIN; a blocking `F_SETLKW` is not yet waited on (callers retry).
+    #[allow(clippy::too_many_arguments)]
+    fn setlk(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        lock_owner: u64,
+        start: u64,
+        end: u64,
+        typ: i32,
+        pid: u32,
+        _sleep: bool,
+        reply: ReplyEmpty,
+    ) {
+        if typ == libc::F_UNLCK {
+            let _ = self.provider.unlock(ino, lock_owner, start, end);
+            return reply.ok();
+        }
+        let lock = LockRange { owner: lock_owner, start, end, exclusive: typ == libc::F_WRLCK, pid };
+        match self.provider.set_lock(ino, lock) {
+            Ok(()) => reply.ok(),
+            Err(_) => reply.error(libc::EAGAIN),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn getlk(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        _fh: u64,
+        lock_owner: u64,
+        start: u64,
+        end: u64,
+        typ: i32,
+        pid: u32,
+        reply: ReplyLock,
+    ) {
+        let probe = LockRange { owner: lock_owner, start, end, exclusive: typ == libc::F_WRLCK, pid };
+        match self.provider.test_lock(ino, probe) {
+            Ok(Some(c)) => {
+                let t = if c.exclusive { libc::F_WRLCK } else { libc::F_RDLCK };
+                reply.locked(c.start, c.end, t, c.pid)
+            }
+            // F_UNLCK in the reply means "no conflict — the lock could be placed".
+            _ => reply.locked(start, end, libc::F_UNLCK, pid),
+        }
     }
 }
 
