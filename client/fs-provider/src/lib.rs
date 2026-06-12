@@ -22,6 +22,17 @@ pub use chunkstore::{ChunkStore, LocalChunkStore};
 
 pub const ROOT_INO: u64 = 1;
 
+/// Wall-clock seconds since the epoch — the `mtime` stamp for a content change. Apps and
+/// the kernel detect "this file changed" primarily via mtime (especially when the new
+/// size equals the old), so every local commit and every pulled remote update must bump
+/// it, or a reader can keep serving stale cached content.
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     File,
@@ -406,14 +417,14 @@ impl SqliteProvider {
         )?;
         if exists {
             conn.execute(
-                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5 WHERE node_id=?6",
-                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, node.node_id],
+                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6 WHERE node_id=?7",
+                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.node_id],
             )?;
         } else {
             conn.execute(
-                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size],
+                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs()],
             )?;
         }
         Ok(())
@@ -691,8 +702,8 @@ impl Provider for SqliteProvider {
             )?;
         }
         tx.execute(
-            "UPDATE nodes SET size = ?1, manifest_id = ?2 WHERE ino = ?3",
-            params![buf.len() as i64, manifest_id, ino as i64],
+            "UPDATE nodes SET size = ?1, manifest_id = ?2, mtime = ?4 WHERE ino = ?3",
+            params![buf.len() as i64, manifest_id, ino as i64, now_secs()],
         )?;
         // Mark the file dirty for sync, atomically with its new manifest.
         if let Some(node_id) =

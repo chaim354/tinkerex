@@ -277,7 +277,17 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         }
     }
 
-    fn open(&mut self, _req: &Request, _ino: u64, _flags: i32, reply: ReplyOpen) {
+    fn open(&mut self, _req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
+        // Opening for write: pull the whole file local first, so random writes — which
+        // seed the staging buffer from the committed content — never hit a chunk-cache
+        // miss (a `write` has no hydrate-retry, unlike `read`). A read-only open needs
+        // nothing here; reads hydrate lazily on miss.
+        const O_ACCMODE: i32 = 0o3;
+        if (flags & O_ACCMODE) != 0 {
+            if let Some(h) = &self.hydrator {
+                h.hydrate(ino);
+            }
+        }
         reply.opened(0, 0);
     }
 
