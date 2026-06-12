@@ -2,7 +2,23 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): Windows CfAPI migration — Phase 1 (driverless mount)
+## Latest (2026-06-12): Windows CfAPI mount — **verified live** (populate + hydrate)
+
+The driverless CfAPI mount **runs on real Windows 11 hardware**: a sync root registers, Explorer
+enumerates it, and files hydrate on open (no GPL driver — the §9 win, on actual hardware). Three
+runtime bugs from the first live run, each caught by the doctor/log diagnostics and fixed:
+- `populate()` ran at mount against the *empty* local tree + there was no FETCH_PLACEHOLDERS
+  handler → enumeration hung. Switched to **on-demand population** (PARTIAL policy +
+  FETCH_PLACEHOLDERS reading the provider's live tree) + a **pre-mount snapshot pull**.
+- `FETCH_DATA` could return without answering → reading app hung. Now **always answers**
+  (error completion on failure).
+- `slice::from_raw_parts` on the root's **null FileIdentity** → UB panic on the callback thread.
+  Added `callback_node_id` (null → root).
+Diagnostics added: `eprintln` in both callbacks + a layered **`doctor` example** (control plane +
+storage reachability, no CfAPI) that isolated the failure to the CfAPI layer. Still to exercise
+live: remote-change invalidation + clean teardown. **Phase 2** = local-edit capture.
+
+## Earlier (2026-06-12): Windows CfAPI migration — Phase 1 (driverless mount)
 
 `client/fs-cfapi` — the **driverless** Windows mount (Cloud Filter API; no GPL WinFsp driver,
 the OneDrive model: a registered sync-root folder with on-demand hydration + native Explorer

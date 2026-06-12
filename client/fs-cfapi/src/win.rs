@@ -16,10 +16,12 @@
 //! Phase 2 (NOT here): capturing **local** edits (the OS owns the on-disk bytes) via a USN /
 //! `ReadDirectoryChangesW` watcher → `Provider::ingest_bytes` → push → `CfSetInSyncState`.
 //!
-//! Runtime-UNVERIFIED on Windows, but it **typechecks for the Windows target** — built on
-//! macOS via `cargo check --target x86_64-pc-windows-gnu` (windows 0.61) and by the
-//! `cfapi-windows` CI job. Runtime behavior needs the smoke test in `BUILD.md`. Gaps flagged
-//! `LIMITATION:`/`PHASE 2:`.
+//! **Verified live on Windows 11** (2026-06-12): a real CfAPI sync root registers, Explorer
+//! enumerates it (FETCH_PLACEHOLDERS), and files hydrate on open (FETCH_DATA → presigned GET →
+//! TRANSFER_DATA) — the download half works end-to-end. Still unexercised live: remote-change
+//! invalidation + teardown; local-edit capture is PHASE 2. Also typechecks for the Windows
+//! target on macOS (`cargo check --target x86_64-pc-windows-gnu`) + the `cfapi-windows` CI job.
+//! Gaps flagged `LIMITATION:`/`PHASE 2:`.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
