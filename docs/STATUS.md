@@ -2,7 +2,39 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): file mode / executable-bit preservation
+## Latest (2026-06-12): real-mtime preservation + active cache invalidation (Option B)
+
+Replaces the `mtime = now`-on-pull freshness hack (which destroyed the true modification
+time — breaking `make`/`ninja`/`cargo` incremental builds) by splitting mtime's two jobs:
+**preserve the real mtime** end-to-end, and **invalidate the OS cache explicitly** on a
+content-changing pull instead of relying on an mtime bump. Plan:
+`docs/plan-real-mtime-and-invalidation.md`.
+
+- `fs-provider`: `mtime` is now real, **unix nanoseconds** (build-tool resolution; maps to
+  FILETIME/NSDate for the CfAPI/File-Provider future). `flush` stamps the real local mod
+  time; `apply_remote` writes the **source device's** mtime verbatim (no more `now`), and
+  returns an `ApplyOutcome { ino, content_changed }` so the adapter knows when to drop its
+  cache. New `set_mtime` (the kernel's `utimensat`/`cp -p`). `SyncNode.mtime` round-trips
+  through export/sync_node/apply.
+- `fs-fuse`: `setattr(mtime)` → `set_mtime`; `file_attr` reports nanos.
+- `sync-engine`: an `Invalidate` seam (cross-platform) the pull path calls when a pull
+  repoints an existing inode at new content. `EngineInvalidate` (FUSE-only) holds the
+  session `Notifier` and calls `notify_inval_inode` (abi-7-12); shared by the sync loop +
+  freshness adapter (whichever applies the change first invalidates), wired into the
+  `Daemon` via deferred notifier injection (the construction-cycle break). WebDAV/WinFsp
+  pass `None` (lean on short metadata timeouts until CfAPI/File-Provider land — the same
+  two primitives slot in here). `push_node`/converters carry mtime.
+- Server: `nodes.mtime` + `pending_commits.mtime` as **bigint** (nanos in 2026 overflow a
+  32-bit int); `Commit`/mkdir store it; tree + changes serialize it; controllers permit it.
+- Tests: fs-provider (`pulled_node_keeps_the_source_mtime_not_now`,
+  `apply_remote_reports_content_change_for_cache_invalidation`, updated
+  `remote_update_serves_fresh_content_and_carries_real_mtime`), server (commit stores +
+  tree/changes expose the bigint mtime), integration `real_mtime_propagates_across_devices`
+  (A's 2001 mtime visible verbatim on B). External: rclone⇄WebDAV re-run clean.
+  **Invalidation itself can't be unit-tested** (needs a live FUSE kernel) — verified by the
+  Linux CI `mount-conformance` path / manual smoke (edit on A, `cat` on B before/after).
+
+## Earlier (2026-06-12): file mode / executable-bit preservation
 
 The one POSIX-fidelity gap that actually bites makers (scripts/binaries losing `+x` after
 sync — see the conformance dig): file mode is now preserved end-to-end.

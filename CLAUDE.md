@@ -203,10 +203,13 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > top of the deployed stack — device **pairing** auth + cross-user security audit;
 > client **caching/freshness** (mtime + full-hydrate-on-write + freshness-on-open);
 > **file browser + version/restore UI**; local + **best-effort cross-device file locking**;
-> **conflict detection + keep/split resolution** (replacing silent LWW); and **file-mode
-> (executable-bit) preservation**. External conformance (rclone/fsx/pjdfstest) re-run: data
-> plane byte-perfect, POSIX-perms gaps deliberate. Next up: real-mtime + active cache
-> invalidation — see `docs/plan-real-mtime-and-invalidation.md`.
+> **conflict detection + keep/split resolution** (replacing silent LWW); **file-mode
+> (executable-bit) preservation**; and **real-mtime preservation + active cache invalidation**
+> (Option B — real mtime synced in unix-nanos end-to-end; explicit FUSE `notify_inval_inode`
+> replacing the `mtime = now`-on-pull bump). External conformance (rclone/fsx/pjdfstest) re-run:
+> data plane byte-perfect, POSIX-perms gaps deliberate (rclone⇄WebDAV caught + fixed a
+> nanos-overflow in the WebDAV/WinFsp adapters). Next up: real **OAuth/OIDC** email
+> verification (§12 step 5) + Postgres deploy validation (step 8).
 
 **Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
@@ -348,11 +351,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    **DONE** (2026-06-12).
 7. **Caching/freshness DONE** (2026-06-12): full-hydrate on write-open (random writes can't
    miss), freshness-on-open catch-up pull, and **file-mode (executable-bit) preservation**
-   synced end-to-end. **NEXT (planned, not started): real-mtime preservation + active cache
-   invalidation** — replace the `mtime = now`-on-pull freshness hack (which breaks build-tool
-   mtimes) with synced real mtime + an adapter `invalidate(ino)` hook (FUSE
-   `notify_inval_inode`); designed to map onto the future CfAPI / macOS File-Provider
-   migrations. Full plan: **`docs/plan-real-mtime-and-invalidation.md`**.
+   synced end-to-end. ~~real-mtime preservation + active cache invalidation~~ **DONE**
+   (2026-06-12, Option B): replaced the `mtime = now`-on-pull hack (which destroyed build-tool
+   mtimes) with **real mtime synced end-to-end in unix nanoseconds** (`flush` stamps the real
+   local time; `apply_remote` writes the *source* device's mtime verbatim; new `set_mtime` for
+   `utimensat`/`cp -p`; server columns are **bigint**) **plus an explicit `invalidate(ino)`
+   seam** — `apply_remote` returns `content_changed`, and on FUSE `sync_engine::EngineInvalidate`
+   calls the kernel `notify_inval_inode` (abi-7-12) via the session `Notifier` (shared by the
+   sync loop + freshness, wired into the `Daemon` by deferred notifier injection). WebDAV/WinFsp
+   pass `None` (lean on metadata timeouts until CfAPI/File-Provider — the same two primitives
+   slot in there). Caught + fixed a nanos-overflow regression in the WebDAV + WinFsp adapters
+   (interpreted `Attr.mtime` as seconds) via the rclone⇄WebDAV conformance re-run. Plan:
+   **`docs/plan-real-mtime-and-invalidation.md`**. (Invalidation itself is FUSE-kernel-only →
+   CI `mount-conformance` / manual smoke, per the plan.)
 8. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
    is config — see `docs/SYNC_SERVER.md`).
 9. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails

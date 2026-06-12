@@ -37,6 +37,20 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Active OS-cache invalidation. When a **pull** repoints an *existing* inode at new
+/// content, the engine calls [`invalidate`](Invalidate::invalidate) so the adapter drops
+/// the kernel's cached attrs + data for that inode and the next read re-fetches the new
+/// manifest's chunks. This replaces the old `mtime = now`-on-pull bump (which forced a
+/// re-read but destroyed the file's real modification time, breaking build tools).
+///
+/// Best-effort, and only FUSE has a strong impl today ([`EngineInvalidate`], via the kernel
+/// `notify_inval_inode`). WebDAV (macOS) and WinFsp pass `None` and lean on short metadata
+/// timeouts for now; CfAPI / macOS File Provider slot in here later (`CfUpdatePlaceholder`
+/// / `signalEnumerator`) — the same two primitives, so this is the migration seam.
+pub trait Invalidate: Send + Sync {
+    fn invalidate(&self, ino: u64);
+}
+
 /// Moves chunk bytes to/from "the cloud".
 pub trait ChunkIO {
     /// Upload `hash`'s bytes. `put_urls` are from `commit_begin` (presigned PUTs).
@@ -169,8 +183,21 @@ impl SyncEngine {
     pub fn pull_changes_paged(
         provider: &SqliteProvider,
         client: &ServerClient,
+        cursor: i64,
+        page: i64,
+    ) -> Result<i64> {
+        Self::pull_changes_paged_inval(provider, client, cursor, page, None)
+    }
+
+    /// [`pull_changes_paged`](Self::pull_changes_paged) that additionally invalidates the
+    /// OS cache of any inode a pull repoints at new content (see [`Invalidate`]). The daemon
+    /// + freshness paths pass the FUSE invalidator; the plain examples/tests pass `None`.
+    pub fn pull_changes_paged_inval(
+        provider: &SqliteProvider,
+        client: &ServerClient,
         mut cursor: i64,
         page: i64,
+        inval: Option<&dyn Invalidate>,
     ) -> Result<i64> {
         let mut checked_floor = false;
         loop {
@@ -192,7 +219,7 @@ impl SyncEngine {
                 return Ok(resp.head_seq.max(cursor));
             }
             for ch in &resp.changes {
-                apply_change(provider, ch)?;
+                apply_change(provider, ch, inval)?;
             }
             // Advance only as far as we actually applied; loop for the next page.
             cursor = resp.changes.last().map(|c| c.seq).unwrap_or(cursor);
@@ -240,8 +267,21 @@ impl SyncEngine {
         io: &dyn ChunkIO,
         cursor: i64,
     ) -> Result<i64> {
+        Self::sync_tick_inval(provider, client, io, cursor, None)
+    }
+
+    /// [`sync_tick`](Self::sync_tick) that invalidates the OS cache of any inode a pull
+    /// repoints at new content (see [`Invalidate`]). The daemon's sync loop passes the FUSE
+    /// invalidator so a same-size remote edit can't keep serving stale cached bytes.
+    pub fn sync_tick_inval(
+        provider: &SqliteProvider,
+        client: &ServerClient,
+        io: &dyn ChunkIO,
+        cursor: i64,
+        inval: Option<&dyn Invalidate>,
+    ) -> Result<i64> {
         Self::push_outbox(provider, client, io)?;
-        Self::pull_changes(provider, client, cursor)
+        Self::pull_changes_paged_inval(provider, client, cursor, 500, inval)
     }
 }
 
@@ -256,7 +296,7 @@ fn push_node(
 ) -> Result<()> {
     match node.kind {
         Kind::Dir => {
-            client.mkdir(&node.node_id, node.parent_node_id.as_deref(), &node.name, node.mode)?;
+            client.mkdir(&node.node_id, node.parent_node_id.as_deref(), &node.name, node.mode, node.mtime)?;
         }
         Kind::File => {
             let manifest: Vec<ChunkRef> = node
@@ -277,6 +317,7 @@ fn push_node(
                 size,
                 manifest,
                 mode: node.mode,
+                mtime: node.mtime,
             })?;
             for hash in &begin.missing {
                 let bytes = provider.chunk_get(hash)?;
@@ -326,6 +367,46 @@ impl fs_fuse::Hydrate for EngineHydrator {
     }
 }
 
+/// Active OS-cache invalidation over the FUSE kernel channel. Holds the session's
+/// [`fuser::Notifier`] and, on a content-changing pull, calls `notify_inval_inode` so the
+/// kernel drops its cached attrs + data for that inode (the next read re-fetches the new
+/// manifest). This is what lets us preserve the real mtime instead of bumping it to force
+/// a re-read.
+///
+/// The notifier only exists *after* the mount is up (`spawn_mount2` → `BackgroundSession`),
+/// but this hook is wired into the freshness adapter + sync loop *before* the mount — a
+/// construction cycle. We break it with a [`OnceLock`](std::sync::OnceLock): build the hook
+/// empty, share it into both paths, then [`set_notifier`](EngineInvalidate::set_notifier)
+/// once mounted. Before that (no inode is cached yet) `invalidate` is a harmless no-op.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Default)]
+pub struct EngineInvalidate {
+    notifier: Arc<std::sync::OnceLock<fuser::Notifier>>,
+}
+
+#[cfg(target_os = "linux")]
+impl EngineInvalidate {
+    pub fn new() -> Self {
+        Self { notifier: Arc::new(std::sync::OnceLock::new()) }
+    }
+    /// Inject the FUSE notifier once the session is mounted (idempotent).
+    pub fn set_notifier(&self, notifier: fuser::Notifier) {
+        let _ = self.notifier.set(notifier);
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Invalidate for EngineInvalidate {
+    fn invalidate(&self, ino: u64) {
+        if let Some(n) = self.notifier.get() {
+            // offset 0 + len 0 = invalidate the inode's attributes and all cached data.
+            if let Err(e) = n.inval_inode(ino, 0, 0) {
+                eprintln!("invalidate: inval_inode({ino}) failed: {e}");
+            }
+        }
+    }
+}
+
 /// Freshness-on-access: on a file open, pull the changelog delta so the local tree
 /// reflects the latest before serving (the read then hydrates the new manifest's chunks
 /// on miss). Throttled so frequent opens don't hammer the server — the background loop +
@@ -336,12 +417,17 @@ pub struct EngineFreshness {
     client: ServerClient,
     throttle: std::time::Duration,
     last: std::sync::Mutex<Option<std::time::Instant>>,
+    /// Invalidate the OS cache for any inode this open-time pull repoints at new content —
+    /// the open's own read would otherwise be served the stale cached bytes. Shares the one
+    /// invalidator with the background sync loop so whichever pull applies a change first is
+    /// the one that invalidates (the other then sees `content_changed == false`).
+    inval: Option<Arc<dyn Invalidate>>,
 }
 
 #[cfg(target_os = "linux")]
 impl EngineFreshness {
-    pub fn new(provider: Arc<SqliteProvider>, client: ServerClient) -> Self {
-        Self { provider, client, throttle: std::time::Duration::from_millis(750), last: std::sync::Mutex::new(None) }
+    pub fn new(provider: Arc<SqliteProvider>, client: ServerClient, inval: Option<Arc<dyn Invalidate>>) -> Self {
+        Self { provider, client, throttle: std::time::Duration::from_millis(750), last: std::sync::Mutex::new(None), inval }
     }
 }
 
@@ -395,7 +481,7 @@ impl fs_fuse::Freshness for EngineFreshness {
             *last = Some(std::time::Instant::now());
         }
         let cursor = self.provider.cursor().unwrap_or(0);
-        match SyncEngine::pull_changes(&self.provider, &self.client, cursor) {
+        match SyncEngine::pull_changes_paged_inval(&self.provider, &self.client, cursor, 500, self.inval.as_deref()) {
             // Advance the cursor monotonically — the sync loop may also be advancing it
             // concurrently; a regression would just re-pull an already-applied (idempotent)
             // delta, so max() is the safe reconciliation.
@@ -424,6 +510,9 @@ fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
         chunks,
         version_id: n.version_id.clone(),
         mode: n.mode.unwrap_or(if n.kind == "dir" { 0o755 } else { 0o644 }),
+        // A server that predates mtime sync sends `None` — fall back to `now` so the kernel
+        // still sees a fresh stamp (the old behavior); a real synced mtime is applied verbatim.
+        mtime: n.mtime.unwrap_or_else(now_nanos),
     }
 }
 
@@ -432,7 +521,7 @@ fn tree_node_to_sync(n: &TreeNode) -> SyncNode {
 /// and remove the node — and any descendants — locally. A *move* is not a delete: the
 /// server models it as op `move` on the same stable node_id with a new parent/name, so it
 /// falls through to `apply_remote` and updates the existing row in place (no duplicate).
-fn apply_change(provider: &SqliteProvider, ch: &Change) -> Result<()> {
+fn apply_change(provider: &SqliteProvider, ch: &Change, inval: Option<&dyn Invalidate>) -> Result<()> {
     // A `conflict` change records a divergent version that is NOT current — the node's
     // content is unchanged, so it must not be applied to the tree. It's surfaced to the
     // user via GET /v1/conflicts and resolved there.
@@ -443,7 +532,14 @@ fn apply_change(provider: &SqliteProvider, ch: &Change) -> Result<()> {
     if ch.op == "delete" || deleted {
         provider.apply_remote_delete(&ch.node_id)?;
     } else if let Some(sn) = change_to_sync(ch) {
-        provider.apply_remote(&sn)?;
+        let outcome = provider.apply_remote(&sn)?;
+        // An existing inode repointed at new content: drop the OS cache so the next read
+        // re-fetches (we no longer bump mtime to force this). Best-effort, FUSE-only today.
+        if outcome.content_changed {
+            if let Some(inval) = inval {
+                inval.invalidate(outcome.ino);
+            }
+        }
     }
     Ok(())
 }
@@ -470,5 +566,15 @@ fn change_to_sync(ch: &Change) -> Option<SyncNode> {
         chunks,
         version_id: ch.version.as_ref().map(|v| v.version_id.clone()),
         mode: view.mode.unwrap_or(if view.kind == "dir" { 0o755 } else { 0o644 }),
+        mtime: view.mtime.unwrap_or_else(now_nanos),
     })
+}
+
+/// Wall-clock nanoseconds — the fallback mtime when a (pre-mtime) server omits one, so the
+/// kernel still gets a fresh stamp. Mirrors `fs_provider::now_nanos` (private there).
+fn now_nanos() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0)
 }

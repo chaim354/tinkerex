@@ -1,6 +1,10 @@
 # Plan: preserve real mtime + active cache invalidation (Option B)
 
-**Status:** planned, not implemented. Hand-off doc for the implementing agent.
+**Status:** ✅ **implemented 2026-06-12** (mtime in unix-nanos end-to-end; `EngineInvalidate`
+→ FUSE `notify_inval_inode`; bigint server columns). Hermetic + server + integration tests
+green; rclone⇄WebDAV conformance re-run clean (caught + fixed a nanos-overflow in the
+WebDAV/WinFsp adapters). Invalidation itself is FUSE-kernel-only → CI/manual-smoke per the
+testing section. Kept as the design record. (Originally: hand-off doc for the implementing agent.)
 **Decision:** chosen over (A) the current `mtime = now`-on-pull hack and (C) disabling the
 kernel page cache. See the rationale + CfAPI/File-Provider forward-compat analysis below.
 

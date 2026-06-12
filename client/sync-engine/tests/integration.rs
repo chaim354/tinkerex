@@ -265,6 +265,32 @@ fn executable_bit_propagates_across_devices() {
     assert_eq!(b.getattr(bf.ino).unwrap().mode, 0o755, "chmod +x on A is visible on B");
 }
 
+// ---- real mtime preservation across devices ----------------------------------------
+
+#[test]
+fn real_mtime_propagates_across_devices() {
+    // Option B: A's real modification time rides the commit to the server and lands on B
+    // verbatim — B sees A's edit time, never B's sync time. (Models
+    // `executable_bit_propagates_across_devices`; the wire carries mtime as a bigint.)
+    let url = server_url!();
+    let (ca, cb, cloud) = two_devices(&url);
+
+    // A writes a file and stamps an obviously-old mtime (2001) via setattr/`cp -p`.
+    let a = dev();
+    let f = a.create(ROOT_INO, "old.txt").unwrap();
+    a.write(f.ino, 0, b"authored long ago").unwrap();
+    a.flush(f.ino).unwrap();
+    let old_mtime: i64 = 1_000_000_000 * 1_000_000_000;
+    a.set_mtime(f.ino, old_mtime).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // B pulls the snapshot → A's real mtime came across (not the sync time).
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    let bf = b.lookup(ROOT_INO, "old.txt").unwrap();
+    assert_eq!(b.getattr(bf.ino).unwrap().mtime, old_mtime, "A's real mtime is visible on B, verbatim");
+}
+
 // ---- best-effort cross-device advisory lock ----------------------------------------
 
 #[test]

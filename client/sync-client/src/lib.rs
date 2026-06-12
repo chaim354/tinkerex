@@ -70,6 +70,9 @@ pub struct CommitBegin {
     pub manifest: Vec<ChunkRef>,
     /// POSIX permission bits to persist on the node (preserves the executable bit).
     pub mode: u32,
+    /// Real modification time, unix nanoseconds (a `bigint` on the server). Preserves the
+    /// true mtime end-to-end instead of stamping the sync time.
+    pub mtime: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,6 +172,10 @@ pub struct NodeView {
     pub deleted: bool,
     #[serde(default)]
     pub mode: Option<u32>,
+    /// Real modification time, unix nanoseconds. `None` from a server that predates mtime
+    /// sync (the engine falls back to `now` so freshness still works).
+    #[serde(default)]
+    pub mtime: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,6 +219,9 @@ pub struct TreeNode {
     pub manifest: Option<Vec<ChunkRef>>,
     #[serde(default)]
     pub mode: Option<u32>,
+    /// Real modification time, unix nanoseconds. `None` from a pre-mtime server.
+    #[serde(default)]
+    pub mtime: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,10 +338,10 @@ impl ServerClient {
         Self::json(resp)
     }
 
-    pub fn mkdir(&self, node_id: &str, parent_node_id: Option<&str>, name: &str, mode: u32) -> Result<SeqResponse> {
+    pub fn mkdir(&self, node_id: &str, parent_node_id: Option<&str>, name: &str, mode: u32, mtime: i64) -> Result<SeqResponse> {
         let resp = self
             .authed(self.http.post(self.url("/v1/nodes")))?
-            .json(&serde_json::json!({ "node_id": node_id, "parent_node_id": parent_node_id, "name": name, "mode": mode }))
+            .json(&serde_json::json!({ "node_id": node_id, "parent_node_id": parent_node_id, "name": name, "mode": mode, "mtime": mtime }))
             .send()?;
         Self::json(resp)
     }

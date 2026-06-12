@@ -25,10 +25,6 @@ pub use locks::{LockManager, LockRange};
 
 pub const ROOT_INO: u64 = 1;
 
-/// Wall-clock seconds since the epoch — the `mtime` stamp for a content change. Apps and
-/// the kernel detect "this file changed" primarily via mtime (especially when the new
-/// size equals the old), so every local commit and every pulled remote update must bump
-/// it, or a reader can keep serving stale cached content.
 /// The default permission bits for a freshly created node (no umask modeling — the
 /// mount runs as the user, who owns everything).
 fn default_mode(kind: Kind) -> u32 {
@@ -38,10 +34,19 @@ fn default_mode(kind: Kind) -> u32 {
     }
 }
 
-fn now_secs() -> i64 {
+/// Wall-clock **nanoseconds** since the epoch — the real `mtime` stamp for a *local*
+/// modification (a new write with no caller-supplied time). A pulled remote change carries
+/// the source device's real mtime instead (see [`SqliteProvider::apply_remote`]); we no
+/// longer stamp `now` on pull, which used to destroy the true modification time (breaking
+/// build tools that key on it). Cache freshness after a pull is handled by an explicit
+/// adapter `invalidate(ino)` (the `content_changed` flag [`apply_remote`] returns), not an
+/// mtime bump. Nanos resolution matches what build tools and the future CfAPI/File-Provider
+/// metadata want; stored as i64 (a `bigint` on the wire/server — unix-nanos in 2026
+/// overflow a 32-bit int).
+fn now_nanos() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
+        .map(|d| d.as_nanos() as i64)
         .unwrap_or(0)
 }
 
@@ -73,6 +78,8 @@ pub struct Attr {
     pub ino: u64,
     pub kind: Kind,
     pub size: u64,
+    /// Real modification time, **unix nanoseconds** (see [`now_nanos`]). Preserved + synced
+    /// so a file's true mtime is stable across devices (not the sync time).
     pub mtime: i64,
     /// POSIX permission bits (e.g. `0o644`, `0o755`). Preserved + synced so the
     /// executable bit (and other mode bits) survive a chmod and propagate across devices.
@@ -112,6 +119,22 @@ pub struct SyncNode {
     pub version_id: Option<String>,
     /// POSIX permission bits, synced so the executable bit survives across devices.
     pub mode: u32,
+    /// Real modification time (unix nanoseconds). Synced so the true mtime — not the sync
+    /// time — is what every device sees. On **push** it's the local node's mtime; on
+    /// **pull** it's the source device's mtime, applied verbatim by [`SqliteProvider::apply_remote`].
+    pub mtime: i64,
+}
+
+/// What [`SqliteProvider::apply_remote`] did, so the caller can refresh the OS cache. A
+/// pull that **repointed an existing node at new content** must explicitly invalidate the
+/// kernel's data cache for that inode (we no longer bump mtime to force a re-read). A brand
+/// new node, or a metadata-only change, has nothing cached to invalidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ApplyOutcome {
+    /// The local inode the node maps to (for the adapter's `invalidate(ino)`).
+    pub ino: u64,
+    /// The node already existed and its manifest (content) changed — invalidate its cache.
+    pub content_changed: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,6 +194,12 @@ pub trait Provider: Send + Sync {
     /// Set permission bits (the kernel's `chmod`). Default no-op; `SqliteProvider`
     /// persists + syncs it so the executable bit survives and propagates.
     fn set_mode(&self, _ino: u64, _mode: u32) -> Result<()> {
+        Ok(())
+    }
+    /// Set the modification time (unix nanoseconds — the kernel's `setattr(mtime)`, e.g. a
+    /// `utimensat`/`cp -p`). Default no-op; `SqliteProvider` persists + syncs it so the real
+    /// mtime survives and propagates instead of being overwritten with the sync time.
+    fn set_mtime(&self, _ino: u64, _mtime: i64) -> Result<()> {
         Ok(())
     }
     /// Resize the file to exactly `size` bytes (the kernel's `setattr`/`O_TRUNC`).
@@ -236,7 +265,7 @@ impl SqliteProvider {
                 name        TEXT NOT NULL,
                 kind        TEXT NOT NULL,
                 size        INTEGER NOT NULL DEFAULT 0,
-                mtime       INTEGER NOT NULL DEFAULT 0,
+                mtime       INTEGER NOT NULL DEFAULT 0,  -- real mtime, unix NANOSECONDS (preserved + synced)
                 manifest_id TEXT,
                 node_id     TEXT,
                 version_id  TEXT,         -- server version this node reflects (commit base)
@@ -357,9 +386,10 @@ impl SqliteProvider {
         }
         let node_id = uuid::Uuid::new_v4().to_string();
         let mode = default_mode(kind);
+        let mtime = now_nanos();
         let res = conn.execute(
-            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![parent as i64, name, kind.as_str(), node_id, mode as i64],
+            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![parent as i64, name, kind.as_str(), node_id, mode as i64, mtime],
         );
         match res {
             Ok(_) => {}
@@ -377,7 +407,7 @@ impl SqliteProvider {
             ino,
             kind,
             size: 0,
-            mtime: 0,
+            mtime,
             mode,
         })
     }
@@ -408,7 +438,7 @@ impl SqliteProvider {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.node_id, n.name, n.kind, n.manifest_id,
-                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id, n.mode
+                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime
              FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
              WHERE n.ino != ?1
              ORDER BY n.ino",
@@ -422,11 +452,12 @@ impl SqliteProvider {
                 r.get::<_, Option<String>>(4)?,
                 r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<i64>>(6)?,
+                r.get::<_, i64>(7)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id, mode) = row?;
+            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime) = row?;
             let kind = Kind::from_str(&kind_s);
             let chunks = match &manifest_id {
                 Some(m) => Self::manifest_rows(&conn, m)?,
@@ -441,6 +472,7 @@ impl SqliteProvider {
                 chunks,
                 version_id,
                 mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
+                mtime,
             });
         }
         Ok(out)
@@ -464,7 +496,13 @@ impl SqliteProvider {
 
     /// Apply a node pulled from the server into the local tree (upsert by node_id).
     /// Parents must already be applied (the server returns them parent-first).
-    pub fn apply_remote(&self, node: &SyncNode) -> Result<()> {
+    ///
+    /// Writes the **source device's** `mtime` verbatim (not `now`) so a file's real
+    /// modification time is identical on every device. Returns an [`ApplyOutcome`] telling
+    /// the caller whether an *existing* node was repointed at new content — if so, the
+    /// adapter must `invalidate(ino)` to drop the OS data cache (we no longer rely on an
+    /// mtime bump to force the re-read).
+    pub fn apply_remote(&self, node: &SyncNode) -> Result<ApplyOutcome> {
         let conn = self.conn.lock().unwrap();
         let parent_ino: i64 = match &node.parent_node_id {
             None => ROOT_INO as i64,
@@ -490,24 +528,36 @@ impl SqliteProvider {
             }
         }
         let size: i64 = node.chunks.iter().map(|c| c.length as i64).sum();
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = ?1)",
-            params![node.node_id],
-            |r| r.get(0),
-        )?;
-        if exists {
+        // Look up the prior row (ino + manifest) so we can both reuse the inode on update
+        // and decide whether the content actually changed (→ cache invalidation).
+        let prior: Option<(i64, Option<String>)> = conn
+            .query_row(
+                "SELECT ino, manifest_id FROM nodes WHERE node_id = ?1",
+                params![node.node_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        let ino = if let Some((ino, _)) = &prior {
             conn.execute(
                 "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8 WHERE node_id=?9",
-                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, now_secs(), node.version_id, (node.mode & 0o7777) as i64, node.node_id],
+                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64, node.node_id],
             )?;
+            *ino as u64
         } else {
             conn.execute(
                 "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id, mode)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, now_secs(), node.version_id, (node.mode & 0o7777) as i64],
+                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64],
             )?;
-        }
-        Ok(())
+            conn.last_insert_rowid() as u64
+        };
+        // Content changed iff the node already existed and its manifest moved (a same-size
+        // edit included — that's exactly the case the old mtime-bump heuristic could miss).
+        let content_changed = match &prior {
+            Some((_, old_manifest)) => *old_manifest != node.manifest_id,
+            None => false,
+        };
+        Ok(ApplyOutcome { ino, content_changed })
     }
 
     /// Apply a delete pulled from the server: remove the node identified by its stable
@@ -633,7 +683,7 @@ impl SqliteProvider {
         let row = conn
             .query_row(
                 "SELECT n.name, n.kind, n.manifest_id,
-                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id, n.mode
+                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime
                  FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
                  WHERE n.node_id = ?1",
                 params![node_id, ROOT_INO as i64],
@@ -645,11 +695,12 @@ impl SqliteProvider {
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, Option<String>>(4)?,
                         r.get::<_, Option<i64>>(5)?,
+                        r.get::<_, i64>(6)?,
                     ))
                 },
             )
             .optional()?;
-        let (name, kind_s, manifest_id, parent_node_id, version_id, mode) = match row {
+        let (name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime) = match row {
             Some(r) => r,
             None => return Ok(None),
         };
@@ -667,6 +718,7 @@ impl SqliteProvider {
             chunks,
             version_id,
             mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
+            mtime,
         }))
     }
 }
@@ -788,7 +840,7 @@ impl Provider for SqliteProvider {
         }
         tx.execute(
             "UPDATE nodes SET size = ?1, manifest_id = ?2, mtime = ?4 WHERE ino = ?3",
-            params![buf.len() as i64, manifest_id, ino as i64, now_secs()],
+            params![buf.len() as i64, manifest_id, ino as i64, now_nanos()],
         )?;
         // Mark the file dirty for sync, atomically with its new manifest.
         if let Some(node_id) =
@@ -954,6 +1006,26 @@ impl Provider for SqliteProvider {
         Ok(())
     }
 
+    fn set_mtime(&self, ino: u64, mtime: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let node_id: Option<String> = conn
+            .query_row("SELECT node_id FROM nodes WHERE ino = ?1", params![ino as i64], |r| r.get(0))
+            .optional()?;
+        let n = conn.execute(
+            "UPDATE nodes SET mtime = ?1 WHERE ino = ?2",
+            params![mtime, ino as i64],
+        )?;
+        if n == 0 {
+            return Err(FsError::NotFound);
+        }
+        // Propagate the metadata change so the real mtime (e.g. from `cp -p`) reaches the
+        // other devices — the re-commit carries the new mtime alongside the manifest.
+        if let Some(id) = node_id {
+            Self::enqueue(&conn, &id, "upsert")?;
+        }
+        Ok(())
+    }
+
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         self.locks.set(ino, lock).map_err(|_| FsError::WouldBlock)
     }
@@ -1012,6 +1084,9 @@ impl<P: Provider + ?Sized> Provider for std::sync::Arc<P> {
     }
     fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
         (**self).set_mode(ino, mode)
+    }
+    fn set_mtime(&self, ino: u64, mtime: i64) -> Result<()> {
+        (**self).set_mtime(ino, mtime)
     }
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         (**self).set_lock(ino, lock)

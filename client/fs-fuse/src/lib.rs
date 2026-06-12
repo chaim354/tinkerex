@@ -28,13 +28,24 @@ fn errno(e: &FsError) -> i32 {
     }
 }
 
+/// A FUSE `setattr` time (`utimensat`/`cp -p`) as unix nanoseconds — what the provider
+/// stores for `mtime`. `Now` resolves to the current wall clock.
+fn time_or_now_nanos(t: TimeOrNow) -> i64 {
+    let st = match t {
+        TimeOrNow::SpecificTime(st) => st,
+        TimeOrNow::Now => SystemTime::now(),
+    };
+    st.duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as i64).unwrap_or(0)
+}
+
 fn file_attr(a: &Attr) -> FileAttr {
     let kind = match a.kind {
         Kind::Dir => FileType::Directory,
         Kind::File => FileType::RegularFile,
     };
+    // `a.mtime` is the real modification time in unix **nanoseconds** (preserved + synced).
     let t = if a.mtime > 0 {
-        UNIX_EPOCH + Duration::from_secs(a.mtime as u64)
+        UNIX_EPOCH + Duration::from_nanos(a.mtime as u64)
     } else {
         SystemTime::now()
     };
@@ -143,7 +154,7 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         _gid: Option<u32>,
         size: Option<u64>,
         _atime: Option<TimeOrNow>,
-        _mtime: Option<TimeOrNow>,
+        mtime: Option<TimeOrNow>,
         _ctime: Option<SystemTime>,
         _fh: Option<u64>,
         _crtime: Option<SystemTime>,
@@ -153,8 +164,9 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         reply: ReplyAttr,
     ) {
         // We persist size (truncate — the kernel issues `setattr(size=0)` on an `O_TRUNC`
-        // open) and mode (chmod — so the executable bit sticks + syncs). Owner/times are
-        // accepted as no-ops and we echo current state.
+        // open), mode (chmod — so the executable bit sticks + syncs), and mtime (the real
+        // modification time from `utimensat`/`cp -p` — preserved + synced instead of being
+        // overwritten with the sync time). Owner + atime/ctime are no-ops; we echo current state.
         if let Some(sz) = size {
             if let Err(e) = self.provider.truncate(ino, sz) {
                 reply.error(errno(&e));
@@ -163,6 +175,12 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         }
         if let Some(m) = mode {
             if let Err(e) = self.provider.set_mode(ino, m) {
+                reply.error(errno(&e));
+                return;
+            }
+        }
+        if let Some(mt) = mtime {
+            if let Err(e) = self.provider.set_mtime(ino, time_or_now_nanos(mt)) {
                 reply.error(errno(&e));
                 return;
             }

@@ -53,12 +53,15 @@ fn to_fsp(e: FsError) -> winfsp::FspError {
     status.into()
 }
 
-/// Convert a Unix mtime (seconds) to a Windows FILETIME (100 ns ticks since 1601).
-fn unix_to_filetime(secs: i64) -> u64 {
-    if secs <= 0 {
+/// Convert a Unix mtime (**nanoseconds** — what `Attr.mtime` now carries) to a Windows
+/// FILETIME (100 ns ticks since 1601). Epoch offset is 11_644_473_600 s = that many *
+/// 1e9 ns; FILETIME ticks are 100 ns, so nanos / 100.
+fn unix_to_filetime(nanos: i64) -> u64 {
+    if nanos <= 0 {
         return 0;
     }
-    ((secs as u64) + 11_644_473_600) * 10_000_000
+    const EPOCH_OFFSET_NANOS: u64 = 11_644_473_600 * 1_000_000_000;
+    ((nanos as u64) + EPOCH_OFFSET_NANOS) / 100
 }
 
 /// Populate a WinFsp `FileInfo` from our provider `Attr`.

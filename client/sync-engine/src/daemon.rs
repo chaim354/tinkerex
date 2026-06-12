@@ -26,6 +26,8 @@ use crate::{PresignedIO, SyncEngine};
 
 // FUSE bits — Linux only (macOS → WebDAV, Windows → WinFsp).
 #[cfg(target_os = "linux")]
+use crate::{EngineInvalidate, Invalidate};
+#[cfg(target_os = "linux")]
 use crate::EngineHydrator;
 #[cfg(target_os = "linux")]
 use fs_fuse::FuseAdapter;
@@ -98,12 +100,20 @@ impl Daemon {
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
 
+        // Active cache-invalidation hook. Shared by the sync loop + the freshness adapter so
+        // whichever pull applies a content change is the one that drops the kernel cache.
+        // Its FUSE notifier is injected after the mount is up (set_notifier below) — see
+        // EngineInvalidate's docs for the construction-cycle break.
+        let invalidate = EngineInvalidate::new();
+        let inval_dyn: Arc<dyn Invalidate> = Arc::new(invalidate.clone());
+
         let sync_handle = {
             let provider = provider.clone();
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll))
+            let inval = inval_dyn.clone();
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval)))
         };
         {
             let client = client.clone();
@@ -112,7 +122,7 @@ impl Daemon {
         }
 
         let hydrator = Arc::new(EngineHydrator::new(provider.clone(), client.clone()));
-        let freshness = Arc::new(crate::EngineFreshness::new(provider.clone(), client.clone()));
+        let freshness = Arc::new(crate::EngineFreshness::new(provider.clone(), client.clone(), Some(inval_dyn.clone())));
         let remote_lock = Arc::new(crate::EngineRemoteLock::new(provider.clone(), client.clone()));
         let fs = FuseAdapter::with_hydrator(provider.clone(), hydrator)
             .with_freshness(freshness)
@@ -125,6 +135,9 @@ impl Daemon {
         // spawn_mount2 runs the FUSE session loop on its own thread and returns a handle
         // that unmounts on drop — the non-blocking counterpart to mount2.
         let session = fuser::spawn_mount2(fs, &cfg.mountpoint, &opts)?;
+        // Now the session exists, hand its notifier to the invalidation hook (both the sync
+        // loop and the freshness adapter share it; before this they no-op harmlessly).
+        invalidate.set_notifier(session.notifier());
 
         Ok(Self {
             stop,
@@ -200,7 +213,7 @@ impl WebdavMount {
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll))
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None))
         };
         {
             let client = client.clone();
@@ -309,7 +322,7 @@ impl WinfspMount {
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll))
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None))
         };
         {
             let client = client.clone();
@@ -398,19 +411,22 @@ impl Drop for WinfspMount {
     }
 }
 
-/// Push the outbox + pull the changelog delta on each nudge or poll-timeout.
+/// Push the outbox + pull the changelog delta on each nudge or poll-timeout. `inval`, when
+/// present (the FUSE `Daemon`), drops the kernel cache for any inode a pull repoints at new
+/// content; the WebDAV/WinFsp mounts pass `None` (no strong push-invalidation yet).
 fn sync_loop(
     provider: Arc<SqliteProvider>,
     client: ServerClient,
     stop: Arc<AtomicBool>,
     nudge_rx: mpsc::Receiver<i64>,
     poll: Duration,
+    inval: Option<Arc<dyn crate::Invalidate>>,
 ) {
     let mut cursor = provider.cursor().unwrap_or(0);
     println!("sync loop started (cursor {cursor}, poll {poll:?})");
     while !stop.load(Ordering::Relaxed) {
         let io = PresignedIO::new(&client);
-        match SyncEngine::sync_tick(&provider, &client, &io, cursor) {
+        match SyncEngine::sync_tick_inval(&provider, &client, &io, cursor, inval.as_deref()) {
             Ok(new_cursor) => {
                 if new_cursor != cursor {
                     if let Err(e) = provider.set_cursor(new_cursor) {

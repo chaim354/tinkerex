@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_12_040000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_12_050000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -96,6 +96,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_12_040000) do
     t.boolean "deleted", default: false, null: false
     t.string "kind", null: false
     t.integer "mode"
+    t.bigint "mtime"
     t.string "name", null: false
     t.string "node_id", null: false
     t.string "parent_node_id"
@@ -116,6 +117,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_12_040000) do
     t.string "manifest_id", null: false
     t.text "manifest_json", null: false
     t.integer "mode"
+    t.bigint "mtime"
     t.string "name", null: false
     t.string "node_id", null: false
     t.string "parent_node_id"

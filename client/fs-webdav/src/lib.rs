@@ -278,8 +278,11 @@ impl DavMetaData for WebdavMeta {
         self.is_dir
     }
     fn modified(&self) -> FsResult<SystemTime> {
+        // `Attr.mtime` is the real modification time in unix **nanoseconds** (preserved +
+        // synced). Using `from_secs` here treated ~1.78e18 nanos as seconds, which
+        // `dav-server` then overflowed building an HTTP date (panic → dropped connection).
         Ok(if self.mtime > 0 {
-            UNIX_EPOCH + Duration::from_secs(self.mtime as u64)
+            UNIX_EPOCH + Duration::from_nanos(self.mtime as u64)
         } else {
             UNIX_EPOCH
         })

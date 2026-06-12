@@ -44,6 +44,24 @@ module Sync
       assert_equal 0o755, tn[:mode], "the mode is in the snapshot for other devices"
     end
 
+    test "commit stores the real mtime and tree/changes expose it (preserved, not sync time)" do
+      nid = SecureRandom.uuid
+      cid = SecureRandom.uuid
+      # An obviously-old mtime in unix nanoseconds (2001) — proves it's stored verbatim,
+      # not replaced with the commit/sync time. The bigint column must hold ~1e18 cleanly.
+      mtime = 1_000_000_000 * 1_000_000_000
+      Sync::Commit.begin(user: @user, device: @device, commit_id: cid, node_id: nid,
+                         parent_node_id: nil, name: "old.txt", base_version_id: nil, size: 5,
+                         manifest: [{ "hash" => "a" * 64, "offset" => 0, "length" => 5 }], mtime: mtime)
+      _, seq = Sync::Commit.finalize(user: @user, commit_id: cid)
+
+      assert_equal mtime, @user.nodes.find_by(node_id: nid).mtime, "stored verbatim (bigint nanos)"
+      tn = Sync::Tree.call(user: @user, after_id: 0, limit: 100)[:nodes].find { |n| n[:node_id] == nid }
+      assert_equal mtime, tn[:mtime], "the real mtime is in the snapshot for other devices"
+      ch = Sync::Changes.call(user: @user, since: seq - 1, limit: 100)[:changes].find { |c| c[:node_id] == nid }
+      assert_equal mtime, ch[:node][:mtime], "the real mtime rides the changelog delta too"
+    end
+
     test "refcounts: shared chunk increments, new chunk starts at 1" do
       x, y, z = "x" * 64, "y" * 64, "z" * 64
       commit!(name: "a", node_id: SecureRandom.uuid,

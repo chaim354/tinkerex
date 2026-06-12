@@ -113,6 +113,7 @@ mod tests {
                 kind: "file".into(),
                 deleted: false,
                 mode: Some(0o644),
+                mtime: Some(0),
             }),
             manifest: Some(vec![ChunkRef { hash: "h".into(), offset: 0, length: 1 }]),
             version: Some(VersionView { version_id: format!("v{seq}"), manifest_id: "m".into(), size: 1 }),

@@ -1,10 +1,12 @@
-//! Client-side caching & freshness. Two properties the mount depends on:
+//! Client-side caching & freshness. Properties the mount depends on:
 //!  1. A hydrated file supports random writes (the write path seeds from committed
 //!     content — the adapter's open-for-write hydrates the whole file so this can't miss).
-//!  2. A pulled remote change updates BOTH the content (new manifest → reader re-hydrates)
-//!     AND `mtime` — the signal apps and the kernel use to notice a file changed and drop
-//!     a stale cached copy. (mtime used to be permanently 0, so a same-size edit on
-//!     another device was invisible: the "opened a minute later, didn't propagate" bug.)
+//!  2. A pulled remote change updates the content (new manifest → reader re-hydrates) and
+//!     carries the source device's **real** `mtime` verbatim (Option B — see
+//!     `docs/plan-real-mtime-and-invalidation.md`). The OS cache is dropped *explicitly*
+//!     after a content-changing pull (`apply_remote` returns `content_changed`, the adapter
+//!     calls `invalidate(ino)`) — we no longer bump mtime to `now` to force the re-read,
+//!     which destroyed the file's true modification time and broke build tools.
 
 mod common;
 use common::*;
@@ -19,16 +21,16 @@ fn flush_sets_a_nonzero_mtime() {
 }
 
 #[test]
-fn remote_update_bumps_mtime_and_serves_fresh_content() {
+fn remote_update_serves_fresh_content_and_carries_real_mtime() {
     // B has the file cached. A overwrites it. After B applies A's new manifest (what a
-    // pull does), B must read the NEW content and see a bumped mtime — never the stale
-    // copy. (Shared chunk store stands in for the cloud, so B can read A's chunks.)
+    // pull does), B must read the NEW content and carry A's real edit mtime — never the
+    // stale copy, and never B's local sync time. (Shared chunk store stands in for the
+    // cloud, so B can read A's chunks.)
     let (a, b, _dir) = shared_store_pair();
     let a_ino = write_file(&a, ROOT, "doc.txt", b"version one");
     replicate_tree(&a, &b);
 
     let b_ino = b.lookup(ROOT, "doc.txt").unwrap().ino;
-    let m1 = b.getattr(b_ino).unwrap().mtime;
     let manifest1 = node_named(&b, "doc.txt").manifest_id;
     assert_eq!(read_all(&b, b_ino), b"version one");
 
@@ -36,12 +38,63 @@ fn remote_update_bumps_mtime_and_serves_fresh_content() {
     a.truncate(a_ino, 0).unwrap();
     a.write(a_ino, 0, b"a wholly different second version").unwrap();
     a.flush(a_ino).unwrap();
+    let a_mtime = a.getattr(a_ino).unwrap().mtime; // A's real edit time
     replicate_tree(&a, &b); // B's pull applies the new manifest in place
 
-    let m2 = b.getattr(b_ino).unwrap().mtime;
     assert_ne!(manifest1, node_named(&b, "doc.txt").manifest_id, "new content → new manifest");
-    assert!(m2 > 0 && m2 >= m1, "mtime is set and advances on the update (cache-invalidation signal)");
+    assert_eq!(
+        b.getattr(b_ino).unwrap().mtime, a_mtime,
+        "B carries A's real edit mtime, not B's sync time"
+    );
     assert_eq!(read_all(&b, b_ino), b"a wholly different second version", "B reads fresh, not stale");
+}
+
+#[test]
+fn pulled_node_keeps_the_source_mtime_not_now() {
+    // Option B's core property: a pull writes the *source device's* real mtime verbatim,
+    // never "now". So a file authored long ago shows its true age on every device (the
+    // old behavior stamped sync time, which broke build tools). We force an obviously-old
+    // mtime on A, sync to B, and assert B reads back that exact value.
+    let (a, b, _dir) = shared_store_pair();
+    let a_ino = write_file(&a, ROOT, "old.txt", b"authored in 2001");
+
+    // 2001-09-09T01:46:40Z in unix nanoseconds — far from any "now".
+    let old_mtime: i64 = 1_000_000_000 * 1_000_000_000;
+    a.set_mtime(a_ino, old_mtime).unwrap();
+    assert_eq!(a.getattr(a_ino).unwrap().mtime, old_mtime, "set_mtime sticks locally");
+    assert_eq!(node_named(&a, "old.txt").mtime, old_mtime, "real mtime is exported for sync");
+
+    replicate_tree(&a, &b);
+    let b_ino = b.lookup(ROOT, "old.txt").unwrap().ino;
+    assert_eq!(
+        b.getattr(b_ino).unwrap().mtime, old_mtime,
+        "B sees the source mtime verbatim — not the sync time"
+    );
+}
+
+#[test]
+fn apply_remote_reports_content_change_for_cache_invalidation() {
+    // The adapter must drop its OS cache when a pull repoints an existing inode at new
+    // content (we no longer bump mtime to force that). `apply_remote` returns that signal.
+    let (a, b, _dir) = shared_store_pair();
+    let a_ino = write_file(&a, ROOT, "doc.txt", b"v1");
+    // First apply: brand-new node on B → nothing cached → no invalidation needed.
+    let first = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
+    assert!(!first.content_changed, "a new node has nothing cached to invalidate");
+    let b_ino = b.lookup(ROOT, "doc.txt").unwrap().ino;
+    assert_eq!(first.ino, b_ino, "outcome carries the local inode");
+
+    // Re-apply the SAME content (metadata-only churn) → not a content change.
+    let same = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
+    assert!(!same.content_changed, "same manifest → no invalidation");
+
+    // A overwrites; the new manifest differs → existing inode must be invalidated.
+    a.truncate(a_ino, 0).unwrap();
+    a.write(a_ino, 0, b"a different, longer second version").unwrap();
+    a.flush(a_ino).unwrap();
+    let changed = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
+    assert!(changed.content_changed, "new manifest on an existing inode → invalidate");
+    assert_eq!(changed.ino, b_ino, "same inode, repointed");
 }
 
 #[test]
