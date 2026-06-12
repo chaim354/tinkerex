@@ -8,7 +8,7 @@
 //! 2. A read of a dehydrated file raises **FETCH_DATA**; [`fetch_data_callback`] resolves the
 //!    placeholder's `FileIdentity` → `node_id`, runs the hydrate hook (presigned GET into the
 //!    chunk cache), reads the requested range from the `Provider`, and hands the bytes back
-//!    with `CfExecuteOperation(TRANSFER_DATA)`.
+//!    with `CfExecute(TRANSFER_DATA)`.
 //! 3. A pulled remote content change calls [`CfApiInvalidate::invalidate`] →
 //!    `CfUpdatePlaceholder` (+ dehydrate), so the next read re-fetches (the CfAPI analogue of
 //!    the FUSE `notify_inval_inode`).
@@ -16,8 +16,10 @@
 //! Phase 2 (NOT here): capturing **local** edits (the OS owns the on-disk bytes) via a USN /
 //! `ReadDirectoryChangesW` watcher → `Provider::ingest_bytes` → push → `CfSetInSyncState`.
 //!
-//! UNVERIFIED on Windows: authored on macOS against `windows` 0.61; compiled by the
-//! `cfapi-windows` CI job, runtime-smoke per `BUILD.md`. Gaps flagged `LIMITATION:`/`PHASE 2:`.
+//! Runtime-UNVERIFIED on Windows, but it **typechecks for the Windows target** — built on
+//! macOS via `cargo check --target x86_64-pc-windows-gnu` (windows 0.61) and by the
+//! `cfapi-windows` CI job. Runtime behavior needs the smoke test in `BUILD.md`. Gaps flagged
+//! `LIMITATION:`/`PHASE 2:`.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -28,12 +30,12 @@ use std::sync::{Arc, Mutex};
 use fs_provider::{Kind, Provider, SqliteProvider, ROOT_INO};
 use widestring::U16CString;
 use windows::core::{GUID, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, STATUS_SUCCESS};
+use windows::Win32::Foundation::{CloseHandle, STATUS_SUCCESS};
 use windows::Win32::Storage::CloudFilters::*;
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-    OPEN_EXISTING,
+    CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO, FILE_FLAGS_AND_ATTRIBUTES,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 
 use crate::{unix_nanos_to_filetime, FileIdentity};
@@ -45,7 +47,7 @@ pub type Hydrate = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// A fixed provider id for the sync-root registration (one logical cloud provider). A real
 /// multi-account build would derive this per user; one constant is fine for v1.
-const PROVIDER_ID: GUID = GUID::from_u128(0x6d_61_6b_65_72_00_00_00_00_00_00_00_00_00_00_01);
+const PROVIDER_ID: GUID = GUID::from_u128(0x6d61_6b65_7200_0000_0000_0000_0000_0001);
 const PROVIDER_NAME: &str = "Maker";
 const PROVIDER_VERSION: &str = "1.0";
 
@@ -69,7 +71,7 @@ pub struct CfApiMountHandle {
 unsafe impl Send for CfApiMountHandle {}
 
 fn to_wide(s: &str) -> U16CString {
-    U16CString::from_str(s).expect("path has no interior NUL")
+    U16CString::from_str(s).expect("string has no interior NUL")
 }
 
 fn path_wide(p: &Path) -> U16CString {
@@ -87,25 +89,20 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         connection_key: Mutex::new(None),
     }));
 
-    // Connect the callback table. The terminator entry has Type CF_CALLBACK_TYPE_NONE.
-    let callbacks = [
-        CF_CALLBACK_REGISTRATION {
-            Callback: Some(fetch_data_callback),
-            Type: CF_CALLBACK_TYPE_FETCH_DATA,
-        },
-        CF_CALLBACK_REGISTRATION {
-            Callback: None,
-            Type: CF_CALLBACK_TYPE_NONE,
-        },
-    ];
-    let mut key = CF_CONNECTION_KEY::default();
+    // The callback table must outlive the connection, so leak it (one small leak per mount).
+    // Terminated by a CF_CALLBACK_TYPE_NONE entry.
+    let callbacks: &'static [CF_CALLBACK_REGISTRATION] = Box::leak(Box::new([
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(fetch_data_callback) },
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NONE, Callback: None },
+    ]));
+
+    let root_w = path_wide(root);
     unsafe {
-        CfConnectSyncRoot(
-            PCWSTR(path_wide(root).as_ptr()),
+        let key = CfConnectSyncRoot(
+            PCWSTR(root_w.as_ptr()),
             callbacks.as_ptr(),
             Some(state as *const c_void),
             CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO | CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH,
-            &mut key,
         )
         .map_err(win_err)?;
         (*state).connection_key.lock().unwrap().replace(key);
@@ -135,25 +132,21 @@ fn register_sync_root(root: &Path) -> std::io::Result<()> {
     let policies = CF_SYNC_POLICIES {
         StructSize: std::mem::size_of::<CF_SYNC_POLICIES>() as u32,
         Hydration: CF_HYDRATION_POLICY {
-            Primary: CF_HYDRATION_POLICY_PRIMARY(CF_HYDRATION_POLICY_FULL.0 as i16),
-            Modifier: CF_HYDRATION_POLICY_MODIFIER(CF_HYDRATION_POLICY_MODIFIER_NONE.0 as i16),
+            Primary: CF_HYDRATION_POLICY_FULL,
+            Modifier: CF_HYDRATION_POLICY_MODIFIER_NONE,
         },
         Population: CF_POPULATION_POLICY {
-            Primary: CF_POPULATION_POLICY_PRIMARY(CF_POPULATION_POLICY_FULL.0 as i16),
-            Modifier: CF_POPULATION_POLICY_MODIFIER(CF_POPULATION_POLICY_MODIFIER_NONE.0 as i16),
+            Primary: CF_POPULATION_POLICY_FULL,
+            Modifier: CF_POPULATION_POLICY_MODIFIER_NONE,
         },
         InSync: CF_INSYNC_POLICY_NONE,
         HardLink: CF_HARDLINK_POLICY_NONE,
         ..Default::default()
     };
+    let root_w = path_wide(root);
     unsafe {
-        CfRegisterSyncRoot(
-            PCWSTR(path_wide(root).as_ptr()),
-            &registration,
-            &policies,
-            CF_REGISTER_FLAG_UPDATE,
-        )
-        .map_err(win_err)?;
+        CfRegisterSyncRoot(PCWSTR(root_w.as_ptr()), &registration, &policies, CF_REGISTER_FLAG_UPDATE)
+            .map_err(win_err)?;
     }
     Ok(())
 }
@@ -166,27 +159,25 @@ fn populate(provider: &SqliteProvider, root: &Path) -> std::io::Result<()> {
     let mut queue: Vec<(u64, PathBuf)> = vec![(ROOT_INO, root.to_path_buf())];
     while let Some((ino, dir)) = queue.pop() {
         let children = provider.readdir(ino).map_err(fs_err)?;
-        // Build the placeholder array for this directory in one CfCreatePlaceholders call.
-        let mut creates: Vec<PlaceholderHolder> = Vec::new();
+        // Backing storage for the placeholder pointers (names + identities) must outlive the
+        // CfCreatePlaceholders call, so hold the holders for this whole directory.
+        let mut holders: Vec<PlaceholderHolder> = Vec::new();
         for c in &children {
             let attr = provider.getattr(c.ino).map_err(fs_err)?;
-            let node_id = provider
-                .node_id_for(c.ino)
-                .map_err(fs_err)?
-                .unwrap_or_default();
-            creates.push(PlaceholderHolder::new(&c.name, &node_id, attr.size, attr.mtime, c.kind == Kind::Dir));
+            let node_id = provider.node_id_for(c.ino).map_err(fs_err)?.unwrap_or_default();
+            holders.push(PlaceholderHolder::new(&c.name, &node_id, attr.size, attr.mtime, c.kind == Kind::Dir));
             if c.kind == Kind::Dir {
                 queue.push((c.ino, dir.join(&c.name)));
             }
         }
-        if !creates.is_empty() {
-            let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = creates.iter().map(|h| h.info()).collect();
+        if !holders.is_empty() {
+            let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = holders.iter().map(|h| h.info()).collect();
+            let dir_w = path_wide(&dir);
             let mut processed = 0u32;
             unsafe {
                 CfCreatePlaceholders(
-                    PCWSTR(path_wide(&dir).as_ptr()),
-                    infos.as_mut_ptr(),
-                    infos.len() as u32,
+                    PCWSTR(dir_w.as_ptr()),
+                    &mut infos,
                     CF_CREATE_FLAG_NONE,
                     Some(&mut processed),
                 )
@@ -202,8 +193,8 @@ fn populate(provider: &SqliteProvider, root: &Path) -> std::io::Result<()> {
 struct PlaceholderHolder {
     name: U16CString,
     identity: Vec<u8>,
-    size: u64,
-    mtime_filetime: u64,
+    size: i64,
+    mtime_ticks: i64,
     is_dir: bool,
 }
 
@@ -212,32 +203,31 @@ impl PlaceholderHolder {
         Self {
             name: to_wide(name),
             identity: FileIdentity::from_node_id(node_id).0,
-            size: if is_dir { 0 } else { size },
-            mtime_filetime: unix_nanos_to_filetime(mtime_nanos),
+            size: if is_dir { 0 } else { size as i64 },
+            // CfAPI metadata times are i64 (100 ns ticks since 1601) — exactly our FILETIME.
+            mtime_ticks: unix_nanos_to_filetime(mtime_nanos) as i64,
             is_dir,
         }
     }
     fn info(&self) -> CF_PLACEHOLDER_CREATE_INFO {
-        // CfAPI metadata times are i64 (100 ns ticks since 1601) — exactly our FILETIME u64.
-        let t = self.mtime_filetime as i64;
         let attrs = if self.is_dir { 0x10 /* FILE_ATTRIBUTE_DIRECTORY */ } else { FILE_ATTRIBUTE_NORMAL.0 };
         CF_PLACEHOLDER_CREATE_INFO {
             RelativeFileName: PCWSTR(self.name.as_ptr()),
             FsMetadata: CF_FS_METADATA {
-                FileSize: self.size as i64,
-                BasicInfo: windows::Win32::Storage::FileSystem::FILE_BASIC_INFO {
-                    CreationTime: t,
-                    LastAccessTime: t,
-                    LastWriteTime: t,
-                    ChangeTime: t,
+                FileSize: self.size,
+                BasicInfo: FILE_BASIC_INFO {
+                    CreationTime: self.mtime_ticks,
+                    LastAccessTime: self.mtime_ticks,
+                    LastWriteTime: self.mtime_ticks,
+                    ChangeTime: self.mtime_ticks,
                     FileAttributes: attrs,
                 },
             },
             FileIdentity: self.identity.as_ptr() as *const c_void,
             FileIdentityLength: self.identity.len() as u32,
-            // Mark the placeholder in-sync (just populated from the source of truth); a later
-            // content change dehydrates it via CfUpdatePlaceholder. Disable on-demand
-            // population since Phase 1 fully populates up front.
+            // Mark in-sync (just populated from the source of truth); a later content change
+            // dehydrates it via CfUpdatePlaceholder. Disable on-demand population — Phase 1
+            // fully populates up front.
             Flags: CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC | CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
             ..Default::default()
         }
@@ -245,7 +235,7 @@ impl PlaceholderHolder {
 }
 
 /// FETCH_DATA: the kernel needs bytes for a dehydrated placeholder. Resolve node → hydrate →
-/// read the requested range → hand it back with `CfExecuteOperation(TRANSFER_DATA)`.
+/// read the requested range → hand it back with `CfExecute(TRANSFER_DATA)`.
 unsafe extern "system" fn fetch_data_callback(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
@@ -282,7 +272,7 @@ unsafe extern "system" fn fetch_data_callback(
     };
     let data = match state.provider.read(ino, offset as u64, length as u32) {
         Ok(d) => d,
-        Err(_) => return, // a real impl reports CfExecuteOperation with an error status
+        Err(_) => return, // a fuller impl reports an error completion status instead
     };
 
     // Hand the bytes to the kernel.
@@ -291,14 +281,14 @@ unsafe extern "system" fn fetch_data_callback(
         Type: CF_OPERATION_TYPE_TRANSFER_DATA,
         ConnectionKey: info.ConnectionKey,
         TransferKey: info.TransferKey,
-        CorrelationVector: info.CorrelationVector,
+        CorrelationVector: info.CorrelationVector as *const _,
         SyncStatus: std::ptr::null(),
         RequestKey: info.RequestKey,
     };
     let mut op_params = CF_OPERATION_PARAMETERS {
         ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
         Anonymous: CF_OPERATION_PARAMETERS_0 {
-            TransferData: CF_OPERATION_PARAMETERS_0_2 {
+            TransferData: CF_OPERATION_PARAMETERS_0_0 {
                 Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
                 CompletionStatus: STATUS_SUCCESS,
                 Buffer: data.as_ptr() as *const c_void,
@@ -307,7 +297,7 @@ unsafe extern "system" fn fetch_data_callback(
             },
         },
     };
-    let _ = CfExecuteOperation(&op_info, &mut op_params);
+    let _ = CfExecute(&op_info, &mut op_params);
 }
 
 impl CfApiMountHandle {
@@ -317,10 +307,8 @@ impl CfApiMountHandle {
     pub fn is_running(&self) -> bool {
         !self.stop.load(Ordering::Relaxed)
     }
-    /// Block until Ctrl-C, then tear down (for the `maker-cfapi` CLI).
+    /// Block until stopped (for the `maker-cfapi` CLI; the caller sets `stop` on Ctrl-C/exit).
     pub fn run_until_ctrl_c(self) {
-        let stop = self.stop.clone();
-        let _ = ctrlc_set(move || stop.store(true, Ordering::Relaxed));
         while !self.stop.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(200));
         }
@@ -336,7 +324,8 @@ impl Drop for CfApiMountHandle {
             if let Some(key) = (*self.state).connection_key.lock().unwrap().take() {
                 let _ = CfDisconnectSyncRoot(key);
             }
-            let _ = CfUnregisterSyncRoot(PCWSTR(path_wide(&self.root).as_ptr()));
+            let root_w = path_wide(&self.root);
+            let _ = CfUnregisterSyncRoot(PCWSTR(root_w.as_ptr()));
             // Reclaim the leaked state.
             drop(Box::from_raw(self.state));
         }
@@ -363,20 +352,14 @@ impl CfApiInvalidate {
         if let Some(p) = self.paths.lock().unwrap().get(&ino) {
             return Some(p.clone());
         }
-        // Walk parents via readdir from the root. (O(tree) — fine for invalidation, which is
-        // rare; PHASE 2: maintain an ino→path index during populate for O(1).)
-        let p = self.resolve_by_walk(ino)?;
-        self.paths.lock().unwrap().insert(ino, p.clone());
-        Some(p)
-    }
-
-    fn resolve_by_walk(&self, target: u64) -> Option<PathBuf> {
-        // DFS from root building paths until we hit `target`.
+        // DFS from root building paths until we hit `target`. O(tree) — fine for invalidation,
+        // which is rare. PHASE 2: maintain an ino→path index during populate for O(1).
         let mut stack = vec![(ROOT_INO, self.root.clone())];
-        while let Some((ino, path)) = stack.pop() {
-            for e in self.provider.readdir(ino).ok()? {
+        while let Some((dir_ino, path)) = stack.pop() {
+            for e in self.provider.readdir(dir_ino).ok()? {
                 let child = path.join(&e.name);
-                if e.ino == target {
+                if e.ino == ino {
+                    self.paths.lock().unwrap().insert(ino, child.clone());
                     return Some(child);
                 }
                 if e.kind == Kind::Dir {
@@ -392,10 +375,11 @@ impl CfApiInvalidate {
             Some(p) => p,
             None => return,
         };
+        let path_w = path_wide(&path);
         unsafe {
             // Open a handle to the placeholder (backup semantics so dirs work too).
             let handle = match CreateFileW(
-                PCWSTR(path_wide(&path).as_ptr()),
+                PCWSTR(path_w.as_ptr()),
                 (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 None,
@@ -420,8 +404,6 @@ impl CfApiInvalidate {
             );
             let _ = CloseHandle(handle);
         }
-        // Keep `provider`/`root` referenced even on the early-return paths.
-        let _ = (&self.provider, &self.root);
     }
 }
 
@@ -430,12 +412,4 @@ fn win_err(e: windows::core::Error) -> std::io::Error {
 }
 fn fs_err(e: fs_provider::FsError) -> std::io::Error {
     std::io::Error::other(format!("provider: {e}"))
-}
-
-/// Minimal Ctrl-C hook without a dep: install a console control handler.
-#[allow(unused_variables)]
-fn ctrlc_set(f: impl Fn() + Send + 'static) -> std::io::Result<()> {
-    // PHASE 2: wire SetConsoleCtrlHandler. For the smoke test, the process is killed
-    // directly; the Drop impl still unregisters the sync root on exit.
-    Ok(())
 }

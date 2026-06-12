@@ -5,9 +5,10 @@
 normal **sync-root folder** under your profile (not a drive letter), as placeholders that
 **hydrate on demand** when read in Explorer.
 
-> **Status — Phase 1 (download/read half), UNVERIFIED on real hardware.** The FFI was
-> authored on macOS against the `windows` 0.61 CloudFilters API; the `cfapi-windows` CI job
-> compiles it, but runtime behavior needs the smoke test below. Local-edit→upload capture is
+> **Status — Phase 1 (download/read half), runtime-UNVERIFIED on real hardware.** The FFI
+> **typechecks for the Windows target** (built on macOS via
+> `cargo check --target x86_64-pc-windows-gnu`, and the `cfapi-windows` CI job), but its
+> *runtime* behavior against a live sync root needs the smoke test below. Local-edit→upload capture is
 > **Phase 2** (a USN-journal watcher → `Provider::ingest_bytes` → push). See
 > `docs/plan-windows-cfapi-migration.md`. The cross-platform pure logic (`FileIdentity`,
 > FILETIME, placeholder decisions) IS unit-tested (`cargo test -p fs-cfapi`, runs anywhere).

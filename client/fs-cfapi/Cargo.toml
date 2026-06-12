@@ -16,9 +16,11 @@ fs-provider = { path = "../fs-provider" }
 widestring = "1"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
-    "Win32_Storage_FileSystem",
-    "Win32_Storage_CloudFilters",
-    "Win32_System_Com",
+    "Win32_Security",                  # SECURITY_ATTRIBUTES (CreateFileW)
+    "Win32_Storage_FileSystem",        # FILE_BASIC_INFO, CreateFileW, FILE_* flags
+    "Win32_Storage_CloudFilters",      # the CfAPI surface
+    "Win32_System_CorrelationVector",  # gates CF_CALLBACK_*/CF_OPERATION_INFO + CfConnectSyncRoot
+    "Win32_System_IO",                 # OVERLAPPED (CfUpdatePlaceholder)
 ] }
 
 [[bin]]
