@@ -451,6 +451,20 @@ impl CfApiMount {
         let stop = Arc::new(AtomicBool::new(false));
         let (nudge_tx, nudge_rx) = mpsc::channel::<i64>();
 
+        // Pull the current tree before mounting (so the first enumeration shows the library)
+        // and **reset the cursor to the snapshot head**. This must happen before the sync
+        // thread starts (it reads the cursor once). A reused DB can carry a cursor from a
+        // *different/larger* library that's ahead of this one's head_seq — then the delta pull
+        // ("changes after <stale cursor>") returns nothing and remote edits never apply.
+        // Snapshotting + resetting the cursor reconciles that.
+        match SyncEngine::pull_snapshot(&provider, &client) {
+            Ok(head) => {
+                let _ = provider.set_cursor(head);
+                println!("cfapi: initial pull complete (head_seq {head}, cursor reset)");
+            }
+            Err(e) => eprintln!("cfapi: initial pull failed (will populate as the loop catches up): {e}"),
+        }
+
         // Cache-invalidation hook over CfUpdatePlaceholder (no construction cycle here — CfAPI
         // resolves paths + opens handles itself, so it needs no post-mount notifier).
         let inval: Arc<dyn crate::Invalidate> = Arc::new(EngineCfInvalidate(
@@ -483,14 +497,6 @@ impl CfApiMount {
                 }
             })
         };
-
-        // Pull the current tree before mounting so the first Explorer enumeration shows the
-        // library (the background loop keeps it fresh after; on-demand FETCH_PLACEHOLDERS reads
-        // whatever the provider has by then, so this is best-effort).
-        match SyncEngine::pull_snapshot(&provider, &client) {
-            Ok(head) => println!("cfapi: initial pull complete (head_seq {head})"),
-            Err(e) => eprintln!("cfapi: initial pull failed (will populate as the loop catches up): {e}"),
-        }
 
         // Register + connect (on-demand population via FETCH_PLACEHOLDERS). The handle keeps
         // the sync root alive.
