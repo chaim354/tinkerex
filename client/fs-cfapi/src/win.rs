@@ -464,22 +464,17 @@ impl CfApiMountHandle {
 impl Drop for CfApiMountHandle {
     fn drop(&mut self) {
         unsafe {
+            // Disconnect the provider, but deliberately do NOT unregister the sync root or
+            // remove the folder. Hydrated files keep their bytes on disk so the user can
+            // "download what they need, then work offline"; the registration persists so a
+            // restart reconnects and the placeholders stay valid. (Online-only files still
+            // need the daemon running to hydrate; removing a library is a separate action.)
             if let Some(key) = (*self.state).connection_key.lock().unwrap().take() {
                 let _ = CfDisconnectSyncRoot(key);
             }
-            let root_w = path_wide(&self.root);
-            let _ = CfUnregisterSyncRoot(PCWSTR(root_w.as_ptr()));
-            // Reclaim the leaked state.
             drop(Box::from_raw(self.state));
         }
-        // Tear down the on-disk sync root: once unregistered, the placeholders are orphaned
-        // regular files (and any hydrated bytes sit on disk). Remove the folder so a stop
-        // leaves no stale mount behind — the library lives on the server and re-appears on the
-        // next mount. (The data is never lost: it's pulled fresh from the server.)
-        match std::fs::remove_dir_all(&self.root) {
-            Ok(()) => eprintln!("cfapi: removed sync-root folder {}", self.root.display()),
-            Err(e) => eprintln!("cfapi: could not remove {} (remove it manually): {e}", self.root.display()),
-        }
+        eprintln!("cfapi: disconnected — sync root + hydrated files kept for offline use");
     }
 }
 

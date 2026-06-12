@@ -11,9 +11,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use std::collections::HashMap;
+
 use fs_provider::{ChunkConfig, LocalChunkStore, Provider, SqliteProvider, ROOT_INO};
 use sync_client::ServerClient;
-use sync_engine::{SharedDirIO, SyncEngine};
+use sync_engine::{ChunkIO, SharedDirIO, SyncEngine};
 
 /// `Some(url)` if a test server is configured, else `None` → the test prints a skip
 /// notice and returns. (Macro so the early-return lands in the test body.)
@@ -263,6 +265,55 @@ fn executable_bit_propagates_across_devices() {
     SyncEngine::pull_snapshot(&b, &cb).unwrap();
     let bf = b.lookup(ROOT_INO, "flash.sh").unwrap();
     assert_eq!(b.getattr(bf.ino).unwrap().mode, 0o755, "chmod +x on A is visible on B");
+}
+
+// ---- offline availability after hydration (cross-platform) --------------------------
+
+/// A chunk transport that's "offline": every fetch fails. Used to prove a read after
+/// hydration never touches the network — the bytes come from the local cache.
+struct OfflineIO;
+impl ChunkIO for OfflineIO {
+    fn put(&self, hash: &str, _urls: &HashMap<String, String>, _bytes: Vec<u8>) -> sync_engine::Result<()> {
+        Err(sync_engine::Error::NoUrl(format!("offline: {hash}")))
+    }
+    fn get(&self, hash: &str, _url: Option<&str>) -> sync_engine::Result<Vec<u8>> {
+        Err(sync_engine::Error::NoUrl(format!("offline: {hash}")))
+    }
+}
+
+#[test]
+fn hydrated_file_stays_readable_offline() {
+    // The offline guarantee (same on macOS/Windows/Linux — it's all the shared Provider +
+    // engine): once a file is hydrated, its chunks live in the local content-addressed cache,
+    // so the user can "download what they need, then go offline" and still read it. We hydrate
+    // online, then point the engine at a DEAD server + a chunk source that errors, and confirm
+    // a re-hydrate fetches nothing (everything's cached) and the read serves from the cache.
+    let url = server_url!();
+    let (ca, cb, cloud) = two_devices(&url);
+
+    // A pushes a multi-chunk file.
+    let a = dev();
+    let f = a.create(ROOT_INO, "offline.bin").unwrap();
+    let body: Vec<u8> = (0..6000u32).map(|i| (i % 251) as u8).collect();
+    a.write(f.ino, 0, &body).unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push_outbox(&a, &ca, &cloud).unwrap();
+
+    // B pulls the tree and hydrates the file ONLINE (chunks land in B's local cache).
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).unwrap();
+    let bf = b.lookup(ROOT_INO, "offline.bin").unwrap();
+    let node_id = b.node_id_for(bf.ino).unwrap().unwrap();
+    SyncEngine::hydrate(&b, &cb, &cloud, &node_id).unwrap();
+    assert_eq!(read_all(&b, bf.ino), body, "online read OK after hydrate");
+
+    // Now go OFFLINE: an unreachable server + a chunk source that errors on every fetch.
+    let dead = ServerClient::new("http://127.0.0.1:9"); // nothing listening
+    // A re-hydrate must NOT contact the network — all chunks are already cached, so it finds
+    // nothing missing and never calls the (failing) transport or the (dead) server.
+    SyncEngine::hydrate(&b, &dead, &OfflineIO, &node_id).expect("offline re-hydrate is a no-op");
+    // And the file still reads byte-for-byte, served entirely from the local cache.
+    assert_eq!(read_all(&b, bf.ino), body, "hydrated file reads OFFLINE from the local cache");
 }
 
 // ---- real mtime preservation across devices ----------------------------------------
