@@ -63,6 +63,17 @@ fn creds_path() -> PathBuf {
     app_base().join("credentials.json")
 }
 
+/// Per-account local state dir (the SQLite tree + chunk cache), keyed by `(server, email)` —
+/// the same identity the saved token is keyed by. Without this the local tree.db is shared
+/// across accounts, so mounting a *different* account shows the previous one's files (its
+/// changelog never deletes them). Hashed so the path has no `://`/`@`/separator surprises.
+fn account_dir(server: &str, email: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    creds_key(server, email).hash(&mut h);
+    app_base().join(format!("acct-{:016x}", h.finish()))
+}
+
 fn creds_key(server: &str, email: &str) -> String {
     format!("{server}|{email}")
 }
@@ -93,6 +104,7 @@ fn save_token(server: &str, email: &str, token: &str) {
 fn mount_with_token(
     state: &State<AppState>,
     server_url: &str,
+    email: &str,
     mountpoint: &str,
     token: String,
 ) -> Result<String, String> {
@@ -103,8 +115,11 @@ fn mount_with_token(
         return Err("already mounted — unmount first".into());
     }
 
-    let db = app_base().join("tree.db");
-    let chunks = app_base().join("chunks");
+    // Per-account local tree + chunk cache, so switching accounts doesn't surface the
+    // previous account's files from a shared tree.db.
+    let base = account_dir(server_url, email);
+    let db = base.join("tree.db");
+    let chunks = base.join("chunks");
     std::fs::create_dir_all(&chunks).map_err(|e| format!("chunk dir: {e}"))?;
     // Expand a leading `~` and make the path absolute. The `.app`'s working directory is `/`,
     // so a bare `~/Maker` (which the UI suggests) or a relative path resolves under the
@@ -152,7 +167,7 @@ fn sync_start(
         }
     };
 
-    mount_with_token(&state, &server_url, &mountpoint, token)
+    mount_with_token(&state, &server_url, &email, &mountpoint, token)
 }
 
 /// Redeem a pairing code to join an existing library on this (new) device, then mount.
@@ -171,7 +186,7 @@ fn sync_pair(
         .pair(&email, &code, "maker-app")
         .map_err(|e| format!("pairing failed: {e}"))?;
     save_token(&server_url, &email, &reg.device_token);
-    mount_with_token(&state, &server_url, &mountpoint, reg.device_token)
+    mount_with_token(&state, &server_url, &email, &mountpoint, reg.device_token)
 }
 
 /// On a signed-in device, mint a pairing code for adding another device. Returns the
