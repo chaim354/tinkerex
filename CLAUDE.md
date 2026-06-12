@@ -199,26 +199,43 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
 > backend per-OS via a `Mount` type alias; commands are identical everywhere.
 
-**Built + verified (~110 tests green + live cross-stack + cross-OS demos):**
-- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **41 tests** (commit/
+> **Branch `auth-caching-security` (2026-06-12, all CI green):** a large hardening arc on
+> top of the deployed stack — device **pairing** auth + cross-user security audit;
+> client **caching/freshness** (mtime + full-hydrate-on-write + freshness-on-open);
+> **file browser + version/restore UI**; local + **best-effort cross-device file locking**;
+> **conflict detection + keep/split resolution** (replacing silent LWW); and **file-mode
+> (executable-bit) preservation**. External conformance (rclone/fsx/pjdfstest) re-run: data
+> plane byte-perfect, POSIX-perms gaps deliberate. Next up: real-mtime + active cache
+> invalidation — see `docs/plan-real-mtime-and-invalidation.md`.
+
+**Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
   refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog
-  pagination / `oldest_seq` backstop signal, tenant isolation, **auth: register
-  hardening + device pairing**).
+  pagination / `oldest_seq` backstop, tenant isolation, **auth: register hardening +
+  device pairing**, **conflict detect/keep/split**, **best-effort edit locks**, **file-mode
+  sync**).
 - `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **53 tests** across hermetic suites (`tests/`): **caching** (mtime-freshness + random-write-on-hydrated), **chunking**
   (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
   **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
   **convergence** (3-replica FakeFolder-style random op stream + durability + idempotency),
   **concurrency** (shared `Arc` threads + chunk-store race). Modeled on rclone-fstests /
   restic-chunker / ownCloud-FakeFolder / JuiceFS-pjdfstest.
-- `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
-- `sync-client`: API + chunk transfer + pull-apply. 5 tests.
+- `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder. Now also persists +
+  syncs file **mode** (chmod/executable bit), local advisory **locks** (`setlk`/`getlk`),
+  **freshness**-on-open, and best-effort **remote-lock** acquire/release.
+- `sync-client`: typed API + chunk transfer + pull-apply, plus pairing/conflict/lock/
+  versions methods. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
-  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`. **Server-backed
-  integration suite** (`tests/integration.rs`, **9 tests**: roundtrip, delete/move delta,
-  last-writer-wins, hydrate-only-missing + hydrate-after-conflict, push dedup, cursor
-  monotonicity, **changelog paging through a backlog**, **offline reconcile on reconnect**)
-  — skips when no server, run in CI against a booted `STORAGE_BACKEND=memory` Rails
-  (`rust-client.yml`).
+  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`/`EngineFreshness`/
+  `EngineRemoteLock`. **Server-backed integration suite** (`tests/integration.rs`,
+  **14 tests**: roundtrip, delete/move delta, hydrate (only-missing/after-conflict), push
+  dedup, cursor monotonicity, changelog paging, offline reconcile, **freshness-on-access**,
+  **pairing**, **offline-edit conflict + split**, **best-effort lock coordination**,
+  **executable-bit propagation**) — skips with no server; CI boots `STORAGE_BACKEND=memory`
+  Rails (`rust-client.yml`).
+- **External conformance** (`client/test-conformance/`): rclone⇄WebDAV (gating, 0 diffs),
+  fsx⇄FUSE (gating, 100k ops no mismatch), pjdfstest⇄FUSE (informational POSIX map). New CI
+  `mount-conformance` job.
 - **Two foundation bugs the suite caught + fixed:** (1) `rename` over an existing name hit
   the unique index instead of POSIX-replacing → **atomic saves (write-temp-then-rename)
   were broken**; now replaces + tombstones the displaced node. (2) `truncate(ino, 0)` read
@@ -325,11 +342,23 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    silent data-loss bug) and **full-resyncs** when its cursor is below the server's
    reported `oldest_seq` (pruned-gap detection; `Sync::Gc.prune_changelog!` is the
    retention op). Still open: FUSE-T's *deferred `release`* (flush-on-close isn't
-   synchronous), `Sync::Changes` N+1 preloading.
-7. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
+   synchronous), `Sync::Changes` N+1 preloading. **Concurrency: conflict detection** (each
+   commit sends `base_version_id`; stale base → recorded conflict + keep/split resolution,
+   replacing silent LWW — §6) and **best-effort cross-device + local file locking** are
+   **DONE** (2026-06-12).
+7. **Caching/freshness DONE** (2026-06-12): full-hydrate on write-open (random writes can't
+   miss), freshness-on-open catch-up pull, and **file-mode (executable-bit) preservation**
+   synced end-to-end. **NEXT (planned, not started): real-mtime preservation + active cache
+   invalidation** — replace the `mtime = now`-on-pull freshness hack (which breaks build-tool
+   mtimes) with synced real mtime + an adapter `invalidate(ino)` hook (FUSE
+   `notify_inval_inode`); designed to map onto the future CfAPI / macOS File-Provider
+   migrations. Full plan: **`docs/plan-real-mtime-and-invalidation.md`**.
+8. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
    is config — see `docs/SYNC_SERVER.md`).
-8. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
-   concern from file sync; references files by `node_id`.
+9. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
+   concern from file sync; references files by `node_id`. Groundwork landed: the Tauri app
+   has a **file browser + version-history/restore UI + conflict-resolution popup + lock
+   indicators** (`client/maker-app`).
 
 ---
 
