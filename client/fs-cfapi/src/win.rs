@@ -438,13 +438,36 @@ impl CfApiInvalidate {
     }
 
     pub fn invalidate(&self, ino: u64) {
+        // path cache can hold a stale entry if a node was renamed; for a content change the
+        // name is unchanged, so the cache is fine. Re-resolve on a miss.
         let path = match self.path_for(ino) {
             Some(p) => p,
-            None => return,
+            None => {
+                eprintln!("cfapi: invalidate ino={ino} — no path (not yet enumerated?)");
+                return;
+            }
+        };
+        // The new size + mtime to stamp on the placeholder (so it reports the new version).
+        let attr = match self.provider.getattr(ino) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("cfapi: invalidate ino={ino} getattr failed: {e}");
+                return;
+            }
+        };
+        let t = unix_nanos_to_filetime(attr.mtime) as i64;
+        let metadata = CF_FS_METADATA {
+            FileSize: attr.size as i64,
+            BasicInfo: FILE_BASIC_INFO {
+                CreationTime: t,
+                LastAccessTime: t,
+                LastWriteTime: t,
+                ChangeTime: t,
+                FileAttributes: FILE_ATTRIBUTE_NORMAL.0,
+            },
         };
         let path_w = path_wide(&path);
         unsafe {
-            // Open a handle to the placeholder (backup semantics so dirs work too).
             let handle = match CreateFileW(
                 PCWSTR(path_w.as_ptr()),
                 (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
@@ -455,13 +478,17 @@ impl CfApiInvalidate {
                 None,
             ) {
                 Ok(h) => h,
-                Err(_) => return,
+                Err(e) => {
+                    eprintln!("cfapi: invalidate ino={ino} open {} failed: {e}", path.display());
+                    return;
+                }
             };
-            // Update metadata + dehydrate the whole file so the next read re-fetches.
+            // Update the placeholder to the new version's metadata AND dehydrate the stale
+            // data, so the next read re-raises FETCH_DATA and pulls the new content.
             let mut usn: i64 = 0;
-            let _ = CfUpdatePlaceholder(
+            let r = CfUpdatePlaceholder(
                 handle,
-                None,
+                Some(&metadata),
                 None,
                 0,
                 None,
@@ -469,6 +496,26 @@ impl CfApiInvalidate {
                 Some(&mut usn),
                 None,
             );
+            match &r {
+                Ok(()) => eprintln!("cfapi: invalidated ino={ino} ({}) size={} — dehydrated", ino, attr.size),
+                Err(e) => {
+                    eprintln!("cfapi: invalidate ino={ino} CfUpdatePlaceholder failed: {e} — retrying metadata-only");
+                    // DEHYDRATE can fail if the file is open/pinned; at least update metadata
+                    // so the size/mtime reflect the new version.
+                    let mut usn2: i64 = 0;
+                    let r2 = CfUpdatePlaceholder(
+                        handle,
+                        Some(&metadata),
+                        None,
+                        0,
+                        None,
+                        CF_UPDATE_FLAG_MARK_IN_SYNC,
+                        Some(&mut usn2),
+                        None,
+                    );
+                    eprintln!("cfapi: invalidate ino={ino} metadata-only retry: {r2:?}");
+                }
+            }
             let _ = CloseHandle(handle);
         }
     }
