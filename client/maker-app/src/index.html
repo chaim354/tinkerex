@@ -232,8 +232,10 @@
             row.style.paddingLeft = `${0.7 + depth * 1.1}rem`;
             row.innerHTML = `<span>${e.kind === "dir" ? "📁" : "📄"}</span>` +
               `<span class="name"></span>` +
+              (e.locked_by ? `<span class="size" title="being edited">🔒 <span class="lockwho"></span></span>` : "") +
               (e.kind === "file" ? `<span class="size">${fmtSize(e.size)}</span>` : "");
             row.querySelector(".name").textContent = e.name;
+            if (e.locked_by) row.querySelector(".lockwho").textContent = e.locked_by;
             if (e.kind === "file") {
               const verBtn = document.createElement("button");
               verBtn.className = "link"; verBtn.textContent = "versions";

@@ -77,27 +77,43 @@ pub trait Freshness: Send + Sync {
     fn refresh(&self);
 }
 
+/// Best-effort cross-device advisory lock. On open-for-write the adapter asks the engine
+/// to acquire the server lock (so other *connected* clients see the file is being edited);
+/// on close it releases. Non-blocking — if offline the implementor just no-ops and the
+/// open proceeds on the local cached copy (conflict detection reconciles on reconnect).
+pub trait RemoteLock: Send + Sync {
+    fn acquire(&self, ino: u64);
+    fn release(&self, ino: u64);
+}
+
 pub struct FuseAdapter<P: Provider> {
     provider: P,
     hydrator: Option<Arc<dyn Hydrate>>,
     freshness: Option<Arc<dyn Freshness>>,
+    remote_lock: Option<Arc<dyn RemoteLock>>,
 }
 
 impl<P: Provider> FuseAdapter<P> {
     /// A mount with no hydrator — reads serve only what's already in the local cache
     /// (a cache miss is `EIO`). Used by the plain `maker-mount` binary and tests.
     pub fn new(provider: P) -> Self {
-        Self { provider, hydrator: None, freshness: None }
+        Self { provider, hydrator: None, freshness: None, remote_lock: None }
     }
 
     /// A mount whose read path hydrates missing chunks on demand (the sync daemon).
     pub fn with_hydrator(provider: P, hydrator: Arc<dyn Hydrate>) -> Self {
-        Self { provider, hydrator: Some(hydrator), freshness: None }
+        Self { provider, hydrator: Some(hydrator), freshness: None, remote_lock: None }
     }
 
     /// Add a freshness checker: every open first does a quick catch-up pull.
     pub fn with_freshness(mut self, freshness: Arc<dyn Freshness>) -> Self {
         self.freshness = Some(freshness);
+        self
+    }
+
+    /// Add a best-effort cross-device lock: open-for-write acquires, close releases.
+    pub fn with_remote_lock(mut self, remote_lock: Arc<dyn RemoteLock>) -> Self {
+        self.remote_lock = Some(remote_lock);
         self
     }
 }
@@ -307,6 +323,11 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         // any new manifest, so that lazy hydrate fetches the latest chunks).
         const O_ACCMODE: i32 = 0o3;
         if (flags & O_ACCMODE) != 0 {
+            // Best-effort cross-device lock: tell other connected clients we're editing
+            // this. Non-blocking; if offline it no-ops and we open the local copy anyway.
+            if let Some(rl) = &self.remote_lock {
+                rl.acquire(ino);
+            }
             if let Some(h) = &self.hydrator {
                 h.hydrate(ino);
             }
@@ -336,6 +357,11 @@ impl<P: Provider + 'static> Filesystem for FuseAdapter<P> {
         // POSIX: a process's locks are released when it closes the file.
         if let Some(owner) = lock_owner {
             let _ = self.provider.release_locks(ino, owner);
+        }
+        // Release the best-effort cross-device lock on close (best-effort; TTL covers a
+        // crash where this never runs).
+        if let Some(rl) = &self.remote_lock {
+            rl.release(ino);
         }
         reply.ok();
     }

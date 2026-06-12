@@ -243,6 +243,32 @@ fn pairing_adds_a_device_to_an_existing_library() {
     assert!(ServerClient::new(&url).pair(&email, &code, "device-C").is_err(), "code is single-use");
 }
 
+// ---- best-effort cross-device advisory lock ----------------------------------------
+
+#[test]
+fn best_effort_lock_coordinates_connected_devices() {
+    let url = server_url!();
+    let (ca, cb, _cloud) = two_devices(&url); // A = "device-A", B = "device-B"
+    let node = format!("lock-{}", uniq());
+
+    // A acquires the lock.
+    let a = ca.lock(&node).expect("A lock");
+    assert!(a.held && a.by_me, "A holds its own lock");
+
+    // B, while connected, sees it held by A — not stolen.
+    let b = cb.lock(&node).expect("B lock attempt");
+    assert!(b.held && !b.by_me, "B sees A's live lock");
+    assert_eq!(b.device_name.as_deref(), Some("device-A"));
+
+    // It shows up in the active-locks list (for the browser's indicators).
+    assert!(ca.locks().unwrap().locks.iter().any(|l| l.node_id == node && l.held));
+
+    // A releases → B can now acquire.
+    ca.unlock(&node).expect("A unlock");
+    let b2 = cb.lock(&node).expect("B re-attempt");
+    assert!(b2.by_me, "B acquires after A releases");
+}
+
 // ---- conflict: a divergent offline edit is flagged, not silently dropped ----------
 
 #[test]

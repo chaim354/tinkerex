@@ -344,6 +344,44 @@ impl EngineFreshness {
     }
 }
 
+/// Best-effort cross-device advisory lock over the server. Acquire on open-for-write,
+/// release on close — both **non-blocking** (a background thread does the short-timeout
+/// HTTP, so an offline open never waits; it just opens the local cached copy). The lock
+/// is advisory: it lets connected clients avoid colliding, and conflict detection handles
+/// whatever the lock can't (offline edits, ignored locks).
+#[cfg(target_os = "linux")]
+pub struct EngineRemoteLock {
+    provider: Arc<SqliteProvider>,
+    client: ServerClient,
+}
+
+#[cfg(target_os = "linux")]
+impl EngineRemoteLock {
+    pub fn new(provider: Arc<SqliteProvider>, client: ServerClient) -> Self {
+        Self { provider, client }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl fs_fuse::RemoteLock for EngineRemoteLock {
+    fn acquire(&self, ino: u64) {
+        if let Ok(Some(node_id)) = self.provider.node_id_for(ino) {
+            let client = self.client.clone();
+            std::thread::spawn(move || {
+                let _ = client.lock(&node_id); // best-effort; offline/held just no-ops
+            });
+        }
+    }
+    fn release(&self, ino: u64) {
+        if let Ok(Some(node_id)) = self.provider.node_id_for(ino) {
+            let client = self.client.clone();
+            std::thread::spawn(move || {
+                let _ = client.unlock(&node_id);
+            });
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 impl fs_fuse::Freshness for EngineFreshness {
     fn refresh(&self) {

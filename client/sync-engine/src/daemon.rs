@@ -113,7 +113,10 @@ impl Daemon {
 
         let hydrator = Arc::new(EngineHydrator::new(provider.clone(), client.clone()));
         let freshness = Arc::new(crate::EngineFreshness::new(provider.clone(), client.clone()));
-        let fs = FuseAdapter::with_hydrator(provider.clone(), hydrator).with_freshness(freshness);
+        let remote_lock = Arc::new(crate::EngineRemoteLock::new(provider.clone(), client.clone()));
+        let fs = FuseAdapter::with_hydrator(provider.clone(), hydrator)
+            .with_freshness(freshness)
+            .with_remote_lock(remote_lock);
         let opts = [
             MountOption::FSName("maker".into()),
             MountOption::AutoUnmount,

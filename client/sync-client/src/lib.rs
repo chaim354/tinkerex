@@ -143,6 +143,21 @@ pub struct SplitResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct LockStatus {
+    pub node_id: String,
+    pub held: bool,
+    #[serde(default)]
+    pub by_me: bool,
+    #[serde(default)]
+    pub device_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LocksResponse {
+    pub locks: Vec<LockStatus>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NodeView {
     pub node_id: String,
     pub parent_node_id: Option<String>,
@@ -334,6 +349,31 @@ impl ServerClient {
         let resp = self
             .authed(self.http.get(self.url(&format!("/v1/nodes/{node_id}/versions"))))?
             .send()?;
+        Self::json(resp)
+    }
+
+    /// Best-effort acquire/refresh the advisory edit lock on a node. Short timeout: if we
+    /// can't reach the server the caller proceeds locally (offline just opens the cached
+    /// copy — conflict detection is the safety net). Returns the lock status.
+    pub fn lock(&self, node_id: &str) -> Result<LockStatus> {
+        let resp = self
+            .authed(self.http.post(self.url(&format!("/v1/nodes/{node_id}/lock"))))?
+            .timeout(std::time::Duration::from_secs(2))
+            .send()?;
+        Self::json(resp)
+    }
+
+    /// Release the advisory lock on a node (no-op if this device isn't the holder).
+    pub fn unlock(&self, node_id: &str) -> Result<()> {
+        self.authed(self.http.post(self.url(&format!("/v1/nodes/{node_id}/unlock"))))?
+            .timeout(std::time::Duration::from_secs(2))
+            .send()?;
+        Ok(())
+    }
+
+    /// All active edit locks (for the file browser's lock indicators).
+    pub fn locks(&self) -> Result<LocksResponse> {
+        let resp = self.authed(self.http.get(self.url("/v1/locks")))?.send()?;
         Self::json(resp)
     }
 

@@ -27,6 +27,11 @@ Rails.application.routes.draw do
     # conflicts (offline-edit divergence)
     get "conflicts", to: "conflicts#index"
 
+    # best-effort advisory edit locks
+    post "nodes/:node_id/lock", to: "nodes#lock"
+    post "nodes/:node_id/unlock", to: "nodes#unlock"
+    get "locks", to: "locks#index"
+
     # hydration
     post "chunks/download", to: "chunks#download"
   end

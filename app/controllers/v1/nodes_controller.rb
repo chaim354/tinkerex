@@ -52,6 +52,18 @@ module V1
       render json: { version_id: version.version_id, seq: }
     end
 
+    # POST /v1/nodes/:node_id/lock — best-effort acquire/refresh. Always 200 with the
+    # status (held + by_me + device_name); the client decides what to do if not by_me.
+    def lock
+      render json: Sync::Locks.acquire(user: current_user, node_id: params[:node_id], device: current_device)
+    end
+
+    # POST /v1/nodes/:node_id/unlock — release if this device holds it.
+    def unlock
+      Sync::Locks.release(user: current_user, node_id: params[:node_id], device: current_device)
+      render json: { released: true }
+    end
+
     # POST /v1/nodes/:node_id/resolve_conflict
     #   { keep_version_id }  -> keep one side as current (the other stays in history)
     #   { split: true }      -> keep both (incoming becomes a new sibling file)

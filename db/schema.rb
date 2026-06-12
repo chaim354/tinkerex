@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_12_020000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_12_030000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -66,6 +66,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_12_020000) do
     t.integer "user_id", null: false
     t.index ["token_digest"], name: "index_devices_on_token_digest", unique: true
     t.index ["user_id"], name: "index_devices_on_user_id"
+  end
+
+  create_table "file_locks", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.bigint "device_id", null: false
+    t.datetime "expires_at", null: false
+    t.string "node_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
+    t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
   end
 
   create_table "manifest_chunks", force: :cascade do |t|

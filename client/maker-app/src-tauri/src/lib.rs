@@ -167,6 +167,8 @@ struct BrowseEntry {
     name: String,
     kind: String,
     size: u64,
+    /// Device name currently editing this file on another device (best-effort lock), if any.
+    locked_by: Option<String>,
 }
 
 /// List the whole library tree (paginated server-side, flattened here). The frontend
@@ -176,6 +178,16 @@ fn browse(server_url: String, email: String) -> Result<Vec<BrowseEntry>, String>
     use sync_client::ServerClient;
     let token = load_token(&server_url, &email).ok_or("this device isn't signed in yet")?;
     let client = ServerClient::with_token(&server_url, token);
+
+    // Active locks held by OTHER devices → node_id => holder name (best-effort; ignore errors).
+    let locked: std::collections::HashMap<String, String> = client
+        .locks()
+        .map(|r| r.locks)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|l| l.held && !l.by_me)
+        .filter_map(|l| l.device_name.map(|d| (l.node_id, d)))
+        .collect();
 
     let mut out = Vec::new();
     let mut after = 0;
@@ -191,6 +203,7 @@ fn browse(server_url: String, email: String) -> Result<Vec<BrowseEntry>, String>
                 name: n.name.clone(),
                 kind: n.kind.clone(),
                 size: n.size.unwrap_or(0),
+                locked_by: locked.get(&n.node_id).cloned(),
             });
         }
         match tree.next_after_id {

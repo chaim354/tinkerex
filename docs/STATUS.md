@@ -2,7 +2,25 @@
 
 **Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-12): file locking + conflict detection & resolution
+## Latest (2026-06-12): best-effort cross-device lock
+
+Layered on the local locks + conflict detection: a **best-effort advisory edit lock**
+across devices. On open-for-write the client (when connected) acquires a server lock so
+other *connected* clients see the file is being edited; if it can't reach the server the
+open just proceeds on the local cached copy, and conflict detection reconciles on
+reconnect. Advisory + TTL-based (a disconnected holder's lock auto-frees), never blocking.
+
+- Server: `FileLock` (TTL) + `Sync::Locks` (acquire/refresh/release/status/active — never
+  steals a live lock; expired locks reclaimable). `POST /v1/nodes/:id/lock` + `/unlock`,
+  `GET /v1/locks`. 6 tests (`locks_test.rb`): grant, no-steal, holder-refresh, expiry
+  reclaim, release-only-by-holder, active/status reflect expiry.
+- Client: `ServerClient::lock`/`unlock`/`locks` (2s timeout so offline never hangs the
+  open). `fs-fuse` gains a `RemoteLock` hook; `sync-engine::EngineRemoteLock` acquires on
+  open-for-write / releases on close **in a background thread** (non-blocking). Wired into
+  the Daemon. Integration test `best_effort_lock_coordinates_connected_devices` (live).
+- App: the file browser shows a 🔒 + holder name for files locked on another device.
+
+## Earlier (2026-06-12): file locking + conflict detection & resolution
 
 Local-first concurrency = local advisory locks + cross-device conflict detection (NOT
 distributed locks — can't hold a WAN lock offline; the synchronous model we rejected).
