@@ -226,6 +226,37 @@ fn re_push_of_identical_content_dedups_and_stays_consistent() {
     assert_eq!(read_all(&b, bf.ino), body);
 }
 
+// ---- auth: pairing a second device into an existing library ------------------------
+
+#[test]
+fn pairing_adds_a_device_to_an_existing_library() {
+    let url = server_url!();
+    let email = format!("pair-{}@example.com", uniq());
+
+    // Device A registers (creates the account) and pushes a file.
+    let mut ca = ServerClient::new(&url);
+    ca.register(&email, "device-A").expect("register A");
+    let cloud = SharedDirIO::new(std::env::temp_dir().join(format!("pair-cloud-{}", uniq()))).unwrap();
+    let a = dev();
+    let f = a.create(ROOT_INO, "paired.txt").unwrap();
+    a.write(f.ino, 0, b"hello from A").unwrap();
+    a.flush(f.ino).unwrap();
+    SyncEngine::push(&a, &ca, &cloud).expect("A push");
+
+    // A issues a pairing code; a brand-new device B redeems it (never sees A's token).
+    let code = ca.create_pairing().expect("A issues code").code;
+    let mut cb = ServerClient::new(&url);
+    cb.pair(&email, &code, "device-B").expect("B pairs in");
+
+    // B is now a real device on the same library — it sees A's file.
+    let b = dev();
+    SyncEngine::pull_snapshot(&b, &cb).expect("B snapshot");
+    assert!(b.lookup(ROOT_INO, "paired.txt").is_ok(), "paired device B sees A's library");
+
+    // A reused code can't pair again (single-use).
+    assert!(ServerClient::new(&url).pair(&email, &code, "device-C").is_err(), "code is single-use");
+}
+
 // ---- offline reconnect: paging through a large backlog -----------------------------
 
 #[test]

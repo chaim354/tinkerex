@@ -95,6 +95,13 @@ pub struct DeviceResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PairingResponse {
+    /// The human-enterable code to type on the new device (shown once).
+    pub code: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct NodeView {
     pub node_id: String,
     pub parent_node_id: Option<String>,
@@ -224,6 +231,27 @@ impl ServerClient {
             .json(&serde_json::json!({ "name": name }))
             .send()?;
         Self::json(resp)
+    }
+
+    /// Issue a short-lived pairing code (this device must be authenticated). A *new*
+    /// device redeems it via [`pair`](Self::pair) to join this library — without ever
+    /// seeing this device's token.
+    pub fn create_pairing(&self) -> Result<PairingResponse> {
+        let resp = self.authed(self.http.post(self.url("/v1/devices/pairing")))?.send()?;
+        Self::json(resp)
+    }
+
+    /// Redeem a pairing code on a new device to join an existing library. Stores the
+    /// returned token on the client (like `register`).
+    pub fn pair(&mut self, email: &str, code: &str, device_name: &str) -> Result<RegisterResponse> {
+        let resp = self
+            .http
+            .post(self.url("/v1/auth/pair"))
+            .json(&serde_json::json!({ "email": email, "code": code, "device_name": device_name }))
+            .send()?;
+        let reg: RegisterResponse = Self::json(resp)?;
+        self.token = Some(reg.device_token.clone());
+        Ok(reg)
     }
 
     pub fn commit_begin(&self, req: &CommitBegin) -> Result<CommitBeginResponse> {

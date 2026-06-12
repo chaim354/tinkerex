@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_12_010000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -32,6 +32,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
     t.index ["user_id", "chunk_hash"], name: "index_chunks_on_user_id_and_chunk_hash", unique: true
     t.index ["user_id", "refcount"], name: "index_chunks_on_user_id_and_refcount"
     t.index ["user_id"], name: "index_chunks_on_user_id"
+  end
+
+  create_table "device_pairings", force: :cascade do |t|
+    t.datetime "claimed_at"
+    t.string "code_digest", null: false
+    t.datetime "created_at", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "code_digest"], name: "index_device_pairings_on_user_id_and_code_digest", unique: true
+    t.index ["user_id", "expires_at"], name: "index_device_pairings_on_user_id_and_expires_at"
   end
 
   create_table "devices", force: :cascade do |t|
