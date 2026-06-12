@@ -1,75 +1,108 @@
-//! Mac "host" for testing the Windows CfAPI client: bring up a synced library on macOS so
-//! you can **drop files into Finder**, and print a **device token to paste on Windows**.
+//! Seed a library + mint a Windows token, for testing the Windows CfAPI client.
 //!
-//! It (1) gets a token — registers a fresh account from `EMAIL`, or reuses an existing
-//! library if you pass `TOKEN`; (2) mints a *second* device token for the Windows box (same
-//! library, no pairing-code dance — an authenticated device can mint device tokens directly);
-//! (3) mounts the library at `~/MakerDrive` via WebDAV (native `mount_webdav`, shows in
-//! Finder as "Maker") and runs the sync loop; (4) stays up until you press Enter.
+//! No mount involved — it pushes files straight to the server via the sync engine (so it
+//! avoids the WebDAV-mount lifecycle entirely). It (1) gets a token (registers a fresh
+//! account from `EMAIL`, or reuses `TOKEN`), (2) mints a *second* device token for the
+//! Windows box (same library), (3) pushes files into the library — the contents of
+//! `FILES_DIR` if set, otherwise a few generated samples — and (4) prints the device token
+//! to paste into `maker-cfsyncd` on Windows.
 //!
-//! Drag files into `~/MakerDrive` → they push to the server → the Windows CfAPI mount
-//! (`maker-cfsyncd`) populates + hydrates them.
+//!   # generated sample files:
+//!   SERVER_URL=http://192.168.1.95 cargo run --example mac_host
+//!   # push your own files (top-level files of a folder):
+//!   SERVER_URL=http://192.168.1.95 FILES_DIR=~/Desktop/to-sync cargo run --example mac_host
+//!   # reuse an existing library:
+//!   SERVER_URL=http://192.168.1.95 TOKEN=<existing-device-token> cargo run --example mac_host
 //!
-//!   # fresh library:
-//!   SERVER_URL=http://192.168.1.95:3001 EMAIL=me@example.com cargo run --example mac_host
-//!   # existing library (reuse a token you already have):
-//!   SERVER_URL=http://192.168.1.95:3001 TOKEN=<existing-device-token> cargo run --example mac_host
-//!
-//! NOTE: for the Windows box to actually *hydrate* file bytes, the server must use the
-//! S3/SeaweedFS chunk backend (STORAGE_BACKEND=s3 …), not the memory one. The deployed
-//! Unraid server already does.
+//! NOTE: the server must use the S3/SeaweedFS chunk backend (the deployed Unraid server
+//! does) so the Windows box can hydrate the bytes.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs_provider::{LocalChunkStore, Provider, SqliteProvider, ROOT_INO};
 use sync_client::ServerClient;
-use sync_engine::{DaemonConfig, WebdavMount};
+use sync_engine::{PresignedIO, SyncEngine};
 
 fn main() {
-    let server = std::env::var("SERVER_URL").expect("set SERVER_URL (e.g. http://192.168.1.95:3001)");
-    let home = std::env::var("HOME").unwrap();
-    let mp = format!("{home}/MakerDrive");
+    let server = std::env::var("SERVER_URL").expect("set SERVER_URL (e.g. http://192.168.1.95)");
 
-    // 1. Get a token for the library we'll host.
+    // 1. Get a token for the library we'll seed.
     let mut client;
-    let mac_token = match std::env::var("TOKEN") {
+    match std::env::var("TOKEN") {
         Ok(tok) => {
-            // Reuse an existing library (your real files are already in it).
-            client = ServerClient::with_token(&server, tok.clone());
+            client = ServerClient::with_token(&server, tok);
             println!("✓ using existing library via TOKEN");
-            tok
         }
         Err(_) => {
-            // Fresh account. A unique fallback email avoids the account-exists conflict on re-run.
             let tag = format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
             let email = std::env::var("EMAIL").unwrap_or_else(|_| format!("maker-{tag}@example.com"));
             client = ServerClient::new(&server);
-            let reg = client.register(&email, "mac-host").expect("register failed (email may already exist — pass TOKEN= instead)");
+            client.register(&email, "mac-host").expect("register failed (email may already exist — omit EMAIL or pass TOKEN=)");
             println!("✓ registered new library: {email}");
-            reg.device_token
         }
-    };
+    }
 
     // 2. Mint a device token for the Windows machine (same library).
     let win = client.create_device("windows-cfapi").expect("mint windows device token");
 
-    // 3. Mount the library on macOS so you can drop files in via Finder.
-    let _ = std::fs::remove_file("/tmp/maker-mac-host.db");
-    let _ = std::fs::remove_dir_all("/tmp/maker-mac-host-chunks");
-    let cfg = DaemonConfig::new(&mp, "/tmp/maker-mac-host.db", "/tmp/maker-mac-host-chunks", &server, mac_token);
-    let mount = WebdavMount::start(cfg).expect("WebdavMount::start (is the server reachable?)");
+    // 3. Build a scratch local tree + seed it, then push to the server.
+    let tag = format!("{:x}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos());
+    let db = std::env::temp_dir().join(format!("maker-host-{tag}.db"));
+    let chunks = std::env::temp_dir().join(format!("maker-host-{tag}-chunks"));
+    let provider = SqliteProvider::open(&db, Box::new(LocalChunkStore::new(&chunks).expect("chunk store"))).expect("open db");
+
+    let mut names: Vec<String> = Vec::new();
+    match std::env::var("FILES_DIR") {
+        Ok(dir) => {
+            let dir = shellexpand(&dir);
+            for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read FILES_DIR {dir}: {e}")).flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if name.starts_with('.') { continue; } // skip .DS_Store etc.
+                    let bytes = std::fs::read(&path).expect("read file");
+                    let attr = provider.create(ROOT_INO, &name).expect("create");
+                    provider.ingest_bytes(attr.ino, &bytes).expect("ingest");
+                    println!("  + {name} ({} bytes)", bytes.len());
+                    names.push(name);
+                }
+            }
+            if names.is_empty() {
+                panic!("FILES_DIR {dir} had no top-level files to push");
+            }
+        }
+        Err(_) => {
+            for (name, body) in [
+                ("hello.txt", b"hello from the mac host\n".to_vec()),
+                ("notes.md", b"# Maker\n\nThis file was pushed to the server by mac_host.\n".to_vec()),
+                ("blob.bin", (0..4096u32).map(|i| (i % 251) as u8).collect::<Vec<u8>>()),
+            ] {
+                let attr = provider.create(ROOT_INO, name).expect("create");
+                provider.ingest_bytes(attr.ino, &body).expect("ingest");
+                println!("  + {name} ({} bytes)", body.len());
+                names.push(name.to_string());
+            }
+        }
+    }
+
+    let io = PresignedIO::new(&client);
+    SyncEngine::push(&provider, &client, &io).expect("push to server (S3 backend + reachable?)");
 
     println!("\n────────────────────────────────────────────────────────");
-    println!("  Mounted at: {mp}   (Finder ▸ Locations ▸ Maker)");
-    println!("  Drop files into that folder — they sync to the server.");
+    println!("  Pushed {} file(s) to the library: {}", names.len(), names.join(", "));
     println!();
     println!("  PASTE THIS ON WINDOWS as the device token:");
     println!("    {}", win.device_token);
     println!("  …and use SERVER_URL: {server}");
     println!("────────────────────────────────────────────────────────");
-    println!("\nPress Enter to unmount and exit.");
+}
 
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    drop(mount);
-    println!("✓ unmounted; done");
+/// Minimal `~` expansion for the FILES_DIR convenience.
+fn shellexpand(p: &str) -> String {
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    p.to_string()
 }
