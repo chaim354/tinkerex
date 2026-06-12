@@ -68,7 +68,9 @@ content-addressed manifest sharing chunks).
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
 store) → device B pulls + hydrates + reads, **byte-for-byte identical**; metadata via
-the live server changelog. Multi-device convergence demonstrated. ~40 tests green.
+the live server changelog. Multi-device convergence demonstrated. ~90 tests green
+(hermetic provider/chunking/convergence/concurrency suites + server-backed engine
+integration + Rails service/isolation tests).
 
 ---
 
@@ -186,13 +188,27 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
 > backend per-OS via a `Mount` type alias; commands are identical everywhere.
 
-**Built + verified (≈40 tests green + live cross-stack + cross-OS demos):**
-- Server (Rails): full v1 API, `Sync::*` services, ActionCable. 10 tests.
-- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. 15 tests (incl. a multi-device convergence harness + the overwrite-with-shorter / grow-shrink truncate tests).
+**Built + verified (~90 tests green + live cross-stack + cross-OS demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **26 tests** (commit/
+  refcounts/dedup + GC prune/sweep, restore chains, tree pagination, tenant isolation).
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **50 tests** across hermetic suites (`tests/`): **chunking**
+  (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
+  **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
+  **convergence** (3-replica FakeFolder-style random op stream + durability + idempotency),
+  **concurrency** (shared `Arc` threads + chunk-store race). Modeled on rclone-fstests /
+  restic-chunker / ownCloud-FakeFolder / JuiceFS-pjdfstest.
 - `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
 - `sync-client`: API + chunk transfer + pull-apply. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
-  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`.
+  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`. **Server-backed
+  integration suite** (`tests/integration.rs`, 6 tests: roundtrip, delete/move delta,
+  last-writer-wins, hydrate-only-missing, push dedup, cursor monotonicity) — skips when no
+  server, run in CI against a booted `STORAGE_BACKEND=memory` Rails (`rust-client.yml`).
+- **Two foundation bugs the suite caught + fixed:** (1) `rename` over an existing name hit
+  the unique index instead of POSIX-replacing → **atomic saves (write-temp-then-rename)
+  were broken**; now replaces + tombstones the displaced node. (2) `truncate(ino, 0)` read
+  the base content first → **`O_TRUNC` overwrite of a pulled-but-unhydrated placeholder
+  failed**; now short-circuits to empty (no hydration needed).
 - **End-to-end daemon roundtrip with real bytes**: A creates a file → push → B pull +
   hydrate + read, byte-for-byte identical (`client/sync-engine/examples/roundtrip.rs`).
 - **The continuous sync loop is wired** (§12 step 1): a local write enqueues an
@@ -281,10 +297,12 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    content-addressed `manifest_id`).
 5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
    (`V1::AuthController#register`). The device-token mechanism itself stays.
-6. **Writeback + robustness hardening:** atomic saves (write-temp-then-rename),
-   FUSE-T's *deferred `release`* (flush-on-close isn't synchronous), reconnect/offline
-   reconcile + the changelog-pruned → full-resync backstop, `Sync::Changes` N+1
-   preloading.
+6. **Writeback + robustness hardening:** ~~atomic saves (write-temp-then-rename)~~ **the
+   `rename`-replace half is DONE** (2026-06-11, found by the new test suite — `Provider::
+   rename` now POSIX-replaces + tombstones the displaced node; `truncate(0)` no longer
+   needs hydration); still open: FUSE-T's *deferred `release`* (flush-on-close isn't
+   synchronous), reconnect/offline reconcile + the changelog-pruned → full-resync
+   backstop, `Sync::Changes` N+1 preloading.
 7. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
    is config — see `docs/SYNC_SERVER.md`).
 8. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
@@ -321,7 +339,11 @@ CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret 
 # ./target/debug/maker-syncd <mnt> <db> <chunks> http://localhost:3001 <device_token>
 
 # Rust crate tests
-(cd client/fs-provider && cargo test)   # + sync-client, maker-app-core, juicefs-backend
+(cd client/fs-provider && cargo test)   # 50: chunking/posix/convergence/concurrency (hermetic)
+(cd client/sync-client && cargo test)   # 5
+# sync-engine integration needs a running server (skips cleanly without one):
+STORAGE_BACKEND=memory bin/rails server -p 3001 &   # then:
+(cd client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
 
 # fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see client/fs-fuse/BUILD.md.
 # Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks

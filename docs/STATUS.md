@@ -1,6 +1,44 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (truncate gap closed — no more stale tail on overwrite-with-shorter)
+**Updated:** 2026-06-11 (comprehensive sync-foundation test suite — ~90 tests across 4 tiers)
+
+## Latest (2026-06-11): comprehensive foundation test suite
+
+Paused feature work to harden the file-sync foundation with a real test suite, modeled on
+how production sync/chunking systems test: **rclone `fstests`** (one contract suite over a
+backend), **restic/borg chunker** (round-trip + boundary-stability properties),
+**ownCloud/Nextcloud `FakeFolder`** (model-based multi-replica convergence), **JuiceFS
+pjdfstest** (POSIX semantics), and **Dropbox**-style randomized state-machine checks.
+Added `proptest` (dev-only) for property tests with shrinking.
+
+**~90 tests, up from ~40.** Tiers:
+- **fs-provider (hermetic, no server) — 50 tests** in `client/fs-provider/tests/`:
+  `chunking` (round-trip for every size, dedup, **block-delta boundary stability** — a
+  front-insert keeps ≥half the chunks, an append keeps all but the last, a 1-byte edit
+  perturbs few; size bounds; zeros/repetitive/random), `posix_semantics` (rename-over
+  replace, dup/missing errors, unicode/long names, deep nesting, re-create-after-delete),
+  `convergence` (3-replica random-op FakeFolder harness asserting byte-identical trees
+  every step; durability across reopen; idempotent re-apply; placeholder truncate),
+  `concurrency` (shared-`Arc` threads + the chunk-store same-hash race).
+- **sync-engine (server-backed) — 6 integration tests** in `tests/integration.rs`:
+  roundtrip (real bytes), delete/move delta, **last-writer-wins**, hydrate-only-missing +
+  idempotent, push dedup/idempotency, cursor monotonicity. Skips cleanly with no server;
+  CI boots `STORAGE_BACKEND=memory` Rails and runs it (new `engine-integration` job).
+- **Rails — 26 tests, up from 10:** added GC (`prune_version!` refcounts, `sweep_orphans!`
+  grace/keep-live), restore (reuse manifest, bump refcounts, undelete, chain), tree
+  pagination (cover-once, exclude-tombstoned, carry manifest), and tenant isolation
+  (one user's token can't see/mutate another's tree/changes/nodes).
+
+**Two foundation bugs the suite caught and fixed (both in `fs-provider`):**
+1. **`rename` over an existing name** hit the unique `(parent, name)` index and errored
+   instead of POSIX-replacing — so **atomic saves (write `f.tmp` → rename over `f`), how
+   nearly every app saves, were broken on the mount.** Now replaces atomically and
+   tombstones the displaced node (so the deletion propagates; no cross-device duplicate).
+2. **`truncate(ino, 0)` read the base content first**, so an `O_TRUNC` overwrite of a
+   pulled-but-unhydrated placeholder failed with `ChunkMissing` — a routine mount op.
+   Truncate-to-empty now short-circuits without touching the (absent) bytes.
+
+## Earlier (2026-06-11): §12.4 truncate gap closed
 
 ## Latest (2026-06-11): §12.4 truncate gap closed
 

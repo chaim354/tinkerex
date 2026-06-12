@@ -1,7 +1,9 @@
 name: Rust client
 
-# The Rust client crates have no CI yet. Two jobs:
-#  - unix: build/test the verified crates on Linux (fast feedback).
+# The Rust client crates' CI. Jobs:
+#  - unix: build/test the hermetic crates on Linux (fast feedback; no server needed).
+#  - engine-integration: boot the real Rails server (SQLite + in-memory chunk store) and
+#    run the sync-engine integration suite against it — the actual HTTP wire contract.
 #  - winfsp-windows: actually COMPILE the Windows mount adapter (`fs-winfsp`), which
 #    can't be built on the maintainer's macOS box — this is its real verification gate.
 on:
@@ -28,6 +30,35 @@ jobs:
         run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
       - name: Build fs-winfsp on non-Windows (must be an inert empty crate)
         run: cargo build --manifest-path client/fs-winfsp/Cargo.toml
+
+  engine-integration:
+    # The sync-engine talks to the server over HTTP; this job stands up the real Rails
+    # app (SQLite, STORAGE_BACKEND=memory → control plane only, chunk bytes via the test's
+    # shared-dir stand-in) and runs the integration suite against it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
+        run: sudo apt-get update && sudo apt-get install -y libfuse-dev pkg-config
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Boot the sync server (memory chunk store)
+        run: |
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }
+            sleep 1
+          done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; exit 1; }
+      - name: Run the engine integration suite against the live server
+        env:
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
 
   winfsp-windows:
     runs-on: windows-latest
