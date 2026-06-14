@@ -71,6 +71,13 @@ struct CfState {
     /// entry stale (≥5 s old), drops it, and is captured normally — bounding any leak to a 5 s
     /// window instead of permanently suppressing the next real change.
     self_writes: Mutex<HashMap<String, std::time::Instant>>,
+    /// Set the instant teardown begins (before `CfDisconnectSyncRoot`). While true, callbacks
+    /// still **mirror** the change into the provider/outbox (so a local edit/delete/rename made
+    /// right before unmount is not lost), but **skip the re-entrant CfAPI calls**
+    /// (`CfConvertToPlaceholder` / `CfSetInSyncState` / the ACK `CfExecute`s). Issuing those while
+    /// the connection is tearing down can deadlock the Cloud Filter runtime — the cause of a
+    /// 15s hang on graceful shutdown when CfAPI flushed its batched NOTIFY callbacks at disconnect.
+    shutting_down: AtomicBool,
 }
 
 /// A live CfAPI sync root: registered, connected, populated. Drop disconnects + unregisters.
@@ -110,12 +117,25 @@ impl NewFileWatcher {
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         unsafe {
-            // Wake the wait (stop event) and cancel any pending overlapped read, then join.
+            // Wake the wait (stop event) and cancel any pending overlapped read.
             let _ = windows::Win32::System::Threading::SetEvent(self.stop_event);
             let _ = windows::Win32::System::IO::CancelIoEx(self.dir, None);
         }
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // Bounded join: the thread should exit promptly (stop flag + cancelled read +
+            // `shutting_down` makes any in-flight capture return without re-entrant CfAPI calls).
+            // But never let a wedged watcher hang teardown — poll briefly, then detach. (Detach is
+            // safe: with `shutting_down` set the thread does no CfAPI work and the closed handles
+            // make its next wait return; it just exits on its own.)
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !t.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            } else {
+                eprintln!("cfapi: new-file watcher didn't exit in time — detaching");
+            }
         }
         unsafe {
             let _ = CloseHandle(self.dir);
@@ -143,6 +163,7 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         connection_key: Mutex::new(None),
         root: root.to_path_buf(),
         self_writes: Mutex::new(HashMap::new()),
+        shutting_down: AtomicBool::new(false),
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
@@ -669,6 +690,11 @@ unsafe extern "system" fn notify_file_close_callback(
         eprintln!("cfapi: ingest_bytes(node={node_id}) failed: {e}");
         return;
     }
+    // During teardown, skip the re-entrant CfSetInSyncState (can deadlock the closing
+    // connection). The edit is already in the provider/outbox → the shutdown drain pushes it.
+    if state.shutting_down.load(Ordering::Relaxed) {
+        return;
+    }
     // Mark the placeholder back in-sync (captured locally; the sync loop pushes it).
     let path_w = path_wide(Path::new(&path));
     if let Ok(handle) = CreateFileW(
@@ -793,6 +819,14 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
     }
     eprintln!("cfapi: new file captured rel={rel} node={node_id} ({} bytes)", bytes.len());
 
+    // During teardown, skip the re-entrant CfAPI convert (it can deadlock the closing
+    // connection). The node + bytes are already in the provider/outbox, so the shutdown drain
+    // still pushes the file; we just don't bother giving the on-disk file a placeholder identity
+    // (the process is exiting anyway).
+    if state.shutting_down.load(Ordering::Relaxed) {
+        return;
+    }
+
     // Convert the real on-disk file into a placeholder carrying our identity so future closes
     // take the edit path (content-compare). Mark in-sync — the bytes are already correct locally
     // and the sync loop will push them. Guard the echo (our convert fires another close).
@@ -875,6 +909,13 @@ unsafe extern "system" fn notify_delete_callback(
         }
     }
 
+    // During teardown, skip the ACK `CfExecute` (re-entering the closing connection can
+    // deadlock). The delete is already mirrored to the provider/outbox; the OS op is moot since
+    // the connection is going away.
+    if state.shutting_down.load(Ordering::Relaxed) {
+        return;
+    }
+
     // ACK the delete so the platform proceeds (an unanswered pre-op hangs Explorer).
     let op_info = op_info_for(info, CF_OPERATION_TYPE_ACK_DELETE);
     let mut op_params = CF_OPERATION_PARAMETERS {
@@ -941,6 +982,12 @@ unsafe extern "system" fn notify_rename_callback(
         }
     }
 
+    // During teardown, skip the ACK `CfExecute` (re-entering the closing connection can
+    // deadlock). The rename is already mirrored to the provider/outbox.
+    if state.shutting_down.load(Ordering::Relaxed) {
+        return;
+    }
+
     // ACK the rename so the platform proceeds.
     let op_info = op_info_for(info, CF_OPERATION_TYPE_ACK_RENAME);
     let mut op_params = CF_OPERATION_PARAMETERS {
@@ -977,9 +1024,13 @@ impl CfApiMountHandle {
 
 impl Drop for CfApiMountHandle {
     fn drop(&mut self) {
+        // Enter teardown: from here, callbacks still mirror changes into the provider/outbox but
+        // skip re-entrant CfAPI calls (convert/set-in-sync/ACK), which can deadlock the runtime
+        // while the connection is closing — the cause of the graceful-shutdown hang.
+        unsafe { (*self.state).shutting_down.store(true, Ordering::Relaxed); }
         // Stop + join the new-file watcher FIRST, while `state` is still valid — the watcher
-        // thread dereferences it. (shutdown closes the dir handle to unblock the synchronous
-        // ReadDirectoryChangesW, then joins.)
+        // thread dereferences it. (shutdown signals the stop event + cancels the overlapped read,
+        // then joins with a bounded wait so a wedged callback can't hang teardown.)
         if let Some(mut w) = self.watcher.take() {
             w.shutdown();
         }
