@@ -23,7 +23,7 @@
 //! target on macOS (`cargo check --target x86_64-pc-windows-gnu`) + the `cfapi-windows` CI job.
 //! Gaps flagged `LIMITATION:`/`PHASE 2:`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,7 +40,7 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 
-use crate::{unix_nanos_to_filetime, FileIdentity};
+use crate::{library_relative, unix_nanos_to_filetime, FileIdentity};
 
 /// On-demand hydration hook: "make `node_id`'s chunks local" (presigned GET into the cache).
 /// The sync engine supplies it (see `sync_engine::CfApiMount`); a bare local mount passes
@@ -59,6 +59,14 @@ struct CfState {
     provider: Arc<SqliteProvider>,
     hydrate: Option<Hydrate>,
     connection_key: Mutex<Option<CF_CONNECTION_KEY>>,
+    /// The absolute sync-root path — the prefix we strip to derive a library-relative path in
+    /// the new-file capture branch (Phase 2b). The close callback only gets the full on-disk
+    /// path, so it needs the root to map back into the `Provider` tree.
+    root: PathBuf,
+    /// Echo guard: paths we just converted to placeholders ourselves. Our own
+    /// `CfConvertToPlaceholder` triggers another close, which would otherwise re-enter the
+    /// new-file branch. A path in this set short-circuits that re-entry exactly once.
+    self_writes: Mutex<HashSet<String>>,
 }
 
 /// A live CfAPI sync root: registered, connected, populated. Drop disconnects + unregisters.
@@ -89,6 +97,8 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         provider: provider.clone(),
         hydrate,
         connection_key: Mutex::new(None),
+        root: root.to_path_buf(),
+        self_writes: Mutex::new(HashSet::new()),
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
@@ -377,12 +387,19 @@ unsafe fn pcwstr_string(p: PCWSTR) -> String {
     p.to_string().unwrap_or_default()
 }
 
-/// PHASE 2 — local-edit capture: a file handle closed. If it's a known synced file whose
-/// on-disk content now differs from what the provider holds, the **user edited it** — re-ingest
-/// the bytes (which enqueues the outbox; the sync loop pushes) and mark the placeholder back
-/// in-sync. The content comparison is the self-write filter: our own hydration writes and plain
-/// reads leave the on-disk bytes equal to the provider's, so they're skipped (no push loop).
-/// New files / deletes / renames are PHASE 2b (logged, not yet captured).
+/// Local-change capture: a file handle closed.
+///
+/// **Existing synced file** (placeholder carries a `node_id`): if the on-disk content now
+/// differs from what the provider holds, the **user edited it** — re-ingest the bytes (which
+/// enqueues the outbox; the sync loop pushes) and mark the placeholder back in-sync. The
+/// content comparison is the self-write filter: our own hydration writes and plain reads leave
+/// the on-disk bytes equal to the provider's, so they're skipped (no push loop).
+///
+/// **New file** (no `node_id` — Phase 2b): a real file the user dropped into the sync root.
+/// Derive the library-relative path, resolve/create the parent dirs + the node in the
+/// `Provider`, ingest its bytes (enqueues the outbox), then `CfConvertToPlaceholder` to give the
+/// on-disk file our `node_id` identity + mark it in-sync. The convert itself fires another close;
+/// the `self_writes` echo guard short-circuits that re-entry. Deletes / renames are PHASE 2c.
 unsafe extern "system" fn notify_file_close_callback(
     info: *const CF_CALLBACK_INFO,
     _params: *const CF_CALLBACK_PARAMETERS,
@@ -397,19 +414,23 @@ unsafe extern "system" fn notify_file_close_callback(
     }
     let state = &*state;
 
-    // Only existing synced files (placeholders carry their node_id). A new file has no
-    // identity → PHASE 2b.
+    // Full on-disk path = VolumeDosName ("C:") + NormalizedPath ("\Users\…\file").
+    let path = format!("{}{}", pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
+
+    // A placeholder carries its node_id; a brand-new file the user dropped in does not.
     let node_id = match callback_node_id(info) {
         Some(n) => n,
-        None => return,
+        // PHASE 2b: new file. Capture it (resolve_path + create + ingest + convert-to-placeholder).
+        None => {
+            capture_new_file(state, &path);
+            return;
+        }
     };
     let ino = match state.provider.ino_for_node_id(&node_id) {
         Ok(Some(i)) => i,
         _ => return,
     };
 
-    // Full on-disk path = VolumeDosName ("C:") + NormalizedPath ("\Users\…\file").
-    let path = format!("{}{}", pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
     let on_disk = match std::fs::read(&path) {
         Ok(b) => b,
         Err(_) => return, // gone/unreadable (or still a dehydrated placeholder)
@@ -440,6 +461,111 @@ unsafe extern "system" fn notify_file_close_callback(
         let mut usn: i64 = 0;
         let _ = CfSetInSyncState(handle, CF_IN_SYNC_STATE_IN_SYNC, CF_SET_IN_SYNC_FLAG_NONE, Some(&mut usn));
         let _ = CloseHandle(handle);
+    }
+}
+
+/// PHASE 2b — capture a **new** file the user dropped into the sync root (a close with no
+/// `node_id`). Maps the on-disk path back to a library-relative path, materializes the node in
+/// the `Provider` (`resolve_path` → `create` → `ingest_bytes`, which enqueues the outbox so the
+/// sync loop pushes), then `CfConvertToPlaceholder`s the on-disk file so it carries our
+/// `node_id` identity (subsequent closes take the edit path) and is marked in-sync.
+///
+/// The convert itself fires another close on the same path; the `self_writes` echo guard
+/// short-circuits that one re-entry so we don't create a duplicate node.
+unsafe fn capture_new_file(state: &CfState, path: &str) {
+    // Echo guard: if we're the ones who just converted this path, skip exactly once.
+    {
+        let mut seen = state.self_writes.lock().unwrap();
+        if seen.remove(path) {
+            return;
+        }
+    }
+
+    // Map the absolute on-disk path back into the library tree.
+    let root_str = state.root.to_string_lossy();
+    let rel = match library_relative(&root_str, path) {
+        Some(r) if !r.is_empty() => r,
+        _ => return, // outside the root (or the root itself) — nothing to capture
+    };
+
+    // Skip directories: a dir close with no identity isn't a new-file capture (the parent dirs
+    // are materialized lazily by `resolve_path` when their children land).
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => return,
+        Ok(_) => {}
+        Err(_) => return, // gone/unreadable (e.g. still a placeholder, or deleted)
+    }
+
+    // Read the new file's bytes. A still-dehydrated placeholder / unreadable file → skip.
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+
+    // Resolve/create the parent dirs, then the leaf node.
+    let (parent_ino, leaf) = match state.provider.resolve_path(&rel) {
+        Ok(pl) => pl,
+        Err(e) => {
+            eprintln!("cfapi: new file resolve_path(rel={rel}) failed: {e}");
+            return;
+        }
+    };
+    let attr = match state.provider.create(parent_ino, &leaf) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("cfapi: new file create(parent={parent_ino}, {leaf}) failed: {e}");
+            return;
+        }
+    };
+    let node_id = match state.provider.node_id_for(attr.ino) {
+        Ok(Some(n)) => n,
+        _ => {
+            eprintln!("cfapi: new file node_id_for(ino={}) missing", attr.ino);
+            return;
+        }
+    };
+    if let Err(e) = state.provider.ingest_bytes(attr.ino, &bytes) {
+        eprintln!("cfapi: new file ingest_bytes(node={node_id}) failed: {e}");
+        return;
+    }
+    eprintln!("cfapi: new file captured rel={rel} node={node_id} ({} bytes)", bytes.len());
+
+    // Convert the real on-disk file into a placeholder carrying our identity so future closes
+    // take the edit path (content-compare). Mark in-sync — the bytes are already correct locally
+    // and the sync loop will push them. Guard the echo (our convert fires another close).
+    state.self_writes.lock().unwrap().insert(path.to_string());
+    let identity = FileIdentity::from_node_id(&node_id);
+    let path_w = path_wide(Path::new(path));
+    match CreateFileW(
+        PCWSTR(path_w.as_ptr()),
+        (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAGS_AND_ATTRIBUTES(FILE_ATTRIBUTE_NORMAL.0),
+        None,
+    ) {
+        Ok(handle) => {
+            let mut usn: i64 = 0;
+            let blob = identity.as_bytes();
+            if let Err(e) = CfConvertToPlaceholder(
+                handle,
+                Some(blob.as_ptr() as *const c_void),
+                blob.len() as u32,
+                CF_CONVERT_FLAG_MARK_IN_SYNC,
+                Some(&mut usn),
+                None,
+            ) {
+                eprintln!("cfapi: new file CfConvertToPlaceholder(node={node_id}) failed: {e}");
+                // The convert didn't fire its own close, so drop the echo guard we inserted.
+                state.self_writes.lock().unwrap().remove(path);
+            }
+            let _ = CloseHandle(handle);
+        }
+        Err(e) => {
+            eprintln!("cfapi: new file open(node={node_id}) failed: {e}");
+            state.self_writes.lock().unwrap().remove(path);
+        }
     }
 }
 

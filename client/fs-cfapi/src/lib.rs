@@ -130,9 +130,46 @@ pub fn decide_action(ev: RemoteNodeEvent) -> PlaceholderAction {
     }
 }
 
+/// Strip the sync-root prefix from an absolute on-disk path, yielding a library-relative
+/// forward-slash path. `None` if `abs` is not under `root`. Case-insensitive on the drive/root
+/// is NOT handled here — callers pass the same root string CfAPI reports.
+pub fn library_relative(root: &str, abs: &str) -> Option<String> {
+    let rel = abs.strip_prefix(root)?.trim_start_matches(['\\', '/']);
+    Some(rel.replace('\\', "/"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_relative_strips_root_and_normalizes_backslashes() {
+        let root = r"C:\Users\me\MakerCF";
+        let abs = r"C:\Users\me\MakerCF\proj\part.stl";
+        assert_eq!(library_relative(root, abs).as_deref(), Some("proj/part.stl"));
+    }
+
+    #[test]
+    fn library_relative_returns_none_when_not_under_root() {
+        let root = r"C:\Users\me\MakerCF";
+        let abs = r"C:\Users\me\Other\part.stl";
+        assert_eq!(library_relative(root, abs), None);
+    }
+
+    #[test]
+    fn library_relative_handles_trailing_slash_on_root() {
+        // Root with a trailing separator and without should both yield the same relative path.
+        let abs = r"C:\Users\me\MakerCF\a\b.txt";
+        assert_eq!(library_relative(r"C:\Users\me\MakerCF", abs).as_deref(), Some("a/b.txt"));
+        assert_eq!(library_relative(r"C:\Users\me\MakerCF\", abs).as_deref(), Some("a/b.txt"));
+    }
+
+    #[test]
+    fn library_relative_file_at_root_yields_bare_leaf() {
+        let root = r"C:\Users\me\MakerCF";
+        let abs = r"C:\Users\me\MakerCF\hello.txt";
+        assert_eq!(library_relative(root, abs).as_deref(), Some("hello.txt"));
+    }
 
     #[test]
     fn file_identity_round_trips_a_node_id() {
