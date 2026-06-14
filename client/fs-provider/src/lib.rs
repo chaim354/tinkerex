@@ -761,18 +761,12 @@ impl SqliteProvider {
     /// and deliberately skips the outbox (to avoid echoing the change back). This method is
     /// for *outbound* local deletes captured by a CfAPI callback.
     pub fn delete_by_node_id(&self, node_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        // Check existence first: if the node isn't there, no-op (idempotent).
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = ?1)",
-            params![node_id],
-            |r| r.get(0),
-        )?;
-        if !exists {
-            return Ok(());
-        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
         // Recursive CTE delete of the entire subtree (same as apply_remote_delete).
-        conn.execute(
+        // `changed` tells us whether anything was actually deleted — if zero the node
+        // wasn't present so we skip the outbox write (idempotent: no-op on missing ids).
+        let changed = tx.execute(
             "DELETE FROM nodes WHERE ino IN (
                  WITH RECURSIVE sub(ino) AS (
                      SELECT ino FROM nodes WHERE node_id = ?1
@@ -783,10 +777,14 @@ impl SqliteProvider {
              )",
             params![node_id],
         )?;
-        // Enqueue a delete for the sync loop — the subtree children are implicitly deleted
-        // on the server when the parent is deleted (the server also does a recursive sweep),
-        // so a single outbox entry for the root of the deleted subtree is sufficient.
-        Self::enqueue(&conn, node_id, "delete")?;
+        if changed > 0 {
+            // Enqueue a delete for the sync loop — the subtree children are implicitly
+            // deleted on the server when the parent is deleted (the server also does a
+            // recursive sweep), so a single outbox entry for the root of the deleted
+            // subtree is sufficient.
+            Self::enqueue(&tx, node_id, "delete")?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -795,6 +793,12 @@ impl SqliteProvider {
     /// is not created** — the caller does that (e.g. via `create`). A top-level path
     /// (`"foo.txt"`) returns `(ROOT_INO, "foo.txt")`. Empty input or a bare `"/"` returns
     /// `Err(NotFound)`.
+    ///
+    /// Returns `Err(NotADirectory)` if an intermediate path component exists as a file
+    /// rather than a directory (e.g. `"foo.txt/bar.txt"` when `"foo.txt"` is a file).
+    ///
+    /// This function does **not** normalize `.` or `..` — the caller must pass a clean
+    /// POSIX path.
     ///
     /// This is the CfAPI bridge for new-file capture: a `NOTIFY_FILE_CLOSE` callback
     /// delivers a root-relative OS path; `resolve_path` maps it to the tree location so
@@ -812,7 +816,12 @@ impl SqliteProvider {
         let mut current_ino = ROOT_INO;
         for &component in dirs {
             current_ino = match self.lookup(current_ino, component) {
-                Ok(attr) => attr.ino,
+                Ok(attr) => {
+                    if attr.kind != Kind::Dir {
+                        return Err(FsError::NotADirectory);
+                    }
+                    attr.ino
+                }
                 Err(FsError::NotFound) => self.mkdir(current_ino, component)?.ino,
                 Err(e) => return Err(e),
             };

@@ -192,3 +192,41 @@ fn rename_by_node_id_unknown_node_id_is_not_found() {
     let err = p.rename_by_node_id("ghost-id", ROOT, "anywhere.txt");
     assert!(matches!(err, Err(FsError::NotFound)), "expected NotFound, got {err:?}");
 }
+
+// ---- additional pinning tests (review fixes) ------------------------------------
+
+/// If an intermediate path component is a FILE (not a directory), resolve_path must
+/// return Err(NotADirectory) immediately rather than walking into the file's inode
+/// and yielding an opaque error later.
+#[test]
+fn resolve_path_intermediate_file_is_not_a_directory() {
+    let p = provider();
+    // Create a top-level file named "foo.txt".
+    write_file(&p, ROOT, "foo.txt", b"contents");
+    // Attempting to treat "foo.txt" as a directory component must fail fast.
+    let err = p.resolve_path("foo.txt/bar.txt");
+    assert!(
+        matches!(err, Err(FsError::NotADirectory)),
+        "expected NotADirectory when intermediate component is a file, got {err:?}"
+    );
+}
+
+/// rename_by_node_id onto itself (same parent + same name) must succeed and leave the
+/// node in place — it delegates to Provider::rename which short-circuits on dst==src.
+#[test]
+fn rename_by_node_id_onto_self_is_ok() {
+    let p = provider();
+    let ino = write_file(&p, ROOT, "self.txt", b"data");
+    let node_id = p.node_id_for(ino).unwrap().unwrap();
+
+    // Rename to the same parent and same name — must not error.
+    p.rename_by_node_id(&node_id, ROOT, "self.txt").unwrap();
+
+    // The node must still be found at the original location with the same node_id.
+    let attr = p.lookup(ROOT, "self.txt").unwrap();
+    assert_eq!(
+        p.node_id_for(attr.ino).unwrap().unwrap(),
+        node_id,
+        "node_id must be stable after a rename-onto-self"
+    );
+}
