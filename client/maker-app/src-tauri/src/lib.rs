@@ -21,7 +21,13 @@ use tauri::State;
 type Mount = sync_engine::WebdavMount;
 #[cfg(target_os = "linux")]
 type Mount = sync_engine::Daemon;
-#[cfg(target_os = "windows")]
+// Windows default: CfAPI — the driverless Cloud Filter path (no WinFsp/GPL driver, mount point is
+// a folder not a drive letter). Flipped from WinfspMount after the live smoke + byte-for-byte
+// conformance went green (Phase 2b B5). WinFsp stays reachable behind the `winfsp-backend` feature
+// for one release.
+#[cfg(all(target_os = "windows", not(feature = "winfsp-backend")))]
+type Mount = sync_engine::CfApiMount;
+#[cfg(all(target_os = "windows", feature = "winfsp-backend"))]
 type Mount = sync_engine::WinfspMount;
 
 /// Holds the running mount (or `None` when stopped).
