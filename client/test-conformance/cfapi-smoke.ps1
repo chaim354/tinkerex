@@ -45,7 +45,7 @@ $seed | Out-Host
 $tokenLine = $seed | Select-String -Pattern '^WINDOWS_DEVICE_TOKEN=(.+)$'
 if (-not $tokenLine) { throw "could not parse WINDOWS_DEVICE_TOKEN from mac_host output" }
 $token = $tokenLine.Matches[0].Groups[1].Value.Trim()
-Write-Host "  got device token (${($token.Length)} chars)"
+Write-Host "  got device token ($($token.Length) chars)"
 
 function ServerTree { & cargo run --quiet --manifest-path $engine --example tree_names -- $Server $token 2>$null }
 

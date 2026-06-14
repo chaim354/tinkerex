@@ -14,6 +14,11 @@ $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/chaim354/tinkerex"
 $Labels  = "self-hosted,windows,maker-windows"
 
+# CI run-steps execute as `powershell -command ". '<temp>.ps1'"`; with the default machine
+# ExecutionPolicy (Restricted) that dot-source is blocked ("running scripts is disabled on this
+# system"). Allow signed/local scripts machine-wide so workflow steps (and our smoke) can run.
+Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force
+
 Write-Host "==> Installing prereqs via Chocolatey (LLVM for winfsp-sys bindgen; WinFsp driver/SDK)"
 if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
   Set-ExecutionPolicy Bypass -Scope Process -Force

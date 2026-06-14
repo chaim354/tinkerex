@@ -15,7 +15,8 @@ sudo apt-get update
 sudo apt-get install -y \
   curl jq tar git \
   libfuse-dev fuse pkg-config build-essential \
-  rclone autoconf automake libtool
+  rclone autoconf automake libtool \
+  libyaml-dev libssl-dev zlib1g-dev
 # AutoUnmount on the maker-mount needs user_allow_other (mount-conformance job).
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || \
   echo 'user_allow_other' | sudo tee -a /etc/fuse.conf >/dev/null
