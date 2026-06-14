@@ -18,6 +18,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Detect whether anything that affects the Windows client changed, so the (slower) Windows
+    # build + live smoke only run when relevant — not on Mac-only / Linux-only / docs changes.
+    runs-on: [self-hosted, linux]
+    outputs:
+      windows: ${{ steps.filter.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            windows:
+              - 'client/fs-cfapi/**'
+              - 'client/fs-winfsp/**'
+              - 'client/sync-engine/**'
+              - 'client/fs-provider/**'
+              - 'client/sync-client/**'
+              - 'client/test-conformance/cfapi-smoke.ps1'
+              - '.github/workflows/rust-client.yml'
+
   mac-tests:
     # The fastest box does the most: every hermetic Rust test (all cross-platform) PLUS the
     # CfAPI Windows-FFI cross-check (cargo check --target windows-gnu) PLUS the native macOS
@@ -86,3 +108,42 @@ jobs:
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
+
+  windows-build:
+    # The real Windows mount adapters (fs-cfapi + fs-winfsp) + sync-engine wiring — the only place
+    # winfsp-sys (msvc) and the cfg(windows) daemon code actually link. Runs only when something
+    # affecting the Windows client changed (or on manual dispatch). LLVM/WinFsp preinstalled by
+    # ci/runners/setup-windows.ps1. clean: false keeps target/ warm.
+    needs: changes
+    if: ${{ needs.changes.outputs.windows == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build fs-cfapi (lib + maker-cfapi)
+        run: cargo build --manifest-path client/fs-cfapi/Cargo.toml --bins
+      - name: Build fs-winfsp (WinFsp adapter)
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins
+      - name: Build sync-engine on Windows (CfApiMount + WinfspMount + maker-cfsyncd)
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+
+  windows-smoke:
+    # The LIVE CfAPI write-path proof (register -> enumerate -> hydrate -> new/edit/delete/rename),
+    # gated the same way. Needs the Windows runner online + the deployed server reachable.
+    needs: [changes, windows-build]
+    if: ${{ needs.changes.outputs.windows == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Live CfAPI smoke (register -> enumerate -> hydrate -> new/edit/delete/rename)
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/cfapi-smoke.ps1
