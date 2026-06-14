@@ -20,7 +20,8 @@ windows = { version = "0.61", features = [
     "Win32_Storage_FileSystem",        # FILE_BASIC_INFO, CreateFileW, FILE_* flags
     "Win32_Storage_CloudFilters",      # the CfAPI surface
     "Win32_System_CorrelationVector",  # gates CF_CALLBACK_*/CF_OPERATION_INFO + CfConnectSyncRoot
-    "Win32_System_IO",                 # OVERLAPPED (CfUpdatePlaceholder)
+    "Win32_System_IO",                 # OVERLAPPED + CancelIoEx + GetOverlappedResult (watcher)
+    "Win32_System_Threading",          # CreateEventW/SetEvent/WaitForMultipleObjects (watcher stop)
 ] }
 
 [[bin]]

@@ -91,13 +91,16 @@ pub struct CfApiMountHandle {
 // handle is moved to one thread. Mark Send so it can live in the daemon's mount slot.
 unsafe impl Send for CfApiMountHandle {}
 
-/// Owns the `ReadDirectoryChangesW` watcher thread + its watch-directory handle. Dropping it
-/// (via [`CfApiMountHandle`]'s Drop, *before* the `CfState` box is reclaimed) closes the dir
-/// handle — which makes the blocking `ReadDirectoryChangesW` return an error — then joins the
-/// thread, so the watcher never touches freed state.
+/// Owns the `ReadDirectoryChangesW` watcher thread + the handles it waits on. The read is issued
+/// **overlapped**, and the loop waits on {change-event, stop-event}; [`shutdown`](Self::shutdown)
+/// signals the stop event (and `CancelIoEx`'s the pending read) so the wait returns promptly and
+/// the thread exits — a clean teardown that doesn't rely on closing a handle out from under a
+/// blocking synchronous call (which can hang). Dropped via [`CfApiMountHandle`]'s Drop *before*
+/// the `CfState` box is reclaimed, so the watcher never touches freed state.
 struct NewFileWatcher {
     stop: Arc<AtomicBool>,
     dir: windows::Win32::Foundation::HANDLE,
+    stop_event: windows::Win32::Foundation::HANDLE,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -106,12 +109,17 @@ unsafe impl Send for NewFileWatcher {}
 impl NewFileWatcher {
     fn shutdown(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Close the watch handle to unblock the synchronous ReadDirectoryChangesW.
         unsafe {
-            let _ = CloseHandle(self.dir);
+            // Wake the wait (stop event) and cancel any pending overlapped read, then join.
+            let _ = windows::Win32::System::Threading::SetEvent(self.stop_event);
+            let _ = windows::Win32::System::IO::CancelIoEx(self.dir, None);
         }
         if let Some(t) = self.thread.take() {
             let _ = t.join();
+        }
+        unsafe {
+            let _ = CloseHandle(self.dir);
+            let _ = CloseHandle(self.stop_event);
         }
     }
 }
@@ -193,13 +201,15 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
 /// close callback — is harmless.
 fn spawn_new_file_watcher(root: &Path, state: *mut CfState) -> std::io::Result<NewFileWatcher> {
     use windows::Win32::Storage::FileSystem::{
-        FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
-        FILE_NOTIFY_CHANGE_SIZE,
+        FILE_FLAG_OVERLAPPED, FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_FILE_NAME,
+        FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE,
     };
+    use windows::Win32::System::Threading::CreateEventW;
 
     let root_w = path_wide(root);
-    // Open the directory for change notifications (BACKUP_SEMANTICS is required to get a dir
-    // handle; share everything so we never block other openers).
+    // Open the directory for **overlapped** change notifications (BACKUP_SEMANTICS gets a dir
+    // handle; OVERLAPPED lets the read complete asynchronously so the loop can also wait on a
+    // stop event; share everything so we never block other openers).
     let dir = unsafe {
         CreateFileW(
             PCWSTR(root_w.as_ptr()),
@@ -207,62 +217,95 @@ fn spawn_new_file_watcher(root: &Path, state: *mut CfState) -> std::io::Result<N
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             None,
             OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
             None,
         )
     }
     .map_err(win_err)?;
 
+    // Manual-reset stop event: `shutdown` signals it to break the wait promptly.
+    let stop_event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }.map_err(|e| {
+        unsafe { let _ = CloseHandle(dir); }
+        win_err(e)
+    })?;
+
     let stop = Arc::new(AtomicBool::new(false));
     let filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE;
     let state_addr = state as usize; // make the raw ptr Send for the thread
     let dir_addr = dir.0 as usize;
+    let stop_event_addr = stop_event.0 as usize;
     let thread = {
         let stop = stop.clone();
         std::thread::spawn(move || {
-            new_file_watch_loop(dir_addr, state_addr, filter, stop);
+            new_file_watch_loop(dir_addr, stop_event_addr, state_addr, filter, stop);
         })
     };
     eprintln!("cfapi: new-file watcher started on {}", root.display());
-    Ok(NewFileWatcher { stop, dir, thread: Some(thread) })
+    Ok(NewFileWatcher { stop, dir, stop_event, thread: Some(thread) })
 }
 
-/// The watcher thread body: block on `ReadDirectoryChangesW`, parse the `FILE_NOTIFY_INFORMATION`
-/// records, and route ADDED / MODIFIED / RENAMED_NEW_NAME paths through `capture_new_file`. Exits
-/// when `stop` is set (Drop closes the handle, so the blocking call returns an error → loop sees
-/// `stop` and returns).
+/// The watcher thread body: issue an **overlapped** `ReadDirectoryChangesW`, then wait on
+/// {change-event, stop-event}. On a change, parse the `FILE_NOTIFY_INFORMATION` chain and route
+/// ADDED / MODIFIED / RENAMED_NEW_NAME paths through `capture_new_file`; on stop, exit. Using an
+/// overlapped read + stop event (rather than closing a handle under a blocking synchronous read)
+/// gives a deterministic, prompt teardown.
 fn new_file_watch_loop(
     dir_addr: usize,
+    stop_event_addr: usize,
     state_addr: usize,
     filter: windows::Win32::Storage::FileSystem::FILE_NOTIFY_CHANGE,
     stop: Arc<AtomicBool>,
 ) {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::Storage::FileSystem::{ReadDirectoryChangesW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_ACTION_RENAMED_NEW_NAME, FILE_NOTIFY_INFORMATION};
+    use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Storage::FileSystem::{
+        ReadDirectoryChangesW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_NOTIFY_INFORMATION,
+    };
+    use windows::Win32::System::Threading::{CreateEventW, WaitForMultipleObjects, INFINITE};
+    use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
 
     let dir = HANDLE(dir_addr as *mut c_void);
+    let stop_event = HANDLE(stop_event_addr as *mut c_void);
     let state = state_addr as *const CfState;
+
+    // The overlapped read needs its own completion event (distinct from the stop event).
+    let read_event = match unsafe { CreateEventW(None, false, false, PCWSTR::null()) } {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("cfapi: watcher CreateEventW failed: {e}");
+            return;
+        }
+    };
+
     // 64 KiB buffer, DWORD-aligned (FILE_NOTIFY_INFORMATION starts with a u32).
-    let mut buf = vec![0u32; 16 * 1024]; // 64 KiB
+    let mut buf = vec![0u32; 16 * 1024];
     while !stop.load(Ordering::Relaxed) {
-        let mut returned: u32 = 0;
-        let ok = unsafe {
+        let mut ov = OVERLAPPED::default();
+        ov.hEvent = read_event;
+        let read = unsafe {
             ReadDirectoryChangesW(
                 dir,
                 buf.as_mut_ptr() as *mut c_void,
                 (buf.len() * 4) as u32,
                 true, // watch subtree
                 filter,
-                Some(&mut returned),
-                None, // synchronous (no OVERLAPPED)
+                None,
+                Some(&mut ov),
                 None,
             )
         };
-        if ok.is_err() || stop.load(Ordering::Relaxed) {
-            break; // handle closed on shutdown, or a real error — exit the thread
+        if read.is_err() {
+            break; // handle cancelled/closed on shutdown, or a real error — exit
         }
-        if returned == 0 {
-            continue; // buffer overflow / no info; just re-arm
+        // Wait for either the read to complete or a stop request.
+        let waited = unsafe { WaitForMultipleObjects(&[read_event, stop_event], false, INFINITE) };
+        if stop.load(Ordering::Relaxed) || waited != WAIT_OBJECT_0 {
+            // Stop signalled (or wait failed): cancel the pending read and exit.
+            unsafe { let _ = windows::Win32::System::IO::CancelIoEx(dir, Some(&ov)); }
+            break;
+        }
+        let mut returned: u32 = 0;
+        if unsafe { GetOverlappedResult(dir, &ov, &mut returned, false) }.is_err() || returned == 0 {
+            continue; // overflow / no info — re-arm
         }
         // Walk the variable-length FILE_NOTIFY_INFORMATION chain.
         let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, returned as usize) };
@@ -273,14 +316,17 @@ fn new_file_watch_loop(
             }
             let info = unsafe { &*(bytes.as_ptr().add(offset) as *const FILE_NOTIFY_INFORMATION) };
             let name_len = info.FileNameLength as usize / 2; // bytes → u16 count
-            let name_ptr = unsafe { (bytes.as_ptr().add(offset) as *const u8).add(std::mem::offset_of!(FILE_NOTIFY_INFORMATION, FileName)) as *const u16 };
+            let name_ptr = unsafe {
+                (bytes.as_ptr().add(offset) as *const u8)
+                    .add(std::mem::offset_of!(FILE_NOTIFY_INFORMATION, FileName)) as *const u16
+            };
             let name: Vec<u16> = unsafe { std::slice::from_raw_parts(name_ptr, name_len) }.to_vec();
             let rel = String::from_utf16_lossy(&name);
             let action = info.Action;
-            if action == FILE_ACTION_ADDED
-                || action == FILE_ACTION_MODIFIED
-                || action == FILE_ACTION_RENAMED_NEW_NAME
-            {
+            // Only ADDED/MODIFIED drive new-file capture. Renames are owned by the NOTIFY_RENAME
+            // callback (which mirrors them via rename_by_node_id); treating RENAMED_NEW_NAME here
+            // too could race that and create a duplicate node before the rename applied.
+            if action == FILE_ACTION_ADDED || action == FILE_ACTION_MODIFIED {
                 // Build the absolute path. `capture_new_file` re-maps it to a library-relative
                 // path, is idempotent, and skips dirs / placeholders it already tracks.
                 if !state.is_null() {
@@ -297,6 +343,7 @@ fn new_file_watch_loop(
             offset += next;
         }
     }
+    unsafe { let _ = CloseHandle(read_event); }
     eprintln!("cfapi: new-file watcher stopped");
 }
 
