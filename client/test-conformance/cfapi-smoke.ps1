@@ -90,7 +90,11 @@ try {
   if ($renameSrc) { Rename-Item -Path (Join-Path $root $renameSrc) -NewName $renamedTo -ErrorAction SilentlyContinue }  # RENAME (B3)
 
   Write-Host "==> Local ops done (new=$(Split-Path $newFile -Leaf) edit=$leaf delete=$toDelete rename=$renameSrc->$renamedTo); waiting for push"
-  Start-Sleep -Seconds 12   # let the sync loop drain the outbox + push (poll is 2s)
+  # Settle generously: CfAPI delivers its NOTIFY callbacks (close/delete/rename) lazily — often a
+  # good while after the op — so a short wait can leave a capture to race the unmount drain. A
+  # longer wait lets them fire during NORMAL sync (cleanly pushed by the loop); the daemon's
+  # patient shutdown drain is the backstop for any that still land at unmount.
+  Start-Sleep -Seconds 25
 }
 finally {
   # --- 7. Stop the daemon GRACEFULLY (touch <db>.stop) so an in-flight/final push can

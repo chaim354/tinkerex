@@ -647,7 +647,6 @@ impl CfApiMount {
             }
             let now = std::time::Instant::now();
             let remaining = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-            eprintln!("cfapi: drain pass t={:?} pushed_any={pushed_any} remaining={remaining}", now.duration_since(start));
             if pushed_any || remaining > 0 {
                 last_work = now;
                 empty_since = None;

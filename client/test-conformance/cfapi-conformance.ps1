@@ -84,7 +84,7 @@ try {
     [System.IO.File]::WriteAllBytes((Join-Path $dir $name), $bytes)
     $expect["$rel$name"] = Sha256OfBytes $bytes
   }
-  Start-Sleep -Seconds 8   # let the watcher + sync loop capture + push the creates
+  Start-Sleep -Seconds 12  # let the watcher + sync loop capture + push the creates
 
   # --- 4. Churn: edit some, delete some, rename some ---------------------------------------
   Write-Host "==> Churn: edit / delete / rename"
@@ -107,7 +107,9 @@ try {
     Rename-Item $rsrc -NewName "renamed-$runid.bin" -EA SilentlyContinue
     $expect["sub/renamed-$runid.bin"] = $expect["sub/f1.bin"]; $expect.Remove("sub/f1.bin")
   }
-  Start-Sleep -Seconds 10  # let the churn capture + push
+  # Settle generously before unmount: CfAPI delivers its NOTIFY callbacks lazily, so give the
+  # churn (edit/delete/rename) time to fire + push during normal sync (the patient drain backstops).
+  Start-Sleep -Seconds 25  # let the churn capture + push
 }
 finally {
   # --- 5. Graceful stop (sentinel) so the final drain completes ----------------------------
