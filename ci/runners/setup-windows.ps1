@@ -35,9 +35,10 @@ $zip = "actions-runner-win-x64-$version.zip"
 if (-not (Test-Path $zip)) {
   Invoke-WebRequest -Uri "https://github.com/actions/runner/releases/download/v$version/$zip" -OutFile $zip
 }
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-# Re-extract cleanly (idempotent): expand over the dir.
-[System.IO.Compression.ZipFile]::ExtractToDirectory((Resolve-Path $zip), $RunnerDir, $true)
+# Extract idempotently. NOTE: ZipFile.ExtractToDirectory's 3-arg overload is
+# (src, dest, Encoding) on Windows PowerShell's .NET Framework — the overwrite-bool overload
+# is .NET Core only — so use Expand-Archive -Force, which overwrites and works on PS 5.1+.
+Expand-Archive -Path $zip -DestinationPath $RunnerDir -Force
 
 Write-Host "==> Configuring the runner (labels: $Labels)"
 ./config.cmd --unattended --replace `
