@@ -54,6 +54,25 @@ jobs:
           SERVER_URL: http://192.168.1.95
         run: ./client/test-conformance/cfapi-smoke.ps1
 
+  cfapi-conformance:
+    # The CfAPI analogue of `mount-conformance`: a rigorous live round-trip through the real
+    # Cloud Filter mount — many files of varied sizes (incl. > chunk size → multi-chunk + dedup),
+    # nested dirs, and create/edit/delete/rename churn — asserted BYTE-FOR-BYTE by hydrating every
+    # file on a fresh device and comparing SHA-256s. Same interactive-session caveat as the smoke
+    # (continue-on-error until the Windows runner runs in an interactive login session).
+    needs: windows-build
+    continue-on-error: true
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Live CfAPI conformance (varied sizes / nested dirs / churn, byte-for-byte)
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/cfapi-conformance.ps1
+
   mount-conformance:
     # External, battle-tested suites against the real FUSE/WebDAV mounts (what JuiceFS/CephFS
     # gate on). Slow (fsx 100k ops, pjdfstest) → nightly, not per-PR.

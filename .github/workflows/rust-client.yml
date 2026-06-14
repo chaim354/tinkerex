@@ -21,7 +21,7 @@ on:
         description: 'Which slice to run'
         type: choice
         default: all
-        options: [all, mac, linux, engine, windows, cfapi]
+        options: [all, mac, linux, engine, windows, cfapi, cfapi-conf]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -39,6 +39,7 @@ jobs:
       engine: ${{ steps.f.outputs.engine }}
       windows: ${{ steps.f.outputs.windows }}
       smoke: ${{ steps.f.outputs.smoke }}
+      conf: ${{ steps.f.outputs.conf }}
     steps:
       - uses: actions/checkout@v5
         with: { clean: false, fetch-depth: 0 }
@@ -49,7 +50,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          mac=false; linux=false; engine=false; windows=false; smoke=false
+          mac=false; linux=false; engine=false; windows=false; smoke=false; conf=false
           if [ "$EVENT" = "workflow_dispatch" ]; then
             case "${TARGET:-all}" in
               all)           mac=true; linux=true; engine=true; windows=true; smoke=true ;;
@@ -57,6 +58,7 @@ jobs:
               linux)         linux=true ;;
               engine)        engine=true ;;
               windows|cfapi) windows=true; smoke=true; mac=true ;;
+              cfapi-conf)    windows=true; conf=true; mac=true ;;  # the rigorous CfAPI round-trip
             esac
           elif [ "$EVENT" = "push" ]; then
             mac=true; linux=true; engine=true; windows=true   # full build matrix; smoke on-demand
@@ -75,8 +77,8 @@ jobs:
               # smoke stays off on auto PRs: it needs an interactive Windows session (see below).
             fi
           fi
-          for k in mac linux engine windows smoke; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
-          echo "RESULT mac=$mac linux=$linux engine=$engine windows=$windows smoke=$smoke"
+          for k in mac linux engine windows smoke conf; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
+          echo "RESULT mac=$mac linux=$linux engine=$engine windows=$windows smoke=$smoke conf=$conf"
 
   mac-tests:
     # The fastest box: every hermetic Rust test (all cross-platform) + the CfAPI Windows-FFI
@@ -194,3 +196,22 @@ jobs:
         env:
           SERVER_URL: http://192.168.1.95
         run: ./client/test-conformance/cfapi-smoke.ps1
+
+  cfapi-conformance:
+    # The rigorous live CfAPI round-trip (on-demand: target=cfapi-conf). Many files of varied
+    # sizes (incl. > chunk size), nested dirs, create/edit/delete/rename churn — asserted
+    # byte-for-byte by hydrating every file on a fresh device. Same interactive-session caveat as
+    # the smoke; continue-on-error (does not gate). Also runs nightly (nightly.yml).
+    needs: [changes, windows-build]
+    if: ${{ needs.changes.outputs.conf == 'true' }}
+    continue-on-error: true
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Live CfAPI conformance (varied sizes / nested dirs / churn, byte-for-byte)
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/cfapi-conformance.ps1
