@@ -1,58 +1,77 @@
 name: Rust client
 
-# The Rust client crates' CI. Jobs:
-#  - unix: build/test the hermetic crates on Linux (fast feedback; no server needed).
-#  - engine-integration: boot the real Rails server (SQLite + in-memory chunk store) and
-#    run the sync-engine integration suite against it — the actual HTTP wire contract.
-#  - winfsp-windows: actually COMPILE the Windows mount adapter (`fs-winfsp`), which
-#    can't be built on the maintainer's macOS box — this is its real verification gate.
+# FAST per-PR gate. Runs only on the two always-on self-hosted runners (macOS + Linux) so the
+# loop never waits on the Windows desktop. The slow / cross-platform / live jobs (Windows builds,
+# the live CfAPI smoke, fsx/pjdfstest conformance) live in `nightly.yml` (cron + on-demand).
 on:
   push:
     branches: [ main ]
   pull_request:
+    paths:
+      - 'client/**'
+      - '.github/workflows/rust-client.yml'
   workflow_dispatch:
 
-# Single self-hosted runner per OS + hardcoded test ports (engine-integration uses :3001) →
-# overlapping runs collide. Serialize: a newer run cancels the older one for the same ref.
+# Single self-hosted runner per OS + fixed test ports → overlapping runs collide. Serialize.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  unix:
+  mac-tests:
+    # The fastest box does the most: every hermetic Rust test (all cross-platform) PLUS the
+    # CfAPI Windows-FFI cross-check (cargo check --target windows-gnu) PLUS the native macOS
+    # mount build. `clean: false` keeps target/ warm across runs → incremental compiles.
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi)
+        run: |
+          cargo test --manifest-path client/fs-provider/Cargo.toml
+          cargo test --manifest-path client/sync-client/Cargo.toml
+          cargo test --manifest-path client/fs-cfapi/Cargo.toml
+      - name: Cross-check the CfAPI Windows FFI (catches most cfg(windows) breakage)
+        run: cargo check --target x86_64-pc-windows-gnu --manifest-path client/fs-cfapi/Cargo.toml
+      - name: Native macOS build (fs-webdav mount + sync-engine bins)
+        run: |
+          cargo build --manifest-path client/fs-webdav/Cargo.toml
+          cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+
+  linux-build:
+    # The Linux-only FUSE mount path (fuser is cfg(target_os = "linux")), built in parallel with
+    # the Mac job. Tests themselves run on the Mac; this just proves the Linux compile.
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
+        with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
-      - name: FUSE dev headers (for fs-fuse / sync-engine)
-        run: sudo apt-get update && sudo apt-get install -y libfuse-dev pkg-config
-      - name: Test fs-provider
-        run: cargo test --manifest-path client/fs-provider/Cargo.toml
-      - name: Test sync-client
-        run: cargo test --manifest-path client/sync-client/Cargo.toml
-      - name: Build fs-fuse
-        run: cargo build --manifest-path client/fs-fuse/Cargo.toml
-      - name: Build sync-engine (Daemon + maker-syncd)
-        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+      - name: FUSE dev headers
+        run: sudo apt-get install -y libfuse-dev pkg-config
+      - name: Build fs-fuse + sync-engine bins (Linux mount path)
+        run: |
+          cargo build --manifest-path client/fs-fuse/Cargo.toml
+          cargo build --manifest-path client/sync-engine/Cargo.toml --bins
       - name: Build fs-winfsp on non-Windows (must be an inert empty crate)
         run: cargo build --manifest-path client/fs-winfsp/Cargo.toml
-      - name: Test fs-cfapi pure logic (cross-platform; the CfAPI FFI is cfg(windows))
-        run: cargo test --manifest-path client/fs-cfapi/Cargo.toml
 
   engine-integration:
-    # The sync-engine talks to the server over HTTP; this job stands up the real Rails
-    # app (SQLite, STORAGE_BACKEND=memory → control plane only, chunk bytes via the test's
-    # shared-dir stand-in) and runs the integration suite against it.
+    # The HTTP wire contract: boot the real Rails server (SQLite + memory chunk store) and run
+    # the sync-engine integration suite against it. On Linux in parallel with the Mac job.
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
+        with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Set up Ruby
         uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
       - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
-        run: sudo apt-get update && sudo apt-get install -y libfuse-dev pkg-config
+        run: sudo apt-get install -y libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Boot the sync server (memory chunk store)
@@ -67,92 +86,3 @@ jobs:
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
-
-  mount-conformance:
-    # External, battle-tested suites pointed at our real mount surfaces (what JuiceFS/
-    # CephFS gate on). rclone⇄WebDAV and fsx⇄FUSE gate the build; pjdfstest is an
-    # informational POSIX conformance map (continue-on-error). See
-    # client/test-conformance/README.md.
-    runs-on: [self-hosted, linux]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: System deps (FUSE, rclone, build tools, autotools)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libfuse-dev fuse pkg-config build-essential \
-            rclone curl git autoconf automake libtool
-          # AutoUnmount on the maker-mount needs user_allow_other.
-          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
-      - name: rclone ⇄ WebDAV round-trip (gating)
-        run: client/test-conformance/webdav-rclone.sh
-      - name: fsx ⇄ FUSE data-integrity exerciser (gating)
-        run: client/test-conformance/fsx-fuse.sh 100000
-      - name: pjdfstest ⇄ FUSE POSIX conformance map (informational)
-        continue-on-error: true
-        run: client/test-conformance/pjdfstest-fuse.sh
-
-  winfsp-windows:
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      # WinFsp + LLVM are preinstalled on the self-hosted runner by ci/runners/setup-windows.ps1.
-      - name: Build fs-winfsp + maker-mount-win
-        env:
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins
-
-  cfapi-windows:
-    # COMPILE the CfAPI mount adapter (`fs-cfapi`) + its sync-engine wiring — the real
-    # verification gate for the driverless Windows path, which can't build on the
-    # maintainer's macOS box. No driver/SDK needed (cldapi.dll ships with Windows; the
-    # `windows` crate provides the bindings — no LLVM/bindgen unlike WinFsp).
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build fs-cfapi (lib + maker-cfapi)
-        run: cargo build --manifest-path client/fs-cfapi/Cargo.toml --bins
-      - name: Build sync-engine on Windows (CfApiMount + WinfspMount + maker-cfsyncd)
-        env:
-          # LLVM + WinFsp are preinstalled by ci/runners/setup-windows.ps1.
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
-
-  macos-cross:
-    # macOS box: the CfAPI Windows-FFI typecheck that can't run elsewhere on the
-    # maintainer's machine (cross-compile to the gnu triple — no link, just check), plus a
-    # native build of the macOS mount path (fs-webdav) over the shared Provider. This is the
-    # gate for the cfg(windows) fs-cfapi code without needing a Windows box for every push.
-    runs-on: [self-hosted, macos]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-gnu
-      - name: Cross-check the CfAPI Windows FFI (fs-cfapi)
-        run: cargo check --target x86_64-pc-windows-gnu --manifest-path client/fs-cfapi/Cargo.toml
-      - name: Native macOS build (fs-webdav mount path + sync-engine bins)
-        run: |
-          cargo build --manifest-path client/fs-webdav/Cargo.toml
-          cargo build --manifest-path client/sync-engine/Cargo.toml --bins
-
-  windows-smoke:
-    # The LIVE Windows CfAPI regression net (Phase 2b Task A4): on the self-hosted Windows
-    # runner — which has real Windows + reachability to the deployed server — register a sync
-    # root, enumerate, hydrate, then create/edit/delete/rename and assert each round-trips to
-    # the server. This is the Windows analogue of `mount-conformance` and the gate for flipping
-    # CfAPI to the default Windows backend (Task B5). Needs the deployed server reachable.
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Live CfAPI smoke (register → enumerate → hydrate → new/edit/delete/rename)
-        # Windows PowerShell (5.1) — the self-hosted runner doesn't have pwsh (PowerShell 7);
-        # the script is 5.1-compatible.
-        shell: powershell
-        env:
-          SERVER_URL: http://192.168.1.95
-        run: ./client/test-conformance/cfapi-smoke.ps1

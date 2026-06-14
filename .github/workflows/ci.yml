@@ -2,6 +2,18 @@ name: CI
 
 on:
   pull_request:
+    # Rails app only — skip on docs-only or client/** (Rust) changes (those gate via rust-client.yml).
+    paths:
+      - 'app/**'
+      - 'config/**'
+      - 'db/**'
+      - 'lib/**'
+      - 'test/**'
+      - 'bin/**'
+      - 'Gemfile'
+      - 'Gemfile.lock'
+      - '.ruby-version'
+      - '.github/workflows/ci.yml'
   push:
     branches: [ main ]
 

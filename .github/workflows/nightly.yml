@@ -1,0 +1,75 @@
+name: Nightly (heavy / cross-platform)
+
+# The slow, cross-platform, and live jobs kept OFF the per-PR loop: full Windows builds, the live
+# CfAPI smoke (needs the Windows desktop awake + the deployed server reachable), and the
+# fsx/pjdfstest mount conformance. Runs overnight and on-demand — trigger it manually
+# (Actions tab → "Run workflow", or `gh workflow run nightly.yml --ref <branch>`) right before a
+# CfAPI change needs live proof or before flipping the Windows default (Task B5).
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 08:00 UTC daily
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-build:
+    # Build the real Windows mount adapters (fs-cfapi + fs-winfsp) + their sync-engine wiring —
+    # the only place winfsp-sys (msvc-only) and the cfg(windows) daemon code actually link.
+    # LLVM + WinFsp are preinstalled by ci/runners/setup-windows.ps1.
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build fs-cfapi (lib + maker-cfapi)
+        run: cargo build --manifest-path client/fs-cfapi/Cargo.toml --bins
+      - name: Build fs-winfsp (WinFsp adapter)
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins
+      - name: Build sync-engine on Windows (CfApiMount + WinfspMount + maker-cfsyncd)
+        env:
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+
+  windows-smoke:
+    # The LIVE CfAPI regression net (Phase 2b Task A4): register a sync root, enumerate, hydrate,
+    # then create/edit/delete/rename and assert each round-trips to the deployed server. Needs the
+    # Windows runner online + the server reachable at SERVER_URL. This is the gate for flipping
+    # CfAPI to the default Windows backend (Task B5).
+    needs: windows-build
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Live CfAPI smoke (register -> enumerate -> hydrate -> new/edit/delete/rename)
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/cfapi-smoke.ps1
+
+  mount-conformance:
+    # External, battle-tested suites against the real FUSE/WebDAV mounts (what JuiceFS/CephFS
+    # gate on). Slow (fsx 100k ops, pjdfstest) → nightly, not per-PR.
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System deps (FUSE, rclone, build tools, autotools)
+        run: |
+          sudo apt-get install -y \
+            libfuse-dev fuse pkg-config build-essential \
+            rclone curl git autoconf automake libtool
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+      - name: rclone <-> WebDAV round-trip (gating)
+        run: client/test-conformance/webdav-rclone.sh
+      - name: fsx <-> FUSE data-integrity exerciser (gating)
+        run: client/test-conformance/fsx-fuse.sh 100000
+      - name: pjdfstest <-> FUSE POSIX conformance map (informational)
+        continue-on-error: true
+        run: client/test-conformance/pjdfstest-fuse.sh
