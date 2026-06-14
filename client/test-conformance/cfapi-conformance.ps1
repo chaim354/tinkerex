@@ -113,8 +113,8 @@ finally {
   # --- 5. Graceful stop (sentinel) so the final drain completes ----------------------------
   if ($proc -and -not $proc.HasExited) {
     New-Item -ItemType File -Path "$db.stop" -Force -EA SilentlyContinue | Out-Null
-    if (-not $proc.WaitForExit(20000)) {
-      Write-Host "  daemon did not exit on the stop sentinel within 20s - forcing"
+    if (-not $proc.WaitForExit(40000)) {
+      Write-Host "  daemon did not exit on the stop sentinel within 40s - forcing"
       Stop-Process -Id $proc.Id -Force -EA SilentlyContinue
     }
   }

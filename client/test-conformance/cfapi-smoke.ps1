@@ -98,8 +98,8 @@ finally {
   # mid-push. The daemon watches for the sentinel, does a final outbox drain, then unmounts.
   if ($proc -and -not $proc.HasExited) {
     New-Item -ItemType File -Path "$db.stop" -Force -ErrorAction SilentlyContinue | Out-Null
-    if (-not $proc.WaitForExit(25000)) {
-      Write-Host "  daemon did not exit on the stop sentinel within 25s - forcing"
+    if (-not $proc.WaitForExit(40000)) {
+      Write-Host "  daemon did not exit on the stop sentinel within 40s - forcing"
       Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     }
   }
