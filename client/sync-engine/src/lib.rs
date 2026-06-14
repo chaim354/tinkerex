@@ -311,12 +311,8 @@ impl SyncEngine {
         cursor: i64,
         inval: Option<&dyn Invalidate>,
     ) -> Result<i64> {
-        eprintln!("sync_tick: push phase");
         Self::push_outbox(provider, client, io)?;
-        eprintln!("sync_tick: pull phase (cursor {cursor})");
-        let r = Self::pull_changes_paged_inval(provider, client, cursor, 500, inval);
-        eprintln!("sync_tick: done");
-        r
+        Self::pull_changes_paged_inval(provider, client, cursor, 500, inval)
     }
 }
 

@@ -566,40 +566,44 @@ impl CfApiMount {
     }
 
     pub fn stop(&mut self) {
-        // Ordered teardown that avoids BOTH a deadlock and the B3-rename flake:
+        // Ordered teardown that's deadlock-free AND can't drop the captured edit/delete/rename,
+        // even though CfAPI delivers its batched NOTIFY callbacks at unmount and the sync thread's
+        // push can be mid-HTTP at that moment:
         //
-        // 0. Enter teardown mode FIRST. CfAPI often delivers its batched NOTIFY callbacks
-        //    (close/delete/rename) exactly when the user unmounts — i.e. right now, during the
-        //    join below, while the connection is still open. Those callbacks must already see
-        //    `shutting_down` so they mirror their change into the provider/outbox but SKIP the
-        //    re-entrant CfAPI calls (convert/set-in-sync/ACK) that deadlock a closing connection
-        //    (the 15s graceful-shutdown hang). Setting it only inside Drop (after the join) was
-        //    too late — the callbacks had already fired and re-entered.
-        // 1. Signal stop + join the sync thread, so nothing contends the provider lock while we
-        //    disconnect (disconnecting mid-push could wedge CfDisconnectSyncRoot behind a callback
-        //    waiting on the SQLite lock the pushing thread holds).
-        // 2. Disconnect the sync root (Drop). CfAPI finishes flushing its NOTIFY callbacks around
-        //    this — they're all mirrored into the outbox by the time it returns.
-        // 3. Drain the outbox here on the main thread (lock-contention-free), settling for any
-        //    callback that lands just after disconnect. This is what reliably gets the captured
-        //    edit/delete/rename to the server on graceful shutdown.
+        // 1. Enter teardown mode (begin_shutdown) so EVERY re-entrant CfAPI path bails: the NOTIFY
+        //    callbacks (convert/set-in-sync/ACK) AND the sync-loop pull's invalidate/created
+        //    (CfUpdatePlaceholder/CfCreatePlaceholders). Without this a callback or invalidate
+        //    landing during disconnect deadlocks the closing connection.
+        // 2. Signal stop. The sync thread will wind down, but it may be stuck mid-push on a slow
+        //    HTTP call (observed: the join hung in the push phase). We do NOT block teardown on it.
+        // 3. Disconnect the sync root NOW. Safe even with the sync thread still running: with
+        //    `shutting_down` set it makes no re-entrant CfAPI calls, so the only contention is the
+        //    brief SQLite lock. Disconnect flushes the pending NOTIFY callbacks into the outbox.
+        // 4. Drain the outbox on the main thread — this is the authoritative final push. It pushes
+        //    the full outbox (so the rename can't be lost behind a stuck sync-thread push) and
+        //    settles for callbacks that land just after disconnect. A redundant double-push with
+        //    the (possibly still-running) sync thread is harmless (idempotent commit).
+        // 5. Finally join the sync thread with a bounded wait so its in-flight push (bounded by the
+        //    30s HTTP timeout) finishes cleanly; detach if it somehow outlasts that.
         if let Some(h) = &self.handle {
             h.begin_shutdown();
         }
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(h) = self.sync_handle.take() {
-            // FULLY join the sync thread before disconnecting. Detaching it (an earlier attempt)
-            // let the detached thread and the post-disconnect drain race the same outbox entries,
-            // so a rename mid-push at process exit was lost. Joining is safe from hanging now that
-            // the HTTP client has a short timeout (a stalled push can't block forever); in practice
-            // the thread finishes its current push in well under a second.
-            eprintln!("cfapi: shutdown — joining sync thread");
-            let _ = h.join();
-            eprintln!("cfapi: shutdown — sync thread joined; disconnecting");
-        }
-        self.handle.take(); // Drop disconnects (flushes remaining callbacks) + stops the watcher
+        self.handle.take(); // Drop disconnects (flushes callbacks → outbox) + stops the watcher
         eprintln!("cfapi: shutdown — disconnected; draining outbox");
         self.shutdown_drain();
+        if let Some(h) = self.sync_handle.take() {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !h.is_finished() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(50));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            } else {
+                eprintln!("cfapi: sync thread still busy post-drain — detaching");
+            }
+        }
+        eprintln!("cfapi: shutdown — done");
     }
 
     /// Push whatever the disconnect's NOTIFY callbacks captured into the outbox. Runs on the
