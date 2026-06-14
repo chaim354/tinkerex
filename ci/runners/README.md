@@ -61,8 +61,13 @@ All three should show `online`.
 # get the id, then:
 gh api -X DELETE repos/chaim354/tinkerex/actions/runners/<RUNNER_ID>
 ```
-On the box, stop+uninstall the service first: `sudo ./svc.sh stop && sudo ./svc.sh uninstall`
-(Unix) or `./svc.cmd stop; ./svc.cmd uninstall` (Windows), then `./config.(sh|cmd) remove`.
+On the box, remove the service + deregister first:
+- **Unix:** `sudo ./svc.sh stop && sudo ./svc.sh uninstall`, then `./config.sh remove --token <removal-token>`.
+- **Windows** (no `svc.cmd` exists — the service is created by `config.cmd --runasservice`):
+  `sc.exe stop "<service-name>"; sc.exe delete "<service-name>"`, then
+  `./config.cmd remove --token <removal-token>`.
+
+Get a removal token with `gh api -X POST repos/chaim354/tinkerex/actions/runners/remove-token --jq .token`.
 
 ## Security note
 
