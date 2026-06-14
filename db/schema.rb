@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_12_050000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_14_010000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -142,6 +142,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_12_050000) do
     t.string "manifest_id", null: false
     t.string "node_id", null: false
     t.string "parent_version_id"
+    t.boolean "pinned", default: false, null: false
     t.bigint "size", default: 0, null: false
     t.integer "user_id", null: false
     t.string "version_id", null: false
