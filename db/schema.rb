@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_12_050000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -34,6 +34,29 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
     t.index ["user_id"], name: "index_chunks_on_user_id"
   end
 
+  create_table "conflicts", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "current_version_id", null: false
+    t.string "incoming_version_id", null: false
+    t.string "node_id", null: false
+    t.datetime "resolved_at"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "node_id"], name: "index_conflicts_on_user_id_and_node_id"
+    t.index ["user_id", "resolved_at"], name: "index_conflicts_on_user_id_and_resolved_at"
+  end
+
+  create_table "device_pairings", force: :cascade do |t|
+    t.datetime "claimed_at"
+    t.string "code_digest", null: false
+    t.datetime "created_at", null: false
+    t.datetime "expires_at", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "code_digest"], name: "index_device_pairings_on_user_id_and_code_digest", unique: true
+    t.index ["user_id", "expires_at"], name: "index_device_pairings_on_user_id_and_expires_at"
+  end
+
   create_table "devices", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "last_seen_at"
@@ -43,6 +66,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
     t.integer "user_id", null: false
     t.index ["token_digest"], name: "index_devices_on_token_digest", unique: true
     t.index ["user_id"], name: "index_devices_on_user_id"
+  end
+
+  create_table "file_locks", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.bigint "device_id", null: false
+    t.datetime "expires_at", null: false
+    t.string "node_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
+    t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
   end
 
   create_table "manifest_chunks", force: :cascade do |t|
@@ -61,6 +95,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
     t.string "current_version_id"
     t.boolean "deleted", default: false, null: false
     t.string "kind", null: false
+    t.integer "mode"
+    t.bigint "mtime"
     t.string "name", null: false
     t.string "node_id", null: false
     t.string "parent_node_id"
@@ -80,6 +116,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_11_010000) do
     t.bigint "device_id"
     t.string "manifest_id", null: false
     t.text "manifest_json", null: false
+    t.integer "mode"
+    t.bigint "mtime"
     t.string "name", null: false
     t.string "node_id", null: false
     t.string "parent_node_id"

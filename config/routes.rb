@@ -4,7 +4,9 @@ Rails.application.routes.draw do
   # --- Sync engine API (v1) ---
   namespace :v1 do
     post "auth/register", to: "auth#register"
-    resources :devices, only: [:create]
+    post "auth/pair", to: "auth#pair"
+    resources :devices, only: [ :create ]
+    post "devices/pairing", to: "devices#pairing"
 
     # content commits (two-phase)
     post "commit", to: "commits#create"
@@ -20,6 +22,15 @@ Rails.application.routes.draw do
     post "nodes/:node_id/move", to: "nodes#move"
     get "nodes/:node_id/versions", to: "nodes#versions"
     post "nodes/:node_id/restore", to: "nodes#restore"
+    post "nodes/:node_id/resolve_conflict", to: "nodes#resolve_conflict"
+
+    # conflicts (offline-edit divergence)
+    get "conflicts", to: "conflicts#index"
+
+    # best-effort advisory edit locks
+    post "nodes/:node_id/lock", to: "nodes#lock"
+    post "nodes/:node_id/unlock", to: "nodes#unlock"
+    get "locks", to: "locks#index"
 
     # hydration
     post "chunks/download", to: "chunks#download"

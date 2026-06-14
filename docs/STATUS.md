@@ -1,8 +1,215 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-11 (external conformance suites wired — rclone / fsx / pjdfstest)
+**Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
 
-## Latest (2026-06-11): external conformance suites
+## Latest (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
+
+Building on the verified-live populate+hydrate (below), the CfAPI mount now runs the full
+read **and** write loop on real Windows 11, and behaves correctly offline. Detailed handoff
++ remaining plan: **`docs/plan-windows-cfapi-migration.md`**.
+- **Remote-change invalidation** live: a file edited on another device refreshes on next open
+  (`CfUpdatePlaceholder` + `CfDehydratePlaceholder` via the engine `Invalidate` seam; updates
+  the new size+mtime, then dehydrates so the next read re-fetches).
+- **Phase 2 (edits)** live: a local edit to an existing file is captured via
+  `NOTIFY_FILE_CLOSE_COMPLETION` + a content-compare self-write filter →
+  `Provider::ingest_bytes` → the sync loop pushes it. (New files / deletes / renames = Phase 2b.)
+- **Offline availability** (cross-platform): hydrated files persist on unmount (CfAPI Drop now
+  only disconnects — no unregister/delete), and because the content-addressed chunk cache
+  persists and the engine only fetches *missing* chunks, a hydrated file reads with **no
+  network** on macOS/Windows/Linux. Test `hydrated_file_stays_readable_offline` (dead server +
+  erroring transport → still reads from cache).
+- **Stale-DB guard:** `Provider::bind_library(hash(server, token))` wipes a *different*
+  library's stale tree/cursor on mount (keeps the chunk cache) — wired into **all four** mounts
+  (FUSE/WebDAV/WinFsp/CfAPI). Fixes the reused-DB "cursor ahead of head_seq → remote edits never
+  apply" + duplicate-placeholder bug. Tested (`bind_library_wipes_a_different_librarys_stale_state`).
+- Three live-bring-up bugs fixed (each caught by the doctor/log workflow): on-demand population
+  (empty-tree-at-mount + missing FETCH_PLACEHOLDERS → hang), always-answer FETCH_DATA, and a
+  null-`FileIdentity` `from_raw_parts` panic on root enumeration. See the plan's "gotchas".
+
+## Earlier (2026-06-12): Windows CfAPI mount — **verified live** (populate + hydrate)
+
+The driverless CfAPI mount **runs on real Windows 11 hardware**: a sync root registers, Explorer
+enumerates it, and files hydrate on open (no GPL driver — the §9 win, on actual hardware). Three
+runtime bugs from the first live run, each caught by the doctor/log diagnostics and fixed:
+- `populate()` ran at mount against the *empty* local tree + there was no FETCH_PLACEHOLDERS
+  handler → enumeration hung. Switched to **on-demand population** (PARTIAL policy +
+  FETCH_PLACEHOLDERS reading the provider's live tree) + a **pre-mount snapshot pull**.
+- `FETCH_DATA` could return without answering → reading app hung. Now **always answers**
+  (error completion on failure).
+- `slice::from_raw_parts` on the root's **null FileIdentity** → UB panic on the callback thread.
+  Added `callback_node_id` (null → root).
+Diagnostics added: `eprintln` in both callbacks + a layered **`doctor` example** (control plane +
+storage reachability, no CfAPI) that isolated the failure to the CfAPI layer. Still to exercise
+live: remote-change invalidation + clean teardown. **Phase 2** = local-edit capture.
+
+## Earlier (2026-06-12): Windows CfAPI migration — Phase 1 (driverless mount)
+
+`client/fs-cfapi` — the **driverless** Windows mount (Cloud Filter API; no GPL WinFsp driver,
+the OneDrive model: a registered sync-root folder with on-demand hydration + native Explorer
+integration). **Phase 1** = the download/read half: register the root, **populate** every node
+as a dehydrated placeholder from the local `Provider` tree, **hydrate** on the FETCH_DATA
+callback (presigned GET → chunk cache → `CfExecuteOperation(TRANSFER_DATA)`), and **invalidate**
+on a remote content change (`CfUpdatePlaceholder` + dehydrate). Wired as
+`sync_engine::CfApiMount` + the `maker-cfsyncd` bin. **Now the DEFAULT Windows backend**
+(flipped 2026-06-14): Phase 2b complete (new-file/delete/rename capture), **live smoke +
+byte-for-byte conformance green** against the deployed server; WinFsp behind the
+`winfsp-backend` feature.
+- Reuses the Option-B seams directly: the engine's `Invalidate` trait → `CfUpdatePlaceholder`
+  (an `EngineCfInvalidate` newtype bridges them), and real nanos mtime → `FILETIME`.
+- New `Provider::ingest_bytes` (the Phase-2 local-edit primitive: re-ingest an edited on-disk
+  file as a node's new version) — tested.
+- Pure logic (`FileIdentity` node_id↔blob, nanos↔FILETIME, placeholder-action decision) is
+  **unit-tested cross-platform** (6 tests, green on macOS/CI). The Windows FFI is authored on
+  macOS (like `fs-winfsp` was), compiled by the new `cfapi-windows` CI job, **runtime-UNVERIFIED**
+  — smoke steps in `client/fs-cfapi/BUILD.md`.
+- **Phase 2** (next): capture local edits/creates/deletes (CfAPI doesn't route writes through
+  us) via a USN-journal / `ReadDirectoryChangesW` watcher → `ingest_bytes` → push →
+  `CfSetInSyncState`. Plan: `docs/plan-windows-cfapi-migration.md`.
+
+## Earlier (2026-06-12): real-mtime preservation + active cache invalidation (Option B)
+
+Replaces the `mtime = now`-on-pull freshness hack (which destroyed the true modification
+time — breaking `make`/`ninja`/`cargo` incremental builds) by splitting mtime's two jobs:
+**preserve the real mtime** end-to-end, and **invalidate the OS cache explicitly** on a
+content-changing pull instead of relying on an mtime bump. Plan:
+`docs/plan-real-mtime-and-invalidation.md`.
+
+- `fs-provider`: `mtime` is now real, **unix nanoseconds** (build-tool resolution; maps to
+  FILETIME/NSDate for the CfAPI/File-Provider future). `flush` stamps the real local mod
+  time; `apply_remote` writes the **source device's** mtime verbatim (no more `now`), and
+  returns an `ApplyOutcome { ino, content_changed }` so the adapter knows when to drop its
+  cache. New `set_mtime` (the kernel's `utimensat`/`cp -p`). `SyncNode.mtime` round-trips
+  through export/sync_node/apply.
+- `fs-fuse`: `setattr(mtime)` → `set_mtime`; `file_attr` reports nanos.
+- `sync-engine`: an `Invalidate` seam (cross-platform) the pull path calls when a pull
+  repoints an existing inode at new content. `EngineInvalidate` (FUSE-only) holds the
+  session `Notifier` and calls `notify_inval_inode` (abi-7-12); shared by the sync loop +
+  freshness adapter (whichever applies the change first invalidates), wired into the
+  `Daemon` via deferred notifier injection (the construction-cycle break). WebDAV/WinFsp
+  pass `None` (lean on short metadata timeouts until CfAPI/File-Provider land — the same
+  two primitives slot in here). `push_node`/converters carry mtime.
+- Server: `nodes.mtime` + `pending_commits.mtime` as **bigint** (nanos in 2026 overflow a
+  32-bit int); `Commit`/mkdir store it; tree + changes serialize it; controllers permit it.
+- Tests: fs-provider (`pulled_node_keeps_the_source_mtime_not_now`,
+  `apply_remote_reports_content_change_for_cache_invalidation`, updated
+  `remote_update_serves_fresh_content_and_carries_real_mtime`), server (commit stores +
+  tree/changes expose the bigint mtime), integration `real_mtime_propagates_across_devices`
+  (A's 2001 mtime visible verbatim on B). External: rclone⇄WebDAV re-run clean.
+  **Invalidation itself can't be unit-tested** (needs a live FUSE kernel) — verified by the
+  Linux CI `mount-conformance` path / manual smoke (edit on A, `cat` on B before/after).
+
+## Earlier (2026-06-12): file mode / executable-bit preservation
+
+The one POSIX-fidelity gap that actually bites makers (scripts/binaries losing `+x` after
+sync — see the conformance dig): file mode is now preserved end-to-end.
+- `fs-provider`: `mode` column (+ ALTER) defaulted 0644/0755; `Attr.mode`; `set_mode`
+  (chmod, enqueues sync); `getattr` reports it; `SyncNode.mode` round-trips through
+  `apply_remote`/export/sync_node. Persists across reopen.
+- `fs-fuse`: `file_attr.perm` from mode; `setattr(mode)` → chmod; `create` captures the
+  create-time mode.
+- Server: `nodes.mode` (+ `pending_commits.mode`); `Commit`/mkdir store it;
+  tree + changes serialize it; commit/mkdir params permit it.
+- Client: `CommitBegin.mode`, `mkdir(mode)`, `NodeView`/`TreeNode.mode`; `push_node` sends
+  it, the converters read it.
+- Tests: fs-provider (mode set/sync/reopen), server (commit stores + tree exposes),
+  integration `executable_bit_propagates_across_devices` (chmod +x on A → 0755 on B).
+
+This is mode *preservation*, not enforcement (ownership/uid-gid deliberately not synced —
+meaningless across devices). Remaining POSIX gaps (symlinks/hardlinks/special files,
+ctime/atime) are intentional non-goals for a personal sync drive.
+
+## Earlier (2026-06-12): best-effort cross-device lock
+
+Layered on the local locks + conflict detection: a **best-effort advisory edit lock**
+across devices. On open-for-write the client (when connected) acquires a server lock so
+other *connected* clients see the file is being edited; if it can't reach the server the
+open just proceeds on the local cached copy, and conflict detection reconciles on
+reconnect. Advisory + TTL-based (a disconnected holder's lock auto-frees), never blocking.
+
+- Server: `FileLock` (TTL) + `Sync::Locks` (acquire/refresh/release/status/active — never
+  steals a live lock; expired locks reclaimable). `POST /v1/nodes/:id/lock` + `/unlock`,
+  `GET /v1/locks`. 6 tests (`locks_test.rb`): grant, no-steal, holder-refresh, expiry
+  reclaim, release-only-by-holder, active/status reflect expiry.
+- Client: `ServerClient::lock`/`unlock`/`locks` (2s timeout so offline never hangs the
+  open). `fs-fuse` gains a `RemoteLock` hook; `sync-engine::EngineRemoteLock` acquires on
+  open-for-write / releases on close **in a background thread** (non-blocking). Wired into
+  the Daemon. Integration test `best_effort_lock_coordinates_connected_devices` (live).
+- App: the file browser shows a 🔒 + holder name for files locked on another device.
+
+## Earlier (2026-06-12): file locking + conflict detection & resolution
+
+Local-first concurrency = local advisory locks + cross-device conflict detection (NOT
+distributed locks — can't hold a WAN lock offline; the synchronous model we rejected).
+
+- **Local advisory locking** — `fs-provider::LockManager` (POSIX byte-range advisory
+  locks, owner-tracked, conflict = different owners + overlapping range + ≥1 exclusive,
+  released per owner on close; 7 unit tests). Provider trait gains
+  `set_lock`/`test_lock`/`unlock`/`release_locks`; `fs-fuse` wires `setlk`/`getlk`/release.
+  Non-blocking (F_SETLKW retry-wait is a TODO).
+- **Conflict detection** — each commit now sends `base_version_id` (the client tracks the
+  server version each node reflects: a new `version_id` column in `fs-provider`, populated
+  on pull, advanced after a push, sent on the next commit). When the base is no longer
+  current (a divergent offline edit), `Sync::Commit` records a **conflict** (keeps both
+  versions, emits a `conflict` changelog op) instead of last-writer-wins dropping an edit.
+- **Resolution** — `Sync::Conflicts`: keep one side current, or **split** (the incoming
+  side becomes a new sibling "foo (conflict from <device> <when>).ext", reusing its
+  manifest → zero new blocks). `GET /v1/conflicts` returns both sides with device + time +
+  size; the app shows a resolution **popup** (keep this / keep that / keep both).
+- Tests: server 41→47 (`conflicts_test.rb`), sync-engine integration +2
+  (`offline_divergent_edit_raises_a_conflict`, `sequential_edits_fast_forward_without_a_conflict`),
+  fs-provider +7 lock tests. The old LWW integration test is replaced (concurrent edits now
+  conflict by design).
+
+## Earlier (2026-06-12): auth, security, caching, freshness-on-access, file browser
+
+Branch `auth-caching-security`. Areas:
+
+### Freshness-on-access (the on-open catch-up pull)
+A file open now does a quick, **throttled** changelog catch-up pull before serving, so an
+open never returns a copy another device already changed — closing the window between
+background sync ticks. `fs-fuse` gained a `Freshness` hook in `open`; `sync-engine`
+`EngineFreshness` implements it as `pull_changes` throttled to ≥750 ms (the loop + nudge
+keep us mostly current, so this only matters in the sub-tick gap), wired into the `Daemon`.
+Red-green integration test `freshness_check_on_access_serves_latest_after_remote_change`:
+RED = stale read before catch-up, GREEN = latest after. Versioning/restore design sketched
+in `docs/versioning.md` (near-delta-per-version via CDC + dedup; restore reuses a manifest
+for zero new blocks; retention/GC policy to bound growth).
+
+
+
+### Auth + cross-user security (server 30→41 tests)
+Audited the client↔sync-engine and ↔bucket-storage auth. **Cross-user isolation was
+structurally sound** — presigned URLs are SigV4-signed for a per-user key
+(`chunks/<user_id>/<hash>`, untamperable), chunk storage/metadata + dedup are per-user,
+and every node mutation scopes through `current_user.nodes`. **The one real hole was the
+bootstrap:** `register` did `find_or_create_by!(email)` and handed out a device token for
+*any* email → account takeover. Fixes:
+- `register` creates a **new account only** (409 on an existing email).
+- Additional devices join via a **single-use, 10-min pairing code** issued by an
+  authenticated device (`DevicePairing`; `POST /v1/devices/pairing` → `POST /v1/auth/pair`).
+  SHA256-digested, atomic single-use claim, generic error (no account enumeration). The
+  Syncthing/Plex model — secure multi-device without external OAuth (the later
+  email-verification upgrade, §12.5).
+- Defense in depth: `/v1/chunks/download` only mints URLs for chunks the requester owns.
+- Client: `create_pairing()`/`pair()` on `ServerClient`; **maker-app persists the device
+  token** (register/pair once, reuse) instead of re-registering each start.
+- Tests: `auth_test.rb`, expanded `tenant_isolation_test.rb`, live pairing integration.
+
+### Client caching / freshness (fs-provider 50→53)
+- **`mtime` was permanently 0** — never written on commit or pull, so a same-size edit on
+  another device was invisible (open a minute later → stale cached copy). `flush` and
+  `apply_remote` now stamp `mtime = now` → readers re-read + re-hydrate the new manifest.
+- **Random writes could miss** (write seeds from committed content; only `read` had a
+  hydrate-retry). `fs-fuse`/`fs-winfsp` `open` now hydrate the whole file on write-intent.
+  WebDAV (whole-file PUT/GET) is unaffected. Tests in `tests/caching.rs`.
+
+### App: file browser + versioning
+`sync-client::versions()`; maker-app `browse`/`file_versions`/`restore_version` commands;
+frontend rebuilt — status pill, "this is my device" vs "pair with a code" tabs, an
+"add a device" pairing-code panel, and a file tree that expands per-file version history
+with one-click restore.
+
+## Earlier (2026-06-11): external conformance suites
 
 Added independent, battle-tested external tools pointed at our real mount surfaces — the
 same suites JuiceFS/CephFS gate on — so robustness isn't only self-authored tests.

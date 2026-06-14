@@ -60,6 +60,7 @@ content-addressed manifest sharing chunks).
 | **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
 | **fs-fuse** | `client/fs-fuse` | FUSE adapter (**Linux** mount path) over `Provider`. Verified live. (macOS uses `fs-webdav` — FUSE-T can't mount on macOS 26.) |
 | **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (**Windows** mount path) over the **same** `Provider`. **Verified: mounts a drive letter + syncs** via the app. Needs `winfsp-x64.dll` on PATH at runtime (or bundled). |
+| **fs-cfapi** | `client/fs-cfapi` | **CfAPI** adapter — the **driverless** Windows path (Cloud Filter API, no GPL driver; the OneDrive model: sync-root folder + on-demand hydration). **Verified live on Windows 11**: register + on-demand enumerate (FETCH_PLACEHOLDERS) + hydrate-on-open (FETCH_DATA) + remote-change invalidation + **local-edit capture** (NOTIFY_FILE_CLOSE → ingest → push) + offline-persistent hydrated files. **Now the DEFAULT Windows backend** (flipped 2026-06-14; Phase 2b complete): new-file capture (ReadDirectoryChangesW watcher) + delete + rename all propagate, **live smoke + byte-for-byte conformance green** against the deployed server. `fs-winfsp` stays behind the `winfsp-backend` cargo feature for one release. See `docs/plan-windows-cfapi-migration.md`, `docs/cfapi-write-path-findings.md`. |
 | **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) over the **same** `Provider` — the **macOS** mount path (native `mount_webdav`, no FUSE/kext/FSKit). Cross-platform; verified live on macOS 26. |
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
@@ -83,7 +84,7 @@ integration + Rails service/isolation tests).
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
 | Client | **Tauri** (Rust core), `fs-provider` + per-OS mount (`fs-fuse`/`fs-winfsp`/`fs-webdav`) + `sync-engine` |
-| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** WinFsp, **macOS** WebDAV (native `mount_webdav`, no kext). CfAPI / macOS File Provider are later native polish. Drivers user-installed (keeps copyleft drivers out of our binaries). |
+| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (driverless Cloud Filter — the default; WinFsp behind the `winfsp-backend` feature), **macOS** WebDAV (native `mount_webdav`, no kext). macOS FSKit is built but gated on a paid Apple Developer membership (`docs/plan-macos-fskit-migration.md`). Drivers user-installed (keeps copyleft drivers out of our binaries). |
 | Change notification | **ActionCable** → `{head_seq}` on commit |
 | Preview (later) | Three.js (browser) + FreeCAD/CadQuery (server jobs) |
 
@@ -117,8 +118,12 @@ to storage** (chunk bytes via presigned URLs).
 - **Pull:** changelog delta since cursor → `apply_remote` into local SQLite →
   dehydrate changed placeholders.
 - **Hydrate:** on read, fetch missing chunks via presigned GET → local cache.
-- v1: **last-writer-wins** (conflict-copies deferred). Tenant = user, full tree on
-  every device.
+- **Conflict detection** (replaced v1 last-writer-wins, 2026-06-12): each commit sends its
+  `base_version_id`; if it's no longer current (a concurrent/offline edit slipped in), the
+  server records a **conflict** (both versions kept) instead of silently dropping an edit,
+  and the client prompts the user to keep one or split into two files (`Sync::Conflicts`,
+  `GET /v1/conflicts`, `POST /v1/nodes/:id/resolve_conflict`). A base that IS current is a
+  clean fast-forward. Tenant = user, full tree on every device.
 
 ---
 
@@ -142,12 +147,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 - **Tenant = user** (one library, the user's own devices). Isolation = ordinary
   Rails `user_id` scoping — *not* the JuiceFS no-ACL problem (that's why the sync
   model is simpler than the mount model).
-- **Client holds only a device token.** No storage credentials — it gets short-lived,
-  per-object **presigned URLs**. Chunks under `chunks/<user>/`.
+- **Client holds only a device token** (256-bit, SHA256-digested at rest). No storage
+  credentials — it gets short-lived, per-object **presigned URLs**, SigV4-signed for a
+  per-user key `chunks/<user>/<hash>` (untamperable → cross-user chunk access impossible;
+  storage + dedup are per-user). `/v1/chunks/download` additionally only mints URLs for
+  chunks the requester owns.
 - **Bytes never flow through Rails.** Rails is the control plane + presigned-URL
   minter only.
-- Auth today is a **placeholder device-token bootstrap**; real OAuth/OIDC is a later
-  workstream. (If multi-user/db-per-tenant is wanted later, the 37signals
+- **Registration creates a new account only** (no `find_or_create_by` takeover); a new
+  device joins an existing library via a **single-use, expiring pairing code** issued by
+  an authenticated device (`DevicePairing`, `POST /v1/devices/pairing` → `/v1/auth/pair`;
+  Syncthing/Plex model). Real OAuth/OIDC (email verification) is the later upgrade; the
+  device-token + pairing mechanism downstream stays. (If multi-user/db-per-tenant is
+  wanted later, the 37signals
   `active_record_tenanted` pattern slots over the same models.)
 
 ---
@@ -188,25 +200,46 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > SeaweedFS, hash-matched on read-back). The Tauri app (`client/maker-app`) picks the
 > backend per-OS via a `Mount` type alias; commands are identical everywhere.
 
-**Built + verified (~94 tests green + live cross-stack + cross-OS demos):**
-- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **30 tests** (commit/
+> **Branch `auth-caching-security` (2026-06-12, all CI green):** a large hardening arc on
+> top of the deployed stack — device **pairing** auth + cross-user security audit;
+> client **caching/freshness** (mtime + full-hydrate-on-write + freshness-on-open);
+> **file browser + version/restore UI**; local + **best-effort cross-device file locking**;
+> **conflict detection + keep/split resolution** (replacing silent LWW); **file-mode
+> (executable-bit) preservation**; and **real-mtime preservation + active cache invalidation**
+> (Option B — real mtime synced in unix-nanos end-to-end; explicit FUSE `notify_inval_inode`
+> replacing the `mtime = now`-on-pull bump). External conformance (rclone/fsx/pjdfstest) re-run:
+> data plane byte-perfect, POSIX-perms gaps deliberate (rclone⇄WebDAV caught + fixed a
+> nanos-overflow in the WebDAV/WinFsp adapters). Next up: real **OAuth/OIDC** email
+> verification (§12 step 5) + Postgres deploy validation (step 8).
+
+**Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
+- Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
   refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog
-  pagination / `oldest_seq` backstop signal, tenant isolation).
-- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **50 tests** across hermetic suites (`tests/`): **chunking**
+  pagination / `oldest_seq` backstop, tenant isolation, **auth: register hardening +
+  device pairing**, **conflict detect/keep/split**, **best-effort edit locks**, **file-mode
+  sync**).
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **53 tests** across hermetic suites (`tests/`): **caching** (mtime-freshness + random-write-on-hydrated), **chunking**
   (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
   **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
   **convergence** (3-replica FakeFolder-style random op stream + durability + idempotency),
   **concurrency** (shared `Arc` threads + chunk-store race). Modeled on rclone-fstests /
   restic-chunker / ownCloud-FakeFolder / JuiceFS-pjdfstest.
-- `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder.
-- `sync-client`: API + chunk transfer + pull-apply. 5 tests.
+- `fs-fuse`: FUSE mount (Linux/macOS-FUSE-T), verified live in Finder. Now also persists +
+  syncs file **mode** (chmod/executable bit), local advisory **locks** (`setlk`/`getlk`),
+  **freshness**-on-open, and best-effort **remote-lock** acquire/release.
+- `sync-client`: typed API + chunk transfer + pull-apply, plus pairing/conflict/lock/
+  versions methods. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
-  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`. **Server-backed
-  integration suite** (`tests/integration.rs`, **9 tests**: roundtrip, delete/move delta,
-  last-writer-wins, hydrate-only-missing + hydrate-after-conflict, push dedup, cursor
-  monotonicity, **changelog paging through a backlog**, **offline reconcile on reconnect**)
-  — skips when no server, run in CI against a booted `STORAGE_BACKEND=memory` Rails
-  (`rust-client.yml`).
+  daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`/`EngineFreshness`/
+  `EngineRemoteLock`. **Server-backed integration suite** (`tests/integration.rs`,
+  **14 tests**: roundtrip, delete/move delta, hydrate (only-missing/after-conflict), push
+  dedup, cursor monotonicity, changelog paging, offline reconcile, **freshness-on-access**,
+  **pairing**, **offline-edit conflict + split**, **best-effort lock coordination**,
+  **executable-bit propagation**) — skips with no server; CI boots `STORAGE_BACKEND=memory`
+  Rails (`rust-client.yml`).
+- **External conformance** (`client/test-conformance/`): rclone⇄WebDAV (gating, 0 diffs),
+  fsx⇄FUSE (gating, 100k ops no mismatch), pjdfstest⇄FUSE (informational POSIX map). New CI
+  `mount-conformance` job.
 - **Two foundation bugs the suite caught + fixed:** (1) `rename` over an existing name hit
   the unique index instead of POSIX-replacing → **atomic saves (write-temp-then-rename)
   were broken**; now replaces + tombstones the displaced node. (2) `truncate(ino, 0)` read
@@ -298,8 +331,26 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    `convergence_under_random_ops` harness now overwrites via truncate-then-write and
    asserts the source has no stale tail (replica content convergence is proven by the
    content-addressed `manifest_id`).
-5. **Real OAuth/OIDC** replacing the placeholder device-token bootstrap
-   (`V1::AuthController#register`). The device-token mechanism itself stays.
+   **CfAPI migration — read+write loop VERIFIED LIVE** (2026-06-12): `client/fs-cfapi` — the
+   **driverless** Windows path (Cloud Filter API; no GPL driver — §9), over the same `Provider`,
+   wired as `sync_engine::CfApiMount` + `maker-cfsyncd`. Live on Windows 11: register +
+   on-demand `FETCH_PLACEHOLDERS` + hydrate-on-open `FETCH_DATA` + remote-change invalidation
+   (`CfUpdatePlaceholder`+`CfDehydratePlaceholder` via the Option-B `Invalidate` seam) +
+   **local-edit capture** (`NOTIFY_FILE_CLOSE_COMPLETION` + content-compare →
+   `Provider::ingest_bytes` → push). Hydrated files persist offline (Drop disconnects only).
+   `Provider::bind_library` guards reused-DB library-mixing across all mounts. Reuses the
+   Option-B seams (real nanos mtime → `FILETIME`). Pure logic unit-tested; FFI typechecks for the
+   Windows target + compiled by the `cfapi-windows` CI job. **WinFsp is still the default**
+   Windows backend. **Remaining (detailed handoff + per-step plan):
+   `docs/plan-windows-cfapi-migration.md`** — Phase 2b (new files/deletes/renames),
+   remote-files-while-mounted, flip CfAPI to default, pin/unpin + lifecycle polish.
+5. ~~**Real OAuth/OIDC** replacing the placeholder device-token bootstrap~~ **PARTLY DONE**
+   (2026-06-12): the account-takeover hole is closed — `register` is new-account-only and
+   additional devices join via a **single-use pairing code** (`DevicePairing`); the app
+   persists its token instead of re-registering. Cross-user isolation audited + tested
+   (presigned URLs are per-user SigV4 keys; chunk-download is ownership-gated). Remaining:
+   real **OAuth/OIDC email verification** so the bootstrap proves email ownership (the
+   device-token + pairing mechanism stays underneath).
 6. **Writeback + robustness hardening:** ~~atomic saves (write-temp-then-rename)~~ **DONE**
    (`Provider::rename` POSIX-replaces + tombstones the displaced node; `truncate(0)` no
    longer needs hydration). ~~reconnect/offline reconcile + the changelog-pruned →
@@ -308,11 +359,31 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    silent data-loss bug) and **full-resyncs** when its cursor is below the server's
    reported `oldest_seq` (pruned-gap detection; `Sync::Gc.prune_changelog!` is the
    retention op). Still open: FUSE-T's *deferred `release`* (flush-on-close isn't
-   synchronous), `Sync::Changes` N+1 preloading.
-7. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
+   synchronous), `Sync::Changes` N+1 preloading. **Concurrency: conflict detection** (each
+   commit sends `base_version_id`; stale base → recorded conflict + keep/split resolution,
+   replacing silent LWW — §6) and **best-effort cross-device + local file locking** are
+   **DONE** (2026-06-12).
+7. **Caching/freshness DONE** (2026-06-12): full-hydrate on write-open (random writes can't
+   miss), freshness-on-open catch-up pull, and **file-mode (executable-bit) preservation**
+   synced end-to-end. ~~real-mtime preservation + active cache invalidation~~ **DONE**
+   (2026-06-12, Option B): replaced the `mtime = now`-on-pull hack (which destroyed build-tool
+   mtimes) with **real mtime synced end-to-end in unix nanoseconds** (`flush` stamps the real
+   local time; `apply_remote` writes the *source* device's mtime verbatim; new `set_mtime` for
+   `utimensat`/`cp -p`; server columns are **bigint**) **plus an explicit `invalidate(ino)`
+   seam** — `apply_remote` returns `content_changed`, and on FUSE `sync_engine::EngineInvalidate`
+   calls the kernel `notify_inval_inode` (abi-7-12) via the session `Notifier` (shared by the
+   sync loop + freshness, wired into the `Daemon` by deferred notifier injection). WebDAV/WinFsp
+   pass `None` (lean on metadata timeouts until CfAPI/File-Provider — the same two primitives
+   slot in there). Caught + fixed a nanos-overflow regression in the WebDAV + WinFsp adapters
+   (interpreted `Attr.mtime` as seconds) via the rclone⇄WebDAV conformance re-run. Plan:
+   **`docs/plan-real-mtime-and-invalidation.md`**. (Invalidation itself is FUSE-kernel-only →
+   CI `mount-conformance` / manual smoke, per the plan.)
+8. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
    is config — see `docs/SYNC_SERVER.md`).
-8. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
-   concern from file sync; references files by `node_id`.
+9. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
+   concern from file sync; references files by `node_id`. Groundwork landed: the Tauri app
+   has a **file browser + version-history/restore UI + conflict-resolution popup + lock
+   indicators** (`client/maker-app`).
 
 ---
 
