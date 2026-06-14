@@ -746,6 +746,108 @@ impl SqliteProvider {
         }))
     }
 
+    // ---- CfAPI callback helpers (local-origin node-id operations) ---------------
+    //
+    // CfAPI callbacks receive a cloud root-relative path or a node identity, not the
+    // (parent_ino, name) pair the Provider trait uses. These three helpers bridge the
+    // gap and are usable cross-platform (no Windows-only code here).
+
+    /// Local-origin recursive delete: remove the node identified by `node_id` (and its
+    /// entire subtree) from the local tree, and enqueue a `"delete"` outbox entry so the
+    /// sync loop pushes the removal to the server. Idempotent: if the node does not exist
+    /// the call is a silent no-op and nothing is written to the outbox.
+    ///
+    /// Contrast with [`apply_remote_delete`]: that method is for *inbound* server deletes
+    /// and deliberately skips the outbox (to avoid echoing the change back). This method is
+    /// for *outbound* local deletes captured by a CfAPI callback.
+    pub fn delete_by_node_id(&self, node_id: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // Check existence first: if the node isn't there, no-op (idempotent).
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM nodes WHERE node_id = ?1)",
+            params![node_id],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            return Ok(());
+        }
+        // Recursive CTE delete of the entire subtree (same as apply_remote_delete).
+        conn.execute(
+            "DELETE FROM nodes WHERE ino IN (
+                 WITH RECURSIVE sub(ino) AS (
+                     SELECT ino FROM nodes WHERE node_id = ?1
+                     UNION ALL
+                     SELECT n.ino FROM nodes n JOIN sub ON n.parent_ino = sub.ino
+                 )
+                 SELECT ino FROM sub
+             )",
+            params![node_id],
+        )?;
+        // Enqueue a delete for the sync loop — the subtree children are implicitly deleted
+        // on the server when the parent is deleted (the server also does a recursive sweep),
+        // so a single outbox entry for the root of the deleted subtree is sufficient.
+        Self::enqueue(&conn, node_id, "delete")?;
+        Ok(())
+    }
+
+    /// Resolve a library-relative POSIX path (e.g. `"a/b/c.txt"`) to `(parent_ino,
+    /// leaf_name)`, creating any missing intermediate directories via `mkdir`. The **leaf
+    /// is not created** — the caller does that (e.g. via `create`). A top-level path
+    /// (`"foo.txt"`) returns `(ROOT_INO, "foo.txt")`. Empty input or a bare `"/"` returns
+    /// `Err(NotFound)`.
+    ///
+    /// This is the CfAPI bridge for new-file capture: a `NOTIFY_FILE_CLOSE` callback
+    /// delivers a root-relative OS path; `resolve_path` maps it to the tree location so
+    /// the adapter can call `create`/`ingest_bytes` with the correct `(parent_ino, name)`.
+    pub fn resolve_path(&self, rel: &str) -> Result<(u64, String)> {
+        // Split on '/' and drop empty components (leading slash, trailing slash, "//").
+        let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return Err(FsError::NotFound);
+        }
+        // The leaf is the last component — we stop before creating it.
+        let (dirs, leaf) = parts.split_at(parts.len() - 1);
+        let leaf = leaf[0].to_string();
+        // Walk (and if necessary create) each intermediate directory.
+        let mut current_ino = ROOT_INO;
+        for &component in dirs {
+            current_ino = match self.lookup(current_ino, component) {
+                Ok(attr) => attr.ino,
+                Err(FsError::NotFound) => self.mkdir(current_ino, component)?.ino,
+                Err(e) => return Err(e),
+            };
+        }
+        Ok((current_ino, leaf))
+    }
+
+    /// Look up the node's current `(parent_ino, name)` by `node_id`, then delegate to
+    /// the existing [`Provider::rename`] implementation (which handles POSIX replace,
+    /// enqueues an `"upsert"`, etc.). Returns `Err(NotFound)` if the `node_id` is
+    /// unknown.
+    ///
+    /// This is the CfAPI bridge for rename/move capture: a `NOTIFY_RENAME` callback
+    /// delivers both the source cloud-file identity (CF_PLACEHOLDER_BASIC_INFO →
+    /// `node_id`) and the new root-relative path (call `resolve_path` on it first).
+    pub fn rename_by_node_id(&self, node_id: &str, new_parent: u64, new_name: &str) -> Result<()> {
+        // Look up the current (parent_ino, name) for this node_id.
+        let (old_parent, old_name) = {
+            let conn = self.conn.lock().unwrap();
+            let row: Option<(i64, String)> = conn
+                .query_row(
+                    "SELECT parent_ino, name FROM nodes WHERE node_id = ?1",
+                    params![node_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            match row {
+                Some((p, n)) => (p as u64, n),
+                None => return Err(FsError::NotFound),
+            }
+        };
+        // Delegate to the existing rename implementation.
+        self.rename(old_parent, &old_name, new_parent, new_name)
+    }
+
     /// Replace a node's entire content with `data`, then commit it (chunk + manifest +
     /// outbox), as if the file had been written and flushed. This is the **CfAPI
     /// local-edit capture** entry point: under Cloud Filter API the OS owns the on-disk
