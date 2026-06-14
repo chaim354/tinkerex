@@ -23,7 +23,7 @@
 //! target on macOS (`cargo check --target x86_64-pc-windows-gnu`) + the `cfapi-windows` CI job.
 //! Gaps flagged `LIMITATION:`/`PHASE 2:`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,10 +63,14 @@ struct CfState {
     /// the new-file capture branch (Phase 2b). The close callback only gets the full on-disk
     /// path, so it needs the root to map back into the `Provider` tree.
     root: PathBuf,
-    /// Echo guard: paths we just converted to placeholders ourselves. Our own
-    /// `CfConvertToPlaceholder` triggers another close, which would otherwise re-enter the
-    /// new-file branch. A path in this set short-circuits that re-entry exactly once.
-    self_writes: Mutex<HashSet<String>>,
+    /// Echo guard: paths we just converted to placeholders ourselves, each stamped with the
+    /// time we inserted it. Our own `CfConvertToPlaceholder` triggers another close, which would
+    /// otherwise re-enter the new-file branch; a fresh entry short-circuits that re-entry exactly
+    /// once. The timestamp makes it **self-healing**: if the convert-triggered close never
+    /// arrives (so the entry is never consumed), a later genuine edit at the same path finds the
+    /// entry stale (≥5 s old), drops it, and is captured normally — bounding any leak to a 5 s
+    /// window instead of permanently suppressing the next real change.
+    self_writes: Mutex<HashMap<String, std::time::Instant>>,
 }
 
 /// A live CfAPI sync root: registered, connected, populated. Drop disconnects + unregisters.
@@ -98,7 +102,7 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         hydrate,
         connection_key: Mutex::new(None),
         root: root.to_path_buf(),
-        self_writes: Mutex::new(HashSet::new()),
+        self_writes: Mutex::new(HashMap::new()),
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
@@ -473,11 +477,18 @@ unsafe extern "system" fn notify_file_close_callback(
 /// The convert itself fires another close on the same path; the `self_writes` echo guard
 /// short-circuits that one re-entry so we don't create a duplicate node.
 unsafe fn capture_new_file(state: &CfState, path: &str) {
-    // Echo guard: if we're the ones who just converted this path, skip exactly once.
+    // Echo guard (self-healing): if we just converted this path AND the entry is fresh
+    // (<5 s old), this close is the convert echo — consume it and skip exactly once. If the
+    // entry is stale (≥5 s, e.g. the convert-triggered close never arrived), drop it and fall
+    // through so a genuine edit isn't wrongly suppressed. Bounds any leak to a 5 s window.
     {
         let mut seen = state.self_writes.lock().unwrap();
-        if seen.remove(path) {
-            return;
+        if let Some(&inserted) = seen.get(path) {
+            seen.remove(path);
+            if inserted.elapsed() < std::time::Duration::from_secs(5) {
+                return; // fresh — the convert echo; suppress
+            }
+            // stale — fall through and capture normally
         }
     }
 
@@ -533,7 +544,7 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
     // Convert the real on-disk file into a placeholder carrying our identity so future closes
     // take the edit path (content-compare). Mark in-sync — the bytes are already correct locally
     // and the sync loop will push them. Guard the echo (our convert fires another close).
-    state.self_writes.lock().unwrap().insert(path.to_string());
+    state.self_writes.lock().unwrap().insert(path.to_string(), std::time::Instant::now());
     let identity = FileIdentity::from_node_id(&node_id);
     let path_w = path_wide(Path::new(path));
     match CreateFileW(
@@ -548,7 +559,7 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
         Ok(handle) => {
             let mut usn: i64 = 0;
             let blob = identity.as_bytes();
-            if let Err(e) = CfConvertToPlaceholder(
+            match CfConvertToPlaceholder(
                 handle,
                 Some(blob.as_ptr() as *const c_void),
                 blob.len() as u32,
@@ -556,9 +567,23 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
                 Some(&mut usn),
                 None,
             ) {
-                eprintln!("cfapi: new file CfConvertToPlaceholder(node={node_id}) failed: {e}");
-                // The convert didn't fire its own close, so drop the echo guard we inserted.
-                state.self_writes.lock().unwrap().remove(path);
+                Ok(()) => {
+                    // Both plan docs specify convert **+ an explicit `CfSetInSyncState`** (the
+                    // sibling edit-capture block does the same). MARK_IN_SYNC on the convert is
+                    // belt-and-suspenders; this makes code and spec agree.
+                    let mut sync_usn: i64 = 0;
+                    let _ = CfSetInSyncState(
+                        handle,
+                        CF_IN_SYNC_STATE_IN_SYNC,
+                        CF_SET_IN_SYNC_FLAG_NONE,
+                        Some(&mut sync_usn),
+                    );
+                }
+                Err(e) => {
+                    eprintln!("cfapi: new file CfConvertToPlaceholder(node={node_id}) failed: {e}");
+                    // The convert didn't fire its own close, so drop the echo guard we inserted.
+                    state.self_writes.lock().unwrap().remove(path);
+                }
             }
             let _ = CloseHandle(handle);
         }

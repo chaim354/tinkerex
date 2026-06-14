@@ -131,11 +131,42 @@ pub fn decide_action(ev: RemoteNodeEvent) -> PlaceholderAction {
 }
 
 /// Strip the sync-root prefix from an absolute on-disk path, yielding a library-relative
-/// forward-slash path. `None` if `abs` is not under `root`. Case-insensitive on the drive/root
-/// is NOT handled here — callers pass the same root string CfAPI reports.
+/// forward-slash path. `None` if `abs` is not under `root`.
+///
+/// Tolerant matching (Windows reports the path as `VolumeDosName + NormalizedPath`, which may
+/// differ in casing/form/separators from the raw user-supplied `root`):
+/// - A leading `\\?\` extended-length prefix is stripped from BOTH sides before comparing
+///   (so we never compare a `\\?\C:\…` against a `C:\…` and miss). We deliberately do NOT
+///   `canonicalize` — on Windows that yields the `\\?\C:\…` form, which would mismatch the
+///   `C:\…` callback path and make this WORSE.
+/// - The root prefix is matched **case-insensitively** (ASCII) and `\`/`/` are treated as
+///   equivalent separators.
+/// - The remainder is returned from the ORIGINAL `abs`, separator-normalized to `/` and with
+///   leading separators trimmed — the unchanged output format.
 pub fn library_relative(root: &str, abs: &str) -> Option<String> {
-    let rel = abs.strip_prefix(root)?.trim_start_matches(['\\', '/']);
-    Some(rel.replace('\\', "/"))
+    // Strip the `\\?\` extended-length prefix (BEFORE separator replacement — afterwards it
+    // would read as `//?/`), then normalize separators to `/` for the comparison form.
+    fn norm(s: &str) -> String {
+        s.strip_prefix(r"\\?\").unwrap_or(s).replace('\\', "/")
+    }
+    let root_norm = norm(root);
+    let abs_norm = norm(abs);
+    // Trim a trailing separator off the root so `C:\X` and `C:\X\` behave identically.
+    let root_norm = root_norm.trim_end_matches('/');
+
+    if abs_norm.len() < root_norm.len() {
+        return None;
+    }
+    let (prefix, rest) = abs_norm.split_at(root_norm.len());
+    if !prefix.eq_ignore_ascii_case(root_norm) {
+        return None;
+    }
+    // The char right after the prefix must be a separator (or end) — guards against a root of
+    // `C:/X` spuriously matching `C:/Xtra/...`.
+    if !rest.is_empty() && !rest.starts_with('/') {
+        return None;
+    }
+    Some(rest.trim_start_matches('/').to_string())
 }
 
 #[cfg(test)]
@@ -169,6 +200,50 @@ mod tests {
         let root = r"C:\Users\me\MakerCF";
         let abs = r"C:\Users\me\MakerCF\hello.txt";
         assert_eq!(library_relative(root, abs).as_deref(), Some("hello.txt"));
+    }
+
+    #[test]
+    fn library_relative_matches_case_insensitively() {
+        // CfAPI may report a differently-cased drive/path than the user-supplied root.
+        let abs = r"c:\users\ME\makercf\a.txt";
+        assert_eq!(library_relative(r"C:\Users\me\MakerCF", abs).as_deref(), Some("a.txt"));
+    }
+
+    #[test]
+    fn library_relative_strips_extended_length_prefix_on_abs() {
+        // `\\?\C:\X\...` abs vs a plain `C:\X` root must still match.
+        let abs = r"\\?\C:\Users\me\MakerCF\proj\part.stl";
+        assert_eq!(
+            library_relative(r"C:\Users\me\MakerCF", abs).as_deref(),
+            Some("proj/part.stl")
+        );
+    }
+
+    #[test]
+    fn library_relative_strips_extended_length_prefix_on_root() {
+        // …and the symmetric case: a `\\?\`-prefixed root vs a plain abs.
+        let abs = r"C:\Users\me\MakerCF\proj\part.stl";
+        assert_eq!(
+            library_relative(r"\\?\C:\Users\me\MakerCF", abs).as_deref(),
+            Some("proj/part.stl")
+        );
+    }
+
+    #[test]
+    fn library_relative_treats_mixed_separators_as_equivalent() {
+        // Forward slashes on one side, backslashes on the other.
+        let abs = "C:/Users/me/MakerCF/proj/part.stl";
+        assert_eq!(
+            library_relative(r"C:\Users\me\MakerCF", abs).as_deref(),
+            Some("proj/part.stl")
+        );
+    }
+
+    #[test]
+    fn library_relative_none_for_sibling_with_shared_prefix() {
+        // A genuinely-outside path that shares a textual prefix must NOT match.
+        let abs = r"C:\Users\me\MakerCFextra\a.txt";
+        assert_eq!(library_relative(r"C:\Users\me\MakerCF", abs), None);
     }
 
     #[test]
