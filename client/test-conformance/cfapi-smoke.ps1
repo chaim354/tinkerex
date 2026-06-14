@@ -31,7 +31,7 @@ $log    = "$env:TEMP\cfapi-smoke-$runid.log"
 Write-Host "== CfAPI smoke == server=$Server root=$root run=$runid"
 
 # Best-effort sweep of leftover sync roots from prior runs. A still-registered root may refuse
-# deletion (IOException) — that must NOT abort the smoke, hence SilentlyContinue.
+# deletion (IOException) - that must NOT abort the smoke, hence SilentlyContinue.
 Get-ChildItem "$env:USERPROFILE\MakerCF-smoke-*" -Directory -ErrorAction SilentlyContinue |
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
