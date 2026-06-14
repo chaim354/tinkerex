@@ -119,7 +119,7 @@ impl Daemon {
             let stop = stop.clone();
             let poll = cfg.poll;
             let inval = inval_dyn.clone();
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval)))
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval), None))
         };
         {
             let client = client.clone();
@@ -225,7 +225,7 @@ impl WebdavMount {
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None))
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None, None))
         };
         {
             let client = client.clone();
@@ -340,7 +340,7 @@ impl WinfspMount {
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None))
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, None, None))
         };
         {
             let client = client.clone();
@@ -466,6 +466,9 @@ pub struct CfApiMount {
     // outbox), we push whatever those callbacks captured — on the main thread, lock-contention-free.
     provider: Arc<SqliteProvider>,
     client: ServerClient,
+    // Serializes the sync loop's push against the shutdown drain so they never push the same
+    // outbox node concurrently (which would self-conflict on the second push's stale base version).
+    push_gate: Arc<std::sync::Mutex<()>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -510,13 +513,17 @@ impl CfApiMount {
             fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone(), shutting_down.clone()),
         ));
 
+        // Serialize the sync loop's push against the shutdown drain (see `push_gate` field).
+        let push_gate = Arc::new(std::sync::Mutex::new(()));
+
         let sync_handle = {
             let provider = provider.clone();
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
             let inval = inval.clone();
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval)))
+            let push_gate = push_gate.clone();
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval), Some(push_gate)))
         };
         {
             let client = client.clone();
@@ -554,6 +561,7 @@ impl CfApiMount {
             mountpoint: cfg.mountpoint,
             provider,
             client,
+            push_gate,
         })
     }
 
@@ -616,8 +624,14 @@ impl CfApiMount {
         const STABLE_CHECKS: u32 = 3;
         let mut empty_streak = 0u32;
         loop {
-            if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
-                eprintln!("cfapi: shutdown drain failed: {e}");
+            {
+                // Hold the push gate so we never push concurrently with the (possibly still
+                // winding-down) sync thread — that would self-conflict on a shared node. The gate
+                // also makes us wait out the sync thread's in-flight push before our first attempt.
+                let _gate = self.push_gate.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
+                    eprintln!("cfapi: shutdown drain failed: {e}");
+                }
             }
             let remaining = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
             if remaining == 0 {
@@ -668,6 +682,7 @@ fn sync_loop(
     nudge_rx: mpsc::Receiver<i64>,
     poll: Duration,
     inval: Option<Arc<dyn crate::Invalidate>>,
+    push_gate: Option<Arc<std::sync::Mutex<()>>>,
 ) {
     let mut cursor = provider.cursor().unwrap_or(0);
     println!("sync loop started (cursor {cursor}, poll {poll:?})");
@@ -675,7 +690,13 @@ fn sync_loop(
     while !stop.load(Ordering::Relaxed) {
         tick += 1;
         let io = PresignedIO::new(&client);
-        match SyncEngine::sync_tick_inval(&provider, &client, &io, cursor, inval.as_deref()) {
+        // Hold the push gate across the tick (CfAPI only) so the shutdown drain can't push the
+        // SAME outbox node concurrently — a concurrent double-push sends the same base_version_id
+        // twice and the server records a spurious self-conflict on the second.
+        let guard = push_gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()));
+        let r = SyncEngine::sync_tick_inval(&provider, &client, &io, cursor, inval.as_deref());
+        drop(guard);
+        match r {
             Ok(new_cursor) => {
                 if new_cursor != cursor {
                     if let Err(e) = provider.set_cursor(new_cursor) {
