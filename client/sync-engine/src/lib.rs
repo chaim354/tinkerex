@@ -151,10 +151,16 @@ impl SyncEngine {
         for (node_id, op) in entries {
             let result: Result<()> = if op == "delete" {
                 match client.delete_node(&node_id) {
-                    Ok(_) => Ok(()),
+                    Ok(r) => {
+                        eprintln!("DIAG push_outbox: delete_node({node_id}) -> 200 seq={}", r.seq);
+                        Ok(())
+                    }
                     // The node may never have reached the server (created then deleted
                     // before this drained). Treat "unknown" as already-gone.
-                    Err(sync_client::Error::Server { status: 404, .. }) => Ok(()),
+                    Err(sync_client::Error::Server { status: 404, .. }) => {
+                        eprintln!("DIAG push_outbox: delete_node({node_id}) -> 404 (NOT on server; swallowed as already-gone)");
+                        Ok(())
+                    }
                     Err(e) => Err(e.into()),
                 }
             } else {

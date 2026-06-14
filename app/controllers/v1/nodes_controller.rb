@@ -15,7 +15,12 @@ module V1
 
     # DELETE /v1/nodes/:node_id   (tombstone; versions retained for restore)
     def destroy
-      node = current_user.nodes.find_by!(node_id: params[:node_id])
+      node = current_user.nodes.find_by(node_id: params[:node_id])
+      unless node
+        Rails.logger.warn("DIAG destroy: node_id=#{params[:node_id]} NOT FOUND for user=#{current_user.id} -> 404")
+        return render json: { error: "not found" }, status: :not_found
+      end
+      Rails.logger.warn("DIAG destroy: node_id=#{params[:node_id]} name=#{node.name} deleted? #{node.deleted} -> tombstoning")
       seq = Sync::Mutation.apply(user: current_user, node:, op: "delete") { |n| n.deleted = true }
       LibraryChannel.broadcast_change(current_user, seq)
       render json: { seq: }

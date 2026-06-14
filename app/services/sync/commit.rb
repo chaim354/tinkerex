@@ -61,6 +61,7 @@ module Sync
         upsert_chunks!(user, manifest)
 
         node = user.nodes.find_or_initialize_by(node_id: pending.node_id)
+        Rails.logger.warn("DIAG commit.finalize: node_id=#{pending.node_id} new_record? #{node.new_record?} (name #{node.name.inspect} -> #{pending.name.inspect})")
         prior_current = node.current_version_id
         node.assign_attributes(
           parent_node_id: pending.parent_node_id, name: pending.name,
