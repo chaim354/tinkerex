@@ -249,10 +249,19 @@ pub struct ServerClient {
 
 impl ServerClient {
     pub fn new(base: impl Into<String>) -> Self {
+        // A default request timeout so a stalled connection can't wedge the caller forever — a
+        // hung push on the sync thread would otherwise block graceful shutdown (join never
+        // returns). 60s is generous for a chunk upload/download yet bounds the worst case;
+        // individual short-deadline ops (locks) still set their own tighter timeout.
+        let http = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
         Self {
             base: base.into().trim_end_matches('/').to_string(),
             token: None,
-            http: reqwest::blocking::Client::new(),
+            http,
         }
     }
 

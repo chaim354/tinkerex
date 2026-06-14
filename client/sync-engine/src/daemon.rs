@@ -576,7 +576,21 @@ impl CfApiMount {
         }
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.sync_handle.take() {
-            let _ = h.join();
+            // Bounded join: the sync thread normally exits within a poll interval, but a push in
+            // flight when stop was set could be mid-HTTP (now capped by the client's 60s timeout).
+            // Don't let that hold up unmount — wait a few seconds, then proceed to disconnect +
+            // the main-thread drain regardless (the drain re-pushes anything the abandoned thread
+            // didn't finish; with `shutting_down` set the callbacks no longer re-enter CfAPI, so
+            // disconnecting while it winds down is safe). The thread is detached if still running.
+            let deadline = std::time::Instant::now() + Duration::from_secs(6);
+            while !h.is_finished() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(50));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            } else {
+                eprintln!("cfapi: sync thread still busy at shutdown — proceeding (detached)");
+            }
         }
         self.handle.take(); // Drop disconnects (flushes remaining callbacks) + stops the watcher
         self.shutdown_drain();
