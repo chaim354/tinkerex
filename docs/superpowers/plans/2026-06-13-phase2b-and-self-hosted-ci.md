@@ -10,7 +10,7 @@
 
 **Verification legend per task:** 🟢 = fully verifiable on this macOS box · 🟡 = cross-target typecheck only here (`cargo check --target x86_64-pc-windows-gnu`), live-verified on Windows · 🔵 = run by the user on their box.
 
-**Working agreement:** Branch `auth-caching-security`. One focused commit per task, **pushed after each task** (rollback points). Before every push of CfAPI FFI code, run `cargo check --target x86_64-pc-windows-gnu` in `client/fs-cfapi` (and `client/sync-engine`).
+**Working agreement:** Branch `auth-caching-security`. One focused commit per task, **pushed after each task** (rollback points). Before every push of CfAPI FFI code, run `cargo check --target x86_64-pc-windows-gnu` in `client/fs-cfapi`. **NOTE:** `client/sync-engine` CANNOT be gnu-cross-checked from macOS — its `fs-winfsp` dep pulls `winfsp-sys`, whose build script panics on the gnu triple (`unsupported triple x86_64-pc-windows-gnu`, only msvc is supported). So the engine-wiring gate is the **msvc `cfapi-windows` CI job** (and the self-hosted Windows runner), NOT a local gnu check. Keep CfAPI changes to `fs-cfapi`'s existing public API where possible so the engine wiring is unaffected.
 
 ---
 
