@@ -14,7 +14,7 @@ on:
 
 jobs:
   unix:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -37,7 +37,7 @@ jobs:
     # The sync-engine talks to the server over HTTP; this job stands up the real Rails
     # app (SQLite, STORAGE_BACKEND=memory → control plane only, chunk bytes via the test's
     # shared-dir stand-in) and runs the integration suite against it.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -67,7 +67,7 @@ jobs:
     # CephFS gate on). rclone⇄WebDAV and fsx⇄FUSE gate the build; pjdfstest is an
     # informational POSIX conformance map (continue-on-error). See
     # client/test-conformance/README.md.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -88,7 +88,7 @@ jobs:
         run: client/test-conformance/pjdfstest-fuse.sh
 
   winfsp-windows:
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -107,7 +107,7 @@ jobs:
     # verification gate for the driverless Windows path, which can't build on the
     # maintainer's macOS box. No driver/SDK needed (cldapi.dll ships with Windows; the
     # `windows` crate provides the bindings — no LLVM/bindgen unlike WinFsp).
-    runs-on: windows-latest
+    runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -120,3 +120,37 @@ jobs:
           choco install llvm -y --no-progress
           choco install winfsp -y --no-progress
           cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+
+  macos-cross:
+    # macOS box: the CfAPI Windows-FFI typecheck that can't run elsewhere on the
+    # maintainer's machine (cross-compile to the gnu triple — no link, just check), plus a
+    # native build of the macOS mount path (fs-webdav) over the shared Provider. This is the
+    # gate for the cfg(windows) fs-cfapi code without needing a Windows box for every push.
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Cross-check the CfAPI Windows FFI (fs-cfapi)
+        run: cargo check --target x86_64-pc-windows-gnu --manifest-path client/fs-cfapi/Cargo.toml
+      - name: Native macOS build (fs-webdav mount path + sync-engine bins)
+        run: |
+          cargo build --manifest-path client/fs-webdav/Cargo.toml
+          cargo build --manifest-path client/sync-engine/Cargo.toml --bins
+
+  windows-smoke:
+    # The LIVE Windows CfAPI regression net (Phase 2b Task A4): on the self-hosted Windows
+    # runner — which has real Windows + reachability to the deployed server — register a sync
+    # root, enumerate, hydrate, then create/edit/delete/rename and assert each round-trips to
+    # the server. This is the Windows analogue of `mount-conformance` and the gate for flipping
+    # CfAPI to the default Windows backend (Task B5). Needs the deployed server reachable.
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Live CfAPI smoke (register → enumerate → hydrate → new/edit/delete/rename)
+        shell: pwsh
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/cfapi-smoke.ps1
