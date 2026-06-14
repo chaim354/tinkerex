@@ -86,8 +86,19 @@ chain via `parent_version_id` and share chunks. `chunks.refcount` = number of li
 versions referencing a chunk. **Deleting a node only tombstones it — versions and
 their chunks are retained, so restore always works.** Chunks are freed only when a
 *version* is pruned by a retention policy (`Sync::Gc.prune_version!` decrements
-refcounts; `Sync::Gc.sweep_orphans!` deletes refcount-0 chunks after a grace period).
-v1 keeps all history — set a retention policy later if storage demands it.
+refcounts; `Sync::Gc.sweep_orphans!` deletes refcount-0 chunk rows **and** their
+storage objects after a grace period — `ChunkStore#delete` → S3/R2 `delete_object`,
+best-effort/idempotent).
+
+**Retention is wired** via `RetentionJob` (Solid Queue recurring, nightly 4am):
+
+```
+RETENTION_POLICY=keep_all   # default — self-host: never prunes (storage is the user's)
+RETENTION_POLICY=tiered     # managed: <24h all, 1–30d daily, 30d–1y weekly, >1y monthly
+```
+
+Both modes ALWAYS keep a node's `current_version` and any **pinned** version
+(`versions.pinned`). See `docs/versioning.md` for the keep-set math.
 
 ## Deferred (matches the spec)
 

@@ -69,42 +69,58 @@ node.current_version = v3
 The bytes for `M1` already exist (they were never deleted — we keep versions), so restore
 moves **0 blocks**. It's lossless and O(manifest size) in metadata. (See `restore_test.rb`.)
 
-## Bounding growth: retention + GC (mechanism built, policy to wire)
+## Bounding growth: retention + GC (WIRED — 2026-06-14)
 
 "Keep every version forever" grows without bound, so a **retention policy** decides which
 versions to drop; dropping a version decrements its chunks' refcounts, and chunks at
-refcount 0 are swept. The mechanism exists; the *policy job* is the remaining piece.
+refcount 0 are swept (DB row **and** the object-storage bytes). Both the mechanism and the
+scheduled policy job are now wired.
 
 - **`Sync::Gc.prune_version!(user, version)`** — decrement refcounts for the version's
   chunks and delete the version row. Tree + current version untouched. (tested)
 - **`Sync::Gc.sweep_orphans!(user, grace:)`** — delete chunk metadata + storage objects at
   refcount 0 past a grace window. Never frees a still-referenced or freshly-zeroed chunk.
-  (tested; storage-delete is the one S3-admin call to wire for managed.)
+  **Wired to the storage delete** (`ChunkStore#delete(user_id, hash)` → S3/R2 `delete_object`;
+  no-op on the memory backend): destroys the DB row **first**, then a best-effort storage
+  delete (rescued + logged), so a storage outage can never corrupt refcount state — orphaned
+  bytes are reclaimed on a later sweep (delete is idempotent, tolerates already-gone). (tested)
+- **`Sync::RetentionPolicy`** — computes the per-node **keep-set**. `keep_all` (self-host
+  default — never prunes) and `tiered` (managed: the table below). Both modes ALWAYS keep the
+  node's `current_version` and any **pinned** version (the `versions.pinned` column, default
+  false). Config via `RETENTION_POLICY` env. (tested)
+- **`Sync::Gc.apply_retention!(user, policy:, grace:)`** — orchestrator: per node, keep-set →
+  `prune_version!` the rest → `sweep_orphans!`. Calls the mechanism, never reimplements it. (tested)
+- **`RetentionJob`** — Solid Queue recurring task (nightly 4am, queue `background`,
+  `config/recurring.yml`): applies `RetentionPolicy.default` across every user. (tested)
 - **Keep-newest invariant:** a node's `current_version` is never pruned, so restore-to-now
   always works and the live tree never loses bytes.
 
-**Suggested policy** (a periodic Solid Queue job, à la Time Machine / Dropbox 30-day):
+**Tiered policy** (the managed mode — Time Machine / Dropbox 30-day; keep the newest in each bucket):
 
 | Age of version        | Keep                         |
 |-----------------------|------------------------------|
 | < 24 h                | every version                |
-| 1–30 days             | one per day (hourly→daily)   |
-| 30 days – 1 year      | one per week                 |
-| > 1 year              | one per month (or drop)      |
+| 1–30 days             | one per day                  |
+| 30 days – 1 year      | one per week (ISO year-week) |
+| > 1 year              | one per month                |
 | always                | current version + any pinned |
 
-Run order each cycle: compute the keep-set per node → `prune_version!` the rest →
-`sweep_orphans!`. Because chunks are shared, pruning a version frees **only** the blocks no
-surviving version references — typically just that version's unique delta. Self-host can
-default to "keep all" (storage is the user's); managed applies the tiered policy with an
-optional paid "extended history".
+Because chunks are shared, pruning a version frees **only** the blocks no surviving version
+references — typically just that version's unique delta.
+
+### Configuring managed vs. self-host
+
+- **Self-host:** leave `RETENTION_POLICY` unset (defaults to `keep_all`) — `apply_retention!`
+  prunes nothing; storage is the user's own box. (The job still runs but is a no-op.)
+- **Managed:** set `RETENTION_POLICY=tiered`. Optionally surface "extended history" by pinning
+  versions (`versions.pinned = true`, exempt from pruning) for a paid tier.
 
 ## What's built vs. to-build
 
 - ✅ Content-addressed, refcounted, deduped chunks; immutable parent-linked versions;
   commit uploads only `missing`; `Sync::Restore` (reuse manifest, zero new blocks);
-  `prune_version!` + `sweep_orphans!`; version-history + restore API + app UI.
-- ⏳ The **retention policy job** (compute keep-set + schedule prune/sweep) and the
-  S3 `delete_object` call in `sweep_orphans!` for managed storage. Optional: **pinned
-  versions** (a `pinned` flag exempt from pruning) and a per-version size attribution
+  `prune_version!` + `sweep_orphans!` (storage delete wired); **`RetentionPolicy`
+  (keep_all/tiered) + `apply_retention!` + the `RetentionJob` recurring schedule**;
+  **`pinned` flag** exempt from pruning; version-history + restore API + app UI.
+- ⏳ Optional polish: a **pin/unpin API + UI control**, and a per-version size attribution
   ("this version added N MB") for a storage breakdown in the UI.
