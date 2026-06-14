@@ -152,9 +152,15 @@ jobs:
           set +e
           cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
           code=$?
+          # The two-device end-to-end suite (the headline A→B→edit→A roundtrip + delete/move/
+          # rename/dedup/restore/conflict), driven through the same engine loop + ServerClient API
+          # the Tauri app's Daemon runs. Provider/engine-level (headless) — see the test's module
+          # docs; the kernel-mount leg is the per-OS conformance suites' job.
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e
+          code2=$?
           set -e
           kill $SRV 2>/dev/null || true
-          exit $code
+          [ $code -eq 0 ] && [ $code2 -eq 0 ]
 
   windows-build:
     # The real Windows mount adapters (fs-cfapi + fs-winfsp) + sync-engine wiring — the only place
