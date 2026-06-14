@@ -918,19 +918,11 @@ unsafe extern "system" fn notify_delete_callback(
     }
     let state = &*state;
 
-    match callback_node_id(info) {
-        Some(node_id) => {
-            let known = state.provider.ino_for_node_id(&node_id).ok().flatten();
-            eprintln!("DIAG cfapi: NOTIFY_DELETE node={node_id} local_ino={known:?} path={}{}",
-                pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
-            if let Err(e) = state.provider.delete_by_node_id(&node_id) {
-                // Log + still ACK — a failed mirror must not block the OS delete.
-                eprintln!("cfapi: delete_by_node_id(node={node_id}) failed: {e}");
-            }
-        }
-        None => {
-            eprintln!("DIAG cfapi: NOTIFY_DELETE with NO node_id (FileIdentity null/empty) path={}{}",
-                pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
+    if let Some(node_id) = callback_node_id(info) {
+        eprintln!("cfapi: delete captured node={node_id}");
+        if let Err(e) = state.provider.delete_by_node_id(&node_id) {
+            // Log + still ACK — a failed mirror must not block the OS delete.
+            eprintln!("cfapi: delete_by_node_id(node={node_id}) failed: {e}");
         }
     }
 
@@ -978,11 +970,7 @@ unsafe extern "system" fn notify_rename_callback(
     }
     let state = &*state;
 
-    match callback_node_id(info) {
-        Some(node_id) => {
-        let known = state.provider.ino_for_node_id(&node_id).ok().flatten();
-        eprintln!("DIAG cfapi: NOTIFY_RENAME node={node_id} local_ino={known:?} src={}{}",
-            pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
+    if let Some(node_id) = callback_node_id(info) {
         // The target path is volume-relative (e.g. `\Users\…\new`); prefix the volume DOS name
         // (e.g. `C:`) to form the full on-disk path, mirroring the close callback.
         if !params.is_null() {
@@ -999,7 +987,7 @@ unsafe extern "system" fn notify_rename_callback(
                         if let Err(e) = state.provider.rename_by_node_id(&node_id, new_parent, &new_name) {
                             eprintln!("cfapi: rename_by_node_id(node={node_id}) failed: {e}");
                         } else {
-                            eprintln!("DIAG cfapi: rename captured node={node_id} -> rel={rel} (new_parent={new_parent} new_name={new_name})");
+                            eprintln!("cfapi: rename captured node={node_id} -> {rel}");
                         }
                     }
                     Err(e) => eprintln!("cfapi: rename resolve_path(rel={rel}) failed: {e}"),
@@ -1008,11 +996,6 @@ unsafe extern "system" fn notify_rename_callback(
                 // rename — just ACK below so the OS op isn't blocked.
                 _ => eprintln!("cfapi: rename target outside root for node={node_id} — not mirrored"),
             }
-        }
-        }
-        None => {
-            eprintln!("DIAG cfapi: NOTIFY_RENAME with NO node_id (FileIdentity null/empty) src={}{}",
-                pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
         }
     }
 

@@ -149,20 +149,12 @@ impl SyncEngine {
             eprintln!("push_outbox: {} queued entr{}", entries.len(), if entries.len() == 1 { "y" } else { "ies" });
         }
         for (node_id, op) in entries {
-            eprintln!("DIAG push_outbox: processing node={node_id} op={op}");
-            let _ = std::io::Write::flush(&mut std::io::stderr());
             let result: Result<()> = if op == "delete" {
                 match client.delete_node(&node_id) {
-                    Ok(r) => {
-                        eprintln!("DIAG push_outbox: delete_node({node_id}) -> 200 seq={}", r.seq);
-                        Ok(())
-                    }
+                    Ok(_) => Ok(()),
                     // The node may never have reached the server (created then deleted
                     // before this drained). Treat "unknown" as already-gone.
-                    Err(sync_client::Error::Server { status: 404, .. }) => {
-                        eprintln!("DIAG push_outbox: delete_node({node_id}) -> 404 (NOT on server; swallowed as already-gone)");
-                        Ok(())
-                    }
+                    Err(sync_client::Error::Server { status: 404, .. }) => Ok(()),
                     Err(e) => Err(e.into()),
                 }
             } else {
