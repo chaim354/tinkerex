@@ -50,7 +50,10 @@ integration). **Phase 1** = the download/read half: register the root, **populat
 as a dehydrated placeholder from the local `Provider` tree, **hydrate** on the FETCH_DATA
 callback (presigned GET → chunk cache → `CfExecuteOperation(TRANSFER_DATA)`), and **invalidate**
 on a remote content change (`CfUpdatePlaceholder` + dehydrate). Wired as
-`sync_engine::CfApiMount` + the `maker-cfsyncd` bin; **WinFsp stays the default fallback**.
+`sync_engine::CfApiMount` + the `maker-cfsyncd` bin. **Now the DEFAULT Windows backend**
+(flipped 2026-06-14): Phase 2b complete (new-file/delete/rename capture), **live smoke +
+byte-for-byte conformance green** against the deployed server; WinFsp behind the
+`winfsp-backend` feature.
 - Reuses the Option-B seams directly: the engine's `Invalidate` trait → `CfUpdatePlaceholder`
   (an `EngineCfInvalidate` newtype bridges them), and real nanos mtime → `FILETIME`.
 - New `Provider::ingest_bytes` (the Phase-2 local-edit primitive: re-ingest an edited on-disk
