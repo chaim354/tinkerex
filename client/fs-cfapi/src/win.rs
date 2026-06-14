@@ -113,6 +113,10 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(fetch_data_callback) },
         // Phase 2: a file handle closed — capture a local edit (content changed) and push it.
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION, Callback: Some(notify_file_close_callback) },
+        // Phase 2b: a delete/rename is about to happen — mirror it into the Provider, then ACK
+        // (pre-op variants, so we observe + allow the OS op). An unanswered pre-op hangs Explorer.
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NOTIFY_DELETE, Callback: Some(notify_delete_callback) },
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NOTIFY_RENAME, Callback: Some(notify_rename_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NONE, Callback: None },
     ]));
 
@@ -403,7 +407,8 @@ unsafe fn pcwstr_string(p: PCWSTR) -> String {
 /// Derive the library-relative path, resolve/create the parent dirs + the node in the
 /// `Provider`, ingest its bytes (enqueues the outbox), then `CfConvertToPlaceholder` to give the
 /// on-disk file our `node_id` identity + mark it in-sync. The convert itself fires another close;
-/// the `self_writes` echo guard short-circuits that re-entry. Deletes / renames are PHASE 2c.
+/// the `self_writes` echo guard short-circuits that re-entry. Deletes / renames are captured in
+/// the dedicated [`notify_delete_callback`] / [`notify_rename_callback`] (NOTIFY_DELETE/RENAME).
 unsafe extern "system" fn notify_file_close_callback(
     info: *const CF_CALLBACK_INFO,
     _params: *const CF_CALLBACK_PARAMETERS,
@@ -591,6 +596,117 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
             eprintln!("cfapi: new file open(node={node_id}) failed: {e}");
             state.self_writes.lock().unwrap().remove(path);
         }
+    }
+}
+
+/// NOTIFY_DELETE (pre-op): a placeholder is about to be deleted from the sync root. Mirror the
+/// delete into the `Provider` (recursive subtree sweep + outbox push via `delete_by_node_id`),
+/// then **ACK** so the OS proceeds with the on-disk delete.
+///
+/// **Always ACKs** — even on a provider error (logged): a failed local mirror must not wedge
+/// Explorer by vetoing the user's delete. A null/unknown `FileIdentity` (e.g. a never-tracked
+/// file) just ACKs with nothing to remove.
+unsafe extern "system" fn notify_delete_callback(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let state = info.CallbackContext as *const CfState;
+    if state.is_null() {
+        return;
+    }
+    let state = &*state;
+
+    if let Some(node_id) = callback_node_id(info) {
+        eprintln!("cfapi: delete captured node={node_id}");
+        if let Err(e) = state.provider.delete_by_node_id(&node_id) {
+            // Log + still ACK — a failed mirror must not block the OS delete.
+            eprintln!("cfapi: delete_by_node_id(node={node_id}) failed: {e}");
+        }
+    }
+
+    // ACK the delete so the platform proceeds (an unanswered pre-op hangs Explorer).
+    let op_info = op_info_for(info, CF_OPERATION_TYPE_ACK_DELETE);
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            AckDelete: CF_OPERATION_PARAMETERS_0_7 {
+                Flags: CF_OPERATION_ACK_DELETE_FLAG_NONE,
+                CompletionStatus: STATUS_SUCCESS,
+            },
+        },
+    };
+    if let Err(e) = CfExecute(&op_info, &mut op_params) {
+        eprintln!("cfapi: CfExecute(ACK_DELETE) failed: {e}");
+    }
+}
+
+/// NOTIFY_RENAME (pre-op): a placeholder is about to be renamed/moved. Resolve the moved node's
+/// `node_id` from its `FileIdentity`, map the callback's `TargetPath` (volume-relative) to a
+/// library-relative path, resolve the new `(parent_ino, leaf)` in the `Provider`, and apply the
+/// rename (`rename_by_node_id`, which enqueues the outbox). Then **ACK** so the OS proceeds.
+///
+/// **Always ACKs** — a failed local mirror must not veto the user's rename. A null/unknown
+/// identity, an out-of-root target, or a resolution error just ACKs (nothing mirrored).
+unsafe extern "system" fn notify_rename_callback(
+    info: *const CF_CALLBACK_INFO,
+    params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let state = info.CallbackContext as *const CfState;
+    if state.is_null() {
+        return;
+    }
+    let state = &*state;
+
+    if let Some(node_id) = callback_node_id(info) {
+        // The target path is volume-relative (e.g. `\Users\…\new`); prefix the volume DOS name
+        // (e.g. `C:`) to form the full on-disk path, mirroring the close callback.
+        if !params.is_null() {
+            let params = &*params;
+            let target = format!(
+                "{}{}",
+                pcwstr_string(info.VolumeDosName),
+                pcwstr_string(params.Anonymous.Rename.TargetPath),
+            );
+            let root_str = state.root.to_string_lossy();
+            match library_relative(&root_str, &target) {
+                Some(rel) if !rel.is_empty() => match state.provider.resolve_path(&rel) {
+                    Ok((new_parent, new_name)) => {
+                        if let Err(e) = state.provider.rename_by_node_id(&node_id, new_parent, &new_name) {
+                            eprintln!("cfapi: rename_by_node_id(node={node_id}) failed: {e}");
+                        } else {
+                            eprintln!("cfapi: rename captured node={node_id} -> {rel}");
+                        }
+                    }
+                    Err(e) => eprintln!("cfapi: rename resolve_path(rel={rel}) failed: {e}"),
+                },
+                // Target outside the sync root (or the root itself): nothing to mirror as a
+                // rename — just ACK below so the OS op isn't blocked.
+                _ => eprintln!("cfapi: rename target outside root for node={node_id} — not mirrored"),
+            }
+        }
+    }
+
+    // ACK the rename so the platform proceeds.
+    let op_info = op_info_for(info, CF_OPERATION_TYPE_ACK_RENAME);
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            AckRename: CF_OPERATION_PARAMETERS_0_6 {
+                Flags: CF_OPERATION_ACK_RENAME_FLAG_NONE,
+                CompletionStatus: STATUS_SUCCESS,
+            },
+        },
+    };
+    if let Err(e) = CfExecute(&op_info, &mut op_params) {
+        eprintln!("cfapi: CfExecute(ACK_RENAME) failed: {e}");
     }
 }
 
