@@ -861,6 +861,69 @@ impl CfApiInvalidate {
             let _ = CloseHandle(handle);
         }
     }
+
+    /// A **pull inserted a brand-new node** (an `apply_remote` INSERT). Create an Explorer
+    /// placeholder for it in its parent directory via `CfCreatePlaceholders`, so it appears
+    /// without the user re-navigating (the parent dir was marked fully populated after its
+    /// first FETCH_PLACEHOLDERS, so the platform won't re-enumerate on its own). Best-effort:
+    /// any failure is logged, never panics (this runs on the sync-loop thread).
+    pub fn created(&self, ino: u64) {
+        // Resolve the node's parent ino + leaf name (the placeholder is created *in* the
+        // parent directory, named by the leaf). Root / unknown → nothing to do.
+        let (parent_ino, name) = match self.provider.parent_and_name(ino) {
+            Ok(Some(pn)) => pn,
+            Ok(None) => {
+                eprintln!("cfapi: created ino={ino} — no parent (root/unknown), skipping");
+                return;
+            }
+            Err(e) => {
+                eprintln!("cfapi: created ino={ino} parent_and_name failed: {e}");
+                return;
+            }
+        };
+        // The parent's on-disk path. If the parent hasn't been enumerated yet there's no
+        // placeholder for it, so a later FETCH_PLACEHOLDERS will surface this child anyway —
+        // skip quietly.
+        let parent_path = match self.path_for(parent_ino) {
+            Some(p) => p,
+            None => {
+                eprintln!("cfapi: created ino={ino} — parent ino={parent_ino} not enumerated yet, skipping");
+                return;
+            }
+        };
+        // Build the one placeholder from the node's attrs + identity.
+        let attr = match self.provider.getattr(ino) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("cfapi: created ino={ino} getattr failed: {e}");
+                return;
+            }
+        };
+        let node_id = self.provider.node_id_for(ino).ok().flatten().unwrap_or_default();
+        let holder =
+            PlaceholderHolder::new(&name, &node_id, attr.size, attr.mtime, attr.kind == Kind::Dir);
+        let mut infos = [holder.info()];
+
+        let base_w = path_wide(&parent_path);
+        let mut processed: u32 = 0;
+        unsafe {
+            match CfCreatePlaceholders(
+                PCWSTR(base_w.as_ptr()),
+                &mut infos,
+                CF_CREATE_FLAG_NONE,
+                Some(&mut processed),
+            ) {
+                Ok(()) => eprintln!(
+                    "cfapi: created placeholder for ino={ino} name={name} in {} ({processed} processed)",
+                    parent_path.display()
+                ),
+                Err(e) => eprintln!(
+                    "cfapi: created ino={ino} CfCreatePlaceholders in {} failed: {e}",
+                    parent_path.display()
+                ),
+            }
+        }
+    }
 }
 
 fn win_err(e: windows::core::Error) -> std::io::Error {

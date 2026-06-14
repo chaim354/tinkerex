@@ -81,12 +81,14 @@ fn apply_remote_reports_content_change_for_cache_invalidation() {
     // First apply: brand-new node on B → nothing cached → no invalidation needed.
     let first = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
     assert!(!first.content_changed, "a new node has nothing cached to invalidate");
+    assert!(first.inserted, "a brand-new node on B → a fresh INSERT (create a placeholder)");
     let b_ino = b.lookup(ROOT, "doc.txt").unwrap().ino;
     assert_eq!(first.ino, b_ino, "outcome carries the local inode");
 
     // Re-apply the SAME content (metadata-only churn) → not a content change.
     let same = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
     assert!(!same.content_changed, "same manifest → no invalidation");
+    assert!(!same.inserted, "the node already exists → an UPDATE, not an INSERT");
 
     // A overwrites; the new manifest differs → existing inode must be invalidated.
     a.truncate(a_ino, 0).unwrap();
@@ -94,6 +96,7 @@ fn apply_remote_reports_content_change_for_cache_invalidation() {
     a.flush(a_ino).unwrap();
     let changed = b.apply_remote(&node_named(&a, "doc.txt")).unwrap();
     assert!(changed.content_changed, "new manifest on an existing inode → invalidate");
+    assert!(!changed.inserted, "a content change to an existing node is not an insert");
     assert_eq!(changed.ino, b_ino, "same inode, repointed");
 }
 

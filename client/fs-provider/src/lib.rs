@@ -135,6 +135,10 @@ pub struct ApplyOutcome {
     pub ino: u64,
     /// The node already existed and its manifest (content) changed — invalidate its cache.
     pub content_changed: bool,
+    /// The node did not exist locally before this pull (a fresh INSERT, not an UPDATE). The
+    /// adapter should *create* a fresh placeholder for it (e.g. CfAPI `CfCreatePlaceholders`)
+    /// rather than invalidate an existing one — there's nothing cached to invalidate yet.
+    pub inserted: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -557,7 +561,8 @@ impl SqliteProvider {
             Some((_, old_manifest)) => *old_manifest != node.manifest_id,
             None => false,
         };
-        Ok(ApplyOutcome { ino, content_changed })
+        let inserted = prior.is_none();
+        Ok(ApplyOutcome { ino, content_changed, inserted })
     }
 
     /// Apply a delete pulled from the server: remove the node identified by its stable
@@ -855,6 +860,27 @@ impl SqliteProvider {
         };
         // Delegate to the existing rename implementation.
         self.rename(old_parent, &old_name, new_parent, new_name)
+    }
+
+    /// Resolve an inode to its `(parent_ino, name)`. Returns `Ok(None)` for the root (which
+    /// has no parent) or an unknown inode. This is the inbound CfAPI bridge for **new remote
+    /// nodes**: when a pull inserts a node, the adapter needs its parent directory (to locate
+    /// the on-disk dir) and its leaf name (to build the placeholder) — both of which the
+    /// `Attr`/`DirEntry` surface omits. Cross-platform (no Windows-only code).
+    pub fn parent_and_name(&self, ino: u64) -> Result<Option<(u64, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(Option<i64>, String)> = conn
+            .query_row(
+                "SELECT parent_ino, name FROM nodes WHERE ino = ?1",
+                params![ino as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(match row {
+            // A NULL parent_ino is the root row — it has no parent directory.
+            Some((Some(p), name)) => Some((p as u64, name)),
+            _ => None,
+        })
     }
 
     /// Replace a node's entire content with `data`, then commit it (chunk + manifest +

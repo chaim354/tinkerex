@@ -441,6 +441,9 @@ impl crate::Invalidate for EngineCfInvalidate {
     fn invalidate(&self, ino: u64) {
         self.0.invalidate(ino);
     }
+    fn created(&self, ino: u64) {
+        self.0.created(ino);
+    }
 }
 
 /// The **CfAPI** mount path (Windows) — the driverless successor to [`WinfspMount`] (the

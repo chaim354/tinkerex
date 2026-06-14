@@ -49,6 +49,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// / `signalEnumerator`) — the same two primitives, so this is the migration seam.
 pub trait Invalidate: Send + Sync {
     fn invalidate(&self, ino: u64);
+
+    /// A **pull inserted a brand-new node** into the local tree (not a content change to an
+    /// existing one). The adapter should *create* a fresh placeholder for it so it appears
+    /// without the user re-navigating — e.g. CfAPI's `CfCreatePlaceholders` in the node's
+    /// parent directory. Default no-op: FUSE/WebDAV/WinFsp surface new nodes via their normal
+    /// `readdir`, so only the on-demand-population adapters (CfAPI / File Provider) override it.
+    fn created(&self, _ino: u64) {}
 }
 
 /// Moves chunk bytes to/from "the cloud".
@@ -533,10 +540,15 @@ fn apply_change(provider: &SqliteProvider, ch: &Change, inval: Option<&dyn Inval
         provider.apply_remote_delete(&ch.node_id)?;
     } else if let Some(sn) = change_to_sync(ch) {
         let outcome = provider.apply_remote(&sn)?;
-        // An existing inode repointed at new content: drop the OS cache so the next read
-        // re-fetches (we no longer bump mtime to force this). Best-effort, FUSE-only today.
-        if outcome.content_changed {
-            if let Some(inval) = inval {
+        if let Some(inval) = inval {
+            if outcome.inserted {
+                // A brand-new node: create a fresh placeholder so it appears without the user
+                // re-navigating the directory (CfAPI on-demand population marks a dir fully
+                // populated after its first enumerate). No-op for FUSE/WebDAV/WinFsp.
+                inval.created(outcome.ino);
+            } else if outcome.content_changed {
+                // An existing inode repointed at new content: drop the OS cache so the next
+                // read re-fetches (we no longer bump mtime to force this). FUSE-strong today.
                 inval.invalidate(outcome.ino);
             }
         }

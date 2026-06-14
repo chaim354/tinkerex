@@ -230,3 +230,31 @@ fn rename_by_node_id_onto_self_is_ok() {
         "node_id must be stable after a rename-onto-self"
     );
 }
+
+// ---- parent_and_name (CfAPI "new remote node" bridge) ---------------------------
+
+/// A top-level file resolves to (ROOT, name); a nested file resolves to (its dir's ino,
+/// leaf name). This is what the CfAPI `created` hook uses to locate a new node's parent
+/// directory + build its placeholder.
+#[test]
+fn parent_and_name_returns_parent_ino_and_leaf() {
+    let p = provider();
+    let top = write_file(&p, ROOT, "top.txt", b"x");
+    let (pi, name) = p.parent_and_name(top).unwrap().unwrap();
+    assert_eq!(pi, ROOT, "top-level file's parent is root");
+    assert_eq!(name, "top.txt");
+
+    let dir = p.mkdir(ROOT, "d").unwrap();
+    let nested = write_file(&p, dir.ino, "n.txt", b"y");
+    let (pi2, name2) = p.parent_and_name(nested).unwrap().unwrap();
+    assert_eq!(pi2, dir.ino, "nested file's parent is its directory");
+    assert_eq!(name2, "n.txt");
+}
+
+/// The root inode has no parent → None (not an error). An unknown inode is also None.
+#[test]
+fn parent_and_name_root_and_unknown_are_none() {
+    let p = provider();
+    assert!(p.parent_and_name(ROOT).unwrap().is_none(), "root has no parent");
+    assert!(p.parent_and_name(999_999).unwrap().is_none(), "unknown ino → None");
+}
