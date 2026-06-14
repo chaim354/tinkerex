@@ -614,7 +614,11 @@ fn sync_loop(
     // persistently-failing entry. Pull is skipped — there's nothing local left to converge on.
     let io = PresignedIO::new(&client);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut pass = 0u32;
     loop {
+        pass += 1;
+        let before = provider.outbox_list().map(|v| v.len()).unwrap_or(0);
+        eprintln!("sync: final drain pass #{pass} ({before} queued)");
         if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
             eprintln!("sync: final outbox drain failed: {e}");
         }
@@ -628,7 +632,7 @@ fn sync_loop(
         // Let any in-flight CfAPI callback finish enqueueing, then drain again.
         thread::sleep(Duration::from_millis(300));
     }
-    println!("sync loop stopped");
+    println!("sync loop stopped (final drain done)");
 }
 
 /// Subscribe to the LibraryChannel; forward each `{head_seq}` to the sync loop.
