@@ -1,8 +1,13 @@
 name: Rust client
 
-# FAST per-PR gate. Runs only on the two always-on self-hosted runners (macOS + Linux) so the
-# loop never waits on the Windows desktop. The slow / cross-platform / live jobs (Windows builds,
-# the live CfAPI smoke, fsx/pjdfstest conformance) live in `nightly.yml` (cron + on-demand).
+# FAST per-PR gate on the always-on runners (macOS + Linux), with the Windows build gated on
+# Windows-affecting changes. Each job runs ONLY when its component changed (auto path-gating),
+# and `workflow_dispatch` lets you run exactly one slice on demand to shorten the iteration loop:
+#   gh workflow run rust-client.yml --ref <branch> -f target=cfapi   # only the Windows/CfAPI jobs
+#   gh workflow run rust-client.yml --ref <branch> -f target=linux   # only the FUSE/Linux build
+#   gh workflow run rust-client.yml --ref <branch> -f target=mac     # only the Mac hermetic+webdav
+#   gh workflow run rust-client.yml --ref <branch> -f target=engine  # only the server integration
+#   gh workflow run rust-client.yml --ref <branch> -f target=all
 on:
   push:
     branches: [ main ]
@@ -11,40 +16,73 @@ on:
       - 'client/**'
       - '.github/workflows/rust-client.yml'
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which slice to run'
+        type: choice
+        default: all
+        options: [all, mac, linux, engine, windows, cfapi]
 
-# Single self-hosted runner per OS + fixed test ports → overlapping runs collide. Serialize.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
-    # Detect whether anything that affects the Windows client changed, so the (slower) Windows
-    # build + live smoke only run when relevant — not on Mac-only / Linux-only / docs changes.
-    # Native `git diff` (no GitHub API / third-party action → no token-permission surprises).
+    # Decide which jobs run. workflow_dispatch -> the chosen target; PR -> native git-diff by
+    # component; push to main -> the full build matrix (no live smoke). No GitHub API / 3rd-party
+    # action, so no token-permission surprises.
     runs-on: [self-hosted, linux]
     outputs:
+      mac: ${{ steps.f.outputs.mac }}
+      linux: ${{ steps.f.outputs.linux }}
+      engine: ${{ steps.f.outputs.engine }}
       windows: ${{ steps.f.outputs.windows }}
+      smoke: ${{ steps.f.outputs.smoke }}
     steps:
       - uses: actions/checkout@v5
         with: { clean: false, fetch-depth: 0 }
       - id: f
-        name: Detect Windows-client changes
+        name: Decide which jobs run
+        env:
+          TARGET: ${{ github.event.inputs.target }}
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          base="${{ github.event.pull_request.base.sha || github.event.before }}"
-          pattern='^client/(fs-cfapi|fs-winfsp|sync-engine|fs-provider|sync-client)/|^client/test-conformance/cfapi-smoke\.ps1$|^\.github/workflows/rust-client\.yml$'
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            echo "windows=true" >> "$GITHUB_OUTPUT"; echo "dispatch / no base -> windows=true"
-          elif git diff --name-only "$base" HEAD | grep -qE "$pattern"; then
-            echo "windows=true" >> "$GITHUB_OUTPUT"; echo "windows-affecting change -> true"
+          mac=false; linux=false; engine=false; windows=false; smoke=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "${TARGET:-all}" in
+              all)           mac=true; linux=true; engine=true; windows=true; smoke=true ;;
+              mac)           mac=true ;;
+              linux)         linux=true ;;
+              engine)        engine=true ;;
+              windows|cfapi) windows=true; smoke=true; mac=true ;;
+            esac
+          elif [ "$EVENT" = "push" ]; then
+            mac=true; linux=true; engine=true; windows=true   # full build matrix; smoke on-demand
           else
-            echo "windows=false" >> "$GITHUB_OUTPUT"; echo "no windows-affecting change -> false"
+            # PR: gate per component off the diff. Foundational crates (fs-provider, sync-client,
+            # sync-engine) fan out to everything; leaf adapters only run their own platform.
+            if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+              mac=true; linux=true; engine=true; windows=true
+            else
+              files=$(git diff --name-only "$BASE" HEAD); echo "$files"
+              grep -qE '^client/(fs-webdav|fs-cfapi|fs-provider|sync-client|sync-engine)/' <<<"$files" && mac=true
+              grep -qE '^client/(fs-fuse|sync-engine|fs-provider|sync-client)/'             <<<"$files" && linux=true
+              grep -qE '^client/(sync-engine|sync-client|fs-provider)/'                     <<<"$files" && engine=true
+              grep -qE '^client/(fs-cfapi|fs-winfsp|sync-engine|fs-provider|sync-client)/'  <<<"$files" && windows=true
+              grep -qE '^\.github/workflows/rust-client\.yml$|^client/test-conformance/'    <<<"$files" && { mac=true; linux=true; engine=true; windows=true; }
+              # smoke stays off on auto PRs: it needs an interactive Windows session (see below).
+            fi
           fi
+          for k in mac linux engine windows smoke; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
+          echo "RESULT mac=$mac linux=$linux engine=$engine windows=$windows smoke=$smoke"
 
   mac-tests:
-    # The fastest box does the most: every hermetic Rust test (all cross-platform) PLUS the
-    # CfAPI Windows-FFI cross-check (cargo check --target windows-gnu) PLUS the native macOS
-    # mount build. `clean: false` keeps target/ warm across runs → incremental compiles.
+    # The fastest box: every hermetic Rust test (all cross-platform) + the CfAPI Windows-FFI
+    # cross-check + the native macOS mount build. clean: false keeps target/ warm.
+    needs: changes
+    if: ${{ needs.changes.outputs.mac == 'true' }}
     runs-on: [self-hosted, macos]
     steps:
       - uses: actions/checkout@v5
@@ -65,8 +103,10 @@ jobs:
           cargo build --manifest-path client/sync-engine/Cargo.toml --bins
 
   linux-build:
-    # The Linux-only FUSE mount path (fuser is cfg(target_os = "linux")), built in parallel with
-    # the Mac job. Tests themselves run on the Mac; this just proves the Linux compile.
+    # The Linux-only FUSE mount path (fuser is cfg(target_os = "linux")). sync-engine pulls the
+    # inert fs-winfsp here transitively, so no separate fs-winfsp build is needed.
+    needs: changes
+    if: ${{ needs.changes.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
@@ -78,12 +118,12 @@ jobs:
         run: |
           cargo build --manifest-path client/fs-fuse/Cargo.toml
           cargo build --manifest-path client/sync-engine/Cargo.toml --bins
-      - name: Build fs-winfsp on non-Windows (must be an inert empty crate)
-        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml
 
   engine-integration:
-    # The HTTP wire contract: boot the real Rails server (SQLite + memory chunk store) and run
-    # the sync-engine integration suite against it. On Linux in parallel with the Mac job.
+    # The HTTP wire contract: boot the real Rails server (SQLite + memory chunk store) and run the
+    # sync-engine integration suite against it. Boot + test in ONE step so the server stays alive.
+    needs: changes
+    if: ${{ needs.changes.outputs.engine == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v5
@@ -101,7 +141,6 @@ jobs:
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: |
-          # Free :3001 of any leftover server from a prior/cancelled run on this persistent runner.
           (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
           sleep 1
           STORAGE_BACKEND=memory bin/rails server -p 3001 &
@@ -117,11 +156,10 @@ jobs:
 
   windows-build:
     # The real Windows mount adapters (fs-cfapi + fs-winfsp) + sync-engine wiring — the only place
-    # winfsp-sys (msvc) and the cfg(windows) daemon code actually link. Runs only when something
-    # affecting the Windows client changed (or on manual dispatch). LLVM/WinFsp preinstalled by
-    # ci/runners/setup-windows.ps1. clean: false keeps target/ warm.
+    # winfsp-sys (msvc) and the cfg(windows) daemon code actually link. LLVM/WinFsp preinstalled by
+    # ci/runners/setup-windows.ps1. This is the headless-capable Windows gate.
     needs: changes
-    if: ${{ needs.changes.outputs.windows == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v5
@@ -139,10 +177,13 @@ jobs:
         run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
 
   windows-smoke:
-    # The LIVE CfAPI write-path proof (register -> enumerate -> hydrate -> new/edit/delete/rename),
-    # gated the same way. Needs the Windows runner online + the deployed server reachable.
+    # The LIVE CfAPI write-path proof. NOTE: CfAPI/Cloud Files needs an INTERACTIVE user session;
+    # the runner-as-service runs in Session 0 (NETWORK SERVICE), where the mount enumerates empty.
+    # So this is on-demand only (target=windows/cfapi/all) and continue-on-error — it does NOT gate.
+    # To make it pass, run the Windows runner in an interactive login session (see ci/runners/README).
     needs: [changes, windows-build]
-    if: ${{ needs.changes.outputs.windows == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.smoke == 'true' }}
+    continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v5

@@ -69,6 +69,27 @@ On the box, remove the service + deregister first:
 
 Get a removal token with `gh api -X POST repos/chaim354/tinkerex/actions/runners/remove-token --jq .token`.
 
+## The live CfAPI smoke needs an INTERACTIVE Windows session
+
+The `windows-build` job runs fine headless (as the `NETWORK SERVICE` runner service). The live
+`windows-smoke` job does **not**: CfAPI / Cloud Files requires an interactive user session, but a
+runner installed as a service runs in **Session 0** with no desktop — the sync root registers but
+enumerates empty (`An invalid name request was made`). So `windows-smoke` is `continue-on-error`
+and on-demand only.
+
+To make the live smoke pass, run the Windows runner **interactively** in a logged-in session
+instead of as a service:
+
+```powershell
+# stop/remove the service runner, then run it in your interactive session:
+sc.exe stop  "actions.runner.chaim354-tinkerex.<name>"
+sc.exe delete "actions.runner.chaim354-tinkerex.<name>"
+cd C:\actions-runner-tinkerex
+./run.cmd        # stays up while you're logged in; CfAPI works here
+```
+For always-on interactive, set `run.cmd` to launch at logon (Task Scheduler "At log on", run with
+highest privileges, on a machine set to auto-login and never sleep).
+
 ## Security note
 
 A self-hosted runner executes whatever a workflow tells it to. Because this repo is

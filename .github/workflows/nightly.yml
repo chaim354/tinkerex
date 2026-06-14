@@ -37,10 +37,12 @@ jobs:
 
   windows-smoke:
     # The LIVE CfAPI regression net (Phase 2b Task A4): register a sync root, enumerate, hydrate,
-    # then create/edit/delete/rename and assert each round-trips to the deployed server. Needs the
-    # Windows runner online + the server reachable at SERVER_URL. This is the gate for flipping
-    # CfAPI to the default Windows backend (Task B5).
+    # then create/edit/delete/rename and assert each round-trips to the deployed server.
+    # continue-on-error: CfAPI needs an INTERACTIVE session; the runner-as-service (Session 0)
+    # enumerates empty. It passes only when the Windows runner runs in an interactive login
+    # session. Informational until then; it gates Task B5 once it can pass.
     needs: windows-build
+    continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v5
