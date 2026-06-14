@@ -20,16 +20,20 @@ function Check([string]$name, [bool]$ok) {
 
 $repo   = (Resolve-Path "$PSScriptRoot\..\..").Path
 $engine = "$repo\client\sync-engine\Cargo.toml"
-$root   = "$env:USERPROFILE\MakerCF-smoke"
-$db     = "$env:TEMP\maker-cf-smoke.db"
-$chunks = "$env:TEMP\maker-cf-smoke-chunks"
-$log    = "$env:TEMP\cfapi-smoke.log"
 $runid  = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+# UNIQUE per-run paths. A CfAPI sync root hard-killed by a prior run stays registered and
+# refuses deletion, so we never reuse the same folder (reusing it threw RemoveItemIOError).
+$root   = "$env:USERPROFILE\MakerCF-smoke-$runid"
+$db     = "$env:TEMP\maker-cf-smoke-$runid.db"
+$chunks = "$env:TEMP\maker-cf-smoke-$runid-chunks"
+$log    = "$env:TEMP\cfapi-smoke-$runid.log"
 
 Write-Host "== CfAPI smoke == server=$Server root=$root run=$runid"
 
-# Clean any prior run's sync root + state so we start fresh.
-foreach ($p in @($root, $db, $chunks)) { if (Test-Path $p) { Remove-Item -Recurse -Force $p } }
+# Best-effort sweep of leftover sync roots from prior runs. A still-registered root may refuse
+# deletion (IOException) — that must NOT abort the smoke, hence SilentlyContinue.
+Get-ChildItem "$env:USERPROFILE\MakerCF-smoke-*" -Directory -ErrorAction SilentlyContinue |
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "==> Building maker-cfsyncd + examples (mac_host, tree_names)"
 & cargo build --manifest-path $engine --bin maker-cfsyncd --example mac_host --example tree_names
