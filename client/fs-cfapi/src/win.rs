@@ -78,11 +78,43 @@ pub struct CfApiMountHandle {
     root: PathBuf,
     state: *mut CfState,
     stop: Arc<AtomicBool>,
+    /// New-file watcher (see [`spawn_new_file_watcher`]). CfAPI delivers NO callback for a
+    /// brand-new file created directly in the sync root (its NOTIFY_* callbacks only cover
+    /// files already in the placeholder namespace — verified live: a new file fires no
+    /// `NOTIFY_FILE_CLOSE`), so a `ReadDirectoryChangesW` watcher surfaces them — the same
+    /// pattern OneDrive uses. The handle holds the watch dir HANDLE (closed on Drop to unblock
+    /// the synchronous read) + the thread to join.
+    watcher: Option<NewFileWatcher>,
 }
 
 // The raw `*mut CfState` is only ever touched behind the connection (single owner); the
 // handle is moved to one thread. Mark Send so it can live in the daemon's mount slot.
 unsafe impl Send for CfApiMountHandle {}
+
+/// Owns the `ReadDirectoryChangesW` watcher thread + its watch-directory handle. Dropping it
+/// (via [`CfApiMountHandle`]'s Drop, *before* the `CfState` box is reclaimed) closes the dir
+/// handle — which makes the blocking `ReadDirectoryChangesW` return an error — then joins the
+/// thread, so the watcher never touches freed state.
+struct NewFileWatcher {
+    stop: Arc<AtomicBool>,
+    dir: windows::Win32::Foundation::HANDLE,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+unsafe impl Send for NewFileWatcher {}
+
+impl NewFileWatcher {
+    fn shutdown(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        // Close the watch handle to unblock the synchronous ReadDirectoryChangesW.
+        unsafe {
+            let _ = CloseHandle(self.dir);
+        }
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
 
 fn to_wide(s: &str) -> U16CString {
     U16CString::from_str(s).expect("string has no interior NUL")
@@ -133,7 +165,139 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
     }
     eprintln!("cfapi: connected sync root at {}", root.display());
 
-    Ok(CfApiMountHandle { root: root.to_path_buf(), state, stop: Arc::new(AtomicBool::new(false)) })
+    // Start the new-file watcher (CfAPI has no "file created" callback — see NewFileWatcher).
+    // Best-effort: if it can't open the dir handle, log + carry on (new files just won't be
+    // captured, but the rest of the write path still works).
+    let watcher = match spawn_new_file_watcher(root, state) {
+        Ok(w) => Some(w),
+        Err(e) => {
+            eprintln!("cfapi: new-file watcher failed to start ({e}) — new files won't be captured");
+            None
+        }
+    };
+
+    Ok(CfApiMountHandle {
+        root: root.to_path_buf(),
+        state,
+        stop: Arc::new(AtomicBool::new(false)),
+        watcher,
+    })
+}
+
+/// Spawn a `ReadDirectoryChangesW` watcher over the sync root that feeds newly-created /
+/// externally-modified files into [`capture_new_file`]. This fills CfAPI's gap: a brand-new
+/// file dropped into the sync root raises **no** CfAPI callback (its NOTIFY_* set only covers
+/// placeholders already in the namespace), so without this the file never reaches the
+/// Provider/outbox. `capture_new_file` is idempotent (it routes an existing node to an edit and
+/// skips the convert), so a duplicate ADDED+MODIFIED for the same file — or an overlap with the
+/// close callback — is harmless.
+fn spawn_new_file_watcher(root: &Path, state: *mut CfState) -> std::io::Result<NewFileWatcher> {
+    use windows::Win32::Storage::FileSystem::{
+        FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE,
+        FILE_NOTIFY_CHANGE_SIZE,
+    };
+
+    let root_w = path_wide(root);
+    // Open the directory for change notifications (BACKUP_SEMANTICS is required to get a dir
+    // handle; share everything so we never block other openers).
+    let dir = unsafe {
+        CreateFileW(
+            PCWSTR(root_w.as_ptr()),
+            FILE_LIST_DIRECTORY.0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .map_err(win_err)?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE;
+    let state_addr = state as usize; // make the raw ptr Send for the thread
+    let dir_addr = dir.0 as usize;
+    let thread = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            new_file_watch_loop(dir_addr, state_addr, filter, stop);
+        })
+    };
+    eprintln!("cfapi: new-file watcher started on {}", root.display());
+    Ok(NewFileWatcher { stop, dir, thread: Some(thread) })
+}
+
+/// The watcher thread body: block on `ReadDirectoryChangesW`, parse the `FILE_NOTIFY_INFORMATION`
+/// records, and route ADDED / MODIFIED / RENAMED_NEW_NAME paths through `capture_new_file`. Exits
+/// when `stop` is set (Drop closes the handle, so the blocking call returns an error → loop sees
+/// `stop` and returns).
+fn new_file_watch_loop(
+    dir_addr: usize,
+    state_addr: usize,
+    filter: windows::Win32::Storage::FileSystem::FILE_NOTIFY_CHANGE,
+    stop: Arc<AtomicBool>,
+) {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{ReadDirectoryChangesW, FILE_ACTION_ADDED, FILE_ACTION_MODIFIED, FILE_ACTION_RENAMED_NEW_NAME, FILE_NOTIFY_INFORMATION};
+
+    let dir = HANDLE(dir_addr as *mut c_void);
+    let state = state_addr as *const CfState;
+    // 64 KiB buffer, DWORD-aligned (FILE_NOTIFY_INFORMATION starts with a u32).
+    let mut buf = vec![0u32; 16 * 1024]; // 64 KiB
+    while !stop.load(Ordering::Relaxed) {
+        let mut returned: u32 = 0;
+        let ok = unsafe {
+            ReadDirectoryChangesW(
+                dir,
+                buf.as_mut_ptr() as *mut c_void,
+                (buf.len() * 4) as u32,
+                true, // watch subtree
+                filter,
+                Some(&mut returned),
+                None, // synchronous (no OVERLAPPED)
+                None,
+            )
+        };
+        if ok.is_err() || stop.load(Ordering::Relaxed) {
+            break; // handle closed on shutdown, or a real error — exit the thread
+        }
+        if returned == 0 {
+            continue; // buffer overflow / no info; just re-arm
+        }
+        // Walk the variable-length FILE_NOTIFY_INFORMATION chain.
+        let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, returned as usize) };
+        let mut offset = 0usize;
+        loop {
+            if offset + std::mem::size_of::<FILE_NOTIFY_INFORMATION>() > bytes.len() {
+                break;
+            }
+            let info = unsafe { &*(bytes.as_ptr().add(offset) as *const FILE_NOTIFY_INFORMATION) };
+            let name_len = info.FileNameLength as usize / 2; // bytes → u16 count
+            let name_ptr = unsafe { (bytes.as_ptr().add(offset) as *const u8).add(std::mem::offset_of!(FILE_NOTIFY_INFORMATION, FileName)) as *const u16 };
+            let name: Vec<u16> = unsafe { std::slice::from_raw_parts(name_ptr, name_len) }.to_vec();
+            let rel = String::from_utf16_lossy(&name);
+            let action = info.Action;
+            if action == FILE_ACTION_ADDED
+                || action == FILE_ACTION_MODIFIED
+                || action == FILE_ACTION_RENAMED_NEW_NAME
+            {
+                // Build the absolute path. `capture_new_file` re-maps it to a library-relative
+                // path, is idempotent, and skips dirs / placeholders it already tracks.
+                if !state.is_null() {
+                    let st = unsafe { &*state };
+                    let abs = st.root.join(rel.replace('\\', "/").trim_start_matches('/'));
+                    let abs_str = abs.to_string_lossy().to_string();
+                    unsafe { capture_new_file(st, &abs_str) };
+                }
+            }
+            let next = info.NextEntryOffset as usize;
+            if next == 0 {
+                break;
+            }
+            offset += next;
+        }
+    }
+    eprintln!("cfapi: new-file watcher stopped");
 }
 
 fn register_sync_root(root: &Path) -> std::io::Result<()> {
@@ -541,12 +705,33 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
             return;
         }
     };
-    let attr = match state.provider.create(parent_ino, &leaf) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("cfapi: new file create(parent={parent_ino}, {leaf}) failed: {e}");
-            return;
+    // The directory watcher (which also drives this path) can fire ADDED *and* a later
+    // MODIFIED for the same file, and a placeholder-convert can race a watcher event. So this
+    // must be idempotent: if a node already exists at the leaf, treat the close/event as an
+    // EDIT (re-ingest into the existing ino) and skip the convert (it's already a placeholder).
+    let existing = state.provider.lookup(parent_ino, &leaf).ok();
+    let attr = match existing {
+        Some(a) => {
+            // Existing node: ingest only if the content actually changed (the watcher's MODIFIED
+            // echo of our own write, or a plain metadata touch, leaves bytes equal → skip).
+            let cur = state.provider.read(a.ino, 0, a.size as u32).ok();
+            if cur.as_deref() == Some(bytes.as_slice()) {
+                return; // unchanged — nothing to capture (our own write or a no-op touch)
+            }
+            if let Err(e) = state.provider.ingest_bytes(a.ino, &bytes) {
+                eprintln!("cfapi: capture edit ingest_bytes(ino={}) failed: {e}", a.ino);
+            } else {
+                eprintln!("cfapi: edit captured rel={rel} ino={} ({} bytes)", a.ino, bytes.len());
+            }
+            return; // already a placeholder; no convert needed
         }
+        None => match state.provider.create(parent_ino, &leaf) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("cfapi: new file create(parent={parent_ino}, {leaf}) failed: {e}");
+                return;
+            }
+        },
     };
     let node_id = match state.provider.node_id_for(attr.ino) {
         Ok(Some(n)) => n,
@@ -745,6 +930,12 @@ impl CfApiMountHandle {
 
 impl Drop for CfApiMountHandle {
     fn drop(&mut self) {
+        // Stop + join the new-file watcher FIRST, while `state` is still valid — the watcher
+        // thread dereferences it. (shutdown closes the dir handle to unblock the synchronous
+        // ReadDirectoryChangesW, then joins.)
+        if let Some(mut w) = self.watcher.take() {
+            w.shutdown();
+        }
         unsafe {
             // Disconnect the provider, but deliberately do NOT unregister the sync root or
             // remove the folder. Hydrated files keep their bytes on disk so the user can
