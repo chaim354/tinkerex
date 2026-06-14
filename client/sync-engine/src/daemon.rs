@@ -579,11 +579,14 @@ impl CfApiMount {
             // FULLY join the sync thread before disconnecting. Detaching it (an earlier attempt)
             // let the detached thread and the post-disconnect drain race the same outbox entries,
             // so a rename mid-push at process exit was lost. Joining is safe from hanging now that
-            // the HTTP client has a 60s timeout (a stalled push can't block forever); in practice
+            // the HTTP client has a short timeout (a stalled push can't block forever); in practice
             // the thread finishes its current push in well under a second.
+            eprintln!("cfapi: shutdown — joining sync thread");
             let _ = h.join();
+            eprintln!("cfapi: shutdown — sync thread joined; disconnecting");
         }
         self.handle.take(); // Drop disconnects (flushes remaining callbacks) + stops the watcher
+        eprintln!("cfapi: shutdown — disconnected; draining outbox");
         self.shutdown_drain();
     }
 

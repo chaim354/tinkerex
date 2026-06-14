@@ -659,9 +659,7 @@ unsafe extern "system" fn notify_file_close_callback(
     let path = format!("{}{}", pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
 
     // A placeholder carries its node_id; a brand-new file the user dropped in does not.
-    let id = callback_node_id(info);
-    eprintln!("cfapi: NOTIFY_FILE_CLOSE path={path} has_identity={}", id.is_some());
-    let node_id = match id {
+    let node_id = match callback_node_id(info) {
         Some(n) => n,
         // PHASE 2b: new file. Capture it (resolve_path + create + ingest + convert-to-placeholder).
         None => {
