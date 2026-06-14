@@ -76,8 +76,10 @@ struct CfState {
     /// right before unmount is not lost), but **skip the re-entrant CfAPI calls**
     /// (`CfConvertToPlaceholder` / `CfSetInSyncState` / the ACK `CfExecute`s). Issuing those while
     /// the connection is tearing down can deadlock the Cloud Filter runtime — the cause of a
-    /// 15s hang on graceful shutdown when CfAPI flushed its batched NOTIFY callbacks at disconnect.
-    shutting_down: AtomicBool,
+    /// hang on graceful shutdown when CfAPI flushed its batched NOTIFY callbacks at disconnect.
+    /// Shared (`Arc`) with the mount handle + the `CfApiInvalidate` so one flip covers EVERY
+    /// re-entrant CfAPI path (callbacks AND the sync-loop pull's invalidate/create).
+    shutting_down: Arc<AtomicBool>,
 }
 
 /// A live CfAPI sync root: registered, connected, populated. Drop disconnects + unregisters.
@@ -85,6 +87,10 @@ pub struct CfApiMountHandle {
     root: PathBuf,
     state: *mut CfState,
     stop: Arc<AtomicBool>,
+    /// Teardown flag shared with `CfState` + the `CfApiInvalidate`. `begin_shutdown` sets it so
+    /// every re-entrant CfAPI path (the NOTIFY callbacks AND a pull-triggered invalidate/create on
+    /// the sync thread) bails out before issuing a call that would deadlock the closing connection.
+    shutting_down: Arc<AtomicBool>,
     /// New-file watcher (see [`spawn_new_file_watcher`]). CfAPI delivers NO callback for a
     /// brand-new file created directly in the sync root (its NOTIFY_* callbacks only cover
     /// files already in the placeholder namespace — verified live: a new file fires no
@@ -154,6 +160,18 @@ fn path_wide(p: &Path) -> U16CString {
 
 /// Register + connect + populate. Returns a handle that tears everything down on drop.
 pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate>) -> std::io::Result<CfApiMountHandle> {
+    mount_with_shutdown(provider, root, hydrate, Arc::new(AtomicBool::new(false)))
+}
+
+/// [`mount`] but with a caller-supplied teardown flag — pass the SAME `Arc` to the engine's
+/// `CfApiInvalidate` so a pull-triggered invalidate/create during unmount also bails out of its
+/// re-entrant CfAPI calls. The plain `mount` makes its own (fine for a mount with no invalidator).
+pub fn mount_with_shutdown(
+    provider: Arc<SqliteProvider>,
+    root: &Path,
+    hydrate: Option<Hydrate>,
+    shutting_down: Arc<AtomicBool>,
+) -> std::io::Result<CfApiMountHandle> {
     std::fs::create_dir_all(root)?;
     register_sync_root(root)?;
 
@@ -163,7 +181,7 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         connection_key: Mutex::new(None),
         root: root.to_path_buf(),
         self_writes: Mutex::new(HashMap::new()),
-        shutting_down: AtomicBool::new(false),
+        shutting_down: shutting_down.clone(),
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
@@ -209,6 +227,7 @@ pub fn mount(provider: Arc<SqliteProvider>, root: &Path, hydrate: Option<Hydrate
         root: root.to_path_buf(),
         state,
         stop: Arc::new(AtomicBool::new(false)),
+        shutting_down,
         watcher,
     })
 }
@@ -1026,16 +1045,24 @@ impl CfApiMountHandle {
     /// mirror their change into the provider/outbox (nothing is lost — the shutdown drain pushes
     /// it). Safe to call before `Drop`.
     pub fn begin_shutdown(&self) {
-        unsafe { (*self.state).shutting_down.store(true, Ordering::Relaxed); }
+        self.shutting_down.store(true, Ordering::Relaxed);
+    }
+
+    /// The shared teardown flag. Pass it to `CfApiInvalidate::new` so a pull that lands during
+    /// unmount skips its re-entrant `CfUpdatePlaceholder`/`CfCreatePlaceholders` too. Returned as
+    /// a clone so the caller can construct the invalidator BEFORE mounting (the engine does).
+    pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
+        self.shutting_down.clone()
     }
 }
 
 impl Drop for CfApiMountHandle {
     fn drop(&mut self) {
-        // Enter teardown: from here, callbacks still mirror changes into the provider/outbox but
-        // skip re-entrant CfAPI calls (convert/set-in-sync/ACK), which can deadlock the runtime
-        // while the connection is closing — the cause of the graceful-shutdown hang.
-        unsafe { (*self.state).shutting_down.store(true, Ordering::Relaxed); }
+        // Enter teardown (idempotent — the owner usually called begin_shutdown already): from here
+        // callbacks still mirror changes into the provider/outbox but skip re-entrant CfAPI calls
+        // (convert/set-in-sync/ACK/invalidate), which can deadlock the runtime while the connection
+        // is closing — the cause of the graceful-shutdown hang.
+        self.shutting_down.store(true, Ordering::Relaxed);
         // Stop + join the new-file watcher FIRST, while `state` is still valid — the watcher
         // thread dereferences it. (shutdown signals the stop event + cancels the overlapped read,
         // then joins with a bounded wait so a wedged callback can't hang teardown.)
@@ -1065,11 +1092,20 @@ pub struct CfApiInvalidate {
     provider: Arc<SqliteProvider>,
     root: PathBuf,
     paths: Mutex<HashMap<u64, PathBuf>>, // ino → absolute path cache (best-effort)
+    /// Shared with the mount's teardown flag (see [`CfApiMountHandle::shutdown_flag`]). Once set,
+    /// `invalidate`/`created` skip their re-entrant CfAPI calls (`CfUpdatePlaceholder` /
+    /// `CfDehydratePlaceholder` / `CfCreatePlaceholders`) — issuing those while the connection is
+    /// closing deadlocks the runtime, and the sync thread runs the pull (hence these) right up to
+    /// shutdown, so without this guard a pull-triggered invalidate could wedge the join.
+    shutdown: Arc<AtomicBool>,
 }
 
 impl CfApiInvalidate {
-    pub fn new(provider: Arc<SqliteProvider>, root: PathBuf) -> Self {
-        Self { provider, root, paths: Mutex::new(HashMap::new()) }
+    /// `shutdown` should be the mount's teardown flag ([`CfApiMountHandle::shutdown_flag`]) so a
+    /// pull that lands during unmount doesn't re-enter the closing connection. A standalone caller
+    /// with no mount can pass a fresh `Arc::new(AtomicBool::new(false))`.
+    pub fn new(provider: Arc<SqliteProvider>, root: PathBuf, shutdown: Arc<AtomicBool>) -> Self {
+        Self { provider, root, paths: Mutex::new(HashMap::new()), shutdown }
     }
 
     /// Resolve an ino to its absolute path under the sync root by walking the name chain.
@@ -1096,6 +1132,11 @@ impl CfApiInvalidate {
     }
 
     pub fn invalidate(&self, ino: u64) {
+        // During teardown, skip the re-entrant CfUpdatePlaceholder/dehydrate — they deadlock a
+        // closing connection. (The sync thread runs the pull, hence this, right up to unmount.)
+        if self.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
         // path cache can hold a stale entry if a node was renamed; for a content change the
         // name is unchanged, so the cache is fine. Re-resolve on a miss.
         let path = match self.path_for(ino) {
@@ -1180,6 +1221,11 @@ impl CfApiInvalidate {
     /// first FETCH_PLACEHOLDERS, so the platform won't re-enumerate on its own). Best-effort:
     /// any failure is logged, never panics (this runs on the sync-loop thread).
     pub fn created(&self, ino: u64) {
+        // During teardown, skip the re-entrant CfCreatePlaceholders (deadlocks a closing
+        // connection — the pull that triggers this runs right up to unmount).
+        if self.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
         // Resolve the node's parent ino + leaf name (the placeholder is created *in* the
         // parent directory, named by the leaf). Root / unknown → nothing to do.
         let (parent_ino, name) = match self.provider.parent_and_name(ino) {

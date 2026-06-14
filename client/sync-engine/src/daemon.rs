@@ -497,10 +497,17 @@ impl CfApiMount {
             Err(e) => eprintln!("cfapi: initial pull failed (will populate as the loop catches up): {e}"),
         }
 
+        // ONE teardown flag shared by the mount's callbacks AND the invalidator. The sync loop's
+        // pull calls `invalidate`/`created` (which re-enter CfAPI: CfUpdatePlaceholder /
+        // CfCreatePlaceholders) right up to unmount; without a shared flag a pull landing during
+        // disconnect would deadlock the closing connection and wedge the shutdown join. We create
+        // it here, hand it to both the invalidator and the mount, and flip it in stop().
+        let shutting_down = Arc::new(AtomicBool::new(false));
+
         // Cache-invalidation hook over CfUpdatePlaceholder (no construction cycle here — CfAPI
         // resolves paths + opens handles itself, so it needs no post-mount notifier).
         let inval: Arc<dyn crate::Invalidate> = Arc::new(EngineCfInvalidate(
-            fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone()),
+            fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone(), shutting_down.clone()),
         ));
 
         let sync_handle = {
@@ -531,8 +538,13 @@ impl CfApiMount {
         };
 
         // Register + connect (on-demand population via FETCH_PLACEHOLDERS). The handle keeps
-        // the sync root alive.
-        let handle = fs_cfapi::win::mount(provider.clone(), &cfg.mountpoint, Some(hydrate))?;
+        // the sync root alive. Share the SAME teardown flag the invalidator holds.
+        let handle = fs_cfapi::win::mount_with_shutdown(
+            provider.clone(),
+            &cfg.mountpoint,
+            Some(hydrate),
+            shutting_down.clone(),
+        )?;
         println!("CfAPI sync root at {}", cfg.mountpoint.display());
 
         Ok(Self {
