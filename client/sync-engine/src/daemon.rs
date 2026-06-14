@@ -461,6 +461,11 @@ pub struct CfApiMount {
     handle: Option<fs_cfapi::CfApiMountHandle>,
     sync_handle: Option<JoinHandle<()>>,
     mountpoint: PathBuf,
+    // Kept for the post-disconnect shutdown drain (see `stop`): after the sync thread is
+    // joined and the sync root disconnected (which flushes CfAPI's NOTIFY callbacks into the
+    // outbox), we push whatever those callbacks captured — on the main thread, lock-contention-free.
+    provider: Arc<SqliteProvider>,
+    client: ServerClient,
 }
 
 #[cfg(target_os = "windows")]
@@ -530,7 +535,14 @@ impl CfApiMount {
         let handle = fs_cfapi::win::mount(provider.clone(), &cfg.mountpoint, Some(hydrate))?;
         println!("CfAPI sync root at {}", cfg.mountpoint.display());
 
-        Ok(Self { stop, handle: Some(handle), sync_handle: Some(sync_handle), mountpoint: cfg.mountpoint })
+        Ok(Self {
+            stop,
+            handle: Some(handle),
+            sync_handle: Some(sync_handle),
+            mountpoint: cfg.mountpoint,
+            provider,
+            client,
+        })
     }
 
     pub fn mountpoint(&self) -> &Path {
@@ -542,17 +554,58 @@ impl CfApiMount {
     }
 
     pub fn stop(&mut self) {
-        // Disconnect FIRST (before signalling the sync thread to stop). CfAPI flushes its
-        // pending NOTIFY callbacks (edit/delete/rename → outbox) around `CfDisconnectSyncRoot`,
-        // so disconnecting before the sync thread runs its final drain ensures those captured
-        // changes are already queued. If we set `stop` first, the sync thread could run its
-        // final drain on a still-empty outbox and miss them (the B3-rename flake). The drain
-        // loop additionally settles for late async stragglers.
-        self.handle.take(); // Drop disconnects (flushes callbacks) + stops the watcher
+        // Ordered teardown that avoids BOTH a deadlock and the B3-rename flake:
+        //
+        // 1. Signal stop + join the sync thread FIRST. This is essential to avoid a deadlock:
+        //    disconnecting while the sync thread is mid-tick can wedge `CfDisconnectSyncRoot`
+        //    (which waits for in-flight callbacks) behind a callback blocked on the SQLite lock
+        //    the pushing sync thread holds. With the sync thread stopped, nothing contends.
+        // 2. Disconnect the sync root. CfAPI flushes its pending NOTIFY callbacks
+        //    (edit/delete/rename → outbox) around this — so AFTER it returns the captured local
+        //    changes are queued.
+        // 3. Drain the outbox here on the main thread (lock-contention-free), settling for any
+        //    callback that lands asynchronously just after disconnect. This is what reliably
+        //    gets the rename (B3) to the server on graceful shutdown — the sync thread's own
+        //    final drain can't, because it runs before the disconnect that flushes the callbacks.
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.sync_handle.take() {
             let _ = h.join();
         }
+        self.handle.take(); // Drop disconnects (flushes callbacks) + stops the watcher
+        self.shutdown_drain();
+    }
+
+    /// Push whatever the disconnect's NOTIFY callbacks captured into the outbox. Runs on the
+    /// caller's thread after the sync thread is joined + the root disconnected. Requires the
+    /// outbox to stay empty for a few consecutive polls before declaring done (CfAPI can deliver
+    /// a callback a moment after `CfDisconnectSyncRoot` returns), bounded by a deadline.
+    fn shutdown_drain(&self) {
+        let io = PresignedIO::new(&self.client);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        const STABLE_CHECKS: u32 = 3;
+        let mut empty_streak = 0u32;
+        loop {
+            if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
+                eprintln!("cfapi: shutdown drain failed: {e}");
+            }
+            let remaining = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
+            if remaining == 0 {
+                empty_streak += 1;
+                if empty_streak >= STABLE_CHECKS {
+                    break;
+                }
+            } else {
+                empty_streak = 0;
+            }
+            if std::time::Instant::now() >= deadline {
+                if remaining > 0 {
+                    eprintln!("cfapi: shutdown drain deadline hit with {remaining} still queued");
+                }
+                break;
+            }
+            thread::sleep(Duration::from_millis(300));
+        }
+        println!("cfapi: shutdown drain done");
     }
 }
 
@@ -612,45 +665,16 @@ fn sync_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-    // Graceful shutdown: drain the outbox until it stays empty. A change captured right before
-    // (or during) unmount can land in the outbox *late* — CfAPI flushes its NOTIFY callbacks
-    // (edit/delete/rename) asynchronously around `CfDisconnectSyncRoot`, so a single drain can
-    // snapshot the outbox before the last callback enqueues. We loop: drain, brief settle, and
-    // if anything new appeared, drain again — bounded by a deadline so we can't hang on a
-    // persistently-failing entry. Pull is skipped — there's nothing local left to converge on.
+    // Graceful shutdown: drain the outbox one final time so a local change captured between the
+    // last tick and `stop` (e.g. a FUSE write right before unmount) still reaches the server.
+    // (The CfAPI backend does NOT rely on this — its NOTIFY callbacks flush only at disconnect,
+    // *after* the sync thread is joined, so `CfApiMount::stop` runs its own post-disconnect drain.
+    // For FUSE/WebDAV/WinFsp the local change is already in the outbox here, so one pass suffices.)
     let io = PresignedIO::new(&client);
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    // Require the outbox to stay empty across a few consecutive checks before we declare the
-    // drain done: CfAPI can deliver a NOTIFY callback (→ outbox entry) *asynchronously* a moment
-    // after `CfDisconnectSyncRoot` returns, so a single empty snapshot isn't proof there's
-    // nothing left. We keep draining until it's been empty for `STABLE_CHECKS` polls in a row
-    // (or the deadline trips). This + disconnect-before-stop is what makes the rename (B3)
-    // reliably reach the server on graceful shutdown.
-    const STABLE_CHECKS: u32 = 3;
-    let mut empty_streak = 0u32;
-    loop {
-        if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
-            eprintln!("sync: final outbox drain failed: {e}");
-        }
-        let remaining = provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-        if remaining == 0 {
-            empty_streak += 1;
-            if empty_streak >= STABLE_CHECKS {
-                break; // empty for several polls → no more stragglers coming
-            }
-        } else {
-            empty_streak = 0;
-        }
-        if std::time::Instant::now() >= deadline {
-            if remaining > 0 {
-                eprintln!("sync: final drain deadline hit with {remaining} entr{} still queued", if remaining == 1 { "y" } else { "ies" });
-            }
-            break;
-        }
-        // Let any in-flight CfAPI callback finish enqueueing, then drain/recheck again.
-        thread::sleep(Duration::from_millis(300));
+    if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
+        eprintln!("sync: final outbox drain failed: {e}");
     }
-    println!("sync loop stopped (final drain done)");
+    println!("sync loop stopped");
 }
 
 /// Subscribe to the LibraryChannel; forward each `{head_seq}` to the sync loop.
