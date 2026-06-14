@@ -76,18 +76,36 @@ jobs:
           exit $code
 
   e2e-macos:
-    # macOS client stack against the deployed server. fuser is cfg(linux), so this builds with no
-    # FUSE on mac. Skips cleanly (test prints SKIPPED, passes) if the server is unset/unreachable.
+    # macOS client stack. Self-contained: boots a STORAGE_BACKEND=memory Rails server locally
+    # (the mac runner can't route to the deployed server's network segment), so it proves the
+    # macOS client stack converges without depending on cross-network reachability. fuser is
+    # cfg(linux), so sync-engine builds with no FUSE on mac.
     runs-on: [self-hosted, macos]
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v5
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
-      - name: Two-device e2e (macOS client stack vs the deployed server)
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
         env:
-          SYNC_IT_SERVER_URL: http://192.168.1.95
-        run: cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: |
+          (lsof -ti tcp:3001 | xargs kill -9 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
+          code=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          exit $code
 
   e2e-windows:
     # Windows client stack against the deployed server. Builds the cfg(windows) daemon path.
