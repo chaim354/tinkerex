@@ -1020,6 +1020,16 @@ impl CfApiMountHandle {
     pub fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
+
+    /// Enter teardown mode **early** — before the owner joins its sync thread and disconnects.
+    /// CfAPI may deliver its batched NOTIFY callbacks at that point (when the user unmounts), and
+    /// those callbacks must already see `shutting_down` so they skip the re-entrant CfAPI calls
+    /// (convert/set-in-sync/ACK) that deadlock a closing connection. Idempotent; callbacks still
+    /// mirror their change into the provider/outbox (nothing is lost — the shutdown drain pushes
+    /// it). Safe to call before `Drop`.
+    pub fn begin_shutdown(&self) {
+        unsafe { (*self.state).shutting_down.store(true, Ordering::Relaxed); }
+    }
 }
 
 impl Drop for CfApiMountHandle {

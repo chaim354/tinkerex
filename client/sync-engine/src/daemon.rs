@@ -556,22 +556,29 @@ impl CfApiMount {
     pub fn stop(&mut self) {
         // Ordered teardown that avoids BOTH a deadlock and the B3-rename flake:
         //
-        // 1. Signal stop + join the sync thread FIRST. This is essential to avoid a deadlock:
-        //    disconnecting while the sync thread is mid-tick can wedge `CfDisconnectSyncRoot`
-        //    (which waits for in-flight callbacks) behind a callback blocked on the SQLite lock
-        //    the pushing sync thread holds. With the sync thread stopped, nothing contends.
-        // 2. Disconnect the sync root. CfAPI flushes its pending NOTIFY callbacks
-        //    (edit/delete/rename → outbox) around this — so AFTER it returns the captured local
-        //    changes are queued.
+        // 0. Enter teardown mode FIRST. CfAPI often delivers its batched NOTIFY callbacks
+        //    (close/delete/rename) exactly when the user unmounts — i.e. right now, during the
+        //    join below, while the connection is still open. Those callbacks must already see
+        //    `shutting_down` so they mirror their change into the provider/outbox but SKIP the
+        //    re-entrant CfAPI calls (convert/set-in-sync/ACK) that deadlock a closing connection
+        //    (the 15s graceful-shutdown hang). Setting it only inside Drop (after the join) was
+        //    too late — the callbacks had already fired and re-entered.
+        // 1. Signal stop + join the sync thread, so nothing contends the provider lock while we
+        //    disconnect (disconnecting mid-push could wedge CfDisconnectSyncRoot behind a callback
+        //    waiting on the SQLite lock the pushing thread holds).
+        // 2. Disconnect the sync root (Drop). CfAPI finishes flushing its NOTIFY callbacks around
+        //    this — they're all mirrored into the outbox by the time it returns.
         // 3. Drain the outbox here on the main thread (lock-contention-free), settling for any
-        //    callback that lands asynchronously just after disconnect. This is what reliably
-        //    gets the rename (B3) to the server on graceful shutdown — the sync thread's own
-        //    final drain can't, because it runs before the disconnect that flushes the callbacks.
+        //    callback that lands just after disconnect. This is what reliably gets the captured
+        //    edit/delete/rename to the server on graceful shutdown.
+        if let Some(h) = &self.handle {
+            h.begin_shutdown();
+        }
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.sync_handle.take() {
             let _ = h.join();
         }
-        self.handle.take(); // Drop disconnects (flushes callbacks) + stops the watcher
+        self.handle.take(); // Drop disconnects (flushes remaining callbacks) + stops the watcher
         self.shutdown_drain();
     }
 
