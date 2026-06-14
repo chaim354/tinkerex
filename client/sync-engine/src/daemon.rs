@@ -620,35 +620,53 @@ impl CfApiMount {
     /// a callback a moment after `CfDisconnectSyncRoot` returns), bounded by a deadline.
     fn shutdown_drain(&self) {
         let io = PresignedIO::new(&self.client);
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        const STABLE_CHECKS: u32 = 3;
-        let mut empty_streak = 0u32;
+        let start = std::time::Instant::now();
+        let deadline = start + Duration::from_secs(25);
+        // CfAPI delivers its batched NOTIFY callbacks (close/delete/rename) lazily around unmount,
+        // and NOT all at once — in failing runs the delete/new-file landed promptly but the
+        // edit/rename arrived a second or two later, after a naive drain had already seen an empty
+        // outbox and quit (dropping them). So we (a) keep draining for at least MIN_SETTLE after the
+        // LAST time we saw work, and (b) require the outbox to stay empty for a sustained window
+        // before declaring done — giving the stragglers time to land. Bounded by the deadline.
+        const STABLE: Duration = Duration::from_secs(3); // outbox must be empty this long to finish
+        const MIN_SETTLE: Duration = Duration::from_secs(2); // keep watching this long past last work
+        let mut last_work = start;
+        let mut empty_since: Option<std::time::Instant> = None;
         loop {
+            let pushed_any;
             {
                 // Hold the push gate so we never push concurrently with the (possibly still
                 // winding-down) sync thread — that would self-conflict on a shared node. The gate
                 // also makes us wait out the sync thread's in-flight push before our first attempt.
                 let _gate = self.push_gate.lock().unwrap_or_else(|e| e.into_inner());
+                let before = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
                 if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
                     eprintln!("cfapi: shutdown drain failed: {e}");
                 }
+                pushed_any = before > 0;
             }
+            let now = std::time::Instant::now();
             let remaining = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-            if remaining == 0 {
-                empty_streak += 1;
-                if empty_streak >= STABLE_CHECKS {
+            if pushed_any || remaining > 0 {
+                last_work = now;
+                empty_since = None;
+            } else if empty_since.is_none() {
+                empty_since = Some(now);
+            }
+            // Done when the outbox has been empty for STABLE *and* we've watched at least MIN_SETTLE
+            // past the last activity — so a late straggler still gets caught.
+            if let Some(since) = empty_since {
+                if now.duration_since(since) >= STABLE && now.duration_since(last_work) >= MIN_SETTLE {
                     break;
                 }
-            } else {
-                empty_streak = 0;
             }
-            if std::time::Instant::now() >= deadline {
+            if now >= deadline {
                 if remaining > 0 {
                     eprintln!("cfapi: shutdown drain deadline hit with {remaining} still queued");
                 }
                 break;
             }
-            thread::sleep(Duration::from_millis(300));
+            thread::sleep(Duration::from_millis(250));
         }
         println!("cfapi: shutdown drain done");
     }
