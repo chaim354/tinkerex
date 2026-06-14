@@ -337,6 +337,7 @@ fn push_node(
                 .collect();
             let size = node.chunks.iter().map(|c| c.length).sum();
             let commit_id = uuid::Uuid::new_v4().to_string();
+            eprintln!("push_node: commit name={} node={} base_version={:?}", node.name, node.node_id, node.version_id);
             let begin = client.commit_begin(&CommitBegin {
                 commit_id: commit_id.clone(),
                 node_id: node.node_id.clone(),
