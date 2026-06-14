@@ -35,6 +35,92 @@ jobs:
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
 
+  # --- Two-device END-TO-END on each OS (the headline multi-device workflow) ---------------
+  # The same client stack the Tauri app runs (fs-provider tree + sync-engine loop + ServerClient
+  # API), exercised as TWO independent devices paired into one library: A writes → B pulls +
+  # hydrates → B edits → A pulls, byte-for-byte, plus delete/move/rename/dedup/restore/conflict.
+  # This is the PROVIDER/ENGINE-LEVEL leg (headless on every OS); the kernel-mount leg is the
+  # per-OS conformance suites' job (cfapi-conformance here; webdav-rclone/fsx-fuse in the
+  # mount-conformance job below). The Linux job is self-contained (boots a memory Rails server);
+  # mac/Windows run against the deployed server and skip cleanly if it's unreachable.
+
+  e2e-linux:
+    # Self-contained: boot STORAGE_BACKEND=memory Rails (SQLite) here, like engine-integration.
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
+        run: sudo apt-get install -y libfuse-dev pkg-config
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
+        env:
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: |
+          (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
+          code=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          exit $code
+
+  e2e-macos:
+    # macOS client stack. Self-contained: boots a STORAGE_BACKEND=memory Rails server locally
+    # (the mac runner can't route to the deployed server's network segment), so it proves the
+    # macOS client stack converges without depending on cross-network reachability. fuser is
+    # cfg(linux), so sync-engine builds with no FUSE on mac.
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      # Use the runner's preinstalled Ruby/bundler (the maker-mac dev box) — ruby/setup-ruby
+      # assumes the GitHub-hosted /Users/runner layout this self-hosted runner doesn't have.
+      - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
+        env:
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: |
+          bundle install --quiet
+          bin/rails db:prepare
+          (lsof -ti tcp:3001 | xargs kill -9 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
+          code=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          exit $code
+
+  e2e-windows:
+    # Windows client stack against the deployed server. Builds the cfg(windows) daemon path.
+    # Same deployed-server target as the CfAPI conformance jobs; skips cleanly if unreachable.
+    runs-on: [self-hosted, windows]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Two-device e2e (Windows client stack vs the deployed server)
+        env:
+          SYNC_IT_SERVER_URL: http://192.168.1.95
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
+        run: cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
+
   windows-smoke:
     # The LIVE CfAPI regression net (Phase 2b Task A4): register a sync root, enumerate, hydrate,
     # then create/edit/delete/rename and assert each round-trips to the deployed server.
