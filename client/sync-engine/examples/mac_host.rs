@@ -88,6 +88,9 @@ fn main() {
     let io = PresignedIO::new(&client);
     SyncEngine::push(&provider, &client, &io).expect("push to server (S3 backend + reachable?)");
 
+    // Machine-parseable line for the CfAPI smoke (cfapi-smoke.ps1 greps this); keep it stable.
+    println!("WINDOWS_DEVICE_TOKEN={}", win.device_token);
+
     println!("\n────────────────────────────────────────────────────────");
     println!("  Pushed {} file(s) to the library: {}", names.len(), names.join(", "));
     println!();
