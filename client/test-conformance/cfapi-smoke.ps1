@@ -1,4 +1,4 @@
-# Live Windows CfAPI smoke — the regression net for Phase 2b (Task A4).
+# Live Windows CfAPI smoke - the regression net for Phase 2b (Task A4).
 # Registers a real sync root, enumerates, hydrates, then exercises the write path
 # (new file / edit / delete / rename) and ASSERTS each round-tripped to the server via
 # the control plane (`tree_names` example). Run on a self-hosted Windows runner with the
@@ -56,7 +56,7 @@ $seededFile = ($baseline | Select-String -Pattern '^file  (.+)$' | Select-Object
 Check "baseline: server has at least one seeded file" ([bool]$seededFile)
 
 # --- 3. Mount the CfAPI sync root (background) -----------------------------------------
-Write-Host "==> Mounting CfAPI sync root (maker-cfsyncd) → $log"
+Write-Host "==> Mounting CfAPI sync root (maker-cfsyncd) -> $log"
 $proc = Start-Process -FilePath $cfsyncd -ArgumentList @($root, $db, $chunks, $Server, $token) `
   -RedirectStandardOutput $log -RedirectStandardError "$log.err" -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 6   # let it register + pull the snapshot
@@ -83,7 +83,7 @@ try {
   $renamedTo = "smoke-renamed-$runid.txt"
   if ($renameSrc) { Rename-Item -Path (Join-Path $root $renameSrc) -NewName $renamedTo }  # RENAME (B3)
 
-  Write-Host "==> Local ops done (new=$(Split-Path $newFile -Leaf) edit=$leaf delete=$toDelete rename=$renameSrc→$renamedTo); waiting for push"
+  Write-Host "==> Local ops done (new=$(Split-Path $newFile -Leaf) edit=$leaf delete=$toDelete rename=$renameSrc->$renamedTo); waiting for push"
   Start-Sleep -Seconds 10   # let the sync loop drain the outbox + push
 }
 finally {
@@ -111,5 +111,5 @@ if ($failures.Count -gt 0) {
   if (Test-Path $log) { Write-Host "---- tail ----"; Get-Content -Tail 40 $log }
   exit 1
 }
-Write-Host "`nSMOKE PASSED — register + enumerate + hydrate + new/edit/delete/rename round-tripped" -ForegroundColor Green
+Write-Host "`nSMOKE PASSED - register + enumerate + hydrate + new/edit/delete/rename round-tripped" -ForegroundColor Green
 exit 0
