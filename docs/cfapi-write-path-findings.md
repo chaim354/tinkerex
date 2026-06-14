@@ -88,5 +88,8 @@ The intermittent smoke B3 (rename) / B2 (delete) failures had **two** further ca
 - **`cfapi-conformance.ps1` PASSES green** against the live deployed server: 24 files across nested
   dirs, varied sizes (incl. > chunk size → multi-chunk/dedup), create/edit/delete/rename churn, all
   byte-exact on a fresh device.
-- **`cfapi-smoke.ps1`**: green ~4/5 against the *deployed* (pre-fix) server; expected fully green
-  once the server is redeployed with the same-device fast-forward.
+- **`cfapi-smoke.ps1`**: **fully GREEN** (run 27505819156) — all 7 checks incl. delete (B2) and
+  rename-old-name-gone (B3). Reached after (a) deploying the same-device fast-forward server fix and
+  (b) the **idle-based shutdown drain** fix (CfAPI flushes its delete/rename callbacks at unmount;
+  the old fixed-deadline drain could quit before pushing the late stragglers). CfAPI is now the
+  default Windows backend (B5 flipped).
