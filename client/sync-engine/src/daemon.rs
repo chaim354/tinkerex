@@ -542,8 +542,14 @@ impl CfApiMount {
     }
 
     pub fn stop(&mut self) {
+        // Disconnect FIRST (before signalling the sync thread to stop). CfAPI flushes its
+        // pending NOTIFY callbacks (edit/delete/rename → outbox) around `CfDisconnectSyncRoot`,
+        // so disconnecting before the sync thread runs its final drain ensures those captured
+        // changes are already queued. If we set `stop` first, the sync thread could run its
+        // final drain on a still-empty outbox and miss them (the B3-rename flake). The drain
+        // loop additionally settles for late async stragglers.
+        self.handle.take(); // Drop disconnects (flushes callbacks) + stops the watcher
         self.stop.store(true, Ordering::Relaxed);
-        self.handle.take(); // Drop disconnects + unregisters the sync root
         if let Some(h) = self.sync_handle.take() {
             let _ = h.join();
         }
@@ -614,22 +620,34 @@ fn sync_loop(
     // persistently-failing entry. Pull is skipped — there's nothing local left to converge on.
     let io = PresignedIO::new(&client);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut pass = 0u32;
+    // Require the outbox to stay empty across a few consecutive checks before we declare the
+    // drain done: CfAPI can deliver a NOTIFY callback (→ outbox entry) *asynchronously* a moment
+    // after `CfDisconnectSyncRoot` returns, so a single empty snapshot isn't proof there's
+    // nothing left. We keep draining until it's been empty for `STABLE_CHECKS` polls in a row
+    // (or the deadline trips). This + disconnect-before-stop is what makes the rename (B3)
+    // reliably reach the server on graceful shutdown.
+    const STABLE_CHECKS: u32 = 3;
+    let mut empty_streak = 0u32;
     loop {
-        pass += 1;
-        let before = provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-        eprintln!("sync: final drain pass #{pass} ({before} queued)");
         if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
             eprintln!("sync: final outbox drain failed: {e}");
         }
         let remaining = provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-        if remaining == 0 || std::time::Instant::now() >= deadline {
+        if remaining == 0 {
+            empty_streak += 1;
+            if empty_streak >= STABLE_CHECKS {
+                break; // empty for several polls → no more stragglers coming
+            }
+        } else {
+            empty_streak = 0;
+        }
+        if std::time::Instant::now() >= deadline {
             if remaining > 0 {
                 eprintln!("sync: final drain deadline hit with {remaining} entr{} still queued", if remaining == 1 { "y" } else { "ies" });
             }
             break;
         }
-        // Let any in-flight CfAPI callback finish enqueueing, then drain again.
+        // Let any in-flight CfAPI callback finish enqueueing, then drain/recheck again.
         thread::sleep(Duration::from_millis(300));
     }
     println!("sync loop stopped (final drain done)");
