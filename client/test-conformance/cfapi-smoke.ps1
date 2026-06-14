@@ -78,14 +78,16 @@ try {
   Check "hydrate: first file opens with non-empty content" ([bool]$content)
 
   # --- 6. Write path: new / edit / delete / rename ----------------------------------
+  # -EA SilentlyContinue so a failed op records a Check FAIL instead of aborting before the
+  # verdict + daemon-log dump (the diagnostics live in the finally block).
   $newFile = Join-Path $root "smoke-new-$runid.txt"
-  Set-Content -Path $newFile -Value "created by smoke $runid"          # NEW FILE (B1)
-  if (Test-Path $onDisk) { Add-Content -Path $onDisk -Value "edit-$runid" }  # EDIT (Phase 2)
+  Set-Content -Path $newFile -Value "created by smoke $runid" -ErrorAction SilentlyContinue   # NEW FILE (B1)
+  if (Test-Path $onDisk) { Add-Content -Path $onDisk -Value "edit-$runid" -ErrorAction SilentlyContinue }  # EDIT
   $toDelete = $listed | Where-Object { $_ -ne $leaf } | Select-Object -First 1
-  if ($toDelete) { Remove-Item -Path (Join-Path $root $toDelete) -Force }    # DELETE (B2)
+  if ($toDelete) { Remove-Item -Path (Join-Path $root $toDelete) -Force -ErrorAction SilentlyContinue }    # DELETE (B2)
   $renameSrc = $listed | Where-Object { $_ -ne $leaf -and $_ -ne $toDelete } | Select-Object -First 1
   $renamedTo = "smoke-renamed-$runid.txt"
-  if ($renameSrc) { Rename-Item -Path (Join-Path $root $renameSrc) -NewName $renamedTo }  # RENAME (B3)
+  if ($renameSrc) { Rename-Item -Path (Join-Path $root $renameSrc) -NewName $renamedTo -ErrorAction SilentlyContinue }  # RENAME (B3)
 
   Write-Host "==> Local ops done (new=$(Split-Path $newFile -Leaf) edit=$leaf delete=$toDelete rename=$renameSrc->$renamedTo); waiting for push"
   Start-Sleep -Seconds 10   # let the sync loop drain the outbox + push
@@ -94,6 +96,13 @@ finally {
   # --- 7. Stop the daemon (Drop disconnects; hydrated files persist) -----------------
   if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
   Start-Sleep -Seconds 2
+  # Always surface the daemon's own logs - they say whether the sync root registered and what
+  # the CfAPI callbacks did (or why the mount produced an empty enumeration).
+  Write-Host "==> maker-cfsyncd stdout ($log):"
+  if (Test-Path $log) { Get-Content $log | Out-Host } else { Write-Host "  (no stdout captured)" }
+  if ((Test-Path "$log.err") -and (Get-Item "$log.err").Length -gt 0) {
+    Write-Host "==> maker-cfsyncd stderr:"; Get-Content "$log.err" | Out-Host
+  }
 }
 
 # --- 8. Assert the write path reached the server --------------------------------------
