@@ -606,12 +606,27 @@ fn sync_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
-    // Graceful shutdown: drain the outbox one final time so a local change captured between
-    // the last tick and `stop` (e.g. an edit/delete/rename right before unmount) still reaches
-    // the server. Pull is skipped — there's nothing local left to converge on the way out.
+    // Graceful shutdown: drain the outbox until it stays empty. A change captured right before
+    // (or during) unmount can land in the outbox *late* — CfAPI flushes its NOTIFY callbacks
+    // (edit/delete/rename) asynchronously around `CfDisconnectSyncRoot`, so a single drain can
+    // snapshot the outbox before the last callback enqueues. We loop: drain, brief settle, and
+    // if anything new appeared, drain again — bounded by a deadline so we can't hang on a
+    // persistently-failing entry. Pull is skipped — there's nothing local left to converge on.
     let io = PresignedIO::new(&client);
-    if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
-        eprintln!("sync: final outbox drain failed: {e}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
+            eprintln!("sync: final outbox drain failed: {e}");
+        }
+        let remaining = provider.outbox_list().map(|v| v.len()).unwrap_or(0);
+        if remaining == 0 || std::time::Instant::now() >= deadline {
+            if remaining > 0 {
+                eprintln!("sync: final drain deadline hit with {remaining} entr{} still queued", if remaining == 1 { "y" } else { "ies" });
+            }
+            break;
+        }
+        // Let any in-flight CfAPI callback finish enqueueing, then drain again.
+        thread::sleep(Duration::from_millis(300));
     }
     println!("sync loop stopped");
 }
