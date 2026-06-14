@@ -83,6 +83,18 @@ module Sync
         is_conflict = node.persisted? && prior_current.present? &&
                       pending.base_version_id.present? && pending.base_version_id != prior_current
 
+        # ...but a divergence from the SAME device is not a real conflict — it's that device's own
+        # sequential write racing its echo (e.g. the sync daemon pushes a rename, pulls its own
+        # changelog entry back which advances current_version, then a follow-up/retry push still
+        # carries the pre-echo base). A genuine conflict needs a *different* device to have moved
+        # current_version. So fast-forward when the prior current version came from this same device.
+        if is_conflict
+          prior_version = user.versions.find_by(version_id: prior_current)
+          if prior_version && pending.device_id.present? && prior_version.device_id == pending.device_id
+            is_conflict = false
+          end
+        end
+
         if is_conflict
           c = user.conflicts.unresolved.find_or_initialize_by(node_id: pending.node_id)
           c.assign_attributes(current_version_id: prior_current, incoming_version_id: version.version_id)

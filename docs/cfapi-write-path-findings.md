@@ -56,33 +56,37 @@ rename-replace path; covered by `apply_remote_displaces_a_name_collision`
 B1 (new file), edit, and delete reach the server **reliably**. The smoke passes the large majority
 of runs. The hang is gone.
 
-## OPEN — intermittent rename conflict (server-side semantics)
+## Two more causes found + fixed for the intermittent rename/delete failure
 
-In ~1/3 of runs, the **rename** (`notes.md → smoke-renamed`) is pushed (op=upsert) but the server
-treats it as a **conflict** (`Sync::Commit#finalize`: `base_version_id != prior_current`), so it
-keeps the node at the old name and records a conflict instead of applying the rename. The fresh-
-device oracle then still sees `notes.md` (and no `smoke-renamed`), failing the B3 assertion.
+The intermittent smoke B3 (rename) / B2 (delete) failures had **two** further causes, both fixed:
 
-What's confirmed:
-- The rename is captured correctly (right `node_id`, right new name) and **pushed** (commit reaches
-  the server).
-- It's the SAME node_id as the seeded `notes.md` (a true in-place rename), not a duplicate.
-- The delete + new-file + edit on the same run apply fine; only the rename conflicts, intermittently.
-- `commit_finalize` returns only `{version_id, seq}` — the client can't tell its own commit was
-  recorded as a conflict, so it can't self-resolve.
+1. **Runner pollution (test isolation).** The smoke's after-tree sometimes showed files from PRIOR
+   runs — a `maker-cfsyncd` that outlived an earlier (hung→force-killed) run kept a **live new-file
+   watcher**, capturing/pushing into a stale library on the shared self-hosted runner. Fix: the
+   smoke + conformance now `Stop-Process maker-cfsyncd` before each run. This alone took the smoke
+   from ~50% to ~80% green.
 
-Working hypothesis: between the snapshot pull (which seeds the local `version_id`) and the rename's
-push, the local node's effective base version diverges from the server's `current_version` — likely
-a race between the daemon's self-echo pull (`apply_change` updating `version_id`) and the push
-reading the base — so the rename commits on a stale base and the server flags a (spurious, same-
-device) conflict. A `push_node: commit … base_version=…` log was added to pin the exact base sent
-on a failing run.
+2. **Same-device self-conflict (server-side).** With a clean, isolated library the rename still
+   occasionally conflicted: the daemon pushes the rename, pulls its own changelog entry back
+   (advancing `current_version`), then a follow-up/retry push still carries the pre-echo
+   `base_version_id`. `Sync::Commit#finalize` saw `base != current` and recorded a CONFLICT — but
+   it's the **same device's** own sequential write racing its echo, not a cross-device divergence,
+   so the rename never applied. Fix (`app/services/sync/commit.rb`): a stale base from the SAME
+   device (prior current version's `device_id == pending.device_id`) **fast-forwards** (op=put); a
+   genuine conflict still needs a *different* device. Covered by a new `conflicts_test` case; all 55
+   server tests green.
 
-Likely real fix (not yet landed): either (a) have `commit_finalize` report whether it recorded a
-conflict so the daemon can re-push the rename on the now-current base (a same-device conflict is not
-a real cross-device divergence), or (b) re-read the node's current `version_id` under the push gate
-immediately before `commit_begin` so a concurrent pull can't stale the base. This sits in the
-conflict-detection / daemon-echo protocol, somewhat orthogonal to the CfAPI adapter itself.
+   ⚠️ **The server fix takes effect only after redeploying the live server** (`192.168.1.95`) — the
+   CfAPI smoke hits the deployed instance, which runs the prior code until `rsync` + `~/kamalw
+   deploy` (see `docs/DEPLOY.md`). Until then the smoke can still hit the same-device conflict ~1/5;
+   the **conformance** harness does not (its create-wave → settle → churn-wave structure lets the
+   echo settle, so the rename pushes cleanly — it passes green against the deployed server).
 
-This does NOT affect the core CfAPI write-path (capture → push); it's a version/conflict-semantics
-edge case in the sync engine that the rename exercises.
+## Status
+
+- **B1 (new file), edit, delete, rename** all reach the server and round-trip byte-for-byte.
+- **`cfapi-conformance.ps1` PASSES green** against the live deployed server: 24 files across nested
+  dirs, varied sizes (incl. > chunk size → multi-chunk/dedup), create/edit/delete/rename churn, all
+  byte-exact on a fresh device.
+- **`cfapi-smoke.ps1`**: green ~4/5 against the *deployed* (pre-fix) server; expected fully green
+  once the server is redeployed with the same-device fast-forward.

@@ -44,6 +44,21 @@ module Sync
       assert_equal "conflict", @user.changelog_entries.order(:seq).last.op
     end
 
+    test "a stale base from the SAME device fast-forwards (its own write racing its echo, not a conflict)" do
+      # The sync daemon can push a change, pull its own changelog entry back (advancing
+      # current_version), then a follow-up/retry push still carries the pre-echo base. That's not a
+      # real divergence — only a *different* device moving current_version is a conflict.
+      v1 = commit!(device: @dev_a, body: "one")
+      v2 = commit!(device: @dev_a, body: "two", base: v1.version_id) # current advances to v2 (dev_a)
+      v3 = commit!(device: @dev_a, body: "three", base: v1.version_id) # stale base, but SAME device
+
+      assert_empty @user.conflicts.unresolved, "same-device stale base is not a conflict"
+      assert_equal v3.version_id, @user.nodes.find_by(node_id: @node_id).current_version_id,
+                   "the node fast-forwards to the same device's newer version"
+      assert_equal "put", @user.changelog_entries.order(:seq).last.op
+      assert v2.version_id # (v2 is the intervening same-device version)
+    end
+
     test "list reports both sides with device + time so the client can prompt" do
       v1 = commit!(device: @dev_a, body: "one")
       commit!(device: @dev_a, body: "two", base: v1.version_id)
