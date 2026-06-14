@@ -35,8 +35,20 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("CfAPI sync root at {mp} — browse it in Explorer. Press Enter to unmount.");
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    drop(mount); // Drop disconnects + unregisters the sync root
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        // Interactive use: wait for Enter, then unmount cleanly.
+        println!("CfAPI sync root at {mp} — browse it in Explorer. Press Enter to unmount.");
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        drop(mount); // Drop disconnects + unregisters the sync root
+    } else {
+        // Headless (service / CI / Start-Process): stdin is EOF immediately, so DON'T read it —
+        // that would unmount the moment we mounted. Stay mounted until the process is terminated
+        // (Ctrl-C / kill). `mount` is kept alive for the lifetime of the loop.
+        println!("CfAPI sync root at {mp} — running headless; terminate the process to unmount.");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
 }
