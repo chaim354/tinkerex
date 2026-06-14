@@ -20,6 +20,17 @@ sudo apt-get install -y \
 grep -q '^user_allow_other' /etc/fuse.conf 2>/dev/null || \
   echo 'user_allow_other' | sudo tee -a /etc/fuse.conf >/dev/null
 
+echo "==> Configuring the CI environment (passwordless sudo + tool cache)"
+# Workflow steps run `sudo apt-get`/`sudo tee` non-interactively (GitHub-hosted images have
+# passwordless sudo; a self-hosted box doesn't by default → the steps fail). Grant it for the
+# runner user. (Acceptable on a private CI box; remove the drop-in to revoke.)
+RUNNER_USER="$(id -un)"
+echo "$RUNNER_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee "/etc/sudoers.d/github-runner-$RUNNER_USER" >/dev/null
+sudo chmod 0440 "/etc/sudoers.d/github-runner-$RUNNER_USER"
+# `ruby/setup-ruby` (and other setup-* actions) install into RUNNER_TOOL_CACHE, which resolves
+# to /opt/hostedtoolcache here; it must exist and be writable by the runner user.
+sudo mkdir -p /opt/hostedtoolcache && sudo chown "$RUNNER_USER" /opt/hostedtoolcache
+
 echo "==> Installing Rust (rustup) if missing"
 if ! command -v cargo >/dev/null 2>&1; then
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y

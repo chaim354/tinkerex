@@ -20,7 +20,10 @@ if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
   [System.Net.ServicePointManager]::SecurityProtocol = 3072
   Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 }
-choco install -y --no-progress llvm winfsp jq
+# git provides bash (C:\Program Files\Git\bin) on the MACHINE PATH — actions like
+# dtolnay/rust-toolchain run `shell: bash` and fail with "bash: command not found" otherwise.
+# (A user-scoped Git install isn't on the NETWORK SERVICE service PATH; choco installs machine-wide.)
+choco install -y --no-progress llvm winfsp jq git
 
 Write-Host "==> Installing Rust (rustup) if missing"
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
