@@ -134,25 +134,49 @@ impl SyncEngine {
     /// writes), sending only what changed. Order is parents-first (the outbox preserves
     /// insertion order). The SQLite lock is **never held across WAN I/O** — each
     /// provider call locks and releases on its own — so the metadata path stays local.
+    ///
+    /// **Per-node error isolation:** one node that fails to push (a transient server/network
+    /// error, a conflict, a missing chunk) must NOT block the *other* queued nodes. A naive
+    /// `?` on the first failure would abort the whole drain, leaving an edit/delete/rename
+    /// queued behind a stuck sibling forever (the loop kept retrying the same failing node
+    /// every tick and never reached the rest). Instead we attempt each entry independently: a
+    /// success clears its outbox row; a failure is logged and **left queued** for the next
+    /// tick's retry. The drain returns `Ok` even with failures (they're transient + retried);
+    /// only an outbox read/clear DB error — a local-state problem — propagates.
     pub fn push_outbox(provider: &SqliteProvider, client: &ServerClient, io: &dyn ChunkIO) -> Result<()> {
-        for (node_id, op) in provider.outbox_list()? {
-            if op == "delete" {
+        let entries = provider.outbox_list()?;
+        if !entries.is_empty() {
+            eprintln!("push_outbox: {} queued entr{}", entries.len(), if entries.len() == 1 { "y" } else { "ies" });
+        }
+        for (node_id, op) in entries {
+            let result: Result<()> = if op == "delete" {
                 match client.delete_node(&node_id) {
-                    Ok(_) => {}
+                    Ok(_) => Ok(()),
                     // The node may never have reached the server (created then deleted
                     // before this drained). Treat "unknown" as already-gone.
-                    Err(sync_client::Error::Server { status: 404, .. }) => {}
-                    Err(e) => return Err(e.into()),
+                    Err(sync_client::Error::Server { status: 404, .. }) => Ok(()),
+                    Err(e) => Err(e.into()),
                 }
             } else {
                 // 'upsert'. If the node vanished between enqueue and now (a delete races
                 // ahead), there's nothing to send — just drop the stale entry.
-                match provider.sync_node(&node_id)? {
-                    Some(node) => push_node(provider, client, io, &node)?,
-                    None => {}
+                match provider.sync_node(&node_id) {
+                    Ok(Some(node)) => push_node(provider, client, io, &node),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(e.into()),
+                }
+            };
+            match result {
+                Ok(()) => {
+                    eprintln!("push_outbox: pushed node={node_id} op={op}");
+                    provider.outbox_clear(&node_id)?;
+                }
+                // Leave the entry queued so the next tick retries it; don't let it block
+                // the siblings still in this drain.
+                Err(e) => {
+                    eprintln!("push_outbox: node={node_id} op={op} failed (left queued, will retry): {e}");
                 }
             }
-            provider.outbox_clear(&node_id)?;
         }
         Ok(())
     }

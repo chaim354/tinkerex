@@ -581,7 +581,9 @@ fn sync_loop(
 ) {
     let mut cursor = provider.cursor().unwrap_or(0);
     println!("sync loop started (cursor {cursor}, poll {poll:?})");
+    let mut tick: u64 = 0;
     while !stop.load(Ordering::Relaxed) {
+        tick += 1;
         let io = PresignedIO::new(&client);
         match SyncEngine::sync_tick_inval(&provider, &client, &io, cursor, inval.as_deref()) {
             Ok(new_cursor) => {
@@ -592,7 +594,7 @@ fn sync_loop(
                     cursor = new_cursor;
                 }
             }
-            Err(e) => eprintln!("sync tick error: {e}"),
+            Err(e) => eprintln!("sync tick #{tick} error: {e}"),
         }
         // Wait for a nudge (pull now) or the poll fallback; coalesce a burst.
         match nudge_rx.recv_timeout(poll) {
@@ -603,6 +605,13 @@ fn sync_loop(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+    }
+    // Graceful shutdown: drain the outbox one final time so a local change captured between
+    // the last tick and `stop` (e.g. an edit/delete/rename right before unmount) still reaches
+    // the server. Pull is skipped — there's nothing local left to converge on the way out.
+    let io = PresignedIO::new(&client);
+    if let Err(e) = SyncEngine::push_outbox(&provider, &client, &io) {
+        eprintln!("sync: final outbox drain failed: {e}");
     }
     println!("sync loop stopped");
 }

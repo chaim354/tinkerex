@@ -427,7 +427,9 @@ unsafe extern "system" fn notify_file_close_callback(
     let path = format!("{}{}", pcwstr_string(info.VolumeDosName), pcwstr_string(info.NormalizedPath));
 
     // A placeholder carries its node_id; a brand-new file the user dropped in does not.
-    let node_id = match callback_node_id(info) {
+    let id = callback_node_id(info);
+    eprintln!("cfapi: NOTIFY_FILE_CLOSE path={path} has_identity={}", id.is_some());
+    let node_id = match id {
         Some(n) => n,
         // PHASE 2b: new file. Capture it (resolve_path + create + ingest + convert-to-placeholder).
         None => {
@@ -491,6 +493,7 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
         if let Some(&inserted) = seen.get(path) {
             seen.remove(path);
             if inserted.elapsed() < std::time::Duration::from_secs(5) {
+                eprintln!("cfapi: new file {path} — echo of our own convert, suppressed");
                 return; // fresh — the convert echo; suppress
             }
             // stale — fall through and capture normally
@@ -501,21 +504,33 @@ unsafe fn capture_new_file(state: &CfState, path: &str) {
     let root_str = state.root.to_string_lossy();
     let rel = match library_relative(&root_str, path) {
         Some(r) if !r.is_empty() => r,
-        _ => return, // outside the root (or the root itself) — nothing to capture
+        _ => {
+            eprintln!("cfapi: new file {path} — not under root {root_str} (or is the root), skipping");
+            return; // outside the root (or the root itself) — nothing to capture
+        }
     };
 
     // Skip directories: a dir close with no identity isn't a new-file capture (the parent dirs
     // are materialized lazily by `resolve_path` when their children land).
     match std::fs::metadata(path) {
-        Ok(m) if m.is_dir() => return,
+        Ok(m) if m.is_dir() => {
+            eprintln!("cfapi: new file {path} — is a directory, skipping");
+            return;
+        }
         Ok(_) => {}
-        Err(_) => return, // gone/unreadable (e.g. still a placeholder, or deleted)
+        Err(e) => {
+            eprintln!("cfapi: new file {path} — metadata failed ({e}), skipping");
+            return; // gone/unreadable (e.g. still a placeholder, or deleted)
+        }
     }
 
     // Read the new file's bytes. A still-dehydrated placeholder / unreadable file → skip.
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
-        Err(_) => return,
+        Err(e) => {
+            eprintln!("cfapi: new file {path} — read failed ({e}), skipping");
+            return;
+        }
     };
 
     // Resolve/create the parent dirs, then the leaf node.

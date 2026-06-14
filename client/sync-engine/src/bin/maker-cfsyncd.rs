@@ -26,6 +26,13 @@ fn main() {
             }
         };
 
+    // A sibling sentinel file the caller can `touch` to request a GRACEFUL shutdown. The smoke
+    // creates `<db>.stop` instead of `Stop-Process -Force` so an in-flight push completes: on
+    // seeing it we `drop(mount)`, which sets the stop flag and **joins the sync thread** (it
+    // wakes within one poll interval and drains the outbox one last time before exiting).
+    let stop_file = std::path::PathBuf::from(format!("{db}.stop"));
+    let _ = std::fs::remove_file(&stop_file); // clear a stale sentinel from a prior run
+
     let cfg = DaemonConfig::new(root, db, chunk_dir, server_url, token);
     let mp = cfg.mountpoint.display().to_string();
     let mount = match CfApiMount::start(cfg) {
@@ -45,10 +52,14 @@ fn main() {
     } else {
         // Headless (service / CI / Start-Process): stdin is EOF immediately, so DON'T read it —
         // that would unmount the moment we mounted. Stay mounted until the process is terminated
-        // (Ctrl-C / kill). `mount` is kept alive for the lifetime of the loop.
-        println!("CfAPI sync root at {mp} — running headless; terminate the process to unmount.");
-        loop {
-            std::thread::sleep(std::time::Duration::from_secs(3600));
+        // (Ctrl-C / kill) OR the `<db>.stop` sentinel appears (graceful shutdown for the smoke).
+        // `mount` is kept alive for the lifetime of the loop.
+        println!("CfAPI sync root at {mp} — running headless; touch {} or terminate to unmount.", stop_file.display());
+        while !stop_file.exists() {
+            std::thread::sleep(std::time::Duration::from_millis(300));
         }
+        println!("stop sentinel seen — unmounting gracefully (final push first)");
+        drop(mount); // Drop sets stop + joins the sync thread (one last outbox drain)
+        let _ = std::fs::remove_file(&stop_file);
     }
 }

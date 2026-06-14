@@ -90,11 +90,19 @@ try {
   if ($renameSrc) { Rename-Item -Path (Join-Path $root $renameSrc) -NewName $renamedTo -ErrorAction SilentlyContinue }  # RENAME (B3)
 
   Write-Host "==> Local ops done (new=$(Split-Path $newFile -Leaf) edit=$leaf delete=$toDelete rename=$renameSrc->$renamedTo); waiting for push"
-  Start-Sleep -Seconds 10   # let the sync loop drain the outbox + push
+  Start-Sleep -Seconds 12   # let the sync loop drain the outbox + push (poll is 2s)
 }
 finally {
-  # --- 7. Stop the daemon (Drop disconnects; hydrated files persist) -----------------
-  if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+  # --- 7. Stop the daemon GRACEFULLY (touch <db>.stop) so an in-flight/final push can
+  # complete before unmount, instead of a hard Stop-Process -Force that could kill it
+  # mid-push. The daemon watches for the sentinel, does a final outbox drain, then unmounts.
+  if ($proc -and -not $proc.HasExited) {
+    New-Item -ItemType File -Path "$db.stop" -Force -ErrorAction SilentlyContinue | Out-Null
+    if (-not $proc.WaitForExit(15000)) {
+      Write-Host "  daemon did not exit on the stop sentinel within 15s - forcing"
+      Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    }
+  }
   Start-Sleep -Seconds 2
   # Always surface the daemon's own logs - they say whether the sync root registered and what
   # the CfAPI callbacks did (or why the mount produced an empty enumeration).
