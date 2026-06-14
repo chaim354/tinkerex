@@ -466,6 +466,9 @@ pub struct CfApiMount {
     // outbox), we push whatever those callbacks captured — on the main thread, lock-contention-free.
     provider: Arc<SqliteProvider>,
     client: ServerClient,
+    // Serializes the sync loop's push against the shutdown drain so they never push the same
+    // outbox node concurrently (which would self-conflict on the second push's stale base version).
+    push_gate: Arc<std::sync::Mutex<()>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -510,15 +513,17 @@ impl CfApiMount {
             fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone(), shutting_down.clone()),
         ));
 
+        // Serialize the sync loop's push against the shutdown drain (see `push_gate` field).
+        let push_gate = Arc::new(std::sync::Mutex::new(()));
+
         let sync_handle = {
             let provider = provider.clone();
             let client = client.clone();
             let stop = stop.clone();
             let poll = cfg.poll;
             let inval = inval.clone();
-            // No push gate: the shutdown drain joins the sync thread BEFORE it pushes, so the two
-            // never run concurrently and there's nothing to serialize.
-            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval), None))
+            let push_gate = push_gate.clone();
+            thread::spawn(move || sync_loop(provider, client, stop, nudge_rx, poll, Some(inval), Some(push_gate)))
         };
         {
             let client = client.clone();
@@ -556,6 +561,7 @@ impl CfApiMount {
             mountpoint: cfg.mountpoint,
             provider,
             client,
+            push_gate,
         })
     }
 
@@ -569,32 +575,31 @@ impl CfApiMount {
 
     pub fn stop(&mut self) {
         // Ordered teardown that's deadlock-free AND can't drop the captured edit/delete/rename,
-        // even though CfAPI delivers its batched NOTIFY callbacks at unmount:
+        // even though CfAPI delivers its batched NOTIFY callbacks at unmount and the sync thread's
+        // push can be mid-HTTP at that moment:
         //
         // 1. Enter teardown mode (begin_shutdown) so EVERY re-entrant CfAPI path bails: the NOTIFY
         //    callbacks (convert/set-in-sync/ACK) AND the sync-loop pull's invalidate/created
         //    (CfUpdatePlaceholder/CfCreatePlaceholders). Without this a callback or invalidate
         //    landing during disconnect deadlocks the closing connection.
-        // 2. Signal stop, then JOIN the sync thread (bounded; detach if wedged mid-HTTP). Doing this
-        //    BEFORE the drain makes the drain the SOLE pusher — no `push_gate` contention, no slow
-        //    sync-thread push eating the drain's budget while a late rename waits (the B3 bug).
-        // 3. Disconnect the sync root. With `shutting_down` set it makes no re-entrant CfAPI calls,
-        //    so this is safe; disconnect FLUSHES the pending NOTIFY callbacks into the outbox.
-        // 4. Drain the outbox on the main thread — the authoritative final push. It re-reads the
-        //    full outbox each round (so a callback that lands just after disconnect is still caught)
-        //    and never declares done while entries remain (a late rename can't be silently dropped).
+        // 2. Signal stop. The sync thread will wind down, but it may be stuck mid-push on a slow
+        //    HTTP call (observed: the join hung in the push phase). We do NOT block teardown on it.
+        // 3. Disconnect the sync root NOW. Safe even with the sync thread still running: with
+        //    `shutting_down` set it makes no re-entrant CfAPI calls, so the only contention is the
+        //    brief SQLite lock. Disconnect flushes the pending NOTIFY callbacks into the outbox.
+        // 4. Drain the outbox on the main thread — this is the authoritative final push. It pushes
+        //    the full outbox (so the rename can't be lost behind a stuck sync-thread push) and
+        //    settles for callbacks that land just after disconnect. A redundant double-push with
+        //    the (possibly still-running) sync thread is harmless (idempotent commit).
+        // 5. Finally join the sync thread with a bounded wait so its in-flight push (bounded by the
+        //    30s HTTP timeout) finishes cleanly; detach if it somehow outlasts that.
         if let Some(h) = &self.handle {
             h.begin_shutdown();
         }
         self.stop.store(true, Ordering::Relaxed);
-
-        // Wind the sync thread down BEFORE disconnecting + draining, so the drain is the SOLE
-        // pusher. Previously the sync thread kept ticking during the drain and the two contended
-        // on `push_gate`: a slow multi-chunk edit push on the sync thread could hold the gate (and
-        // burn the drain's deadline) long enough that a late-arriving rename — enqueued by a NOTIFY
-        // callback flushed at disconnect — never got pushed (the observed B3 rename failure).
-        // Bounded join: if the sync thread is wedged mid-HTTP we detach it (the drain re-pushes
-        // whatever it left queued; commits are idempotent), so a stuck push can't starve the drain.
+        self.handle.take(); // Drop disconnects (flushes callbacks → outbox) + stops the watcher
+        eprintln!("cfapi: shutdown — disconnected; draining outbox");
+        self.shutdown_drain();
         if let Some(h) = self.sync_handle.take() {
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while !h.is_finished() && std::time::Instant::now() < deadline {
@@ -603,13 +608,9 @@ impl CfApiMount {
             if h.is_finished() {
                 let _ = h.join();
             } else {
-                eprintln!("cfapi: sync thread still busy at shutdown — detaching (drain will re-push)");
+                eprintln!("cfapi: sync thread still busy post-drain — detaching");
             }
         }
-
-        self.handle.take(); // Drop disconnects (flushes callbacks → outbox) + stops the watcher
-        eprintln!("cfapi: shutdown — disconnected; draining outbox");
-        self.shutdown_drain();
         eprintln!("cfapi: shutdown — done");
     }
 
@@ -620,39 +621,44 @@ impl CfApiMount {
     fn shutdown_drain(&self) {
         let io = PresignedIO::new(&self.client);
         let start = std::time::Instant::now();
-        // The drain is now the SOLE pusher (the sync thread was joined/detached before this), so
-        // there's no `push_gate` contention burning the budget. We deliberately measure the
-        // deadline from the LAST time the outbox was non-empty ("idle deadline"), not from the
-        // start: CfAPI flushes its batched NOTIFY callbacks (delete/rename/edit) at disconnect, and
-        // a slow multi-chunk edit push can take many seconds — without an idle-based deadline that
-        // single slow push would eat a fixed wall-clock budget and a late-arriving rename would
-        // never get pushed (the observed B3 failure). So: keep pushing the FULL outbox each round;
-        // only give up once the outbox has been empty for STABLE AND nothing new arrived for
-        // MAX_IDLE — and never exit while entries are still queued unless the absolute cap is hit.
+        // CfAPI flushes its batched NOTIFY callbacks (delete/rename/edit) at disconnect, so the
+        // outbox can keep growing for a moment AFTER the drain starts, and a slow multi-chunk edit
+        // push can take seconds. The deadline is therefore IDLE-based (measured from the last time
+        // the outbox had work), never a fixed wall-clock budget that a single slow push could eat,
+        // and we never declare done while entries remain — so a late straggler (the B3 rename) is
+        // always pushed. A hard cap is the only absolute backstop against a true hang.
         const STABLE: Duration = Duration::from_secs(3); // outbox empty this long → likely done
-        const MAX_IDLE: Duration = Duration::from_secs(8); // give up this long after the last work
-        const HARD_CAP: Duration = Duration::from_secs(90); // absolute backstop against a true hang
+        const MAX_IDLE: Duration = Duration::from_secs(6); // give up this long after the last work
+        const HARD_CAP: Duration = Duration::from_secs(120); // absolute backstop against a true hang
         let mut last_work = start;
         let mut empty_since: Option<std::time::Instant> = None;
         loop {
-            // No gate needed: we are the only pusher now. Push the full outbox (per-entry
-            // error-isolated inside push_outbox), then re-read so late callbacks are caught.
-            let before = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-            if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
-                eprintln!("cfapi: shutdown drain failed: {e}");
+            let before;
+            {
+                // Hold the push gate so we never push concurrently with the (possibly still
+                // winding-down) sync thread — that would self-conflict on a shared node. The gate
+                // also makes us wait out the sync thread's in-flight push before our first attempt.
+                let _gate = self.push_gate.lock().unwrap_or_else(|e| e.into_inner());
+                before = self.provider.outbox_list().unwrap_or_default();
+                if !before.is_empty() {
+                    let ops: Vec<String> = before.iter().map(|(id, op)| format!("{op}:{}", &id[..8.min(id.len())])).collect();
+                    eprintln!("cfapi: drain round — outbox [{}]", ops.join(", "));
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                }
+                if let Err(e) = SyncEngine::push_outbox(&self.provider, &self.client, &io) {
+                    eprintln!("cfapi: shutdown drain failed: {e}");
+                }
             }
             let now = std::time::Instant::now();
             let remaining = self.provider.outbox_list().map(|v| v.len()).unwrap_or(0);
-            if before > 0 || remaining > 0 {
+            if !before.is_empty() || remaining > 0 {
                 last_work = now;
                 empty_since = None;
             } else if empty_since.is_none() {
                 empty_since = Some(now);
             }
-            // Done when the outbox has been empty for STABLE *and* nothing has happened for MAX_IDLE
-            // — so a straggler that lands seconds after a slow push still gets caught. Crucially we
-            // never declare done while `remaining > 0` (a stuck entry keeps us looping until the
-            // hard cap), so a late rename can't be silently dropped.
+            // Done only when the outbox is EMPTY and has stayed empty for STABLE and nothing has
+            // happened for MAX_IDLE — so a straggler that lands seconds after a slow push is caught.
             if remaining == 0 {
                 if let Some(since) = empty_since {
                     if now.duration_since(since) >= STABLE && now.duration_since(last_work) >= MAX_IDLE {
@@ -660,16 +666,14 @@ impl CfApiMount {
                     }
                 }
             }
-            // Absolute backstop: if something is genuinely wedged, don't hang shutdown forever.
             if now.duration_since(start) >= HARD_CAP {
-                if remaining > 0 {
-                    eprintln!("cfapi: shutdown drain hard-cap hit with {remaining} still queued");
-                }
+                eprintln!("cfapi: shutdown drain hard-cap hit with {remaining} still queued");
                 break;
             }
             thread::sleep(Duration::from_millis(250));
         }
-        println!("cfapi: shutdown drain done");
+        eprintln!("cfapi: shutdown drain done");
+        let _ = std::io::Write::flush(&mut std::io::stderr());
     }
 }
 
