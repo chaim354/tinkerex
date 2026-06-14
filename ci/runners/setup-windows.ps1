@@ -5,7 +5,10 @@
 #   gh api -X POST repos/chaim354/tinkerex/actions/runners/registration-token --jq .token
 param(
   [Parameter(Mandatory = $true)][string]$Token,
-  [string]$RunnerDir = "$env:USERPROFILE\actions-runner-tinkerex"
+  # NOT under the user profile: the service runs as NT AUTHORITY\NETWORK SERVICE, which cannot
+  # read C:\Users\<you> (the runner validates read/execute up the whole path hierarchy and fails
+  # to start with "Access to the path 'C:\Users\<you>' is denied"). A top-level dir is readable.
+  [string]$RunnerDir = "C:\actions-runner-tinkerex"
 )
 $ErrorActionPreference = "Stop"
 $RepoUrl = "https://github.com/chaim354/tinkerex"
