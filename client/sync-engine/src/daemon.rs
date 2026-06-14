@@ -507,10 +507,20 @@ impl CfApiMount {
         // it here, hand it to both the invalidator and the mount, and flip it in stop().
         let shutting_down = Arc::new(AtomicBool::new(false));
 
+        // B6.4: one ino→path index shared by the mount's FETCH_PLACEHOLDERS (populates it) and the
+        // invalidator (reads it for O(1) path resolution; drops stale entries on rename/delete).
+        let path_index = Arc::new(fs_cfapi::PathIndex::new());
+
         // Cache-invalidation hook over CfUpdatePlaceholder (no construction cycle here — CfAPI
-        // resolves paths + opens handles itself, so it needs no post-mount notifier).
+        // resolves paths + opens handles itself, so it needs no post-mount notifier). Share the
+        // path index so it benefits from enumeration-time path knowledge.
         let inval: Arc<dyn crate::Invalidate> = Arc::new(EngineCfInvalidate(
-            fs_cfapi::CfApiInvalidate::new(provider.clone(), cfg.mountpoint.clone(), shutting_down.clone()),
+            fs_cfapi::CfApiInvalidate::with_index(
+                provider.clone(),
+                cfg.mountpoint.clone(),
+                shutting_down.clone(),
+                path_index.clone(),
+            ),
         ));
 
         // Serialize the sync loop's push against the shutdown drain (see `push_gate` field).
@@ -545,12 +555,14 @@ impl CfApiMount {
         };
 
         // Register + connect (on-demand population via FETCH_PLACEHOLDERS). The handle keeps
-        // the sync root alive. Share the SAME teardown flag the invalidator holds.
-        let handle = fs_cfapi::win::mount_with_shutdown(
+        // the sync root alive. Share the SAME teardown flag the invalidator holds AND the same
+        // ino→path index it populates from FETCH_PLACEHOLDERS (B6.4).
+        let handle = fs_cfapi::win::mount_full(
             provider.clone(),
             &cfg.mountpoint,
             Some(hydrate),
             shutting_down.clone(),
+            path_index,
         )?;
         println!("CfAPI sync root at {}", cfg.mountpoint.display());
 
@@ -571,6 +583,36 @@ impl CfApiMount {
 
     pub fn is_running(&self) -> bool {
         self.handle.as_ref().is_some_and(|h| h.is_running())
+    }
+
+    /// **B6.2 — fully remove this library** (explicit "Stop syncing / remove this library" action,
+    /// NOT the offline-keeping `stop`/`Drop`). Stops the sync threads, drains the outbox so a
+    /// just-made local change still pushes, then unregisters the CfAPI sync root via
+    /// [`CfApiMountHandle::remove_library`] (leaving no orphaned sync root). `delete_folder` also
+    /// removes the local folder + its (now plain) files. Consumes the mount.
+    pub fn remove_library(mut self, delete_folder: bool) -> crate::Result<()> {
+        // Same ordered, deadlock-free teardown as `stop`, but the handle is *removed* not dropped.
+        if let Some(h) = &self.handle {
+            h.begin_shutdown();
+        }
+        self.stop.store(true, Ordering::Relaxed);
+        let handle = self.handle.take();
+        // Drain the outbox (push the final captured change) before we unregister, mirroring `stop`.
+        self.shutdown_drain();
+        if let Some(h) = self.sync_handle.take() {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while !h.is_finished() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(50));
+            }
+            if h.is_finished() {
+                let _ = h.join();
+            }
+        }
+        if let Some(h) = handle {
+            h.remove_library(delete_folder)?; // std::io::Error → crate::Error::Io via #[from]
+        }
+        eprintln!("cfapi: library removed (sync root unregistered{})", if delete_folder { " + folder deleted" } else { "" });
+        Ok(())
     }
 
     pub fn stop(&mut self) {

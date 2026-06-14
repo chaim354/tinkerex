@@ -156,21 +156,43 @@ release. Update `maker-app/SETUP.md` (no WinFsp/`winfsp-x64.dll` needed; the mou
 folder, not a drive letter). This is the dogfooding milestone — once it's the default, the GUI
 drives CfAPI like Mac/Linux.
 
-### 4. Harden + polish
-- **Pin/unpin** ("Always keep on this device" vs "Free up space") → tie Explorer's pin state to
-  hydrate/dehydrate (we already have both primitives). Handle `CF_PIN_STATE` + the
-  dehydrate-policy modifiers; respect a pinned file (don't auto-dehydrate it on invalidate —
-  re-hydrate instead).
-- **Registration lifecycle** — a real "remove this library" action that *does*
-  `CfUnregisterSyncRoot` + cleans the folder (the opposite of the offline default). Surface it in
-  the app, not on every stop.
-- **Large-file `FETCH_DATA`** — currently one transfer of the whole required range; stream in
-  chunks + report progress (`CfReportProviderProgress`) for big maker files; honor
-  `CANCEL_FETCH_DATA`.
-- **ino→path index** — `CfApiInvalidate::path_for` and the close-callback path resolution are
-  O(tree) walks; build an index during `FETCH_PLACEHOLDERS` for O(1).
-- **`FETCH_DATA` size** — `provider.read(ino, off, len as u32)` caps at 4 GB per call; fine for
-  now, revisit for >4 GB files.
+### 4. Harden + polish — **CODE-COMPLETE (needs live-Windows verification)**
+All four items below are implemented on branch `cfapi-b6-polish`: pure logic is unit-tested on
+macOS (39 fs-cfapi tests green) and the FFI typechecks for the Windows target
+(`cargo check --target x86_64-pc-windows-gnu`, clean). The *runtime* behavior is unverified — it
+needs the live self-hosted Windows runner (`gh workflow run rust-client.yml -f target=cfapi` /
+`-f target=cfapi-conf`) + a manual pin/unpin + remove-library smoke in Explorer.
+
+- ~~**Pin/unpin**~~ **DONE (code).** Explorer's "Always keep on this device" / "Free up space"
+  toggles the file's pinned attribute — there's no dedicated CfAPI pin callback, so the
+  `ReadDirectoryChangesW` watcher now also watches `FILE_NOTIFY_CHANGE_ATTRIBUTES`; on a MODIFIED
+  event `win::reconcile_pin_state` reads `CF_PLACEHOLDER_STANDARD_INFO.PinState`, maps it through the
+  unit-tested `pin_hydration_action` (lib.rs), and calls `CfHydratePlaceholder` (pinned → fetches via
+  FETCH_DATA) or `CfDehydratePlaceholder` (unpinned). No-op on dirs/non-placeholders; skipped during
+  teardown. **Live-verify:** right-click → both menu items in Explorer; confirm a pinned file reads
+  offline and an unpinned one frees its bytes.
+- ~~**Registration lifecycle**~~ **DONE (code).** `CfApiMountHandle::remove_library(delete_folder)`
+  (+ `CfApiMount::remove_library` on the engine wrapper) disconnects, `CfUnregisterSyncRoot`s, and
+  optionally `remove_dir_all`s the folder — the explicit "remove this library" action, distinct from
+  the offline-keeping Drop. A `torn_down` flag makes Drop a no-op afterward (no double-disconnect /
+  double-free). **Live-verify:** call it, then confirm the folder is no longer a sync root
+  (`Get-SyncRoot` / re-register at the same path succeeds clean). **App wiring (TODO):** surface a
+  Tauri command/button — the engine method exists; the GUI button is not wired yet.
+- ~~**Large-file `FETCH_DATA`**~~ **DONE (code).** `fetch_data_callback` now streams via the
+  unit-tested `plan_transfer_chunks` (lib.rs): the required range is split into ≤16 MiB page-aligned
+  slices (only the EOF-reaching slice may be short — CfAPI's one legal unaligned length), each read
+  from the provider + transferred with its own `CfExecute(TRANSFER_DATA)`, with per-slice
+  `CfReportProviderProgress`. `CANCEL_FETCH_DATA` is registered + honored (cancelled transfer keys
+  stop the loop between slices). **Live-verify:** hydrate a multi-GB file; watch the Explorer
+  progress bar; cancel mid-download.
+- ~~**ino→path index**~~ **DONE (code).** New cross-platform `PathIndex` (lib.rs, unit-tested):
+  `FETCH_PLACEHOLDERS` records each child's `ino → dir_path/name` as it enumerates (free — it already
+  holds both), so `CfApiInvalidate::path_for` is O(1) on a hit. A miss falls back to the old DFS and
+  back-fills the index (always correct). Delete/rename callbacks drop the stale entry. The engine
+  shares one `Arc<PathIndex>` between the mount (`win::mount_full`) and `CfApiInvalidate::with_index`.
+- **`FETCH_DATA` size** — each *slice* read is now ≤16 MiB, so the old 4 GB `read(.., len as u32)`
+  cap is no longer reachable in practice (a >4 GB file streams in ≤16 MiB slices). The provider
+  `read` signature still takes a `u32` length; the streaming planner keeps every call well under it.
 
 ### 5. CI / runtime regression net
 The pure logic is unit-tested and the FFI compiles in CI, but live behavior is manual. If you

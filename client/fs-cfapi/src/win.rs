@@ -80,6 +80,16 @@ struct CfState {
     /// Shared (`Arc`) with the mount handle + the `CfApiInvalidate` so one flip covers EVERY
     /// re-entrant CfAPI path (callbacks AND the sync-loop pull's invalidate/create).
     shutting_down: Arc<AtomicBool>,
+    /// B6.4: ino→path index, populated as `FETCH_PLACEHOLDERS` enumerates each directory (we hold
+    /// the dir path + the children's names there), so `CfApiInvalidate::path_for` is O(1) on a hit
+    /// instead of an O(tree) DFS. Shared (`Arc`) with the invalidator, which reads it + drops stale
+    /// entries on rename/delete. A miss falls back to the tree walk, so it's always correct.
+    path_index: Arc<crate::PathIndex>,
+    /// B6.3: transfer keys for FETCH_DATA hydrations the kernel asked us to **cancel** (the reading
+    /// app went away / the file was deleted mid-download). The streamed `fetch_data_callback`
+    /// checks this between slices and stops early; `cancel_fetch_data_callback` inserts the key.
+    /// A `HashSet<i64>` of `CF_CALLBACK_INFO::TransferKey`s.
+    cancelled_transfers: Mutex<std::collections::HashSet<i64>>,
 }
 
 /// A live CfAPI sync root: registered, connected, populated. Drop disconnects + unregisters.
@@ -98,6 +108,10 @@ pub struct CfApiMountHandle {
     /// pattern OneDrive uses. The handle holds the watch dir HANDLE (closed on Drop to unblock
     /// the synchronous read) + the thread to join.
     watcher: Option<NewFileWatcher>,
+    /// B6.2: set true by [`remove_library`](CfApiMountHandle::remove_library) once it has
+    /// disconnected + unregistered the sync root. Drop then skips its own disconnect (the
+    /// connection is already gone) so we never double-disconnect or touch a stale key.
+    torn_down: bool,
 }
 
 // The raw `*mut CfState` is only ever touched behind the connection (single owner); the
@@ -172,6 +186,20 @@ pub fn mount_with_shutdown(
     hydrate: Option<Hydrate>,
     shutting_down: Arc<AtomicBool>,
 ) -> std::io::Result<CfApiMountHandle> {
+    mount_full(provider, root, hydrate, shutting_down, Arc::new(crate::PathIndex::new()))
+}
+
+/// [`mount_with_shutdown`] plus a caller-supplied [`PathIndex`] (B6.4). Pass the SAME `Arc` to the
+/// engine's `CfApiInvalidate` so the index populated by `FETCH_PLACEHOLDERS` here is the one the
+/// invalidator reads for O(1) path resolution. The engine wires this; the simpler entry points make
+/// their own index (harmless — the invalidator they don't have wouldn't share it anyway).
+pub fn mount_full(
+    provider: Arc<SqliteProvider>,
+    root: &Path,
+    hydrate: Option<Hydrate>,
+    shutting_down: Arc<AtomicBool>,
+    path_index: Arc<crate::PathIndex>,
+) -> std::io::Result<CfApiMountHandle> {
     std::fs::create_dir_all(root)?;
     register_sync_root(root)?;
 
@@ -182,6 +210,8 @@ pub fn mount_with_shutdown(
         root: root.to_path_buf(),
         self_writes: Mutex::new(HashMap::new()),
         shutting_down: shutting_down.clone(),
+        path_index,
+        cancelled_transfers: Mutex::new(std::collections::HashSet::new()),
     }));
 
     // The callback table must outlive the connection, so leak it (one small leak per mount).
@@ -190,6 +220,9 @@ pub fn mount_with_shutdown(
     let callbacks: &'static [CF_CALLBACK_REGISTRATION] = Box::leak(Box::new([
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, Callback: Some(fetch_placeholders_callback) },
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_FETCH_DATA, Callback: Some(fetch_data_callback) },
+        // B6.3: the kernel cancels an in-flight hydration (reading app gone / file deleted) — mark
+        // the transfer key so the streaming FETCH_DATA loop stops between slices.
+        CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_CANCEL_FETCH_DATA, Callback: Some(cancel_fetch_data_callback) },
         // Phase 2: a file handle closed — capture a local edit (content changed) and push it.
         CF_CALLBACK_REGISTRATION { Type: CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION, Callback: Some(notify_file_close_callback) },
         // Phase 2b: a delete/rename is about to happen — mirror it into the Provider, then ACK
@@ -229,6 +262,7 @@ pub fn mount_with_shutdown(
         stop: Arc::new(AtomicBool::new(false)),
         shutting_down,
         watcher,
+        torn_down: false,
     })
 }
 
@@ -241,8 +275,8 @@ pub fn mount_with_shutdown(
 /// close callback — is harmless.
 fn spawn_new_file_watcher(root: &Path, state: *mut CfState) -> std::io::Result<NewFileWatcher> {
     use windows::Win32::Storage::FileSystem::{
-        FILE_FLAG_OVERLAPPED, FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_FILE_NAME,
-        FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE,
+        FILE_FLAG_OVERLAPPED, FILE_LIST_DIRECTORY, FILE_NOTIFY_CHANGE_ATTRIBUTES,
+        FILE_NOTIFY_CHANGE_FILE_NAME, FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE,
     };
     use windows::Win32::System::Threading::CreateEventW;
 
@@ -270,7 +304,13 @@ fn spawn_new_file_watcher(root: &Path, state: *mut CfState) -> std::io::Result<N
     })?;
 
     let stop = Arc::new(AtomicBool::new(false));
-    let filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE;
+    // B6.1: also watch ATTRIBUTES — Explorer's "Always keep on this device" / "Free up space"
+    // toggles the file's pinned/unpinned attribute, surfacing here as a FILE_ACTION_MODIFIED so we
+    // can drive hydrate/dehydrate (CfAPI has no dedicated pin-change callback).
+    let filter = FILE_NOTIFY_CHANGE_FILE_NAME
+        | FILE_NOTIFY_CHANGE_LAST_WRITE
+        | FILE_NOTIFY_CHANGE_SIZE
+        | FILE_NOTIFY_CHANGE_ATTRIBUTES;
     let state_addr = state as usize; // make the raw ptr Send for the thread
     let dir_addr = dir.0 as usize;
     let stop_event_addr = stop_event.0 as usize;
@@ -373,6 +413,11 @@ fn new_file_watch_loop(
                     let st = unsafe { &*state };
                     let abs = st.root.join(rel.replace('\\', "/").trim_start_matches('/'));
                     let abs_str = abs.to_string_lossy().to_string();
+                    // B6.1: a MODIFIED event can be a pin-state toggle (ATTRIBUTES) rather than a
+                    // content edit. Reconcile the placeholder's pin state first (hydrate if pinned,
+                    // dehydrate if unpinned); it's a no-op for a non-placeholder / unchanged pin.
+                    // Then run the content-capture path (idempotent — skips when bytes are equal).
+                    unsafe { reconcile_pin_state(st, &abs_str) };
                     unsafe { capture_new_file(st, &abs_str) };
                 }
             }
@@ -431,18 +476,15 @@ fn register_sync_root(root: &Path) -> std::io::Result<()> {
 /// current tree. Each carries the child's `node_id` as `FileIdentity` and its real mtime.
 /// The returned holders own the name/identity backing storage the `CF_PLACEHOLDER_CREATE_INFO`
 /// pointers reference, so they must outlive the CfAPI call that consumes them.
-fn placeholders_for_dir(provider: &SqliteProvider, dir_ino: u64) -> Vec<PlaceholderHolder> {
-    let children = match provider.readdir(dir_ino) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("cfapi: readdir(ino {dir_ino}) failed: {e}");
-            return Vec::new();
-        }
-    };
+fn placeholders_for_children(
+    provider: &SqliteProvider,
+    children: &[fs_provider::DirEntry],
+) -> Vec<PlaceholderHolder> {
     let mut holders = Vec::new();
-    for c in &children {
-        let size = provider.getattr(c.ino).map(|a| a.size).unwrap_or(0);
-        let mtime = provider.getattr(c.ino).map(|a| a.mtime).unwrap_or(0);
+    for c in children {
+        let attr = provider.getattr(c.ino).ok();
+        let size = attr.map(|a| a.size).unwrap_or(0);
+        let mtime = attr.map(|a| a.mtime).unwrap_or(0);
         let node_id = provider.node_id_for(c.ino).ok().flatten().unwrap_or_default();
         holders.push(PlaceholderHolder::new(&c.name, &node_id, size, mtime, c.kind == Kind::Dir));
     }
@@ -519,10 +561,36 @@ unsafe fn op_info_for(info: &CF_CALLBACK_INFO, op_type: CF_OPERATION_TYPE) -> CF
     }
 }
 
+/// Max bytes per `CfExecute(TRANSFER_DATA)` slice (B6.3). A FETCH_DATA for a multi-GB file is
+/// streamed in page-aligned chunks of at most this size, so we never buffer (or read from the
+/// provider) the whole file at once. 16 MiB is a whole number of 4 KiB pages.
+const FETCH_CHUNK_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Hand one error completion back for a failed FETCH_DATA so the reading app fails fast instead of
+/// hanging to a timeout. `offset` is the kernel's required offset (echoed in the completion).
+unsafe fn transfer_data_error(info: &CF_CALLBACK_INFO, offset: i64) {
+    let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_DATA);
+    let mut op_params = CF_OPERATION_PARAMETERS {
+        ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+        Anonymous: CF_OPERATION_PARAMETERS_0 {
+            TransferData: CF_OPERATION_PARAMETERS_0_0 {
+                Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+                CompletionStatus: STATUS_UNSUCCESSFUL,
+                Buffer: std::ptr::null(),
+                Offset: offset,
+                Length: 0,
+            },
+        },
+    };
+    if let Err(e) = CfExecute(&op_info, &mut op_params) {
+        eprintln!("cfapi: CfExecute(TRANSFER_DATA error) failed: {e}");
+    }
+}
+
 /// FETCH_DATA: the kernel needs bytes for a dehydrated placeholder. Resolve node → hydrate →
-/// read the requested range → hand it back with `CfExecute(TRANSFER_DATA)`. **Always** answers
-/// (success or an error completion) — an unanswered FETCH_DATA hangs the reading app to a
-/// timeout.
+/// **stream** the requested range back in page-aligned slices via `CfExecute(TRANSFER_DATA)`
+/// (B6.3 — bounded memory for multi-GB files + per-slice progress). **Always** answers (a
+/// per-slice success, or an error completion) — an unanswered FETCH_DATA hangs the reading app.
 unsafe extern "system" fn fetch_data_callback(
     info: *const CF_CALLBACK_INFO,
     params: *const CF_CALLBACK_PARAMETERS,
@@ -539,54 +607,207 @@ unsafe extern "system" fn fetch_data_callback(
     let state = &*state;
 
     let fetch = params.Anonymous.FetchData;
-    let offset = fetch.RequiredFileOffset;
-    let length = fetch.RequiredLength;
+    let req_offset = fetch.RequiredFileOffset;
+    let req_length = fetch.RequiredLength;
 
-    // Try to produce the bytes; on any failure, answer with an error status so the app's read
-    // fails fast instead of hanging.
-    let data: Option<Vec<u8>> = (|| {
-        let node_id = callback_node_id(info)?;
-        eprintln!("cfapi: FETCH_DATA node={node_id} off={offset} len={length}");
-        if let Some(h) = &state.hydrate {
-            h(&node_id);
+    // Resolve node + ino, and make its chunks local (presigned GET into the cache). On any failure
+    // here we can't produce bytes → one error completion, then bail.
+    let node_id = match callback_node_id(info) {
+        Some(n) => n,
+        None => {
+            eprintln!("cfapi: FETCH_DATA — no node identity, reporting error");
+            transfer_data_error(info, req_offset);
+            return;
         }
-        let ino = state.provider.ino_for_node_id(&node_id).ok().flatten()?;
-        state.provider.read(ino, offset as u64, length as u32).ok()
-    })();
+    };
+    eprintln!("cfapi: FETCH_DATA node={node_id} off={req_offset} len={req_length}");
+    if let Some(h) = &state.hydrate {
+        h(&node_id);
+    }
+    let ino = match state.provider.ino_for_node_id(&node_id).ok().flatten() {
+        Some(i) => i,
+        None => {
+            eprintln!("cfapi: FETCH_DATA node={node_id} — not found locally, reporting error");
+            transfer_data_error(info, req_offset);
+            return;
+        }
+    };
+    let file_size = state.provider.getattr(ino).map(|a| a.size).unwrap_or(0);
 
-    let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_DATA);
-    let mut op_params = match &data {
-        Some(bytes) => CF_OPERATION_PARAMETERS {
+    // Plan the page-aligned slices for the required range (the unit-tested core). An empty plan
+    // (zero length / past EOF) still needs a single success completion so the read can finish.
+    let plan = crate::plan_transfer_chunks(
+        req_offset as u64,
+        req_length as u64,
+        file_size,
+        FETCH_CHUNK_BYTES,
+    );
+    let total: i64 = plan.iter().map(|c| c.length as i64).sum::<i64>().max(1);
+    let mut completed: i64 = 0;
+
+    if plan.is_empty() {
+        // Nothing to transfer (e.g. a zero-length read) — answer success with an empty range so
+        // the kernel's request completes rather than hanging.
+        let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_DATA);
+        let mut op_params = CF_OPERATION_PARAMETERS {
+            ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
+            Anonymous: CF_OPERATION_PARAMETERS_0 {
+                TransferData: CF_OPERATION_PARAMETERS_0_0 {
+                    Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
+                    CompletionStatus: STATUS_SUCCESS,
+                    Buffer: std::ptr::null(),
+                    Offset: req_offset,
+                    Length: 0,
+                },
+            },
+        };
+        let _ = CfExecute(&op_info, &mut op_params);
+        return;
+    }
+
+    for chunk in plan {
+        // Read just this slice from the provider (bounded memory). A read failure mid-stream → an
+        // error completion at this offset so the app's read fails rather than hanging.
+        let bytes = match state.provider.read(ino, chunk.offset, chunk.length as u32) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("cfapi: FETCH_DATA node={node_id} read(off={}, len={}) failed: {e}", chunk.offset, chunk.length);
+                transfer_data_error(info, chunk.offset as i64);
+                return;
+            }
+        };
+        let op_info = op_info_for(info, CF_OPERATION_TYPE_TRANSFER_DATA);
+        let mut op_params = CF_OPERATION_PARAMETERS {
             ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
             Anonymous: CF_OPERATION_PARAMETERS_0 {
                 TransferData: CF_OPERATION_PARAMETERS_0_0 {
                     Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
                     CompletionStatus: STATUS_SUCCESS,
                     Buffer: bytes.as_ptr() as *const c_void,
-                    Offset: offset,
+                    Offset: chunk.offset as i64,
                     Length: bytes.len() as i64,
                 },
             },
-        },
-        None => {
-            eprintln!("cfapi: FETCH_DATA failed off={offset} len={length} — reporting error");
-            CF_OPERATION_PARAMETERS {
-                ParamSize: std::mem::size_of::<CF_OPERATION_PARAMETERS>() as u32,
-                Anonymous: CF_OPERATION_PARAMETERS_0 {
-                    TransferData: CF_OPERATION_PARAMETERS_0_0 {
-                        Flags: CF_OPERATION_TRANSFER_DATA_FLAG_NONE,
-                        CompletionStatus: STATUS_UNSUCCESSFUL,
-                        Buffer: std::ptr::null(),
-                        Offset: offset,
-                        Length: 0,
-                    },
-                },
+        };
+        if let Err(e) = CfExecute(&op_info, &mut op_params) {
+            eprintln!("cfapi: CfExecute(TRANSFER_DATA off={}) failed: {e}", chunk.offset);
+            return; // the kernel saw an error on this slice; stop streaming
+        }
+        // Report progress so Explorer shows a hydration bar for a big file. Best-effort — a
+        // failure here is cosmetic and must not abort the transfer.
+        completed += bytes.len() as i64;
+        if let Some(key) = *state.connection_key.lock().unwrap() {
+            let _ = CfReportProviderProgress(key, info.TransferKey, total, completed);
+        }
+
+        // B6.3: honor a CANCEL_FETCH_DATA that arrived for this transfer — stop streaming further
+        // slices (the kernel already knows the transfer is cancelled; no extra completion needed).
+        if state.cancelled_transfers.lock().unwrap().remove(&info.TransferKey) {
+            eprintln!("cfapi: FETCH_DATA node={node_id} cancelled mid-stream at off={}", chunk.offset);
+            return;
+        }
+    }
+    // Done streaming cleanly — clear any (late) cancel marker for this key so it can't leak.
+    state.cancelled_transfers.lock().unwrap().remove(&info.TransferKey);
+}
+
+/// CANCEL_FETCH_DATA: the platform aborts an in-flight hydration (the reading app closed the
+/// handle, or the file was deleted while downloading). Record the transfer key so the streaming
+/// [`fetch_data_callback`] loop stops before its next slice. No completion is issued — a cancel is
+/// not answered with `CfExecute` (the kernel owns the cancellation).
+unsafe extern "system" fn cancel_fetch_data_callback(
+    info: *const CF_CALLBACK_INFO,
+    _params: *const CF_CALLBACK_PARAMETERS,
+) {
+    if info.is_null() {
+        return;
+    }
+    let info = &*info;
+    let state = info.CallbackContext as *const CfState;
+    if state.is_null() {
+        return;
+    }
+    let state = &*state;
+    eprintln!("cfapi: CANCEL_FETCH_DATA transfer_key={}", info.TransferKey);
+    state.cancelled_transfers.lock().unwrap().insert(info.TransferKey);
+}
+
+/// B6.1 — reconcile a placeholder's **pin state** to its local bytes ("Always keep on this device"
+/// → hydrate; "Free up space" → dehydrate). Driven by the watcher's ATTRIBUTES events (CfAPI has
+/// no dedicated pin-change callback). Reads the placeholder's `CF_PLACEHOLDER_STANDARD_INFO.PinState`,
+/// maps it through the pure [`crate::pin_hydration_action`], and calls `CfHydratePlaceholder` /
+/// `CfDehydratePlaceholder` accordingly. Best-effort + idempotent:
+/// - A non-placeholder / non-cloud file (`CfGetPlaceholderInfo` fails) is silently skipped.
+/// - Hydrate raises FETCH_DATA → our streaming callback (which runs the hydrate hook), so a pinned
+///   file ends up fully local. Dehydrate drops the on-disk bytes; the next read re-fetches.
+/// - During teardown we skip (re-entrant CfAPI on a closing connection can deadlock).
+unsafe fn reconcile_pin_state(state: &CfState, path: &str) {
+    if state.shutting_down.load(Ordering::Relaxed) {
+        return;
+    }
+    // Only placeholders we track have a node_id; resolve the kind so we no-op on directories.
+    let rel = match library_relative(&state.root.to_string_lossy(), path) {
+        Some(r) if !r.is_empty() => r,
+        _ => return,
+    };
+    let kind = match std::fs::metadata(path) {
+        Ok(m) if m.is_dir() => Kind::Dir,
+        Ok(_) => Kind::File,
+        Err(_) => return, // gone/unreadable
+    };
+    let _ = rel;
+
+    // Open with BACKUP_SEMANTICS so we can open either a file or a dehydrated placeholder without
+    // triggering hydration just by opening (no data read here).
+    let path_w = path_wide(Path::new(path));
+    let handle = match CreateFileW(
+        PCWSTR(path_w.as_ptr()),
+        (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        None,
+        OPEN_EXISTING,
+        FILE_FLAGS_AND_ATTRIBUTES(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_ATTRIBUTE_NORMAL.0),
+        None,
+    ) {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+
+    // Read the placeholder's standard info to get its current pin state. If this fails the file
+    // isn't a cloud placeholder (a plain file) — nothing to reconcile.
+    let mut info = CF_PLACEHOLDER_STANDARD_INFO::default();
+    let mut returned: u32 = 0;
+    let got = CfGetPlaceholderInfo(
+        handle,
+        CF_PLACEHOLDER_INFO_STANDARD,
+        &mut info as *mut _ as *mut c_void,
+        std::mem::size_of::<CF_PLACEHOLDER_STANDARD_INFO>() as u32,
+        Some(&mut returned),
+    );
+    if got.is_err() {
+        let _ = CloseHandle(handle);
+        return;
+    }
+
+    let pin = crate::PinState::from_raw(info.PinState.0);
+    match crate::pin_hydration_action(pin, kind) {
+        crate::HydrationAction::Hydrate => {
+            eprintln!("cfapi: pin → hydrate {path}");
+            // Hydrate the whole file (offset 0, length -1 = to EOF). FETCH_DATA does the actual
+            // chunk fetch via the hydrate hook.
+            if let Err(e) = CfHydratePlaceholder(handle, 0, -1, CF_HYDRATE_FLAG_NONE, None) {
+                eprintln!("cfapi: CfHydratePlaceholder({path}) failed: {e}");
             }
         }
-    };
-    if let Err(e) = CfExecute(&op_info, &mut op_params) {
-        eprintln!("cfapi: CfExecute(TRANSFER_DATA) failed: {e}");
+        crate::HydrationAction::Dehydrate => {
+            eprintln!("cfapi: unpin → dehydrate {path}");
+            if let Err(e) = CfDehydratePlaceholder(handle, 0, -1, CF_DEHYDRATE_FLAG_NONE, None) {
+                eprintln!("cfapi: CfDehydratePlaceholder({path}) failed: {e}");
+            }
+        }
+        crate::HydrationAction::None => {}
     }
+    let _ = CloseHandle(handle);
 }
 
 /// FETCH_PLACEHOLDERS: Explorer opened a directory — enumerate its children from the
@@ -614,7 +835,22 @@ unsafe extern "system" fn fetch_placeholders_callback(
         .and_then(|nid| state.provider.ino_for_node_id(&nid).ok().flatten())
         .unwrap_or(ROOT_INO);
 
-    let holders = placeholders_for_dir(&state.provider, dir_ino);
+    // B6.4: record this dir's children in the ino→path index (O(1) path resolution later). The
+    // dir's own path is the sync root for ROOT_INO, else its cached index entry; if we don't know
+    // the dir path yet we just skip indexing (the invalidator falls back to a tree walk).
+    let dir_path = if dir_ino == ROOT_INO {
+        Some(state.root.clone())
+    } else {
+        state.path_index.get(dir_ino)
+    };
+
+    let children = state.provider.readdir(dir_ino).unwrap_or_default();
+    if let Some(dp) = &dir_path {
+        state
+            .path_index
+            .insert_children(dp, children.iter().map(|c| (c.ino, c.name.as_str())));
+    }
+    let holders = placeholders_for_children(&state.provider, &children);
     let mut infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = holders.iter().map(|h| h.info()).collect();
     eprintln!("cfapi: FETCH_PLACEHOLDERS dir_ino={dir_ino} → {} entries", infos.len());
 
@@ -920,6 +1156,11 @@ unsafe extern "system" fn notify_delete_callback(
 
     if let Some(node_id) = callback_node_id(info) {
         eprintln!("cfapi: delete captured node={node_id}");
+        // B6.4: drop the node's stale ino→path index entry (resolve the ino BEFORE the delete
+        // removes the row). Best-effort — a miss just leaves the entry to be overwritten later.
+        if let Ok(Some(ino)) = state.provider.ino_for_node_id(&node_id) {
+            state.path_index.invalidate(ino);
+        }
         if let Err(e) = state.provider.delete_by_node_id(&node_id) {
             // Log + still ACK — a failed mirror must not block the OS delete.
             eprintln!("cfapi: delete_by_node_id(node={node_id}) failed: {e}");
@@ -984,6 +1225,12 @@ unsafe extern "system" fn notify_rename_callback(
             match library_relative(&root_str, &target) {
                 Some(rel) if !rel.is_empty() => match state.provider.resolve_path(&rel) {
                     Ok((new_parent, new_name)) => {
+                        // B6.4: the node's cached path (and, for a moved dir, its whole subtree)
+                        // is now stale. Drop the node's entry; subtree children are re-learned on
+                        // the next enumeration (a miss falls back to the tree walk meanwhile).
+                        if let Ok(Some(ino)) = state.provider.ino_for_node_id(&node_id) {
+                            state.path_index.invalidate(ino);
+                        }
                         if let Err(e) = state.provider.rename_by_node_id(&node_id, new_parent, &new_name) {
                             eprintln!("cfapi: rename_by_node_id(node={node_id}) failed: {e}");
                         } else {
@@ -1054,10 +1301,70 @@ impl CfApiMountHandle {
     pub fn shutdown_flag(&self) -> Arc<AtomicBool> {
         self.shutting_down.clone()
     }
+
+    /// **B6.2 — fully remove this library** (the opposite of the offline-by-default `Drop`). Use
+    /// this for an explicit "Stop syncing / remove this library" action, NOT on every unmount:
+    /// it tears the connection down AND **unregisters the sync root** (`CfUnregisterSyncRoot`), so
+    /// no orphaned sync root is left behind (a re-register at the same path would otherwise hit a
+    /// stale registration). When `delete_folder` is true it also removes the now-plain folder and
+    /// its contents — choose that when the user wants the local copies gone too; pass false to keep
+    /// the (now ordinary, fully-hydrated) files on disk.
+    ///
+    /// Consumes the handle so it can't be used afterward and Drop won't double-disconnect.
+    /// Ordering matches the safe teardown: enter shutdown → stop+join the watcher → disconnect →
+    /// unregister → (optional) delete. Each step is best-effort + logged; a failure in one doesn't
+    /// abort the rest (we still want to unregister even if the folder delete fails, etc.).
+    pub fn remove_library(mut self, delete_folder: bool) -> std::io::Result<()> {
+        self.shutting_down.store(true, Ordering::Relaxed);
+        if let Some(mut w) = self.watcher.take() {
+            w.shutdown();
+        }
+        unsafe {
+            // Disconnect first (drops the callback connection) so the unregister can't race a
+            // callback. Reclaim the leaked CfState box.
+            if let Some(key) = (*self.state).connection_key.lock().unwrap().take() {
+                let _ = CfDisconnectSyncRoot(key);
+            }
+        }
+        // Unregister the sync root so nothing orphaned remains. This is the whole point of the
+        // "remove" path vs the offline-keeping Drop.
+        let root_w = path_wide(&self.root);
+        let unregister = unsafe { CfUnregisterSyncRoot(PCWSTR(root_w.as_ptr())) };
+        if let Err(e) = &unregister {
+            eprintln!("cfapi: CfUnregisterSyncRoot({}) failed: {e}", self.root.display());
+        } else {
+            eprintln!("cfapi: unregistered sync root {}", self.root.display());
+        }
+        // Optionally remove the now-plain folder + contents.
+        let mut folder_err = None;
+        if delete_folder {
+            if let Err(e) = std::fs::remove_dir_all(&self.root) {
+                eprintln!("cfapi: remove_dir_all({}) failed: {e}", self.root.display());
+                folder_err = Some(e);
+            } else {
+                eprintln!("cfapi: removed library folder {}", self.root.display());
+            }
+        }
+        // Mark torn down + reclaim the state box, so Drop is a no-op.
+        self.torn_down = true;
+        unsafe { drop(Box::from_raw(self.state)); }
+        // Surface a failure (unregister first, then folder delete) so a caller/UI can report it.
+        unregister.map_err(win_err)?;
+        if let Some(e) = folder_err {
+            return Err(e);
+        }
+        Ok(())
+    }
 }
 
 impl Drop for CfApiMountHandle {
     fn drop(&mut self) {
+        // B6.2: if `remove_library` already tore everything down (disconnected, unregistered, and
+        // reclaimed the CfState box), Drop must do nothing — the connection is gone and `state` is
+        // a dangling pointer we must not touch or free again.
+        if self.torn_down {
+            return;
+        }
         // Enter teardown (idempotent — the owner usually called begin_shutdown already): from here
         // callbacks still mirror changes into the provider/outbox but skip re-entrant CfAPI calls
         // (convert/set-in-sync/ACK/invalidate), which can deadlock the runtime while the connection
@@ -1091,7 +1398,11 @@ impl Drop for CfApiMountHandle {
 pub struct CfApiInvalidate {
     provider: Arc<SqliteProvider>,
     root: PathBuf,
-    paths: Mutex<HashMap<u64, PathBuf>>, // ino → absolute path cache (best-effort)
+    /// B6.4: the ino→path index shared with the mount's `CfState`, populated during
+    /// `FETCH_PLACEHOLDERS`. O(1) on a hit; a miss falls back to the [`path_for`](Self::path_for)
+    /// tree walk (which then back-fills the index). Replaces the old per-invalidator `paths`
+    /// cache so enumeration-time knowledge is reused.
+    path_index: Arc<crate::PathIndex>,
     /// Shared with the mount's teardown flag (see [`CfApiMountHandle::shutdown_flag`]). Once set,
     /// `invalidate`/`created` skip their re-entrant CfAPI calls (`CfUpdatePlaceholder` /
     /// `CfDehydratePlaceholder` / `CfCreatePlaceholders`) — issuing those while the connection is
@@ -1103,24 +1414,39 @@ pub struct CfApiInvalidate {
 impl CfApiInvalidate {
     /// `shutdown` should be the mount's teardown flag ([`CfApiMountHandle::shutdown_flag`]) so a
     /// pull that lands during unmount doesn't re-enter the closing connection. A standalone caller
-    /// with no mount can pass a fresh `Arc::new(AtomicBool::new(false))`.
+    /// with no mount can pass a fresh `Arc::new(AtomicBool::new(false))`. Makes its own
+    /// [`PathIndex`](crate::PathIndex); use [`with_index`](Self::with_index) to share the mount's.
     pub fn new(provider: Arc<SqliteProvider>, root: PathBuf, shutdown: Arc<AtomicBool>) -> Self {
-        Self { provider, root, paths: Mutex::new(HashMap::new()), shutdown }
+        Self::with_index(provider, root, shutdown, Arc::new(crate::PathIndex::new()))
     }
 
-    /// Resolve an ino to its absolute path under the sync root by walking the name chain.
+    /// Like [`new`](Self::new) but shares the SAME `path_index` the mount's `CfState` populates from
+    /// `FETCH_PLACEHOLDERS` — so the invalidator gets O(1) path resolution for any node Explorer has
+    /// enumerated. The engine wires this; pass the index it also handed to [`mount_full`].
+    pub fn with_index(
+        provider: Arc<SqliteProvider>,
+        root: PathBuf,
+        shutdown: Arc<AtomicBool>,
+        path_index: Arc<crate::PathIndex>,
+    ) -> Self {
+        Self { provider, root, path_index, shutdown }
+    }
+
+    /// Resolve an ino to its absolute path under the sync root. **O(1)** on an index hit (the
+    /// `FETCH_PLACEHOLDERS` enumeration recorded it); on a miss, fall back to a DFS over the
+    /// provider tree and back-fill the index so the next lookup is O(1).
     fn path_for(&self, ino: u64) -> Option<PathBuf> {
-        if let Some(p) = self.paths.lock().unwrap().get(&ino) {
-            return Some(p.clone());
+        if let Some(p) = self.path_index.get(ino) {
+            return Some(p);
         }
-        // DFS from root building paths until we hit `target`. O(tree) — fine for invalidation,
-        // which is rare. PHASE 2: maintain an ino→path index during populate for O(1).
+        // Index miss: DFS from root building paths until we hit `target`. O(tree), but rare now
+        // (only for a node never enumerated). Back-fill the index with what we learn.
         let mut stack = vec![(ROOT_INO, self.root.clone())];
         while let Some((dir_ino, path)) = stack.pop() {
             for e in self.provider.readdir(dir_ino).ok()? {
                 let child = path.join(&e.name);
+                self.path_index.insert(e.ino, child.clone());
                 if e.ino == ino {
-                    self.paths.lock().unwrap().insert(ino, child.clone());
                     return Some(child);
                 }
                 if e.kind == Kind::Dir {
