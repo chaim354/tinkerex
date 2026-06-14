@@ -4,8 +4,11 @@ source "https://rubygems.org"
 gem "rails", "~> 8.1.1"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"
-# Use sqlite3 as the database for Active Record
+# Use sqlite3 as the database for Active Record (self-host default)
 gem "sqlite3", ">= 2.1"
+# PostgreSQL adapter for the managed/SaaS deployment. Both adapters ship; the active
+# one is selected by config/database.yml / DATABASE_URL (see docs/SYNC_SERVER.md).
+gem "pg", "~> 1.5"
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
 # Use JavaScript with ESM import maps [https://github.com/rails/importmap-rails]
