@@ -30,6 +30,13 @@ $log    = "$env:TEMP\cfapi-smoke-$runid.log"
 
 Write-Host "== CfAPI smoke == server=$Server root=$root run=$runid"
 
+# Kill any LEFTOVER daemons from prior runs FIRST. A maker-cfsyncd that outlived its run (an
+# early hang that got force-killed, or a crash) keeps its sync root mounted + its new-file
+# watcher live — and the watcher can capture files into a stale library, polluting results. A
+# fresh runner has none; this just guarantees isolation between runs on a shared self-hosted box.
+Get-Process maker-cfsyncd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
 # Best-effort sweep of leftover sync roots from prior runs. A still-registered root may refuse
 # deletion (IOException) - that must NOT abort the smoke, hence SilentlyContinue.
 Get-ChildItem "$env:USERPROFILE\MakerCF-smoke-*" -Directory -ErrorAction SilentlyContinue |

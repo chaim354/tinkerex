@@ -34,7 +34,10 @@ $log    = "$env:TEMP\cfapi-conf-$runid.log"
 
 Write-Host "== CfAPI conformance == server=$Server root=$root run=$runid files=$Files"
 
-# Sweep leftover conformance roots from prior runs (a still-registered root may resist deletion).
+# Kill leftover daemons from prior runs first (a zombie maker-cfsyncd keeps a live new-file
+# watcher that can pollute results); then sweep leftover roots.
+Get-Process maker-cfsyncd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
 Get-ChildItem "$env:USERPROFILE\MakerCF-conf-*" -Directory -ErrorAction SilentlyContinue |
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 

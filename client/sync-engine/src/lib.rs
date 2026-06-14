@@ -161,10 +161,7 @@ impl SyncEngine {
                 // 'upsert'. If the node vanished between enqueue and now (a delete races
                 // ahead), there's nothing to send — just drop the stale entry.
                 match provider.sync_node(&node_id) {
-                    Ok(Some(node)) => {
-                        eprintln!("push_outbox: upsert name={} node={node_id} base_version={:?}", node.name, node.version_id);
-                        push_node(provider, client, io, &node)
-                    }
+                    Ok(Some(node)) => push_node(provider, client, io, &node),
                     Ok(None) => Ok(()),
                     Err(e) => Err(e.into()),
                 }
