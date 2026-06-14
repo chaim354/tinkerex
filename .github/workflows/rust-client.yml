@@ -12,6 +12,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Single self-hosted runner per OS + hardcoded test ports (engine-integration uses :3001) →
+# overlapping runs collide. Serialize: a newer run cancels the older one for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   unix:
     runs-on: [self-hosted, linux]

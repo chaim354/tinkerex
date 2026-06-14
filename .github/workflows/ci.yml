@@ -5,6 +5,11 @@ on:
   push:
     branches: [ main ]
 
+# Serialize runs on the single self-hosted runners (a newer run cancels the older for the ref).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   scan_ruby:
     runs-on: [self-hosted, linux]
