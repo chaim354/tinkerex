@@ -541,6 +541,24 @@ impl SqliteProvider {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
+        // Displace any *different* node already occupying this (parent, name): the remote
+        // snapshot/changelog is authoritative, so the incoming node wins. Without this, applying
+        // a snapshot in which a name was reused (e.g. a delete+create, or two devices racing a
+        // create/rename to the same path) hits the `UNIQUE(parent_ino, name)` index and the whole
+        // pull fails. Recursively sweeping the displaced subtree mirrors the local POSIX
+        // rename-replace path. (The displaced node's own changelog delete, if any, arrives
+        // separately and is then a no-op.)
+        conn.execute(
+            "DELETE FROM nodes WHERE ino IN (
+                 WITH RECURSIVE sub(ino) AS (
+                     SELECT ino FROM nodes WHERE parent_ino = ?1 AND name = ?2 AND node_id != ?3
+                     UNION ALL
+                     SELECT n.ino FROM nodes n JOIN sub ON n.parent_ino = sub.ino
+                 )
+                 SELECT ino FROM sub
+             )",
+            params![parent_ino, node.name, node.node_id],
+        )?;
         let ino = if let Some((ino, _)) = &prior {
             conn.execute(
                 "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8 WHERE node_id=?9",
