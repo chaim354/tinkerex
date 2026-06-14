@@ -21,24 +21,25 @@ jobs:
   changes:
     # Detect whether anything that affects the Windows client changed, so the (slower) Windows
     # build + live smoke only run when relevant — not on Mac-only / Linux-only / docs changes.
+    # Native `git diff` (no GitHub API / third-party action → no token-permission surprises).
     runs-on: [self-hosted, linux]
     outputs:
-      windows: ${{ steps.filter.outputs.windows }}
+      windows: ${{ steps.f.outputs.windows }}
     steps:
       - uses: actions/checkout@v5
-        with: { clean: false }
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            windows:
-              - 'client/fs-cfapi/**'
-              - 'client/fs-winfsp/**'
-              - 'client/sync-engine/**'
-              - 'client/fs-provider/**'
-              - 'client/sync-client/**'
-              - 'client/test-conformance/cfapi-smoke.ps1'
-              - '.github/workflows/rust-client.yml'
+        with: { clean: false, fetch-depth: 0 }
+      - id: f
+        name: Detect Windows-client changes
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          pattern='^client/(fs-cfapi|fs-winfsp|sync-engine|fs-provider|sync-client)/|^client/test-conformance/cfapi-smoke\.ps1$|^\.github/workflows/rust-client\.yml$'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "windows=true" >> "$GITHUB_OUTPUT"; echo "dispatch / no base -> windows=true"
+          elif git diff --name-only "$base" HEAD | grep -qE "$pattern"; then
+            echo "windows=true" >> "$GITHUB_OUTPUT"; echo "windows-affecting change -> true"
+          else
+            echo "windows=false" >> "$GITHUB_OUTPUT"; echo "no windows-affecting change -> false"
+          fi
 
   mac-tests:
     # The fastest box does the most: every hermetic Rust test (all cross-platform) PLUS the
@@ -96,18 +97,23 @@ jobs:
         run: sudo apt-get install -y libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
-      - name: Boot the sync server (memory chunk store)
-        run: |
-          STORAGE_BACKEND=memory bin/rails server -p 3001 &
-          for i in $(seq 1 60); do
-            curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }
-            sleep 1
-          done
-          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; exit 1; }
-      - name: Run the engine integration suite against the live server
+      - name: Boot the sync server + run the integration suite (one step keeps the server alive)
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
-        run: cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
+        run: |
+          # Free :3001 of any leftover server from a prior/cancelled run on this persistent runner.
+          (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
+          code=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          exit $code
 
   windows-build:
     # The real Windows mount adapters (fs-cfapi + fs-winfsp) + sync-engine wiring — the only place
