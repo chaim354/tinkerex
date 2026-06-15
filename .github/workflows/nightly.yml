@@ -152,6 +152,26 @@ jobs:
       - name: Two real FUSE mounts, A<->B byte-for-byte through the mounts
         run: client/test-conformance/two-device-fuse.sh
 
+  two-device-webdav-macos:
+    # macOS WebDAV: mount TWO real native mount_webdav mounts at once and pass files between them
+    # THROUGH the mounts. mount_webdav needs an INTERACTIVE desktop login session (it won't hold a
+    # mount from a headless launchd/ssh context) — same caveat as Windows CfAPI. The script
+    # self-detects a mount that won't come up and exits 0 with a BLOCKED notice rather than a false
+    # failure. continue-on-error so a service-mode runner never reds the nightly; this passes only on
+    # an INTERACTIVE self-hosted macOS runner (see ci/runners/README.md "interactive sessions").
+    continue-on-error: true
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      # Preinstalled Ruby/bundler on the maker-mac box (ruby/setup-ruby assumes the hosted layout).
+      # The script self-boots a STORAGE_BACKEND=local server and runs db:prepare itself.
+      - name: Two real WebDAV mounts, A<->B byte-for-byte through the mounts
+        run: |
+          bundle install --quiet
+          client/test-conformance/two-device-webdav-macos.sh
+
   two-device-cfapi-windows:
     # Windows CfAPI: mount TWO real Cloud Filter sync roots at once and pass files between them
     # through the mounts. Needs an INTERACTIVE login session (Session-0 service enumerates empty),

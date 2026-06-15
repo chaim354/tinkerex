@@ -90,6 +90,57 @@ cd C:\actions-runner-tinkerex
 For always-on interactive, set `run.cmd` to launch at logon (Task Scheduler "At log on", run with
 highest privileges, on a machine set to auto-login and never sleep).
 
+## Enabling the two-device REAL-MOUNT e2e (Linux `/dev/fuse` + macOS interactive)
+
+The nightly `two-device-*` jobs mount **two real kernel mounts at once** and pass files between
+them through the mounts (the syscall→adapter→Provider leg the engine-level e2e can't reach). Each
+self-detects a missing prerequisite and exits `0` with a `BLOCKED` notice (never a false red), so
+they only turn green once the runner can actually mount.
+
+### Linux — give the runner `/dev/fuse` access (one-time)
+
+FUSE mounts headlessly (no desktop needed), so the only requirement is that the runner's service
+user can open `/dev/fuse`. The job itself installs `libfuse-dev`/`fuse` and adds `user_allow_other`
+to `/etc/fuse.conf`; you just need device access for the runner user.
+
+```sh
+# Bare-metal / VM runner: add the runner's service user to the fuse group, then restart the runner.
+sudo groupadd -f fuse
+sudo usermod -aG fuse "$(whoami)"      # or the user the runner service runs as
+ls -l /dev/fuse                        # should be group 'fuse', mode 0660 (or 0666)
+# restart the runner service so it picks up the new group:
+cd ~/actions-runner-tinkerex && sudo ./svc.sh stop && sudo ./svc.sh start
+```
+
+If the runner runs inside a **container**, give the container the device + capability instead:
+`--device /dev/fuse --cap-add SYS_ADMIN` (and `--security-opt apparmor:unconfined` on some hosts).
+
+Verify: `gh workflow run nightly.yml` (or `gh workflow run rust-client.yml -f target=two-device`),
+then check the `two-device-fuse-linux` job logs say `mounted` + the A↔B checks, not `BLOCKED`.
+
+### macOS — run the runner INTERACTIVELY (one-time)
+
+`/sbin/mount_webdav` will **not** hold a mount from a headless launchd/ssh/Session context — it
+needs a real desktop login session (the same class of wall as Windows CfAPI). So the macOS runner
+must run in a logged-in desktop session, not as a background `launchd` service.
+
+```sh
+# stop/remove the service-mode runner, then run it inside your interactive desktop session:
+cd ~/actions-runner-tinkerex
+sudo ./svc.sh stop && sudo ./svc.sh uninstall
+./run.sh        # stays up while you're logged in; mount_webdav works here
+```
+
+For always-on: set the Mac to **auto-login** to a desktop user, add `run.sh` as a Login Item (or a
+`launchd` *LaunchAgent* in the **Aqua** session, not a LaunchDaemon), and disable sleep
+(`sudo pmset -a sleep 0 disablesleep 1`). Then the nightly `two-device-webdav-macos` job mounts two
+real `mount_webdav` mounts and passes files A↔B; otherwise it reports `BLOCKED` and stays green.
+
+> Same pattern as the Windows interactive requirement above. After enabling Linux `/dev/fuse` +
+> the macOS/Windows interactive sessions, the full three-OS real-mount e2e
+> (`two-device-fuse-linux`, `two-device-webdav-macos`, `two-device-cfapi-windows`) runs
+> automatically in `nightly.yml`.
+
 ## Security note
 
 A self-hosted runner executes whatever a workflow tells it to. Because this repo is
