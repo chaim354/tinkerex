@@ -1,0 +1,16 @@
+<% content_for :title, "Sign in — Tinkerex" %>
+
+<div class="auth-card">
+  <h1>Tinkerex</h1>
+  <p class="muted">File library</p>
+
+  <div class="placeholder-note">
+    <strong>Placeholder login.</strong> No password — this is a dev seam that signs you
+    in as an existing user (or creates one). Real auth replaces this later.
+  </div>
+
+  <%= form_with url: login_path, method: :post, class: "auth-form" do |f| %>
+    <%= f.email_field :email, placeholder: "you@example.com", required: true, autofocus: true %>
+    <%= f.submit "Sign in" %>
+  <% end %>
+</div>

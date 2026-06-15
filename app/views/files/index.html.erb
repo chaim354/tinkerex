@@ -1,0 +1,51 @@
+<% content_for :title, "Files — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Files</h1>
+</div>
+
+<section class="uploader"
+         data-controller="uploader"
+         data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+         data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
+  <label class="upload-btn">
+    <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+    <span>Upload a file</span>
+  </label>
+  <span class="upload-status" data-uploader-target="status"></span>
+</section>
+
+<% if @nodes.empty? %>
+  <p class="empty muted">No files yet. Upload one to get started.</p>
+<% else %>
+  <table class="files">
+    <thead>
+      <tr><th>Name</th><th>Kind</th><th class="num">Size</th><th>Version</th><th>Modified</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% @nodes.each do |node| %>
+        <% version = node.file? ? @versions_by_node[node.current_version_id] : nil %>
+        <tr>
+          <td>
+            <% if node.file? %>
+              <%= link_to node.name, file_path(node.node_id) %>
+            <% else %>
+              <span class="dir">📁 <%= node.name %></span>
+            <% end %>
+          </td>
+          <td class="muted"><%= node.kind %></td>
+          <td class="num muted"><%= version ? number_to_human_size(version.size) : "—" %></td>
+          <td class="muted mono"><%= version ? version.version_id.first(8) : "—" %></td>
+          <td class="muted"><%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
+          <td class="row-actions">
+            <% if node.file? %>
+              <%= link_to "Download", blob_file_path(node.node_id, download: 1) %>
+            <% end %>
+            <%= button_to "Delete", file_path(node.node_id), method: :delete,
+                  form: { data: { turbo_confirm: "Delete #{node.name}?" } }, class: "linkbtn danger" %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>

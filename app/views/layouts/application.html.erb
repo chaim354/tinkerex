@@ -19,11 +19,26 @@
     <link rel="apple-touch-icon" href="/icon.png">
 
     <%# Includes all stylesheet files in app/assets/stylesheets %>
-    <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+    <%= stylesheet_link_tag "application", "data-turbo-track": "reload" %>
     <%= javascript_importmap_tags %>
   </head>
 
   <body>
-    <%= yield %>
+    <% if respond_to?(:current_user) && current_user %>
+      <header class="topbar">
+        <a href="<%= files_path %>" class="brand">Tinkerex</a>
+        <div class="topbar-right">
+          <span class="muted"><%= current_user.email %></span>
+          <%= button_to "Sign out", logout_path, method: :delete, class: "linkbtn" %>
+        </div>
+      </header>
+    <% end %>
+
+    <% if flash[:notice] %><div class="flash flash-notice"><%= flash[:notice] %></div><% end %>
+    <% if flash[:alert]  %><div class="flash flash-alert"><%= flash[:alert] %></div><% end %>
+
+    <main class="container">
+      <%= yield %>
+    </main>
   </body>
 </html>
