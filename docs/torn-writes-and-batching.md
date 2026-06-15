@@ -348,3 +348,51 @@ extra existence check per unique hash at finalize (cheap; mostly DB-side via the
   (the sweep walks DB rows; abandoned chunks have none) — a storage *leak*, not
   corruption. Fix with a storage-orphan reaper or a `pending_commits` TTL sweep, and
   optionally enable `verify: true` at finalize for belt-and-suspenders.
+
+---
+
+## 7. Implemented: G5 (debounce), G8 (special-file guardrail), G10 (delta-on-wire audit)
+
+Landed on branch `g5-g8-g10-file-layer-polish` (2026-06-15).
+
+### G5 — change-batching / outbox debounce (the §4 recommendation, built)
+
+The outbox now carries two unix-millis timestamps (`enqueued_at` refreshed on every
+re-enqueue = last touch; `first_enqueued_at` set once = the max-age floor).
+`SqliteProvider::outbox_ready_topo(window_ms, max_age_ms)` is the debounced drain order:
+an `upsert` is **held** while it is still hot (last touched `< window_ms` ago) AND under
+the cap (`first_enqueued_at` `< max_age_ms` ago); a held parent also holds its queued
+children (parents-first invariant preserved). **Deletes are never held.** `window_ms == 0`
+disables the debounce (identical to the eager `outbox_list_topo`). The engine drains via
+`SyncEngine::push_outbox_debounced` / `sync_tick_debounced`; `DaemonConfig::with_debounce`
+opts in (default = **off**, so behavior is unchanged unless configured —
+`Debounce::MAKER_DEFAULT` = 2.5 s window / 30 s cap per §4's D=2-3 s, M=30 s). Flush on
+unmount is already handled: the sync loop's graceful-shutdown drain (and `flush_outbox`)
+pass window 0, so a debounced final edit can't be left un-pushed. Tests:
+`client/fs-provider/tests/debounce.rs` (5: rapid-saves-coalesce-to-one-push-of-final-bytes,
+max-age cap flushes a hot file, deletes bypass, window-0 disables, held-parent-holds-child).
+
+### G8 — special-file guardrail
+
+Symlinks / FIFOs / sockets / block+char device nodes remain a deliberate non-goal (the
+tree models only `File`/`Dir`). The guardrail makes attempts fail **deterministically**
+instead of hitting `fuser`'s default `ENOSYS`: new `FsError::NotSupported` → **`EPERM`**
+in the FUSE `errno` map. The FUSE adapter now implements `mknod` (allows `S_IFREG` /
+untyped → regular file; rejects every special type) and `symlink` (always `EPERM`). The
+tree is never mutated for a rejected type, so it cannot be corrupted. WebDAV (macOS) is
+inherently safe — the protocol has no special-file verb (`create_file`/`create_dir` only →
+File/Dir). Pure routing logic is unit-tested (`mknod_is_regular_file` + the errno map in
+`fs-fuse`'s `#[cfg(test)]` module); the full FUSE crate compiles + runs those on Linux CI
+(it does not link on macOS — no `fuse.pc`).
+
+### G10 — delta-on-wire audit: VERDICT — already minimal ✔
+
+`push_node` uploads exactly the hashes the server reports missing
+(`commit_begin.missing`), and FastCDC localizes an edit to a few chunks, so the wire delta
+is already optimal — **no gap found.** Locked in with a regression test that instruments
+the `ChunkIO` to count PUTs (`client/sync-engine/tests/integration.rs::
+one_block_edit_uploads_only_the_delta_chunks`). **Measured** against the live server
+(`STORAGE_BACKEND=memory`): a 60 KB file = **194 chunks**; an initial push uploads all 194,
+and a **one-byte middle edit re-uploads exactly 1 chunk** (0 % of the file). The test
+asserts the delta push stays `<= total/4 + 2` chunks, so any regression to whole-file
+uploads fails CI.
