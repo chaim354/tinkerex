@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_14_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_14_040000) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -128,12 +128,41 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_14_010000) do
     t.index ["user_id"], name: "index_pending_commits_on_user_id"
   end
 
+  create_table "sessions", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "ip_address"
+    t.string "token_digest", null: false
+    t.datetime "updated_at", null: false
+    t.string "user_agent"
+    t.integer "user_id", null: false
+    t.index ["token_digest"], name: "index_sessions_on_token_digest", unique: true
+    t.index ["user_id"], name: "index_sessions_on_user_id"
+  end
+
+  create_table "user_identities", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "provider", null: false
+    t.string "uid", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["provider", "uid"], name: "index_user_identities_on_provider_and_uid", unique: true
+    t.index ["user_id"], name: "index_user_identities_on_user_id"
+  end
+
   create_table "users", force: :cascade do |t|
+    t.datetime "confirmation_sent_at"
+    t.string "confirmation_token_digest"
+    t.datetime "confirmed_at"
     t.datetime "created_at", null: false
     t.string "email", null: false
     t.bigint "head_seq", default: 0, null: false
+    t.string "password_digest"
+    t.datetime "reset_sent_at"
+    t.string "reset_token_digest"
     t.datetime "updated_at", null: false
+    t.index ["confirmation_token_digest"], name: "index_users_on_confirmation_token_digest", unique: true
     t.index ["email"], name: "index_users_on_email", unique: true
+    t.index ["reset_token_digest"], name: "index_users_on_reset_token_digest", unique: true
   end
 
   create_table "versions", force: :cascade do |t|
@@ -157,5 +186,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_14_010000) do
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "pending_commits", "users"
+  add_foreign_key "sessions", "users"
+  add_foreign_key "user_identities", "users"
   add_foreign_key "versions", "users"
 end
