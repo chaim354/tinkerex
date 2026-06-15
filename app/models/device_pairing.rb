@@ -14,8 +14,10 @@ class DevicePairing < ApplicationRecord
   attr_reader :plaintext_code
 
   # Issue a fresh code for `user`. Returns the record; read `.plaintext_code` once.
+  # The code is a credential (it joins a device to the library), so it is drawn from a
+  # CSPRNG (SecureRandom) — not Array#sample / Kernel#rand.
   def self.issue!(user:, ttl: CODE_TTL)
-    code = Array.new(8) { ALPHABET.sample }.join
+    code = Array.new(8) { ALPHABET[SecureRandom.random_number(ALPHABET.length)] }.join
     rec = create!(user:, code_digest: digest(code), expires_at: ttl.from_now)
     rec.instance_variable_set(:@plaintext_code, code)
     rec
