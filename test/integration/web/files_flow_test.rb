@@ -7,10 +7,15 @@ module Web
   class FilesFlowTest < ActionDispatch::IntegrationTest
     setup { Storage::ChunkStore.reset! }
 
-    # Sign in via the placeholder dev login.
+    # Sign in via the real password auth. Creates a confirmed account if needed, then
+    # logs in (sets the signed session cookie) — the web UI works behind real auth.
+    PASSWORD = "correct horse battery staple".freeze
+
     def sign_in(email = "web@example.com")
-      post login_path, params: { email: }
-      User.find_by(email:)
+      user = User.find_by(email:) ||
+             User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
+      post login_path, params: { email:, password: PASSWORD }
+      user
     end
 
     # Mirror the browser uploader: hash -> begin_upload -> PUT bytes -> finalize_upload.

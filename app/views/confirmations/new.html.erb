@@ -1,0 +1,13 @@
+<% content_for :title, "Resend confirmation — Tinkerex" %>
+
+<div class="auth-card">
+  <h1>Resend confirmation</h1>
+  <p class="muted">Enter your email and we'll send a new confirmation link.</p>
+
+  <%= form_with url: confirmations_path, method: :post, class: "auth-form" do |f| %>
+    <%= f.email_field :email, placeholder: "you@example.com", required: true, autofocus: true %>
+    <%= f.submit "Resend link" %>
+  <% end %>
+
+  <p class="muted"><%= link_to "Back to sign in", login_path %></p>
+</div>

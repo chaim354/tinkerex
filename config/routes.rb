@@ -4,11 +4,34 @@ Rails.application.routes.draw do
   # --- Web UI (server-rendered file browser) ---
   root to: redirect("/files")
 
-  # PLACEHOLDER dev login (no password) — replace when real auth lands (see
-  # WebAuthentication). Selects/creates a User and stores it in the session.
-  get  "login",  to: "web_sessions#new"
-  post "login",  to: "web_sessions#create"
-  delete "logout", to: "web_sessions#destroy"
+  # --- Web auth (real Rails 8 password auth + email confirmation) ---
+  # Human-identity layer (docs/parity-roadmap.md §A). Sits in front of the unchanged
+  # device-token + DevicePairing bootstrap (v1 namespace below).
+  get    "login",  to: "sessions#new"
+  post   "login",  to: "sessions#create"
+  delete "logout", to: "sessions#destroy"
+
+  get  "signup", to: "registrations#new"
+  post "signup", to: "registrations#create"
+
+  # Email confirmation (proves email ownership — §12 step 5).
+  get  "confirm",          to: "confirmations#show", as: :confirm_email
+  get  "confirmations/new", to: "confirmations#new", as: :new_confirmation
+  post "confirmations",     to: "confirmations#create", as: :confirmations
+
+  # Password reset.
+  get   "password/new",  to: "passwords#new",    as: :new_password
+  post  "password",      to: "passwords#create", as: :passwords
+  get   "password/edit", to: "passwords#edit",   as: :edit_password
+  patch "password",      to: "passwords#update", as: :password
+
+  # OmniAuth seam (no provider wired yet — see OmniauthCallbacksController). Drawn so the
+  # callback path is stable; enable a strategy + middleware later. Guarded by env so it's
+  # inert until configured.
+  if ENV["OMNIAUTH_ENABLED"].present?
+    match "auth/:provider/callback", to: "omniauth_callbacks#create", via: [ :get, :post ]
+    get   "auth/failure", to: "omniauth_callbacks#failure"
+  end
 
   # Trash / undelete: list tombstoned nodes + restore (re-points at the kept version).
   resources :trash, only: %i[index] do
