@@ -209,8 +209,23 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > (Option B — real mtime synced in unix-nanos end-to-end; explicit FUSE `notify_inval_inode`
 > replacing the `mtime = now`-on-pull bump). External conformance (rclone/fsx/pjdfstest) re-run:
 > data plane byte-perfect, POSIX-perms gaps deliberate (rclone⇄WebDAV caught + fixed a
-> nanos-overflow in the WebDAV/WinFsp adapters). Next up: real **OAuth/OIDC** email
-> verification (§12 step 5) + Postgres deploy validation (step 8).
+> nanos-overflow in the WebDAV/WinFsp adapters).
+
+> **Merged to `main` + file layer hardened (2026-06-14):** the `auth-caching-security` arc
+> landed on **`main`** (squash PR #8). A hardening batch then closed the remaining file-layer
+> gaps: **Postgres validated** (config-only switch, step 8 ✅); **GC/retention wired** (tiered
+> policy + nightly job + S3 delete — closes unbounded-storage growth); **CfAPI B6 polish**
+> (pin/unpin↔hydrate, `CfUnregisterSyncRoot`, streamed `FETCH_DATA`, ino→path index); a
+> **two-device E2E suite** (A→B→edit→A byte-for-byte) with per-OS CI; and an **adversarial
+> fault-injection harness** ("Trinity") that **found two real changelog ordering bugs** — a
+> child-before-parent outbox drain and a pull hard-deleting a locally-renamed-but-unpushed node
+> (silent convergence loss) — **both fixed + verified** (topological drain; defer-and-retry +
+> `needs_resync`→`pull_snapshot` floor; soak 1000×200 = 0 silent losses). Plus loose ends:
+> pairing codes from **SecureRandom**, `image_processing`→2.0, deterministic GC tests. Server
+> suite **75 tests**. New strategy docs: `docs/research-sync-competitors.md`,
+> `docs/feature-set-and-workflows.md`. Next up: real **OAuth/OIDC** email verification (§12 step
+> 5), then the **maker app layer** (§12 step 9); open file-layer items = selective sync + at-rest
+> encryption (non-correctness).
 
 **Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
@@ -378,12 +393,23 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    (interpreted `Attr.mtime` as seconds) via the rclone⇄WebDAV conformance re-run. Plan:
    **`docs/plan-real-mtime-and-invalidation.md`**. (Invalidation itself is FUSE-kernel-only →
    CI `mount-conformance` / manual smoke, per the plan.)
-8. **Postgres deploy validation** (code is adapter-agnostic, tested on SQLite; switch
-   is config — see `docs/SYNC_SERVER.md`).
+8. ~~**Postgres deploy validation**~~ **DONE** (2026-06-14): the adapter-agnostic server
+   runs green on Postgres (Docker), **56/0**; switch is config-only via `DATABASE_URL` (a
+   `postgres` profile in `database.yml`; `next_seq!` `FOR UPDATE` exercised on PG). Remaining
+   for a *real managed* deploy (Neon/RDS): TLS `sslmode`, a connection pooler in
+   **session/transaction** mode (NOT statement — `FOR UPDATE` needs it), a concurrent-commit
+   load test, and deciding whether Solid Queue/Cache/Cable move off SQLite. See
+   `docs/SYNC_SERVER.md`.
+   - **Also done (2026-06-14):** **GC/retention wired** (`Sync::RetentionPolicy` keep_all/tiered
+     + `RetentionJob` nightly + S3 `delete_object` in `sweep_orphans!`; current+`pinned` never
+     pruned) — closes unbounded-storage growth. **Adversarial fault harness** + **two-device E2E**
+     added; **two changelog ordering bugs** found + fixed (topological outbox drain;
+     defer-and-retry + `needs_resync`→`pull_snapshot` floor — 0 silent losses under soak).
 9. **The maker app layer** on top (projects/inventory/BOM/preview) — a *separate* Rails
    concern from file sync; references files by `node_id`. Groundwork landed: the Tauri app
    has a **file browser + version-history/restore UI + conflict-resolution popup + lock
-   indicators** (`client/maker-app`).
+   indicators** (`client/maker-app`). *Open file-layer items first (optional, non-correctness):*
+   **selective sync** + **at-rest chunk encryption** (`docs/research-sync-competitors.md` #2/#3).
 
 ---
 

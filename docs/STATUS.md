@@ -1,6 +1,51 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-12 (auth hardening + cross-user security + client caching/freshness + file browser)
+**Updated:** 2026-06-14 (auth-caching-security merged to main; file-layer hardening batch + two sync bugs fixed)
+
+## Latest (2026-06-14): `auth-caching-security` merged to main + file layer hardened to "rock-solid"
+
+The big `auth-caching-security` arc landed on **`main`** (squash PR #8), and a hardening batch
+on top closed the remaining file-layer gaps. The headline: an adversarial fault-injection
+harness was built and **found two real changelog ordering bugs**, both now fixed and verified.
+
+- **Postgres validated** (CLAUDE.md §12 step 8): the adapter-agnostic server runs green on
+  Postgres (Docker), 56/0; switch is config-only via `DATABASE_URL` (a `postgres` profile in
+  `database.yml`). `next_seq!` row-lock exercised on PG. Caveats for a real managed deploy (TLS
+  `sslmode`, **session/transaction** pooling not statement pooling for `FOR UPDATE`, concurrent-
+  commit load test, Solid Queue/Cache/Cable still on SQLite) noted.
+- **GC/retention wired** (closes an unbounded-storage bug): `Sync::RetentionPolicy`
+  (`keep_all` self-host / `tiered` managed, current + `pinned` versions never pruned),
+  `RetentionJob` (nightly via `config/recurring.yml`), and the actual S3 `delete_object` in
+  `sweep_orphans!` (row destroyed first, then best-effort idempotent storage delete).
+- **CfAPI B6 polish**: pin/unpin ↔ hydrate/dehydrate, `CfUnregisterSyncRoot` remove-library
+  lifecycle, streamed page-aligned `FETCH_DATA` (+cancel), O(1) ino→path index. Windows CI green.
+  (pin/unpin + remove-library are code-complete; need interactive-Explorer verification.)
+- **Two-device end-to-end suite** (`client/sync-engine/tests/two_device_e2e.rs`, 9 tests): the
+  A→write→B→pull→edit→A→pull byte-for-byte roundtrip + nested-dir/delete/rename/dedup/restore/
+  conflict/lock/offline — driving the same engine loop the Tauri app uses. Per-OS CI jobs
+  (`e2e-linux`/`e2e-macos`/`e2e-windows`) green.
+- **Adversarial fault-injection harness** (`client/sync-engine/tests/fault_injection.rs`,
+  "Trinity"): injected PUT/GET faults, mid-pull/push crashes, randomized interleaving, concurrent
+  edits; asserts no-data-loss + convergence + idempotency, seeded + soak-validated 1000×200.
+- **Two real bugs found + fixed** (merged `ce72f25`): (1) **outbox drained child-before-parent**
+  on a move into a newer dir → pull abort → `outbox_list_topo()` topological drain.
+  (2) **a pull could hard-delete a locally-renamed-but-unpushed node** (collision/recursive-delete
+  sweep) → silent convergence loss → defer-and-retry parentless upserts + a sticky `needs_resync`
+  that triggers the `pull_snapshot` reconcile floor. Soak: **0 silent losses** (373/1000 self-heal
+  via the floor). All suites green (fs-provider, integration 19/0, two_device_e2e 9/0, harness 10/0).
+- **UI polish** (`client/maker-app`): accessible loading/empty/error states, closable conflict
+  modal, restore confirmation, pairing copy-to-clipboard, per-OS backend label (CfAPI default).
+- **Loose ends cleared**: pairing codes now from **SecureRandom** (not `Array#sample`);
+  `image_processing` 1.x→**2.0.2** (Dependabot #5); GC retention tests made **deterministic**
+  (frozen clock; `sweep_orphans!` uses `updated_at <= cutoff` so grace:0 = sweep-now). Server
+  suite **75/0**.
+- **New strategy docs**: `docs/research-sync-competitors.md` (vs Dropbox/Drive/Nextcloud/oCIS/
+  OpenCloud/Seafile/Syncthing + ranked gaps) and `docs/feature-set-and-workflows.md` (supported
+  today / gap workflows, FILE-LAYER vs MAKER-APP).
+
+**Open file-layer items (non-correctness, shape the product):** selective sync (research #2) and
+at-rest chunk encryption (#3). Both fit the existing chunk/manifest/changelog model. Next big
+arc: the **maker app layer** (projects/inventory/BOM/preview — §12 step 9).
 
 ## Latest (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
 
