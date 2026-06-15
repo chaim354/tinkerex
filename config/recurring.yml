@@ -21,3 +21,14 @@ production:
     class: RetentionJob
     queue: background
     schedule: every day at 4am
+
+  # Storage-orphan chunk reaper (G4). Lists the object-storage keyspace and deletes chunk
+  # bytes left by commits that uploaded but never finalized — objects with NO DB row, which
+  # the refcount-based version_retention sweep cannot see. Runs on a CONSERVATIVE weekly
+  # cadence because list_objects_v2 is billed per request on S3/R2; the grace window inside
+  # the reaper (24h default) protects in-flight uploads, so weekly is plenty timely for a
+  # cost leak. Off-peak, on a different day/hour from version_retention.
+  orphan_chunk_reaper:
+    class: ChunkReaperJob
+    queue: background
+    schedule: every sunday at 5am
