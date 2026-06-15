@@ -79,6 +79,23 @@ CHUNK_REGION=auto          CHUNK_ACCESS_KEY_ID=...  CHUNK_SECRET_ACCESS_KEY=...
 ```
 Tests/dev default to the in-memory store (`STORAGE_BACKEND=memory`).
 
+Three backends:
+- **`s3`** — R2/S3/SeaweedFS, the production + deployed data plane (bytes → object storage).
+- **`memory`** — **control-plane only.** Mints fake `memory://` URLs and stores nothing, so the
+  client's real PUT/GET data plane can't move bytes through it. Use it for HTTP-contract tests
+  (the sync-engine integration suite), NOT for anything that actually transfers chunk bytes.
+- **`local`** — a **real** filesystem-backed data plane with **no external object store** (no
+  SeaweedFS/MinIO; permissive). Presigns real `http(s)://<host>/v1/chunks/blob/<user>/<hash>?exp&sig`
+  URLs that the client PUTs/GETs; bytes land under `CHUNK_LOCAL_DIR` (default `tmp/chunk-store`).
+  The URL is HMAC-signed with the Rails secret (keyed by user+hash+expiry), so it's untamperable +
+  per-user-scoped — the same property as a presigned SigV4 key (§8). This is the self-hosted
+  single-box option and what the **two-device real-mount tests** use to move bytes between two
+  co-located mounts. Zero-config locally (presigned URLs point back at the request host); set
+  `CHUNK_PUBLIC_URL` when the client reaches the server by a different host than it presents.
+  ```
+  STORAGE_BACKEND=local   CHUNK_LOCAL_DIR=/var/lib/maker/chunks   [CHUNK_PUBLIC_URL=http://host:3001]
+  ```
+
 ## Versioning & GC (built for restore from day one)
 
 Every commit writes an immutable `version` → content-addressed manifest; versions

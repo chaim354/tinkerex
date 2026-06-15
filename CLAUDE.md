@@ -453,6 +453,14 @@ client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (ma
 client/test-conformance/fsx-fuse.sh           # fsx data-integrity exerciser ⇄ FUSE (Linux)
 client/test-conformance/pjdfstest-fuse.sh     # pjdfstest POSIX map ⇄ FUSE (Linux, informational)
 
+# Two-device REAL-MOUNT E2E (a file through ONE real kernel mount, read byte-for-byte through
+# ANOTHER device's real mount — the layer above sync-engine/tests/two_device_e2e.rs). Uses
+# STORAGE_BACKEND=local (real presigned data plane; memory:// can't move bytes). Per OS:
+client/test-conformance/two-device-fuse.sh           # Linux, two real FUSE mounts (self-contained, CI-automatable)
+client/test-conformance/two-device-webdav-macos.sh   # macOS, two real WebDAV mounts (run AT the machine — interactive)
+client/test-conformance/two-device-cfapi.ps1         # Windows, two real CfAPI sync roots (interactive runner + deployed server)
+# CI: `gh workflow run rust-client.yml -f target=two-device` (Linux auto; Windows on the interactive runner).
+
 # fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see client/fs-fuse/BUILD.md.
 # Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
 ```

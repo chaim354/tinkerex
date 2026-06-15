@@ -21,7 +21,7 @@ on:
         description: 'Which slice to run'
         type: choice
         default: all
-        options: [all, mac, linux, engine, windows, cfapi, cfapi-conf]
+        options: [all, mac, linux, engine, windows, cfapi, cfapi-conf, two-device]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -40,6 +40,7 @@ jobs:
       windows: ${{ steps.f.outputs.windows }}
       smoke: ${{ steps.f.outputs.smoke }}
       conf: ${{ steps.f.outputs.conf }}
+      twodev: ${{ steps.f.outputs.twodev }}
     steps:
       - uses: actions/checkout@v5
         with: { clean: false, fetch-depth: 0 }
@@ -50,7 +51,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          mac=false; linux=false; engine=false; windows=false; smoke=false; conf=false
+          mac=false; linux=false; engine=false; windows=false; smoke=false; conf=false; twodev=false
           if [ "$EVENT" = "workflow_dispatch" ]; then
             case "${TARGET:-all}" in
               all)           mac=true; linux=true; engine=true; windows=true; smoke=true ;;
@@ -59,6 +60,7 @@ jobs:
               engine)        engine=true ;;
               windows|cfapi) windows=true; smoke=true; mac=true ;;
               cfapi-conf)    windows=true; conf=true; mac=true ;;  # the rigorous CfAPI round-trip
+              two-device)    twodev=true; windows=true ;;          # two REAL mounts, A<->B (FUSE + CfAPI)
             esac
           elif [ "$EVENT" = "push" ]; then
             mac=true; linux=true; engine=true; windows=true   # full build matrix; smoke on-demand
@@ -77,8 +79,8 @@ jobs:
               # smoke stays off on auto PRs: it needs an interactive Windows session (see below).
             fi
           fi
-          for k in mac linux engine windows smoke conf; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
-          echo "RESULT mac=$mac linux=$linux engine=$engine windows=$windows smoke=$smoke conf=$conf"
+          for k in mac linux engine windows smoke conf twodev; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
+          echo "RESULT mac=$mac linux=$linux engine=$engine windows=$windows smoke=$smoke conf=$conf twodev=$twodev"
 
   mac-tests:
     # The fastest box: every hermetic Rust test (all cross-platform) + the CfAPI Windows-FFI
@@ -221,3 +223,47 @@ jobs:
         env:
           SERVER_URL: http://192.168.1.95
         run: ./client/test-conformance/cfapi-conformance.ps1
+
+  two-device-fuse-linux:
+    # On-demand (target=two-device): TWO real FUSE mounts on the Linux runner, a file passed
+    # THROUGH one mount read byte-for-byte THROUGH the other (A<->B), incl. new/nested/delete/
+    # rename/multi-chunk. Self-contained (boots its own memory Rails server). continue-on-error:
+    # the script exits 0 with a BLOCKED notice if /dev/fuse / allow_other isn't available.
+    needs: changes
+    if: ${{ needs.changes.outputs.twodev == 'true' }}
+    continue-on-error: true
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: System deps (FUSE + allow_other)
+        run: |
+          sudo apt-get install -y libfuse-dev fuse pkg-config
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Two real FUSE mounts, A<->B byte-for-byte through the mounts
+        run: client/test-conformance/two-device-fuse.sh
+
+  two-device-cfapi-windows:
+    # On-demand (target=two-device): TWO real CfAPI sync roots on the Windows runner, a file
+    # passed THROUGH one mount read byte-for-byte THROUGH the other (A<->B). Needs an INTERACTIVE
+    # session (Session-0 enumerates empty) + the deployed server → continue-on-error; passes only
+    # on the interactive self-hosted Windows runner.
+    needs: [changes, windows-build]
+    if: ${{ needs.changes.outputs.twodev == 'true' }}
+    continue-on-error: true
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Two real CfAPI sync roots, A<->B byte-for-byte through the mounts
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/two-device-cfapi.ps1
