@@ -100,6 +100,8 @@ jobs:
         run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example mount_smoke
       - name: Real FuseAdapter over a fresh SqliteProvider, no sync threads (does IT hold?)
         run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example adapter_mount_smoke
+      - name: Full Daemon::start FUSE wiring vs a DEAD server (does the daemon mount hold?)
+        run: cargo run --manifest-path client/sync-engine/Cargo.toml --example daemon_fuse_smoke
 
   # --- Stress / load + multi-filetype conformance (heavier; additive, never reds the nightly) ---
   # Two suites that push the data plane well past the 2-device tests:
