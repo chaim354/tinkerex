@@ -31,9 +31,10 @@ multi-chunk) automatically in `nightly.yml`:
   removal + echo-guard. See `[[cfapi-receive-side]]` memory + `docs/plan-windows-cfapi-migration.md`.)
 - **macOS WebDAV** — `two-device-webdav-macos` ✅ green (runs on the interactive mac runner; boots
   its own `STORAGE_BACKEND=local` server).
-- **Cross-machine 3-OS** — `cross-os-e2e.yml` (Win push→Mac pull→Linux edit→Mac+Win pull). Wired;
-  **being verified now** — known risk: the macOS runner reaching the shared deployed server
-  `192.168.1.95` (the per-OS mac test uses its own local server; cross-os needs all 3 on ONE server).
+- **Cross-machine 3-OS** — `cross-os-e2e.yml` (Win push→Mac pull→Linux edit→Mac+Win pull) **✅ PASSED
+  end-to-end** (run 27579865391): all 6 legs green with real mounts, byte-for-byte, against the shared
+  deployed server. The macOS→shared-server routing risk did NOT materialize (both mac legs reached
+  `192.168.1.95`) — but it's the historical flake to watch if a future run's mac legs BLOCK.
 - Single-mount conformance also green: rclone⇄WebDAV (0 diff), fsx⇄FUSE (100k ops), CfAPI 24-file.
 
 ### Sync engine / file layer
@@ -73,10 +74,11 @@ multi-chunk) automatically in `nightly.yml`:
 
 ## ⛔ Blockers / known gaps
 
-1. **Cross-OS 3-machine test (`cross-os-e2e.yml`) — macOS→shared-server reachability.** All 3
-   real-mounts now hold, but the cross-machine handoff needs all three runners hitting ONE shared
-   server (`192.168.1.95`). The mac runner historically couldn't route there. (Being verified now;
-   if it blocks, the fix is mac→server routing or pointing all 3 at a reachable `server_url`.)
+1. **Cross-OS 3-machine test — intermittent macOS→shared-server reachability risk.** The full
+   `cross-os-e2e.yml` handoff PASSED (run 27579865391, all 6 legs green), so this is no longer a
+   blocker — but the mac runner has *historically* sometimes failed to route to `192.168.1.95`. If a
+   future cross-os run's mac legs BLOCK on server-unreachable, the fix is mac→server routing (or pass
+   a reachable `server_url` to the workflow).
 2. **FSKit (native macOS mount) — blocked on a PAID Apple Developer membership ($99/yr).** Code
    complete; macOS uses WebDAV meanwhile (fully working). `client/fs-fskit/BUILD.md` §6b.
 3. **macOS real-mount is interactive-runner-only** (native `mount_webdav` needs a desktop session).
