@@ -121,6 +121,55 @@ jobs:
           LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
 
+  # --- Two-device REAL-MOUNT END-TO-END (the layer ABOVE the engine-level e2e) --------------
+  # These mount TWO real kernel mounts at once (the same Daemon/CfApiMount/WebdavMount the Tauri
+  # app's sync_start launches), pair them into one library via the REAL pairing flow, and pass a
+  # file THROUGH one mount to be read byte-for-byte THROUGH the other — plus new/nested/delete/
+  # rename/multi-chunk. This is the syscall→adapter→Provider leg the engine-level e2e can't reach.
+  # macOS's leg is interactive-only (mount_webdav) → a manual script the user runs locally
+  # (client/test-conformance/two-device-webdav-macos.sh), NOT CI-automated.
+
+  two-device-fuse-linux:
+    # Linux FUSE CAN mount in CI when /dev/fuse is available, so this real-mount leg is automated.
+    # The script self-detects a missing /dev/fuse / allow_other and exits 0 with a BLOCKED notice
+    # rather than a false failure (an environment gap, documented in the script). continue-on-error
+    # so a runner without /dev/fuse never reds the nightly.
+    continue-on-error: true
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: System deps (FUSE + allow_other)
+        run: |
+          sudo apt-get install -y libfuse-dev fuse pkg-config
+          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Two real FUSE mounts, A<->B byte-for-byte through the mounts
+        run: client/test-conformance/two-device-fuse.sh
+
+  two-device-cfapi-windows:
+    # Windows CfAPI: mount TWO real Cloud Filter sync roots at once and pass files between them
+    # through the mounts. Needs an INTERACTIVE login session (Session-0 service enumerates empty),
+    # same caveat as the smoke/conformance — continue-on-error; passes only on the interactive
+    # self-hosted Windows runner with the deployed server reachable.
+    needs: windows-build
+    continue-on-error: true
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Two real CfAPI sync roots, A<->B byte-for-byte through the mounts
+        shell: powershell
+        env:
+          SERVER_URL: http://192.168.1.95
+        run: ./client/test-conformance/two-device-cfapi.ps1
+
   windows-smoke:
     # The LIVE CfAPI regression net (Phase 2b Task A4): register a sync root, enumerate, hydrate,
     # then create/edit/delete/rename and assert each round-trips to the deployed server.

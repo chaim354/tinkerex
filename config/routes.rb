@@ -34,6 +34,13 @@ Rails.application.routes.draw do
 
     # hydration
     post "chunks/download", to: "chunks#download"
+
+    # The `local` (filesystem) chunk backend's storage tier — presigned, HMAC-authorized blob
+    # PUT/GET (no bearer token; the URL's signature is the auth). Only active under
+    # STORAGE_BACKEND=local; a 404/403 otherwise. The hash is hex (`[0-9a-f]+`), constrained so the
+    # route can't capture a path with slashes.
+    put "chunks/blob/:user_id/:hash", to: "chunks/blob#upload", constraints: { hash: /[0-9a-f]+/ }
+    get "chunks/blob/:user_id/:hash", to: "chunks/blob#download", constraints: { hash: /[0-9a-f]+/ }
   end
 
   # ActionCable mount (change notifications)
