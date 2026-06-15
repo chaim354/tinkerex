@@ -90,24 +90,64 @@ class User < ApplicationRecord
   # --- OmniAuth seam (docs/parity-roadmap.md §A) ------------------------------------
   # find-or-create a User from an OmniAuth auth hash. NOT wired to any provider yet — this
   # is the documented hook so a later OIDC/SSO strategy plugs in WITHOUT touching the
-  # device bootstrap. An OAuth-authenticated email is treated as already-confirmed (the
-  # IdP proved ownership). After this returns, the normal flow runs: first device →
-  # register; Nth device → mint a DevicePairing code (parity-roadmap §A "two layers").
+  # device bootstrap. After this returns, the normal flow runs: first device → register;
+  # Nth device → mint a DevicePairing code (parity-roadmap §A "two layers").
+  #
+  # SECURITY — auto-linking by email is account-takeover-prone, so it is gated:
+  #   * A returning identity (provider+uid we've seen) always maps to its user (safe).
+  #   * We only auto-link an *email* to an existing account when (a) the IdP asserts the
+  #     email is verified AND (b) that account has NO local password (so we never silently
+  #     merge an OAuth login into a credentialed human account — a malicious/misconfigured
+  #     IdP asserting a victim's address must not hijack their password login).
+  #   * Otherwise we create a fresh account for this identity (unique email permitting).
+  # `email_verified` is the standard OIDC claim; absent it, we do NOT trust the address for
+  # linking (a brand-new account is still created so login works, but it can't take over an
+  # existing one).
   def self.from_omniauth(auth)
     provider = auth[:provider] || auth["provider"]
     uid      = auth[:uid]      || auth["uid"]
     info     = auth[:info]     || auth["info"] || {}
     email    = info[:email]    || info["email"]
+    verified = omniauth_email_verified?(auth, info)
 
     identity = UserIdentity.find_by(provider:, uid:)
     return identity.user if identity
 
-    user = email.present? ? find_or_initialize_by(email:) : new
-    user.confirmed_at ||= Time.current if email.present?
+    existing = email.present? ? find_by(email:) : nil
+    user =
+      if existing && verified && existing.password_digest.blank?
+        # Safe to link: provider-verified email, and no local password to hijack.
+        existing
+      elsif existing
+        # An account already owns this email and we won't silently take it over (an
+        # unverified-email claim, or a credentialed human account). Refuse rather than
+        # attach — the caller surfaces a generic SSO failure.
+        raise AccountLinkRefused, "email already linked to an account"
+      else
+        # No collision: a brand-new account, so trusting the provider email is safe (there
+        # is nothing to take over). Mark confirmed since the IdP delivered it.
+        new(email:)
+      end
+
+    user.confirmed_at ||= Time.current if user.email.present?
     user.password = SecureRandom.urlsafe_base64(32) if user.password_digest.blank?
     user.save!
     user.identities.create!(provider:, uid:)
     user
+  end
+
+  # Raised when an OAuth login would otherwise silently merge into a pre-existing account.
+  class AccountLinkRefused < StandardError; end
+
+  # Read the IdP's email-verification signal. Standard OIDC exposes `email_verified`;
+  # different strategies surface it under `extra.raw_info` or `info`. Treat only an
+  # explicit truthy claim as verified.
+  def self.omniauth_email_verified?(auth, info)
+    raw = (auth[:extra] || auth["extra"] || {})
+    raw = (raw[:raw_info] || raw["raw_info"] || raw)
+    claim = info[:email_verified] || info["email_verified"] ||
+            raw[:email_verified] || raw["email_verified"]
+    claim == true || claim.to_s == "true"
   end
 
   # Assign the next per-user changelog sequence. MUST be called inside a
