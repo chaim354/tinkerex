@@ -10,6 +10,11 @@ Rails.application.routes.draw do
   post "login",  to: "web_sessions#create"
   delete "logout", to: "web_sessions#destroy"
 
+  # Trash / undelete: list tombstoned nodes + restore (re-points at the kept version).
+  resources :trash, only: %i[index] do
+    member { post "restore" }
+  end
+
   # File library: list / view / upload (begin+finalize) / download / delete.
   resources :files, only: %i[index show destroy] do
     collection do
@@ -53,6 +58,10 @@ Rails.application.routes.draw do
 
     # conflicts (offline-edit divergence)
     get "conflicts", to: "conflicts#index"
+
+    # trash / undelete (deleted-file recovery; deletes are tombstones + versions kept)
+    get "trash", to: "trash#index"
+    post "trash/:node_id/restore", to: "trash#restore"
 
     # best-effort advisory edit locks
     post "nodes/:node_id/lock", to: "nodes#lock"
