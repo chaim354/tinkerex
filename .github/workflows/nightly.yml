@@ -98,6 +98,8 @@ jobs:
           grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
       - name: Stock fuser-0.17 hello mount smoke (does the mount HOLD?)
         run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example mount_smoke
+      - name: Real FuseAdapter over a fresh SqliteProvider, no sync threads (does IT hold?)
+        run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example adapter_mount_smoke
 
   # --- Stress / load + multi-filetype conformance (heavier; additive, never reds the nightly) ---
   # Two suites that push the data plane well past the 2-device tests:
