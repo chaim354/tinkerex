@@ -7,9 +7,14 @@ module Web
   class TrashFlowTest < ActionDispatch::IntegrationTest
     setup { Storage::ChunkStore.reset! }
 
+    PASSWORD = "correct horse battery staple".freeze
+
+    # Sign in via the real password auth (creates a confirmed account if needed).
     def sign_in(email = "web-trash@example.com")
-      post login_path, params: { email: }
-      User.find_by(email:)
+      user = User.find_by(email:) ||
+             User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
+      post login_path, params: { email:, password: PASSWORD }
+      user
     end
 
     def upload(name, bytes)
