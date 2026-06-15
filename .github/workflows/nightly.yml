@@ -11,7 +11,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Key on event_name too so a manual `workflow_dispatch` verify run and the scheduled `cron`
+  # run land in SEPARATE groups and don't cancel each other (they only cancel a prior run of
+  # the SAME event). Without this, the nightly cron silently cancels an in-flight manual run.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
