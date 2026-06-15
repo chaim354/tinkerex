@@ -145,8 +145,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: System deps (FUSE + allow_other)
         run: |
-          sudo apt-get install -y libfuse-dev fuse pkg-config
-          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev fuse pkg-config
+          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
       - name: Linux edit THROUGH the FUSE mount → push the v2 edit
         id: edit
         env:

@@ -117,7 +117,7 @@ jobs:
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: FUSE dev headers
-        run: sudo apt-get install -y libfuse-dev pkg-config
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Build fs-fuse + sync-engine bins (Linux mount path)
         run: |
           cargo build --manifest-path client/fs-fuse/Cargo.toml
@@ -138,7 +138,7 @@ jobs:
         with:
           bundler-cache: true
       - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
-        run: sudo apt-get install -y libfuse-dev pkg-config
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Boot the sync server + run the integration suite (one step keeps the server alive)
@@ -242,8 +242,8 @@ jobs:
           bundler-cache: true
       - name: System deps (FUSE + allow_other)
         run: |
-          sudo apt-get install -y libfuse-dev fuse pkg-config
-          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev fuse pkg-config
+          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Two real FUSE mounts, A<->B byte-for-byte through the mounts

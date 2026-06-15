@@ -58,7 +58,7 @@ jobs:
         with:
           bundler-cache: true
       - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
-        run: sudo apt-get install -y libfuse-dev pkg-config
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
@@ -101,7 +101,7 @@ jobs:
         with:
           bundler-cache: true
       - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
-        run: sudo apt-get install -y libfuse-dev pkg-config
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Boot the sync server + run the stress/load + multi-filetype suites
@@ -193,8 +193,8 @@ jobs:
           bundler-cache: true
       - name: System deps (FUSE + allow_other)
         run: |
-          sudo apt-get install -y libfuse-dev fuse pkg-config
-          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev fuse pkg-config
+          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
       - name: Two real FUSE mounts, A<->B byte-for-byte through the mounts
@@ -286,10 +286,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: System deps (FUSE, rclone, build tools, autotools)
         run: |
-          sudo apt-get install -y \
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
             libfuse-dev fuse pkg-config build-essential \
             rclone curl git autoconf automake libtool
-          echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
       - name: rclone <-> WebDAV round-trip (gating)
         run: client/test-conformance/webdav-rclone.sh
       - name: fsx <-> FUSE data-integrity exerciser (gating)
