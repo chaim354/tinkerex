@@ -150,10 +150,24 @@ class User < ApplicationRecord
     claim == true || claim.to_s == "true"
   end
 
-  # Assign the next per-user changelog sequence. MUST be called inside a
-  # transaction: locks the user row so concurrent commits from multiple devices
-  # get distinct, ordered seqs. Portable — FOR UPDATE on Postgres; SQLite
-  # serializes writes globally so correctness holds either way.
+  # Assign the next per-user changelog sequence. MUST be called inside a transaction, and
+  # MUST be the FIRST write in it (before any node/version/changelog insert): locks the user
+  # row so concurrent commits from multiple devices get distinct, ordered seqs. Portable —
+  # `SELECT … FOR UPDATE` on Postgres; a harmless reload on SQLite (which serializes writes
+  # globally anyway). Correct and fast on both.
+  #
+  # LOCK ORDERING (Postgres): the node/version/changelog/chunk rows written later in a commit
+  # all FK-reference `users`, and a Postgres FK insert takes a `FOR KEY SHARE` lock on the
+  # parent users row. If a commit inserted those FIRST and called next_seq! second, two
+  # concurrent commits for the same user would each hold KEY SHARE and both want FOR UPDATE →
+  # a lock-upgrade DEADLOCK (observed live under a concurrent-commit load test). Taking the
+  # strong FOR UPDATE here, up front, makes a user's commits serialize cleanly with no
+  # deadlock. All callers (Sync::Commit, Mutation, Restore, Conflicts) lock first.
+  #
+  # Pooler note: because the FOR UPDATE lock must span the read+write of head_seq, the
+  # transaction's statements must run on ONE backend connection — i.e. a connection pooler in
+  # front of Postgres MUST be in SESSION or TRANSACTION mode, never STATEMENT mode. See
+  # docs/SYNC_SERVER.md "Connection pooler".
   def next_seq!
     lock!
     new_seq = head_seq + 1
