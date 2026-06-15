@@ -1,6 +1,33 @@
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
 
+  # --- Web UI (server-rendered file browser) ---
+  root to: redirect("/files")
+
+  # PLACEHOLDER dev login (no password) — replace when real auth lands (see
+  # WebAuthentication). Selects/creates a User and stores it in the session.
+  get  "login",  to: "web_sessions#new"
+  post "login",  to: "web_sessions#create"
+  delete "logout", to: "web_sessions#destroy"
+
+  # File library: list / view / upload (begin+finalize) / download / delete.
+  resources :files, only: %i[index show destroy] do
+    collection do
+      post "begin_upload"
+      post "finalize_upload"
+    end
+    member do
+      get "blob"
+    end
+  end
+
+  # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
+  # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
+  unless Rails.env.production?
+    get "dev/blobs/*key", to: "dev_blobs#show",   format: false, as: :dev_blob
+    put "dev/blobs/*key", to: "dev_blobs#update", format: false
+  end
+
   # --- Sync engine API (v1) ---
   namespace :v1 do
     post "auth/register", to: "auth#register"

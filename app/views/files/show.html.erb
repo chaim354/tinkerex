@@ -1,0 +1,37 @@
+<% content_for :title, "#{@node.name} — Tinkerex" %>
+
+<div class="page-head">
+  <h1><%= @node.name %></h1>
+  <div class="page-actions">
+    <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn" %>
+    <%= button_to "Delete", file_path(@node.node_id), method: :delete,
+          form: { data: { turbo_confirm: "Delete #{@node.name}?" } }, class: "btn danger" %>
+    <%= link_to "Back", files_path, class: "btn ghost" %>
+  </div>
+</div>
+
+<dl class="meta">
+  <dt>Name</dt><dd><%= @node.name %></dd>
+  <dt>Size</dt><dd><%= @version ? number_to_human_size(@version.size) : "—" %></dd>
+  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: @node.name) %></dd>
+  <dt>Current version</dt><dd class="mono"><%= @version&.version_id || "—" %></dd>
+  <dt>Modified</dt><dd><%= @node.mtime ? Time.at(@node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
+</dl>
+
+<div class="preview">
+  <% if @version.nil? %>
+    <p class="muted">No content yet.</p>
+  <% elsif @kind == :image %>
+    <img src="<%= blob_file_path(@node.node_id) %>" alt="<%= @node.name %>" class="preview-image">
+  <% elsif @kind == :text %>
+    <%# Inline text preview — fetched from the blob endpoint (presigned bytes). %>
+    <pre class="preview-text"
+         data-controller="textpreview"
+         data-textpreview-url-value="<%= blob_file_path(@node.node_id) %>">Loading…</pre>
+  <% else %>
+    <div class="preview-fallback muted">
+      <p>No inline preview for this file type.</p>
+      <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
+    </div>
+  <% end %>
+</div>
