@@ -78,6 +78,33 @@ jobs:
           kill $SRV 2>/dev/null || true
           exit $code
 
+  # --- STEP-1 ISOLATION: does a STOCK fuser-0.17 mount even HOLD on this runner? -------------
+  # A dependency-free hello-world FUSE mount (client/fs-fuse/examples/mount_smoke.rs) with the
+  # SAME fuser::Config the daemon uses (FSName + DefaultPermissions, spawn_mount2). It mounts,
+  # waits ~1s, then asserts the mount HELD (worker alive + findmnt sees it + the file reads) and
+  # prints `SMOKE: MOUNT HELD` (exit 0) or `SMOKE: MOUNT DROPPED` (exit 1). HELD here pins our
+  # daemon's instant-drop on our FuseAdapter/daemon; DROPPED pins it on the fuser crate vs kernel.
+  # continue-on-error so a runner without /dev/fuse never reds the nightly.
+  fuser-mount-smoke-linux:
+    continue-on-error: true
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System deps (FUSE + allow_other)
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev fuse pkg-config util-linux
+          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
+      - name: Stock fuser-0.17 hello mount smoke (does the mount HOLD?)
+        run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example mount_smoke
+      - name: Real FuseAdapter over a fresh SqliteProvider, no sync threads (does IT hold?)
+        run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example adapter_mount_smoke
+      - name: Full Daemon::start FUSE wiring vs a DEAD server (does the daemon mount hold?)
+        run: cargo run --manifest-path client/sync-engine/Cargo.toml --example daemon_fuse_smoke
+      - name: run_until_unmounted must WAIT, not self-unmount (the instant-drop regression)
+        run: cargo run --manifest-path client/sync-engine/Cargo.toml --example run_until_unmounted_smoke
+
   # --- Stress / load + multi-filetype conformance (heavier; additive, never reds the nightly) ---
   # Two suites that push the data plane well past the 2-device tests:
   #   * concurrency_load        — N (10–50) real client threads vs ONE server: concurrent commits
