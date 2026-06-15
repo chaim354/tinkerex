@@ -75,6 +75,51 @@ jobs:
           kill $SRV 2>/dev/null || true
           exit $code
 
+  # --- Stress / load + multi-filetype conformance (heavier; additive, never reds the nightly) ---
+  # Two suites that push the data plane well past the 2-device tests:
+  #   * concurrency_load        — N (10–50) real client threads vs ONE server: concurrent commits
+  #                               (distinct + same-node→conflict), concurrent pulls+hydrates while
+  #                               writing, a far-behind device paging a growing changelog. Asserts
+  #                               no loss, convergence, no torn manifests, monotonic changelog.
+  #   * multifiletype_conformance — a diverse maker-file corpus (STL ascii/binary, 3MF zip,
+  #                               STEP/IGES, OBJ, .lbrn2, PNG/JPG, gcode, md/txt, large
+  #                               random + repetitive binaries) round-tripped byte-for-byte +
+  #                               dedup on edit, sequentially and under a concurrent storm.
+  # continue-on-error: these are heavy/exploratory — a flake or a runner-resource limit must not
+  # red the whole nightly. Scale knobs: LOAD_DEVICES / LOAD_FILES_PER_DEVICE / LOAD_READERS.
+  stress-load-and-multifiletype-linux:
+    continue-on-error: true
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v5
+        with: { clean: false }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
+        run: sudo apt-get install -y libfuse-dev pkg-config
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      - name: Boot the sync server + run the stress/load + multi-filetype suites
+        env:
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: |
+          (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=memory bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test concurrency_load -- --nocapture
+          c1=$?
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test multifiletype_conformance -- --nocapture
+          c2=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          [ $c1 -eq 0 ] && [ $c2 -eq 0 ]
+
   e2e-macos:
     # macOS client stack. Self-contained: boots a STORAGE_BACKEND=memory Rails server locally
     # (the mac runner can't route to the deployed server's network segment), so it proves the
