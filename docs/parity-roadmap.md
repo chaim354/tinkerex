@@ -39,6 +39,15 @@ shipped (per `docs/STATUS.md`, 2026-06-14) and are **removed from this roadmap**
   `client/sync-engine/tests/fault_injection.rs`, which *found and fixed two real changelog
   ordering bugs*.
 - **Postgres deploy validation** (`CLAUDE.md` §12 step 8) — **DONE** (56/0 on PG/Docker).
+- **G2 — managed-Postgres hardening** — **DONE** (2026-06-15): TLS/`sslmode` defaults
+  (require for managed, verify-full + CA seam); **statement-pooler boot guard** (refuses to
+  boot behind statement-mode pooling, which would break `next_seq!`'s `FOR UPDATE`);
+  **concurrent-commit load test** (`test/services/sync/concurrent_seq_test.rb`, gapless 1..N,
+  clean to 3840 concurrent commits on PG) — which **found + fixed a real PG deadlock** (FK
+  KEY-SHARE vs `FOR UPDATE` lock-upgrade; fixed by locking the user row FIRST in every mutating
+  transaction); and **Solid Queue/Cache/Cable moved onto managed Postgres** (own per-role DBs;
+  self-host stays on SQLite). Full suite 149/0 on SQLite AND Postgres. See `docs/SYNC_SERVER.md`
+  "Managed-Postgres hardening (G2)".
 
 So the live roadmap is the remaining items: **auth/OIDC, selective sync, sharing, bandwidth
 controls, trash UX, progressive hydration, LAN sync, and encryption (last).**
