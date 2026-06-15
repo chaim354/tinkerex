@@ -65,12 +65,44 @@ class UserAuthTest < ActiveSupport::TestCase
     end
   end
 
-  test "from_omniauth links a provider to an existing local account by email" do
+  test "from_omniauth REFUSES to take over an existing password account by email" do
+    # Account-takeover guard: a credentialed human account must not be silently merged into
+    # an OAuth login just because the IdP asserts the same email address.
     existing = User.create!(email: "link@example.com", password: PASSWORD, confirmed_at: Time.current)
-    auth = { provider: "oidc", uid: "uid-link", info: { email: "link@example.com" } }
+    auth = { provider: "oidc", uid: "uid-link",
+             info: { email: "link@example.com", email_verified: true } }
+    assert_no_difference [ -> { User.count }, -> { UserIdentity.count } ] do
+      assert_raises(User::AccountLinkRefused) { User.from_omniauth(auth) }
+    end
+    assert_not existing.reload.identities.exists?(provider: "oidc", uid: "uid-link")
+  end
+
+  test "from_omniauth REFUSES to take over an existing account when email is unverified" do
+    # Even a passwordless account is not auto-linked unless the IdP says the email is verified
+    # (an unverified claim could be attacker-controlled).
+    User.create!(email: "unverified@example.com", confirmed_at: Time.current)
+    auth = { provider: "oidc", uid: "uid-unv", info: { email: "unverified@example.com" } }
+    assert_raises(User::AccountLinkRefused) { User.from_omniauth(auth) }
+  end
+
+  test "from_omniauth links to an existing PASSWORDLESS account when email is verified" do
+    # A prior OAuth-only (no local password) account with this email is safe to attach a new
+    # identity to: there is no credential to hijack.
+    existing = User.create!(email: "oauthonly@example.com", confirmed_at: Time.current)
+    assert existing.password_digest.blank?
+    auth = { provider: "oidc", uid: "uid-ok",
+             info: { email: "oauthonly@example.com", email_verified: true } }
     assert_no_difference -> { User.count } do
       assert_equal existing, User.from_omniauth(auth)
     end
-    assert existing.identities.exists?(provider: "oidc", uid: "uid-link")
+    assert existing.identities.exists?(provider: "oidc", uid: "uid-ok")
+  end
+
+  test "from_omniauth reads email_verified from extra.raw_info too" do
+    User.create!(email: "rawinfo@example.com") # passwordless, confirmed_at nil
+    auth = { provider: "oidc", uid: "uid-raw",
+             info: { email: "rawinfo@example.com" },
+             extra: { raw_info: { email_verified: true } } }
+    assert_nothing_raised { User.from_omniauth(auth) }
   end
 end
