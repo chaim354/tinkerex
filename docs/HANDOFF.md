@@ -1,97 +1,156 @@
-# Handoff — state as of 2026-06-14 (end of hardening session)
+# Handoff — state as of 2026-06-15
 
-Snapshot for the next agent/developer. **Everything now lives on `main`** (HEAD `2e9df94`,
-pushed). The long-lived `auth-caching-security` branch was squash-merged (PR #8); `main` is the
-mainline. Detailed running log: `docs/STATUS.md`. Architecture: `CLAUDE.md`. This file is the
-"where are we, what's blocked, what's next."
+Snapshot for the next agent/developer. **Everything lives on `main`** (HEAD `bab90bb`, pushed).
+Detailed running log: `docs/STATUS.md`. Architecture: `CLAUDE.md`. Strategy: `docs/parity-roadmap.md`,
+`docs/research-sync-competitors.md`, `docs/feature-set-and-workflows.md`. This file = "where are we,
+what's blocked, what's next." Persistent memory also holds key decisions/gotchas (see the project
+memory: auth decision, sync ordering bugs, CfAPI receive-side, Linux FUSE mount).
+
+---
+
+## TL;DR
+
+The **file/sync layer is rock-solid and now has automated real-mount end-to-end on all three OSes.**
+A web UI MVP + real auth landed. The product layer (the maker app: projects/inventory/BOM/preview)
+is the next big arc and the file foundation is ready for it. A long cross-OS debugging saga this
+session surfaced + fixed real bugs on actual hardware (3 Windows CfAPI receive-side bugs, a daemon
+self-unmount, a stale FUSE dependency).
 
 ---
 
 ## ✅ Confirmed working (verified live / tested, not just compiled)
 
-### The file layer is "rock-solid" — hardened + adversarially tested this session
-- **`auth-caching-security` merged to `main`** (squash PR #8); the 3 Dependabot Actions bumps
-  (#2/#3/#4) merged; `scan_ruby` fixed (brakeman 8.0.5).
-- **Postgres validated** — server runs green on PG (56/0); config-only switch via `DATABASE_URL`.
-- **GC/retention wired** — tiered policy + nightly `RetentionJob` + real S3 `delete_object`
-  (current + `pinned` versions never pruned). Closes unbounded-storage growth.
-- **CfAPI B6 polish** — pin/unpin↔hydrate, `CfUnregisterSyncRoot` lifecycle, streamed
-  page-aligned `FETCH_DATA`, O(1) ino→path index. Windows CI green. (pin/unpin + remove-library
-  are code-complete; need interactive-Explorer verification — see plan §4.)
-- **Two-device E2E suite** (`client/sync-engine/tests/two_device_e2e.rs`, 9 tests) — the
-  A→write→B→pull→edit→A→pull byte-for-byte roundtrip + delete/rename/dedup/restore/conflict/
-  lock/offline. Per-OS CI jobs (`e2e-linux`/`e2e-macos`/`e2e-windows`) green.
-- **Adversarial fault-injection harness** (`client/sync-engine/tests/fault_injection.rs`) —
-  "Trinity": injected I/O faults, mid-op crashes, randomized interleaving, concurrent edits;
-  asserts no-loss/convergence/idempotency; seeded, soak 1000×200.
-- **Two real bugs found by the harness + fixed** (`ce72f25`): (1) child-before-parent outbox
-  drain → `outbox_list_topo()`; (2) a pull hard-deleting a locally-renamed-but-unpushed node
-  (silent convergence loss) → defer-and-retry + sticky `needs_resync`→`pull_snapshot` floor.
-  Soak: **0 silent losses**. All suites green (fs-provider, integration 19/0, e2e 9/0, harness 10/0).
-- **UI polish** (`client/maker-app`) — accessible states, closable conflict modal, restore
-  confirm, pairing copy, per-OS backend label. Redone against current `index.html` (NOT a
-  `ui-rework` merge); builds clean.
-- **Loose ends cleared** — pairing codes from `SecureRandom`; `image_processing`→2.0.2;
-  deterministic GC tests (frozen clock + `sweep_orphans!` `<=` so grace:0 = sweep-now).
-  **Server suite 75/0.**
-- **New strategy docs** — `docs/research-sync-competitors.md`, `docs/feature-set-and-workflows.md`.
+### Automated real-mount E2E on all three OSes (the headline this session)
+Every OS exercises a real kernel mount + A↔B byte-for-byte (create/edit/delete/rename/nested/
+multi-chunk) automatically in `nightly.yml`:
+- **Linux FUSE** — `two-device-fuse-linux` ✅ green. (Fixed this session: `fuser` 0.14→0.17 upgrade
+  + the real bug — `run_until_unmounted` used `umount_and_join()` [unmounts immediately in 0.17]
+  instead of `join()` [wait-only]. See `[[linux-fuse-mount]]` memory.)
+- **Windows CfAPI** — `two-device-cfapi-windows` ✅ green. (Fixed this session: 3 receive-side bugs
+  — empty-dir enumeration `0x8007017C`, create-materialization parent-placeholders, delete/rename
+  removal + echo-guard. See `[[cfapi-receive-side]]` memory + `docs/plan-windows-cfapi-migration.md`.)
+- **macOS WebDAV** — `two-device-webdav-macos` ✅ green (runs on the interactive mac runner; boots
+  its own `STORAGE_BACKEND=local` server).
+- **Cross-machine 3-OS** — `cross-os-e2e.yml` (Win push→Mac pull→Linux edit→Mac+Win pull). Wired;
+  **being verified now** — known risk: the macOS runner reaching the shared deployed server
+  `192.168.1.95` (the per-OS mac test uses its own local server; cross-os needs all 3 on ONE server).
+- Single-mount conformance also green: rclone⇄WebDAV (0 diff), fsx⇄FUSE (100k ops), CfAPI 24-file.
 
-### From the prior arcs (still green)
-- **Server deployed via Kamal** (Unraid VM `192.168.1.95`, SeaweedFS chunks); `/up` 200.
-- **Cross-OS mount + sync**: macOS WebDAV, Linux FUSE, Windows CfAPI (default). Conformance
-  clean ×3 OS (fsx 100k/0, rclone byte-perfect, CfAPI byte-for-byte).
-- **Self-hosted CI** (macOS/Linux/Windows runners; Windows interactive for CfAPI).
+### Sync engine / file layer
+- **`fuser` 0.17** across `fs-fuse`+`sync-engine`; full per-PR build matrix green on `main`.
+- **GC/retention wired** — `Sync::RetentionPolicy` (keep_all self-host / tiered managed; current +
+  `pinned` never pruned), `RetentionJob` (nightly), real S3 `delete_object` in `sweep_orphans!`.
+- **Selective sync** — per-device subtree subscriptions + a client-side proactive-hydration gate
+  (server tree stays complete; on-demand open still hydrates out-of-scope files). API on the
+  provider/engine; no app UI yet.
+- **Progressive/range hydration** — `hydrate_range` fetches only chunks overlapping a read; write-open
+  still full-hydrates.
+- **Bandwidth controls** — `ThrottledChunkIO` token-bucket up/down caps (config via `DaemonConfig`).
+- **Adversarial fault harness** (`fault_injection.rs`) — found + fixed 2 changelog ordering bugs
+  (topological outbox drain; defer-and-retry + `needs_resync`→`pull_snapshot` floor). 0 silent losses
+  under 1000×200 soak. See `[[sync-ordering-bugs]]`.
+- **Stress/concurrency** (`concurrency_load.rs`, up to 50 devices) + **multi-filetype conformance**
+  (`multifiletype_conformance.rs`, 15 types) — no corruption/loss/torn manifests under load.
+- **Torn-write safety CONFIRMED** — `Sync::Commit.finalize` is one transaction; partial uploads are
+  invisible (no corrupt state). `docs/torn-writes-and-batching.md`.
+- **Postgres** validated (config-only via `DATABASE_URL`, 56/0). `STORAGE_BACKEND=local` added (a
+  filesystem chunk store with HMAC-signed HTTP presigned URLs — for single-box testing/simple
+  self-host; routes bytes through Rails, so NOT a production-scale path — s3/R2 stays that).
+
+### Server + web (Rails)
+- **Real auth (Rails 8 built-in)** — signup → email-confirm → login/logout → password reset, `Session`
+  model (cookie + digest), OmniAuth seam (inert until configured). Replaced the web UI placeholder.
+  Device-token + `DevicePairing` bootstrap untouched (auth sits in front). **Decision rationale +
+  the OAuth-linking security constraint: `[[auth-decision]]` memory.**
+- **Web UI MVP** (`client/maker-app` is the Tauri app; the *web* UI is server-rendered Rails) —
+  file browser: upload (browser SHA-256 → presigned PUT → `Sync::Commit`), download, inline view
+  (images/text), soft-delete. **Trash/undelete** view + restore. Bytes stay off Rails (presigned).
+- **Security review** done on the new auth/web surface: 1 HIGH (OAuth account-takeover via unverified
+  email-linking) **fixed**; session-fixation/cookies/tokens/CSRF/IDOR/blob-HMAC all sound. brakeman 0.
+- Server suite **144/0**. Deployed via Kamal (Unraid VM `192.168.1.95`, SeaweedFS).
 
 ---
 
 ## ⛔ Blockers / known gaps
 
-1. **FSKit (native macOS mount) — blocked on a PAID Apple Developer membership ($99/yr).** Code
-   complete + proven to pass the FSKit delegate handshake, but the extension can't gain residency
-   without a paid FSKit provisioning profile. No $0 path. Code on `worktree-agent-a1e15f52cc45cd0bf`;
-   evidence in `client/fs-fskit/BUILD.md` §6b. macOS uses WebDAV meanwhile (fully working).
-2. **The live CfAPI net doesn't gate per-PR.** `windows-smoke`/`cfapi-conformance` are
-   `continue-on-error` + on-demand (need the interactive Windows session). Run `target=cfapi`/
-   `cfapi-conf` or nightly to exercise the live write path; a per-PR run only builds it.
-3. **`maker-app` (Tauri) isn't built by CI on Windows.** A `cargo check -p maker-app` Windows
-   step would close it.
-4. **CfAPI pin/unpin + remove-library need interactive-Explorer verification** (code-complete).
-5. **Postgres: managed-deploy specifics unproven** — TLS sslmode, pooler in session/transaction
-   mode (not statement — `FOR UPDATE`), concurrent-commit load test, Solid Queue/Cache/Cable
-   still on SQLite. Local validation is done.
+1. **Cross-OS 3-machine test (`cross-os-e2e.yml`) — macOS→shared-server reachability.** All 3
+   real-mounts now hold, but the cross-machine handoff needs all three runners hitting ONE shared
+   server (`192.168.1.95`). The mac runner historically couldn't route there. (Being verified now;
+   if it blocks, the fix is mac→server routing or pointing all 3 at a reachable `server_url`.)
+2. **FSKit (native macOS mount) — blocked on a PAID Apple Developer membership ($99/yr).** Code
+   complete; macOS uses WebDAV meanwhile (fully working). `client/fs-fskit/BUILD.md` §6b.
+3. **macOS real-mount is interactive-runner-only** (native `mount_webdav` needs a desktop session).
+   The mac runner must run interactively (Login Item / Aqua LaunchAgent), like the Windows CfAPI runner.
+4. **`maker-app` (Tauri) isn't built by CI on Windows** — a `cargo check -p maker-app` Windows step
+   would close it.
+5. **The live CfAPI/mount nets don't gate per-PR** — `two-device-*`, `windows-smoke`, `cfapi-conformance`
+   are nightly/on-demand (need interactive runners). Per-PR runs only build.
+6. **Managed-Postgres specifics unproven** — TLS sslmode, session/transaction pooler (NOT statement —
+   `FOR UPDATE`), concurrent-commit load test, whether Solid Queue/Cache/Cable move off SQLite.
+7. **CfAPI pin/unpin + remove-library** need interactive-Explorer verification (code-complete).
+
+### Parked follow-ups (small, non-blocking)
+- **Orphaned-chunk reaper** — chunks from a never-finalized commit leak (no DB row → GC can't see them).
+  Matters for managed R2 cost. (A task chip was filed; `docs/torn-writes-and-batching.md` §4.)
+- **Windows `Get-FileHash` flake** — the CfAPI two-device edit-readback occasionally hits a file-sharing
+  lock; add a read-retry in `two-device-cfapi.ps1`.
+- **macOS multi-chunk hydrate timeout** — bumped to 300s; if it still flakes, investigate WebDAV
+  hydration latency vs. the budget.
+- **Change-batching (debounce)** — optional 2–3s outbox debounce for big CAD autosaves (research §3).
 
 ---
 
 ## ▶️ Next steps (rough priority)
 
-1. **Real OAuth/OIDC email verification** (CLAUDE.md §12 step 5) — pairing + device-token stays
-   underneath; proves email ownership at bootstrap.
-2. **Maker app layer** (§12 step 9) — projects / inventory / BOM / preview, referencing files by
-   `node_id`. The file layer is ready; the gap doc confirms preview/inventory/BOM are *unbuilt
-   product surface, not file-system limits*. Suggested first slice: **Projects** (uses the file
-   layer immediately). `image_processing` 2.0 is in place for preview/thumbnails.
-3. **Open file-layer items (optional, non-correctness)** — **selective sync** (research #2) and
-   **at-rest chunk encryption** (#3). Both fit the chunk/manifest/changelog model; they shape the
-   maker/SaaS story but don't block building on top.
-4. **CI hardening** — `cargo check -p maker-app` on Windows; consider a gating live-CfAPI path.
-5. **FSKit** — finish when a paid Apple membership is available (code ready).
+1. **The maker app layer** (`CLAUDE.md` §12 step 9) — the actual product: **Projects → Inventory →
+   BOM → preview**, referencing files by `node_id`. Separate Rails concern from sync. The file layer
+   is ready (the gap doc confirms preview/inventory/BOM are *unbuilt product surface, not file-system
+   limits*). **Suggested first slice: Projects** (exercises the file layer immediately). `image_processing`
+   2.0 is in place for preview/thumbnails. Brainstorm scope before building (same Rails app vs separate;
+   web vs Tauri surface).
+2. **Parity roadmap** (`docs/parity-roadmap.md`, ordered): auth baseline ✅ done → **selective sync UI**
+   (engine done, needs app surface) → trash UX ✅ → progressive hydration ✅ → bandwidth ✅ →
+   **OAuth/OIDC layer** on the seam → **sharing/multi-user** (the big product fork) → **encryption (LAST,
+   deliberately — keeps the other features debuggable against plaintext)**.
+3. **R2 migration** — `docs/r2-migration.md` is a config-only plan + a latency harness
+   (`examples/chunk_latency.rs`); needs Cloudflare creds for the 3 live checks (presigned roundtrip,
+   latency numbers, browser CORS). Flip `CHUNK_REGION` to `auto` for R2.
+4. **CI hardening** — `cargo check -p maker-app` on Windows; make the mac/Windows runners durably
+   interactive (auto-login) so the real-mount nets run reliably.
+5. **FSKit** — finish when a paid Apple membership is available.
 
 ---
 
-## Branch map
+## Working notes for the next agent
+- **Self-hosted CI is the only way to verify real mounts** (mac/Windows need interactive sessions;
+  `fuser` only links on Linux). The Mac dev box CANNOT build `fuser`/fs-fuse. Trigger nightly /
+  `cross-os-e2e.yml` / `rust-client.yml -f target=...` and read JOB LOGS (jobs are `continue-on-error`
+  and leg scripts `exit 0` on BLOCKED — the green checkmark can hide a skipped test).
+- **`nightly.yml`** has the heavy/real-mount jobs; concurrency is keyed on `event_name` so a manual
+  dispatch and the cron don't cancel each other.
+- **Run the app / demos**: `CLAUDE.md` §13 cheatsheet. Server: `STORAGE_BACKEND=memory bin/rails server`.
+- **Regression nets** to keep green: server `bin/rails test` (144), `fs-provider` hermetic suites,
+  `sync-engine` `integration`/`two_device_e2e`/`fault_injection`/`concurrency_load`/
+  `multifiletype_conformance`, the FUSE smoke examples.
 
+## Branch map
 | Branch | What | State |
 |---|---|---|
-| `main` | Mainline — all work merged (HEAD `2e9df94`) | pushed, current |
-| `worktree-agent-a1e15f52cc45cd0bf` | Canonical FSKit port (code + findings) | pushed, reference |
-| `fskit-signing-personal-team` | FSKit signing-experiment findings | pushed, reference |
-| `ui-rework` | OLD divergent UI reimpl — **superseded** by the merged UI polish; reference only | pushed |
+| `main` | Mainline — all work merged (HEAD `bab90bb`) | pushed, current |
+| `worktree-agent-a1e15f52cc45cd0bf` | Canonical FSKit port (code + findings) | reference |
+| `fskit-signing-personal-team` | FSKit signing-experiment findings | reference |
+| `ui-rework` | OLD divergent UI reimpl — superseded; reference only | reference |
 | `auth-caching-security`, `sync-engine-foundation`, `mac-webdav-mount`, `client-juicefs-mount-spike` | historical | — |
 
+(All this-session feature/fix branches were merged to `main` and pruned.)
+
 ## Key docs
-- `docs/STATUS.md` — detailed running status. `CLAUDE.md` — architecture.
-- `docs/research-sync-competitors.md` — competitor comparison + ranked gaps.
-- `docs/feature-set-and-workflows.md` — supported vs gap workflows.
+- `docs/STATUS.md` — detailed running status. `CLAUDE.md` — architecture (+ §12 plan).
+- `docs/parity-roadmap.md` — sequenced roadmap (auth/encryption/sharing/etc.).
+- `docs/research-sync-competitors.md` — vs Dropbox/Drive/Nextcloud/oCIS/Seafile/Syncthing + gaps.
+- `docs/feature-set-and-workflows.md` — supported vs gap workflows (FILE-LAYER vs MAKER-APP).
+- `docs/torn-writes-and-batching.md` — commit atomicity (we're safe) + batching analysis.
+- `docs/r2-migration.md` — R2 migration plan + latency harness.
 - `docs/plan-windows-cfapi-migration.md` — CfAPI design + remaining B6 verification.
 - `docs/plan-macos-fskit-migration.md` + `client/fs-fskit/BUILD.md` §6b — FSKit + paid-membership blocker.
-- `docs/DEPLOY.md` — Kamal redeploy. `ci/runners/README.md` — self-hosted runners.
+- `docs/DEPLOY.md` — Kamal redeploy. `ci/runners/README.md` — self-hosted runners (interactive + /dev/fuse).

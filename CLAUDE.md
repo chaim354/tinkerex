@@ -227,6 +227,20 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > 5), then the **maker app layer** (§12 step 9); open file-layer items = selective sync + at-rest
 > encryption (non-correctness).
 
+> **Automated cross-OS real-mount E2E + web UI + real auth (2026-06-15, HEAD `bab90bb`):** a large
+> batch landed on `main`. **Automated real-mount A↔B end-to-end is now green on all three OSes**
+> (`nightly.yml`: `two-device-fuse-linux`, `two-device-cfapi-windows`, `two-device-webdav-macos`) —
+> a deep cross-OS debugging arc surfaced + fixed real on-hardware bugs: Windows CfAPI **3 receive-side
+> bugs**, and Linux FUSE (**`fuser` 0.14→0.17** + the real one: `run_until_unmounted` must `join()`,
+> not `umount_and_join()` which self-unmounts in 0.17). Also: **real auth** (Rails 8 built-in:
+> signup/confirm/login/reset + Session + OmniAuth seam, replacing the web placeholder; 1 HIGH OAuth
+> takeover fixed); a **web UI MVP** (file browser upload/download/view/delete + trash/undelete, bytes
+> off Rails); **selective sync**, **progressive/range hydration**, **client bandwidth controls**;
+> stress/concurrency + 15-filetype conformance (no corruption); **torn-write safety confirmed**
+> (finalize is atomic); `STORAGE_BACKEND=local` test backend. New docs: `docs/parity-roadmap.md`,
+> `docs/torn-writes-and-batching.md`, `docs/r2-migration.md`. Server 144/0. **Next: the maker app
+> layer (§12 step 9).** Full takeover notes: `docs/HANDOFF.md`.
+
 **Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
   refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog

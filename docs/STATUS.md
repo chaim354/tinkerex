@@ -1,6 +1,32 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-14 (auth-caching-security merged to main; file-layer hardening batch + two sync bugs fixed)
+**Updated:** 2026-06-15 (automated real-mount E2E green on all 3 OSes; web UI + real auth; cross-OS bug-fix saga)
+
+## Latest (2026-06-15): automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
+
+A large batch landed on `main`, and a deep cross-OS debugging arc got **automated real-mount A↔B
+end-to-end green on all three OSes** (Linux FUSE, Windows CfAPI, macOS WebDAV) in `nightly.yml`.
+
+- **Cross-OS real-mount E2E green (all 3):** the saga surfaced + fixed real on-hardware bugs:
+  Windows CfAPI **3 receive-side bugs** (empty-dir enum `0x8007017C`; create-materialization
+  parent-placeholders; delete/rename removal + echo-guard); Linux FUSE **`fuser` 0.14→0.17 upgrade**
+  + the actual bug (`run_until_unmounted` used `umount_and_join()` which unmounts immediately in 0.17,
+  vs `join()` wait-only). Long chain of eliminated red herrings (AppArmor, /dev/fuse, fusermount3,
+  module, privilege) — `bindfs` held while ours didn't → proved it was our code. Regression smokes kept.
+- **Real auth (Rails 8 built-in):** signup/confirm/login/reset + `Session` + OmniAuth seam; replaced
+  the web UI placeholder; device-token/pairing untouched. Security review: 1 HIGH (OAuth email-link
+  takeover) fixed; rest sound; brakeman 0.
+- **Web UI MVP:** server-rendered file browser (upload via presigned PUT + `Sync::Commit`, download,
+  inline view, soft-delete) + **trash/undelete**. Bytes stay off Rails.
+- **Sync features:** **selective sync** (subtree subscriptions + hydration gate), **progressive/range
+  hydration** (`hydrate_range`), **client bandwidth controls** (`ThrottledChunkIO`).
+- **Hardening + research:** stress/concurrency (≤50 devices) + 15-filetype conformance (no corruption);
+  **torn-write safety confirmed** (finalize is one transaction); `STORAGE_BACKEND=local` test backend;
+  `image_processing`→2.0; `SecureRandom` pairing codes. New docs: `parity-roadmap.md`,
+  `torn-writes-and-batching.md`, `r2-migration.md` (config-only R2 plan + latency harness).
+- **Server 144/0.** Cross-machine `cross-os-e2e.yml` wired (gated on mac→shared-server reachability).
+- **Next:** the maker app layer (Projects→Inventory→BOM→preview); then parity roadmap
+  (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
 
 ## Latest (2026-06-14): `auth-caching-security` merged to main + file layer hardened to "rock-solid"
 
