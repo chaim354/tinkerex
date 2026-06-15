@@ -1,0 +1,39 @@
+<% content_for :title, "Trash — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Trash</h1>
+  <%= link_to "← Back to Files", files_path, class: "linkbtn" %>
+</div>
+
+<p class="muted">Deleted files are kept (along with their versions) and can be restored.</p>
+
+<% if @nodes.empty? %>
+  <p class="empty muted">Trash is empty.</p>
+<% else %>
+  <table class="files">
+    <thead>
+      <tr><th>Name</th><th>Kind</th><th class="num">Size</th><th>Deleted</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% @nodes.each do |node| %>
+        <% version = node.file? ? @versions_by_node[node.current_version_id] : nil %>
+        <tr>
+          <td>
+            <% if node.dir? %>
+              <span class="dir">📁 <%= node.name %></span>
+            <% else %>
+              <%= node.name %>
+            <% end %>
+          </td>
+          <td class="muted"><%= node.kind %></td>
+          <td class="num muted"><%= version ? number_to_human_size(version.size) : "—" %></td>
+          <td class="muted"><%= node.updated_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
+          <td class="row-actions">
+            <%= button_to "Restore", restore_trash_path(node.node_id), method: :post,
+                  form: { data: { turbo_confirm: "Restore #{node.name}?" } }, class: "linkbtn" %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+<% end %>
