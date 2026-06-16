@@ -31,7 +31,7 @@ module V1
         post   "/v1/maker/inventory_items/#{@item}/adjust", params: { delta: 1, reason: "restocked" },
                as: :json, headers: auth(@b)
         assert_response :not_found
-        get    "/v1/maker/inventory_items/#{@item}/transactions", headers: auth(@b);   assert_response :not_found
+        get "/v1/maker/inventory_items/#{@item}/transactions", headers: auth(@b);   assert_response :not_found
       end
 
       test "B's inventory index is empty" do
