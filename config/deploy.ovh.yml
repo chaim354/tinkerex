@@ -1,0 +1,41 @@
+# Kamal destination overlay for the OVH prod-like TEST box (deep-merged over deploy.yml).
+#   Deploy with:  kamal deploy -d ovh
+#
+# Same image (ghcr.io/chaim354/tinkerex), same Rails app as the Unraid deploy — this only
+# overrides the target server, its ssh user, and the chunk-storage backend (Cloudflare R2
+# instead of the Unraid SeaweedFS box). Bytes still move client <-> R2 via presigned URLs;
+# the Rails box only signs, so it needn't reach R2.
+#
+# BOTH R2 credentials (Access Key ID + Secret) are kept OUT of git — sourced from the
+# shell via .kamal/secrets-common, never committed. Only the non-secret endpoint/bucket/
+# region are in clear. Before deploying:
+#   export CHUNK_ACCESS_KEY_ID=<R2 token Access Key ID>
+#   export CHUNK_SECRET_ACCESS_KEY=<R2 token Secret Access Key>
+#   export KAMAL_REGISTRY_PASSWORD=<github packages token>
+
+servers:
+  web:
+    - 15.204.216.249
+
+ssh:
+  user: ubuntu
+
+# Build natively on the OVH box (it's amd64) rather than QEMU-emulating amd64 on the arm64
+# Mac — much faster + more reliable. The box already has docker + buildx.
+builder:
+  remote: ssh://ubuntu@15.204.216.249
+  arch: amd64
+
+env:
+  # No env.secret block here on purpose: a destination overlay REPLACES (not unions) the
+  # base env.secret list, so re-declaring it risks dropping RAILS_MASTER_KEY /
+  # CHUNK_SECRET_ACCESS_KEY and breaking boot ("Missing secret_key_base"). We inherit the
+  # base secrets and override only the chunk-store CLEAR vars. The R2 Access Key ID is
+  # pulled from the shell via ERB (no literal credential in git); the real secret
+  # (CHUNK_SECRET_ACCESS_KEY) stays in the inherited base env.secret, also shell-sourced.
+  clear:
+    STORAGE_BACKEND: s3
+    CHUNK_ENDPOINT: https://d1ea7ae1da7f90fb8edd168ab7928e7d.r2.cloudflarestorage.com
+    CHUNK_BUCKET: maker-chunks-prod
+    CHUNK_REGION: auto
+    CHUNK_ACCESS_KEY_ID: <%= ENV["CHUNK_ACCESS_KEY_ID"] %>

@@ -1,8 +1,8 @@
 # Name of your application. Used to uniquely configure containers.
 service: tinkerex
 
-# Name of the container image (use your-user/app-name on external registries).
-image: tinkerex
+# Name of the container image. On ghcr this is <github-user>/<app> → ghcr.io/chaim354/tinkerex.
+image: chaim354/tinkerex
 
 # Deploy to these servers.
 servers:
@@ -28,20 +28,14 @@ ssh:
 #   ssl: true
 #   host: app.example.com
 
-# Where you keep your container images. We run Kamal *on the VM* and push to a local
-# registry:2 container on the same box — no cloud account, no sudo.
-#
-# Why 127.0.0.1 (not localhost): Kamal treats a `^localhost` registry as "local" and
-# opens an SSH reverse-tunnel on each server bound to the registry port — which
-# collides with the registry already listening there when builder == server (single
-# host). Using 127.0.0.1 skips that tunnel, and Docker still treats 127.0.0.1 as
-# insecure-OK automatically. A non-localhost registry requires a username, so the
-# registry runs with htpasswd auth (see docs/DEPLOY.md). Paired with `builder.driver:
-# docker` below so the build runs in the host dockerd (which can reach 127.0.0.1:5000)
-# rather than an isolated buildkit container (which cannot).
+# Shared container registry: GitHub Container Registry (ghcr.io). The Mac builds the
+# image once and pushes here; both servers (Unraid + OVH) pull the same image. Auth is a
+# GitHub token with `packages` scope, sourced from the shell via .kamal/secrets (never in
+# git). The image package inherits the repo's visibility (private) — servers pull with the
+# same token (read:packages). See docs/DEPLOY.md.
 registry:
-  server: 127.0.0.1:5000
-  username: kamal
+  server: ghcr.io
+  username: chaim354
   password:
     - KAMAL_REGISTRY_PASSWORD
 
@@ -98,11 +92,11 @@ volumes:
 asset_path: /rails/public/assets
 
 
-# Configure the image builder.
+# Configure the image builder. Both target servers are amd64; the Mac control machine is
+# arm64, so Kamal uses buildx to cross-build amd64 (QEMU emulation) and push to ghcr.
+# (If emulated builds are too slow, set `remote: ssh://ubuntu@15.204.216.249` to build
+# natively on the amd64 OVH box.)
 builder:
-  # Build in the host dockerd (not an isolated buildkit container) so the build can
-  # reach the 127.0.0.1:5000 registry on this same box. See the registry note above.
-  driver: docker
   arch: amd64
 
   # # Build image via remote server (useful for faster amd64 builds on arm64 computers)
