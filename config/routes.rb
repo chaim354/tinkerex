@@ -92,7 +92,9 @@ Rails.application.routes.draw do
     get "locks", to: "locks#index"
 
     namespace :maker do
-      resources :items
+      resources :items do
+        resources :file_attachments, only: %i[create destroy], shallow: true
+      end
     end
 
     # hydration
