@@ -177,6 +177,10 @@ pub struct SyncNode {
     /// time — is what every device sees. On **push** it's the local node's mtime; on
     /// **pull** it's the source device's mtime, applied verbatim by [`SqliteProvider::apply_remote`].
     pub mtime: i64,
+    /// For `kind == Symlink`: the link target bytes (a path), synced verbatim so the link
+    /// resolves identically on every device. `None` for files and dirs. This is a symlink's
+    /// entire content — there's no manifest/chunks for a link (the target is tiny inline data).
+    pub symlink_target: Option<Vec<u8>>,
 }
 
 /// Options for [`SqliteProvider::search`]. `limit`/`offset` paginate the (path-ordered)
@@ -709,7 +713,8 @@ impl SqliteProvider {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT n.node_id, n.name, n.kind, n.manifest_id,
-                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime
+                    CASE WHEN n.parent_ino = ?1 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime,
+                    n.symlink_target
              FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
              WHERE n.ino != ?1
              ORDER BY n.ino",
@@ -724,11 +729,12 @@ impl SqliteProvider {
                 r.get::<_, Option<String>>(5)?,
                 r.get::<_, Option<i64>>(6)?,
                 r.get::<_, i64>(7)?,
+                r.get::<_, Option<Vec<u8>>>(8)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime) = row?;
+            let (node_id, name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime, symlink_target) = row?;
             let kind = Kind::from_str(&kind_s);
             let chunks = match &manifest_id {
                 Some(m) => Self::manifest_rows(&conn, m)?,
@@ -744,6 +750,7 @@ impl SqliteProvider {
                 version_id,
                 mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
                 mtime,
+                symlink_target,
             });
         }
         Ok(out)
@@ -847,7 +854,12 @@ impl SqliteProvider {
                 }
             }
         }
-        let size: i64 = node.chunks.iter().map(|c| c.length as i64).sum();
+        // A symlink's "size" is its target length (it has no chunks); a file's is the sum of
+        // its chunk lengths.
+        let size: i64 = match (node.kind, &node.symlink_target) {
+            (Kind::Symlink, Some(t)) => t.len() as i64,
+            _ => node.chunks.iter().map(|c| c.length as i64).sum(),
+        };
         // Look up the prior row (ino + manifest) so we can both reuse the inode on update
         // and decide whether the content actually changed (→ cache invalidation).
         let prior: Option<(i64, Option<String>, i64, String)> = conn
@@ -901,15 +913,15 @@ impl SqliteProvider {
         )?;
         let ino = if let Some((ino, _, _, _)) = &prior {
             conn.execute(
-                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8 WHERE node_id=?9",
-                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64, node.node_id],
+                "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8, symlink_target=?10 WHERE node_id=?9",
+                params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64, node.node_id, node.symlink_target],
             )?;
             *ino as u64
         } else {
             conn.execute(
-                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id, mode)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64],
+                "INSERT INTO nodes(parent_ino, name, kind, node_id, manifest_id, size, mtime, version_id, mode, symlink_target)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![parent_ino, node.name, node.kind.as_str(), node.node_id, node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64, node.symlink_target],
             )?;
             conn.last_insert_rowid() as u64
         };
@@ -1357,7 +1369,8 @@ impl SqliteProvider {
         let row = conn
             .query_row(
                 "SELECT n.name, n.kind, n.manifest_id,
-                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime
+                        CASE WHEN n.parent_ino = ?2 THEN NULL ELSE p.node_id END, n.version_id, n.mode, n.mtime,
+                        n.symlink_target
                  FROM nodes n LEFT JOIN nodes p ON p.ino = n.parent_ino
                  WHERE n.node_id = ?1",
                 params![node_id, ROOT_INO as i64],
@@ -1370,11 +1383,12 @@ impl SqliteProvider {
                         r.get::<_, Option<String>>(4)?,
                         r.get::<_, Option<i64>>(5)?,
                         r.get::<_, i64>(6)?,
+                        r.get::<_, Option<Vec<u8>>>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let (name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime) = match row {
+        let (name, kind_s, manifest_id, parent_node_id, version_id, mode, mtime, symlink_target) = match row {
             Some(r) => r,
             None => return Ok(None),
         };
@@ -1393,6 +1407,7 @@ impl SqliteProvider {
             version_id,
             mode: mode.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
             mtime,
+            symlink_target,
         }))
     }
 
@@ -2359,6 +2374,7 @@ mod tests {
             version_id: Some("vR".into()),
             mode: 0o644,
             mtime: 0,
+            symlink_target: None,
         };
         let outcome = p.apply_remote(&remote).unwrap();
 
@@ -2382,6 +2398,7 @@ mod tests {
             version_id: Some("v1".into()),
             mode: 0o644,
             mtime: 0,
+            symlink_target: None,
         };
         p.apply_remote(&pulled).unwrap();
         p.outbox_clear("remote-S").unwrap(); // simulate it being a clean (non-local) row
@@ -2415,6 +2432,7 @@ mod tests {
             version_id: Some("v1".into()),
             mode: 0o644,
             mtime: 0,
+            symlink_target: None,
         };
         let o_insert = p.apply_remote(&mk("R", &d1_id, "a.txt")).unwrap();
         assert!(o_insert.inserted && !o_insert.moved, "INSERT is not a move");

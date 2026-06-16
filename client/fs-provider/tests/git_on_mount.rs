@@ -58,3 +58,49 @@ fn symlink_duplicate_name_is_already_exists() {
     p.symlink(ROOT, "link", b"a").unwrap();
     assert!(matches!(p.symlink(ROOT, "link", b"b"), Err(FsError::AlreadyExists)));
 }
+
+// ---------------------------------------------------------------------------
+// Symlinks must round-trip through sync (export_tree / sync_node / apply_remote)
+// or a checked-out symlink would vanish (or arrive empty) on the other device.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn symlink_round_trips_through_export_and_apply() {
+    let (a, b, _store) = shared_store_pair();
+    a.symlink(ROOT, "link", b"../objects/pack").unwrap();
+
+    // export_tree carries the kind + target; apply on B reconstructs it.
+    replicate_tree(&a, &b);
+
+    let st = b.lookup(ROOT, "link").unwrap();
+    assert_eq!(st.kind, Kind::Symlink);
+    assert_eq!(b.readlink(st.ino).unwrap(), b"../objects/pack");
+}
+
+#[test]
+fn symlink_round_trips_through_sync_node_outbox() {
+    // The daemon path: a local symlink enqueues an outbox upsert; sync_node yields a
+    // SyncNode the replica applies. (sync_to drives outbox→sync_node→apply_remote.)
+    let (a, b, _store) = shared_store_pair();
+    a.symlink(ROOT, "HEAD", b"refs/heads/main").unwrap();
+
+    sync_to(&a, &[&b]);
+
+    let st = b.lookup(ROOT, "HEAD").unwrap();
+    assert_eq!(st.kind, Kind::Symlink);
+    assert_eq!(b.readlink(st.ino).unwrap(), b"refs/heads/main");
+}
+
+#[test]
+fn changing_a_symlink_target_propagates() {
+    let (a, b, _store) = shared_store_pair();
+    a.symlink(ROOT, "cur", b"v1").unwrap();
+    sync_to(&a, &[&b]);
+    // Atomic-swap a symlink the way tooling does: new temp link, rename over.
+    a.symlink(ROOT, "cur.tmp", b"v2").unwrap();
+    a.rename(ROOT, "cur.tmp", ROOT, "cur").unwrap();
+    sync_to(&a, &[&b]);
+
+    let st = b.lookup(ROOT, "cur").unwrap();
+    assert_eq!(b.readlink(st.ino).unwrap(), b"v2");
+}
