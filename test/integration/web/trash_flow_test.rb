@@ -13,7 +13,7 @@ module Web
     def sign_in(email = "web-trash@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post login_path, params: { email:, password: PASSWORD }
+      post user_session_path, params: { user: { email:, password: PASSWORD } }
       user
     end
 
@@ -34,7 +34,7 @@ module Web
 
     test "requires login" do
       get trash_index_path
-      assert_redirected_to login_path
+      assert_redirected_to new_user_session_path
     end
 
     test "deleted file appears in trash, not in the file list" do
@@ -84,7 +84,7 @@ module Web
       alice_node = upload("alice-secret.txt", "alice".b)
       delete file_path(alice_node)
 
-      delete logout_path
+      delete destroy_user_session_path
       sign_in("bob-web@example.com")
 
       # Bob's trash is empty.

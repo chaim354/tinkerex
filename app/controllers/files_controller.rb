@@ -11,9 +11,7 @@
 # as the desktop client, so a web upload produces a valid content-addressed manifest +
 # immutable version with correct refcounts. No second, bytes-through-Rails write path.
 class FilesController < ApplicationController
-  include WebAuthentication
-
-  before_action :require_login!
+  before_action :authenticate_user!
 
   # A node id that doesn't belong to current_user (or doesn't exist) -> 404, never a 500
   # and never another user's data (all lookups are scoped to current_user).

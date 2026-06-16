@@ -22,7 +22,10 @@ module V1
                   "from a signed-in device (POST /v1/devices/pairing -> POST /v1/auth/pair)."
         }, status: :conflict
       end
-      user = User.create!(email:)
+      # Legacy passwordless device-token bootstrap (removed in the device-login migration).
+      # omniauth_signup relaxes Devise :validatable's password requirement for this
+      # server-side, no-password account creation path.
+      user = User.create!(email:, omniauth_signup: true)
       device = Device.register!(user:, name: device_name)
       render json: payload(user, device), status: :created
     rescue ActiveRecord::RecordInvalid => e
