@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_14_040000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000001) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -77,6 +77,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_14_040000) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_items", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "description"
+    t.boolean "favorited", default: false, null: false
+    t.text "instructions"
+    t.string "item_type", default: "other", null: false
+    t.string "origin", default: "downloaded", null: false
+    t.string "primary_node_id"
+    t.string "source_name"
+    t.string "source_url"
+    t.string "summary"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "favorited"], name: "index_maker_items_on_user_id_and_favorited"
+    t.index ["user_id", "item_type"], name: "index_maker_items_on_user_id_and_item_type"
+    t.index ["user_id", "title"], name: "index_maker_items_on_user_id_and_title"
   end
 
   create_table "manifest_chunks", force: :cascade do |t|

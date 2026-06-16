@@ -8,6 +8,7 @@ class User < ApplicationRecord
   has_many :device_pairings, dependent: :destroy
   has_many :conflicts, dependent: :destroy
   has_many :file_locks, dependent: :destroy
+  has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
   has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
