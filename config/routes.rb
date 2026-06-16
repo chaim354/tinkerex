@@ -108,6 +108,7 @@ Rails.application.routes.draw do
         end
       end
       resources :tasks, only: %i[index show create update destroy]
+      resources :projects, only: %i[index show create update destroy]
     end
 
     # hydration
