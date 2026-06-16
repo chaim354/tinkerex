@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000003) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000004) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -77,6 +77,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000003) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_file_attachments", force: :cascade do |t|
+    t.integer "attachable_id", null: false
+    t.string "attachable_type", null: false
+    t.datetime "created_at", null: false
+    t.string "label"
+    t.string "node_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "role", default: "other", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version_id"
+    t.index ["user_id", "attachable_type", "attachable_id"], name: "index_maker_file_attachments_on_attachable"
+    t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
   end
 
   create_table "maker_items", force: :cascade do |t|
