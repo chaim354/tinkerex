@@ -32,3 +32,14 @@ production:
     class: ChunkReaperJob
     queue: background
     schedule: every sunday at 5am
+
+  # Targeted pending-commit-TTL reaper — the cheap, FREQUENT complement to orphan_chunk_reaper
+  # above. It does NO bucket list (so it is not billed per request): it finds expired,
+  # never-finalized pending_commits and deletes precisely the chunk hashes their manifests
+  # uploaded, applying the SAME dedup-committed + live-pending guards. Because it is DB-only +
+  # targeted deletes, it runs HOURLY so the common abandoned-upload leak is reclaimed promptly
+  # instead of waiting up to a week for the list-based backstop.
+  pending_commit_reaper:
+    class: PendingCommitReaperJob
+    queue: background
+    schedule: every hour at minute 42
