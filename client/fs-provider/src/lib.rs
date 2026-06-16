@@ -1850,9 +1850,10 @@ impl Provider for SqliteProvider {
             //   - file  → existing directory : EISDIR
             //   - dir   → existing non-dir    : ENOTDIR
             //   - dir   → existing directory  : allowed only if the dest is empty (else ENOTEMPTY)
+            // A symlink is a non-directory (like a file) for rename purposes.
             match (src_kind, dst_kind) {
-                (Kind::File, Kind::Dir) => return Err(FsError::IsADirectory),
-                (Kind::Dir, Kind::File) => return Err(FsError::NotADirectory),
+                (Kind::File | Kind::Symlink, Kind::Dir) => return Err(FsError::IsADirectory),
+                (Kind::Dir, Kind::File | Kind::Symlink) => return Err(FsError::NotADirectory),
                 (Kind::Dir, Kind::Dir) => {
                     let kids: i64 = tx.query_row(
                         "SELECT COUNT(*) FROM nodes WHERE parent_ino = ?1",
@@ -1863,7 +1864,8 @@ impl Provider for SqliteProvider {
                         return Err(FsError::NotEmpty);
                     }
                 }
-                (Kind::File, Kind::File) => {} // plain replace (the atomic-save path)
+                // non-dir onto non-dir: plain atomic replace (the atomic-save path)
+                (Kind::File | Kind::Symlink, Kind::File | Kind::Symlink) => {}
             }
             // The displaced node is tombstoned so the deletion propagates on push
             // (otherwise other devices keep a duplicate).
@@ -1911,7 +1913,7 @@ impl Provider for SqliteProvider {
         }
         let ino = conn.last_insert_rowid() as u64;
         Self::enqueue(&conn, &node_id, "upsert")?;
-        Ok(Attr { ino, kind: Kind::Symlink, size: size as u64, mtime, mode })
+        Ok(Attr { ino, kind: Kind::Symlink, size: size as u64, mtime, atime: mtime, mode })
     }
 
     /// Read a symlink's target bytes (the `readlink(2)` path). `NotSupported` if the inode is
