@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000006) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000007) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -151,6 +151,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000006) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "name"], name: "index_maker_tags_on_user_id_and_name", unique: true
+  end
+
+  create_table "maker_tasks", force: :cascade do |t|
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.text "notes"
+    t.integer "position", default: 0, null: false
+    t.string "status", default: "todo", null: false
+    t.integer "taskable_id"
+    t.string "taskable_type"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "status"], name: "index_maker_tasks_on_user_id_and_status"
+    t.index ["user_id", "taskable_type", "taskable_id"], name: "index_maker_tasks_on_taskable"
   end
 
   create_table "manifest_chunks", force: :cascade do |t|
