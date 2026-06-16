@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_14_040000) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000007) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -77,6 +77,95 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_14_040000) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_collection_items", force: :cascade do |t|
+    t.integer "collection_id", null: false
+    t.datetime "created_at", null: false
+    t.integer "item_id", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["collection_id", "item_id"], name: "index_maker_collection_items_unique", unique: true
+    t.index ["user_id", "collection_id", "position"], name: "index_maker_collection_items_on_position"
+  end
+
+  create_table "maker_collections", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "description"
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "name"], name: "index_maker_collections_on_user_id_and_name"
+  end
+
+  create_table "maker_file_attachments", force: :cascade do |t|
+    t.integer "attachable_id", null: false
+    t.string "attachable_type", null: false
+    t.datetime "created_at", null: false
+    t.string "label"
+    t.string "node_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "role", default: "other", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version_id"
+    t.index ["user_id", "attachable_type", "attachable_id"], name: "index_maker_file_attachments_on_attachable"
+    t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
+  end
+
+  create_table "maker_items", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "description"
+    t.boolean "favorited", default: false, null: false
+    t.text "instructions"
+    t.string "item_type", default: "other", null: false
+    t.string "origin", default: "downloaded", null: false
+    t.string "primary_node_id"
+    t.string "source_name"
+    t.string "source_url"
+    t.string "summary"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "favorited"], name: "index_maker_items_on_user_id_and_favorited"
+    t.index ["user_id", "item_type"], name: "index_maker_items_on_user_id_and_item_type"
+    t.index ["user_id", "title"], name: "index_maker_items_on_user_id_and_title"
+  end
+
+  create_table "maker_taggings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "tag_id", null: false
+    t.integer "taggable_id", null: false
+    t.string "taggable_type", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["tag_id", "taggable_type", "taggable_id"], name: "index_maker_taggings_unique", unique: true
+    t.index ["user_id", "taggable_type", "taggable_id"], name: "index_maker_taggings_on_taggable"
+  end
+
+  create_table "maker_tags", force: :cascade do |t|
+    t.string "color"
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "name"], name: "index_maker_tags_on_user_id_and_name", unique: true
+  end
+
+  create_table "maker_tasks", force: :cascade do |t|
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.text "notes"
+    t.integer "position", default: 0, null: false
+    t.string "status", default: "todo", null: false
+    t.integer "taskable_id"
+    t.string "taskable_type"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "status"], name: "index_maker_tasks_on_user_id_and_status"
+    t.index ["user_id", "taskable_type", "taskable_id"], name: "index_maker_tasks_on_taskable"
   end
 
   create_table "manifest_chunks", force: :cascade do |t|

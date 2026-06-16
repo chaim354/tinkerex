@@ -94,6 +94,22 @@ Rails.application.routes.draw do
     post "nodes/:node_id/unlock", to: "nodes#unlock"
     get "locks", to: "locks#index"
 
+    namespace :maker do
+      resources :items, only: %i[index show create update destroy] do
+        resources :file_attachments, only: %i[create destroy], shallow: true
+        resources :taggings, only: %i[create destroy], shallow: true
+      end
+      resources :tags, only: %i[index create destroy]
+      resources :collections, only: %i[index create update destroy] do
+        member do
+          get  "items"
+          post "items", action: :add_item
+          delete "items/:item_id", action: :remove_item
+        end
+      end
+      resources :tasks, only: %i[index show create update destroy]
+    end
+
     # hydration
     post "chunks/download", to: "chunks#download"
 
