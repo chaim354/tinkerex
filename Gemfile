@@ -24,6 +24,14 @@ gem "jbuilder"
 # Powers the real web auth (User#password digest + Session model). bcrypt is MIT (CLAUDE.md §9).
 gem "bcrypt", "~> 3.1.7"
 
+# Human-identity authentication (web login + device-login enrollment). Devise is MIT
+# (CLAUDE.md §9). It governs ONLY the human layer; the v1 device-token machinery is
+# untouched. OmniAuth keeps the OAuth/OIDC seam open (also MIT).
+gem "devise", "~> 4.9"
+gem "omniauth", "~> 2.1"
+gem "omniauth-rails_csrf_protection", "~> 1.0"
+gem "omniauth_openid_connect", "~> 0.8", require: false
+
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 
