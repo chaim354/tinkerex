@@ -20,11 +20,11 @@ servers:
 ssh:
   user: ubuntu
 
-# Build natively on the OVH box (it's amd64) rather than QEMU-emulating amd64 on the arm64
-# Mac — much faster + more reliable. The box already has docker + buildx.
-builder:
-  remote: ssh://ubuntu@15.204.216.249
-  arch: amd64
+# No builder override: this overlay inherits `builder: arch: amd64` from deploy.yml, so the
+# image is cross-built ONCE on the Mac (QEMU, ~84 s cold / cache-fast incremental) and pushed
+# to ghcr. Both this OVH box and the Unraid box pull that same amd64 image — no build, no repo
+# checkout, and no source transfer to either server. (Reverting to an on-box build is just
+# `builder: { remote: ssh://ubuntu@15.204.216.249, arch: amd64 }` here.)
 
 env:
   # No env.secret block here on purpose: a destination overlay REPLACES (not unions) the
