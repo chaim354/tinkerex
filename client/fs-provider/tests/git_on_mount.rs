@@ -104,3 +104,74 @@ fn changing_a_symlink_target_propagates() {
     let st = b.lookup(ROOT, "cur").unwrap();
     assert_eq!(b.readlink(st.ino).unwrap(), b"v2");
 }
+
+// ---------------------------------------------------------------------------
+// Git-critical POSIX operations that AREN'T about symlinks — verified to hold
+// against the model so we have an explicit per-op signal, not an assumption.
+// ---------------------------------------------------------------------------
+
+/// `.git/index.lock` → `.git/index`: git writes its new index to a lock file then
+/// atomically renames it over the live index. This is THE operation that breaks atomic
+/// saves if rename-over-existing isn't POSIX-replace. (Already supported — this is the
+/// regression guard for the git case specifically.)
+#[test]
+fn index_lock_atomic_rename_replaces_the_index() {
+    let p = provider();
+    let git = p.mkdir(ROOT, ".git").unwrap().ino;
+    write_file(&p, git, "index", b"old index v1");
+
+    // git writes the next index to index.lock, then renames it over index.
+    write_file(&p, git, "index.lock", b"new index v2");
+    p.rename(git, "index.lock", git, "index").unwrap();
+
+    // index now holds the new content; the lock name is gone (consumed by the rename).
+    let idx = p.lookup(git, "index").unwrap();
+    assert_eq!(read_all(&p, idx.ino), b"new index v2");
+    assert!(matches!(p.lookup(git, "index.lock"), Err(FsError::NotFound)));
+}
+
+/// Git takes a lock by creating `*.lock` with O_EXCL — a second `create` of the same name
+/// must fail (EEXIST), which is how git detects a concurrent operation. If create silently
+/// succeeded/overwrote, two gits could corrupt the repo.
+#[test]
+fn lockfile_create_is_exclusive() {
+    let p = provider();
+    let git = p.mkdir(ROOT, ".git").unwrap().ino;
+    p.create(git, "config.lock").unwrap();
+    // O_EXCL semantics: the second create must report EEXIST.
+    assert!(matches!(p.create(git, "config.lock"), Err(FsError::AlreadyExists)));
+}
+
+/// Git hooks and 100755-mode blobs must keep their executable bit on checkout, and it must
+/// propagate across devices (the mode field already syncs — this pins the git case).
+#[test]
+fn executable_bit_on_a_hook_survives_sync() {
+    let (a, b, _store) = shared_store_pair();
+    let hooks = a.mkdir(ROOT, "hooks").unwrap().ino;
+    let f = a.create(hooks, "pre-commit").unwrap();
+    a.write(f.ino, 0, b"#!/bin/sh\nexit 0\n").unwrap();
+    a.flush(f.ino).unwrap();
+    a.set_mode(f.ino, 0o755).unwrap();
+
+    sync_to(&a, &[&b]);
+
+    let dir = b.lookup(ROOT, "hooks").unwrap();
+    let hook = b.lookup(dir.ino, "pre-commit").unwrap();
+    assert_eq!(hook.mode & 0o111, 0o111, "executable bits must survive sync");
+}
+
+/// A git "object" directory layout: many small files in 2-char fanout dirs. Verifies the
+/// nested mkdir + small-file create/read path (the bulk of what `git add`/`commit` does).
+#[test]
+fn loose_object_fanout_dirs_and_small_files() {
+    let p = provider();
+    let git = p.mkdir(ROOT, ".git").unwrap().ino;
+    let objects = p.mkdir(git, "objects").unwrap().ino;
+    let fan = p.mkdir(objects, "ab").unwrap().ino;
+    let oid = write_file(&p, fan, "cdef0123456789", b"\x78\x01blob payload");
+
+    // readdir of the fanout dir, lookup + read the object back byte-for-byte.
+    let entries = p.readdir(fan).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(read_all(&p, oid), b"\x78\x01blob payload");
+}
