@@ -118,9 +118,10 @@ multi-chunk) automatically in `nightly.yml`:
   (weekly) sweeps never-finalized-commit chunk bytes from object storage. `docs/torn-writes-and-batching.md` §5.
 - ~~**Change-batching (debounce)**~~ **DONE (G5, 2026-06-16)** — an **opt-in (default-OFF)** outbox
   debounce for big CAD autosaves landed in `fs-provider`/`sync-engine`.
-- **Parallel/pipelined chunk hydration** — concurrent `io.get` across a bounded pool, the one lever
-  for large *cold* files (R2 hydrate is RTT-bound + serial today). **In flight on a separate branch.**
-  `docs/r2-migration.md` §5.
+- ~~**Parallel/pipelined chunk hydration**~~ **DONE (PR #15, 2026-06-16)** — concurrent `io.get`/`io.put`
+  across a bounded pool (`DaemonConfig::hydrate_concurrency`, default 8); ~8× on a synthetic-latency bench.
+  The remaining cold-path lever is now a **concurrent/pipelined outbox drain across *files*** (a 10k-file
+  push is ~113 s sequential — O(files) work, not an N+1; surfaced by G11). `docs/r2-migration.md` §5.
 - **Windows `Get-FileHash` flake** — the CfAPI two-device edit-readback occasionally hits a file-sharing
   lock; add a read-retry in `two-device-cfapi.ps1`.
 - **macOS multi-chunk hydrate timeout** — bumped to 300s; if it still flakes, investigate WebDAV
@@ -143,8 +144,8 @@ multi-chunk) automatically in `nightly.yml`:
 3. **R2 migration** — **validated live** (2026-06-15): presigned roundtrip OK + per-chunk hydrate
    latency measured (~85–205 ms; `docs/r2-migration.md` §5). Remaining for production cutover: the
    browser-CORS check against R2 (only a real browser catches a CORS mistake), the SeaweedFS→R2
-   `rclone copy` migration + `kamal deploy`, and (optional perf) the **parallel-hydration** branch
-   for large cold files. `CHUNK_REGION=auto` for R2.
+   `rclone copy` migration + `kamal deploy` (push-button tooling now in `scripts/r2-cutover/`, PR #17).
+   `CHUNK_REGION=auto` for R2. (Parallel hydration for large cold files already merged — PR #15.)
 4. **CI hardening** — `cargo check -p maker-app` on Windows; make the mac/Windows runners durably
    interactive (auto-login) so the real-mount nets run reliably.
 5. **FSKit** — currently only a design sketch (not built; see blocker 2). Build the `fs-fskit`

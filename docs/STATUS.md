@@ -32,8 +32,8 @@ against a real bucket.
   confirmed (`presigned_roundtrip` OK, chunk byte-for-byte in the bucket) and per-chunk hydrate
   latency measured (**~85–205 ms**, invisible in the local-first UX — metadata is local, hydrate
   is background/on-demand). See `docs/r2-migration.md` §5. A **parallel/pipelined chunk-hydration**
-  optimization (concurrent `io.get` across a bounded pool, the one lever for large *cold* files)
-  is **in flight on a separate branch — not yet merged**.
+  optimization (concurrent `io.get`/`io.put` across a bounded pool, `hydrate_concurrency` default 8,
+  ~8× on a synthetic-latency bench) is **merged (PR #15)**.
 - **Next:** the maker app layer (Projects→Inventory→BOM→preview); then the parity roadmap
   (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
 

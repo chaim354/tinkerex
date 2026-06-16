@@ -259,8 +259,9 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > guardrail (FIFO/socket/device nodes), and a delta-on-wire audit. **R2 validated live:** the
 > S3 presign path was exercised end-to-end against a real R2 bucket and the per-chunk hydrate
 > latency measured (~85–205 ms, invisible in the local-first UX — `docs/r2-migration.md` §5). A
-> **parallel/pipelined chunk-hydration** optimization for large cold files is **in flight on a
-> separate branch** (not yet merged). See `docs/STATUS.md` for the current per-suite test counts.
+> **parallel/pipelined chunk-hydration** optimization for large cold files (concurrent `io.get`/`io.put`
+> across a bounded pool, `DaemonConfig::hydrate_concurrency` default 8, ~8× on a synthetic-latency
+> bench) is **merged** (PR #15). See `docs/STATUS.md` for the current per-suite test counts.
 
 **Built + verified (live cross-stack + cross-OS demos; current per-suite test counts in `docs/STATUS.md`):**
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. **Server suite green
