@@ -212,12 +212,14 @@ offline, what fails, and the gaps that make it rough.
 
 ### 2.0 The honest headline
 
-> **The bytes-on-disk machinery all exists and is tested. The *user-facing controls to target
-> and verify it* do not.** A maker cannot, from the app, say "make this folder available offline"
-> and see a "✓ 142/142 files downloaded" confirmation. The reliable path today is either (a) let
-> the default-`Include` policy download the *whole* library while online (works, but not targeted),
-> or (b) drive the engine's selective-sync + verification from Rust/an example binary. Closing
-> this is a small, well-scoped wiring job on top of a complete engine.
+> **The bytes-on-disk machinery all exists and is tested.** As of the make-available-offline
+> batch, the **engine + a cross-platform CLI** now also *target* and *verify* it: a maker can run
+> `maker-offline pin /Jobs/ClientX` to download exactly that folder (and keep it resident across
+> pulls), then `maker-offline offline-status /Jobs/ClientX` to get a "2/2 files local, 100% of
+> chunks — READY for offline ✓" confirmation (exit 0) before disconnecting. The remaining gap is
+> purely **graphical**: the Tauri app has no button/badge for this yet — it would call
+> `SyncEngine::pin` / `ensure_available_offline` + `offline_readiness` (the exact calls the CLI
+> makes). See §2.1 Option B (now reachable) and §2.2.
 
 ### 2.1 Pre-downloading the files (three honest options)
 
@@ -417,8 +419,9 @@ in-browser STL/3MF/CAD **preview**, **inventory**, and **projects/tasks/build-lo
 | Range / progressive hydration | **Engine-API exists; wired only on CfAPI** | `SyncEngine::hydrate_range_concurrent` |
 | Client bandwidth caps | **Engine-API exists, no UI** | `DaemonConfig::with_bandwidth` |
 | Windows "Always keep on device" pin | **Works today (Windows, OS-native UI)** | `fs-cfapi` `pin_hydration_action` |
-| "Make folder available offline" (cross-platform UI) | **Not built** | — (wire `subscribe` to app/CLI) |
-| Verify files are local before disconnect | **Not built** (primitives exist) | `node_manifest_hashes` + `has_chunk` |
+| "Make folder available offline" (cross-platform) | **Works today (engine + CLI; app button still TODO)** | `SyncEngine::ensure_available_offline` / `pin`; `maker-offline pin <path>` |
+| Pin a subtree resident across pulls | **Works today (engine + CLI)** | `Provider::pin`/`unpin`/`is_pinned`; daemon proactive-hydration honors it |
+| Verify files are local before disconnect | **Works today (engine + CLI; app indicator still TODO)** | `SyncEngine::offline_readiness`; `maker-offline offline-status <path>` |
 | Symlinks / hardlinks / special files | **Not supported (EPERM guardrail)** | `fs-fuse` `symlink`/`mknod` |
 | uid/gid / full perms / ACLs / xattrs | **Not supported (non-goal)** | — |
 | Cross-user sharing | **Not built (tenant = user)** | — |
