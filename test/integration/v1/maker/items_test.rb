@@ -81,6 +81,13 @@ module V1
         get "/v1/maker/items"
         assert_response :unauthorized
       end
+
+      test "unimplemented collection show route is a clean 404, not a 500" do
+        post "/v1/maker/collections", params: { collection: { name: "C" } }, as: :json, headers: auth(@token)
+        cid = JSON.parse(response.body)["id"]
+        get "/v1/maker/collections/#{cid}", headers: auth(@token)
+        assert_response :not_found
+      end
     end
   end
 end
