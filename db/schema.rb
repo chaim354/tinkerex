@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_16_122543) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -106,6 +106,35 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_122543) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_bom_lines", force: :cascade do |t|
+    t.integer "bom_id", null: false
+    t.datetime "created_at", null: false
+    t.integer "inventory_item_id"
+    t.string "node_id"
+    t.text "notes"
+    t.string "part_name"
+    t.integer "position", default: 0, null: false
+    t.decimal "quantity", precision: 12, scale: 3, default: "1.0", null: false
+    t.string "reference"
+    t.integer "supplier_id"
+    t.string "unit", default: "each", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "bom_id", "position"], name: "index_maker_bom_lines_on_bom_position"
+    t.index ["user_id", "inventory_item_id"], name: "index_maker_bom_lines_on_user_id_and_inventory_item_id"
+  end
+
+  create_table "maker_boms", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "name", default: "BOM", null: false
+    t.integer "project_id", null: false
+    t.integer "revision", default: 1, null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["project_id", "revision"], name: "index_maker_boms_on_project_id_and_revision"
+    t.index ["user_id", "project_id"], name: "index_maker_boms_on_user_id_and_project_id"
   end
 
   create_table "maker_build_log_entries", force: :cascade do |t|

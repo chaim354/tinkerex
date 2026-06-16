@@ -21,6 +21,8 @@ class User < ApplicationRecord
   has_many :maker_inventory_items, class_name: "Maker::InventoryItem", dependent: :destroy
   has_many :maker_inventory_transactions, class_name: "Maker::InventoryTransaction", dependent: :destroy
   has_many :maker_previews, class_name: "Maker::Preview", dependent: :destroy
+  has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
+  has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
   has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
