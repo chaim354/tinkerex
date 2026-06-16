@@ -1,8 +1,43 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-15 (automated real-mount E2E green on all 3 OSes; web UI + real auth; cross-OS bug-fix saga)
+**Updated:** 2026-06-16 (managed-Postgres hardening G2 + storage-orphan reaper G4 + file-layer polish G5/G8/G10 + R2 validated live)
 
-## Latest (2026-06-15): automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
+## Latest (2026-06-16): managed-deploy hardening (G2/G4) + file-layer polish (G5/G8/G10) + R2 live (HEAD `94b7f02`)
+
+Three PRs landed on `main` on top of the cross-OS E2E state, plus R2 was validated end-to-end
+against a real bucket.
+
+- **G2 — managed-Postgres hardening** (PR #11): a **boot-time statement-pooler safety guard**
+  (`lib/postgres_pooler_check.rb` + `config/initializers/postgres_pooler_check.rb`) that refuses
+  to boot behind a statement-mode pooler (it would silently break the transaction-spanning
+  `User#next_seq!` `FOR UPDATE` row lock and corrupt the changelog with duplicate seqs);
+  `sslmode` defaulting in `config/database.yml` (`require` off-localhost, `prefer` local);
+  Solid Queue/Cache/Cable roles documented for managed Postgres. **Real concurrency deadlock
+  fix:** `next_seq!` is now the *first* statement in `Sync::Commit#finalize`/`Mutation#apply`/
+  `Restore`/`Conflicts`, so two concurrent commits can't deadlock on a `FOR KEY SHARE`→`FOR
+  UPDATE` lock upgrade (`test/services/sync/concurrent_seq_test.rb`). `docs/SYNC_SERVER.md` +
+  `docs/parity-roadmap.md` updated by that PR (authoritative).
+- **G4 — storage-orphan chunk reaper** (PR #10): `Sync::ChunkReaper` + `ChunkReaperJob` (weekly
+  via `config/recurring.yml`) + `Storage::ChunkStore#list` + `lib/tasks/chunks.rake`. Sweeps
+  chunk **bytes** left in object storage by commits that uploaded but never finalized — objects
+  with **no DB row**, which the refcount-based `version_retention` sweep cannot see. Closes the
+  abandoned-upload storage leak (matters for managed R2 cost; weekly cadence because
+  `list_objects_v2` is billed per request, with a 24 h grace window protecting in-flight
+  uploads). `docs/torn-writes-and-batching.md` §5 marked resolved by that PR (authoritative).
+- **G5/G8/G10 — file-layer polish** (PR #12, in `fs-provider`/`fs-fuse`/`sync-engine`): an
+  **opt-in (default-OFF) outbox debounce** for big CAD autosaves; a **special-file `EPERM`
+  guardrail** (FIFO/socket/device nodes rejected cleanly); and a **delta-on-wire audit**.
+- **R2 validated LIVE** (2026-06-15, docs in PR #9): the `Storage::S3ChunkStore` presign path
+  was exercised end-to-end against a real R2 bucket (`maker-chunks-prod`, ENAM) — compatibility
+  confirmed (`presigned_roundtrip` OK, chunk byte-for-byte in the bucket) and per-chunk hydrate
+  latency measured (**~85–205 ms**, invisible in the local-first UX — metadata is local, hydrate
+  is background/on-demand). See `docs/r2-migration.md` §5. A **parallel/pipelined chunk-hydration**
+  optimization (concurrent `io.get` across a bounded pool, the one lever for large *cold* files)
+  is **in flight on a separate branch — not yet merged**.
+- **Next:** the maker app layer (Projects→Inventory→BOM→preview); then the parity roadmap
+  (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
+
+## Previous (2026-06-15): automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
 
 A large batch landed on `main`, and a deep cross-OS debugging arc got **automated real-mount A↔B
 end-to-end green on all three OSes** (Linux FUSE, Windows CfAPI, macOS WebDAV) in `nightly.yml`.
@@ -28,7 +63,7 @@ end-to-end green on all three OSes** (Linux FUSE, Windows CfAPI, macOS WebDAV) i
 - **Next:** the maker app layer (Projects→Inventory→BOM→preview); then parity roadmap
   (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
 
-## Latest (2026-06-14): `auth-caching-security` merged to main + file layer hardened to "rock-solid"
+## Earlier (2026-06-14): `auth-caching-security` merged to main + file layer hardened to "rock-solid"
 
 The big `auth-caching-security` arc landed on **`main`** (squash PR #8), and a hardening batch
 on top closed the remaining file-layer gaps. The headline: an adversarial fault-injection
@@ -73,7 +108,7 @@ harness was built and **found two real changelog ordering bugs**, both now fixed
 at-rest chunk encryption (#3). Both fit the existing chunk/manifest/changelog model. Next big
 arc: the **maker app layer** (projects/inventory/BOM/preview — §12 step 9).
 
-## Latest (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
+## Earlier (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
 
 Building on the verified-live populate+hydrate (below), the CfAPI mount now runs the full
 read **and** write loop on real Windows 11, and behaves correctly offline. Detailed handoff

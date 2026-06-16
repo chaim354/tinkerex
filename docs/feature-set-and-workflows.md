@@ -221,9 +221,12 @@ Cross-referenced to the roadmap (CLAUDE.md §12) and research rankings (`researc
 9. **Native macOS mount (Finder-integrated, no WebDAV).**
    *Workflow:* "A first-class macOS sync-root with on-demand placeholders like CfAPI on Windows."
    *Why it fits:* macOS makers want the OneDrive-class experience, not a WebDAV mount. *Missing:*
-   FSKit — **code-complete and proven to handshake**, but **blocked on a paid Apple Developer
-   membership** ($99/yr) for extension residency on macOS 26. **Blocked, not a code gap** —
-   HANDOFF.md blocker 1; `client/fs-fskit/BUILD.md` §6b. FILE-LAYER (platform-blocked).
+   FSKit — a **design sketch** (`docs/plan-macos-fskit-migration.md`; no `client/fs-fskit` crate
+   exists yet), additionally **blocked on a paid Apple Developer membership** ($99/yr) for
+   extension residency on macOS 26. **Platform-blocked + unbuilt** — HANDOFF.md blocker 2;
+   `docs/plan-macos-fskit-migration.md`. FILE-LAYER (platform-blocked). *(Note: earlier handoffs
+   described FSKit as "code-complete"; the dedicated plan doc and the repo show it is a sketch, not
+   built — treat it as unbuilt.)*
 
 ### Maker-APP gaps (product surface simply not built — §12 step 9)
 
@@ -267,5 +270,5 @@ is ready to support them; the product layer on top just hasn't been built.
 5. **Inventory + projects/BOM** — the other two product pillars; models + UI unbuilt, file layer is ready (refs by `node_id`). MAKER-APP (§12 step 9).
 
 Also notable: LAN sync, bandwidth throttling, collaborator sharing (all file-layer, research
-#5–#7), real OAuth/OIDC (auth, partial), and a native macOS FSKit mount (code-complete,
-**blocked on a paid Apple membership**, not a code gap).
+#5–#7), real OAuth/OIDC (auth, partial), and a native macOS FSKit mount (a **design sketch,
+not built** — no `client/fs-fskit` crate; additionally **blocked on a paid Apple membership**).

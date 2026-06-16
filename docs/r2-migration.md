@@ -12,10 +12,15 @@ PUT/GET via `aws-sdk-s3`) talks to R2 the same way it talks to SeaweedFS/AWS. Th
 records the compatibility verdict, the exact steps, the CORS policy the web UI needs,
 cost notes, and how to measure latency before/after.
 
-> **Status:** plan + verified-locally latency harness. R2 specifics below were confirmed
-> against Cloudflare's R2 docs (S3 API compatibility, presigned URLs, region `auto`). The
-> live R2 leg still needs real account credentials to run end-to-end — see
-> [§7 What still needs real R2 creds](#7-what-still-needs-real-r2-creds).
+> **Status (updated 2026-06-16): validated live against a real R2 bucket.** The presign path
+> was exercised end-to-end (`presigned_roundtrip` → `PRESIGNED ROUNDTRIP OK`, chunk verified
+> byte-for-byte in the bucket) and per-chunk hydrate latency measured (**~85–205 ms** — see
+> [§5 "Measured against LIVE R2"](#measured-against-live-r2-2026-06-15)). What remains for a
+> production cutover is operational, not a compatibility unknown: the browser-side **CORS**
+> check (only a real browser catches a CORS mistake — §2), the SeaweedFS→R2 chunk migration
+> (§3.5), and `kamal deploy` (§3.4). A **parallel/pipelined chunk-hydration** optimization for
+> large *cold* files is tracked as a follow-up (§5, caveat 1) and is **in flight on a separate
+> branch**.
 
 ---
 
@@ -419,20 +424,23 @@ transfer, exactly the §8 design intent. **Two caveats worth acting on:**
 
 ---
 
-## 7. What still needs real R2 creds
+## 7. What still remains (done vs. open)
 
-Everything in this doc is config + verified-locally tooling **except** the live R2 leg,
-which needs a real Cloudflare account (Account ID + an R2 token). With creds, run, in order:
+The two unknowns this doc set out to close are **done** — the live R2 leg was run against a
+real bucket (2026-06-16):
 
-1. `presigned_roundtrip` against a server pointed at R2 → confirms presign + PUT + GET +
+1. ~~`presigned_roundtrip` against a server pointed at R2~~ **DONE** — presign + PUT + GET +
    `head_object` verify all work on R2 end-to-end (the compatibility verdict in §1, proven
-   live).
-2. `chunk_latency` against the same server → fills in the real R2 latency column to compare
-   with the localhost baseline above.
-3. (web UI) A browser upload/download against R2 → confirms the §2 CORS policy is correct
-   (the desktop client can't catch a CORS mistake; only a real browser will).
+   live; chunk byte-for-byte in the bucket).
+2. ~~`chunk_latency` against the same server~~ **DONE** — the real R2 latency column is filled
+   in (§5 "Measured against LIVE R2"): ~85–205 ms per-chunk hydrate.
 
-I could not create a test bucket here: the connected Cloudflare account has **no R2 buckets
-and I was not given credentials**, so I documented the manual dashboard/`wrangler` steps
-rather than invent keys. The harness was proven against the `local` backend (numbers in §5)
-so the measurement path is known-good before you point it at R2.
+Still open (operational, not compatibility):
+
+3. **(web UI) A browser upload/download against R2** → confirms the §2 CORS policy is correct.
+   The desktop client can't catch a CORS mistake; only a real browser will — so run this before
+   cutting the web UI over to R2.
+4. **Migration + cutover** — the SeaweedFS→R2 `rclone copy` (§3.5), `kamal deploy` (§3.4), and a
+   final incremental copy after the flip.
+5. **(perf, optional) parallel/pipelined chunk hydration** for large *cold* files (§5, caveat 1)
+   — **in flight on a separate branch**, not a blocker.
