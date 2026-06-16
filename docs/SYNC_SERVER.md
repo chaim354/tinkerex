@@ -17,14 +17,16 @@ clients PUT/GET chunks directly to object storage via presigned URLs.
   - `Storage::ChunkStore` (+ `S3ChunkStore` for R2/S3, `MemoryChunkStore` for tests).
 - **API** (`app/controllers/v1`): see below.
 - **ActionCable** (`LibraryChannel`): broadcasts `head_seq` on every commit.
-- **Tests** (`test/`): 10 tests, green on SQLite — full HTTP flow + service-level
-  dedup/refcount/restore/idempotency.
+- **Tests** (`test/`): full server suite green on SQLite (and on Postgres) — full HTTP flow,
+  service-level dedup/refcount/restore/idempotency, auth/pairing, conflict detect/resolve,
+  GC/retention + storage-orphan reaper, concurrent-`next_seq!` no-deadlock. Current count in
+  `docs/STATUS.md`.
 
 ## API (v1)
 
 | Method & path | Body / params | Returns |
 |---|---|---|
-| `POST /v1/auth/register` | `email`, `device_name` | `device_token`, `head_seq` (bootstrap; placeholder auth) |
+| `POST /v1/auth/register` | `email`, `device_name` | `device_token`, `head_seq` (device bootstrap; new-account-only — see Auth note) |
 | `POST /v1/devices` | `name` | another device token |
 | `POST /v1/commit` | `commit_id, node_id, parent_node_id, name, base_version_id, size, manifest[]` | `missing[]`, `put_urls{}` |
 | `POST /v1/commit/:commit_id/finalize` | — | `version_id`, `seq` |
@@ -38,7 +40,12 @@ clients PUT/GET chunks directly to object storage via presigned URLs.
 | `POST /v1/chunks/download` | `hashes[]` | `urls{ hash => presigned GET }` |
 | WebSocket `/cable` | `?token=` | `LibraryChannel` → `{head_seq}` on change |
 
-Auth: `Authorization: Bearer <device_token>`.
+Auth: `Authorization: Bearer <device_token>`. **Auth note:** `register` creates a **new account
+only** (no `find_or_create_by` takeover); additional devices join an existing library via a
+single-use, expiring **pairing code** (`DevicePairing`), not by re-registering. Real auth
+(Rails 8 built-in: signup → email-confirm → login/reset, `Session`, OmniAuth seam) sits in front
+of this device-token bootstrap; it is no longer a placeholder. See `CLAUDE.md` §8 + the
+`[[auth-decision]]` project memory.
 
 ## Adapter-agnostic, without compromising performance
 

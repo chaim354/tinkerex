@@ -1,6 +1,6 @@
-# Handoff — state as of 2026-06-15
+# Handoff — state as of 2026-06-16
 
-Snapshot for the next agent/developer. **Everything lives on `main`** (HEAD `bab90bb`, pushed).
+Snapshot for the next agent/developer. **Everything lives on `main`** (HEAD `94b7f02`, pushed).
 Detailed running log: `docs/STATUS.md`. Architecture: `CLAUDE.md`. Strategy: `docs/parity-roadmap.md`,
 `docs/research-sync-competitors.md`, `docs/feature-set-and-workflows.md`. This file = "where are we,
 what's blocked, what's next." Persistent memory also holds key decisions/gotchas (see the project
@@ -15,6 +15,13 @@ A web UI MVP + real auth landed. The product layer (the maker app: projects/inve
 is the next big arc and the file foundation is ready for it. A long cross-OS debugging saga this
 session surfaced + fixed real bugs on actual hardware (3 Windows CfAPI receive-side bugs, a daemon
 self-unmount, a stale FUSE dependency).
+
+**Since the 2026-06-15 snapshot (HEAD now `94b7f02`):** three more PRs landed — **G2** managed-
+Postgres hardening (statement-pooler boot guard + `sslmode` + a real `next_seq!` deadlock fix),
+**G4** storage-orphan chunk reaper (closes the abandoned-upload leak — see Parked follow-ups, now
+resolved), and **G5/G8/G10** file-layer polish (opt-in outbox debounce, special-file `EPERM`
+guardrail, delta-on-wire audit). **R2 was also validated live** (per-chunk hydrate ~85–205 ms;
+`docs/r2-migration.md` §5). Details: `docs/STATUS.md` (2026-06-16 section).
 
 ---
 
@@ -54,7 +61,14 @@ multi-chunk) automatically in `nightly.yml`:
   (`multifiletype_conformance.rs`, 15 types) — no corruption/loss/torn manifests under load.
 - **Torn-write safety CONFIRMED** — `Sync::Commit.finalize` is one transaction; partial uploads are
   invisible (no corrupt state). `docs/torn-writes-and-batching.md`.
-- **Postgres** validated (config-only via `DATABASE_URL`, 56/0). `STORAGE_BACKEND=local` added (a
+- **Postgres** validated (config-only via `DATABASE_URL`) **+ managed-hardened (G2)** — boot-time
+  statement-pooler safety guard (`lib/postgres_pooler_check.rb`), `sslmode` defaulting
+  (`config/database.yml`), and a real concurrency deadlock fix (`next_seq!` first in
+  `Commit`/`Mutation`/`Restore`/`Conflicts`; `test/services/sync/concurrent_seq_test.rb`).
+- **Storage-orphan chunk reaper (G4)** — `Sync::ChunkReaper` + `ChunkReaperJob` (weekly) +
+  `ChunkStore#list` + `chunks.rake`: deletes object-storage bytes from never-finalized commits
+  (no DB row → invisible to the refcount GC). Closes the leak in Parked follow-ups below.
+- `STORAGE_BACKEND=local` added (a
   filesystem chunk store with HMAC-signed HTTP presigned URLs — for single-box testing/simple
   self-host; routes bytes through Rails, so NOT a production-scale path — s3/R2 stays that).
 
@@ -79,26 +93,38 @@ multi-chunk) automatically in `nightly.yml`:
    blocker — but the mac runner has *historically* sometimes failed to route to `192.168.1.95`. If a
    future cross-os run's mac legs BLOCK on server-unreachable, the fix is mac→server routing (or pass
    a reachable `server_url` to the workflow).
-2. **FSKit (native macOS mount) — blocked on a PAID Apple Developer membership ($99/yr).** Code
-   complete; macOS uses WebDAV meanwhile (fully working). `client/fs-fskit/BUILD.md` §6b.
+2. **FSKit (native macOS mount) — a DESIGN SKETCH, not built.** There is **no `client/fs-fskit`
+   crate on `main`** — only the forward-looking sketch `docs/plan-macos-fskit-migration.md`
+   ("no code lands from it"). An experimental port exists on the unmerged reference branch
+   `worktree-agent-a1e15f52cc45cd0bf`. A first-party FSKit extension would additionally need a
+   **paid Apple Developer membership ($99/yr)**. macOS uses WebDAV meanwhile (fully working).
+   See `docs/roads-not-taken.md` §7. *(Earlier handoffs called this "code complete" — inaccurate
+   for `main`; treat as unbuilt.)*
 3. **macOS real-mount is interactive-runner-only** (native `mount_webdav` needs a desktop session).
    The mac runner must run interactively (Login Item / Aqua LaunchAgent), like the Windows CfAPI runner.
 4. **`maker-app` (Tauri) isn't built by CI on Windows** — a `cargo check -p maker-app` Windows step
    would close it.
 5. **The live CfAPI/mount nets don't gate per-PR** — `two-device-*`, `windows-smoke`, `cfapi-conformance`
    are nightly/on-demand (need interactive runners). Per-PR runs only build.
-6. **Managed-Postgres specifics unproven** — TLS sslmode, session/transaction pooler (NOT statement —
-   `FOR UPDATE`), concurrent-commit load test, whether Solid Queue/Cache/Cable move off SQLite.
+6. **Managed-Postgres — mostly hardened (G2), one item left.** TLS `sslmode`, the statement-pooler
+   boot guard, the Solid-roles guidance, and the `next_seq!` concurrency deadlock are all **done**
+   (G2). Remaining: stand up a real **session/transaction-mode pooler** endpoint (NOT statement —
+   `FOR UPDATE` needs it) and run a concurrent-commit **load test** at scale; decide whether Solid
+   Queue/Cache/Cable move off SQLite for managed.
 7. **CfAPI pin/unpin + remove-library** need interactive-Explorer verification (code-complete).
 
 ### Parked follow-ups (small, non-blocking)
-- **Orphaned-chunk reaper** — chunks from a never-finalized commit leak (no DB row → GC can't see them).
-  Matters for managed R2 cost. (A task chip was filed; `docs/torn-writes-and-batching.md` §4.)
+- ~~**Orphaned-chunk reaper**~~ **DONE (G4, 2026-06-16)** — `Sync::ChunkReaper` + `ChunkReaperJob`
+  (weekly) sweeps never-finalized-commit chunk bytes from object storage. `docs/torn-writes-and-batching.md` §5.
+- ~~**Change-batching (debounce)**~~ **DONE (G5, 2026-06-16)** — an **opt-in (default-OFF)** outbox
+  debounce for big CAD autosaves landed in `fs-provider`/`sync-engine`.
+- **Parallel/pipelined chunk hydration** — concurrent `io.get` across a bounded pool, the one lever
+  for large *cold* files (R2 hydrate is RTT-bound + serial today). **In flight on a separate branch.**
+  `docs/r2-migration.md` §5.
 - **Windows `Get-FileHash` flake** — the CfAPI two-device edit-readback occasionally hits a file-sharing
   lock; add a read-retry in `two-device-cfapi.ps1`.
 - **macOS multi-chunk hydrate timeout** — bumped to 300s; if it still flakes, investigate WebDAV
   hydration latency vs. the budget.
-- **Change-batching (debounce)** — optional 2–3s outbox debounce for big CAD autosaves (research §3).
 
 ---
 
@@ -114,12 +140,16 @@ multi-chunk) automatically in `nightly.yml`:
    (engine done, needs app surface) → trash UX ✅ → progressive hydration ✅ → bandwidth ✅ →
    **OAuth/OIDC layer** on the seam → **sharing/multi-user** (the big product fork) → **encryption (LAST,
    deliberately — keeps the other features debuggable against plaintext)**.
-3. **R2 migration** — `docs/r2-migration.md` is a config-only plan + a latency harness
-   (`examples/chunk_latency.rs`); needs Cloudflare creds for the 3 live checks (presigned roundtrip,
-   latency numbers, browser CORS). Flip `CHUNK_REGION` to `auto` for R2.
+3. **R2 migration** — **validated live** (2026-06-15): presigned roundtrip OK + per-chunk hydrate
+   latency measured (~85–205 ms; `docs/r2-migration.md` §5). Remaining for production cutover: the
+   browser-CORS check against R2 (only a real browser catches a CORS mistake), the SeaweedFS→R2
+   `rclone copy` migration + `kamal deploy`, and (optional perf) the **parallel-hydration** branch
+   for large cold files. `CHUNK_REGION=auto` for R2.
 4. **CI hardening** — `cargo check -p maker-app` on Windows; make the mac/Windows runners durably
    interactive (auto-login) so the real-mount nets run reliably.
-5. **FSKit** — finish when a paid Apple membership is available.
+5. **FSKit** — currently only a design sketch (not built; see blocker 2). Build the `fs-fskit`
+   crate (parallels `fs-fuse`, not `fs-cfapi`) when a paid Apple membership is available;
+   `docs/plan-macos-fskit-migration.md` is the forward-looking design.
 
 ---
 
@@ -154,5 +184,6 @@ multi-chunk) automatically in `nightly.yml`:
 - `docs/torn-writes-and-batching.md` — commit atomicity (we're safe) + batching analysis.
 - `docs/r2-migration.md` — R2 migration plan + latency harness.
 - `docs/plan-windows-cfapi-migration.md` — CfAPI design + remaining B6 verification.
-- `docs/plan-macos-fskit-migration.md` + `client/fs-fskit/BUILD.md` §6b — FSKit + paid-membership blocker.
+- `docs/plan-macos-fskit-migration.md` — FSKit forward-looking sketch (NOT built; no `client/fs-fskit` crate on `main`).
+- `docs/roads-not-taken.md` — condensed abandoned/superseded approaches (mount, JuiceFS, Cloudflare-native, WinFsp-default, LWW, FSKit).
 - `docs/DEPLOY.md` — Kamal redeploy. `ci/runners/README.md` — self-hosted runners (interactive + /dev/fuse).

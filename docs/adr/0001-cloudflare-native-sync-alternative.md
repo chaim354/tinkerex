@@ -1,8 +1,16 @@
 # ADR 0001 — Cloudflare-native sync as an alternative to JuiceFS
 
+> **Historical context (read first):** this ADR predates the architecture pivot. When it
+> was written the "adopted path" was still JuiceFS mount + a serverless metadata engine —
+> **that path has since been abandoned too** (remote mount is ~1 s/file over the WAN). The
+> project now runs the **local-first sync engine** (`docs/architecture-sync-engine.md`).
+> This Cloudflare-native variant remains **deferred** for the reason in §8.2 below
+> (self-hostability breaks). Condensed summary: `docs/roads-not-taken.md` §3. The full
+> sketch is preserved below as the ADR of record.
+
 - **Status:** Proposed / **deferred** (captured for the record, not adopted)
-- **Supersedes:** nothing. The adopted path remains JuiceFS mount + a serverless
-  metadata engine (Upstash/Neon).
+- **Supersedes:** nothing. (The JuiceFS-mount path this was an alternative to is itself now
+  abandoned — see the banner above; the live path is the local-first sync engine.)
 - **Context:** Explored after asking whether D1 / Durable Objects could back
   JuiceFS metadata (they can't — no driver, wrong latency shape for a mounted
   FS). This ADR sketches the architecture where those Cloudflare primitives
