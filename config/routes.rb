@@ -112,6 +112,15 @@ Rails.application.routes.draw do
         resources :build_log_entries, only: %i[index create destroy], shallow: true
         resources :file_attachments, only: %i[create destroy], shallow: true
       end
+      resources :locations, only: %i[index show create update destroy]
+      resources :suppliers, only: %i[index show create update destroy]
+      resources :inventory_items, only: %i[index show create update destroy] do
+        member do
+          post "adjust"
+          get  "transactions"
+        end
+        collection { get "low_stock" }
+      end
     end
 
     # hydration
