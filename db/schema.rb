@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000011) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000012) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -123,6 +123,26 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000011) do
     t.string "version_id"
     t.index ["user_id", "attachable_type", "attachable_id"], name: "index_maker_file_attachments_on_attachable"
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
+  end
+
+  create_table "maker_inventory_items", force: :cascade do |t|
+    t.string "category"
+    t.datetime "created_at", null: false
+    t.integer "location_id"
+    t.decimal "min_quantity", precision: 12, scale: 3, default: "0.0", null: false
+    t.string "name", null: false
+    t.text "notes"
+    t.string "part_number"
+    t.decimal "quantity_cached", precision: 12, scale: 3, default: "0.0", null: false
+    t.integer "supplier_id"
+    t.string "unit", default: "each", null: false
+    t.decimal "unit_cost", precision: 12, scale: 4
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "category"], name: "index_maker_inventory_items_on_user_id_and_category"
+    t.index ["user_id", "location_id"], name: "index_maker_inventory_items_on_user_id_and_location_id"
+    t.index ["user_id", "name"], name: "index_maker_inventory_items_on_user_id_and_name"
+    t.index ["user_id", "supplier_id"], name: "index_maker_inventory_items_on_user_id_and_supplier_id"
   end
 
   create_table "maker_items", force: :cascade do |t|
