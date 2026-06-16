@@ -123,6 +123,13 @@ Rails.application.routes.draw do
         collection { get "low_stock" }
       end
       resources :previews, only: %i[index create]
+      resources :projects, only: [] do
+        resources :boms, only: %i[index create], shallow: true
+      end
+      resources :boms, only: %i[show update destroy] do
+        member { get "rollup" }
+        resources :bom_lines, only: %i[index create update destroy], shallow: true
+      end
     end
 
     # hydration
