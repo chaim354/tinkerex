@@ -37,6 +37,11 @@ Rails.application.routes.draw do
   unless Rails.env.production?
     get "dev/blobs/*key", to: "dev_blobs#show",   format: false, as: :dev_blob
     put "dev/blobs/*key", to: "dev_blobs#update", format: false
+
+    # TEST/DEV-ONLY confirmed-account signup seam for the Rust integration tests (further
+    # guarded at runtime by ENABLE_TEST_SIGNUP). Lets those tests create a confirmed account,
+    # then enroll devices via POST /v1/devices/login.
+    post "v1/test/users", to: "v1/test_users#create"
   end
 
   # --- Sync engine API (v1) ---
