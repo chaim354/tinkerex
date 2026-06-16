@@ -58,6 +58,16 @@ new `nodes.symlink_target` BLOB column.
   `--no-hardlinks` fallback assertion). This is **Linux-only** (fuser links only on Linux);
   run it in CI or via the Docker wrapper from a macOS/Windows box.
 
+  **Status on this build box (macOS):** the Docker wrapper **compiled `fs-fuse` cleanly on
+  Linux and reached the live mount step** (the first run surfaced + fixed a real bug —
+  fuser 0.17 rejects `AutoUnmount` under the Owner ACL; hence `MAKER_MOUNT_NO_AUTOUNMOUNT`).
+  Full end-to-end execution could **not** complete here because **this Docker Desktop setup
+  does not expose `/dev/fuse` to containers** (`docker run --device /dev/fuse …` never
+  starts — a host/VM limitation, not a harness bug; verified directly). The harness is
+  therefore **gated for a Linux CI runner / native-Linux box**, where `/dev/fuse` is real.
+  This is the documented fallback the task anticipated: Provider-level coverage is the
+  primary signal on macOS; the real-FUSE leg runs in CI.
+
 ---
 
 ## Workflows: works vs. doesn't (with the reason for each gap)
