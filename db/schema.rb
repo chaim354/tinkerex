@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000001) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000003) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -96,6 +96,26 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000001) do
     t.index ["user_id", "favorited"], name: "index_maker_items_on_user_id_and_favorited"
     t.index ["user_id", "item_type"], name: "index_maker_items_on_user_id_and_item_type"
     t.index ["user_id", "title"], name: "index_maker_items_on_user_id_and_title"
+  end
+
+  create_table "maker_taggings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "tag_id", null: false
+    t.integer "taggable_id", null: false
+    t.string "taggable_type", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["tag_id", "taggable_type", "taggable_id"], name: "index_maker_taggings_unique", unique: true
+    t.index ["user_id", "taggable_type", "taggable_id"], name: "index_maker_taggings_on_taggable"
+  end
+
+  create_table "maker_tags", force: :cascade do |t|
+    t.string "color"
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "name"], name: "index_maker_tags_on_user_id_and_name", unique: true
   end
 
   create_table "manifest_chunks", force: :cascade do |t|
