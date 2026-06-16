@@ -1610,36 +1610,45 @@ impl Provider for SqliteProvider {
 
     fn unlink(&self, parent: u64, name: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let node_id: Option<String> = conn
+        // Look the target up by (parent, name) WITHOUT a kind filter, so we can return the
+        // POSIX-correct errno: a missing entry is ENOENT, but a *directory* is EISDIR
+        // (`unlink` of a dir must not masquerade as "not found"). Linux maps this to EISDIR;
+        // the mount adapters surface it as such.
+        let target: Option<(String, String)> = conn
             .query_row(
-                "SELECT node_id FROM nodes WHERE parent_ino = ?1 AND name = ?2 AND kind = 'file'",
+                "SELECT node_id, kind FROM nodes WHERE parent_ino = ?1 AND name = ?2",
                 params![parent as i64, name],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        let n = conn.execute(
+        let (node_id, kind) = target.ok_or(FsError::NotFound)?;
+        if Kind::from_str(&kind) == Kind::Dir {
+            return Err(FsError::IsADirectory);
+        }
+        conn.execute(
             "DELETE FROM nodes WHERE parent_ino = ?1 AND name = ?2 AND kind = 'file'",
             params![parent as i64, name],
         )?;
-        if n == 0 {
-            return Err(FsError::NotFound);
-        }
-        if let Some(id) = node_id {
-            Self::enqueue(&conn, &id, "delete")?;
-        }
+        Self::enqueue(&conn, &node_id, "delete")?;
         Ok(())
     }
 
     fn rmdir(&self, parent: u64, name: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        let ino: i64 = conn
+        // Resolve without a kind filter for the POSIX-correct errno: a missing entry is
+        // ENOENT, but `rmdir` of a *file* (non-directory) is ENOTDIR — it must not look
+        // like "not found".
+        let (ino, kind): (i64, String) = conn
             .query_row(
-                "SELECT ino FROM nodes WHERE parent_ino = ?1 AND name = ?2 AND kind = 'dir'",
+                "SELECT ino, kind FROM nodes WHERE parent_ino = ?1 AND name = ?2",
                 params![parent as i64, name],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?
             .ok_or(FsError::NotFound)?;
+        if Kind::from_str(&kind) != Kind::Dir {
+            return Err(FsError::NotADirectory);
+        }
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM nodes WHERE parent_ino = ?1", params![ino], |r| {
                 r.get(0)
