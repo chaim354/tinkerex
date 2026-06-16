@@ -20,6 +20,13 @@ module Maker
     # discard cleanly rather than letting find's RecordNotFound be swallowed as a "failure".
     discard_on ActiveRecord::RecordNotFound
 
+    # A transient byte-store failure (403 creds blip, 5xx, network) is RETRYABLE — the
+    # chunk likely exists, we just couldn't read it this instant. Retry with backoff
+    # instead of burning the preview to a terminal "failed" (the prod creds-outage bug).
+    # After attempts are exhausted, ActiveJob re-raises; the preview stays non-terminal
+    # ("processing") so a later manual/scheduled re-enqueue can still succeed.
+    retry_on Maker::FileBytes::FetchError, wait: :polynomially_longer, attempts: 5
+
     def perform(preview_id, filename: nil)
       # find OUTSIDE the begin/rescue so a missing record propagates to discard_on,
       # while fetch/render errors below still mark the preview "failed".
@@ -54,6 +61,11 @@ module Maker
       rescue Unsupported => e
         # Not an error — a deliberate terminal state. Don't re-raise (no retries).
         preview.update!(status: "unsupported", error: e.message)
+      rescue Maker::FileBytes::FetchError => e
+        # Transient (auth/network/5xx). Do NOT mark terminal — leave it "processing" and
+        # re-raise so retry_on schedules a backed-off retry (or re-raises once exhausted).
+        preview.update!(error: "#{e.class}: #{e.message} (retrying)")
+        raise
       rescue StandardError => e
         preview.update!(status: "failed", error: "#{e.class}: #{e.message}")
       end

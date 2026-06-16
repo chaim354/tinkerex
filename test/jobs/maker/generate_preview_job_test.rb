@@ -2,6 +2,8 @@ require "test_helper"
 
 module Maker
   class GeneratePreviewJobTest < ActiveSupport::TestCase
+    include ActiveJob::TestHelper
+
     setup do
       Storage::ChunkStore.reset!
       @store = Storage::ChunkStore.current
@@ -99,6 +101,34 @@ module Maker
       end
 
       assert_not Maker::Preview.exists?(id)
+    end
+
+    test "a transient FetchError is retried, NOT marked terminally failed" do
+      # A 403/5xx/network blip reaching the chunk store surfaces as FileBytes::FetchError.
+      # The chunk may well exist — we just couldn't read it this instant — so the job must
+      # re-raise (ActiveJob retries) and leave the preview NON-terminal (processing),
+      # rather than burning it to "failed". This is the prod creds-outage scenario.
+      stage_version(node_id: "flaky.svg", version_id: "vf", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "flaky.svg", version_id: "vf")
+
+      original = Maker::FileBytes.method(:read)
+      Maker::FileBytes.define_singleton_method(:read) do |*, **|
+        raise Maker::FileBytes::FetchError, "HTTP 403 transient"
+      end
+
+      begin
+        # retry_on re-enqueues the job (it does NOT mark it failed). Under the test
+        # adapter the retry is enqueued rather than re-run, so assert a retry was queued.
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::GeneratePreviewJob.perform_now(preview.id, filename: "flaky.svg")
+        end
+      ensure
+        Maker::FileBytes.define_singleton_method(:read, original)
+      end
+
+      preview.reload
+      assert_not_equal "failed", preview.status, "transient error must not be terminal"
+      assert_not preview.asset.attached?
     end
 
     test "a real fetch/render error flips status to failed with the error message" do
