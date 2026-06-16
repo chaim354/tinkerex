@@ -92,10 +92,11 @@ volumes:
 asset_path: /rails/public/assets
 
 
-# Configure the image builder. Both target servers are amd64; the Mac control machine is
-# arm64, so Kamal uses buildx to cross-build amd64 (QEMU emulation) and push to ghcr.
-# (If emulated builds are too slow, set `remote: ssh://ubuntu@15.204.216.249` to build
-# natively on the amd64 OVH box.)
+# Configure the image builder. Both target servers (Unraid + OVH) are amd64; the Mac control
+# machine is arm64, so Kamal uses buildx to cross-build amd64 (QEMU emulation) ON THE MAC and
+# push to ghcr — both servers then pull the same image. Measured cold build ~84 s (incremental
+# deploys hit the gem/apt layer cache and are far faster), so no remote/on-box builder is needed.
+# A fat build context kills this — keep client/, docs/, test/, .claude/ out via .dockerignore.
 builder:
   arch: amd64
 

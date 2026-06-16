@@ -49,3 +49,24 @@
 # Ignore Docker-related files
 /.dockerignore
 /Dockerfile*
+
+# Rust sync-client workspace — NOT part of the Rails server image. ~15 GB of build
+# artifacts (client/*/target) + source that the server never builds or ships (it
+# references files only by node_id). Excluding it cuts the build context from ~8 GB
+# down to tens of MB.
+/client/
+
+# Docs, tests, CI runners, and dev scripts aren't needed in the production image.
+/docs/
+/test/
+/ci/
+/scripts/
+
+# Claude Code session state + agent git worktrees (full repo checkouts, ~700 MB).
+/.claude/
+
+# macOS cruft, incl. the "* 2" duplicate-file problem noted in CLAUDE.md §13
+# (a stray duplicate once broke a build).
+**/.DS_Store
+**/* 2.*
+**/* 2
