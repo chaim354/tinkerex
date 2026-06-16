@@ -13,14 +13,17 @@ module Maker
 
       # ext (frozen string) => renderer module/object.
       RENDERERS = {
-        "svg" => Maker::Previews::Svg
-        # --- DEFERRED SEAMS (register here; each ships its own renderer + available? gate) ---
-        # "lbrn2" => Maker::Previews::Lbrn2,   # LightBurn XML → SVG → reuse Svg  (Nokogiri, MIT)
-        # "3mf"   => Maker::Previews::ThreeMf, # extract Metadata/thumbnail.png   (rubyzip, BSD-2)
-        # "stl"   => Maker::Previews::Mesh,    # F3D headless PNG                 (f3d BSD-3 subprocess)
-        # "obj"   => Maker::Previews::Mesh,
-        # "step"  => Maker::Previews::Mesh,    # OCCT stays process-isolated (LGPL)
-        # "stp"   => Maker::Previews::Mesh,
+        "svg"   => Maker::Previews::Svg,
+        "lbrn2" => Maker::Previews::Lbrn2,   # LightBurn XML → SVG → reuse Svg   (Nokogiri, MIT)
+        "lbrn"  => Maker::Previews::Lbrn2,
+        "dxf"   => Maker::Previews::Dxf,     # DXF entities → SVG → reuse Svg    (pure Ruby)
+        "3mf"   => Maker::Previews::ThreeMf, # extract embedded thumbnail.png    (rubyzip, BSD-2)
+        "stl"   => Maker::Previews::Mesh,    # F3D headless PNG                  (f3d BSD-3 subprocess)
+        "obj"   => Maker::Previews::Mesh,
+        "step"  => Maker::Previews::Mesh,    # STEP/IGES via F3D's OCCT plugin — OCCT (LGPL) stays
+        "stp"   => Maker::Previews::Mesh,    # process-isolated in the f3d subprocess.
+        "iges"  => Maker::Previews::Mesh,
+        "igs"   => Maker::Previews::Mesh
       }.freeze
 
       # Resolve by raw extension (case-insensitive, leading dot tolerated). nil if none.

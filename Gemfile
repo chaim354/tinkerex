@@ -52,6 +52,12 @@ gem "thruster", require: false
 # Use Active Storage variants [https://guides.rubyonrails.org/active_storage_overview.html#transforming-images]
 gem "image_processing", "~> 2.0"
 
+# File-preview renderers (Maker::Previews::*, permissive only — CLAUDE.md §9):
+#   rubyzip (BSD-2) — extract the embedded thumbnail from a 3MF (OPC/zip container).
+#   nokogiri (MIT)  — parse LightBurn .lbrn2 XML → SVG. (Both are already transitive deps; pinned direct.)
+gem "rubyzip", "~> 3.0", require: "zip"
+gem "nokogiri", "~> 1.18"
+
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
 gem "aws-sdk-s3", require: false
 
