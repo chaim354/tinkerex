@@ -359,6 +359,47 @@ This is well within "usable for async sync": hydration happens on-demand on read
 background, and per-chunk — it's not in the metadata/`stat`/`readdir` path (which is local
 SQLite, §2). Even a 50-100 ms per-chunk R2 hydrate is invisible for the local-first UX.
 
+### Measured against LIVE R2 (2026-06-15)
+
+Run with the server pointed at a real R2 bucket (`maker-chunks-prod`, location ENAM,
+endpoint `https://<acct>.r2.cloudflarestorage.com`, region `auto`) and the client on this
+dev box (residential link). The presign legs hit **localhost** Rails; the PUT/GET legs hit
+**R2 directly** — so the table isolates the R2 WAN cost. `BENCH_BATCH=12`, release build.
+**Compatibility confirmed live first** (`presigned_roundtrip` → `PRESIGNED ROUNDTRIP OK`,
+and the chunk verified in the bucket at `chunks/<user_id>/<sha256>`, byte-for-byte).
+
+| chunk size | presign-PUT (med) | PUT rt (med) | presign-GET (med) | GET rt (med) | **hydrate e2e (med)** | PUT MB/s | GET MB/s |
+|---|---|---|---|---|---|---|---|
+| 64 KB   | 12.7 ms | 131.7 ms | 6.7 ms | 78.7 ms  | **84.5 ms**  | 0.5  | 0.8  |
+| 256 KB  | 13.4 ms | 158.7 ms | 7.4 ms | 87.8 ms  | **95.6 ms**  | 1.6  | 2.8  |
+| 1024 KB | 11.7 ms | 194.6 ms | 7.1 ms | 102.0 ms | **109.3 ms** | 5.1  | 9.8  |
+| 4096 KB |  8.7 ms | 380.9 ms | 7.3 ms | 196.9 ms | **204.8 ms** | 10.5 | 20.3 |
+
+**Reading it:** the prediction above held — per-chunk hydrate is ~85-205 ms, invisible in
+the local-first UX (metadata is local; hydrate is background/on-demand). The **presign legs
+stayed fast** (~7-13 ms, localhost Rails) — the WAN cost is entirely the direct client↔R2
+transfer, exactly the §8 design intent. **Two caveats worth acting on:**
+
+1. **~75-80 ms fixed cost per R2 op** (a 64 KB GET takes ~79 ms vs a 7 ms localhost presign),
+   plus modest per-op bandwidth → **poor small-chunk throughput** (0.8 MB/s GET at 64 KB,
+   rising to 20 MB/s at 4 MB). **Root cause, confirmed in the code:** it is **NOT** per-request
+   TLS handshake — `ServerClient` holds one pooled `reqwest::blocking::Client`
+   (`client/sync-client/src/lib.rs:257`) reused for both presign (→ Rails) and byte transfer
+   (→ R2, `upload_chunk`/`download_chunk`), so keep-alive amortizes the handshake. And presign
+   is **batched per file** (`download_urls(&[hashes])` mints all of a file's GET URLs in one
+   Rails round-trip; `commit_begin` returns all `put_urls`), so the Rails RTT is paid once per
+   file, not per chunk. The cost is purely the **R2 round-trip latency paid SERIALLY** — the
+   engine loops `io.get`/`io.put` one chunk at a time (`client/sync-engine/src/lib.rs:382`,
+   `:519`). 64 KB ÷ 79 ms ≈ 0.8 MB/s because it is RTT-bound and one-at-a-time. **Optimization:
+   parallelize/pipeline chunk hydration** (concurrent `io.get` across a bounded worker pool) —
+   pooling is already in place, so this is the one lever. A large *cold* file is the only path
+   that bites: `per-chunk-RTT × (chunks ÷ parallelism)`. At P=1 a 100 MB file ≈ 10 s; at P=8-16,
+   ~1-1.5 s. Tracked as a follow-up; not a blocker (warm/incremental reads hit the local cache,
+   and metadata never touches the WAN).
+2. **Measurement origin matters** — this is *this dev box → R2 ENAM*. The production Rails
+   host (Unraid VM) and real users will see different RTTs. Re-run from a representative
+   client for user-perceived numbers (the harness needs only `SERVER_URL`).
+
 ---
 
 ## 6. Summary checklist
