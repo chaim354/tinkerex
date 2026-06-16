@@ -71,6 +71,9 @@ Rails.application.routes.draw do
     get "changes", to: "changes#index"
     get "tree", to: "tree#index"
 
+    # search (name/path; scoped to the device's user — for the web UI / a fresh device)
+    get "search", to: "search#index"
+
     # metadata ops + history
     post "nodes", to: "nodes#mkdir"
     delete "nodes/:node_id", to: "nodes#destroy"

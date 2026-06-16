@@ -419,6 +419,27 @@ node (metadata present → found without hydration).
 
 **Effort: S–M.**
 
+**Status: DONE (name/path substring; FTS deferred).** Both surfaces shipped on the
+`g9-search` branch:
+- **Client (instant, offline):** `SqliteProvider::search(query, &SearchOpts)` in
+  `client/fs-provider` returns `Vec<SearchHit { node_id, path, name, kind, size, mtime }>`.
+  Case-insensitive substring of basename *or* full path; a recursive CTE rebuilds each
+  node's path in one query (no N+1); `%`/`_` escaped; paginated by `limit`/`offset`. Touches
+  only local SQLite — an online-only (never-hydrated) node is still found. Tests in
+  `client/fs-provider/tests/search.rs` (9, incl. online-only + deep-nesting + deleted-excluded).
+- **Server (web UI / fresh device):** `Sync::Search` + `GET /v1/search?q=&limit=&offset=&include_deleted=`.
+  Scoped to `current_user` via a recursive CTE that filters `user_id` at every level
+  (tenant isolation proven for identically-named cross-user nodes); tombstones excluded by
+  default, surfaced with `include_deleted=true` (trash search). Adapter-agnostic SQL (`WITH
+  RECURSIVE` + `||` + `LIKE … ESCAPE`, no PG-only extension). Tests:
+  `test/services/sync/search_test.rb` (9) + tenant-isolation HTTP cases in
+  `test/integration/v1/tenant_isolation_test.rb`.
+- **Typed client:** `ServerClient::search(query, limit, offset) -> SearchResponse` in
+  `client/sync-client`.
+- **Deferred (follow-up):** FTS5/`pg_trgm` ranking (only if `LIKE` is slow at scale — ties
+  into G11) and **content search** (a separate maker-app indexing job). A **web UI search
+  box** wiring `GET /v1/search` is a small front-end follow-up.
+
 ---
 
 ## 11. G10 — Delta-on-the-wire audit
