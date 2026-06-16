@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000013) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_16_000001) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -42,6 +42,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000013) do
     t.datetime "resolved_at"
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
+    t.index ["user_id", "node_id", "incoming_version_id"], name: "index_conflicts_on_user_node_incoming", unique: true
     t.index ["user_id", "node_id"], name: "index_conflicts_on_user_id_and_node_id"
     t.index ["user_id", "resolved_at"], name: "index_conflicts_on_user_id_and_resolved_at"
   end
