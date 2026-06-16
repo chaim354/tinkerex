@@ -97,6 +97,13 @@ Rails.application.routes.draw do
         resources :taggings, only: %i[create destroy], shallow: true
       end
       resources :tags, only: %i[index create destroy]
+      resources :collections do
+        member do
+          get  "items"
+          post "items", action: :add_item
+          delete "items/:item_id", action: :remove_item
+        end
+      end
     end
 
     # hydration
