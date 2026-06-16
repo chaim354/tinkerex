@@ -53,7 +53,7 @@ module Maker
     end
 
     def http_error(status)
-      io = Struct.new(:status).new([status.to_s, "oops"])
+      io = Struct.new(:status).new([ status.to_s, "oops" ])
       OpenURI::HTTPError.new("#{status} oops", io)
     end
 

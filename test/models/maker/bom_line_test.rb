@@ -67,7 +67,7 @@ module Maker
       assert_equal :inventory_item, @bom.lines.build(inventory_item_id: @inv.id).target_kind
       assert_equal :design_file,    @bom.lines.build(node_id: "n").target_kind
       assert_equal :free_text,      @bom.lines.build(part_name: "x").target_kind
-      assert_nil    @bom.lines.build.target_kind
+      assert_nil @bom.lines.build.target_kind
     end
 
     test "resolved_target returns the linked inventory item with its balance" do

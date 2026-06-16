@@ -1,0 +1,28 @@
+{
+  "ignored_warnings": [
+    {
+      "warning_type": "Mass Assignment",
+      "warning_code": 70,
+      "fingerprint": "1f8d6e2d3b5b9ae9dc7f04d95bb38ba4d687148a7299d9671fb8e0d0155ab911",
+      "check_name": "PermitAttributes",
+      "message": "Potentially dangerous key allowed for mass assignment",
+      "file": "app/controllers/v1/maker/file_attachments_controller.rb",
+      "line": 33,
+      "link": "https://brakemanscanner.org/docs/warning_types/mass_assignment/",
+      "code": "params.require(:file_attachment).permit(:node_id, :version_id, :role, :label, :position)",
+      "render_path": null,
+      "location": {
+        "type": "method",
+        "class": "V1::Maker::FileAttachmentsController",
+        "method": "attachment_params"
+      },
+      "user_input": null,
+      "confidence": "Medium",
+      "cwe_id": [
+        915
+      ],
+      "note": "False positive. `role` here is a domain label enum (Maker::FileAttachment::ROLES = model/instructions/image/source_archive/gcode/other), NOT a security/authorization role. It is validated by `inclusion: { in: ROLES }` on the model, so an attacker cannot inject an arbitrary value. The attachment is always scoped to current_user via the parent association, so mass-assigning it grants no privilege escalation."
+    }
+  ],
+  "brakeman_version": "8.0.5"
+}
