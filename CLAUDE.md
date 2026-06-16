@@ -58,7 +58,7 @@ content-addressed manifest sharing chunks).
 
 | Component | Path | Role |
 |---|---|---|
-| **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. |
+| **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. Node kinds: File/Dir/**Symlink** (symlink target synced; git-on-mount works — `docs/git-on-mount.md`). |
 | **fs-fuse** | `client/fs-fuse` | FUSE adapter (**Linux** mount path) over `Provider`. Verified live. (macOS uses `fs-webdav` — FUSE-T can't mount on macOS 26.) |
 | **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (**Windows** mount path) over the **same** `Provider`. **Verified: mounts a drive letter + syncs** via the app. Needs `winfsp-x64.dll` on PATH at runtime (or bundled). |
 | **fs-cfapi** | `client/fs-cfapi` | **CfAPI** adapter — the **driverless** Windows path (Cloud Filter API, no GPL driver; the OneDrive model: sync-root folder + on-demand hydration). **Verified live on Windows 11**: register + on-demand enumerate (FETCH_PLACEHOLDERS) + hydrate-on-open (FETCH_DATA) + remote-change invalidation + **local-edit capture** (NOTIFY_FILE_CLOSE → ingest → push) + offline-persistent hydrated files. **Now the DEFAULT Windows backend** (flipped 2026-06-14; Phase 2b complete): new-file capture (ReadDirectoryChangesW watcher) + delete + rename all propagate, **live smoke + byte-for-byte conformance green** against the deployed server. `fs-winfsp` stays behind the `winfsp-backend` cargo feature for one release. See `docs/plan-windows-cfapi-migration.md`, `docs/cfapi-write-path-findings.md`. |

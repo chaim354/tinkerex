@@ -1,6 +1,28 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-16 (managed-Postgres hardening G2 + storage-orphan reaper G4 + file-layer polish G5/G8/G10 + R2 validated live)
+**Updated:** 2026-06-16 (git-on-mount MVP: symlink support added; managed-Postgres hardening G2 + storage-orphan reaper G4 + file-layer polish G5/G8/G10 + R2 validated live)
+
+## Latest (2026-06-16): git-on-mount investigation + symlink MVP
+
+**Verdict:** a `git` repo **works inside the mounted sync filesystem** for the everyday loop
+(`init`/`add`/`commit`/`status`/`log`/`diff`/`branch`/`checkout`) — the model already supported
+the hard parts (atomic `index.lock`→`index` rename, `O_EXCL` lockfiles, exec-bit). The one real
+break was **symlinks** (the tree modeled only `File`/`Dir` → `EPERM`), now **fixed**.
+
+- `fs-provider`: new `Kind::Symlink` + `nodes.symlink_target` BLOB; `Provider::symlink`/`readlink`
+  (trait methods, default `NotSupported`, `SqliteProvider` overrides; forwarded through the
+  `Arc<P>` blanket impl). `SyncNode.symlink_target` round-trips through
+  `export_tree`/`sync_node`/`apply_remote` → symlinks **replicate device→device byte-identical**.
+- `fs-fuse`: real `symlink`/`readlink` callbacks (was an `EPERM` stub) + `Kind::Symlink →
+  FileType::Symlink`.
+- Tests: `client/fs-provider/tests/git_on_mount.rs` (symlink CRUD + sync round-trip + git-critical-op
+  guards) — all green on macOS. **Gold-standard real `git` vs a real FUSE mount** in Linux/Docker:
+  `client/test-conformance/git-on-fuse.sh` (+ `git-on-fuse-docker.sh`).
+- **Open follow-up:** end-to-end **server** sync of symlinks (the Rails server doesn't model a
+  symlink-kind node yet, so `sync-engine` push *skips* `Kind::Symlink`; Provider + in-process
+  replication work). **Hardlinks remain a documented non-goal** (git degrades to copy on
+  `clone --local`). Full writeup: `docs/git-on-mount.md`.
+
 
 ## Latest (2026-06-16): managed-deploy hardening (G2/G4) + file-layer polish (G5/G8/G10) + R2 live (HEAD `94b7f02`)
 
@@ -221,8 +243,9 @@ sync — see the conformance dig): file mode is now preserved end-to-end.
   integration `executable_bit_propagates_across_devices` (chmod +x on A → 0755 on B).
 
 This is mode *preservation*, not enforcement (ownership/uid-gid deliberately not synced —
-meaningless across devices). Remaining POSIX gaps (symlinks/hardlinks/special files,
-ctime/atime) are intentional non-goals for a personal sync drive.
+meaningless across devices). **Symlinks are now supported** (see the git-on-mount section
+below). Remaining POSIX gaps (hardlinks/special files, ctime/atime) are intentional
+non-goals for a personal sync drive.
 
 ## Earlier (2026-06-12): best-effort cross-device lock
 
