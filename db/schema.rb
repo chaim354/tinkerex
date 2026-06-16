@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000010) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000011) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -166,6 +166,16 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000010) do
     t.integer "user_id", null: false
     t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
     t.index ["user_id", "status"], name: "index_maker_projects_on_user_id_and_status"
+  end
+
+  create_table "maker_suppliers", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.text "notes"
+    t.datetime "updated_at", null: false
+    t.string "url"
+    t.integer "user_id", null: false
+    t.index ["user_id", "name"], name: "index_maker_suppliers_on_user_id_and_name"
   end
 
   create_table "maker_taggings", force: :cascade do |t|
