@@ -94,7 +94,9 @@ Rails.application.routes.draw do
     namespace :maker do
       resources :items do
         resources :file_attachments, only: %i[create destroy], shallow: true
+        resources :taggings, only: %i[create destroy], shallow: true
       end
+      resources :tags, only: %i[index create destroy]
     end
 
     # hydration

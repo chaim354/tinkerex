@@ -3,6 +3,16 @@ module V1
     class ItemsController < V1::BaseController
       def index
         items = current_user.maker_items.order(updated_at: :desc)
+        items = items.of_type(params[:type])
+        if params[:tag].present?
+          tag = current_user.maker_tags.find_by(name: params[:tag].to_s.strip.downcase)
+          ids = tag ? tag.taggings.where(taggable_type: "Maker::Item").pluck(:taggable_id) : []
+          items = items.where(id: ids)
+        end
+        if params[:q].present?
+          like = "%#{params[:q].to_s.strip}%"
+          items = items.where("title LIKE :q OR summary LIKE :q OR description LIKE :q", q: like)
+        end
         render json: { items: items.map { |i| item_json(i) } }
       end
 
