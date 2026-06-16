@@ -16,31 +16,40 @@ module Maker
 
     Unsupported = Class.new(StandardError)
 
+    # A preview can be destroyed (e.g. file deleted) before this enqueued job runs;
+    # discard cleanly rather than letting find's RecordNotFound be swallowed as a "failure".
+    discard_on ActiveRecord::RecordNotFound
+
     def perform(preview_id, filename: nil)
+      # find OUTSIDE the begin/rescue so a missing record propagates to discard_on,
+      # while fetch/render errors below still mark the preview "failed".
       preview = Maker::Preview.find(preview_id)
-      preview.update!(status: "processing", error: nil)
 
-      name = filename.presence || preview.node_id
-      renderer = Maker::Previews::Registry.for_filename(name)
+      begin
+        preview.update!(status: "processing", error: nil)
 
-      ext = File.extname(name.to_s).downcase.delete_prefix(".")
-      raise Unsupported, "no preview renderer for .#{ext}" if renderer.nil?
-      raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless renderer.available?
+        name = filename.presence || preview.node_id
+        renderer = Maker::Previews::Registry.for_filename(name)
 
-      bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
-      result = renderer.render(bytes, size: 512)
+        ext = File.extname(name.to_s).downcase.delete_prefix(".")
+        raise Unsupported, "no preview renderer for .#{ext}" if renderer.nil?
+        raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless renderer.available?
 
-      preview.asset.attach(
-        io: StringIO.new(result[:bytes]),
-        filename: "#{preview.kind}-#{preview.id}#{asset_ext(result[:content_type])}",
-        content_type: result[:content_type]
-      )
-      preview.update!(status: "ready", width: result[:width], height: result[:height], error: nil)
-    rescue Unsupported => e
-      # Not an error — a deliberate terminal state. Don't re-raise (no retries).
-      preview&.update!(status: "unsupported", error: e.message)
-    rescue StandardError => e
-      preview&.update!(status: "failed", error: "#{e.class}: #{e.message}")
+        bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
+        result = renderer.render(bytes, size: 512)
+
+        preview.asset.attach(
+          io: StringIO.new(result[:bytes]),
+          filename: "#{preview.kind}-#{preview.id}#{asset_ext(result[:content_type])}",
+          content_type: result[:content_type]
+        )
+        preview.update!(status: "ready", width: result[:width], height: result[:height], error: nil)
+      rescue Unsupported => e
+        # Not an error — a deliberate terminal state. Don't re-raise (no retries).
+        preview.update!(status: "unsupported", error: e.message)
+      rescue StandardError => e
+        preview.update!(status: "failed", error: "#{e.class}: #{e.message}")
+      end
     end
 
     private

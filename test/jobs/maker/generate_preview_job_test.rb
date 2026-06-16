@@ -54,6 +54,19 @@ module Maker
       assert_not preview.asset.attached?
     end
 
+    test "a job for a since-deleted preview is discarded, not failed" do
+      stage_version(node_id: "gone.svg", version_id: "vg", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "gone.svg", version_id: "vg")
+      id = preview.id
+      preview.destroy!
+
+      assert_nothing_raised do
+        Maker::GeneratePreviewJob.perform_now(id, filename: "gone.svg")
+      end
+
+      assert_not Maker::Preview.exists?(id)
+    end
+
     test "a real fetch/render error flips status to failed with the error message" do
       # Version exists but its chunk bytes are missing from the store → FileBytes::NotFound.
       ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",

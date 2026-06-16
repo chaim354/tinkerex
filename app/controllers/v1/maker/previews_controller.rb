@@ -26,6 +26,7 @@ module V1
         preview.status = "pending" if new_record || preview.status == "failed"
         preview.save!
 
+        # Reads the in-memory status after save (set above) to decide whether to enqueue.
         if new_record || preview.status == "pending"
           ::Maker::GeneratePreviewJob.perform_later(preview.id, filename: attrs[:filename])
         end
