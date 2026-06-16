@@ -216,6 +216,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_122543) do
     t.index ["user_id", "parent_id"], name: "index_maker_locations_on_user_id_and_parent_id"
   end
 
+  create_table "maker_previews", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "error"
+    t.integer "height"
+    t.string "kind", default: "thumbnail", null: false
+    t.string "node_id", null: false
+    t.string "status", default: "pending", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version_id"
+    t.integer "width"
+    t.index ["user_id", "node_id", "version_id", "kind"], name: "idx_maker_previews_unique", unique: true
+    t.index ["user_id", "status"], name: "index_maker_previews_on_user_id_and_status"
+  end
+
   create_table "maker_projects", force: :cascade do |t|
     t.datetime "archived_at"
     t.datetime "created_at", null: false
