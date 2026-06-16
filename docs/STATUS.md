@@ -1,6 +1,23 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-16 (git-on-mount MVP: symlink support added; managed-Postgres hardening G2 + storage-orphan reaper G4 + file-layer polish G5/G8/G10 + R2 validated live)
+**Updated:** 2026-06-16 (file-layer hardening + prod-like infra wave: symlinks client+server, verify-on-hydrate, N-way conflict, offline primitives, both documented-reds fixed, conformance byte-perfect, ghcr+OVH/R2 prod-like box, cross-OS app build CI, sharing+encryption plans)
+
+## Latest (2026-06-16, later): file-layer hardening + prod-like infra
+
+A large file-layer wave merged on top of the morning's G2/G4/G5 batch (full detail + the action
+items in `docs/HANDOFF.md` "File-layer hardening + prod-like infra wave"):
+- **Correctness:** POSIX conformance (#24), **symlinks end-to-end** client (#25) + **server** (#26),
+  **verify-on-hydrate** integrity (#28), **N-way conflict** resolution (#29), and **both
+  documented-reds fixed** (rename-cycle + apply_remote cyclic-reparent, #33) → `fs-provider` 170/0,
+  **0 ignored**. Server suite 393+/0.
+- **Offline:** `make-available-offline`/`offline_readiness`/pin + `maker-offline` CLI (#30).
+- **Conformance (#34):** data plane **byte-perfect** (fsx 25k + rclone, 0 diffs); `docs/conformance-status.md`.
+- **Infra:** shared **ghcr** registry + a live **OVH prod-like box** (`15.204.216.249`, `kamal deploy -d ovh`)
+  on R2 — **11.2× parallel hydration measured over real WAN** (`r2-migration.md` §5). Cross-OS Tauri
+  **build CI** (#32, `docs/building-the-app.md`).
+- **Plans for the next arcs:** `docs/plan-sharing.md` (#35) + `docs/plan-encryption.md` (#36);
+  self-host options (#31). Ordering: auth → sharing → encryption.
+- **⚠️ Rotate** the exposed R2 token + ghcr PAT (see HANDOFF security action).
 
 ## Latest (2026-06-16): git-on-mount investigation + symlink MVP
 
