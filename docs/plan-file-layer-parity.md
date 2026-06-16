@@ -56,7 +56,7 @@ These roadmap items shipped and are **not** re-planned here, only their *remaini
 | **G8** | Symlink / special-file / ctime-atime handling **decision + guardrail** | **S** | correctness boundary | — |
 | **G9** | Search (server-side name/path; later content) | **S–M** | table-stakes | — |
 | **G10** | Delta-on-the-wire audit (confirm block-delta is truly minimal) | **S** | verification | — |
-| **G11** | Large-file & many-file **scale** validation (10k+ files, >10 GB) | **M** | verification | — |
+| **G11** ✅ | Large-file & many-file **scale** validation (10k+ files, >10 GB) — DONE (2 N+1s fixed) | **M** | verification | — |
 | **G12** | Sharing / multi-user (shared folders, links, permissions) | **L** | PRODUCT FORK | G2, G3 |
 | **G13** | LAN sync / peer block transfer (Syncthing-style) | **M–H** | differentiator | — (mind CVE) |
 | **G14** | At-rest / E2EE chunk encryption (per-user AEAD) | **M–L** | differentiator (SaaS trust) | everything else first |
@@ -468,6 +468,53 @@ assert query counts on resync are O(pages), not O(nodes). Add a CI "scale" leg (
 **Licensing.** None.
 
 **Effort: M.**
+
+### G11 — DONE (2026-06-16). What was found + fixed.
+
+**Two N+1s confirmed + fixed (the headline).** Both bulk read serializers issued
+per-row `find_by`s inside the page loop:
+
+| Serializer | Before (per page) | After | Fix |
+|---|---|---|---|
+| `Sync::Tree` (snapshot) | **~1.75 queries/node** (351 for 200 nodes) | **3 queries** flat | batch-load versions + manifests |
+| `Sync::Changes` (delta) | **~2.6 queries/entry** (527 for 200 entries) | **5 queries** flat | batch-load nodes + versions + manifests |
+
+At 1000 nodes/entries the fixed paths are **3 and 5 queries** respectively (33 ms / 31 ms
+on SQLite) — O(pages), not O(nodes). The fix is *batch loading* (not `includes`): the tree
+has **no AR associations on the string keys** (`node_id`/`version_id`/`manifest_id` are
+matched via `find_by`), so each serializer now `pluck`s the key set for the page and does
+one `WHERE … IN (…)` per related table, grouping manifests in memory via the shared
+`Sync.load_manifests` helper (`app/services/sync.rb`). Portable — no PG-only SQL, correct
+on SQLite + Postgres. Regression backstop: `test/services/sync/scale_test.rb` asserts the
+query count stays a small constant and does **not** grow with page size (it fails loudly on
+the pre-fix code — 351/527 queries).
+
+**End-to-end at the 10k target.** `client/sync-engine/tests/scale.rs` (server-backed,
+skips offline; CI-fast at the default 400 files, scales via `SCALE_FILES`) builds a deep
+tree on device A, pushes it, then full-resyncs device B (paginated `/v1/tree` →
+`apply_remote` of the whole snapshot), does a bounded delta pull, and hydrates a file
+byte-for-byte. Measured at **`SCALE_FILES=10000`** (memory backend, SharedDirIO data
+plane): local build 2.3 s; **full-resync of 10,100 nodes 6.4 s**; **a 1-file delta pull
+atop 10k = 7.8 ms** (the proof the delta path does NOT walk the tree); hydrate verified.
+
+**>2 GB offsets — confirmed safe.** `ChunkLoc.offset`/`length` are `u64` in `fs-provider`
+and stored as `i64` in SQLite (i64 max ≈ 9.2 EB); the server columns are `bigint`. No
+u32 truncation on the offset path. (A literal multi-GB-single-file byte run was **not**
+executed here — it's I/O-bound, not a correctness/query question; flagged below.)
+
+**Out of scope / flagged (not query-count problems):**
+- **Push of a 10k-file tree is ~113 s** — the outbox drains as a *sequential* per-file
+  two-phase `commit` (begin→upload→finalize), one HTTP round-trip set per file. This is
+  inherently O(files) *work* (not an N+1), dominated by request latency. A batched/
+  pipelined commit endpoint (or concurrent outbox drain) is the lever; tracked separately,
+  not a correctness gate.
+- **Real managed-Postgres numbers** — the query *counts* are adapter-agnostic and proven,
+  but absolute latency over a network DB + a session/transaction-mode pooler (G2) should be
+  measured on a real managed deploy. The `IN (…)` lists are bounded by the page `limit`
+  (≤5000 tree / ≤2000 changes), well within Postgres parameter limits.
+- **A literal >2 GB / 3 GB single-file** push+hydrate (FastCDC throughput) — the offset
+  *types* are verified; an actual multi-GB byte run is an I/O benchmark left for a manual/
+  nightly leg.
 
 ---
 
