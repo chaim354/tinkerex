@@ -10,6 +10,7 @@ module Maker
     has_many :file_attachments, -> { order(:position) },
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
     has_many :taggings, as: :taggable, class_name: "Maker::Tagging", dependent: :destroy
+    has_many :collection_items, class_name: "Maker::CollectionItem", dependent: :destroy
     has_many :tags, through: :taggings, class_name: "Maker::Tag"
 
     validates :title, presence: true

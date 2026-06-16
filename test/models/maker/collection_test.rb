@@ -29,5 +29,13 @@ module Maker
       assert Maker::Item.exists?(@item.id)
       assert_equal 0, Maker::CollectionItem.count
     end
+
+    test "destroying an item removes its collection memberships" do
+      @collection.collection_items.create!(user: @user, item: @item)
+      assert_difference -> { Maker::CollectionItem.count }, -1 do
+        @item.destroy
+      end
+      assert Maker::Collection.exists?(@collection.id)
+    end
   end
 end
