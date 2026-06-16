@@ -304,6 +304,77 @@ fn rename_dir_into_its_own_descendant_is_rejected_with_einval() {
 }
 
 // =======================================================================================
+// AREA 5b: cycle on the PULL path — `apply_remote` re-parenting under a descendant.
+//
+// The changelog is applied entry-by-entry; a delta can momentarily present "X's parent is
+// now Y" and "Y's parent is now X". Unlike local `rename`, `apply_remote` is authoritative,
+// but it must never leave the LOCAL tree in a cyclic state where a subtree is unreachable
+// from ROOT (that orphans data + loops any tree walk). We probe whether applying a cyclic
+// pair leaves a detached cycle.
+// =======================================================================================
+
+/// Walk every node's parent chain; panic if any node cannot reach ROOT within `bound` hops
+/// (i.e. it's in a cycle or orphaned). Returns the set of node_ids reachable from ROOT.
+fn assert_acyclic_reachable(p: &SqliteProvider, ctx: &str) {
+    let nodes = p.export_tree().unwrap();
+    let by_id: std::collections::HashMap<String, Option<String>> =
+        nodes.iter().map(|n| (n.node_id.clone(), n.parent_node_id.clone())).collect();
+    for n in &nodes {
+        let mut cur = n.parent_node_id.clone();
+        let mut hops = 0;
+        while let Some(pid) = cur {
+            hops += 1;
+            assert!(
+                hops < 10_000,
+                "{ctx}: BUG — node {} is in a cycle / cannot reach ROOT (orphaned subtree)",
+                n.node_id
+            );
+            cur = by_id.get(&pid).cloned().flatten();
+        }
+    }
+}
+
+#[test]
+#[ignore = "RED (documented gap): apply_remote does not guard against re-parenting a dir \
+            under its own descendant, so a cyclic changelog interleaving leaves a detached \
+            cycle in the LOCAL tree (subtree unreachable from ROOT). See comment for repro. \
+            Lower severity than the local-rename cycle: the authoritative server tree is \
+            acyclic, so this only manifests on a transient/buggy delta ordering and the \
+            reconcile floor (pull_snapshot) would eventually re-apply a consistent snapshot. \
+            Left documented rather than fixed tonight: the right fix (cycle-detect + defer in \
+            pull_changes_paged, mirroring BUG #2's defer-and-retry) belongs in sync-engine, \
+            not a blunt reject in apply_remote (which must stay able to apply any single \
+            authoritative snapshot row)."]
+fn apply_remote_cyclic_reparent_must_not_orphan_subtree() {
+    // Build X and Y as two sibling dirs under ROOT on a source, export their nodes.
+    let src = provider();
+    let x = src.mkdir(ROOT, "X").unwrap();
+    let y = src.mkdir(ROOT, "Y").unwrap();
+    let x_node = src.export_tree().unwrap().into_iter().find(|n| n.name == "X").unwrap();
+    let y_node = src.export_tree().unwrap().into_iter().find(|n| n.name == "Y").unwrap();
+    let _ = (x, y);
+
+    // Replica applies both as-is (siblings under ROOT) — fine.
+    let replica = provider();
+    replica.apply_remote(&x_node).unwrap();
+    replica.apply_remote(&y_node).unwrap();
+    assert_acyclic_reachable(&replica, "after sibling apply");
+
+    // Now craft a cyclic delta: X.parent := Y, then Y.parent := X.
+    let mut x_under_y = x_node.clone();
+    x_under_y.parent_node_id = Some(y_node.node_id.clone());
+    let mut y_under_x = y_node.clone();
+    y_under_x.parent_node_id = Some(x_node.node_id.clone());
+
+    // Apply both (authoritative). EXPECTED: the local tree must not contain a detached cycle.
+    // ACTUAL (the gap): apply_remote happily sets X.parent=Y and Y.parent=X → both unreachable
+    // from ROOT, a 2-node cycle → assert_acyclic_reachable panics.
+    let _ = replica.apply_remote(&x_under_y);
+    let _ = replica.apply_remote(&y_under_x);
+    assert_acyclic_reachable(&replica, "after cyclic reparent delta");
+}
+
+// =======================================================================================
 // AREA 6: metadata-only mutation (`set_mtime`) and the outbox.
 // =======================================================================================
 
