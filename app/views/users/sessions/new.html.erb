@@ -23,4 +23,15 @@
   </div>
 <% end %>
 
+<%# Single sign-on — only shown when an OIDC provider is actually configured (OIDC_* env).
+    The request phase MUST be a POST (omniauth-rails_csrf_protection); button_to emits the
+    authenticity token + POST form for us. %>
+<% if OmniauthConfig.oidc_configured? %>
+  <div class="sso">
+    <%= button_to ENV["OIDC_DISPLAY_NAME"].presence || "Sign in with SSO",
+                  user_openid_connect_omniauth_authorize_path,
+                  data: { turbo: false } %>
+  </div>
+<% end %>
+
 <%= render "users/shared/links" %>
