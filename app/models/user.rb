@@ -36,13 +36,6 @@ class User < ApplicationRecord
          :validatable, :confirmable, :lockable, :trackable, :timeoutable,
          :omniauthable, omniauth_providers: %i[openid_connect]
 
-  # Ignore the legacy hand-rolled auth columns while they still exist in the DB (physically
-  # dropped in a later migration, after the encrypted_password backfill). In particular the
-  # `password_digest` COLUMN collides with Devise's `password_digest(password)` bcrypt helper
-  # during ActiveModel serialization/inspect (e.g. the confirmable mailer inspects the
-  # record) — ignoring it removes the column from the attribute set so no 0-arg call is made.
-  self.ignored_columns += %w[password_digest confirmation_token_digest reset_token_digest reset_sent_at]
-
   # Set transiently by from_omniauth (and the v1 bootstrap) so a passwordless account
   # validates on first save before its UserIdentity row is persisted. Not a DB column.
   attr_accessor :omniauth_signup
