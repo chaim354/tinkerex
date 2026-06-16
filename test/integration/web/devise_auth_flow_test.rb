@@ -28,6 +28,36 @@ module Web
       assert user.encrypted_password.present?, "password is hashed"
     end
 
+    test "sign up with a BLANK password is rejected and creates no user" do
+      # password_required? is false when no password is set (so the OmniAuth seam + the
+      # device-token bootstrap can create passwordless accounts) — but a HUMAN web sign-up
+      # with a blank password must NOT persist an inert, can't-authenticate row. The web
+      # registration boundary rejects it.
+      assert_no_difference -> { User.count } do
+        post user_registration_path, params: { user: {
+          email: "blank@example.com", password: "", password_confirmation: ""
+        } }
+      end
+      assert_response :unprocessable_entity
+      assert_nil User.find_by(email: "blank@example.com")
+    end
+
+    test "sign up WITH a valid password still works after the blank-password guard" do
+      assert_difference -> { User.count }, 1 do
+        post user_registration_path, params: { user: {
+          email: "valid@example.com", password: PASSWORD, password_confirmation: PASSWORD
+        } }
+      end
+      assert User.find_by(email: "valid@example.com").encrypted_password.present?
+    end
+
+    test "the blank-password guard does NOT break programmatic passwordless creates" do
+      # OmniAuth seam + v1 bootstrap rely on passwordless User.create! — these must stay valid.
+      assert_difference -> { User.count }, 1 do
+        User.create!(email: "omniauth@example.com", omniauth_signup: true, confirmed_at: Time.current)
+      end
+    end
+
     test "sign up rejects a mismatched password confirmation" do
       assert_no_difference -> { User.count } do
         post user_registration_path, params: { user: {
