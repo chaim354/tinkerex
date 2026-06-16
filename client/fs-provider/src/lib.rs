@@ -119,6 +119,11 @@ pub struct Attr {
     /// Real modification time, **unix nanoseconds** (see [`now_nanos`]). Preserved + synced
     /// so a file's true mtime is stable across devices (not the sync time).
     pub mtime: i64,
+    /// Access time, **unix nanoseconds**. **Device-local** — set by `utimensat`/`set_atime`
+    /// and reported by `getattr`, but deliberately NOT carried in the sync export (every
+    /// device has its own access pattern; syncing atime would be both wrong and chatty).
+    /// Defaults to the node's mtime when never explicitly set.
+    pub atime: i64,
     /// POSIX permission bits (e.g. `0o644`, `0o755`). Preserved + synced so the
     /// executable bit (and other mode bits) survive a chmod and propagate across devices.
     pub mode: u32,
@@ -313,6 +318,12 @@ pub trait Provider: Send + Sync {
     fn set_mtime(&self, _ino: u64, _mtime: i64) -> Result<()> {
         Ok(())
     }
+    /// Set the access time (unix nanoseconds — the kernel's `setattr(atime)`, e.g. a
+    /// `utimensat`). Default no-op; `SqliteProvider` persists it **device-locally** (atime
+    /// is access state, never synced — see [`Attr::atime`]).
+    fn set_atime(&self, _ino: u64, _atime: i64) -> Result<()> {
+        Ok(())
+    }
     /// Resize the file to exactly `size` bytes (the kernel's `setattr`/`O_TRUNC`).
     /// Shrinking drops any content past the new EOF (so an overwrite-with-shorter
     /// leaves no stale tail); growing zero-fills. The new length is what `flush`
@@ -377,6 +388,7 @@ impl SqliteProvider {
                 kind        TEXT NOT NULL,
                 size        INTEGER NOT NULL DEFAULT 0,
                 mtime       INTEGER NOT NULL DEFAULT 0,  -- real mtime, unix NANOSECONDS (preserved + synced)
+                atime       INTEGER NOT NULL DEFAULT 0,  -- access time, unix NANOSECONDS (DEVICE-LOCAL, never synced)
                 manifest_id TEXT,
                 node_id     TEXT,
                 version_id  TEXT,         -- server version this node reflects (commit base)
@@ -416,6 +428,8 @@ impl SqliteProvider {
         // Migrate older DBs that predate these columns (ignore "duplicate column").
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN version_id TEXT", []);
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN mode INTEGER", []);
+        // atime column on an existing DB (device-local access time; 0 → falls back to mtime).
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN atime INTEGER NOT NULL DEFAULT 0", []);
         // G5 debounce columns on an existing outbox (no-op on a fresh DB).
         let _ = conn.execute("ALTER TABLE outbox ADD COLUMN enqueued_at INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE outbox ADD COLUMN first_enqueued_at INTEGER NOT NULL DEFAULT 0", []);
@@ -437,15 +451,24 @@ impl SqliteProvider {
 
     fn attr_row(conn: &Connection, ino: u64) -> Result<Attr> {
         conn.query_row(
-            "SELECT ino, kind, size, mtime, mode FROM nodes WHERE ino = ?1",
+            "SELECT ino, kind, size, mtime, mode, atime FROM nodes WHERE ino = ?1",
             params![ino as i64],
             |r| {
                 let kind = Kind::from_str(&r.get::<_, String>(1)?);
+                let mtime = r.get::<_, i64>(3)?;
+                // atime defaults to mtime when never explicitly set (a fresh node, or an
+                // older DB predating the column) — a sane "last touched" value, and what a
+                // noatime-style mount would report.
+                let atime = match r.get::<_, Option<i64>>(5)? {
+                    Some(a) if a > 0 => a,
+                    _ => mtime,
+                };
                 Ok(Attr {
                     ino: r.get::<_, i64>(0)? as u64,
                     kind,
                     size: r.get::<_, i64>(2)? as u64,
-                    mtime: r.get::<_, i64>(3)?,
+                    mtime,
+                    atime,
                     mode: r.get::<_, Option<i64>>(4)?.map(|m| m as u32).unwrap_or_else(|| default_mode(kind)),
                 })
             },
@@ -566,8 +589,10 @@ impl SqliteProvider {
         let node_id = uuid::Uuid::new_v4().to_string();
         let mode = default_mode(kind);
         let mtime = now_nanos();
+        // Seed atime = mtime at creation so it has a concrete value; thereafter set_mtime
+        // never disturbs atime and set_atime never disturbs mtime (the UTIME_OMIT contract).
         let res = conn.execute(
-            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime, atime) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             params![parent as i64, name, kind.as_str(), node_id, mode as i64, mtime],
         );
         match res {
@@ -587,6 +612,7 @@ impl SqliteProvider {
             kind,
             size: 0,
             mtime,
+            atime: mtime, // a fresh node's atime starts at its creation/mtime
             mode,
         })
     }
@@ -1834,6 +1860,18 @@ impl Provider for SqliteProvider {
         Ok(())
     }
 
+    fn set_atime(&self, ino: u64, atime: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("UPDATE nodes SET atime = ?1 WHERE ino = ?2", params![atime, ino as i64])?;
+        if n == 0 {
+            return Err(FsError::NotFound);
+        }
+        // Deliberately NOT enqueued to the outbox: atime is device-local access state, not
+        // synced (unlike set_mtime, which propagates the real modification time). This is
+        // the whole reason atime lives in a separate column the export ignores.
+        Ok(())
+    }
+
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         self.locks.set(ino, lock).map_err(|_| FsError::WouldBlock)
     }
@@ -1895,6 +1933,9 @@ impl<P: Provider + ?Sized> Provider for std::sync::Arc<P> {
     }
     fn set_mtime(&self, ino: u64, mtime: i64) -> Result<()> {
         (**self).set_mtime(ino, mtime)
+    }
+    fn set_atime(&self, ino: u64, atime: i64) -> Result<()> {
+        (**self).set_atime(ino, atime)
     }
     fn set_lock(&self, ino: u64, lock: LockRange) -> Result<()> {
         (**self).set_lock(ino, lock)
