@@ -176,3 +176,46 @@ fn name_length_limit_counts_bytes_not_chars() {
     assert_eq!(multibyte.len(), 256);
     assert!(matches!(p.create(ROOT, &multibyte), Err(FsError::NameTooLong)));
 }
+
+// ---- chmod: full 12-bit permission round-trip ------------------------------------------
+
+#[test]
+fn chmod_preserves_all_permission_bits_including_special() {
+    // pjdfstest chmod/00 sweeps the whole 07777 space: the rwx triples *and* the special
+    // bits (setuid 04000, setgid 02000, sticky 01000). set_mode masks to 07777 — confirm a
+    // value using every group survives a round-trip (it must not drop setuid/setgid/sticky).
+    let p = provider();
+    let ino = write_file(&p, ROOT, "f", b"x");
+    for &mode in &[0o644u32, 0o600, 0o755, 0o4755 /*setuid*/, 0o2755 /*setgid*/, 0o1777 /*sticky*/, 0o7777] {
+        p.set_mode(ino, mode).unwrap();
+        assert_eq!(p.getattr(ino).unwrap().mode, mode, "mode {mode:o} round-trips");
+    }
+}
+
+#[test]
+fn chmod_ignores_non_permission_high_bits() {
+    // The kernel passes the file-type bits (S_IFMT) in the same word as the mode on some
+    // paths; set_mode must keep only the permission bits (07777), never store the type bits.
+    let p = provider();
+    let ino = write_file(&p, ROOT, "f", b"x");
+    p.set_mode(ino, 0o100644 /* S_IFREG | 0644 */).unwrap();
+    assert_eq!(p.getattr(ino).unwrap().mode, 0o644, "type bits stripped, perms kept");
+}
+
+#[test]
+fn chmod_on_missing_inode_is_not_found() {
+    let p = provider();
+    assert!(matches!(p.set_mode(999_999, 0o644), Err(FsError::NotFound)));
+}
+
+// ---- truncate target/errno -------------------------------------------------------------
+
+#[test]
+fn truncate_of_a_directory_is_eisdir() {
+    // POSIX truncate()/ftruncate() on a directory → EISDIR. pjdfstest truncate/09.
+    let p = provider();
+    let d = p.mkdir(ROOT, "d").unwrap();
+    assert!(matches!(p.truncate(d.ino, 0), Err(FsError::IsADirectory)));
+    // The directory is intact.
+    assert_eq!(p.getattr(d.ino).unwrap().kind, Kind::Dir);
+}

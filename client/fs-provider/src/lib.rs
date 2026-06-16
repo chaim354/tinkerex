@@ -1628,6 +1628,20 @@ impl Provider for SqliteProvider {
     }
 
     fn truncate(&self, ino: u64, size: u64) -> Result<()> {
+        // POSIX: truncate() on a directory is EISDIR. Reject before touching staging/chunks
+        // (a dir has no manifest; without this the size=0 path would commit an empty file
+        // manifest onto the directory row). A missing inode is ENOENT.
+        {
+            let conn = self.conn.lock().unwrap();
+            let kind: Option<String> = conn
+                .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![ino as i64], |r| r.get(0))
+                .optional()?;
+            match kind {
+                None => return Err(FsError::NotFound),
+                Some(k) if Kind::from_str(&k) == Kind::Dir => return Err(FsError::IsADirectory),
+                Some(_) => {}
+            }
+        }
         // If the file is already open for write, resize the live staging buffer in
         // place; the eventual `flush`/`release` commits the new length. Shrinking here
         // is what clears the stale tail an overwrite-with-shorter would otherwise leave
