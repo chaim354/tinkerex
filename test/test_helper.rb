@@ -15,6 +15,17 @@ module ActiveSupport
       parallelize(workers: :number_of_processors)
     end
 
+    # Each parallel worker shares one DB (transactional fixtures isolate rows), but the
+    # MemoryChunkStore writes real files to tmp/dev-chunks that survive a transaction
+    # rollback. A keyspace-enumerating operation (Sync::ChunkReaper) in one worker would
+    # then see objects another worker (or an earlier, rolled-back test reusing an
+    # autoincrement user id) left behind. Give each worker its own chunk dir so the
+    # storage keyspace is as isolated as the DB rows. (Single-process runs leave it unset
+    # → base dir, which is fine.)
+    parallelize_setup do |worker|
+      ENV["CHUNK_STORE_WORKER"] = worker.to_s
+    end
+
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
 
