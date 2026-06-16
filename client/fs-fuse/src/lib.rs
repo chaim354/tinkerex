@@ -45,6 +45,9 @@ fn errno(e: &FsError) -> fuser::Errno {
         FsError::IsADirectory => fuser::Errno::EISDIR,
         FsError::AlreadyExists => fuser::Errno::EEXIST,
         FsError::NotEmpty => fuser::Errno::ENOTEMPTY,
+        // A directory moved into its own subtree (rename cycle) and other structurally
+        // invalid arguments → EINVAL, the POSIX errno pjdfstest's rename/17 expects.
+        FsError::InvalidArgument => fuser::Errno::EINVAL,
         // Special files (symlink/FIFO/socket/device) are a deliberate non-goal — reject
         // the attempt cleanly with EPERM rather than ENOSYS/EIO so callers (cp -a, tar,
         // git) get a deterministic "operation not permitted" instead of a confusing crash.

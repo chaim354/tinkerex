@@ -230,6 +230,11 @@ pub enum FsError {
     AlreadyExists,
     #[error("directory not empty")]
     NotEmpty,
+    /// The arguments are structurally invalid for the operation — currently raised when a
+    /// `rename` would move a directory into its own subtree (a directory cannot become its
+    /// own ancestor; POSIX maps this to **EINVAL**). Mapped to `EINVAL` by the adapters.
+    #[error("invalid argument")]
+    InvalidArgument,
     #[error("chunk missing: {0}")]
     ChunkMissing(String),
     #[error("locked (would block)")]
@@ -1679,6 +1684,45 @@ impl Provider for SqliteProvider {
             )
             .optional()?;
         let (src_ino, src_id) = src.ok_or(FsError::NotFound)?;
+        let src_kind = Kind::from_str(
+            &tx.query_row("SELECT kind FROM nodes WHERE ino = ?1", params![src_ino], |r| {
+                r.get::<_, String>(0)
+            })?,
+        );
+
+        // The destination *parent* must exist and be a directory — otherwise the bare
+        // UPDATE below would reparent the node under a non-existent or non-directory ino,
+        // silently orphaning it (it would vanish from every readdir while still holding a
+        // row). POSIX: a missing prefix component is ENOENT; a file used as a directory is
+        // ENOTDIR.
+        let pkind: Option<String> = tx
+            .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![newparent as i64], |r| r.get(0))
+            .optional()?;
+        match pkind {
+            None => return Err(FsError::NotFound),
+            Some(k) if Kind::from_str(&k) != Kind::Dir => return Err(FsError::NotADirectory),
+            Some(_) => {}
+        }
+
+        // A directory cannot be moved into its own subtree (it would become its own
+        // ancestor — a cycle). POSIX: EINVAL. Walk the destination parent's ancestor chain
+        // up to the root; if the source is on it (or IS the destination parent), reject.
+        if src_kind == Kind::Dir {
+            let mut cur = newparent as i64;
+            loop {
+                if cur == src_ino {
+                    return Err(FsError::InvalidArgument);
+                }
+                let parent: Option<i64> = tx
+                    .query_row("SELECT parent_ino FROM nodes WHERE ino = ?1", params![cur], |r| r.get(0))
+                    .optional()?
+                    .flatten();
+                match parent {
+                    Some(p) => cur = p,
+                    None => break, // reached the root (NULL parent)
+                }
+            }
+        }
 
         // POSIX rename atomically *replaces* an occupied destination (the atomic-save
         // pattern: write `f.tmp`, rename `f.tmp` → `f`). Without this the unique
@@ -1690,20 +1734,32 @@ impl Provider for SqliteProvider {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()?;
-        if let Some((dst_ino, dst_id, dst_kind)) = dst {
+        if let Some((dst_ino, dst_id, dst_kind_s)) = dst {
             if dst_ino == src_ino {
                 return Ok(()); // rename onto itself — no-op
             }
-            // A directory destination must be empty (ENOTEMPTY otherwise); a file is
-            // simply displaced. The displaced node is tombstoned so the deletion
-            // propagates on push (otherwise other devices keep a duplicate).
-            if Kind::from_str(&dst_kind) == Kind::Dir {
-                let kids: i64 = tx
-                    .query_row("SELECT COUNT(*) FROM nodes WHERE parent_ino = ?1", params![dst_ino], |r| r.get(0))?;
-                if kids > 0 {
-                    return Err(FsError::NotEmpty);
+            let dst_kind = Kind::from_str(&dst_kind_s);
+            // POSIX cross-type rules: the source and destination must agree on directory-ness.
+            //   - file  → existing directory : EISDIR
+            //   - dir   → existing non-dir    : ENOTDIR
+            //   - dir   → existing directory  : allowed only if the dest is empty (else ENOTEMPTY)
+            match (src_kind, dst_kind) {
+                (Kind::File, Kind::Dir) => return Err(FsError::IsADirectory),
+                (Kind::Dir, Kind::File) => return Err(FsError::NotADirectory),
+                (Kind::Dir, Kind::Dir) => {
+                    let kids: i64 = tx.query_row(
+                        "SELECT COUNT(*) FROM nodes WHERE parent_ino = ?1",
+                        params![dst_ino],
+                        |r| r.get(0),
+                    )?;
+                    if kids > 0 {
+                        return Err(FsError::NotEmpty);
+                    }
                 }
+                (Kind::File, Kind::File) => {} // plain replace (the atomic-save path)
             }
+            // The displaced node is tombstoned so the deletion propagates on push
+            // (otherwise other devices keep a duplicate).
             tx.execute("DELETE FROM nodes WHERE ino = ?1", params![dst_ino])?;
             Self::enqueue(&tx, &dst_id, "delete")?;
         }
