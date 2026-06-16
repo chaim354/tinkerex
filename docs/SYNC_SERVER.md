@@ -51,24 +51,87 @@ Everything uses portable, fast ActiveRecord — no PostgreSQL-only SQL in the ho
 - Stable cross-device ids are string UUIDs; internal PKs are bigint. Indexed lookups.
 
 Dev/test run on **SQLite** (which proves the portability). Switch to **PostgreSQL**
-for managed with config only:
+for managed with config only (no model or service code changes — schema + queries are
+identical):
 
 ```ruby
-# Gemfile (managed)
-gem "pg"
-gem "aws-sdk-s3"   # the S3/R2 chunk store requires it lazily
+# Gemfile — `pg` is already present; `aws-sdk-s3` is required lazily by the S3/R2 store.
 ```
-```yaml
-# config/database.yml — managed/production primary
-production:
-  primary:
-    adapter: postgresql
-    url: <%= ENV["DATABASE_URL"] %>
-    pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
-  # keep Solid Queue/Cache/Cable on their own DBs (SQLite or Postgres) as desired
 ```
+DATABASE_URL=postgresql://USER:PASS@HOST:5432/maker_prod   # selects the postgres profile
+```
+The `postgres` profile in `config/database.yml` reads `DATABASE_URL`. **TLS** and the
+**Solid stores** are handled automatically for a managed (Postgres) deploy — see below.
 
-No model or service code changes — the schema and queries are identical.
+### Managed-Postgres hardening (G2)
+
+**`next_seq!` concurrency + the lock-ordering invariant.** The per-user changelog `seq`
+is the one true serialization point: every mutating transaction (`Sync::Commit#finalize`,
+`Mutation#apply`, `Restore`, `Conflicts#keep/#split`) calls `User#next_seq!`, which takes
+`SELECT … FOR UPDATE` on the user row. **It MUST be the first write in the transaction.**
+The other rows a commit writes (node/version/changelog/chunk) all FK-reference `users`, and
+a Postgres FK insert takes a `FOR KEY SHARE` lock on that users row. If a commit inserted
+those *first* and locked *second*, two concurrent commits for one user would each hold KEY
+SHARE and both want FOR UPDATE → a **lock-upgrade deadlock**. (This was a real bug, caught by
+the load test below at 32×50 concurrent commits, and fixed by locking up front.) A
+concurrent-commit **load test** proves the invariant — it hammers `next_seq!` and the full
+commit path from many threads, each on its own connection, and asserts the allocated seqs are
+exactly `1..N` (gapless, duplicate-free, no lost updates):
+
+```sh
+# SQLite (CI default — still exercises the invariant; SQLite serializes writes globally):
+bin/rails test test/services/sync/concurrent_seq_test.rb
+# Postgres (the real proof — a statement-mode pooler would surface as duplicates here):
+DATABASE_URL=postgresql://… SEQ_LOAD_THREADS=32 SEQ_LOAD_PER_THREAD=50 \
+  bin/rails test test/services/sync/concurrent_seq_test.rb
+```
+Verified clean to 48×80 (3840) concurrent commits on Postgres 16.
+
+**Connection pooler — MUST be session or transaction mode, NEVER statement mode.** Because
+`next_seq!`'s `FOR UPDATE` lock spans the read+write of `head_seq` within one transaction, all
+of that transaction's statements must run on **one backend connection**. A pooler in
+**statement** mode (PgBouncer `pool_mode = statement`) routes each *statement* to a possibly
+different backend → it silently breaks the lock (and prepared statements), risking duplicate
+seqs and changelog corruption. Use:
+- **PgBouncer**: `pool_mode = transaction` (or `session`).
+- **RDS Proxy / Supabase / Neon pooler**: transaction mode.
+
+This is **enforced at boot**: `config/initializers/postgres_pooler_check.rb` (logic in
+`lib/postgres_pooler_check.rb`) probes the connection — opens a transaction, checks two
+statements share a backend pid and a session advisory lock stays held — and **refuses to boot**
+if it detects statement-mode pooling, with a fix hint. Best-effort; opt out with
+`DB_SKIP_POOLER_CHECK=1` once you've verified the mode yourself. No-op on SQLite.
+
+*Could we avoid `FOR UPDATE` to be more pooler-robust?* Two alternatives were weighed and
+rejected for now: (a) a **Postgres `SEQUENCE`/`bigserial`** — gapless-free and pooler-mode-
+agnostic, but sequences are *non-transactional* (a rolled-back commit burns a number → **gaps**),
+they're PG-only (breaks the SQLite self-host path), and the changelog contract wants tight
+`1..N` so a far-behind device's delta math stays simple; (b) a **transaction-level advisory
+lock** (`pg_advisory_xact_lock(user_id)`) instead of the row lock — also PG-only and still needs
+non-statement pooling to be transaction-scoped, so it buys nothing over the row lock. The row
+lock is correct on *both* adapters, gapless, and—now that it's taken first—deadlock-free; the
+only real requirement it imposes is non-statement pooling, which we now assert at boot. So we
+**keep the row lock**.
+
+**TLS / sslmode.** The `postgres` profile defaults `sslmode` to **`require`** for any non-local
+host (a managed deploy is encrypted by default) and **`prefer`** for `localhost`/`127.0.0.1` (so
+the Docker/dev box with no TLS still connects). Override with `DB_SSLMODE`; for full MITM
+protection on a real managed deploy use `DB_SSLMODE=verify-full` plus `DB_SSLROOTCERT=/path/to/
+provider-ca.pem` (Neon/RDS publish a CA bundle). A `sslmode` already in `DATABASE_URL` wins
+(libpq precedence). Neon/Supabase URLs typically already carry `?sslmode=require`.
+
+**Solid Queue / Cache / Cable.** Self-host keeps each on its **own SQLite file** (one box, local
+disk — the right default). A **managed (Postgres) deploy moves them onto Postgres**: a managed
+deploy is multi-instance and/or has ephemeral local disk, so a per-instance SQLite queue is
+wrong (jobs enqueued on instance A are invisible to a worker on instance B, and a redeploy drops
+the queue). When `DATABASE_URL` is Postgres, the `production` block puts each Solid role on its
+**own Postgres database** (`…_cache` / `…_queue` / `…_cable`, derived from the primary DB name;
+override any with `SOLID_CACHE_DATABASE_URL` / `SOLID_QUEUE_DATABASE_URL` /
+`SOLID_CABLE_DATABASE_URL` — e.g. to park them on a cheaper instance). Separate databases isolate
+their churn/locks from the primary. **Point the Solid roles at a session/transaction-mode pooler
+too** (Solid Queue uses `FOR UPDATE SKIP LOCKED`). Verified on Postgres 16: all three schemas
+load, a Solid Queue job persists, and a Solid Cache value round-trips cross-process. Migrate the
+roles on deploy with `bin/rails db:prepare` (loads `db/{cache,queue,cable}_schema.rb`).
 
 ## Storage config (R2/S3)
 

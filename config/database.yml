@@ -12,10 +12,24 @@ default: &default
 # Postgres profile (managed/SaaS) — used when DATABASE_URL is set, e.g.
 #   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tinkerex_test
 # Self-host stays on the SQLite default below. See docs/SYNC_SERVER.md.
+#
+# TLS: managed Postgres (Neon/RDS/Supabase) requires TLS. Set it via DATABASE_URL
+#   (...?sslmode=require)  — or override DB_SSLMODE here. We default to `require` for any
+#   non-local host so a managed deploy is encrypted by default; `prefer` for localhost so the
+#   Docker/dev box (no TLS) still connects. For strong MITM protection on a real deploy use
+#   `verify-full` plus DB_SSLROOTCERT (the provider's CA bundle). DATABASE_URL params win over
+#   these (libpq precedence), so a sslmode in the URL is authoritative.
 postgres: &postgres
   adapter: postgresql
   url: <%= ENV["DATABASE_URL"] %>
   pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  sslmode: <%= ENV["DB_SSLMODE"] || (ENV["DATABASE_URL"].to_s.match?(/@(localhost|127\.0\.0\.1)/) ? "prefer" : "require") %>
+  <% if ENV["DB_SSLROOTCERT"].present? %>
+  sslrootcert: <%= ENV["DB_SSLROOTCERT"] %>
+  <% end %>
+  # The next_seq! row lock must span a transaction across one backend connection, so a pooler
+  # in front of this MUST be session/transaction mode (never statement). A boot check in
+  # config/initializers/postgres_pooler_check.rb asserts this. See docs/SYNC_SERVER.md.
 
 development:
   <% if ENV["DATABASE_URL"].to_s.start_with?("postgres") %>
@@ -37,9 +51,43 @@ test:
   <% end %>
 
 
-# Store production database in the storage/ directory, which by default
-# is mounted as a persistent Docker volume in config/deploy.yml.
+# Production. TWO shapes from the SAME file (adapter-agnostic, §7):
+#
+#  • SELF-HOST (default) — SQLite. Primary + the three Solid stores (cache/queue/cable) are
+#    separate SQLite files under storage/ (a Docker persistent volume). One box, local disk,
+#    nothing to coordinate — the right default for a single-user self-host.
+#
+#  • MANAGED (DATABASE_URL is Postgres) — the Solid stores move OFF SQLite onto Postgres too.
+#    A managed deploy is multi-instance and/or has ephemeral local disk, so a per-instance
+#    SQLite file for queue/cache/cable is wrong: jobs enqueued on instance A wouldn't be seen
+#    by the worker on instance B, and a redeploy would drop the queue. Each Solid role gets its
+#    OWN Postgres database (separate schema namespaces; isolates their churn/locks from the
+#    primary). Default DB names derive from the primary (…_cache/_queue/_cable); override any
+#    of them with SOLID_{CACHE,QUEUE,CABLE}_DATABASE_URL (e.g. to put them on a cheaper
+#    instance). NOTE: point the Solid roles at a SESSION/TRANSACTION-mode pooler too — same
+#    constraint as the primary (Solid Queue uses FOR UPDATE SKIP LOCKED). See docs/SYNC_SERVER.md.
+<% pg = ENV["DATABASE_URL"].to_s.start_with?("postgres") %>
+<% derive = ->(role_url, suffix) {
+     ENV[role_url].presence ||
+       (ENV["DATABASE_URL"].to_s.sub(%r{(/[^/?]+)(\?|$)}) { "#{$1}_#{suffix}#{$2}" })
+   } %>
 production:
+  <% if pg %>
+  primary:
+    <<: *postgres
+  cache:
+    <<: *postgres
+    url: <%= derive.call("SOLID_CACHE_DATABASE_URL", "cache") %>
+    migrations_paths: db/cache_migrate
+  queue:
+    <<: *postgres
+    url: <%= derive.call("SOLID_QUEUE_DATABASE_URL", "queue") %>
+    migrations_paths: db/queue_migrate
+  cable:
+    <<: *postgres
+    url: <%= derive.call("SOLID_CABLE_DATABASE_URL", "cable") %>
+    migrations_paths: db/cable_migrate
+  <% else %>
   primary:
     <<: *default
     database: storage/production.sqlite3
@@ -55,3 +103,4 @@ production:
     <<: *default
     database: storage/production_cable.sqlite3
     migrations_paths: db/cable_migrate
+  <% end %>
