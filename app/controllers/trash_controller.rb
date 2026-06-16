@@ -5,9 +5,7 @@
 # node at its existing current version). Kept separate from FilesController so the auth
 # workstream and the file browser stay easy to merge.
 class TrashController < ApplicationController
-  include WebAuthentication
-
-  before_action :require_login!
+  before_action :authenticate_user!
 
   rescue_from ActiveRecord::RecordNotFound do
     redirect_to trash_index_path, alert: "Item not found."

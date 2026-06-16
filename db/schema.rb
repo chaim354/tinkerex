@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_17_000005) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -73,17 +73,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
     t.index ["user_id", "node_id", "incoming_version_id"], name: "index_conflicts_on_user_node_incoming", unique: true
     t.index ["user_id", "node_id"], name: "index_conflicts_on_user_id_and_node_id"
     t.index ["user_id", "resolved_at"], name: "index_conflicts_on_user_id_and_resolved_at"
-  end
-
-  create_table "device_pairings", force: :cascade do |t|
-    t.datetime "claimed_at"
-    t.string "code_digest", null: false
-    t.datetime "created_at", null: false
-    t.datetime "expires_at", null: false
-    t.datetime "updated_at", null: false
-    t.integer "user_id", null: false
-    t.index ["user_id", "code_digest"], name: "index_device_pairings_on_user_id_and_code_digest", unique: true
-    t.index ["user_id", "expires_at"], name: "index_device_pairings_on_user_id_and_expires_at"
   end
 
   create_table "devices", force: :cascade do |t|
@@ -368,17 +357,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
     t.index ["user_id"], name: "index_pending_commits_on_user_id"
   end
 
-  create_table "sessions", force: :cascade do |t|
-    t.datetime "created_at", null: false
-    t.string "ip_address"
-    t.string "token_digest", null: false
-    t.datetime "updated_at", null: false
-    t.string "user_agent"
-    t.integer "user_id", null: false
-    t.index ["token_digest"], name: "index_sessions_on_token_digest", unique: true
-    t.index ["user_id"], name: "index_sessions_on_user_id"
-  end
-
   create_table "user_identities", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "provider", null: false
@@ -391,18 +369,29 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
 
   create_table "users", force: :cascade do |t|
     t.datetime "confirmation_sent_at"
-    t.string "confirmation_token_digest"
+    t.string "confirmation_token"
     t.datetime "confirmed_at"
     t.datetime "created_at", null: false
+    t.datetime "current_sign_in_at"
+    t.string "current_sign_in_ip"
     t.string "email", null: false
+    t.string "encrypted_password", default: "", null: false
+    t.integer "failed_attempts", default: 0, null: false
     t.bigint "head_seq", default: 0, null: false
-    t.string "password_digest"
-    t.datetime "reset_sent_at"
-    t.string "reset_token_digest"
+    t.datetime "last_sign_in_at"
+    t.string "last_sign_in_ip"
+    t.datetime "locked_at"
+    t.datetime "remember_created_at"
+    t.datetime "reset_password_sent_at"
+    t.string "reset_password_token"
+    t.integer "sign_in_count", default: 0, null: false
+    t.string "unconfirmed_email"
+    t.string "unlock_token"
     t.datetime "updated_at", null: false
-    t.index ["confirmation_token_digest"], name: "index_users_on_confirmation_token_digest", unique: true
+    t.index ["confirmation_token"], name: "index_users_on_confirmation_token", unique: true
     t.index ["email"], name: "index_users_on_email", unique: true
-    t.index ["reset_token_digest"], name: "index_users_on_reset_token_digest", unique: true
+    t.index ["reset_password_token"], name: "index_users_on_reset_password_token", unique: true
+    t.index ["unlock_token"], name: "index_users_on_unlock_token", unique: true
   end
 
   create_table "versions", force: :cascade do |t|
@@ -428,7 +417,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_130001) do
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "pending_commits", "users"
-  add_foreign_key "sessions", "users"
   add_foreign_key "user_identities", "users"
   add_foreign_key "versions", "users"
 end

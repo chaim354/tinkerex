@@ -4,8 +4,7 @@ module V1
   module Maker
     class BomsTest < ActionDispatch::IntegrationTest
       def register(email = "b@example.com")
-        post "/v1/auth/register", params: { email:, device_name: "d" }, as: :json
-        JSON.parse(response.body)["device_token"]
+        bootstrap_token(email: email, device_name: "d")
       end
       def auth(token) = { "Authorization" => "Bearer #{token}" }
 

@@ -5,7 +5,6 @@ class User < ApplicationRecord
   has_many :chunks, dependent: :destroy
   has_many :changelog_entries, dependent: :destroy
   has_many :pending_commits, dependent: :destroy
-  has_many :device_pairings, dependent: :destroy
   has_many :conflicts, dependent: :destroy
   has_many :file_locks, dependent: :destroy
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
@@ -23,90 +22,42 @@ class User < ApplicationRecord
   has_many :maker_previews, class_name: "Maker::Preview", dependent: :destroy
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
-  has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
-  # Real human-identity auth (docs/parity-roadmap.md §A Option 1). bcrypt password digest.
-  # `validations: false` so OmniAuth-only users (no password) and the existing v1 device
-  # bootstrap (which creates accounts with no password) stay valid; the sign-up path
-  # requires a password explicitly. The email bootstrap that ISSUES device tokens (v1
-  # AuthController + DevicePairing) is unchanged — this layer sits *in front of* it
-  # (parity-roadmap §A "two layers").
-  has_secure_password validations: false
+  # Human-identity auth via Devise (CLAUDE.md §8; replaces the hand-rolled password +
+  # confirmation/reset token flow). The v1 device-token + device-login enrollment is a
+  # SEPARATE layer (Device model, Authentication concern) and is untouched.
+  #   :confirmable  — email-ownership gate (unconfirmed accounts can't sign in / enroll).
+  #   :lockable     — brute-force mitigation (also protects device-login).
+  #   :trackable    — sign-in counters/timestamps.
+  #   :timeoutable  — idle WEB sessions expire (device tokens are unaffected).
+  #   :omniauthable — preserves the OAuth/OIDC seam (UserIdentity + from_omniauth).
+  devise :database_authenticatable, :registerable, :recoverable, :rememberable,
+         :validatable, :confirmable, :lockable, :trackable, :timeoutable,
+         :omniauthable, omniauth_providers: %i[openid_connect]
 
-  TOKEN_TTL = 2.hours
-  MIN_PASSWORD_LENGTH = 8
+  # Set transiently by from_omniauth (and the v1 bootstrap) so a passwordless account
+  # validates on first save before its UserIdentity row is persisted. Not a DB column.
+  attr_accessor :omniauth_signup
+
+  # Passwordless accounts are created by trusted server-side flows (the OmniAuth seam and the
+  # legacy device-token bootstrap), never by a human web signup. They have no password to
+  # confirm via the email flow, so suppress Devise's confirmation-instructions email for them
+  # (web signups always carry a password, so they still get confirmation mail). This also
+  # avoids invoking the Devise mailer — which needs a routed Devise mapping — from plain unit
+  # tests that create bootstrap users.
+  before_create :skip_passwordless_confirmation_notification
+
+  def skip_passwordless_confirmation_notification
+    skip_confirmation_notification! if respond_to?(:skip_confirmation_notification!) &&
+                                       encrypted_password.blank? && password.blank?
+  end
+  private :skip_passwordless_confirmation_notification
 
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
-  validates :email, presence: true, uniqueness: true,
-                    format: { with: URI::MailTo::EMAIL_REGEXP, allow_blank: true }
-
-  # Validate the password ONLY when one is being set (i.e. password-based signup or reset).
-  # OmniAuth-only users and the v1 device bootstrap create rows with no password — those
-  # stay valid (that's why has_secure_password's built-in validations are disabled above).
-  validates :password, length: { minimum: MIN_PASSWORD_LENGTH }, if: -> { password.present? }
-  validate :password_confirmation_matches, if: -> { password.present? }
-
-  def password_confirmation_matches
-    return if password_confirmation.nil? # confirmation not supplied -> not enforced
-    errors.add(:password_confirmation, "doesn't match Password") if password != password_confirmation
-  end
-
-  scope :confirmed, -> { where.not(confirmed_at: nil) }
-
-  def confirmed? = confirmed_at.present?
-
-  # --- Email confirmation (proves email ownership; §12 step 5) ----------------------
-  # Issue a single-use confirmation token; only its digest is stored. Returns the
-  # plaintext to embed in the mailer link.
-  def generate_confirmation_token!
-    raw = self.class.generate_raw_token
-    update!(confirmation_token_digest: self.class.digest_token(raw),
-            confirmation_sent_at: Time.current)
-    raw
-  end
-
-  # Find a user by a raw confirmation token if it hasn't expired. The token is
-  # high-entropy, so a direct digest lookup is sufficient.
-  def self.find_by_confirmation_token(raw)
-    return nil if raw.blank?
-    user = find_by(confirmation_token_digest: digest_token(raw))
-    return nil unless user&.confirmation_sent_at
-    return nil if user.confirmation_sent_at < TOKEN_TTL.ago
-    user
-  end
-
-  def confirm!
-    update!(confirmed_at: Time.current, confirmation_token_digest: nil, confirmation_sent_at: nil)
-  end
-
-  # --- Password reset (Rails 8 generator pattern) -----------------------------------
-  def generate_reset_token!
-    raw = self.class.generate_raw_token
-    update!(reset_token_digest: self.class.digest_token(raw), reset_sent_at: Time.current)
-    raw
-  end
-
-  def self.find_by_reset_token(raw)
-    return nil if raw.blank?
-    user = find_by(reset_token_digest: digest_token(raw))
-    return nil unless user&.reset_sent_at
-    return nil if user.reset_sent_at < TOKEN_TTL.ago
-    user
-  end
-
-  def clear_reset_token!
-    update!(reset_token_digest: nil, reset_sent_at: nil)
-  end
-
-  def self.generate_raw_token = SecureRandom.urlsafe_base64(32)
-  def self.digest_token(raw) = Digest::SHA256.hexdigest(raw.to_s)
 
   # --- OmniAuth seam (docs/parity-roadmap.md §A) ------------------------------------
-  # find-or-create a User from an OmniAuth auth hash. NOT wired to any provider yet — this
-  # is the documented hook so a later OIDC/SSO strategy plugs in WITHOUT touching the
-  # device bootstrap. After this returns, the normal flow runs: first device → register;
-  # Nth device → mint a DevicePairing code (parity-roadmap §A "two layers").
+  # find-or-create a User from an OmniAuth auth hash.
   #
   # SECURITY — auto-linking by email is account-takeover-prone, so it is gated:
   #   * A returning identity (provider+uid we've seen) always maps to its user (safe).
@@ -115,9 +66,6 @@ class User < ApplicationRecord
   #     merge an OAuth login into a credentialed human account — a malicious/misconfigured
   #     IdP asserting a victim's address must not hijack their password login).
   #   * Otherwise we create a fresh account for this identity (unique email permitting).
-  # `email_verified` is the standard OIDC claim; absent it, we do NOT trust the address for
-  # linking (a brand-new account is still created so login works, but it can't take over an
-  # existing one).
   def self.from_omniauth(auth)
     provider = auth[:provider] || auth["provider"]
     uid      = auth[:uid]      || auth["uid"]
@@ -130,7 +78,7 @@ class User < ApplicationRecord
 
     existing = email.present? ? find_by(email:) : nil
     user =
-      if existing && verified && existing.password_digest.blank?
+      if existing && verified && !existing.password_set?
         # Safe to link: provider-verified email, and no local password to hijack.
         existing
       elsif existing
@@ -139,20 +87,47 @@ class User < ApplicationRecord
         # attach — the caller surfaces a generic SSO failure.
         raise AccountLinkRefused, "email already linked to an account"
       else
-        # No collision: a brand-new account, so trusting the provider email is safe (there
-        # is nothing to take over). Mark confirmed since the IdP delivered it.
+        # No collision: a brand-new account, so trusting the provider email is safe.
         new(email:)
       end
 
+    # IdP delivered the email -> treat as confirmed (skip Devise's confirmation email).
+    user.skip_confirmation! if user.respond_to?(:skip_confirmation!) && user.confirmed_at.nil?
     user.confirmed_at ||= Time.current if user.email.present?
-    user.password = SecureRandom.urlsafe_base64(32) if user.password_digest.blank?
+    user.omniauth_signup = true
     user.save!
-    user.identities.create!(provider:, uid:)
+    user.identities.find_or_create_by!(provider:, uid:)
     user
   end
 
   # Raised when an OAuth login would otherwise silently merge into a pre-existing account.
   class AccountLinkRefused < StandardError; end
+
+  # True when the account has a usable bcrypt password (NOT an OmniAuth-only account).
+  # Devise stores `""` (the column default) for passwordless accounts; bcrypt never
+  # matches an empty digest, so a blank/"" encrypted_password means "no password".
+  def password_set?
+    encrypted_password.present?
+  end
+
+  # Devise :validatable requires a password by default. We preserve the prior model's
+  # `has_secure_password validations: false` semantic: a password is REQUIRED only when one
+  # is actually being set (web password signup / reset). Passwordless accounts stay valid —
+  # OmniAuth-only accounts (UserIdentity present) and the server-side device-token bootstrap
+  # (omniauth_signup flag). Devise still validates length + confirmation whenever a password
+  # IS provided (so web signup with a mismatched/short password is still rejected), and
+  # bcrypt never matches the empty digest, so a passwordless account cannot password-auth.
+  def password_required?
+    return false if omniauth_signup || omniauth_identity?
+    return false if encrypted_password.blank? && password.blank?
+    super
+  end
+
+  # An account backed by at least one external identity (built or persisted). Checks the
+  # in-memory association too so `User.new` + `identities.build` validates without a save.
+  def omniauth_identity?
+    identities.any? { |i| i.persisted? || i.new_record? }
+  end
 
   # Read the IdP's email-verification signal. Standard OIDC exposes `email_verified`;
   # different strategies surface it under `extra.raw_info` or `info`. Treat only an

@@ -4,9 +4,7 @@ module V1
   module Maker
     class ProjectsTest < ActionDispatch::IntegrationTest
       def register(email = "p@example.com")
-        post "/v1/auth/register", params: { email:, device_name: "laptop" }, as: :json
-        assert_response :created
-        JSON.parse(response.body)["device_token"]
+        bootstrap_token(email: email, device_name: "laptop")
       end
 
       def auth(token) = { "Authorization" => "Bearer #{token}" }

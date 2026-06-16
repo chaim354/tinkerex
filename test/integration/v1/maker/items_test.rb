@@ -4,9 +4,7 @@ module V1
   module Maker
     class ItemsTest < ActionDispatch::IntegrationTest
       def register
-        post "/v1/auth/register", params: { email: "m@example.com", device_name: "laptop" }, as: :json
-        assert_response :created
-        JSON.parse(response.body)["device_token"]
+        bootstrap_token(email: "m@example.com", device_name: "laptop")
       end
 
       def auth(token) = { "Authorization" => "Bearer #{token}" }
@@ -27,8 +25,7 @@ module V1
 
       test "index lists only the current user's items" do
         post "/v1/maker/items", params: { item: { title: "Mine" } }, as: :json, headers: auth(@token)
-        post "/v1/auth/register", params: { email: "two@example.com", device_name: "d" }, as: :json
-        other = JSON.parse(response.body)["device_token"]
+        other = bootstrap_token(email: "two@example.com", device_name: "d")
         post "/v1/maker/items", params: { item: { title: "Theirs" } }, as: :json, headers: auth(other)
 
         get "/v1/maker/items", headers: auth(@token)
@@ -71,8 +68,7 @@ module V1
       test "another user cannot show my item" do
         post "/v1/maker/items", params: { item: { title: "Private" } }, as: :json, headers: auth(@token)
         id = JSON.parse(response.body)["id"]
-        post "/v1/auth/register", params: { email: "x@example.com", device_name: "d" }, as: :json
-        other = JSON.parse(response.body)["device_token"]
+        other = bootstrap_token(email: "x@example.com", device_name: "d")
         get "/v1/maker/items/#{id}", headers: auth(other)
         assert_response :not_found
       end

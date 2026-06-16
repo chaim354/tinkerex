@@ -4,8 +4,7 @@ module V1
   module Maker
     class TasksTest < ActionDispatch::IntegrationTest
       def register
-        post "/v1/auth/register", params: { email: "tk@example.com", device_name: "d" }, as: :json
-        JSON.parse(response.body)["device_token"]
+        bootstrap_token(email: "tk@example.com", device_name: "d")
       end
       def auth(token) = { "Authorization" => "Bearer #{token}" }
       setup { @token = register }
@@ -58,8 +57,7 @@ module V1
         post "/v1/maker/items", params: { item: { title: "Mine" } }, as: :json, headers: auth(@token)
         my_item = JSON.parse(response.body)["id"]
         # a second user
-        post "/v1/auth/register", params: { email: "tk2@example.com", device_name: "d" }, as: :json
-        other = JSON.parse(response.body)["device_token"]
+        other = bootstrap_token(email: "tk2@example.com", device_name: "d")
         # the other user tries to own a task with MY item
         post "/v1/maker/tasks",
              params: { task: { title: "Sneaky", taskable_type: "Maker::Item", taskable_id: my_item } },

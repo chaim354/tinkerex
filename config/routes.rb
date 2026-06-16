@@ -4,34 +4,17 @@ Rails.application.routes.draw do
   # --- Web UI (server-rendered file browser) ---
   root to: redirect("/files")
 
-  # --- Web auth (real Rails 8 password auth + email confirmation) ---
-  # Human-identity layer (docs/parity-roadmap.md §A). Sits in front of the unchanged
-  # device-token + DevicePairing bootstrap (v1 namespace below).
-  get    "login",  to: "sessions#new"
-  post   "login",  to: "sessions#create"
-  delete "logout", to: "sessions#destroy"
-
-  get  "signup", to: "registrations#new"
-  post "signup", to: "registrations#create"
-
-  # Email confirmation (proves email ownership — §12 step 5).
-  get  "confirm",          to: "confirmations#show", as: :confirm_email
-  get  "confirmations/new", to: "confirmations#new", as: :new_confirmation
-  post "confirmations",     to: "confirmations#create", as: :confirmations
-
-  # Password reset.
-  get   "password/new",  to: "passwords#new",    as: :new_password
-  post  "password",      to: "passwords#create", as: :passwords
-  get   "password/edit", to: "passwords#edit",   as: :edit_password
-  patch "password",      to: "passwords#update", as: :password
-
-  # OmniAuth seam (no provider wired yet — see OmniauthCallbacksController). Drawn so the
-  # callback path is stable; enable a strategy + middleware later. Guarded by env so it's
-  # inert until configured.
-  if ENV["OMNIAUTH_ENABLED"].present?
-    match "auth/:provider/callback", to: "omniauth_callbacks#create", via: [ :get, :post ]
-    get   "auth/failure", to: "omniauth_callbacks#failure"
-  end
+  # --- Human-identity web auth (Devise) ---
+  # Governs the server-rendered web UI only. The v1 device-token machinery (namespace :v1
+  # below) is unchanged. Custom controllers keep our redirect copy + OmniAuth seam.
+  devise_for :users,
+             controllers: {
+               sessions:           "users/sessions",
+               registrations:      "users/registrations",
+               confirmations:      "users/confirmations",
+               passwords:          "users/passwords",
+               omniauth_callbacks: "users/omniauth_callbacks"
+             }
 
   # Trash / undelete: list tombstoned nodes + restore (re-points at the kept version).
   resources :trash, only: %i[index] do
@@ -54,14 +37,20 @@ Rails.application.routes.draw do
   unless Rails.env.production?
     get "dev/blobs/*key", to: "dev_blobs#show",   format: false, as: :dev_blob
     put "dev/blobs/*key", to: "dev_blobs#update", format: false
+
+    # TEST/DEV-ONLY confirmed-account signup seam for the Rust integration tests (further
+    # guarded at runtime by ENABLE_TEST_SIGNUP). Lets those tests create a confirmed account,
+    # then enroll devices via POST /v1/devices/login.
+    post "v1/test/users", to: "v1/test_users#create"
   end
 
   # --- Sync engine API (v1) ---
   namespace :v1 do
-    post "auth/register", to: "auth#register"
-    post "auth/pair", to: "auth#pair"
+    # Device enrollment by login (the Dropbox model): email+password -> a device token.
+    # Replaces the pairing-code flow. No Bearer auth — the credentials ARE the auth.
+    post "devices/login", to: "devices#login"
+    # Direct add-a-device for an already-authenticated device (keeps its Bearer-authed path).
     resources :devices, only: [ :create ]
-    post "devices/pairing", to: "devices#pairing"
 
     # content commits (two-phase)
     post "commit", to: "commits#create"
