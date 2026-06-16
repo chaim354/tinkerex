@@ -9,7 +9,7 @@ module Maker
     belongs_to :supplier, class_name: "Maker::Supplier", optional: true
     has_many :transactions, -> { order(created_at: :asc, id: :asc) },
              class_name: "Maker::InventoryTransaction", foreign_key: :inventory_item_id,
-             dependent: :destroy
+             dependent: :delete_all
 
     validates :name, presence: true
     validates :unit, inclusion: { in: UNITS }

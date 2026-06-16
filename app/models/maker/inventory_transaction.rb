@@ -21,7 +21,7 @@ module Maker
     # holding a row lock on the item so concurrent posts can't lose an update. Works on SQLite + PG.
     def self.apply!(item:, user:, delta:, reason: "adjusted", project_id: nil, note: nil)
       transaction do
-        locked = Maker::InventoryItem.lock.find(item.id)   # SELECT ... FOR UPDATE on PG; serialized on SQLite
+        locked = Maker::InventoryItem.where(id: item.id, user_id: item.user_id).lock.first!   # SELECT ... FOR UPDATE on PG; serialized on SQLite
         txn = locked.transactions.create!(
           user: user, delta: delta, reason: reason, project_id: project_id, note: note
         )

@@ -51,5 +51,23 @@ module Maker
       10.times { Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 3, reason: "restocked") }
       assert_equal 30, @item.reload.quantity_cached
     end
+
+    test "an existing ledger transaction cannot be updated" do
+      txn = Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 7, reason: "restocked")
+      assert_raises(ActiveRecord::ReadOnlyRecord) { txn.update!(delta: 0) }
+    end
+
+    test "a ledger transaction cannot be destroyed while its item exists" do
+      txn = Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 7, reason: "restocked")
+      assert_raises(ActiveRecord::ReadOnlyRecord) { txn.destroy! }
+      assert Maker::InventoryTransaction.exists?(txn.id)
+    end
+
+    test "destroying the item cascades and removes its ledger transactions" do
+      Maker::InventoryTransaction.apply!(item: @item, user: @user, delta: 7, reason: "restocked")
+      assert_difference -> { Maker::InventoryTransaction.count }, -1 do
+        @item.destroy!
+      end
+    end
   end
 end
