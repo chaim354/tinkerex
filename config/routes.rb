@@ -104,6 +104,7 @@ Rails.application.routes.draw do
           delete "items/:item_id", action: :remove_item
         end
       end
+      resources :tasks
     end
 
     # hydration
