@@ -375,6 +375,59 @@ fn apply_remote_cyclic_reparent_must_not_orphan_subtree() {
 }
 
 // =======================================================================================
+// AREA 5c: delete-vs-edit race on the PULL path. A device has a pending LOCAL edit
+// (un-pushed outbox upsert) on node X; a remote DELETE of X arrives via the changelog.
+// `apply_remote_delete` removes X locally and (by design) does NOT signal for the target
+// node itself — only for swept descendants. We probe what happens to the pending edit: does
+// the device silently drop it, or surface a signal? This documents the actual semantics so a
+// regression (or a future product decision to conflict instead) is visible.
+// =======================================================================================
+
+#[test]
+fn remote_delete_of_a_locally_edited_node_drops_the_pending_edit_silently() {
+    // This is a DOCUMENTING test (not a bug claim): it pins the current "remote delete wins,
+    // no signal for the target node" behavior so any future change is deliberate. The brief
+    // calls out delete-vs-edit races; the gap here is that a user's un-pushed edit to a file
+    // another device deleted is discarded locally with NO conflict/signal — defensible, but
+    // worth making explicit + visible in the suite.
+    let p = provider();
+    let f = p.create(ROOT, "doc.txt").unwrap();
+    p.write(f.ino, 0, b"v1").unwrap();
+    p.flush(f.ino).unwrap();
+    let node_id = p.node_id_for(f.ino).unwrap().unwrap();
+    // Drain the create from the outbox (it's "synced").
+    for (nid, _) in p.outbox_list().unwrap() {
+        p.outbox_clear(&nid).unwrap();
+    }
+
+    // Local pending EDIT (un-pushed): re-write the file → outbox upsert queued.
+    p.truncate(f.ino, 0).unwrap();
+    p.write(f.ino, 0, b"my important local edit").unwrap();
+    p.flush(f.ino).unwrap();
+    assert!(
+        p.outbox_list().unwrap().iter().any(|(nid, op)| nid == &node_id && op == "upsert"),
+        "the local edit is queued as a pending upsert"
+    );
+
+    // A remote DELETE for the SAME node arrives via pull.
+    let signaled = p.apply_remote_delete_signaled(&node_id).unwrap();
+
+    // Document the observed semantics:
+    //  - the node is gone locally,
+    //  - no reconcile signal is raised for the target node (design: delete authorizes it),
+    //  - the queued outbox upsert now references a vanished node → it will push as a no-op,
+    //    so the local edit is silently discarded.
+    assert!(p.lookup(ROOT, "doc.txt").is_err(), "remote delete removed the node locally");
+    assert!(!signaled, "no reconcile signal for the target node itself (current design)");
+    // The pending upsert's node is gone, so a drain finds nothing to push.
+    assert!(
+        p.sync_node(&node_id).unwrap().is_none(),
+        "DOCUMENTED GAP: the locally-edited node vanished; its pending edit will not be pushed \
+         (remote delete wins with no conflict surfaced to the user)"
+    );
+}
+
+// =======================================================================================
 // AREA 6: metadata-only mutation (`set_mtime`) and the outbox.
 // =======================================================================================
 
