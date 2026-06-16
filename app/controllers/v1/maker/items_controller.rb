@@ -64,7 +64,8 @@ module V1
           description: item.description,
           instructions: item.instructions,
           file_attachments: item.file_attachments.map { |a| attachment_json(a) },
-          tags: item.tags.map(&:name)
+          tags: item.tags.map(&:name),
+          taggings: item.taggings.includes(:tag).map { |t| { id: t.id, tag_id: t.tag_id, name: t.tag.name } }
         )
       end
 

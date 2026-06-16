@@ -27,6 +27,22 @@ module V1
         assert_equal [ "printed" ], JSON.parse(response.body)["tags"]
       end
 
+      test "item json exposes tagging ids so a tag can be removed" do
+        post "/v1/maker/items/#{@vase}/taggings", params: { name: "printed" }, as: :json, headers: auth(@token)
+        get "/v1/maker/items/#{@vase}", headers: auth(@token)
+        taggings = JSON.parse(response.body)["taggings"]
+        assert_equal 1, taggings.size
+        tg = taggings.first
+        assert_equal "printed", tg["name"]
+        assert tg["id"].present?, "tagging id must be exposed for removal"
+        # remove via the tagging id
+        delete "/v1/maker/taggings/#{tg['id']}", headers: auth(@token)
+        assert_response :no_content
+        get "/v1/maker/items/#{@vase}", headers: auth(@token)
+        assert_equal [], JSON.parse(response.body)["tags"]
+        assert_equal [], JSON.parse(response.body)["taggings"]
+      end
+
       test "tags index lists the user's tags" do
         post "/v1/maker/items/#{@vase}/taggings", params: { name: "useful" }, as: :json, headers: auth(@token)
         get "/v1/maker/tags", headers: auth(@token)
