@@ -58,7 +58,9 @@ env:
     CHUNK_ENDPOINT: http://192.168.1.7:8333
     CHUNK_BUCKET: my-bucket
     CHUNK_REGION: us-east-1
-    CHUNK_ACCESS_KEY_ID: admin
+    # Authoritative source = 1Password item "seaweedfs" (op://Personal/seaweedfs/access key,
+    # user "tester"). The secret is sourced from the same item in .kamal/secrets.
+    CHUNK_ACCESS_KEY_ID: F61BUJTZ2I5KRC0NH7YX
 
     # Set number of processes dedicated to Solid Queue (default: 1)
     # JOB_CONCURRENCY: 3
