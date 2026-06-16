@@ -597,6 +597,39 @@ impl SyncEngine {
         Ok(provider.dehydrate_subtree(node_id)?)
     }
 
+    /// **Pin a subtree for offline + download it now.** Records the pin (forcing the subtree
+    /// in scope for proactive hydration across pulls — see [`SqliteProvider::pin`]) and then
+    /// immediately makes it available offline via [`ensure_available_offline`](Self::ensure_available_offline).
+    /// The combination is the "make this folder available offline" action: it both downloads
+    /// the current contents AND keeps the folder resident as new files arrive (the daemon's
+    /// proactive-hydration pass honors the pin every tick). Returns the download summary.
+    pub fn pin(
+        provider: &SqliteProvider,
+        client: &ServerClient,
+        io: &dyn ChunkIO,
+        node_id: &str,
+        concurrency: usize,
+    ) -> Result<OfflineSummary> {
+        provider.pin(node_id)?;
+        Self::ensure_available_offline(provider, client, io, node_id, concurrency)
+    }
+
+    /// **Unpin a subtree**, optionally reclaiming its cached bytes. Removes the pin so the
+    /// subtree stops being force-kept resident (it reverts to inheriting its ancestry / the
+    /// device default). When `reclaim` is true, the now out-of-scope subtree's cached chunks
+    /// are dropped (dedup-safe — a chunk a still-in-scope file shares is never dropped),
+    /// returning the number reclaimed; when false, returns 0 and leaves the bytes (they'll be
+    /// reclaimed by a later dehydrate / GC). The tree + manifests stay, so the subtree is still
+    /// navigable and re-hydrates on demand.
+    pub fn unpin(provider: &SqliteProvider, node_id: &str, reclaim: bool) -> Result<usize> {
+        provider.unpin(node_id)?;
+        if reclaim {
+            Ok(provider.dehydrate_subtree(node_id)?)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// **Make a node available offline.** Fully hydrate `node_id` and — if it's a directory —
     /// every descendant file's chunks, so the whole subtree is resident on local disk before
     /// the device goes offline (the workshop / makerspace / client-site scenario). Each file
