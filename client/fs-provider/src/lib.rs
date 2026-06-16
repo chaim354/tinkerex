@@ -348,6 +348,19 @@ pub trait Provider: Send + Sync {
     fn rmdir(&self, parent: u64, name: &str) -> Result<()>;
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()>;
 
+    /// Create a symbolic link `name` under `parent`, pointing at `target` (raw bytes — a
+    /// path, stored verbatim). The git-checkout path (mode-120000 entries). Default returns
+    /// `NotSupported` (an adapter/provider without link support behaves as before — EPERM);
+    /// `SqliteProvider` stores + syncs the target.
+    fn symlink(&self, _parent: u64, _name: &str, _target: &[u8]) -> Result<Attr> {
+        Err(FsError::NotSupported)
+    }
+    /// Read a symlink's target bytes (`readlink(2)`). Default `NotSupported`; `SqliteProvider`
+    /// returns the stored target (and `NotSupported` if `ino` is not a symlink).
+    fn readlink(&self, _ino: u64) -> Result<Vec<u8>> {
+        Err(FsError::NotSupported)
+    }
+
     // ---- advisory locking (POSIX byte-range; local to this device) -------------------
     // Defaults are a no-op "always succeeds" — a provider without lock support behaves as
     // if nothing is ever locked. `SqliteProvider` overrides with real tracking.
@@ -633,58 +646,6 @@ impl SqliteProvider {
             atime: mtime, // a fresh node's atime starts at its creation/mtime
             mode,
         })
-    }
-
-    /// Create a **symlink** named `name` under `parent`, pointing at `target` (arbitrary
-    /// bytes — a path). This is the git-checkout path: a repo storing a 120000 entry has its
-    /// working-tree link materialized via `symlink(2)`. Sync-ready on creation (no manifest
-    /// — the target *is* the content), so it's enqueued to the outbox immediately like a dir.
-    pub fn symlink(&self, parent: u64, name: &str, target: &[u8]) -> Result<Attr> {
-        let conn = self.conn.lock().unwrap();
-        let pkind: String = conn
-            .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![parent as i64], |r| r.get(0))
-            .optional()?
-            .ok_or(FsError::NotFound)?;
-        if Kind::from_str(&pkind) != Kind::Dir {
-            return Err(FsError::NotADirectory);
-        }
-        let node_id = uuid::Uuid::new_v4().to_string();
-        let mode = default_mode(Kind::Symlink);
-        let mtime = now_nanos();
-        let size = target.len() as i64;
-        let res = conn.execute(
-            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime, size, symlink_target)
-             VALUES (?1, ?2, 'symlink', ?3, ?4, ?5, ?6, ?7)",
-            params![parent as i64, name, node_id, mode as i64, mtime, size, target],
-        );
-        match res {
-            Ok(_) => {}
-            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
-                return Err(FsError::AlreadyExists)
-            }
-            Err(e) => return Err(e.into()),
-        }
-        let ino = conn.last_insert_rowid() as u64;
-        Self::enqueue(&conn, &node_id, "upsert")?;
-        Ok(Attr { ino, kind: Kind::Symlink, size: size as u64, mtime, mode })
-    }
-
-    /// Read a symlink's target bytes (the `readlink(2)` path). `NotSupported` if the inode is
-    /// not a symlink (an EINVAL-shaped error — `readlink` on a regular file), `NotFound` if gone.
-    pub fn readlink(&self, ino: u64) -> Result<Vec<u8>> {
-        let conn = self.conn.lock().unwrap();
-        let row: Option<(String, Option<Vec<u8>>)> = conn
-            .query_row(
-                "SELECT kind, symlink_target FROM nodes WHERE ino = ?1",
-                params![ino as i64],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .optional()?;
-        match row {
-            None => Err(FsError::NotFound),
-            Some((kind, _)) if Kind::from_str(&kind) != Kind::Symlink => Err(FsError::NotSupported),
-            Some((_, target)) => Ok(target.unwrap_or_default()),
-        }
     }
 
     /// Record the server version a node now reflects — called after a successful push
@@ -1916,6 +1877,58 @@ impl Provider for SqliteProvider {
         Ok(())
     }
 
+    /// Create a **symlink** named `name` under `parent`, pointing at `target` (arbitrary
+    /// bytes — a path). This is the git-checkout path: a repo storing a 120000 entry has its
+    /// working-tree link materialized via `symlink(2)`. Sync-ready on creation (no manifest
+    /// — the target *is* the content), so it's enqueued to the outbox immediately like a dir.
+    fn symlink(&self, parent: u64, name: &str, target: &[u8]) -> Result<Attr> {
+        let conn = self.conn.lock().unwrap();
+        let pkind: String = conn
+            .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![parent as i64], |r| r.get(0))
+            .optional()?
+            .ok_or(FsError::NotFound)?;
+        if Kind::from_str(&pkind) != Kind::Dir {
+            return Err(FsError::NotADirectory);
+        }
+        let node_id = uuid::Uuid::new_v4().to_string();
+        let mode = default_mode(Kind::Symlink);
+        let mtime = now_nanos();
+        let size = target.len() as i64;
+        let res = conn.execute(
+            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime, size, symlink_target)
+             VALUES (?1, ?2, 'symlink', ?3, ?4, ?5, ?6, ?7)",
+            params![parent as i64, name, node_id, mode as i64, mtime, size, target],
+        );
+        match res {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
+                return Err(FsError::AlreadyExists)
+            }
+            Err(e) => return Err(e.into()),
+        }
+        let ino = conn.last_insert_rowid() as u64;
+        Self::enqueue(&conn, &node_id, "upsert")?;
+        Ok(Attr { ino, kind: Kind::Symlink, size: size as u64, mtime, mode })
+    }
+
+    /// Read a symlink's target bytes (the `readlink(2)` path). `NotSupported` if the inode is
+    /// not a symlink (an EINVAL-shaped error — `readlink` on a regular file), `NotFound` if gone.
+    fn readlink(&self, ino: u64) -> Result<Vec<u8>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(String, Option<Vec<u8>>)> = conn
+            .query_row(
+                "SELECT kind, symlink_target FROM nodes WHERE ino = ?1",
+                params![ino as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Err(FsError::NotFound),
+            Some((kind, _)) if Kind::from_str(&kind) != Kind::Symlink => Err(FsError::NotSupported),
+            Some((_, target)) => Ok(target.unwrap_or_default()),
+        }
+    }
+
     fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let node_id: Option<String> = conn
@@ -2022,6 +2035,12 @@ impl<P: Provider + ?Sized> Provider for std::sync::Arc<P> {
     }
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()> {
         (**self).rename(parent, name, newparent, newname)
+    }
+    fn symlink(&self, parent: u64, name: &str, target: &[u8]) -> Result<Attr> {
+        (**self).symlink(parent, name, target)
+    }
+    fn readlink(&self, ino: u64) -> Result<Vec<u8>> {
+        (**self).readlink(ino)
     }
     fn set_mode(&self, ino: u64, mode: u32) -> Result<()> {
         (**self).set_mode(ino, mode)
