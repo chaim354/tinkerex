@@ -19,6 +19,7 @@ class User < ApplicationRecord
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
   has_many :maker_inventory_items, class_name: "Maker::InventoryItem", dependent: :destroy
+  has_many :maker_inventory_transactions, class_name: "Maker::InventoryTransaction", dependent: :destroy
   has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 

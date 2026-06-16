@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000012) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000013) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -143,6 +143,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000012) do
     t.index ["user_id", "location_id"], name: "index_maker_inventory_items_on_user_id_and_location_id"
     t.index ["user_id", "name"], name: "index_maker_inventory_items_on_user_id_and_name"
     t.index ["user_id", "supplier_id"], name: "index_maker_inventory_items_on_user_id_and_supplier_id"
+  end
+
+  create_table "maker_inventory_transactions", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.decimal "delta", precision: 12, scale: 3, null: false
+    t.integer "inventory_item_id", null: false
+    t.text "note"
+    t.integer "project_id"
+    t.string "reason", default: "adjusted", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "inventory_item_id", "created_at"], name: "index_maker_inventory_transactions_on_item_created_at"
+    t.index ["user_id", "project_id"], name: "index_maker_inventory_transactions_on_user_id_and_project_id"
   end
 
   create_table "maker_items", force: :cascade do |t|
