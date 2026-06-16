@@ -91,6 +91,10 @@ Rails.application.routes.draw do
     post "nodes/:node_id/unlock", to: "nodes#unlock"
     get "locks", to: "locks#index"
 
+    namespace :maker do
+      resources :items
+    end
+
     # hydration
     post "chunks/download", to: "chunks#download"
 
