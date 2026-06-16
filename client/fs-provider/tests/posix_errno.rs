@@ -131,6 +131,33 @@ fn rename_directory_onto_empty_directory_succeeds() {
     assert_eq!(read_all(&p, p.lookup(dst.ino, "kid").unwrap().ino), b"k");
 }
 
+#[test]
+fn rename_directory_into_a_sibling_subtree_is_allowed() {
+    // The cycle guard must reject ONLY a move into the source's *own* subtree — a move into
+    // an unrelated sibling's subtree is a perfectly legal directory move. Guards against the
+    // ancestor-walk being over-eager (which would break ordinary `mv dir other/dir`).
+    let p = provider();
+    let src = p.mkdir(ROOT, "src").unwrap();
+    write_file(&p, src.ino, "kid", b"k");
+    let other = p.mkdir(ROOT, "other").unwrap();
+    let deep = p.mkdir(other.ino, "deep").unwrap();
+    p.rename(ROOT, "src", deep.ino, "moved").expect("move into an unrelated subtree is legal");
+    assert!(matches!(p.lookup(ROOT, "src"), Err(FsError::NotFound)));
+    let moved = p.lookup(deep.ino, "moved").unwrap();
+    assert_eq!(moved.kind, Kind::Dir);
+    assert_eq!(read_all(&p, p.lookup(moved.ino, "kid").unwrap().ino), b"k");
+}
+
+#[test]
+fn rename_onto_self_is_a_noop() {
+    // POSIX: rename(x, x) when both resolve to the same node succeeds and changes nothing.
+    let p = provider();
+    let ino = write_file(&p, ROOT, "f", b"data");
+    p.rename(ROOT, "f", ROOT, "f").expect("rename onto self is a no-op");
+    assert_eq!(read_all(&p, p.lookup(ROOT, "f").unwrap().ino), b"data");
+    assert_eq!(p.lookup(ROOT, "f").unwrap().ino, ino);
+}
+
 // ---- ENAMETOOLONG (a single component longer than 255 bytes) ---------------------------
 
 // POSIX `NAME_MAX` is 255 bytes per component; a 256-byte name fails with ENAMETOOLONG.
