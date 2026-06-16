@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_16_000001) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_16_000002) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -267,6 +267,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_16_000001) do
     t.string "name", null: false
     t.string "node_id", null: false
     t.string "parent_node_id"
+    t.binary "symlink_target"
     t.datetime "updated_at", null: false
     t.bigint "updated_seq", default: 0, null: false
     t.integer "user_id", null: false
