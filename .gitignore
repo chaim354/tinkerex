@@ -37,5 +37,9 @@
 # macOS
 .DS_Store
 
+# Built/downloaded desktop app artifacts (produced by build-app.yml; never source)
+*.dmg
+*.app.zip
+
 # Local agent tooling/plans
 .claude/
