@@ -58,6 +58,32 @@ module V1
       assert_equal 2, tree["nodes"].first["manifest"].size
     end
 
+    test "symlink: create -> changes + tree carry the kind and target" do
+      token = register["device_token"]
+      target = "../shared/libfoo.so"
+      node_id = SecureRandom.uuid
+
+      post "/v1/nodes/symlink",
+           params: { node_id:, parent_node_id: nil, name: "libfoo.so",
+                     symlink_target: Base64.strict_encode64(target), mode: 0o777, mtime: 42 },
+           as: :json, headers: auth(token)
+      assert_response :created
+      assert_equal node_id, JSON.parse(response.body)["node_id"]
+
+      get "/v1/changes", params: { since: 0 }, headers: auth(token)
+      assert_response :success
+      entry = JSON.parse(response.body)["changes"].find { |c| c["node_id"] == node_id }
+      assert_equal "symlink", entry["op"]
+      assert_equal "symlink", entry["node"]["kind"]
+      assert_equal target, Base64.strict_decode64(entry["node"]["symlink_target"])
+
+      get "/v1/tree", headers: auth(token)
+      assert_response :success
+      node = JSON.parse(response.body)["nodes"].find { |n| n["node_id"] == node_id }
+      assert_equal "symlink", node["kind"]
+      assert_equal target, Base64.strict_decode64(node["symlink_target"])
+    end
+
     test "dedup: shared chunk reported as not-missing on the second file" do
       token = register["device_token"]
       x, y, z = "x" * 64, "y" * 64, "z" * 64

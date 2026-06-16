@@ -1,7 +1,7 @@
 class Node < ApplicationRecord
   belongs_to :user
 
-  KINDS = %w[file dir].freeze
+  KINDS = %w[file dir symlink].freeze
 
   validates :node_id, presence: true, uniqueness: { scope: :user_id }
   validates :name, presence: true
@@ -11,6 +11,7 @@ class Node < ApplicationRecord
 
   def dir? = kind == "dir"
   def file? = kind == "file"
+  def symlink? = kind == "symlink"
 
   def children
     user.nodes.present.where(parent_node_id: node_id)

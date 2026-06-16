@@ -76,6 +76,7 @@ Rails.application.routes.draw do
 
     # metadata ops + history
     post "nodes", to: "nodes#mkdir"
+    post "nodes/symlink", to: "nodes#symlink"
     delete "nodes/:node_id", to: "nodes#destroy"
     post "nodes/:node_id/move", to: "nodes#move"
     get "nodes/:node_id/versions", to: "nodes#versions"
