@@ -22,6 +22,29 @@
         915
       ],
       "note": "False positive. `role` here is a domain label enum (Maker::FileAttachment::ROLES = model/instructions/image/source_archive/gcode/other), NOT a security/authorization role. It is validated by `inclusion: { in: ROLES }` on the model, so an attacker cannot inject an arbitrary value. The attachment is always scoped to current_user via the parent association, so mass-assigning it grants no privilege escalation."
+    },
+    {
+      "warning_type": "Command Injection",
+      "warning_code": 14,
+      "fingerprint": "a3843806f9433e1efa18ad7000ddd737d599051ff61db54e7764dae3f091f347",
+      "check_name": "Execute",
+      "message": "Possible command injection",
+      "file": "app/services/maker/previews/mesh.rb",
+      "line": 59,
+      "link": "https://brakemanscanner.org/docs/warning_types/command_injection/",
+      "code": "Open3.capture3(F3D, Tempfile.new.path, \"--output\", \"#{Tempfile.new.path}#{out_ext}\", \"--resolution\", \"#{size},#{size}\")",
+      "render_path": null,
+      "location": {
+        "type": "method",
+        "class": "Maker::Previews::Mesh",
+        "method": "to_output"
+      },
+      "user_input": "out_ext",
+      "confidence": "Medium",
+      "cwe_id": [
+        77
+      ],
+      "note": "False positive. `Open3.capture3(*args)` is invoked with an ARGV ARRAY, so Ruby execs the binary directly with NO shell \u2014 there is no shell-injection vector. `F3D` is an operator-controlled constant (ENV['F3D_BIN'] default 'f3d'); the input/output paths are Tempfile-generated, not user-supplied; and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make f3d error out, which is handled). No user input reaches a shell."
     }
   ],
   "brakeman_version": "8.0.5"
