@@ -40,6 +40,40 @@ module Maker
       assert_equal "ready", preview.reload.status
     end
 
+    test "no filename: resolves the renderable name from the Node row (extensionless node_id)" do
+      # The regression the smoke caught: node_id is a UUID with no extension, but the
+      # synced Node row carries the real name. With no filename arg, the job must resolve
+      # the name from the node (not fall back to the extensionless node_id).
+      node_id = "11111111-2222-3333-4444-555555555555"
+      stage_version(node_id:, version_id: "v1", bytes: @svg)
+      @user.nodes.create!(node_id:, name: "drawing.svg", kind: "file", parent_node_id: "root")
+      preview = @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id)
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert preview.asset.attached?
+      assert_equal "image/svg+xml", preview.asset.content_type
+      assert_nil preview.error
+    end
+
+    test "no filename: node name with an unrenderable extension stays unsupported" do
+      node_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+      stage_version(node_id:, version_id: "v2", bytes: "anything")
+      @user.nodes.create!(node_id:, name: "part.sldprt", kind: "file", parent_node_id: "root")
+      preview = @user.maker_previews.create!(node_id:, version_id: "v2")
+
+      assert_nothing_raised do
+        Maker::GeneratePreviewJob.perform_now(preview.id)
+      end
+
+      preview.reload
+      assert_equal "unsupported", preview.status
+      assert preview.error.present?
+      assert_not preview.asset.attached?
+    end
+
     test "unsupported extension flips status to unsupported (not failed), no attachment, no raise" do
       stage_version(node_id: "weird.sldprt", version_id: "v2", bytes: "anything")
       preview = @user.maker_previews.create!(node_id: "weird.sldprt", version_id: "v2")

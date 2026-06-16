@@ -28,7 +28,14 @@ module Maker
       begin
         preview.update!(status: "processing", error: nil)
 
-        name = filename.presence || preview.node_id
+        # An explicit filename arg wins (e.g. the UI passes it). Otherwise resolve the
+        # file's real name from the synced Node row (tenant-scoped) — the enqueue API may
+        # omit filename, and preview.node_id is a UUID with no extension, so renderer
+        # selection would wrongly land on "unsupported" without this. Falls back to the
+        # raw node_id when there's no matching node row (still correctly unsupported).
+        name = filename.presence ||
+               preview.user.nodes.find_by(node_id: preview.node_id)&.name ||
+               preview.node_id
         renderer = Maker::Previews::Registry.for_filename(name)
 
         ext = File.extname(name.to_s).downcase.delete_prefix(".")
