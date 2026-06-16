@@ -1831,34 +1831,6 @@ impl Provider for SqliteProvider {
             }
         }
 
-        // POSIX `rename(2)` (EINVAL): a directory may not be moved into itself or one of its
-        // own descendants — doing so would re-parent it under a node it contains, detaching a
-        // cycle from the tree root (the moved subtree becomes unreachable and any parent-walk
-        // loops forever). Reject before the UPDATE. (Only directories can form a cycle; a file
-        // has no descendants.) We walk `newparent`'s ancestor chain up to ROOT looking for the
-        // source inode; if found (or `newparent == src_ino`), it's a cycle.
-        let src_kind: String = tx
-            .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![src_ino], |r| r.get(0))?;
-        if Kind::from_str(&src_kind) == Kind::Dir {
-            let mut anc = newparent as i64;
-            // Bound the walk so a pre-existing malformed tree can't spin forever.
-            for _ in 0..100_000 {
-                if anc == src_ino {
-                    return Err(FsError::InvalidArgument);
-                }
-                if anc == ROOT_INO as i64 {
-                    break;
-                }
-                match tx
-                    .query_row("SELECT parent_ino FROM nodes WHERE ino = ?1", params![anc], |r| r.get::<_, i64>(0))
-                    .optional()?
-                {
-                    Some(p) => anc = p,
-                    None => break, // newparent detached from root already; nothing to cycle into
-                }
-            }
-        }
-
         // POSIX rename atomically *replaces* an occupied destination (the atomic-save
         // pattern: write `f.tmp`, rename `f.tmp` → `f`). Without this the unique
         // (parent, name) index turns every such save into a constraint error.
