@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="1.4.00" FormatVersion="1">
+  <CutSetting type="Cut">
+    <index Value="0"/>
+    <name Value="C00"/>
+    <color Value="255"/>
+  </CutSetting>
+  <CutSetting type="Cut">
+    <index Value="1"/>
+    <name Value="C01"/>
+    <color Value="65280"/>
+  </CutSetting>
+  <Shape Type="Rect" CutIndex="0" W="40" H="20" XForm="1 0 0 1 50 30"/>
+  <Shape Type="Ellipse" CutIndex="1" Rx="10" Ry="10" XForm="1 0 0 1 50 30"/>
+  <Shape Type="Line" CutIndex="0" XForm="1 0 0 1 0 0">
+    <VertList>V0x0y0V1x100y0</VertList>
+  </Shape>
+</LightBurnProject>

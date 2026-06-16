@@ -131,6 +131,80 @@ module Maker
       assert_not preview.asset.attached?
     end
 
+    test "renders a 3MF by extracting its embedded thumbnail → ready PNG" do
+      threemf = File.binread(Rails.root.join("test/fixtures/files/cube.3mf"))
+      stage_version(node_id: "cube.3mf", version_id: "v3mf", bytes: threemf)
+      preview = @user.maker_previews.create!(node_id: "cube.3mf", version_id: "v3mf")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "cube.3mf")
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert preview.asset.attached?
+      assert_equal "image/png", preview.asset.content_type
+      assert_equal "\x89PNG".b, preview.asset.download[0, 4].b
+    end
+
+    test "a 3MF with no embedded thumbnail flips to failed (no F3D fallback yet)" do
+      nothumb = File.binread(Rails.root.join("test/fixtures/files/nothumb.3mf"))
+      stage_version(node_id: "bare.3mf", version_id: "vbare", bytes: nothumb)
+      preview = @user.maker_previews.create!(node_id: "bare.3mf", version_id: "vbare")
+
+      assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "bare.3mf") }
+
+      preview.reload
+      assert_equal "failed", preview.status
+      assert preview.error.present?
+      assert_not preview.asset.attached?
+    end
+
+    test "renders a LightBurn .lbrn2 → ready SVG" do
+      lbrn2 = File.binread(Rails.root.join("test/fixtures/files/sample.lbrn2"))
+      stage_version(node_id: "art.lbrn2", version_id: "vlb", bytes: lbrn2)
+      preview = @user.maker_previews.create!(node_id: "art.lbrn2", version_id: "vlb")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "art.lbrn2")
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert_equal "image/svg+xml", preview.asset.content_type
+      assert_includes preview.asset.download, "<svg"
+    end
+
+    test "renders a DXF → ready SVG" do
+      dxf = File.binread(Rails.root.join("test/fixtures/files/sample.dxf"))
+      stage_version(node_id: "plate.dxf", version_id: "vdxf", bytes: dxf)
+      preview = @user.maker_previews.create!(node_id: "plate.dxf", version_id: "vdxf")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "plate.dxf")
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert_equal "image/svg+xml", preview.asset.content_type
+      assert_includes preview.asset.download, "<line"
+    end
+
+    test "an STL preview is unsupported when F3D is absent (graceful, not failed)" do
+      # The renderer EXISTS but its toolchain (f3d) may not be installed → the job marks
+      # `unsupported` (a deliberate terminal state), never crashing. When f3d IS present it
+      # renders a PNG instead — assert whichever applies.
+      stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl"))
+      stage_version(node_id: "cube.stl", version_id: "vstl", bytes: stl)
+      preview = @user.maker_previews.create!(node_id: "cube.stl", version_id: "vstl")
+
+      assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "cube.stl") }
+
+      preview.reload
+      if Maker::Previews::Mesh.available?
+        assert_equal "ready", preview.status
+        assert_equal "image/png", preview.asset.content_type
+      else
+        assert_equal "unsupported", preview.status
+        assert preview.error.present?
+        assert_not preview.asset.attached?
+      end
+    end
+
     test "a real fetch/render error flips status to failed with the error message" do
       # Version exists but its chunk bytes are missing from the store → FileBytes::NotFound.
       ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",

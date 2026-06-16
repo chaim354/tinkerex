@@ -50,7 +50,7 @@ module Maker
         raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless renderer.available?
 
         bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
-        result = renderer.render(bytes, size: 512)
+        result = render_with(renderer, bytes, ext:, kind: preview.kind)
 
         preview.asset.attach(
           io: StringIO.new(result[:bytes]),
@@ -73,10 +73,23 @@ module Maker
 
     private
 
+    # Renderers share a `render(bytes, size:)` contract; some (e.g. Mesh/F3D) also accept
+    # `ext:` (to pick the loader) and `kind:` (thumbnail vs model_glb). Pass each kwarg only
+    # when the renderer's signature declares it, so the simpler renderers stay unchanged.
+    def render_with(renderer, bytes, ext:, kind:)
+      accepted = renderer.method(:render).parameters.select { |t, _| %i[key keyreq].include?(t) }.map(&:last)
+      opts = { size: 512 }
+      opts[:ext]  = ext  if accepted.include?(:ext)
+      opts[:kind] = kind if accepted.include?(:kind)
+      renderer.render(bytes, **opts)
+    end
+
     def asset_ext(content_type)
       case content_type
-      when "image/svg+xml" then ".svg"
-      when "image/png"     then ".png"
+      when "image/svg+xml"     then ".svg"
+      when "image/png"         then ".png"
+      when "image/jpeg"        then ".jpg"
+      when "model/gltf-binary" then ".glb"
       else ".bin"
       end
     end

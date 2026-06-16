@@ -494,6 +494,7 @@ DEPENDENCIES
   importmap-rails
   jbuilder
   kamal
+  nokogiri (~> 1.18)
   omniauth (~> 2.1)
   omniauth-rails_csrf_protection (~> 1.0)
   omniauth_openid_connect (~> 0.8)
@@ -502,6 +503,7 @@ DEPENDENCIES
   puma (>= 5.0)
   rails (~> 8.1.1)
   rubocop-rails-omakase
+  rubyzip (~> 3.0)
   selenium-webdriver
   solid_cable
   solid_cache
