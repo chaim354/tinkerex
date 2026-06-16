@@ -14,6 +14,7 @@ class User < ApplicationRecord
   has_many :maker_file_attachments, class_name: "Maker::FileAttachment", dependent: :destroy
   has_many :maker_collections, class_name: "Maker::Collection", dependent: :destroy
   has_many :maker_tasks, class_name: "Maker::Task", dependent: :destroy
+  has_many :maker_projects, class_name: "Maker::Project", dependent: :destroy
   has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 

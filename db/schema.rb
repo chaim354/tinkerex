@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000007) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000008) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -131,6 +131,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000007) do
     t.index ["user_id", "favorited"], name: "index_maker_items_on_user_id_and_favorited"
     t.index ["user_id", "item_type"], name: "index_maker_items_on_user_id_and_item_type"
     t.index ["user_id", "title"], name: "index_maker_items_on_user_id_and_title"
+  end
+
+  create_table "maker_projects", force: :cascade do |t|
+    t.datetime "archived_at"
+    t.datetime "created_at", null: false
+    t.text "description"
+    t.string "name", null: false
+    t.string "slug", null: false
+    t.string "status", default: "planning", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
+    t.index ["user_id", "status"], name: "index_maker_projects_on_user_id_and_status"
   end
 
   create_table "maker_taggings", force: :cascade do |t|
