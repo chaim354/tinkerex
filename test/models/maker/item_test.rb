@@ -32,5 +32,22 @@ module Maker
       other.maker_items.create!(title: "theirs")
       assert_equal [ "mine" ], @user.maker_items.pluck(:title)
     end
+
+    test "of_type filters by type when given" do
+      @user.maker_items.create!(title: "a", item_type: "model_3d")
+      @user.maker_items.create!(title: "b", item_type: "cad")
+      assert_equal [ "a" ], @user.maker_items.of_type("model_3d").pluck(:title)
+    end
+
+    test "of_type returns all when type is blank" do
+      @user.maker_items.create!(title: "a", item_type: "model_3d")
+      @user.maker_items.create!(title: "b", item_type: "cad")
+      assert_equal 2, @user.maker_items.of_type(nil).count
+    end
+
+    test "origin must be in the allowed set" do
+      item = @user.maker_items.build(title: "x", origin: "pirated")
+      assert_not item.valid?
+    end
   end
 end
