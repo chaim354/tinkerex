@@ -48,6 +48,10 @@ fn default_mode(kind: Kind) -> u32 {
     match kind {
         Kind::Dir => 0o755,
         Kind::File => 0o644,
+        // Symlinks are conventionally 0o777 (the mode is ignored on most systems — the
+        // link's permissions come from the target — but git records 120000 and tools
+        // expect lrwxrwxrwx, so report 0o777 here).
+        Kind::Symlink => 0o777,
     }
 }
 
@@ -92,6 +96,12 @@ fn now_millis() -> i64 {
 pub enum Kind {
     File,
     Dir,
+    /// A symbolic link. The link target (an arbitrary byte path) is stored out-of-band in
+    /// the node's `symlink_target` column, read back via [`SqliteProvider::readlink`]. Git
+    /// stores symlinks (mode 120000) and `git checkout` materializes them, so this is the
+    /// one "special" POSIX kind the sync engine models (FIFOs/sockets/devices stay non-goals
+    /// — they have no portable cross-device meaning; a symlink target is just bytes).
+    Symlink,
 }
 
 impl Kind {
@@ -99,13 +109,14 @@ impl Kind {
         match self {
             Kind::File => "file",
             Kind::Dir => "dir",
+            Kind::Symlink => "symlink",
         }
     }
     fn from_str(s: &str) -> Kind {
-        if s == "dir" {
-            Kind::Dir
-        } else {
-            Kind::File
+        match s {
+            "dir" => Kind::Dir,
+            "symlink" => Kind::Symlink,
+            _ => Kind::File,
         }
     }
 }
@@ -392,7 +403,8 @@ impl SqliteProvider {
                 manifest_id TEXT,
                 node_id     TEXT,
                 version_id  TEXT,         -- server version this node reflects (commit base)
-                mode        INTEGER       -- POSIX permission bits (preserved + synced)
+                mode        INTEGER,      -- POSIX permission bits (preserved + synced)
+                symlink_target BLOB       -- for kind='symlink': the link target bytes (NULL otherwise)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS idx_parent_name ON nodes(parent_ino, name);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_node_id ON nodes(node_id);
@@ -430,6 +442,8 @@ impl SqliteProvider {
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN mode INTEGER", []);
         // atime column on an existing DB (device-local access time; 0 → falls back to mtime).
         let _ = conn.execute("ALTER TABLE nodes ADD COLUMN atime INTEGER NOT NULL DEFAULT 0", []);
+        // Symlink support (git checkout of a symlinked path); NULL on older rows + non-links.
+        let _ = conn.execute("ALTER TABLE nodes ADD COLUMN symlink_target BLOB", []);
         // G5 debounce columns on an existing outbox (no-op on a fresh DB).
         let _ = conn.execute("ALTER TABLE outbox ADD COLUMN enqueued_at INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE outbox ADD COLUMN first_enqueued_at INTEGER NOT NULL DEFAULT 0", []);
@@ -615,6 +629,58 @@ impl SqliteProvider {
             atime: mtime, // a fresh node's atime starts at its creation/mtime
             mode,
         })
+    }
+
+    /// Create a **symlink** named `name` under `parent`, pointing at `target` (arbitrary
+    /// bytes — a path). This is the git-checkout path: a repo storing a 120000 entry has its
+    /// working-tree link materialized via `symlink(2)`. Sync-ready on creation (no manifest
+    /// — the target *is* the content), so it's enqueued to the outbox immediately like a dir.
+    pub fn symlink(&self, parent: u64, name: &str, target: &[u8]) -> Result<Attr> {
+        let conn = self.conn.lock().unwrap();
+        let pkind: String = conn
+            .query_row("SELECT kind FROM nodes WHERE ino = ?1", params![parent as i64], |r| r.get(0))
+            .optional()?
+            .ok_or(FsError::NotFound)?;
+        if Kind::from_str(&pkind) != Kind::Dir {
+            return Err(FsError::NotADirectory);
+        }
+        let node_id = uuid::Uuid::new_v4().to_string();
+        let mode = default_mode(Kind::Symlink);
+        let mtime = now_nanos();
+        let size = target.len() as i64;
+        let res = conn.execute(
+            "INSERT INTO nodes(parent_ino, name, kind, node_id, mode, mtime, size, symlink_target)
+             VALUES (?1, ?2, 'symlink', ?3, ?4, ?5, ?6, ?7)",
+            params![parent as i64, name, node_id, mode as i64, mtime, size, target],
+        );
+        match res {
+            Ok(_) => {}
+            Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::ConstraintViolation => {
+                return Err(FsError::AlreadyExists)
+            }
+            Err(e) => return Err(e.into()),
+        }
+        let ino = conn.last_insert_rowid() as u64;
+        Self::enqueue(&conn, &node_id, "upsert")?;
+        Ok(Attr { ino, kind: Kind::Symlink, size: size as u64, mtime, mode })
+    }
+
+    /// Read a symlink's target bytes (the `readlink(2)` path). `NotSupported` if the inode is
+    /// not a symlink (an EINVAL-shaped error — `readlink` on a regular file), `NotFound` if gone.
+    pub fn readlink(&self, ino: u64) -> Result<Vec<u8>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(String, Option<Vec<u8>>)> = conn
+            .query_row(
+                "SELECT kind, symlink_target FROM nodes WHERE ino = ?1",
+                params![ino as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        match row {
+            None => Err(FsError::NotFound),
+            Some((kind, _)) if Kind::from_str(&kind) != Kind::Symlink => Err(FsError::NotSupported),
+            Some((_, target)) => Ok(target.unwrap_or_default()),
+        }
     }
 
     /// Record the server version a node now reflects — called after a successful push
