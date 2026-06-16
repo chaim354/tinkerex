@@ -1,6 +1,68 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-15 (automated real-mount E2E green on all 3 OSes; web UI + real auth; cross-OS bug-fix saga)
+**Updated:** 2026-06-16 (managed-Postgres hardening + orphaned-chunk reaper + file-layer polish; R2 validated live)
+
+## Latest (2026-06-16): managed-Postgres hardening (G2) + orphaned-chunk reaper (G4) + file-layer polish (G5/G8/G10) + R2 live
+
+A batch of file-layer / server hardening landed (branches `g2-postgres-hardening`,
+`g4-orphaned-chunk-reaper`, `g5-g8-g10-file-layer-polish`), and the **R2 chunk data plane was
+validated live** end-to-end.
+
+- **G2 — managed-Postgres hardening.** Made the adapter-agnostic server genuinely
+  managed-Postgres-ready (the §12-step-8 caveats, now closed):
+  - **`FOR KEY SHARE`→`FOR UPDATE` deadlock fix (the real bug, found by a concurrent-commit load
+    test).** Every write in a commit (chunks/manifest/version/node) FK-references `users`, so
+    Postgres takes a `FOR KEY SHARE` lock on the users row; the old code called `next_seq!`
+    (`FOR UPDATE`) *after* those inserts → two concurrent same-user commits each held KEY SHARE
+    and both wanted UPDATE → **lock-upgrade deadlock**. Fix: **`next_seq!` is now the FIRST
+    statement** in `Sync::Commit`/`Mutation`/`Restore`/`Conflicts` (take the strong lock up
+    front; the seq is still only *used* at the end). Regression suite
+    `test/services/sync/concurrent_seq_test.rb`.
+  - **TLS `sslmode`** wired in `config/database.yml` (managed profile honors `PGSSLMODE`/URL).
+  - **Statement-pooler boot guard** (`config/initializers/postgres_pooler_check.rb` +
+    `lib/postgres_pooler_check.rb`): refuses to boot behind a **statement-mode** pooler (which
+    silently breaks the transaction-spanning `FOR UPDATE` and can dup changelog seqs); requires
+    **session/transaction** mode. Disable with `DB_SKIP_POOLER_CHECK=1`; no-op on SQLite.
+  - **Solid Queue/Cache/Cable on managed Postgres** (the managed profile can put the Solid
+    stores on PG instead of SQLite). Suite **149/0** on SQLite + PG. Docs:
+    `docs/SYNC_SERVER.md` (Connection pooler + sslmode), `docs/parity-roadmap.md`.
+- **G4 — orphaned-chunk reaper** (closes the `docs/torn-writes-and-batching.md` §5 storage leak):
+  `Sync::ChunkReaper` enumerates the per-user `chunks/<user>/` keyspace via a new
+  `ChunkStore#list` (impl on s3/local/memory) and deletes objects with **no `chunks` row AND no
+  in-flight `pending_commits` reference AND older than a grace window** (24 h default, mirroring
+  git-gc's prune grace). `ChunkReaperJob` runs **weekly** (Sunday 5am, `config/recurring.yml`) —
+  conservative because `list_objects_v2` is billed per request; the refcount sweep can't see
+  these (no DB row). Dry-run supported; per-user scoped. Manual: `bin/rails chunks:reap`
+  (`lib/tasks/chunks.rake`). `Sync::Gc`'s stale "also catches never-finalized chunks" comment
+  corrected. Server suite **154/0**.
+- **G5 — change-batching / outbox debounce (opt-in, default OFF).** The §4-recommended debounce
+  from `torn-writes-and-batching.md`, built: `outbox` gains `enqueued_at` + `first_enqueued_at`
+  (unix-millis); `SqliteProvider::outbox_ready_topo(window_ms, max_age_ms)` holds a still-hot
+  upsert (and its queued children) so rapid saves to one big CAD file coalesce into ONE push of
+  the final bytes. **Deletes never held; `window_ms == 0` == the eager pre-G5 drain.** Engine:
+  `push_outbox_debounced`/`sync_tick_debounced`/`flush_outbox`; `DaemonConfig::with_debounce` +
+  `Debounce::MAKER_DEFAULT` (2.5 s window / 30 s cap). Unmount drains with window 0. Tests:
+  `client/fs-provider/tests/debounce.rs` (5).
+- **G8 — special-file guardrail.** Symlinks/FIFOs/sockets/device nodes stay a deliberate
+  non-goal, but now fail **deterministically (`EPERM`)** instead of `fuser`'s default `ENOSYS`:
+  new `FsError::NotSupported` → `EPERM`; the FUSE adapter implements `mknod` (regular/untyped →
+  file; every special type → `EPERM`) + `symlink` (`EPERM`). The tree is never mutated for a
+  rejected type → can't be corrupted. WebDAV is inherently safe (no special-file verb).
+- **G10 — delta-on-wire audit: VERDICT minimal, no gap.** `push_node` uploads only
+  `commit_begin.missing` and FastCDC localizes edits, so the wire delta is already optimal.
+  Locked in with a PUT-counting regression test (`sync-engine/tests/integration.rs`): a 60 KB
+  file = 194 chunks; a **one-byte middle edit re-uploads exactly 1 chunk**.
+- **R2 chunk storage validated live** (`docs/r2-migration.md`): the config-only `STORAGE_BACKEND=s3`
+  switch was confirmed end-to-end against a real R2 bucket — `presigned_roundtrip` byte-for-byte
+  + measured `chunk_latency`. **Bottleneck = serial-per-chunk hydration** (each chunk pays a
+  presign RTT + an R2 GET RTT in sequence); **parallel hydration is the lever** — a
+  parallel-hydration optimization is **IN PROGRESS on a separate branch** (note it as in-flight,
+  not yet landed).
+
+> ⚠️ **Merge-state note (2026-06-16):** at the time of this writing the G2/G4/G5 work lives on
+> the three feature branches named above, branched off `main` HEAD `f0c0387`; confirm they are
+> merged before treating `main` as containing them. The R2-live validation and the in-flight
+> parallel-hydration work are likewise on their own branches.
 
 ## Latest (2026-06-15): automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
 

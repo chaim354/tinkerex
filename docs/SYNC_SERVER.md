@@ -17,8 +17,11 @@ clients PUT/GET chunks directly to object storage via presigned URLs.
   - `Storage::ChunkStore` (+ `S3ChunkStore` for R2/S3, `MemoryChunkStore` for tests).
 - **API** (`app/controllers/v1`): see below.
 - **ActionCable** (`LibraryChannel`): broadcasts `head_seq` on every commit.
-- **Tests** (`test/`): 10 tests, green on SQLite — full HTTP flow + service-level
-  dedup/refcount/restore/idempotency.
+- **Tests** (`test/`): green on SQLite **and** Postgres — full HTTP flow + service-level
+  dedup/refcount/restore/idempotency, conflict detect/keep/split, locks, retention/GC,
+  auth/pairing, tenant isolation, concurrent-commit seq ordering, orphan-chunk reaper. The
+  suite has grown to **144** on `main` (→ **154** with the G2+G4 hardening branches; see
+  `docs/STATUS.md`).
 
 ## API (v1)
 
@@ -70,6 +73,38 @@ production:
 
 No model or service code changes — the schema and queries are identical.
 
+### Connection pooler (managed Postgres) — MUST be session/transaction mode
+
+`User#next_seq!` takes a `SELECT … FOR UPDATE` row lock on the `users` row that **must span the
+read and the write of `head_seq` within one transaction**. A connection pooler in front of
+Postgres (PgBouncer, Neon's pooled endpoint, RDS Proxy) therefore **must run in session or
+transaction mode, never statement mode** — statement mode hands each statement a different
+backend connection, breaking the transaction-spanning lock and risking **duplicate changelog
+seqs** (changelog corruption). A boot-time guard enforces this:
+`config/initializers/postgres_pooler_check.rb` (+ `lib/postgres_pooler_check.rb`) probes the
+connection and **refuses to boot** behind a statement-mode pooler. Disable with
+`DB_SKIP_POOLER_CHECK=1`; it's a no-op on SQLite and when no Postgres primary is configured.
+
+### Lock ordering — why `next_seq!` runs FIRST in a commit (the deadlock fix)
+
+In Postgres, every node/version/changelog/chunk insert in a commit FK-references `users` and so
+takes a **`FOR KEY SHARE`** lock on the user's row. If a commit inserted those *first* and called
+`next_seq!` (which takes the stronger `FOR UPDATE`) *second*, two concurrent same-user commits
+would each hold KEY SHARE and both want UPDATE → a **lock-upgrade deadlock** (observed live under
+a concurrent-commit load test). The fix: **`next_seq!` is the first statement** in every write
+service (`Sync::Commit`, `Mutation`, `Restore`, `Conflicts`) — take the strong lock up front so a
+user's commits serialize cleanly. Regression: `test/services/sync/concurrent_seq_test.rb`.
+
+### TLS / `sslmode`
+
+The managed profile honors `sslmode` via `DATABASE_URL` / `PGSSLMODE` (e.g. `sslmode=require` or
+`verify-full` for Neon/RDS). `config/database.yml`'s `postgres` profile threads it through.
+
+### Solid Queue / Cache / Cable on managed Postgres
+
+The Solid stores can stay on SQLite or move onto the managed Postgres alongside the primary (a
+managed deployment that doesn't want a writable SQLite volume puts them on PG). Config-only.
+
 ## Storage config (R2/S3)
 
 ```
@@ -119,10 +154,12 @@ Both modes ALWAYS keep a node's `current_version` and any **pinned** version
 
 ## Deferred (matches the spec)
 
-Write-write conflict resolution (last-writer-wins now), sharing/multi-user, selective
-sync, maker-app metadata, per-tenant chunk encryption, real OAuth (placeholder
-device-token bootstrap today), and N+1 preloading in `Sync::Changes` (fine for small
-deltas; the bulk path is `Sync::Tree`).
+Sharing/multi-user, maker-app metadata, and per-tenant chunk encryption. (Updated since:
+**conflict resolution is built** — `base_version_id` conflict detection + keep/split replaced
+last-writer-wins, 2026-06-12, §`Sync::Conflicts`; **selective sync** is built client-side, 2026-06-15;
+**real auth** — Rails 8 built-in signup/confirm/login/reset + OmniAuth seam — replaced the
+placeholder web bootstrap, 2026-06-15, with the device-token + pairing mechanism underneath.) Still
+open: N+1 preloading in `Sync::Changes` (fine for small deltas; the bulk path is `Sync::Tree`).
 
 ## Multi-tenancy note (per the 37signals reference)
 

@@ -291,6 +291,11 @@ nicety, not a blocker.
 
 ## 5. The one real residual gap (storage leak, not corruption)
 
+> **RESOLVED (G4, 2026-06-16) — see §7.** `Sync::ChunkReaper` + the weekly `ChunkReaperJob` +
+> `bin/rails chunks:reap` now implement the storage-orphan reaper described below (the first
+> "Suggested fix"). The `gc.rb` stale comment is also corrected. This section is kept for the
+> analysis; the gap itself is closed.
+
 **Orphan chunk bytes from never-finalized commits are never reclaimed.**
 
 `Sync::Gc.sweep_orphans!` (`app/services/sync/gc.rb:70-86`) reclaims chunks by
@@ -347,4 +352,56 @@ extra existence check per unique hash at finalize (cheap; mostly DB-side via the
 - **Real gap + fix:** orphan **chunk bytes** from abandoned commits are never reclaimed
   (the sweep walks DB rows; abandoned chunks have none) — a storage *leak*, not
   corruption. Fix with a storage-orphan reaper or a `pending_commits` TTL sweep, and
-  optionally enable `verify: true` at finalize for belt-and-suspenders.
+  optionally enable `verify: true` at finalize for belt-and-suspenders. **(The reaper is now
+  built — §7 / G4.)**
+
+---
+
+## 7. Implemented: G4 (orphan reaper), G5 (debounce), G8 (special-file guardrail), G10 (delta audit)
+
+Landed 2026-06-16 (branches `g4-orphaned-chunk-reaper`, `g5-g8-g10-file-layer-polish`).
+
+### G4 — orphaned-chunk reaper (the §5 gap, closed)
+
+`Sync::ChunkReaper.reap!(user, grace:, dry_run:)` enumerates the per-user `chunks/<user>/`
+keyspace via a new **`ChunkStore#list`** (implemented on s3/local/memory) and deletes an object
+**only** when all hold: (1) no committed `chunks` row references its hash, (2) no in-flight
+`pending_commits` references it, and (3) it is older than `grace` (default
+`PENDING_COMMIT_TTL = 24.hours`, mirroring git-gc's prune grace so an in-flight upload is never
+reaped). Per-user scoped, idempotent, dry-run supported. **`ChunkReaperJob`** runs **weekly**
+(Sunday 5am, `config/recurring.yml`) — conservative because `list_objects_v2` is billed per
+request and the grace window makes weekly plenty timely for a cost leak. Manual:
+`bin/rails chunks:reap` (`lib/tasks/chunks.rake`). The stale `gc.rb` comment (§5) is corrected.
+Tests: `test/services/sync/chunk_reaper_test.rb`, `test/jobs/chunk_reaper_job_test.rb` (server
+suite → **154/0**).
+
+### G5 — change-batching / outbox debounce (the §4 recommendation, built; opt-in, default OFF)
+
+The outbox now carries two unix-millis timestamps (`enqueued_at` = last touch, refreshed on every
+re-enqueue; `first_enqueued_at` = the max-age floor, set once; both migrated on older DBs).
+`SqliteProvider::outbox_ready_topo(window_ms, max_age_ms)` **holds** a still-hot `upsert` (last
+touched `< window_ms` ago AND under the `max_age_ms` cap) and its queued children (parents-first
+invariant preserved), so a burst of saves to one big CAD file coalesces into ONE push of the
+final bytes. **Deletes are never held; `window_ms == 0` is identical to the eager
+`outbox_list_topo`.** The engine drains via `SyncEngine::push_outbox_debounced` /
+`sync_tick_debounced`; `DaemonConfig::with_debounce` opts in (**default = off**;
+`Debounce::MAKER_DEFAULT` = 2.5 s window / 30 s cap, per §4's D=2–3 s, M=30 s). Unmount drains
+with window 0 (a debounced final edit can't be left un-pushed). Tests:
+`client/fs-provider/tests/debounce.rs` (5).
+
+### G8 — special-file guardrail
+
+Symlinks / FIFOs / sockets / block+char device nodes stay a deliberate non-goal (the tree models
+only `File`/`Dir`). The guardrail makes attempts fail **deterministically (`EPERM`)** instead of
+`fuser`'s default `ENOSYS`: new `FsError::NotSupported` → `EPERM` in the FUSE errno map; the FUSE
+adapter implements `mknod` (`S_IFREG`/untyped → regular file; every special type → `EPERM`) and
+`symlink` (always `EPERM`). The tree is never mutated for a rejected type → cannot be corrupted.
+WebDAV (macOS) is inherently safe — the protocol has no special-file verb.
+
+### G10 — delta-on-wire audit: VERDICT — already minimal ✔
+
+`push_node` uploads exactly `commit_begin.missing`, and FastCDC localizes an edit to a few chunks,
+so the wire delta is already optimal — **no gap.** Locked in with a PUT-counting regression test
+(`client/sync-engine/tests/integration.rs`): a 60 KB file = **194 chunks**; an initial push
+uploads all 194 and a **one-byte middle edit re-uploads exactly 1 chunk**. The test asserts the
+delta push stays `<= total/4 + 2`, so a regression to whole-file uploads fails CI.

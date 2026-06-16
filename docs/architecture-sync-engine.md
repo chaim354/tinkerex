@@ -19,6 +19,10 @@ This is a **sync engine**, not a mount. It also happens to make multi-tenancy an
 security *simpler* (coarse API + normal app authz, not raw-engine exposure), and it
 stays **self-hostable** (Rails + Postgres + S3 — no proprietary D1/DO).
 
+> The rejected alternatives (remote JuiceFS/rclone mount, JuiceFS-as-data-plane,
+> Cloudflare-native DO/D1) and *why* they were rejected are condensed in
+> `docs/roads-not-taken.md` — read it before reviving any of them.
+
 ## Components
 
 ```

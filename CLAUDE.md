@@ -69,9 +69,12 @@ content-addressed manifest sharing chunks).
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
 store) → device B pulls + hydrates + reads, **byte-for-byte identical**; metadata via
-the live server changelog. Multi-device convergence demonstrated. ~90 tests green
-(hermetic provider/chunking/convergence/concurrency suites + server-backed engine
-integration + Rails service/isolation tests).
+the live server changelog. Multi-device convergence demonstrated. Hundreds of tests green
+across all tiers (Rails server **144/0**, →154 with the G2/G4 hardening branches; the
+hermetic `fs-provider` provider/chunking/convergence/concurrency suites; server-backed
+`sync-engine` integration / two-device E2E / fault-injection / concurrency-load /
+multi-filetype-conformance; plus external mount conformance). Exact per-tier counts:
+`docs/STATUS.md`.
 
 ---
 
@@ -84,7 +87,7 @@ integration + Rails service/isolation tests).
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
 | Client | **Tauri** (Rust core), `fs-provider` + per-OS mount (`fs-fuse`/`fs-winfsp`/`fs-webdav`) + `sync-engine` |
-| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (driverless Cloud Filter — the default; WinFsp behind the `winfsp-backend` feature), **macOS** WebDAV (native `mount_webdav`, no kext). macOS FSKit is built but gated on a paid Apple Developer membership (`docs/plan-macos-fskit-migration.md`). Drivers user-installed (keeps copyleft drivers out of our binaries). |
+| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (driverless Cloud Filter — the default; WinFsp behind the `winfsp-backend` feature), **macOS** WebDAV (native `mount_webdav`, no kext). macOS FSKit is a **design sketch** (not built — no `client/fs-fskit` crate), additionally gated on a paid Apple Developer membership (`docs/plan-macos-fskit-migration.md`). Drivers user-installed (keeps copyleft drivers out of our binaries). |
 | Change notification | **ActionCable** → `{head_seq}` on commit |
 | Preview (later) | Three.js (browser) + FreeCAD/CadQuery (server jobs) |
 
@@ -183,12 +186,31 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
                  fs-webdav (macOS), sync-client, sync-engine, maker-app (Tauri)
                  (+ maker-app-core, juicefs-backend from the prior path)
 /docs            architecture-sync-engine.md, sync-protocol.md, SYNC_SERVER.md,
-                 STATUS.md, DEPLOY.md, adr/
+                 STATUS.md, DEPLOY.md, roads-not-taken.md (abandoned paths), adr/
 ```
 
 ---
 
 ## 11. Status (see `docs/STATUS.md` for detail)
+
+> **Latest (2026-06-16): managed-Postgres hardening + orphaned-chunk reaper + file-layer polish +
+> R2 validated live.** A hardening batch (feature branches `g2-postgres-hardening`,
+> `g4-orphaned-chunk-reaper`, `g5-g8-g10-file-layer-polish` off `main` — *confirm merged*):
+> **G2** made the server managed-Postgres-ready — fixed a **real concurrent-commit deadlock**
+> (`FOR KEY SHARE`→`FOR UPDATE` lock-upgrade; `next_seq!` is now the *first* statement in
+> `Commit`/`Mutation`/`Restore`/`Conflicts`), wired TLS `sslmode`, added a **statement-pooler boot
+> guard** (session/transaction mode required), and put the Solid stores on managed Postgres (suite
+> **149/0** SQLite+PG). **G4** added the **orphaned-chunk reaper** (`Sync::ChunkReaper` + weekly
+> `ChunkReaperJob` + `chunks:reap` rake + `ChunkStore#list`) — reclaims storage bytes from
+> never-finalized commits that the refcount sweep can't see (server **154/0**; closes the
+> `torn-writes-and-batching.md` §5 leak). **G5/G8/G10**: opt-in **outbox debounce** (default OFF;
+> coalesces big-CAD autosaves), a **special-file `EPERM` guardrail** (symlink/fifo/socket/device →
+> deterministic EPERM, never corrupts the tree), and a **delta-on-wire audit** (verdict: already
+> minimal — a one-byte edit re-uploads exactly 1 chunk). **R2 chunk storage validated live**
+> (config-only `STORAGE_BACKEND=s3`; presigned roundtrip + measured latency) — serial-per-chunk
+> hydration is the bottleneck, **parallel hydration is the next lever (in progress on a branch)**.
+> Detail: `docs/STATUS.md`, `docs/SYNC_SERVER.md`, `docs/torn-writes-and-batching.md` §7,
+> `docs/r2-migration.md`.
 
 > **Headline (2026-06-11):** the full stack runs **on real hardware**. The Rails server
 > is **deployed via Kamal** on an Unraid VM (`192.168.1.95`, SeaweedFS chunk storage —
@@ -241,7 +263,9 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
 > `docs/torn-writes-and-batching.md`, `docs/r2-migration.md`. Server 144/0. **Next: the maker app
 > layer (§12 step 9).** Full takeover notes: `docs/HANDOFF.md`.
 
-**Built + verified (~125 tests green + live cross-stack + cross-OS demos):**
+**Built + verified (live cross-stack + cross-OS demos):** *(the per-component test counts below
+are an early snapshot kept for the feature inventory; the current authoritative totals are in
+`docs/STATUS.md` — Rails server **144/0**, →154 with G2/G4.)*
 - Server (Rails): full v1 API, `Sync::*` services, ActionCable. **53 tests** (commit/
   refcounts/dedup + GC prune/sweep + changelog prune, restore chains, tree + changelog
   pagination / `oldest_seq` backstop, tenant isolation, **auth: register hardening +
@@ -407,13 +431,14 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    (interpreted `Attr.mtime` as seconds) via the rclone⇄WebDAV conformance re-run. Plan:
    **`docs/plan-real-mtime-and-invalidation.md`**. (Invalidation itself is FUSE-kernel-only →
    CI `mount-conformance` / manual smoke, per the plan.)
-8. ~~**Postgres deploy validation**~~ **DONE** (2026-06-14): the adapter-agnostic server
-   runs green on Postgres (Docker), **56/0**; switch is config-only via `DATABASE_URL` (a
-   `postgres` profile in `database.yml`; `next_seq!` `FOR UPDATE` exercised on PG). Remaining
-   for a *real managed* deploy (Neon/RDS): TLS `sslmode`, a connection pooler in
-   **session/transaction** mode (NOT statement — `FOR UPDATE` needs it), a concurrent-commit
-   load test, and deciding whether Solid Queue/Cache/Cable move off SQLite. See
-   `docs/SYNC_SERVER.md`.
+8. ~~**Postgres deploy validation**~~ **DONE** (2026-06-14), **+ managed-hardening DONE (G2,
+   2026-06-16):** the adapter-agnostic server runs green on Postgres; switch is config-only via
+   `DATABASE_URL`. G2 closed the managed caveats — **TLS `sslmode`** wired, a **statement-pooler
+   boot guard** (session/transaction mode required — statement mode silently breaks the
+   transaction-spanning `FOR UPDATE`), a **concurrent-commit load test** (which found + fixed a
+   real `FOR KEY SHARE`→`FOR UPDATE` deadlock: `next_seq!` now locks the user row *first*), and
+   the Solid stores can run on managed Postgres. Suite **149/0** on SQLite + PG. Only remaining:
+   run it against a real Neon/RDS instance (vs Docker). See `docs/SYNC_SERVER.md`.
    - **Also done (2026-06-14):** **GC/retention wired** (`Sync::RetentionPolicy` keep_all/tiered
      + `RetentionJob` nightly + S3 `delete_object` in `sweep_orphans!`; current+`pinned` never
      pruned) — closes unbounded-storage growth. **Adversarial fault harness** + **two-device E2E**
@@ -505,6 +530,10 @@ Rails on the Unraid VM → content-addressed chunk in SeaweedFS, hash-matched on
 ---
 
 ## 14. Hard-won learnings (don't relitigate)
+
+> Abandoned/superseded paths (remote mount, JuiceFS, Cloudflare-native, WinFsp-default, LWW,
+> `mtime=now` hack, FSKit) are condensed with their rejection rationale in
+> **`docs/roads-not-taken.md`** — read it before reviving any of them.
 
 - **A remote-mounted filesystem does NOT work over the WAN.** rclone/JuiceFS mount =
   synchronous metadata round-trips → ~1 s/file (Phase 0, measured). Every production

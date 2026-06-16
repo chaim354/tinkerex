@@ -43,6 +43,19 @@ shipped (per `docs/STATUS.md`, 2026-06-14) and are **removed from this roadmap**
 So the live roadmap is the remaining items: **auth/OIDC, selective sync, sharing, bandwidth
 controls, trash UX, progressive hydration, LAN sync, and encryption (last).**
 
+> **Update (2026-06-16): several of the items sequenced below have since SHIPPED** (this doc is
+> dated 2026-06-14; read it as the plan-of-record with these now done — see `docs/STATUS.md` /
+> `docs/HANDOFF.md`):
+> - **Auth baseline (D-step 1)** — Rails 8 built-in signup/confirm/login/reset + OmniAuth seam
+>   shipped 2026-06-15. OAuth/OIDC (D-step 6) is still the remaining auth work.
+> - **Selective sync (C1), trash/undelete (C2), progressive/range hydration (C5), bandwidth
+>   controls (C3)** — all shipped 2026-06-15 (engine/server; selective-sync still wants app UI).
+> - **Managed-Postgres hardening** (TLS sslmode, statement-pooler guard, concurrent-commit
+>   deadlock fix) — shipped as **G2 (2026-06-16)**; closes the §12-step-8 managed caveats.
+> - **Orphaned-chunk reaper** + **opt-in outbox debounce** — shipped as **G4 / G5 (2026-06-16)**.
+>   The still-future items are **OAuth/OIDC, sharing/multi-user (the product fork), LAN sync, and
+>   encryption (last)**, plus the selective-sync **app UI**.
+
 ---
 
 # A. Auth / account management — OPTIONS to decide
