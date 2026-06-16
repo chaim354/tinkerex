@@ -28,6 +28,10 @@ on:
         description: "Shared server URL all three machines hit"
         required: false
         default: "http://192.168.1.95"
+      email:
+        description: "Pre-created CONFIRMED account email the seed logs in with (the prod server has no signup seam — create it via `kamal app exec` first; password is the seed's fixed one)"
+        required: false
+        default: "crossos-e2e@maker.test"
   schedule:
     - cron: '30 8 * * *'   # 08:30 UTC daily (after nightly.yml's 08:00)
 
@@ -37,6 +41,7 @@ concurrency:
 
 env:
   SERVER_URL: ${{ github.event.inputs.server_url || 'http://192.168.1.95' }}
+  SEED_EMAIL: ${{ github.event.inputs.email || 'crossos-e2e@maker.test' }}
 
 jobs:
   # 1. SEED — register a FRESH unique test user + pair THREE devices (windows/mac/linux) into one
@@ -67,7 +72,7 @@ jobs:
             exit 0
           fi
           set +e
-          SEED="$(SERVER_URL=$SERVER_URL cargo run --quiet --manifest-path client/sync-engine/Cargo.toml --example pair_three_devices 2>&1)"
+          SEED="$(SERVER_URL=$SERVER_URL EMAIL=$SEED_EMAIL cargo run --quiet --manifest-path client/sync-engine/Cargo.toml --example pair_three_devices 2>&1)"
           code=$?
           set -e
           echo "$SEED"
