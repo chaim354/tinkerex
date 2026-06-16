@@ -6,12 +6,16 @@ module V1
         items = items.of_type(params[:type])
         if params[:tag].present?
           tag = current_user.maker_tags.find_by(name: params[:tag].to_s.strip.downcase)
-          ids = tag ? tag.taggings.where(taggable_type: "Maker::Item").pluck(:taggable_id) : []
+          ids = tag ? tag.taggings.where(taggable_type: "Maker::Item", user: current_user).pluck(:taggable_id) : []
           items = items.where(id: ids)
         end
         if params[:q].present?
-          like = "%#{params[:q].to_s.strip}%"
-          items = items.where("title LIKE :q OR summary LIKE :q OR description LIKE :q", q: like)
+          # LOWER(...) keeps the search case-insensitive on BOTH SQLite and Postgres
+          # (Postgres LIKE is case-sensitive; SQLite LIKE is not — see CLAUDE.md §15 adapter-agnostic).
+          like = "%#{params[:q].to_s.strip.downcase}%"
+          items = items.where(
+            "LOWER(title) LIKE :q OR LOWER(summary) LIKE :q OR LOWER(description) LIKE :q", q: like
+          )
         end
         render json: { items: items.map { |i| item_json(i) } }
       end

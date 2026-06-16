@@ -52,6 +52,12 @@ module V1
         titles = JSON.parse(response.body)["items"].map { |i| i["title"] }
         assert_equal [ "Vase" ], titles
       end
+
+      test "text search is case-insensitive (portable across sqlite/postgres)" do
+        get "/v1/maker/items", params: { q: "VASE" }, headers: auth(@token)
+        titles = JSON.parse(response.body)["items"].map { |i| i["title"] }
+        assert_equal [ "Vase" ], titles, "uppercase query must still match a lowercase-stored title via LOWER()"
+      end
     end
   end
 end
