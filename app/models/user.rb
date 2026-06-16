@@ -15,6 +15,7 @@ class User < ApplicationRecord
   has_many :maker_collections, class_name: "Maker::Collection", dependent: :destroy
   has_many :maker_tasks, class_name: "Maker::Task", dependent: :destroy
   has_many :maker_projects, class_name: "Maker::Project", dependent: :destroy
+  has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :sessions, dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 

@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_15_000008) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_15_000009) do
   create_table "changelog_entries", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "node_id", null: false
@@ -77,6 +77,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_15_000008) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_build_log_entries", force: :cascade do |t|
+    t.text "body", null: false
+    t.datetime "created_at", null: false
+    t.string "entry_type", default: "note", null: false
+    t.datetime "logged_at", null: false
+    t.integer "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "project_id", "logged_at"], name: "index_maker_build_log_entries_on_project_logged_at"
   end
 
   create_table "maker_collection_items", force: :cascade do |t|
