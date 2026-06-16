@@ -28,6 +28,20 @@ pub use subscriptions::SubRule;
 
 pub const ROOT_INO: u64 = 1;
 
+/// POSIX `NAME_MAX`: the maximum length, **in bytes**, of a single path component. A
+/// longer name fails with `ENAMETOOLONG` (pjdfstest `<op>/02.t`). The kernel enforces this
+/// per component (bytes, not chars), so we mirror it on every node-creating/-renaming path.
+pub const NAME_MAX: usize = 255;
+
+/// Reject a component longer than [`NAME_MAX`] bytes with [`FsError::NameTooLong`]
+/// (ENAMETOOLONG). Shared by `create`/`mkdir` (via `insert_node`) and `rename`.
+fn check_name_len(name: &str) -> Result<()> {
+    if name.len() > NAME_MAX {
+        return Err(FsError::NameTooLong);
+    }
+    Ok(())
+}
+
 /// The default permission bits for a freshly created node (no umask modeling — the
 /// mount runs as the user, who owns everything).
 fn default_mode(kind: Kind) -> u32 {
@@ -235,6 +249,10 @@ pub enum FsError {
     /// own ancestor; POSIX maps this to **EINVAL**). Mapped to `EINVAL` by the adapters.
     #[error("invalid argument")]
     InvalidArgument,
+    /// A single path component exceeds `NAME_MAX` (255 bytes) — POSIX **ENAMETOOLONG**.
+    /// Mapped to `ENAMETOOLONG` by the adapters.
+    #[error("file name too long")]
+    NameTooLong,
     #[error("chunk missing: {0}")]
     ChunkMissing(String),
     #[error("locked (would block)")]
@@ -531,6 +549,7 @@ impl SqliteProvider {
     }
 
     fn insert_node(&self, parent: u64, name: &str, kind: Kind) -> Result<Attr> {
+        check_name_len(name)?;
         let conn = self.conn.lock().unwrap();
         // parent must exist and be a directory
         let pkind: String = conn
@@ -1672,6 +1691,9 @@ impl Provider for SqliteProvider {
     }
 
     fn rename(&self, parent: u64, name: &str, newparent: u64, newname: &str) -> Result<()> {
+        // The *new* name is the one being written; the old name already passed this check
+        // when its node was created, so only the destination component needs validating.
+        check_name_len(newname)?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
 

@@ -130,3 +130,49 @@ fn rename_directory_onto_empty_directory_succeeds() {
     assert_eq!(dst.kind, Kind::Dir);
     assert_eq!(read_all(&p, p.lookup(dst.ino, "kid").unwrap().ino), b"k");
 }
+
+// ---- ENAMETOOLONG (a single component longer than 255 bytes) ---------------------------
+
+// POSIX `NAME_MAX` is 255 bytes per component; a 256-byte name fails with ENAMETOOLONG.
+// pjdfstest's `<op>/02.t` files check this for create/mkdir/rename. A 255-byte name must
+// still succeed (the boundary).
+
+#[test]
+fn create_with_256_byte_name_is_enametoolong() {
+    let p = provider();
+    let long = "z".repeat(256);
+    assert!(matches!(p.create(ROOT, &long), Err(FsError::NameTooLong)));
+    // The boundary (255) is allowed.
+    let ok = "z".repeat(255);
+    p.create(ROOT, &ok).expect("255-byte name is allowed");
+}
+
+#[test]
+fn mkdir_with_256_byte_name_is_enametoolong() {
+    let p = provider();
+    let long = "z".repeat(256);
+    assert!(matches!(p.mkdir(ROOT, &long), Err(FsError::NameTooLong)));
+    let ok = "z".repeat(255);
+    p.mkdir(ROOT, &ok).expect("255-byte name is allowed");
+}
+
+#[test]
+fn rename_to_256_byte_name_is_enametoolong() {
+    let p = provider();
+    write_file(&p, ROOT, "src", b"s");
+    let long = "z".repeat(256);
+    assert!(matches!(p.rename(ROOT, "src", ROOT, &long), Err(FsError::NameTooLong)));
+    // The source is untouched (the failed rename was a no-op).
+    assert_eq!(read_all(&p, p.lookup(ROOT, "src").unwrap().ino), b"s");
+}
+
+#[test]
+fn name_length_limit_counts_bytes_not_chars() {
+    // NAME_MAX is a *byte* limit. A multibyte name whose char count is < 255 but whose
+    // byte length exceeds 255 must still be rejected (matches the kernel, which works in
+    // bytes). 'é' is 2 bytes in UTF-8, so 128 of them = 256 bytes > 255.
+    let p = provider();
+    let multibyte = "é".repeat(128); // 256 bytes, 128 chars
+    assert_eq!(multibyte.len(), 256);
+    assert!(matches!(p.create(ROOT, &multibyte), Err(FsError::NameTooLong)));
+}
