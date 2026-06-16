@@ -1,0 +1,38 @@
+# config/deploy.r2.example.yml
+#
+# EXAMPLE ONLY — the exact env.clear / env.secret block to put in config/deploy.yml when
+# cutting the managed deploy's chunk storage over from SeaweedFS to Cloudflare R2.
+# Copy the two blocks below into the real config/deploy.yml (replacing the existing
+# `env:` section's chunk-storage lines). Do NOT rename this file over deploy.yml — it is
+# a fragment for reference, not a complete Kamal config.
+#
+# What changes vs the current SeaweedFS config (config/deploy.yml):
+#   STORAGE_BACKEND : s3                              (unchanged — R2 is S3-compatible)
+#   CHUNK_ENDPOINT  : http://192.168.1.7:8333   -->   https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+#   CHUNK_BUCKET    : my-bucket                 -->   maker-chunks-prod
+#   CHUNK_REGION    : us-east-1                 -->   auto      (R2's documented region)
+#   CHUNK_ACCESS_KEY_ID : admin                 -->   <R2 token Access Key ID>
+#   CHUNK_SECRET_ACCESS_KEY : (env.secret, from shell — UNCHANGED mechanism, new value)
+#
+# The secret stays in env.secret and is sourced from your shell at deploy time
+# (.kamal/secrets has `CHUNK_SECRET_ACCESS_KEY=$CHUNK_SECRET_ACCESS_KEY`), so the raw
+# R2 secret never lands in git. Before `kamal deploy`:
+#   export CHUNK_SECRET_ACCESS_KEY=<R2 token Secret Access Key>
+
+env:
+  secret:
+    - RAILS_MASTER_KEY
+    # R2 API token Secret Access Key — sourced from ENV in .kamal/secrets (never committed).
+    - CHUNK_SECRET_ACCESS_KEY
+  clear:
+    SOLID_QUEUE_IN_PUMA: true
+
+    # --- Chunk storage: Cloudflare R2 (S3-compatible, zero egress). Bytes move
+    # client <-> R2 via presigned URLs the server mints; the Rails box only signs
+    # (local HMAC) and need not reach R2 itself. EVERY CLIENT DEVICE must reach
+    # CHUNK_ENDPOINT — R2's endpoint is public HTTPS, so any client with internet works.
+    STORAGE_BACKEND: s3
+    CHUNK_ENDPOINT: https://CHANGE_ME_ACCOUNT_ID.r2.cloudflarestorage.com
+    CHUNK_BUCKET: maker-chunks-prod
+    CHUNK_REGION: auto
+    CHUNK_ACCESS_KEY_ID: CHANGE_ME_R2_ACCESS_KEY_ID

@@ -407,6 +407,10 @@ transfer, exactly the §8 design intent. **Two caveats worth acting on:**
 
 ---
 
+> **Ready-to-run cutover tooling** for everything in §2/§3/§6 (idempotent rclone migration
+> + CORS apply + `presigned_roundtrip` smoke + a deploy.yml R2 example) lives in
+> **`scripts/r2-cutover/`** — start with `scripts/r2-cutover/RUNBOOK.md`.
+
 ## 6. Summary checklist
 
 - [ ] Create R2 bucket `maker-chunks-prod` + scoped **Object Read & Write** API token.
