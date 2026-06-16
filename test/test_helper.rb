@@ -32,3 +32,28 @@ module ActiveSupport
     # Add more helper methods to be used by all tests here...
   end
 end
+
+module ActionDispatch
+  class IntegrationTest
+    # Bootstrap a CONFIRMED account + its first device DIRECTLY (no HTTP), returning the same
+    # JSON-shaped payload the removed POST /v1/auth/register endpoint did. Device enrollment
+    # in production now goes through POST /v1/devices/login (email+password via Devise); these
+    # sync/maker integration tests don't exercise the human-auth bootstrap, so they build the
+    # user + device directly (CLAUDE.md: tests build users/devices directly). Keys are strings
+    # to match the old `JSON.parse(response.body)` return.
+    def bootstrap_account(email:, device_name: "device")
+      user = User.find_by(email:) ||
+             User.create!(email:, confirmed_at: Time.current, omniauth_signup: true)
+      device = Device.register!(user:, name: device_name)
+      {
+        "user_id" => user.id, "device_id" => device.id,
+        "device_token" => device.plaintext_token, "head_seq" => user.head_seq
+      }
+    end
+
+    # Token-only convenience for the many helpers that returned just the device token.
+    def bootstrap_token(email:, device_name: "device")
+      bootstrap_account(email:, device_name:)["device_token"]
+    end
+  end
+end

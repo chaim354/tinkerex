@@ -4,8 +4,7 @@ module V1
   module Maker
     class TagsTest < ActionDispatch::IntegrationTest
       def register
-        post "/v1/auth/register", params: { email: "tg@example.com", device_name: "d" }, as: :json
-        JSON.parse(response.body)["device_token"]
+        bootstrap_token(email: "tg@example.com", device_name: "d")
       end
       def auth(token) = { "Authorization" => "Bearer #{token}" }
 

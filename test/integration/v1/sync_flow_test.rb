@@ -5,9 +5,7 @@ module V1
     setup { Storage::ChunkStore.reset! }
 
     def register(email: "maker@example.com", name: "laptop")
-      post "/v1/auth/register", params: { email:, device_name: name }, as: :json
-      assert_response :created
-      JSON.parse(response.body)
+      bootstrap_account(email: email, device_name: name)
     end
 
     def auth(token) = { "Authorization" => "Bearer #{token}" }
