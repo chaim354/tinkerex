@@ -41,10 +41,11 @@ Rails.application.routes.draw do
 
   # --- Sync engine API (v1) ---
   namespace :v1 do
-    post "auth/register", to: "auth#register"
-    post "auth/pair", to: "auth#pair"
+    # Device enrollment by login (the Dropbox model): email+password -> a device token.
+    # Replaces the pairing-code flow. No Bearer auth — the credentials ARE the auth.
+    post "devices/login", to: "devices#login"
+    # Direct add-a-device for an already-authenticated device (keeps its Bearer-authed path).
     resources :devices, only: [ :create ]
-    post "devices/pairing", to: "devices#pairing"
 
     # content commits (two-phase)
     post "commit", to: "commits#create"

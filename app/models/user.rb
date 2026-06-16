@@ -5,7 +5,6 @@ class User < ApplicationRecord
   has_many :chunks, dependent: :destroy
   has_many :changelog_entries, dependent: :destroy
   has_many :pending_commits, dependent: :destroy
-  has_many :device_pairings, dependent: :destroy
   has_many :conflicts, dependent: :destroy
   has_many :file_locks, dependent: :destroy
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
