@@ -122,6 +122,7 @@ Rails.application.routes.draw do
         end
         collection { get "low_stock" }
       end
+      resources :previews, only: %i[index create]
     end
 
     # hydration
