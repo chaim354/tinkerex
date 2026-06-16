@@ -21,8 +21,11 @@ module V1
       def update
         task = current_user.maker_tasks.find(params[:id])
         attrs = task_params.to_h
-        attrs["completed_at"] = Time.current if attrs["status"] == "done" && task.completed_at.nil?
-        attrs["completed_at"] = nil if attrs["status"].present? && attrs["status"] != "done"
+        if attrs["status"] == "done"
+          attrs["completed_at"] = Time.current if task.completed_at.nil?
+        elsif attrs["status"].present?
+          attrs["completed_at"] = nil
+        end
         task.update!(attrs)
         render json: task_json(task)
       end

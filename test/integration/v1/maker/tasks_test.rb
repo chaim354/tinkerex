@@ -53,6 +53,26 @@ module V1
         delete "/v1/maker/tasks/#{id}", headers: auth(@token)
         assert_response :no_content
       end
+
+      test "cannot own a task with another user's item" do
+        post "/v1/maker/items", params: { item: { title: "Mine" } }, as: :json, headers: auth(@token)
+        my_item = JSON.parse(response.body)["id"]
+        # a second user
+        post "/v1/auth/register", params: { email: "tk2@example.com", device_name: "d" }, as: :json
+        other = JSON.parse(response.body)["device_token"]
+        # the other user tries to own a task with MY item
+        post "/v1/maker/tasks",
+             params: { task: { title: "Sneaky", taskable_type: "Maker::Item", taskable_id: my_item } },
+             as: :json, headers: { "Authorization" => "Bearer #{other}" }
+        assert_response :unprocessable_entity
+      end
+
+      test "rejects an arbitrary taskable_type" do
+        post "/v1/maker/tasks",
+             params: { task: { title: "Bad", taskable_type: "User", taskable_id: 1 } },
+             as: :json, headers: auth(@token)
+        assert_response :unprocessable_entity
+      end
     end
   end
 end
