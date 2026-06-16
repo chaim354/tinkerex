@@ -108,7 +108,10 @@ Rails.application.routes.draw do
         end
       end
       resources :tasks, only: %i[index show create update destroy]
-      resources :projects, only: %i[index show create update destroy]
+      resources :projects, only: %i[index show create update destroy] do
+        resources :build_log_entries, only: %i[index create destroy], shallow: true
+        resources :file_attachments, only: %i[create destroy], shallow: true
+      end
     end
 
     # hydration
