@@ -6,7 +6,7 @@ module Maker
     belongs_to :taskable, polymorphic: true, optional: true
 
     STATUSES       = %w[todo doing done].freeze
-    TASKABLE_TYPES = %w[Maker::Item].freeze
+    TASKABLE_TYPES = %w[Maker::Item Maker::Project].freeze
 
     validates :title, presence: true
     validates :status, inclusion: { in: STATUSES }
@@ -22,9 +22,15 @@ module Maker
     private
 
     def taskable_belongs_to_owner
-      return unless taskable_type == "Maker::Item"
-      unless Maker::Item.exists?(id: taskable_id, user_id: user_id)
-        errors.add(:taskable_id, "must reference your own item")
+      owner_class =
+        case taskable_type
+        when "Maker::Item"    then Maker::Item
+        when "Maker::Project" then Maker::Project
+        end
+      return unless owner_class
+
+      unless owner_class.exists?(id: taskable_id, user_id: user_id)
+        errors.add(:taskable_id, "must reference your own #{owner_class.model_name.element}")
       end
     end
   end
