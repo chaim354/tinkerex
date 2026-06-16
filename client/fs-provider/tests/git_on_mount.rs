@@ -105,6 +105,27 @@ fn changing_a_symlink_target_propagates() {
     assert_eq!(b.readlink(st.ino).unwrap(), b"v2");
 }
 
+/// When a pull changes an EXISTING symlink's target (same node_id, in place), `apply_remote`
+/// must report `content_changed` so the FUSE adapter invalidates the kernel's cached readlink.
+/// Symlinks have no manifest, so the manifest-comparison heuristic would miss this — the target
+/// itself must be compared.
+#[test]
+fn apply_remote_flags_content_changed_when_symlink_target_changes() {
+    let (a, b, _store) = shared_store_pair();
+    a.symlink(ROOT, "lnk", b"old-target").unwrap();
+    replicate_tree(&a, &b);
+
+    // A repoints the same link; B pulls the in-place update.
+    let node = a.export_tree().unwrap().into_iter().find(|n| n.name == "lnk").unwrap();
+    let mut changed = node.clone();
+    changed.symlink_target = Some(b"new-target".to_vec());
+    let outcome = b.apply_remote(&changed).unwrap();
+
+    assert!(outcome.content_changed, "a changed symlink target must flag content_changed");
+    let st = b.lookup(ROOT, "lnk").unwrap();
+    assert_eq!(b.readlink(st.ino).unwrap(), b"new-target");
+}
+
 // ---------------------------------------------------------------------------
 // Git-critical POSIX operations that AREN'T about symlinks — verified to hold
 // against the model so we have an explicit per-op signal, not an assumption.

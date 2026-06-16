@@ -821,13 +821,13 @@ impl SqliteProvider {
             (Kind::Symlink, Some(t)) => t.len() as i64,
             _ => node.chunks.iter().map(|c| c.length as i64).sum(),
         };
-        // Look up the prior row (ino + manifest) so we can both reuse the inode on update
-        // and decide whether the content actually changed (→ cache invalidation).
-        let prior: Option<(i64, Option<String>, i64, String)> = conn
+        // Look up the prior row (ino + manifest + symlink target) so we can both reuse the
+        // inode on update and decide whether the content actually changed (→ cache invalidation).
+        let prior: Option<(i64, Option<String>, i64, String, Option<Vec<u8>>)> = conn
             .query_row(
-                "SELECT ino, manifest_id, parent_ino, name FROM nodes WHERE node_id = ?1",
+                "SELECT ino, manifest_id, parent_ino, name, symlink_target FROM nodes WHERE node_id = ?1",
                 params![node.node_id],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .optional()?;
         // Displace any *different* node already occupying this (parent, name): the remote
@@ -872,7 +872,7 @@ impl SqliteProvider {
              )",
             params![parent_ino, node.name, node.node_id],
         )?;
-        let ino = if let Some((ino, _, _, _)) = &prior {
+        let ino = if let Some((ino, _, _, _, _)) = &prior {
             conn.execute(
                 "UPDATE nodes SET parent_ino=?1, name=?2, kind=?3, manifest_id=?4, size=?5, mtime=?6, version_id=?7, mode=?8, symlink_target=?10 WHERE node_id=?9",
                 params![parent_ino, node.name, node.kind.as_str(), node.manifest_id, size, node.mtime, node.version_id, (node.mode & 0o7777) as i64, node.node_id, node.symlink_target],
@@ -887,16 +887,19 @@ impl SqliteProvider {
             conn.last_insert_rowid() as u64
         };
         // Content changed iff the node already existed and its manifest moved (a same-size
-        // edit included — that's exactly the case the old mtime-bump heuristic could miss).
+        // edit included — that's exactly the case the old mtime-bump heuristic could miss) OR,
+        // for a symlink (which has no manifest), its target bytes changed.
         let content_changed = match &prior {
-            Some((_, old_manifest, _, _)) => *old_manifest != node.manifest_id,
+            Some((_, old_manifest, _, _, old_target)) => {
+                *old_manifest != node.manifest_id || *old_target != node.symlink_target
+            }
             None => false,
         };
         // Moved/renamed iff the node already existed and its (parent, name) changed. The
         // changelog models a move as an upsert on the same stable node_id, so this is the only
         // signal that an on-demand-population adapter's old-path placeholder is now stale.
         let moved = match &prior {
-            Some((_, _, old_parent, old_name)) => *old_parent != parent_ino || *old_name != node.name,
+            Some((_, _, old_parent, old_name, _)) => *old_parent != parent_ino || *old_name != node.name,
             None => false,
         };
         let inserted = prior.is_none();
