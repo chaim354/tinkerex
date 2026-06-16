@@ -206,7 +206,13 @@ Devise.setup do |config|
   # :time  = Re-enables login after a certain amount of time (see :unlock_in below)
   # :both  = Enables both strategies
   # :none  = No unlock strategy. You should handle unlocking by yourself.
-  config.unlock_strategy = :both
+  # :time only (NOT :email). The lock itself is the brute-force mitigation; it applies to
+  # BOTH web sign-in and the API device-login endpoint (POST /v1/devices/login). An emailed
+  # unlock link is meaningless for the API flow (no human is reading mail at that instant),
+  # and sending it from the lock callback invokes the Devise mailer, whose scope lookup is
+  # fragile outside a routed web request. Time-unlock (config.unlock_in) re-enables sign-in
+  # after the window with no email dependency, keeping the lockout robust everywhere.
+  config.unlock_strategy = :time
 
   # Number of authentication tries before locking an account if lock_strategy
   # is failed attempts.
@@ -215,8 +221,10 @@ Devise.setup do |config|
   # Time interval to unlock the account if :time is enabled as unlock_strategy.
   config.unlock_in = 1.hour
 
-  # Warn on the last attempt before the account is locked.
-  config.last_attempt_warning = true
+  # Warn on the last attempt before the account is locked. Disabled: the warning is delivered
+  # by email, and (like the unlock email above) sending it from the auth path invokes the
+  # Devise mailer outside a routed web request. The lockout still triggers normally.
+  config.last_attempt_warning = false
 
   # ==> Configuration for :recoverable
   #

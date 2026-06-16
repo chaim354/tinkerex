@@ -2,6 +2,15 @@ ENV["RAILS_ENV"] ||= "test"
 require_relative "../config/environment"
 require "rails/test_help"
 
+# Devise registers its `mappings` (used by Devise::Mailer to resolve a record's scope) while
+# DRAWING the routes (`devise_for :users`). Routes load lazily, so in a parallel test worker a
+# Devise mailer can fire (e.g. a confirmation email when a confirmable account is created)
+# BEFORE that worker has drawn its routes → an intermittent "Could not find a valid mapping"
+# from Devise::Mailers::Helpers#find_scope!. Force the routes (and thus the mappings) to be
+# loaded up front so the mailer can always resolve its scope.
+Rails.application.reload_routes_unless_loaded if Rails.application.respond_to?(:reload_routes_unless_loaded)
+Rails.application.routes.url_helpers # touch to ensure routes are drawn
+
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers. Parallel workers each need their
