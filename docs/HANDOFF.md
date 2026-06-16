@@ -4,7 +4,8 @@ Snapshot for the next agent/developer. **Everything lives on `main`** (HEAD `94b
 Detailed running log: `docs/STATUS.md`. Architecture: `CLAUDE.md`. Strategy: `docs/parity-roadmap.md`,
 `docs/research-sync-competitors.md`, `docs/feature-set-and-workflows.md`. This file = "where are we,
 what's blocked, what's next." Persistent memory also holds key decisions/gotchas (see the project
-memory: auth decision, sync ordering bugs, CfAPI receive-side, Linux FUSE mount).
+memory: scope/lane, workflow-orchestration, sync-competitor-gaps, auth-decision, maker-app-layer,
+per-os-mount-gotchas).
 
 ---
 
@@ -22,6 +23,35 @@ Postgres hardening (statement-pooler boot guard + `sslmode` + a real `next_seq!`
 resolved), and **G5/G8/G10** file-layer polish (opt-in outbox debounce, special-file `EPERM`
 guardrail, delta-on-wire audit). **R2 was also validated live** (per-chunk hydrate ~85–205 ms;
 `docs/r2-migration.md` §5). Details: `docs/STATUS.md` (2026-06-16 section).
+
+**File-layer hardening + prod-like infra wave (2026-06-16, later; all merged to `main`):**
+- **Correctness/POSIX:** POSIX-conformance pass (errno/rename/`ENAMETOOLONG`/atime, PR #24);
+  **symlinks end-to-end** — client (#25, git-on-mount works) *and* server-side sync (#26);
+  **verify-on-hydrate** chunk-integrity (`ChunkCorrupt` rejection at the fetch chokepoint, #28);
+  **N-way conflict** resolution — concurrent 3+-device edits no longer collapse to one record (#29);
+  the rename-cycle + `apply_remote` cyclic-reparent **documented-reds both fixed** (#33). Result:
+  `fs-provider` 170/0 with **0 ignored**.
+- **Offline (the workshop use case):** `make-available-offline` / `offline_readiness` engine
+  primitives + pin (an `Include` subscription) + a `maker-offline` CLI (#30). Engine done; UI hook
+  left for the app team.
+- **Conformance (#34, `docs/conformance-status.md`):** data plane **byte-perfect** — fsx (25k ops)
+  + rclone⇄WebDAV (0 diffs); residual pjdfstest failures are deliberate non-goals only. Note: real
+  FUSE **does** run locally in Docker (`--cap-add SYS_ADMIN --device /dev/fuse`).
+- **Deploy infra:** shared **ghcr registry** (`ghcr.io/chaim354/tinkerex`) — Mac builds once, both
+  boxes pull (PR #22). A **prod-like test box is LIVE**: OVH `b3-8` at **`15.204.216.249`** (US-East
+  VA), deploy with **`kamal deploy -d ovh`** (`config/deploy.ovh.yml`, creds shell-sourced). Measured
+  **11.2× parallel hydration over real WAN** there (`docs/r2-migration.md` §5 + `examples/parallel_hydrate_wan.rs`).
+- **Cross-OS app build CI (#32):** `gh workflow run build-app.yml [-f os=macos]` → downloadable
+  `.dmg`/`.msi`/`.AppImage` runnable on any machine of that OS (`docs/building-the-app.md`).
+- **Research/plans landed:** self-host options (#31, `docs/research-self-host-options.md` — keep the
+  engine; BYO-S3 works, rclone for any-cloud); **implementation plans for the next two big arcs:**
+  **sharing/multi-user** (`docs/plan-sharing.md`) and **at-rest E2E encryption** (`docs/plan-encryption.md`).
+  Ordering: **auth → sharing → encryption**.
+
+> **⚠️ SECURITY ACTION — rotate two live credentials** that were pasted into a prior chat session
+> and are therefore considered exposed: the **R2 API token** (Access Key ID `3fb277a9…` + secret,
+> scoped to bucket `maker-chunks-prod`) and the **ghcr PAT** (`ghp_…`, the registry password). Mint
+> fresh ones; the deploy reads both from the shell, so rotation is just new exports.
 
 ---
 
@@ -114,6 +144,12 @@ multi-chunk) automatically in `nightly.yml`:
 7. **CfAPI pin/unpin + remove-library** need interactive-Explorer verification (code-complete).
 
 ### Parked follow-ups (small, non-blocking)
+- **`ENAMETOOLONG` on `rmdir`/`unlink`** — an over-`NAME_MAX` name returns `ENOENT` not
+  `ENAMETOOLONG` (create paths already enforce it). The one real conformance nit (PR #34).
+- **`client/maker-app/src-tauri/Cargo.lock` stale** — missing already-declared `sync-client`/`sync-engine`
+  deps; a `cargo update`-style refresh (flagged by the build-CI work, #32).
+- **Distributable-build signing** — the cross-OS build CI (#32) produces *unsigned-but-runnable*
+  artifacts; notarized/signed installers need paid Apple/Windows certs (wire into Tauri's secret seams).
 - ~~**Orphaned-chunk reaper**~~ **DONE (G4, 2026-06-16)** — `Sync::ChunkReaper` + `ChunkReaperJob`
   (weekly) sweeps never-finalized-commit chunk bytes from object storage. `docs/torn-writes-and-batching.md` §5.
 - ~~**Change-batching (debounce)**~~ **DONE (G5, 2026-06-16)** — an **opt-in (default-OFF)** outbox
