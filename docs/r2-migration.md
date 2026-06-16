@@ -405,6 +405,34 @@ transfer, exactly the §8 design intent. **Two caveats worth acting on:**
    host (Unraid VM) and real users will see different RTTs. Re-run from a representative
    client for user-perceived numbers (the harness needs only `SERVER_URL`).
 
+### Measured PROD-LIKE: client → deployed Rails (US-East VA) → R2 (2026-06-16)
+
+Re-ran with the server **deployed on a cloud box** (OVH `b3-8`, US-East Virginia, via the
+ghcr/Kamal flow — `config/deploy.ovh.yml`) instead of localhost, so **both** legs are real
+WAN: the presign call (client → Rails-VA) *and* the byte transfer (client → R2). The presign
+legs jumped from ~5-7 ms (localhost) to **~21-29 ms** — the genuine client↔VA internet RTT
+the localhost test was hiding.
+
+| chunk | presign-PUT | presign-GET | PUT rt (R2) | GET rt (R2) | hydrate e2e |
+|---|---|---|---|---|---|
+| 64 KB   | 28.8 ms | 25.8 ms | 131.7 ms |  76 ms |  102 ms |
+| 1024 KB | 24.8 ms | 23.0 ms | 200 ms   |  98 ms |  121 ms |
+| 4096 KB | 21.3 ms | 20.4 ms | 381 ms   | 159 ms |  178 ms |
+
+**Parallel hydration, measured on real R2** (`client/sync-engine/examples/parallel_hydrate_wan.rs`
+— pushes a multi-chunk file, then hydrates it on two fresh devices, serial vs parallel):
+
+| | wall time | per-chunk |
+|---|---|---|
+| serial (P=1)   | **7.71 s** | ~92 ms |
+| parallel (P=8) | **0.69 s** | — |
+
+**≈ 11.2× speedup** for an 83-chunk cold file on the production R2 data plane — *exceeding*
+the synthetic 8× bench (the presign call is batched once and the pooled connection stays warm
+across overlapping fetches). This confirms PR #15's parallel hydration is the lever that keeps
+large cold-file opens responsive over the WAN: a serial 100-chunk file would take ~10 s, the
+parallel path ~1.3 s.
+
 ---
 
 > **Ready-to-run cutover tooling** for everything in §2/§3/§6 (idempotent rclone migration
