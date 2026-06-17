@@ -30,12 +30,7 @@ gem "bcrypt", "~> 3.1.7"
 gem "devise", ">= 5.0.4", "< 6"
 gem "omniauth", "~> 2.1"
 gem "omniauth-rails_csrf_protection", "~> 1.0"
-# Required (not `require: false`) so the OpenIDConnect strategy class registers at boot —
-# Devise's `config.omniauth :openid_connect` (config/initializers/omniauth.rb) needs the
-# strategy to exist. Loading the gem is inert on its own (it only DEFINES the strategy); a
-# provider is only actually configured when OIDC_* env is present, so the app still boots
-# cleanly with NO OIDC env (the initializer guards on that).
-gem "omniauth_openid_connect", "~> 0.8"
+gem "omniauth_openid_connect", "~> 0.8", require: false
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: %i[ windows jruby ]
