@@ -124,11 +124,33 @@ Pushing a tag `app-v*` builds all three OSes and attaches every installer to a *
 GitHub Release (you review and publish it manually):
 
 ```sh
-git tag app-v0.1.0 && git push origin app-v0.1.0
+git tag app-v0.2.0 && git push origin app-v0.2.0
 ```
 
 The draft Release is *in addition to* the per-OS workflow artifacts (artifacts expire after
 14 days; the Release is permanent once published).
+
+### Version is stamped from the tag — no manual file edits
+
+The tag is the **single source of truth** for the app version. On an `app-v*` build the
+workflow runs `client/maker-app/src-tauri/scripts/set-app-version.sh <version>` (the "Stamp
+app version" step), which writes the tag's version into **both** `Cargo.toml` *and*
+`tauri.conf.json` before bundling. You do **not** hand-edit either file for a release —
+just push the tag.
+
+This matters for the **WKWebView cache fix** (`src-tauri/src/lib.rs`): on macOS the app
+evicts its stale webview cache on startup only when the version *changes* (it compares the
+running `CARGO_PKG_VERSION` against a stored stamp). If a release reused the previous
+version, an updated app would serve the old UI from cache until a manual
+`~/Library/Caches/com.chaim.maker-app` clear. Stamping from the tag guarantees every release
+carries a new version, so the cache busts automatically.
+
+**Manual / dev builds:** `gh workflow run build-app.yml --ref main` builds at the committed
+dev version (currently `0.1.0`) — two same-version dev installs won't auto-evict the cache.
+To force a fresh version on a manual build, pass it: `gh workflow run build-app.yml --ref
+main -f version=0.2.0-rc.1`. To bump locally before tagging, run the script directly:
+`client/maker-app/src-tauri/scripts/set-app-version.sh 0.2.0` (accepts `x.y.z` plus an
+optional `-prerelease`/`+build` suffix).
 
 ---
 

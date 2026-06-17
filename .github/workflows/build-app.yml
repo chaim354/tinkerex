@@ -34,6 +34,10 @@ on:
         description: 'Path to the Tauri app crate to build (must contain src-tauri/tauri.conf.json)'
         type: string
         default: client/maker-app
+      version:
+        description: 'Override app version (blank = committed dev version). `app-v*` tag builds always use the tag.'
+        type: string
+        default: ''
   push:
     # On a version tag, build all three and attach the installers to a draft Release.
     tags:
@@ -142,6 +146,32 @@ jobs:
 
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2.0" --locked
+
+      # Stamp the release version into Cargo.toml + tauri.conf.json BEFORE bundling so the
+      # WKWebView cache-bust (src-tauri/src/lib.rs, keyed off CARGO_PKG_VERSION) fires on every
+      # update. On an `app-v*` tag the version IS the tag; a manual dispatch may pass `version`;
+      # otherwise we build at the committed dev version (same-version rebuilds won't auto-evict).
+      - name: Stamp app version (tag → version, or dispatch input)
+        shell: bash
+        working-directory: ${{ env.APP_CRATE }}
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF:-}" in
+            refs/tags/app-v*) V="${GITHUB_REF#refs/tags/app-v}" ;;
+            *)                V="${VERSION_INPUT:-}" ;;
+          esac
+          if [[ -z "$V" ]]; then
+            echo "No tag/input version — building at the committed dev version."
+            echo "(Same-version rebuilds won't trigger the on-update cache eviction.)"
+            exit 0
+          fi
+          if [[ ! -f src-tauri/scripts/set-app-version.sh ]]; then
+            echo "::warning::no set-app-version.sh under ${APP_CRATE}/src-tauri — skipping version stamp"
+            exit 0
+          fi
+          bash src-tauri/scripts/set-app-version.sh "$V"
 
       # ---- bundle ---------------------------------------------------------------------
       # No beforeBuildCommand / npm install — the frontend is static HTML served from
