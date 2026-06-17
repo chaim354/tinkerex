@@ -100,6 +100,11 @@ jobs:
     runs-on: [self-hosted, "${{ matrix.runner }}"]
     env:
       GH_TOKEN: ${{ github.token }}
+      # Set the repo explicitly so `gh run list/download` resolves it from the env instead of
+      # probing the local git checkout — the self-hosted Windows runner's repo dir is owned by
+      # NETWORK SERVICE while the runner user differs, which trips git's "dubious ownership"
+      # guard and aborts gh. No-op on the macOS/Linux runners.
+      GH_REPO: ${{ github.repository }}
       ARTIFACT: ${{ matrix.artifact }}
       BUILD_RUN_ID: ${{ needs.prepare.outputs.run_id }}
     steps:
