@@ -624,6 +624,23 @@ impl SqliteProvider {
 
     /// Current content of `ino`: in-progress staging buffer if open for write, else
     /// the committed content assembled from chunks, else empty.
+    /// The [`Kind`] of an inode, or `NotFound` if it's gone. The shared guard for the
+    /// content ops (`read`/`write`/`truncate`): they operate on file bytes, so a directory
+    /// or symlink ino reaching them is a misuse that must fail with the kernel's errno
+    /// rather than silently corrupt the tree (stamping a file manifest onto a dir/symlink
+    /// row, or returning an empty buffer for a directory).
+    fn kind_of(&self, ino: u64) -> Result<Kind> {
+        let conn = self.conn.lock().unwrap();
+        let k: Option<String> = conn
+            .query_row(
+                "SELECT kind FROM nodes WHERE ino = ?1",
+                params![ino as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        k.map(|s| Kind::from_str(&s)).ok_or(FsError::NotFound)
+    }
+
     fn current_content(&self, ino: u64) -> Result<Vec<u8>> {
         if let Some(buf) = self.staging.lock().unwrap().get(&ino) {
             return Ok(buf.clone());
@@ -1725,9 +1742,15 @@ impl SqliteProvider {
     /// counterpart to a FUSE `write`+`flush`, which CfAPI never routes through us. Stamps a
     /// fresh real mtime and enqueues the outbox, so the normal push path uploads it.
     pub fn ingest_bytes(&self, ino: u64, data: &[u8]) -> Result<()> {
-        // Validate the inode exists first — `flush` is a no-op on a missing stage entry, so
-        // a bad ino would otherwise silently do nothing.
-        self.getattr(ino)?;
+        // Validate the inode exists AND is a file first — `flush` is a no-op on a missing
+        // stage entry (a bad ino would silently do nothing), and ingesting bytes onto a
+        // directory or symlink would stamp a file manifest onto it, corrupting the tree
+        // (same hazard the write/truncate kind-guards close). dir -> EISDIR, symlink -> EINVAL.
+        match self.kind_of(ino)? {
+            Kind::File => {}
+            Kind::Dir => return Err(FsError::IsADirectory),
+            Kind::Symlink => return Err(FsError::InvalidArgument),
+        }
         self.staging.lock().unwrap().insert(ino, data.to_vec());
         self.flush(ino)
     }
@@ -1762,6 +1785,16 @@ impl Provider for SqliteProvider {
     }
 
     fn readdir(&self, ino: u64) -> Result<Vec<DirEntry>> {
+        // opendir(2)/readdir on a non-directory is ENOTDIR; on a missing inode, ENOENT.
+        // Without this the bare `parent_ino = ?` query returned an empty Vec for a file,
+        // a symlink, or a non-existent ino alike — masking the kind/existence error as an
+        // empty directory. (ROOT_INO is always a directory and is allowed.)
+        if ino != ROOT_INO {
+            match self.kind_of(ino)? {
+                Kind::Dir => {}
+                _ => return Err(FsError::NotADirectory),
+            }
+        }
         let conn = self.conn.lock().unwrap();
         let mut stmt =
             conn.prepare("SELECT ino, name, kind FROM nodes WHERE parent_ino = ?1 ORDER BY name")?;
@@ -1776,6 +1809,15 @@ impl Provider for SqliteProvider {
     }
 
     fn read(&self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>> {
+        // Guard the node kind: read() is for file bytes. A directory → EISDIR (POSIX
+        // read(2) on a directory fd); a symlink → EINVAL (you readlink() a symlink, not
+        // read() it). Without this a directory read returned an empty buffer (wrong errno)
+        // and a symlink read returned its target bytes (a structural misuse).
+        match self.kind_of(ino)? {
+            Kind::File => {}
+            Kind::Dir => return Err(FsError::IsADirectory),
+            Kind::Symlink => return Err(FsError::InvalidArgument),
+        }
         // Open for write → serve from the in-memory staging buffer (the live, uncommitted
         // content). Slice the requested range out of it.
         if let Some(buf) = self.staging.lock().unwrap().get(&ino) {
@@ -1814,6 +1856,14 @@ impl Provider for SqliteProvider {
     }
 
     fn write(&self, ino: u64, offset: u64, data: &[u8]) -> Result<u32> {
+        // Guard the node kind: write() is for file bytes. A directory → EISDIR; a symlink →
+        // EINVAL. Without this a write+flush stamped a file manifest onto the dir/symlink
+        // row, corrupting the tree (a symlink lost its target; a dir became a file).
+        match self.kind_of(ino)? {
+            Kind::File => {}
+            Kind::Dir => return Err(FsError::IsADirectory),
+            Kind::Symlink => return Err(FsError::InvalidArgument),
+        }
         let mut staging = self.staging.lock().unwrap();
         if !staging.contains_key(&ino) {
             drop(staging);
@@ -1905,10 +1955,13 @@ impl Provider for SqliteProvider {
                     |r| r.get(0),
                 )
                 .optional()?;
-            match kind {
+            match kind.map(|k| Kind::from_str(&k)) {
                 None => return Err(FsError::NotFound),
-                Some(k) if Kind::from_str(&k) == Kind::Dir => return Err(FsError::IsADirectory),
-                Some(_) => {}
+                Some(Kind::Dir) => return Err(FsError::IsADirectory),
+                // A symlink reaching truncate is a structural misuse — committing a file
+                // manifest here would silently destroy the link target. EINVAL.
+                Some(Kind::Symlink) => return Err(FsError::InvalidArgument),
+                Some(Kind::File) => {}
             }
         }
         // If the file is already open for write, resize the live staging buffer in
@@ -2124,6 +2177,10 @@ impl Provider for SqliteProvider {
     /// working-tree link materialized via `symlink(2)`. Sync-ready on creation (no manifest
     /// — the target *is* the content), so it's enqueued to the outbox immediately like a dir.
     fn symlink(&self, parent: u64, name: &str, target: &[u8]) -> Result<Attr> {
+        // Same NAME_MAX (ENAMETOOLONG) rule as create/mkdir/rename — symlink(2) is a
+        // node-creating op and the kernel enforces NAME_MAX on its component too. Without
+        // this the over-long name fell through to SQLite as a generic Db error.
+        check_name_len(name)?;
         let conn = self.conn.lock().unwrap();
         let pkind: String = conn
             .query_row(

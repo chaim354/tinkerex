@@ -289,3 +289,186 @@ fn truncate_of_a_directory_is_eisdir() {
     // The directory is intact.
     assert_eq!(p.getattr(d.ino).unwrap().kind, Kind::Dir);
 }
+
+// ---- symlink: the same name/parent errno rules as create/mkdir -------------------------
+//
+// `symlink(2)` shares create()'s prefix rules: a 256-byte name is ENAMETOOLONG
+// (pjdfstest symlink/02), a missing destination parent is ENOENT, and a parent that is a
+// regular file is ENOTDIR. `create`/`mkdir`/`rename` already enforce NAME_MAX via
+// `check_name_len`, but `symlink` skipped it — so an over-long link name slipped through
+// to the SQLite layer (a generic Db error) instead of failing cleanly with the kernel's
+// errno. These pin the symlink prefix to match the other node-creating ops.
+
+#[test]
+fn symlink_with_256_byte_name_is_enametoolong() {
+    let p = provider();
+    let long = "z".repeat(256);
+    assert!(matches!(
+        p.symlink(ROOT, &long, b"target"),
+        Err(FsError::NameTooLong)
+    ));
+    // The boundary (255) is allowed.
+    let ok = "z".repeat(255);
+    p.symlink(ROOT, &ok, b"target")
+        .expect("255-byte symlink name is allowed");
+}
+
+#[test]
+fn symlink_name_length_limit_counts_bytes_not_chars() {
+    // NAME_MAX is a byte limit (matches the kernel): 128 × 'é' = 256 bytes > 255.
+    let p = provider();
+    let multibyte = "é".repeat(128);
+    assert_eq!(multibyte.len(), 256);
+    assert!(matches!(
+        p.symlink(ROOT, &multibyte, b"t"),
+        Err(FsError::NameTooLong)
+    ));
+}
+
+#[test]
+fn symlink_into_missing_parent_is_enoent() {
+    let p = provider();
+    assert!(matches!(
+        p.symlink(999_999, "link", b"t"),
+        Err(FsError::NotFound)
+    ));
+}
+
+#[test]
+fn symlink_under_a_file_is_enotdir() {
+    let p = provider();
+    let f = write_file(&p, ROOT, "afile", b"x");
+    assert!(matches!(
+        p.symlink(f, "link", b"t"),
+        Err(FsError::NotADirectory)
+    ));
+}
+
+// ---- byte-I/O ops must reject the wrong node KIND (no silent tree corruption) ----------
+//
+// `read`/`write`/`truncate` operate on file content. Routed at a directory or a symlink ino
+// they used to silently succeed: a `write`+`flush` would stamp a *file* manifest onto a
+// directory or symlink row (corrupting the tree — a dir would become a file, a symlink
+// would lose its target), and `read` on a directory returned an empty buffer instead of the
+// kernel's EISDIR. The kernel resolves symlinks before these calls and rejects directories
+// at the syscall boundary, but the Provider seam is also reachable from the sync engine +
+// WebDAV/CfAPI adapters, so it must be defensive. POSIX errnos: read/write on a directory →
+// EISDIR; truncate on a directory → EISDIR (already pinned above). A symlink reaching these
+// content ops is a structural misuse → InvalidArgument (EINVAL), the closest POSIX shape.
+
+#[test]
+fn read_on_a_directory_is_eisdir() {
+    let p = provider();
+    let d = p.mkdir(ROOT, "d").unwrap();
+    assert!(matches!(p.read(d.ino, 0, 16), Err(FsError::IsADirectory)));
+}
+
+#[test]
+fn write_on_a_directory_is_eisdir_and_leaves_it_a_directory() {
+    let p = provider();
+    let d = p.mkdir(ROOT, "d").unwrap();
+    assert!(matches!(p.write(d.ino, 0, b"x"), Err(FsError::IsADirectory)));
+    // A failed write must not have staged content that a later flush turns into a manifest.
+    p.flush(d.ino).unwrap();
+    assert_eq!(p.getattr(d.ino).unwrap().kind, Kind::Dir);
+}
+
+#[test]
+fn write_on_a_symlink_is_einval_and_preserves_the_target() {
+    // Before the guard, write+flush replaced the symlink's target with a file manifest,
+    // turning the link into a (corrupt) file. The link's target must survive intact.
+    let p = provider();
+    let l = p.symlink(ROOT, "l", b"the/target").unwrap();
+    assert!(matches!(
+        p.write(l.ino, 0, b"x"),
+        Err(FsError::InvalidArgument)
+    ));
+    assert_eq!(p.getattr(l.ino).unwrap().kind, Kind::Symlink);
+    assert_eq!(p.readlink(l.ino).unwrap(), b"the/target");
+}
+
+#[test]
+fn truncate_on_a_symlink_is_einval_and_preserves_the_target() {
+    // truncate(symlink, 0) used to commit an empty file manifest onto the symlink row,
+    // silently destroying the link target. It must be rejected and leave the link intact.
+    let p = provider();
+    let l = p.symlink(ROOT, "l", b"the/target").unwrap();
+    assert!(matches!(
+        p.truncate(l.ino, 0),
+        Err(FsError::InvalidArgument)
+    ));
+    assert_eq!(p.getattr(l.ino).unwrap().kind, Kind::Symlink);
+    assert_eq!(p.readlink(l.ino).unwrap(), b"the/target");
+}
+
+#[test]
+fn read_on_a_symlink_is_einval() {
+    // POSIX: you readlink() a symlink, you don't read() its contents. At the Provider seam
+    // a read() on a symlink ino is a structural misuse → EINVAL (not the target bytes).
+    let p = provider();
+    let l = p.symlink(ROOT, "l", b"the/target").unwrap();
+    assert!(matches!(p.read(l.ino, 0, 16), Err(FsError::InvalidArgument)));
+}
+
+// ---- readdir target-kind errnos --------------------------------------------------------
+//
+// `readdir`/`opendir(2)` on a non-directory → ENOTDIR; on a missing inode → ENOENT.
+// readdir was a bare `WHERE parent_ino = ?` query that returned an empty Vec for a file,
+// a symlink, OR a non-existent ino alike — so a misrouted call looked like an empty dir
+// instead of failing with the kernel's errno. pjdfstest's opendir checks rely on ENOTDIR.
+
+#[test]
+fn readdir_of_a_file_is_enotdir() {
+    let p = provider();
+    let f = write_file(&p, ROOT, "f", b"x");
+    assert!(matches!(p.readdir(f), Err(FsError::NotADirectory)));
+}
+
+#[test]
+fn readdir_of_a_symlink_is_enotdir() {
+    let p = provider();
+    let l = p.symlink(ROOT, "l", b"t").unwrap();
+    assert!(matches!(p.readdir(l.ino), Err(FsError::NotADirectory)));
+}
+
+#[test]
+fn readdir_of_a_missing_inode_is_enoent() {
+    let p = provider();
+    assert!(matches!(p.readdir(999_999), Err(FsError::NotFound)));
+}
+
+#[test]
+fn readdir_of_an_empty_directory_is_ok_and_empty() {
+    // The valid case must still work: an existing, empty directory lists nothing (no error).
+    let p = provider();
+    let d = p.mkdir(ROOT, "d").unwrap();
+    assert_eq!(p.readdir(d.ino).unwrap().len(), 0);
+}
+
+// ---- ingest_bytes (CfAPI local-edit capture) rejects the wrong kind too ----------------
+//
+// `ingest_bytes` is the CfAPI/Windows write-capture entry point (read the OS-owned bytes,
+// re-commit them). It must enforce the same kind guard as write/truncate — re-ingesting
+// onto a directory or symlink would stamp a file manifest onto it and corrupt the tree.
+
+#[test]
+fn ingest_bytes_on_a_directory_is_eisdir() {
+    let p = provider();
+    let d = p.mkdir(ROOT, "d").unwrap();
+    assert!(matches!(
+        p.ingest_bytes(d.ino, b"x"),
+        Err(FsError::IsADirectory)
+    ));
+    assert_eq!(p.getattr(d.ino).unwrap().kind, Kind::Dir);
+}
+
+#[test]
+fn ingest_bytes_on_a_symlink_is_einval_and_preserves_the_target() {
+    let p = provider();
+    let l = p.symlink(ROOT, "l", b"the/target").unwrap();
+    assert!(matches!(
+        p.ingest_bytes(l.ino, b"x"),
+        Err(FsError::InvalidArgument)
+    ));
+    assert_eq!(p.readlink(l.ino).unwrap(), b"the/target");
+}
