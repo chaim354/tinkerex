@@ -214,7 +214,7 @@ jobs:
             $p = Start-Process msiexec.exe -ArgumentList $args -Wait -PassThru
             # 0 = success, 3010 = success but reboot suggested. Anything else = failure.
             if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
-              Write-Host "msiexec failed ($($p.ExitCode)); tail of $log:"
+              Write-Host "msiexec failed ($($p.ExitCode)); tail of ${log}:"
               if (Test-Path $log) { Get-Content $log -Tail 40 }
               exit $p.ExitCode
             }
