@@ -17,10 +17,13 @@ name: Build app
 # the signing/notarization caveats (unsigned artifacts run with a Gatekeeper/SmartScreen
 # bypass; distributable builds need paid certs).
 #
-# Runs on GitHub-hosted runners (macos-latest / windows-latest / ubuntu-latest) — these
-# are general-purpose BUILD runners. We only *bundle* the app here; we never mount a
-# filesystem, so the interactive-session caveats that gate the live-mount jobs
-# (rust-client.yml / nightly.yml on self-hosted runners) do not apply.
+# Runs on our SELF-HOSTED runners ([self-hosted, macos|windows|linux]) — GitHub-hosted
+# runners are billed by the minute (macOS 10×, Windows 2×) and this was the ONLY workflow
+# still using them; self-hosted runners are free (per GitHub billing docs), so per the
+# repo policy (CLAUDE.md §"CI") all jobs run self-hosted. We only *bundle* the app here; we
+# never mount a filesystem, so the interactive-session caveats that gate the live-mount jobs
+# (rust-client.yml / nightly.yml) do not apply. The per-OS dep-install steps below are
+# idempotent (apt/choco no-op if already present), safe to re-run on a persistent runner.
 
 on:
   workflow_dispatch:
@@ -55,7 +58,7 @@ jobs:
     # Build the matrix from the `os` input. On tag/push (no input) build all three. This
     # filtering can't live in the build job's `if` (a job-level `if` can't read `matrix`),
     # so we compute the include-list here and the build job consumes it via fromJSON.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux]
     outputs:
       matrix: ${{ steps.set.outputs.matrix }}
     steps:
@@ -64,9 +67,9 @@ jobs:
           OS: ${{ github.event.inputs.os || 'all' }}
         shell: bash
         run: |
-          mac='{"os_label":"macos","runner":"macos-latest","artifact":"maker-app-macos","bundles":"dmg,app"}'
-          win='{"os_label":"windows","runner":"windows-latest","artifact":"maker-app-windows","bundles":"msi,nsis"}'
-          lin='{"os_label":"linux","runner":"ubuntu-latest","artifact":"maker-app-linux","bundles":"deb,appimage"}'
+          mac='{"os_label":"macos","runner":"macos","artifact":"maker-app-macos","bundles":"dmg,app"}'
+          win='{"os_label":"windows","runner":"windows","artifact":"maker-app-windows","bundles":"msi,nsis"}'
+          lin='{"os_label":"linux","runner":"linux","artifact":"maker-app-linux","bundles":"deb,appimage"}'
           case "$OS" in
             macos)   inc="[$mac]" ;;
             windows) inc="[$win]" ;;
@@ -82,7 +85,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
     env:
       # The crate to build. workflow_dispatch lets you point it at another Tauri crate
       # (e.g. a second UI app) without editing this file; tag/push builds the default.

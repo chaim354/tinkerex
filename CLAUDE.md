@@ -581,4 +581,12 @@ Rails on the Unraid VM → content-addressed chunk in SeaweedFS, hash-matched on
 - Content-addressed chunks + immutable versions everywhere; **keep versions** for restore.
 - Adapter-agnostic server code (SQLite + Postgres) without perf compromise.
 - Write tests; verify end-to-end against the live server when wiring sync.
+- **CI runs on SELF-HOSTED runners only — never GitHub-hosted.** Every job uses
+  `runs-on: [self-hosted, linux|macos|windows]` (the repo has all three registered:
+  `flasher-maker-linux`, `charless-MacBook-Pro-maker-mac`, `CHAIMDESK-maker-windows`).
+  GitHub bills *only* hosted runners (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×),
+  and self-hosted runners are **free** (confirmed against GitHub's billing docs, 2026-06-17).
+  So **never add `*-latest` to a workflow** — any new job/workflow must target self-hosted.
+  Self-hosted machines are persistent, so make dep-install steps idempotent (apt/choco/brew
+  no-op if present) and don't assume the clean preinstalled toolchain of a hosted image.
 - Update this file **and** `docs/STATUS.md` when the architecture moves.
