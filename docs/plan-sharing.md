@@ -4,6 +4,34 @@
 > (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps
 > use checkbox (`- [ ]`) syntax for tracking.
 
+> **STATUS (2026-06-17, branch `night/sharing`): a deliberately SHALLOW first slice is BUILT
+> and green — read-only share *links* to a single immutable version.** The full Spaces design
+> below (cross-user read/write libraries, per-Space keyspace, multi-feed client) remains
+> **planned, not built** — it requires the deep core changes this plan analyzes (re-keying the
+> chunk store + widening tenancy from user to Space). The shallow slice sidesteps all of that:
+> a redeemed link mints presigned GETs against the **owner's own** existing keyspace
+> (`chunks/<user_id>/<hash>`), scoped to exactly the target version's manifest chunk hashes, so
+> it adds controlled cross-user **read** access with **zero** chunk re-keying and **zero**
+> tenancy change. What landed:
+> - `ShareLink` model + migration (`db/migrate/20260617000006_create_share_links.rb`) — a
+>   capability token (`token_digest` only), version-scoped, with expiry + revoke.
+> - `Sharing::Links` service (`app/services/sharing/links.rb`) — `create_for_version!` /
+>   `redeem` / `revoke!` + a read-only `Capability` that presigns ONLY the version's own chunks.
+> - API: `POST`/`DELETE /v1/share_links` (authenticated owner) +
+>   `GET /v1/share/:token` & `POST /v1/share/:token/download` (anonymous; the link token is the
+>   auth — `ShareController` deliberately does not inherit the device-auth `BaseController`).
+> - Tests: `test/models/share_link_test.rb`, `test/services/sharing/links_test.rb`,
+>   `test/integration/v1/share_links_test.rb` (full server suite 442/0). Invariants preserved:
+>   bytes-out-of-Rails (presign-only), version-scoped mint, revoke/expire cut access on the next
+>   request.
+>
+> **Still NOT built (everything below):** write sharing, viewer/editor/owner roles, member
+> management, per-Space keyspace, multi-feed client sync, the Shared/ mount root. Those are the
+> deep slice and follow this plan's phases. Note also the **password-protected link** and
+> **editor-role link** variants in Decision 3 are not in the shallow slice (links are read-only,
+> no password) — add them with the Space work, or as a small follow-up if a password-gated
+> public link is wanted before Spaces.
+
 **Goal:** Let a user share a folder/library with a *different* user — viewer/editor/owner
 roles, per-folder grants, and public share links — without breaking the "bytes never
 through Rails", "untamperable per-key presign", and "local-first metadata" invariants.
