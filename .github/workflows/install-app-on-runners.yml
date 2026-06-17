@@ -103,7 +103,7 @@ jobs:
       ARTIFACT: ${{ matrix.artifact }}
       BUILD_RUN_ID: ${{ needs.prepare.outputs.run_id }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with: { clean: false }
 
       # Where each OS stages the installer artifact (under the runner work dir). `runner.*`

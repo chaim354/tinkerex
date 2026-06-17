@@ -88,7 +88,7 @@ jobs:
       # (e.g. a second UI app) without editing this file; tag/push builds the default.
       APP_CRATE: ${{ github.event.inputs.crate || 'client/maker-app' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
