@@ -124,6 +124,13 @@ Rails.application.routes.draw do
     # hydration
     post "chunks/download", to: "chunks#download"
 
+    # Read-only share links. Owner side (authenticated): mint/revoke a link to one immutable
+    # version. Redeem side (anonymous — the link token is the auth, no device bearer): view
+    # the version's metadata + presign GETs for its chunks.
+    resources :share_links, only: %i[create destroy]
+    get  "share/:token",          to: "share#show"
+    post "share/:token/download", to: "share#download"
+
     # The `local` (filesystem) chunk backend's storage tier — presigned, HMAC-authorized blob
     # PUT/GET (no bearer token; the URL's signature is the auth). Only active under
     # STORAGE_BACKEND=local; a 404/403 otherwise. The hash is hex (`[0-9a-f]+`), constrained so the

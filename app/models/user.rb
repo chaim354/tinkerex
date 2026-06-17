@@ -7,6 +7,7 @@ class User < ApplicationRecord
   has_many :pending_commits, dependent: :destroy
   has_many :conflicts, dependent: :destroy
   has_many :file_locks, dependent: :destroy
+  has_many :share_links, dependent: :destroy
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
   has_many :maker_tags, class_name: "Maker::Tag", dependent: :destroy
   has_many :maker_taggings, class_name: "Maker::Tagging", dependent: :destroy
