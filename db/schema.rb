@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_06_17_000005) do
+ActiveRecord::Schema[8.1].define(version: 2026_06_17_000006) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -357,6 +357,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_17_000005) do
     t.index ["user_id"], name: "index_pending_commits_on_user_id"
   end
 
+  create_table "share_links", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.datetime "expires_at"
+    t.string "manifest_id", null: false
+    t.string "node_id", null: false
+    t.datetime "revoked_at"
+    t.string "token_digest", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version_id", null: false
+    t.index ["token_digest"], name: "index_share_links_on_token_digest", unique: true
+    t.index ["user_id", "version_id"], name: "index_share_links_on_user_id_and_version_id"
+    t.index ["user_id"], name: "index_share_links_on_user_id"
+  end
+
   create_table "user_identities", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "provider", null: false
@@ -417,6 +432,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_06_17_000005) do
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "pending_commits", "users"
+  add_foreign_key "share_links", "users"
   add_foreign_key "user_identities", "users"
   add_foreign_key "versions", "users"
 end
