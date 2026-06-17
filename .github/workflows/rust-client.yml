@@ -71,7 +71,7 @@ jobs:
               mac=true; linux=true; engine=true; windows=true
             else
               files=$(git diff --name-only "$BASE" HEAD); echo "$files"
-              grep -qE '^client/(fs-webdav|fs-cfapi|fs-provider|sync-client|sync-engine)/' <<<"$files" && mac=true
+              grep -qE '^client/(fs-webdav|fs-cfapi|fs-fskit|fs-provider|sync-client|sync-engine)/' <<<"$files" && mac=true
               grep -qE '^client/(fs-fuse|sync-engine|fs-provider|sync-client)/'             <<<"$files" && linux=true
               grep -qE '^client/(sync-engine|sync-client|fs-provider)/'                     <<<"$files" && engine=true
               grep -qE '^client/(fs-cfapi|fs-winfsp|sync-engine|fs-provider|sync-client)/'  <<<"$files" && windows=true
@@ -94,11 +94,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi)
+      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi, fs-fskit)
         run: |
           cargo test --manifest-path client/fs-provider/Cargo.toml
           cargo test --manifest-path client/sync-client/Cargo.toml
           cargo test --manifest-path client/fs-cfapi/Cargo.toml
+          # fs-fskit: pure logic + the FFI bridge dispatch (the Swift .appex is
+          # account-gated and not built here — see client/fs-fskit/BUILD.md).
+          cargo test --manifest-path client/fs-fskit/Cargo.toml --features ffi
       - name: Cross-check the CfAPI Windows FFI (catches most cfg(windows) breakage)
         run: cargo check --target x86_64-pc-windows-gnu --manifest-path client/fs-cfapi/Cargo.toml
       - name: Native macOS build (fs-webdav mount + sync-engine bins)
