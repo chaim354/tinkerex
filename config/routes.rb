@@ -37,10 +37,14 @@ Rails.application.routes.draw do
   unless Rails.env.production?
     get "dev/blobs/*key", to: "dev_blobs#show",   format: false, as: :dev_blob
     put "dev/blobs/*key", to: "dev_blobs#update", format: false
+  end
 
-    # TEST/DEV-ONLY confirmed-account signup seam for the Rust integration tests (further
-    # guarded at runtime by ENABLE_TEST_SIGNUP). Lets those tests create a confirmed account,
-    # then enroll devices via POST /v1/devices/login.
+  # TEST/DEV-ONLY confirmed-account signup seam for the Rust integration tests. Mounted when
+  # the explicit ENABLE_TEST_SIGNUP flag is set (off by default) OR in any non-production env —
+  # so a self-hosted NON-production test/dev deploy (e.g. the Unraid box, which runs as
+  # RAILS_ENV=production for deploy reasons) can opt in via the flag. The controller re-checks
+  # the flag at request time. NEVER set ENABLE_TEST_SIGNUP on the real managed SaaS production.
+  if ENV["ENABLE_TEST_SIGNUP"].present? || !Rails.env.production?
     post "v1/test/users", to: "v1/test_users#create"
   end
 

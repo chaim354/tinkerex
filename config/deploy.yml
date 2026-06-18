@@ -50,6 +50,13 @@ env:
     # When you start using multiple servers, you should split out job processing to a dedicated machine.
     SOLID_QUEUE_IN_PUMA: true
 
+    # Opens the POST /v1/test/users signup seam so the automated E2E tests + dev can enroll
+    # accounts against THIS box. SAFE here: this Unraid instance is a NON-production test/dev
+    # deploy (despite running as RAILS_ENV=production for deploy reasons). The seam creates
+    # unverified confirmed accounts, so NEVER set this on the managed SaaS production. A boot
+    # warning fires whenever it's on (config/initializers/test_signup_warning.rb).
+    ENABLE_TEST_SIGNUP: true
+
     # --- Chunk storage (object store). Bytes move client ⇄ storage via presigned URLs
     # the server mints; the server only signs (local HMAC), so it needn't reach the
     # store itself. Clients hit CHUNK_ENDPOINT directly, so it must be reachable from
