@@ -54,6 +54,14 @@ RUN bundle exec bootsnap precompile -j 1 app/ lib/
 RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 
 
+# ---- stl-thumbnailer: a tiny pure-CPU (NO GPU / OpenGL / Mesa / browser) STL→PNG thumbnailer
+# (client/stl-thumbnailer, euc Apache/MIT). Built here and copied into the runtime image so the
+# preview pipeline renders STL thumbnails server-side with zero graphics-stack dependencies.
+# Independent of `base`, so it builds in parallel. (.dockerignore re-includes just this crate.)
+FROM docker.io/library/rust:1-slim AS stl-thumbnailer
+WORKDIR /build
+COPY client/stl-thumbnailer ./
+RUN cargo build --release && strip target/release/stl-thumbnailer
 
 
 # Final stage for app image
@@ -67,6 +75,10 @@ USER 1000:1000
 # Copy built artifacts: gems, application
 COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
 COPY --chown=rails:rails --from=build /rails /rails
+
+# The STL thumbnailer binary on PATH → Maker::Previews::Stl#available? is true on the server,
+# so STL uploads get a real thumbnail (no F3D/Mesa). root:root 0755 → runnable by the rails user.
+COPY --from=stl-thumbnailer /build/target/release/stl-thumbnailer /usr/local/bin/stl-thumbnailer
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]

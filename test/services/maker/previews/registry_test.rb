@@ -16,10 +16,12 @@ module Maker
         assert_equal Maker::Previews::ThreeMf, Maker::Previews::Registry.for("3mf")
       end
 
-      test "resolves the mesh/CAD extensions to the F3D Mesh renderer" do
-        %w[stl obj step stp iges igs].each do |ext|
+      test "resolves obj/STEP/IGES to the F3D Mesh renderer, and STL to the euc Stl renderer" do
+        %w[obj step stp iges igs].each do |ext|
           assert_equal Maker::Previews::Mesh, Maker::Previews::Registry.for(ext), ext
         end
+        # STL uses the pure-CPU euc rasterizer (no GL/Mesa), not F3D.
+        assert_equal Maker::Previews::Stl, Maker::Previews::Registry.for("stl")
       end
 
       test "returns nil for an unsupported extension" do

@@ -55,6 +55,11 @@
 # references files only by node_id). Excluding it cuts the build context from ~8 GB
 # down to tens of MB.
 /client/
+# …EXCEPT the tiny stl-thumbnailer crate — the image DOES compile it (a Rust build stage)
+# so the preview pipeline can render STL thumbnails server-side with no GL/Mesa. Re-include
+# the source but keep its build artifacts out (BuildKit honors this re-inclusion).
+!/client/stl-thumbnailer
+/client/stl-thumbnailer/target
 
 # Docs, tests, CI runners, and dev scripts aren't needed in the production image.
 /docs/

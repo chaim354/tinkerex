@@ -184,10 +184,10 @@ module Maker
       assert_includes preview.asset.download, "<line"
     end
 
-    test "an STL preview is unsupported when F3D is absent (graceful, not failed)" do
-      # The renderer EXISTS but its toolchain (f3d) may not be installed → the job marks
-      # `unsupported` (a deliberate terminal state), never crashing. When f3d IS present it
-      # renders a PNG instead — assert whichever applies.
+    test "an STL preview renders via the euc Stl renderer (unsupported only if its binary is absent)" do
+      # STL no longer depends on F3D — it uses the pure-CPU stl-thumbnailer (Maker::Previews::Stl,
+      # no GL/Mesa). When the binary is present the job renders a PNG; when absent it marks
+      # `unsupported` (a deliberate terminal state), never crashing.
       stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl"))
       stage_version(node_id: "cube.stl", version_id: "vstl", bytes: stl)
       preview = @user.maker_previews.create!(node_id: "cube.stl", version_id: "vstl")
@@ -195,7 +195,7 @@ module Maker
       assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "cube.stl") }
 
       preview.reload
-      if Maker::Previews::Mesh.available?
+      if Maker::Previews::Stl.available?
         assert_equal "ready", preview.status
         assert_equal "image/png", preview.asset.content_type
       else
