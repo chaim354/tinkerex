@@ -29,7 +29,7 @@ gem "bcrypt", "~> 3.1.7"
 # untouched. OmniAuth keeps the OAuth/OIDC seam open (also MIT).
 gem "devise", ">= 5.0.4", "< 6"
 gem "omniauth", "~> 2.1"
-gem "omniauth-rails_csrf_protection", "~> 1.0"
+gem "omniauth-rails_csrf_protection", "~> 2.0"
 gem "omniauth_openid_connect", "~> 0.8", require: false
 
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
