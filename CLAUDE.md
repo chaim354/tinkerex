@@ -480,7 +480,7 @@ STORAGE_BACKEND=memory bin/rails server -p 3001
 (cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example nudge)           # ActionCable {head_seq} push (~39ms)
 
 # Server with real S3/SeaweedFS storage (presigned PUT/GET):
-STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket \
+STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
 CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
   bin/rails server -p 3001
 # …then push/hydrate real bytes through SeaweedFS via presigned URLs:

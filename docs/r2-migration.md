@@ -208,7 +208,7 @@ minted per request). The hashes and keys are identical in both stores.
 
 ```sh
 # rclone remotes: one for SeaweedFS, one for R2 (both S3 providers)
-rclone config   # add: [seaweed] type=s3 provider=Other endpoint=http://192.168.1.7:8333 ...
+rclone config   # add: [seaweed] type=s3 provider=Other endpoint=http://192.168.1.8:8333 ...
                 #      [r2]      type=s3 provider=Cloudflare endpoint=https://<acct>.r2.cloudflarestorage.com region=auto ...
 
 # Dry-run, then copy the whole chunk keyspace (content-addressed → safe to re-run/resume)
@@ -325,7 +325,7 @@ STORAGE_BACKEND=s3 CHUNK_ENDPOINT=https://<ACCOUNT_ID>.r2.cloudflarestorage.com 
 (cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --release --example chunk_latency)
 
 # --- BASELINE vs SeaweedFS (the current store), for comparison ---
-STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.7:8333 CHUNK_BUCKET=my-bucket \
+STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
   CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
   bin/rails server -p 3001
 (cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --release --example chunk_latency)

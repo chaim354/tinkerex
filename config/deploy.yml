@@ -58,11 +58,17 @@ env:
     ENABLE_TEST_SIGNUP: true
 
     # --- Chunk storage (object store). Bytes move client ⇄ storage via presigned URLs
-    # the server mints; the server only signs (local HMAC), so it needn't reach the
-    # store itself. Clients hit CHUNK_ENDPOINT directly, so it must be reachable from
-    # each client device. Set STORAGE_BACKEND=memory for a control-plane-only smoke test.
+    # the server mints (local HMAC signing). Clients hit CHUNK_ENDPOINT directly, so it
+    # must be reachable from each client device. Set STORAGE_BACKEND=memory for a
+    # control-plane-only smoke test.
+    #
+    # NOTE: the server ALSO needs to reach CHUNK_ENDPOINT now — verify-on-finalize
+    # (config.x.verify_finalize, on by default) does an exists?-check that the chunk bytes
+    # actually landed before creating the version. Signing alone no longer suffices. If the
+    # store is unreachable from the server, commits fail loudly rather than creating versions
+    # pointing at bytes that never arrived. Set SYNC_VERIFY_FINALIZE=0 to opt out.
     STORAGE_BACKEND: s3
-    CHUNK_ENDPOINT: http://192.168.1.7:8333
+    CHUNK_ENDPOINT: http://192.168.1.8:8333
     CHUNK_BUCKET: my-bucket
     CHUNK_REGION: us-east-1
     # Authoritative source = 1Password item "seaweedfs" (op://Personal/seaweedfs/access key,

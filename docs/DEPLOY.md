@@ -8,7 +8,7 @@ Docker build, no repo checkout, and no source transfer to either server.
 |---|---|---|
 | Host | `kamal1@192.168.1.95` | `ubuntu@15.204.216.249` |
 | Kamal config | `config/deploy.yml` (default) | `+ config/deploy.ovh.yml` overlay (`-d ovh`) |
-| Chunk storage | SeaweedFS `192.168.1.7:8333` | Cloudflare R2 |
+| Chunk storage | SeaweedFS `192.168.1.8:8333` | Cloudflare R2 |
 | Deploy command | `kamal deploy` | `kamal deploy -d ovh` |
 
 > **Why build on the Mac?** Both servers are amd64 and the Mac is arm64, so Kamal cross-builds

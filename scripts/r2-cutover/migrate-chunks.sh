@@ -39,7 +39,7 @@ R2_PATH="r2:${R2_BUCKET:-<R2_BUCKET>}/${PREFIX}"
 # only by commands that actually touch storage, so `help` works without any env set.
 configure() {
   # SeaweedFS (source) — the store config/deploy.yml currently points at.
-  : "${SEAWEED_ENDPOINT:?set SEAWEED_ENDPOINT, e.g. http://192.168.1.7:8333}"
+  : "${SEAWEED_ENDPOINT:?set SEAWEED_ENDPOINT, e.g. http://192.168.1.8:8333}"
   : "${SEAWEED_BUCKET:?set SEAWEED_BUCKET, e.g. my-bucket}"
   : "${SEAWEED_ACCESS_KEY_ID:?set SEAWEED_ACCESS_KEY_ID}"
   : "${SEAWEED_SECRET_ACCESS_KEY:?set SEAWEED_SECRET_ACCESS_KEY}"
