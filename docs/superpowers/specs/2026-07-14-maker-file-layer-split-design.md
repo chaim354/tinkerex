@@ -264,6 +264,44 @@ Each phase is independently shippable and leaves the tree green.
 3. **`S3` adapter.** Reuses the scanner via `list_objects_v2`; adds the `Redirect` delivery.
 4. **Capability gating in the web UI + 501s** for the sync surface.
 
+## 9a. Deferred to Phase 2 (surfaced by the Phase 1 code review, 2026-07-14)
+
+Real issues found while building the port. Each needs a behavior change or a product decision,
+so they are recorded rather than smuggled into Phase 1's pure refactor (see §10).
+
+1. **Deleted-node read semantics — decide before `Share` lands.** `Chunk#stat` uses the
+   `present` scope (tombstoned → `NotFound`), but `Chunk#read` does not, so a trashed node's
+   bytes are still readable. That inconsistency is inherited and harmless with one adapter —
+   but `Share`'s trash is a real filesystem move to `<root>/.trash/…` (§6), so `Share#read`
+   on a tombstoned node *cannot* return bytes and will raise `NotFound`. Two adapters, same
+   call, opposite answers, and the contract asserts nothing about it. Decide "tombstoned =
+   gone" (likely) and pin it with a contract test.
+   *Not a one-word fix:* `read`'s by-token path resolves through `user.versions` and never
+   touches `nodes`, so the asymmetry survives inside `read` itself; and the existing
+   `file_bytes` tests construct `Version` rows with no `Node` row, so a node-presence check
+   changes real behavior and breaks them. Hence Phase 2.
+2. **Pin retryability in the contract.** The contract asserts `NotFound` in four places and
+   `FetchError` in zero, so an adapter could answer a transient failure with `NotFound` and
+   pass. For `Share` that is exactly the "an unmounted NAS must never read as *the user
+   deleted 40,000 files*" failure in §6. Needs a per-adapter "make the backend fail
+   transiently" hook, which is only meaningful once a second adapter exists.
+3. **`capabilities.presignable` is answered statically but is a property of the store.**
+   `Chunk` hardcodes `presignable: true` (accurate today for all three chunk stores) while
+   `Chunk.fetch` separately duck-types the same question via `respond_to?`. Two mechanisms,
+   two places. Consider delegating to `Storage::ChunkStore.current`.
+4. **`Chunk.fetch`'s `respond_to?` sniffing puts backend knowledge in the wrong class.**
+   `Storage::ChunkStore` already owns backend polymorphism; the adapter reaches around it and
+   duck-types, order-dependently and failing open (if `S3ChunkStore` ever gains a `read`, the
+   presign path is silently bypassed with no test failing). A `ChunkStore#read_bytes` template
+   method plus three overrides would delete the sniffing.
+5. **`MAX_BYTES` overflow raises `NotFound` for a file that is emphatically found.** The port
+   documents two categories (terminal-absent, transient); "too big" is a third — terminal but
+   present. The behavior is right, the taxonomy isn't. `Share`/`S3` will each face the same
+   choice. Also the check is post-append, so the cap is approximate by up to one chunk.
+6. **Contract hook shape.** `adapter` and `create_file!` are methods but `@user` is an ivar
+   reached into directly; a `user` reader would let an adapter that constructs its user
+   differently satisfy the contract without mimicking an ivar name.
+
 ## 10. Non-goals restated (so the plan doesn't drift)
 
 This spec does **not** change chunk mode's behavior. If any phase requires a change to sync,
