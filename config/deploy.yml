@@ -71,9 +71,14 @@ env:
     CHUNK_ENDPOINT: http://192.168.1.8:8333
     CHUNK_BUCKET: my-bucket
     CHUNK_REGION: us-east-1
-    # Authoritative source = 1Password item "seaweedfs" (op://Personal/seaweedfs/access key,
-    # user "tester"). The secret is sourced from the same item in .kamal/secrets.
-    CHUNK_ACCESS_KEY_ID: F61BUJTZ2I5KRC0NH7YX
+    # Authoritative source = 1Password item "seaweednew" (op://Personal/seaweednew/access key).
+    # The secret is sourced from the SAME item in .kamal/secrets — keep them together or you
+    # get InvalidAccessKeyId.
+    #
+    # The older "seaweedfs" item belongs to the RETIRED instance at 192.168.1.7 (port now
+    # closed). Its identity does not exist on the current server, so signing with it fails the
+    # client's presigned PUT with InvalidAccessKeyId — which is how this was found.
+    CHUNK_ACCESS_KEY_ID: 2ER1TJXNXU15ECJ3YRQK
 
     # Set number of processes dedicated to Solid Queue (default: 1)
     # JOB_CONCURRENCY: 3
