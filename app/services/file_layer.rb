@@ -19,4 +19,32 @@ module FileLayer
   # Cap to protect the job host when reading a whole file into memory. Port-wide: it applies
   # to any backend, not just the chunk store.
   MAX_BYTES = 256 * 1024 * 1024
+
+  class << self
+    attr_writer :current
+
+    # The adapter for THIS deployment. One backend per deployment (spec decision 1): an
+    # instance is the sync product (chunk) or the web-over-your-own-storage product
+    # (share/s3), never both.
+    def current
+      @current ||= build
+    end
+
+    def reset!
+      @current = nil
+    end
+
+    def build
+      case ENV.fetch("LIBRARY_BACKEND", "chunk")
+      when "chunk" then Chunk.new
+      when "share", "s3"
+        # Phases 2-3. Fail loudly: silently falling back to chunk mode would serve an EMPTY
+        # library while the operator believes we are reading their NAS.
+        raise NotImplementedError,
+              "LIBRARY_BACKEND=#{ENV['LIBRARY_BACKEND']} is not implemented yet (phases 2-3)"
+      else
+        raise ArgumentError, "unknown LIBRARY_BACKEND #{ENV['LIBRARY_BACKEND'].inspect}"
+      end
+    end
+  end
 end
