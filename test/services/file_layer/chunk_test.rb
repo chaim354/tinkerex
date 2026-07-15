@@ -49,6 +49,38 @@ module FileLayer
       node_id
     end
 
+    # The read path's core loop walks Version#manifest_chunks, which is `.order(:seq)`
+    # (app/models/version.rb). NOTHING else asserts that ordering, and getting it wrong corrupts
+    # the bytes of EVERY file larger than one chunk — silently, since each chunk is individually
+    # valid and hashes fine on its own. Proven by mutation: flipping to `.order(seq: :desc)`
+    # passed the entire suite. Chunk-specific rather than a shared-contract test because a
+    # manifest is an internal detail of the chunk store — a plain-directory Share adapter has no
+    # manifest to order. create_file! always builds a SINGLE-chunk manifest, so this test builds
+    # its own two-chunk one with distinct bytes.
+    test "read assembles a multi-chunk manifest in seq order" do
+      node_id = SecureRandom.uuid
+      store = Storage::ChunkStore.current
+      first, second = "AAA", "BB"
+      h1 = Digest::SHA256.hexdigest(first)
+      h2 = Digest::SHA256.hexdigest(second)
+      store.put!(@user.id, h1, first)
+      store.put!(@user.id, h2, second)
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(
+        user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
+        name: "multi.stl", base_version_id: nil, size: 5,
+        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
+        manifest: [
+          { "hash" => h1, "offset" => 0, "length" => 3 },
+          { "hash" => h2, "offset" => 3, "length" => 2 }
+        ]
+      )
+      Sync::Commit.finalize(user: @user, commit_id: cid)
+
+      # Ordered concatenation, not just "contains both": "AAABB", never "BBAAA".
+      assert_equal "AAABB", adapter.read(@user, node_id:)
+    end
+
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---
     # These stub the presigned-GET seam, which now lives on the adapter. If they still stubbed
     # Maker::FileBytes.http_get they would silently no-op once FileBytes becomes a shim.
