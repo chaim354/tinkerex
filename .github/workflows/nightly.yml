@@ -44,11 +44,12 @@ jobs:
   # hydrates → B edits → A pulls, byte-for-byte, plus delete/move/rename/dedup/restore/conflict.
   # This is the PROVIDER/ENGINE-LEVEL leg (headless on every OS); the kernel-mount leg is the
   # per-OS conformance suites' job (cfapi-conformance here; webdav-rclone/fsx-fuse in the
-  # mount-conformance job below). The Linux job is self-contained (boots a memory Rails server);
-  # mac/Windows run against the deployed server and skip cleanly if it's unreachable.
+  # mount-conformance job below). Linux/mac are self-contained (each boots its own
+  # STORAGE_BACKEND=local Rails server, needed for real presigned URLs — see below); Windows runs
+  # against the deployed server and skips cleanly if it's unreachable.
 
   e2e-linux:
-    # Self-contained: boot STORAGE_BACKEND=memory Rails (SQLite) here, like engine-integration.
+    # Self-contained: boot STORAGE_BACKEND=local Rails (SQLite) here, like engine-integration.
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v6
@@ -61,13 +62,18 @@ jobs:
         run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
+      # STORAGE_BACKEND=local, verify ON (no SYNC_VERIFY_FINALIZE=0): two_device_e2e moves bytes
+      # via PresignedIO, the production transport, so it needs a backend that presigns real
+      # absolute HMAC-signed URLs (the memory store's relative /dev/blobs/... paths aren't
+      # followable by a Rust HTTP client) — and since the bytes genuinely land in storage now,
+      # finalize's verify-the-bytes-landed check can run for real instead of being disabled.
       - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: |
           (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
           sleep 1
-          STORAGE_BACKEND=memory ENABLE_TEST_SIGNUP=true SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &
+          STORAGE_BACKEND=local CHUNK_PUBLIC_URL=http://localhost:3001 ENABLE_TEST_SIGNUP=true bin/rails server -p 3001 &
           SRV=$!
           for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
           curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
@@ -151,7 +157,7 @@ jobs:
           [ $c1 -eq 0 ] && [ $c2 -eq 0 ]
 
   e2e-macos:
-    # macOS client stack. Self-contained: boots a STORAGE_BACKEND=memory Rails server locally
+    # macOS client stack. Self-contained: boots a STORAGE_BACKEND=local Rails server locally
     # (the mac runner can't route to the deployed server's network segment), so it proves the
     # macOS client stack converges without depending on cross-network reachability. fuser is
     # cfg(linux), so sync-engine builds with no FUSE on mac.
@@ -162,6 +168,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # Use the runner's preinstalled Ruby/bundler (the maker-mac dev box) — ruby/setup-ruby
       # assumes the GitHub-hosted /Users/runner layout this self-hosted runner doesn't have.
+      # STORAGE_BACKEND=local, verify ON (no SYNC_VERIFY_FINALIZE=0) — same reasoning as e2e-linux:
+      # PresignedIO needs real absolute presigned URLs, and since the bytes genuinely land in
+      # storage now, verify-on-finalize can (and should) run for real.
       - name: Boot the sync server + run the two-device e2e (one step keeps the server alive)
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
@@ -170,7 +179,7 @@ jobs:
           bin/rails db:prepare
           (lsof -ti tcp:3001 | xargs kill -9 2>/dev/null) || true
           sleep 1
-          STORAGE_BACKEND=memory ENABLE_TEST_SIGNUP=true SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &
+          STORAGE_BACKEND=local CHUNK_PUBLIC_URL=http://localhost:3001 ENABLE_TEST_SIGNUP=true bin/rails server -p 3001 &
           SRV=$!
           for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
           curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
