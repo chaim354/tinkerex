@@ -18,6 +18,17 @@ module FileLayer
     # on the factory and can be written before it exists.
     def adapter = FileLayer::Chunk.new
 
+    # The shared contract can only assert these are booleans — every backend answers
+    # differently. Chunk's actual values matter: the UI reads them to decide whether to offer
+    # Restore/History, so a flipped flag here silently removes a working feature rather than
+    # failing loudly.
+    test "chunk is the versioned, syncable, presignable backend" do
+      caps = adapter.capabilities
+      assert caps.versioned?, "chunk mode restores old versions — that's its whole point"
+      assert caps.syncable?
+      assert caps.presignable?
+    end
+
     # Commit a real file and put its single chunk's bytes in the store. The contract requires
     # the created file to carry a REAL current modification time, so mtime is passed through
     # to the commit in unix NANOSECONDS (the sync engine's convention; nodes.mtime is a bigint
