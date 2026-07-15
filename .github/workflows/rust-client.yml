@@ -144,13 +144,20 @@ jobs:
         run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
       - name: Prepare the dev database (SQLite)
         run: bin/rails db:prepare
+      # SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check is ON by default
+      # (config/initializers/finalize_verification.rb), but the engine suites deliberately move
+      # chunk bytes through SharedDirIO — a shared-dir stand-in for the cloud — rather than the
+      # server's store, so the server legitimately can't see them. That transport is also the
+      # seam the offline/corrupting/counting fault tests wrap. The real presigned data plane is
+      # covered by two_device_e2e/presigned_roundtrip + the STORAGE_BACKEND=local two-device
+      # conformance scripts.
       - name: Boot the sync server + run the integration suite (one step keeps the server alive)
         env:
           SYNC_IT_SERVER_URL: http://localhost:3001
         run: |
           (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
           sleep 1
-          STORAGE_BACKEND=memory ENABLE_TEST_SIGNUP=true bin/rails server -p 3001 &
+          STORAGE_BACKEND=memory ENABLE_TEST_SIGNUP=true SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &
           SRV=$!
           for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
           curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }

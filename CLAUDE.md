@@ -495,7 +495,10 @@ CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret 
 (cd client/fs-provider && cargo test)   # chunking/posix/convergence/concurrency/caching (hermetic)
 (cd client/sync-client && cargo test)
 # sync-engine integration needs a running server (skips cleanly without one):
-STORAGE_BACKEND=memory bin/rails server -p 3001 &   # then:
+# SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check defaults ON, but the engine
+# suites move chunk bytes through SharedDirIO (a shared-dir cloud stand-in), not the server's
+# store — so the server can't see them. See config/initializers/finalize_verification.rb.
+STORAGE_BACKEND=memory SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &   # then:
 (cd client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
 
 # External conformance (battle-tested tools vs our real mounts — client/test-conformance/):

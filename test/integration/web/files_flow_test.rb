@@ -41,6 +41,36 @@ module Web
       assert_redirected_to new_user_session_path
     end
 
+    # ---- Fix 9: sniffable user content is served as a download, never inline ---
+
+    test "an SVG blob is served as an attachment (no stored XSS on the app origin)" do
+      sign_in
+      node_id = upload("evil.svg", "<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>".b)
+
+      get blob_file_path(node_id)
+      assert_response :success
+      assert_match(/attachment/, response.headers["Content-Disposition"], "SVG must not render inline")
+      assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+    end
+
+    test "an HTML blob is served as an attachment" do
+      sign_in
+      node_id = upload("page.html", "<html><body><script>alert(1)</script></body></html>".b)
+
+      get blob_file_path(node_id)
+      assert_response :success
+      assert_match(/attachment/, response.headers["Content-Disposition"])
+    end
+
+    test "a PNG blob is still served inline (safe raster image)" do
+      sign_in
+      node_id = upload("pic.png", "\x89PNG\r\n\x1a\nfake".b)
+
+      get blob_file_path(node_id)
+      assert_response :success
+      assert_match(/inline/, response.headers["Content-Disposition"], "raster images stay inline")
+    end
+
     test "placeholder login signs in and lists files" do
       sign_in
       get files_path
