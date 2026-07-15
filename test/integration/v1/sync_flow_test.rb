@@ -23,9 +23,18 @@ module V1
            as: :json, headers: auth(token)
       assert_response :success
       began = JSON.parse(response.body)
+      upload_chunks(began) # mirror the client: PUT the bytes before finalize (finalize verifies)
       post "/v1/commit/#{cid}/finalize", params: {}, as: :json, headers: auth(token)
       assert_response :success
       [ began, JSON.parse(response.body), node_id ]
+    end
+
+    # PUT each presigned chunk URL so finalize's verify (Sync::Commit.finalize verify: true)
+    # sees the bytes in the store. Memory store presigns to /dev/blobs/... (DevBlobsController).
+    def upload_chunks(began)
+      (began["put_urls"] || {}).each_value do |url|
+        put url, params: "x", headers: { "CONTENT_TYPE" => "application/octet-stream" }
+      end
     end
 
     test "register -> commit -> finalize -> changes -> tree" do
@@ -84,7 +93,7 @@ module V1
 
     test "dedup: shared chunk reported as not-missing on the second file" do
       token = register["device_token"]
-      x, y, z = "x" * 64, "y" * 64, "z" * 64
+      x, y, z = "e" * 64, "f" * 64, "1" * 64
       commit_file(token, name: "a.bin", chunks: [ { hash: x, offset: 0, length: 10 }, { hash: y, offset: 10, length: 10 } ])
 
       cid = SecureRandom.uuid

@@ -13,6 +13,13 @@
 class FilesController < ApplicationController
   before_action :authenticate_user!
 
+  # Content types safe to render inline in the app origin. Raster images only — deliberately
+  # NO image/svg+xml (SVG can carry <script>) and NO text/html, which would be stored XSS.
+  SAFE_INLINE_TYPES = %w[
+    image/png image/jpeg image/gif image/webp image/bmp
+    image/x-icon image/vnd.microsoft.icon
+  ].freeze
+
   # A node id that doesn't belong to current_user (or doesn't exist) -> 404, never a 500
   # and never another user's data (all lookups are scoped to current_user).
   rescue_from ActiveRecord::RecordNotFound do
@@ -59,6 +66,8 @@ class FilesController < ApplicationController
       commit_id: result.commit_id, node_id:,
       put_urls: result.put_urls, missing: result.missing
     }
+  rescue Sync::Commit::InvalidManifest => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   # --- Upload: phase 2 (finalize) ---------------------------------------------
@@ -89,7 +98,6 @@ class FilesController < ApplicationController
 
     chunks = version.manifest_chunks.to_a
     store = Storage::ChunkStore.current
-    disposition = params[:download] ? "attachment" : "inline"
     filename = node.name
 
     # Single-chunk file on real object storage: redirect the browser straight to storage.
@@ -99,7 +107,16 @@ class FilesController < ApplicationController
       return
     end
 
-    response.headers["Content-Type"] = Marcel::MimeType.for(name: filename)
+    content_type = Marcel::MimeType.for(name: filename)
+    # Serve user-uploaded bytes inline ONLY for a small allowlist of raster image types.
+    # Everything else — notably SVG and HTML, which the browser would execute in the app
+    # origin (stored XSS in the user's own session) — is forced to a download. `nosniff`
+    # stops the browser second-guessing the declared type. `?download=1` always attaches.
+    inline_ok = !params[:download] && SAFE_INLINE_TYPES.include?(content_type)
+    disposition = inline_ok ? "inline" : "attachment"
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Type"] = content_type
     response.headers["Content-Disposition"] =
       ActionDispatch::Http::ContentDisposition.format(disposition:, filename:)
 
