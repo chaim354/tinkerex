@@ -27,10 +27,16 @@ module FileLayer
 
     # Share's "delete" is the user removing the file from the indexed tree; the next scan
     # tombstones the node.
+    #
+    # `max_delete_pct: 100` disables the mass-deletion guard, deliberately: the contract's
+    # fixtures are one file, so deleting it is a 100% deletion and the guard — a percentage
+    # written for a NAS archive — would refuse the scan and this helper would tombstone nothing.
+    # The guard has its own tests (ScannerGuardTest); these are the adapter's tombstone
+    # semantics, which is a different question.
     def delete_file!(node_id)
       node = @user.nodes.find_by!(node_id:)
       FileUtils.rm_f(@root.join(node.storage_path))
-      Library::Scanner.call(@user, root: @root.to_s)
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     end
 
     # Share's transient failure: the bytes are there, we just can't read them right now —

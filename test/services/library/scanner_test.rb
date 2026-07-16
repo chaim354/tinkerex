@@ -289,4 +289,227 @@ module Library
       assert_not node.deleted, "a permission error is not a deletion"
     end
   end
+
+  # The mass-deletion guard, end to end through a real filesystem.
+  #
+  # The guard fires on what would ACTUALLY be tombstoned — the set left after move-pairing —
+  # not on what merely changed path. Guarding the raw missing-path count would refuse every
+  # large reorganization, which is the exact thing this phase exists to survive. The
+  # "reorganization" tests below are what pin that distinction; they are not decoration.
+  class ScannerGuardTest < ActiveSupport::TestCase
+    setup do
+      @root = Pathname.new(Dir.mktmpdir("scan-guard"))
+      @user = User.create!(email: "guard-#{SecureRandom.hex(4)}@example.com")
+    end
+    teardown { FileUtils.remove_entry(@root) if @root&.exist? }
+
+    def write!(rel, bytes)
+      p = @root.join(rel)
+      FileUtils.mkdir_p(p.dirname)
+      File.binwrite(p, bytes)
+      p
+    end
+
+    def scan! = Library::Scanner.call(@user, root: @root.to_s)
+    def live_paths = @user.nodes.present.where(kind: "file").order(:storage_path).pluck(:storage_path)
+
+    # --- the catastrophic cases the guard exists for -----------------------------------------
+
+    test "an emptied root ABORTS rather than tombstoning the library" do
+      write!("a.stl", "1"); write!("b.stl", "2"); write!("c.stl", "3")
+      scan!
+      assert_equal 3, @user.nodes.present.where(kind: "file").count
+
+      # Simulate the NAS unmounting: the root exists but is empty.
+      FileUtils.rm_f(Dir.glob(@root.join("*").to_s))
+      assert_raises(Library::Scanner::UnsafeScan) { scan! }
+
+      assert_equal 3, @user.nodes.present.where(kind: "file").count,
+                   "an unmounted NAS must never read as the user deleting their library"
+    end
+
+    # A MISSING root is not caught by the percentage guard at all: Scanner#observe rescues the
+    # root's ENOENT and returns [] with an EMPTY unreadable_dirs, so a missing root is
+    # indistinguishable from an empty library BY OBSERVATION ALONE. The explicit directory?
+    # check is therefore load-bearing, not belt-and-braces. (It happens to be redundant with the
+    # 100%-vanished arithmetic while the library is non-empty — but not for a library of zero
+    # live files, and not for the operator, who deserves "your root is gone" rather than a
+    # percentage.)
+    test "a MISSING root ABORTS — it is not an empty library" do
+      write!("a.stl", "1")
+      scan!
+      FileUtils.remove_entry(@root)
+
+      err = assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      assert_match(/missing/, err.message)
+    end
+
+    test "deleting more than the threshold ABORTS" do
+      10.times { |i| write!("f#{i}.stl", "x#{i}") }
+      scan!
+
+      5.times { |i| FileUtils.rm_f(@root.join("f#{i}.stl").to_s) } # 50% > the 20% default
+      assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      assert_equal 10, @user.nodes.present.where(kind: "file").count
+    end
+
+    test "a deletion under the threshold proceeds" do
+      10.times { |i| write!("g#{i}.stl", "x#{i}") }
+      scan!
+
+      FileUtils.rm_f(@root.join("g0.stl").to_s) # 10% < 20%
+      scan!
+      assert_equal 9, @user.nodes.present.where(kind: "file").count
+      assert @user.nodes.find_by!(storage_path: "g0.stl").deleted
+    end
+
+    # The threshold is INCLUSIVE (`pct <= max`), and nothing else pins that: the cases above
+    # bracket the default at 10% and 50%, so flipping `<=` to `<` leaves them all green while
+    # silently making the guard stricter than its own error message claims ("> 20%"). Exactly 20%
+    # is the only input that can tell the two apart.
+    test "a deletion of EXACTLY the threshold proceeds — the bound is inclusive" do
+      10.times { |i| write!("b#{i}.stl", "z#{i}") }
+      scan!
+
+      2.times { |i| FileUtils.rm_f(@root.join("b#{i}.stl").to_s) } # 2/10 = exactly 20%
+      scan!
+      assert_equal 8, @user.nodes.present.where(kind: "file").count
+    end
+
+    # --- ...and the case a naive guard breaks ------------------------------------------------
+
+    # THE test for this task's redesign. A guard that counts live nodes whose path is no longer
+    # observed counts every rename as a deletion — so reorganizing more than the threshold in one
+    # interval would refuse the scan forever. Reorganizing a NAS is the use case this whole phase
+    # is built for; a guard that blocks it is worse than no guard.
+    test "a large REORGANIZATION does not trip the guard — a move is not a deletion" do
+      10.times { |i| write!("flat/h#{i}.stl", "payload-#{i}") }
+      scan!
+      ids = @user.nodes.present.where(kind: "file").to_h { |n| [ n.storage_path, n.node_id ] }
+      assert_equal 10, ids.size
+
+      # Move 6 of 10 (60% — three times the threshold) into a new tree, same bytes.
+      FileUtils.mkdir_p(@root.join("cad/sorted"))
+      6.times { |i| FileUtils.mv(@root.join("flat/h#{i}.stl").to_s, @root.join("cad/sorted/h#{i}.stl").to_s) }
+
+      scan! # must NOT raise
+
+      assert_equal 10, @user.nodes.present.where(kind: "file").count, "nothing was deleted"
+      assert_equal 0, @user.nodes.where(kind: "file", deleted: true).count
+      6.times do |i|
+        assert_equal ids.fetch("flat/h#{i}.stl"),
+                     @user.nodes.present.find_by!(storage_path: "cad/sorted/h#{i}.stl").node_id,
+                     "the move must keep node_id — that is the attachment"
+      end
+    end
+
+    # ...but the guard must not be blinded by the reorganization either: a mass deletion hiding
+    # among a pile of moves still has to trip it.
+    test "a reorganization WITH a genuine mass deletion still ABORTS" do
+      10.times { |i| write!("k#{i}.stl", "body-#{i}") }
+      scan!
+
+      FileUtils.mkdir_p(@root.join("moved"))
+      3.times { |i| FileUtils.mv(@root.join("k#{i}.stl").to_s, @root.join("moved/k#{i}.stl").to_s) }
+      (3..7).each { |i| FileUtils.rm_f(@root.join("k#{i}.stl").to_s) } # 5/10 = 50% genuinely gone
+
+      assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      assert_equal 10, @user.nodes.present.where(kind: "file").count,
+                   "the whole pass is refused — moves included; a refused scan writes nothing destructive"
+    end
+
+    # --- "we could not look" is never "it is not there" --------------------------------------
+
+    # Pathname#find SILENTLY swallows EACCES, dropping an unreadable directory's whole subtree
+    # from the walk — which is why the walk is hand-rolled and reports #unreadable_dirs. Those
+    # files look deleted and are not. Excluding them (rather than aborting) is deliberate: one
+    # weird folder must not block every future scan of an otherwise healthy library.
+    test "files under an unreadable directory are NOT tombstoned" do
+      write!("secret/hidden.stl", "s")
+      write!("secret/sub/deep.stl", "d")
+      write!("open/seen.stl", "o")
+      scan!
+      assert_equal [ "open/seen.stl", "secret/hidden.stl", "secret/sub/deep.stl" ], live_paths
+
+      File.chmod(0o000, @root.join("secret"))
+      begin
+        scan! # must NOT raise: 2 of 3 unobservable would be 66% if counted as deletions
+      ensure
+        File.chmod(0o755, @root.join("secret"))
+      end
+
+      assert_equal [ "open/seen.stl", "secret/hidden.stl", "secret/sub/deep.stl" ], live_paths,
+                   "an unreadable subtree is UNOBSERVED, not absent"
+      # The directory node too: `secret/sub` was never listed, so nothing observed it either.
+      assert_not @user.nodes.present.find_by!(storage_path: "secret/sub").deleted,
+                 "a directory inside an unreadable subtree is equally unobserved"
+    end
+
+    # The denominator is the OBSERVABLE library, not the whole one. Otherwise a large unreadable
+    # region dilutes the percentage and lets a genuine mass deletion slip under the threshold:
+    # 5 of the 5 readable files gone reads as 5/105 = 4.8% and proceeds.
+    test "an unreadable region does not dilute the guard into letting a real deletion through" do
+      100.times { |i| write!("vault/v#{i}.stl", "v#{i}") }
+      5.times { |i| write!("desk/d#{i}.stl", "d#{i}") }
+      scan!
+      assert_equal 105, @user.nodes.present.where(kind: "file").count
+
+      File.chmod(0o000, @root.join("vault"))
+      5.times { |i| FileUtils.rm_f(@root.join("desk/d#{i}.stl").to_s) } # 100% of what we CAN see
+      begin
+        assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      ensure
+        File.chmod(0o755, @root.join("vault"))
+      end
+
+      assert_equal 105, @user.nodes.present.where(kind: "file").count
+    end
+
+    # ...and when it refuses, it says so. Those subtrees are excluded from BOTH sides of the
+    # fraction, so an operator reading only "5/5 observable files" has no way to know the
+    # population was reduced — "vault was unreadable" is usually the whole explanation for a
+    # half-mounted share. Task 9 wants this signal too.
+    test "the refusal names the unreadable directories it excluded" do
+      10.times { |i| write!("vault/v#{i}.stl", "v#{i}") }
+      5.times { |i| write!("desk/d#{i}.stl", "d#{i}") }
+      scan!
+
+      File.chmod(0o000, @root.join("vault"))
+      5.times { |i| FileUtils.rm_f(@root.join("desk/d#{i}.stl").to_s) }
+      begin
+        err = assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      ensure
+        File.chmod(0o755, @root.join("vault"))
+      end
+
+      assert_match(/1 directories were unreadable and excluded/, err.message)
+      assert_match(/"vault"/, err.message, "name them — that is the diagnosis")
+    end
+
+    # --- the escape hatch -------------------------------------------------------------------
+
+    # The threshold is read per call, not at class load: the raise names this variable as the
+    # operator's way out, and a constant frozen at boot makes that advice a lie inside a running
+    # process (and unreachable from a test, which is how an escape hatch rots shut).
+    test "LIBRARY_SCAN_MAX_DELETE_PCT is the documented way out, and it works" do
+      10.times { |i| write!("m#{i}.stl", "y#{i}") }
+      scan!
+      9.times { |i| FileUtils.rm_f(@root.join("m#{i}.stl").to_s) } # 90%
+
+      err = assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      # The message must NAME the variable. Reading ENV per call instead of freezing a constant
+      # is justified entirely by this raise being the operator's pointer to the way out — a
+      # reword that drops the name leaves them a percentage and no exit, and every other
+      # assertion here would stay green.
+      assert_match(/LIBRARY_SCAN_MAX_DELETE_PCT/, err.message)
+
+      ENV["LIBRARY_SCAN_MAX_DELETE_PCT"] = "95"
+      begin
+        scan!
+      ensure
+        ENV.delete("LIBRARY_SCAN_MAX_DELETE_PCT")
+      end
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+    end
+  end
 end

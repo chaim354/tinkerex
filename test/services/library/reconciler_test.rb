@@ -26,8 +26,16 @@ module Library
     end
 
     # The reconciler hashes on demand via an injected reader, so these tests need no filesystem.
+    #
+    # `max_delete_pct: 100` disables the mass-deletion guard, deliberately and out loud: these
+    # are MATCHING-ALGORITHM tests, and their fixtures are two or three files, where deleting one
+    # is 33-100% and would trip a threshold written for a NAS archive. The guard has its own
+    # tests (below, and ScannerGuardTest) which construct the Reconciler directly and get the
+    # real default. If you are reading this because a guard test went green through this helper,
+    # it is not testing the guard.
     def reconcile(observations, contents)
-      Library::Reconciler.new(@user, observations:, reader: ->(rel) { contents.fetch(rel) }).call
+      Library::Reconciler.new(@user, observations:, unreadable_dirs: [], max_delete_pct: 100,
+                                     reader: ->(rel) { contents.fetch(rel) }).call
     end
 
     test "a new file becomes a node" do
@@ -219,7 +227,7 @@ module Library
         rel_path: "locked.stl", size: 99, mtime: 1_800_000_000_000_000_000, dir: false
       )
       Library::Reconciler.new(
-        @user, observations: [ changed ], reader: ->(_) { raise Errno::EACCES, "simulated" }
+        @user, observations: [ changed ], unreadable_dirs: [], reader: ->(_) { raise Errno::EACCES, "simulated" }
       ).call
 
       node = @user.nodes.find_by!(node_id: id)
@@ -229,7 +237,7 @@ module Library
 
     test "an unreadable NEW file is left for the next pass, not indexed half-formed" do
       Library::Reconciler.new(
-        @user, observations: [ obs("new.stl", "x") ], reader: ->(_) { raise Errno::EACCES, "x" }
+        @user, observations: [ obs("new.stl", "x") ], unreadable_dirs: [], reader: ->(_) { raise Errno::EACCES, "x" }
       ).call
 
       # A node with a nil content_hash is a preview that can never be keyed, and would be
@@ -251,7 +259,7 @@ module Library
       calls = 0
       counting = ->(rel) { calls += 1; { "big.stl" => "unchanged" }.fetch(rel) }
       Library::Reconciler.new(@user, observations: [ obs("big.stl", "unchanged") ],
-                                     reader: counting).call
+                                     unreadable_dirs: [], reader: counting).call
 
       assert_equal 0, calls, "unchanged (path, mtime, size) must be skipped without reading bytes"
     end
@@ -266,7 +274,7 @@ module Library
                 { "keep.stl" => "k", "gone.stl" => "g", "also.stl" => "a" })
 
       rec = Library::Reconciler.new(@user, observations: [ obs("keep.stl", "k") ],
-                                           reader: ->(_) { "k" })
+                                           unreadable_dirs: [], reader: ->(_) { "k" })
 
       assert_equal [ "also.stl", "gone.stl" ], rec.vanished_paths
       # Purity is the whole contract: the guard runs this to DECIDE whether to reconcile, so it
@@ -282,13 +290,95 @@ module Library
       reconcile([ obs("old.stl", "same") ], { "old.stl" => "same" })
 
       rec = Library::Reconciler.new(@user, observations: [ obs("new.stl", "same") ],
-                                           reader: ->(_) { "same" })
+                                           unreadable_dirs: [], reader: ->(_) { "same" })
       assert_equal [ "old.stl" ], rec.vanished_paths, "the old path IS missing from disk"
 
       rec.call
       assert_equal 1, @user.nodes.present.where(kind: "file").count
       assert_not @user.nodes.present.find_by!(storage_path: "new.stl").deleted,
                  "...but pairing rescued it, so nothing was actually tombstoned"
+    end
+
+    # --- unobserved is not absent (the seam the guard and #call SHARE) ----------------------
+
+    # An unreadable directory's subtree is missing from the observations through no fault of the
+    # filesystem's contents. Excluding it inside vanished_paths — rather than in the guard —
+    # means #call cannot tombstone it EITHER. That is the correctness fix; the guard reading a
+    # smaller number is a consequence. Two definitions would let the guard approve a pass that
+    # then deletes files the guard never counted.
+    test "vanished_paths excludes live nodes under an unreadable directory" do
+      reconcile([ obs("secret/a.stl", "a"), obs("open/b.stl", "b") ],
+                { "secret/a.stl" => "a", "open/b.stl" => "b" })
+
+      rec = Library::Reconciler.new(@user, observations: [ obs("open/b.stl", "b") ],
+                                           unreadable_dirs: [ "secret" ], reader: ->(_) { "b" })
+      assert_empty rec.vanished_paths, "we could not list secret/ — that is not evidence of absence"
+
+      rec.call
+      assert_not @user.nodes.present.find_by!(storage_path: "secret/a.stl").deleted
+    end
+
+    # A sibling whose name merely starts with an unreadable directory's name is a different
+    # directory. Prefix-matching on the bare string would silently spare (and, in the guard's
+    # denominator, discount) files that really are gone.
+    test "the unreadable-subtree exclusion matches a path boundary, not a string prefix" do
+      reconcile([ obs("secrets/x.stl", "x") ], { "secrets/x.stl" => "x" })
+
+      rec = Library::Reconciler.new(@user, observations: [], unreadable_dirs: [ "secret" ],
+                                           reader: ->(_) { "x" })
+      assert_equal [ "secrets/x.stl" ], rec.vanished_paths, "'secrets' is not inside 'secret'"
+    end
+
+    # An unreadable ROOT is reported as "."; nothing at all was observed, so nothing at all can
+    # be called absent. Without this the emptiest possible observation — the mass-tombstone input
+    # — would sail past a guard whose denominator it had just zeroed.
+    test "an unreadable ROOT makes the whole library unobserved, not vanished" do
+      reconcile([ obs("a.stl", "a") ], { "a.stl" => "a" })
+
+      rec = Library::Reconciler.new(@user, observations: [], unreadable_dirs: [ "." ],
+                                           reader: ->(_) { "a" })
+      assert_empty rec.vanished_paths
+      rec.call
+      assert_not @user.nodes.present.find_by!(storage_path: "a.stl").deleted
+    end
+
+    # --- the guard fires on the POST-pairing set --------------------------------------------
+
+    # vanished_paths is an upper bound that includes renames (pinned above). The guard must not
+    # read it directly: here EVERY file moved, so the upper bound is 100% while the true
+    # tombstone count is 0. A guard reading the upper bound refuses a scan that deletes nothing.
+    test "a reorganization of the entire library does not trip the guard" do
+      3.times { |i| reconcile([ obs("f#{i}.stl", "b#{i}") ], { "f#{i}.stl" => "b#{i}" }) }
+      files = 3.times.map { |i| [ obs("f#{i}.stl", "b#{i}"), "b#{i}" ] }
+      reconcile(files.map(&:first), files.to_h { |o, b| [ o.rel_path, b ] })
+
+      moved = 3.times.map { |i| obs("new/f#{i}.stl", "b#{i}") }
+      rec = Library::Reconciler.new(@user, observations: moved, unreadable_dirs: [],
+                                           reader: ->(rel) { "b#{rel[/\d/]}" })
+      assert_equal 3, rec.vanished_paths.size, "the upper bound says 100% vanished..."
+
+      rec.call # ...and the guard must not believe it
+      assert_equal 3, @user.nodes.present.where(kind: "file").count
+      assert_equal 0, @user.nodes.where(kind: "file", deleted: true).count
+    end
+
+    # The guard runs after pairing but BEFORE any tombstone is written, so a refused pass leaves
+    # the move it had already decided on unapplied too. All-or-nothing is the honest contract for
+    # a pass we are refusing on the grounds that we do not trust its input.
+    test "a refused pass writes no tombstone AND no move" do
+      5.times { |i| reconcile([ obs("p#{i}.stl", "c#{i}") ], { "p#{i}.stl" => "c#{i}" }) }
+      all = 5.times.map { |i| obs("p#{i}.stl", "c#{i}") }
+      reconcile(all, 5.times.to_h { |i| [ "p#{i}.stl", "c#{i}" ] })
+
+      # p0 moves; p1..p4 are simply gone -> 4/5 = 80% > 20%.
+      rec = Library::Reconciler.new(@user, observations: [ obs("kept/p0.stl", "c0") ],
+                                           unreadable_dirs: [], reader: ->(_) { "c0" })
+      assert_raises(Library::Scanner::UnsafeScan) { rec.call }
+
+      assert_equal 5, @user.nodes.present.where(kind: "file").count
+      assert_nil @user.nodes.find_by(storage_path: "kept/p0.stl"),
+                 "the move is decided before the guard, so it must be withheld when the guard fires"
+      assert_not @user.nodes.present.find_by!(storage_path: "p0.stl").deleted
     end
 
     # --- the seam this depends on -----------------------------------------------------------
@@ -319,7 +409,26 @@ module Library
       # FileLayer.current is the DEPLOYMENT's backend (Chunk by default, which has no root at
       # all). Reaching for it to resolve an observation would be a NoMethodError in every run
       # that is not a share deployment.
-      assert_raises(ArgumentError) { Library::Reconciler.new(@user, observations: []) }
+      #
+      # `unreadable_dirs: []` is passed even though this test is not about it: it is a REQUIRED
+      # kwarg, so omitting it raises ArgumentError for missing-keyword and this assertion would
+      # pass without the root/reader check existing at all.
+      err = assert_raises(ArgumentError) do
+        Library::Reconciler.new(@user, observations: [], unreadable_dirs: [])
+      end
+      assert_match(/a root: or a reader: is required/, err.message,
+                   "must fail on the root/reader check, not on a missing keyword")
+    end
+
+    # ...and the converse: unreadable_dirs is required, so a caller cannot silently inherit the
+    # data loss it prevents (every file under a directory we could not list, tombstoned). A
+    # default of [] would make forgetting it indistinguishable from claiming the walk was
+    # complete.
+    test "unreadable_dirs is REQUIRED — 'the walk was complete' must be said out loud" do
+      err = assert_raises(ArgumentError) do
+        Library::Reconciler.new(@user, observations: [], reader: ->(_) { "x" })
+      end
+      assert_match(/unreadable_dirs/, err.message)
     end
   end
 end

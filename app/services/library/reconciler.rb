@@ -35,6 +35,10 @@ module Library
   # next pass; a ghost directory survives one extra pass). Per-row `update!` is already atomic,
   # which is the only atomicity a single node's correctness needs.
   class Reconciler
+    # How much of the observable library one pass may tombstone before we assume the input is a
+    # lie rather than the user's intent.
+    DEFAULT_MAX_DELETE_PCT = 20
+
     # `root` is where a rel_path resolves to real bytes; `reader` replaces reading them at all
     # (tests inject it, so the algorithm needs no filesystem). One of the two is required.
     #
@@ -42,10 +46,28 @@ module Library
     # given its observations, so reaching for the global to resolve them would couple it to a
     # deployment-wide setting that is `Chunk` (which has no root at all) in most runs — a
     # NoMethodError in exactly the tests that matter. The Scanner already knows its root.
-    def initialize(user, observations:, root: nil, reader: nil)
+    #
+    # `unreadable_dirs` is part of the observation, not a separate concern: it is the Scanner
+    # saying "and here is what I could not see." A pass that tombstones on absence is only
+    # entitled to do so where it actually looked, so the two must arrive together — which is why
+    # it is REQUIRED rather than defaulted to []. A caller who forgets it would get, silently,
+    # the exact data loss this argument exists to prevent: every file under an unreadable
+    # directory tombstoned because we could not look. `unreadable_dirs: []` at a call site is a
+    # claim ("the walk was complete"), and it should have to be made out loud.
+    # (A `Scanner::Report = Data.define(:observations, :unreadable_dirs)` would make "arrive
+    # together" a type rather than a promise. Not worth the restructure at this signature size.)
+    #
+    # `max_delete_pct` overrides the mass-deletion threshold. It exists so a test can say "this
+    # fixture is not about the guard" in one visible keyword (100 = never refuse) instead of
+    # every two-file fixture tripping a percentage written for a NAS. Nil means the deployment's
+    # setting, which is the only thing production ever passes.
+    def initialize(user, observations:, unreadable_dirs:, max_delete_pct: nil,
+                   root: nil, reader: nil)
       raise ArgumentError, "a root: or a reader: is required" if root.nil? && reader.nil?
       @user = user
       @observations = observations
+      @unreadable_dirs = unreadable_dirs
+      @max_delete_pct = max_delete_pct
       @root = root && Pathname.new(root).expand_path
       @reader = reader
       @dir_ids = {} # rel_path => node_id, filled by ensure_dirs as it walks shallowest-first
@@ -54,33 +76,144 @@ module Library
     # The live file nodes these observations do not account for — the set this pass would
     # tombstone, before move-pairing rescues the renames among them.
     #
-    # PURE and WRITE-FREE, and public, because Task 7's mass-deletion guard has to ask "how many
-    # files would this scan tombstone?" BEFORE any of them are tombstoned. Sharing this one
-    # definition is the point: if the guard recomputed the missing-set on its own, any later
-    # change to what counts as accounted-for (symlinks, a new skip case) would silently leave the
-    # guard guarding a different number than the one #call actually acts on — a quiet failure in
-    # the code whose entire job is being loud.
+    # PURE and WRITE-FREE, and public, because the mass-deletion guard has to ask "how many files
+    # would this scan tombstone?" BEFORE any of them are tombstoned. Sharing this one definition
+    # is the point: if the guard recomputed the missing-set on its own, any later change to what
+    # counts as accounted-for (symlinks, a new skip case) would silently leave the guard guarding
+    # a different number than the one #call actually acts on — a quiet failure in the code whose
+    # entire job is being loud.
+    #
+    # It remains an UPPER BOUND on the tombstones: a renamed file's old path is genuinely missing
+    # from disk and appears here, and only move-pairing later rescues it. The guard must NOT read
+    # this number directly — see #guard_mass_deletion!.
     def vanished_paths
       observed = @observations.reject(&:dir).map(&:rel_path).to_set
-      live_file_paths.reject { |p| observed.include?(p) }
+      observable_live_paths.reject { |p| observed.include?(p) }
     end
 
     def call
       dirs, files = @observations.partition(&:dir)
 
-      # Computed BEFORE any write, so it is the same set Task 7's guard sees when it asks the
-      # question ahead of time.
-      doomed = vanished_paths
+      # Both read the memoized observable set, so the guard's numerator and its denominator are
+      # drawn from one pluck — and both are computed BEFORE any write.
+      #
+      # `vanished` is the UPPER BOUND, not the tombstone set: it still contains every renamed
+      # file's old path. Only `doomed` below — what pairing could not explain — is what would
+      # actually be tombstoned, and it is the only one the guard may read. Conflating the two is
+      # precisely the bug this design exists to avoid, so the names are kept apart.
+      vanished         = vanished_paths
+      observable_count = observable_live_paths.size
 
       ensure_dirs(dirs)
-      unmatched  = match_live_paths(files)                    # 1
-      leftovers  = pair_moves(vanished_nodes(doomed), unmatched) # 2 (tombstones the unpaired)
+      unmatched = match_live_paths(files)                                      # 1
+      moves, doomed, leftovers = plan_moves(vanished_nodes(vanished), unmatched) # 2 (decide)
+
+      # The guard sits HERE — after pairing has settled which of the vanished are merely moved,
+      # and before the first destructive write. Earlier is not possible (pairing is what turns
+      # the upper bound into the real tombstone set) and later is not safe.
+      #
+      # Steps 1 and ensure_dirs have already written by now, which is deliberate and not a
+      # partial-apply hazard: both only write nodes for paths this pass actually OBSERVED —
+      # including, on a kind collision, tombstoning the node whose kind changed. That tombstone
+      # rests on positive evidence (a path observed with a different kind), not on absence, so it
+      # is correct whether or not the guard fires, and it is revivable. And in the case the guard
+      # exists for — an unmounted NAS, zero observations — both are handed empty lists and write
+      # nothing at all before the raise.
+      guard_mass_deletion!(doomed.size, observable_count)
+
+      apply_moves!(moves)                                      # 2 (apply)
+      doomed.each { |node| node.update!(deleted: true) }
       leftovers.each { |o, hash| create_or_revive!(o, hash) }  # 3 & 4
       tombstone_vanished_dirs(dirs)
       nil # Task 9 can define a result when it knows what it wants to read.
     end
 
     private
+
+    # Refuse to reconcile a pass that would tombstone an implausible share of the library. An
+    # unmounted NAS, a wrong LIBRARY_PATH, and a half-mounted share all look identical to "the
+    # user deleted everything" — and those tombstones propagate to every project attachment.
+    # Immich, Photoprism and Plex each learned this one the hard way (spec §6).
+    #
+    # `doomed_count` is the POST-pairing count — what would actually be tombstoned — never
+    # vanished_paths. Guarding the upper bound would count every rename as a deletion and refuse
+    # any reorganization above the threshold, which is precisely the thing this phase exists to
+    # survive: the headline case (one file moved to a new folder) is a 100% "vanish" and a 0%
+    # deletion.
+    #
+    # The denominator is the OBSERVABLE library, not the whole of it. A large unreadable region
+    # would otherwise dilute the percentage until a genuine mass deletion slipped under it (5 of
+    # the only 5 readable files gone reading as 4.8% of 105).
+    #
+    # KNOWN TRADE: a percentage has no floor, so a 3-file library loses a file at 33% and the
+    # scan refuses until the operator raises the threshold. Small libraries are not the use case
+    # this backend is for (a NAS archive is), and an absolute floor would blind the guard to the
+    # unmount of a small library — which is the one thing it is here to stop. Stated so a future
+    # floor has to argue with this paragraph rather than quietly widen the hole.
+    #
+    # SCOPE: this guards FILES only — tombstone_vanished_dirs is in neither the numerator nor the
+    # denominator, even though #call tombstones directories too. Deliberate, and the window is
+    # narrow and self-healing: reaching a dir-only tombstone requires observable_count to be zero
+    # (a library of directories and no files) with the root present but empty, and ensure_dirs
+    # revives a tombstoned directory by storage_path with its original node_id on the next pass.
+    # No attachment points at a dir node. Threading dirs into both sides would disturb the
+    # numerator/denominator symmetry for a low payoff; it belongs with Task 9 or Phase 2b. Stated
+    # so that work argues with this position rather than discovering the gap.
+    def guard_mass_deletion!(doomed_count, observable_count)
+      return if doomed_count.zero? || observable_count.zero?
+
+      pct = (doomed_count.to_f / observable_count) * 100
+      return if pct <= max_delete_pct
+
+      raise Library::Scanner::UnsafeScan,
+            "scan would tombstone #{doomed_count}/#{observable_count} observable files " \
+            "(#{pct.round(1)}% > #{max_delete_pct}%).#{unreadable_note} Refusing — is the share " \
+            "mounted? Set LIBRARY_SCAN_MAX_DELETE_PCT to override."
+    end
+
+    # A refusal should diagnose itself. "N directories were unreadable" is usually the whole
+    # explanation for a half-mounted share, and those subtrees are excluded from BOTH sides of
+    # the fraction above — so without this the operator sees a percentage computed over a
+    # population they have no way to know was reduced.
+    def unreadable_note
+      return "" if @unreadable_dirs.empty?
+      " #{@unreadable_dirs.size} directories were unreadable and excluded " \
+        "(#{@unreadable_dirs.first(3).map(&:inspect).join(', ')}#{'...' if @unreadable_dirs.size > 3})."
+    end
+
+    # Read PER CALL, not frozen into a constant at class load: the raise above names this
+    # variable as the operator's way out, and a value fixed at boot makes that advice false
+    # inside a running process (and unreachable from a test, which is how an escape hatch rots
+    # shut). One ENV fetch per scan — not per file — costs nothing.
+    def max_delete_pct
+      @max_delete_pct ||
+        Integer(ENV.fetch("LIBRARY_SCAN_MAX_DELETE_PCT", DEFAULT_MAX_DELETE_PCT.to_s))
+    end
+
+    # Live file paths this pass was actually in a position to see. An unreadable directory's
+    # subtree is absent from the observations through no fault of the filesystem's CONTENTS —
+    # Dir.children raised, so we never looked. Excluding it here rather than in the guard is the
+    # whole point: #call reads the same method, so it cannot tombstone what the guard never
+    # counted. Two definitions and the guard approves a pass that then deletes files it did not
+    # know about.
+    #
+    # MEMOIZED so the guard's numerator and denominator are literally one snapshot rather than
+    # two independent plucks that merely happen to agree (there is no transaction — see the class
+    # header — so 2b's write path could otherwise slip between them). A Reconciler is already
+    # single-use: @dir_ids accumulates across #call, so caching the pre-write tree here is
+    # consistent with what the object already is. It also halves the pluck of the whole live-file
+    # path set.
+    def observable_live_paths
+      @observable_live_paths ||=
+        @unreadable_dirs.empty? ? live_file_paths : live_file_paths.reject { |p| unobserved?(p) }
+    end
+
+    # Path-boundary matching, never a bare string prefix: "secrets/x.stl" is not inside "secret".
+    # "." is the Scanner's report that the ROOT itself could not be listed — nothing was observed,
+    # so nothing can be called absent.
+    def unobserved?(path)
+      @unreadable_dirs.any? { |d| d == "." || path == d || path.start_with?("#{d}/") }
+    end
 
     # Step 1. Returns the observations that no live node claims — the input to step 2.
     def match_live_paths(files)
@@ -125,31 +258,46 @@ module Library
       @user.nodes.present.where(kind: "file", storage_path: paths).order(:storage_path).to_a
     end
 
-    # Step 2. Pair a vanished path with an unexplained new one by (content_hash, size) — that is
-    # a move. Returns the [observation, hash] pairs nothing claimed, for steps 3-4.
-    def pair_moves(vanished, unmatched)
+    # Step 2, DECIDE. Pair a vanished path with an unexplained new one by (content_hash, size) —
+    # that is a move. Returns [moves, doomed, leftovers]: the pairings, the vanished nodes nothing
+    # explained, and the [observation, hash] pairs nothing claimed (for steps 3-4).
+    #
+    # Deciding and applying are split so the guard can read the real tombstone count — `doomed` —
+    # while every one of those nodes is still live. Fused, the only number available before the
+    # first tombstone is the rename-inflated upper bound.
+    def plan_moves(vanished, unmatched)
       # filter_map: an unreadable NEW file yields no hash, so it cannot be paired and must not
       # be created half-indexed (a node with a nil content_hash is a preview that can never be
       # keyed). Leaving it out entirely means the next pass indexes it properly.
       candidates = unmatched.filter_map { |o| (h = hash_for(o)) && [ o, h ] }
+      moves = []
+      doomed = []
 
       vanished.each do |node|
         idx = best_pairing(candidates, node)
         if idx
+          # Consumed from `candidates` as we go, so no two nodes can claim one observation.
           o, hash = candidates.delete_at(idx)
-          node.update!(storage_path: o.rel_path, name: File.basename(o.rel_path),
-                       parent_node_id: parent_id_for(o.rel_path),
-                       mtime: o.mtime, size: o.size, content_hash: hash)
+          moves << [ node, o, hash ]
         else
           # Tombstone, never destroy: a project shows "file missing" instead of an attachment
           # silently vanishing. A move AND an edit within one interval is indistinguishable
           # from delete+create — the bytes changed, so there is nothing left to pair on — and
           # degrades to exactly that. Accepted and tested, not silent.
-          node.update!(deleted: true)
+          doomed << node
         end
       end
 
-      candidates
+      [ moves, doomed, candidates ]
+    end
+
+    # Step 2, APPLY.
+    def apply_moves!(moves)
+      moves.each do |node, o, hash|
+        node.update!(storage_path: o.rel_path, name: File.basename(o.rel_path),
+                     parent_node_id: parent_id_for(o.rel_path),
+                     mtime: o.mtime, size: o.size, content_hash: hash)
+      end
     end
 
     # Several byte-identical files make pairing non-unique (a CAD library is full of them), so
@@ -227,11 +375,16 @@ module Library
     # parent_node_id that resolves to a directory the user deleted.
     #
     # Deepest-first, so a child is tombstoned before its parent.
+    #
+    # `unobserved?` applies here exactly as it does to files: an unreadable directory is itself
+    # observed (its parent listed it) but everything BENEATH it is not, so `secret/sub` is
+    # missing from the observations only because Dir.children(secret) raised. Tombstoning it
+    # would delete a directory we were never able to look inside.
     def tombstone_vanished_dirs(dirs)
       observed = dirs.map(&:rel_path).to_set
       @user.nodes.present.where(kind: "dir").where.not(storage_path: nil)
            .order(:storage_path).to_a
-           .reject { |n| observed.include?(n.storage_path) }
+           .reject { |n| observed.include?(n.storage_path) || unobserved?(n.storage_path) }
            .sort_by { |n| -n.storage_path.count("/") }
            .each { |n| n.update!(deleted: true) }
     end

@@ -17,6 +17,16 @@ module Library
   # "it isn't there" is the mass-deletion bug itself, wearing the costume of a successful scan.
   # Walking by hand is ~20 lines and makes every error decision explicit and local.
   class Scanner
+    # A scan whose input we do not trust enough to act on. Raised from here for a root that is
+    # gone, and from the Reconciler for a pass that would tombstone an implausible share of the
+    # library — one name, because to an operator they are the same event ("the scan refused") and
+    # to a caller they are the same decision (retry later; do not treat this as the truth).
+    #
+    # It lives on the Scanner rather than the Reconciler because a scan is the operation an
+    # operator, ScanJob, and the tests all name. The Reconciler already depends on this class for
+    # Observation, so raising Scanner::UnsafeScan adds no coupling that was not already here.
+    UnsafeScan = Class.new(StandardError)
+
     # Never index the trash: doing so re-indexes deleted files as new ones and resurrects them.
     # Root-anchored — we skip the entry and never descend, so no child can be observed either.
     TRASH_PREFIX = ".trash".freeze
@@ -32,26 +42,47 @@ module Library
     # unreadable subtree under the threshold otherwise tombstones quietly, with only a per-dir
     # log line to say why. Sync's services return data rather than self; this departs from that
     # because the telemetry is out-of-band from what the reconcile returns.
-    def self.call(user, root:) = new(user, root:).tap(&:call)
+    def self.call(user, root:, max_delete_pct: nil) = new(user, root:, max_delete_pct:).tap(&:call)
 
-    def initialize(user, root:)
+    # `max_delete_pct` overrides the mass-deletion threshold for this scan; nil (all production
+    # callers) means the deployment's LIBRARY_SCAN_MAX_DELETE_PCT. It is forwarded rather than
+    # left on the Reconciler because the Scanner is the only thing that ever constructs one — a
+    # knob the real entry point cannot reach is a knob that only tests can use by mutating ENV.
+    def initialize(user, root:, max_delete_pct: nil)
       @user = user
       @root = Pathname.new(root).expand_path
+      @max_delete_pct = max_delete_pct
       @unreadable_dirs = []
     end
 
     # Directories the walk could not list. NOT the same as "empty": their subtrees are absent
     # from the observations through no fault of the filesystem's contents. Anything that
-    # tombstones on absence (Task 7's mass-deletion guard) MUST consult this before believing
-    # the observations are a complete picture of the tree.
+    # tombstones on absence MUST consult this before believing the observations are a complete
+    # picture of the tree — #call hands it to the Reconciler, which excludes those subtrees from
+    # `vanished_paths` (so nothing under them is tombstoned) and from the mass-deletion guard's
+    # denominator (so an unreadable region cannot dilute a real deletion under the threshold).
     attr_reader :unreadable_dirs
 
     # The root is handed to the Reconciler rather than left for it to look up: it needs to
     # resolve a rel_path back to real bytes to hash it, and reaching for FileLayer.current.root
     # would couple it to the deployment-wide backend — which is Chunk (no root at all) whenever
     # a scan runs outside a share deployment. We already know the root; pass it.
+    #
+    # The missing-root check is LOAD-BEARING, not belt-and-braces: #each_child rescues ENOENT and
+    # returns without recording anything (right for a child vanishing mid-scan), so a root that
+    # is gone yields [] observations AND an empty unreadable_dirs — indistinguishable from an
+    # empty library by observation alone. It is also the difference between telling an operator
+    # "your LIBRARY_PATH does not exist" and handing them a percentage.
     def call
-      Library::Reconciler.new(@user, observations: observe, root: @root).call
+      raise UnsafeScan, "library root #{@root} is missing" unless @root.directory?
+
+      # `observe` must run BEFORE unreadable_dirs is read — it is what fills it. Hence the local
+      # rather than inlining the call into the argument list.
+      observations = observe
+      # unreadable_dirs travels WITH the observations: it is the half of the report that says
+      # where we could not look, and the Reconciler must not tombstone on absence there.
+      Library::Reconciler.new(@user, observations:, unreadable_dirs:, root: @root,
+                                     max_delete_pct: @max_delete_pct).call
     end
 
     # Walk the tree and return one Observation per entry. Public because it is the whole of this
