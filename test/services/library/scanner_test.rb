@@ -124,6 +124,35 @@ module Library
       assert_equal [ "secret" ], scanner.unreadable_dirs
     end
 
+    # A real NAS holds names written by old Windows/classic-Mac clients that are not valid UTF-8.
+    # They reach the Reconciler and raise ArgumentError ("invalid byte sequence") — which is NOT
+    # a SystemCallError, so its rescue misses it — leaving the library half-indexed and killing
+    # every later pass at the same entry.
+    #
+    # This stubs Dir.children rather than creating the file: macOS rejects such a name outright
+    # (EILSEQ), so the fixture cannot exist on the dev box this ships from. That is exactly why
+    # the bug survived to the final review.
+    test "a filename that is not valid UTF-8 is skipped, not indexed and not fatal" do
+      write!("good.stl", "fine")
+      bad = "caf\xE9.stl".dup.force_encoding("UTF-8")
+      assert_not bad.valid_encoding?, "precondition: the fixture name must be invalid UTF-8"
+
+      scanner = Library::Scanner.new(nil, root: @root.to_s)
+      original = Dir.method(:children)
+      Dir.define_singleton_method(:children) { |*| [ "good.stl", bad ] }
+      begin
+        paths = scanner.observe.map(&:rel_path)
+      ensure
+        Dir.define_singleton_method(:children, original)
+      end
+
+      assert_equal [ "good.stl" ], paths, "the unencodable name must not reach the Reconciler"
+      assert paths.all?(&:valid_encoding?)
+      # Skipped, NOT recorded unreadable: the directory listed fine. Recording it would be a lie,
+      # and would drag a healthy library toward the mass-deletion guard.
+      assert_empty scanner.unreadable_dirs
+    end
+
     test "an unreadable ROOT reports as unreadable rather than as an empty library" do
       scanner = Library::Scanner.new(nil, root: @root.to_s)
       File.chmod(0o000, @root)

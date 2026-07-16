@@ -136,6 +136,28 @@ module Library
         end
 
       names.each do |name|
+        # A real NAS holds filenames that are not valid UTF-8: a name written by an old Windows
+        # or classic-Mac client arrives from Dir.children as raw bytes tagged with the
+        # filesystem encoding. Such a name raises ArgumentError ("invalid byte sequence") the
+        # moment anything touches it — Pathname#join, String#count, or an ActiveRecord bind —
+        # and ArgumentError is NOT a SystemCallError, so the Reconciler's rescue does not catch
+        # it. Because a pass is deliberately un-transactioned, one such file leaves the library
+        # half-indexed and kills every subsequent pass at the same entry: the scan never
+        # converges, and the error cannot even name the file, since the name is what won't
+        # encode.
+        #
+        # Skip rather than scrub: a scrubbed name no longer resolves back to the real bytes, so
+        # we would index a file whose every read 404s. Skipping HERE — in the Scanner — is also
+        # what keeps it out of vanished_paths, so an unindexable file can never be tombstoned.
+        #
+        # No test on macOS can produce this fixture (APFS rejects the name with EILSEQ), and the
+        # CI share leg scans an empty tmpdir, so this is pinned at the Reconciler level instead.
+        unless name.valid_encoding?
+          Rails.logger.warn("library scan: skipping #{name.scrub.inspect} — filename is not " \
+                            "valid #{name.encoding}")
+          next
+        end
+
         rel = prefix.empty? ? name : "#{prefix}/#{name}"
         next if rel == TRASH_PREFIX
 
