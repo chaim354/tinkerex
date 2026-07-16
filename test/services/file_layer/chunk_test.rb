@@ -49,6 +49,12 @@ module FileLayer
       node_id
     end
 
+    # Chunk's "delete" is the tombstone the v1 API sets (Sync::Mutation op "delete"); the
+    # versions stay in the DB for restore, which is exactly why read must check the node.
+    def delete_file!(node_id)
+      @user.nodes.find_by!(node_id:).update!(deleted: true)
+    end
+
     # The read path's core loop walks Version#manifest_chunks, which is `.order(:seq)`
     # (app/models/version.rb). NOTHING else asserts that ordering, and getting it wrong corrupts
     # the bytes of EVERY file larger than one chunk — silently, since each chunk is individually
@@ -102,6 +108,19 @@ module FileLayer
     def http_error(status)
       io = Struct.new(:status).new([ status.to_s, "Err" ])
       OpenURI::HTTPError.new("#{status} Err", io)
+    end
+
+    # Contract hook. Chunk's transient failure: a presign-only store whose GET returns 403 —
+    # the exact credentials-outage shape that caused the original incident.
+    #
+    # `current=` is a global, so it's reset on the way out rather than left for the next
+    # test's setup to mop up: the contract calls this hook, and a leaked PresignOnlyStore
+    # would surface as an unrelated failure elsewhere in the worker.
+    def with_transient_backend_failure(&block)
+      Storage::ChunkStore.current = PresignOnlyStore.new
+      with_http_get_raising(http_error(403), &block)
+    ensure
+      Storage::ChunkStore.reset!
     end
 
     test "a 404 on the presigned GET is a missing chunk (terminal NotFound)" do
@@ -226,11 +245,40 @@ module FileLayer
       )
       other_version, = Sync::Commit.finalize(user: other, commit_id: cid)
 
+      # @user owns a LIVE node with the SAME node_id. `node_id` uniqueness is scoped to
+      # :user_id and node_id is client-supplied, so a user genuinely CAN hold a node carrying
+      # another user's node_id — this is the real attack shape. It is also what gets the
+      # request PAST read's liveness guard and into the version lookup, which is the line
+      # under test: without it, live_node! short-circuits and this test proves nothing about
+      # tenant scoping (verified by mutation — see below).
+      own_hash = Digest::SHA256.hexdigest("mine")
+      Storage::ChunkStore.current.put!(@user.id, own_hash, "mine")
+      own_cid = SecureRandom.uuid
+      Sync::Commit.begin(
+        user: @user, device: @device, commit_id: own_cid, node_id:, parent_node_id: nil,
+        name: "mine.stl", base_version_id: nil, size: 4,
+        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
+        manifest: [ { "hash" => own_hash, "offset" => 0, "length" => 4 } ]
+      )
+      Sync::Commit.finalize(user: @user, commit_id: own_cid)
+
       # @user asking for other's node_id+content_token => no row in @user's scope => NotFound,
       # no bytes leak.
-      assert_raises(FileLayer::NotFound) do
+      #
+      # Assert the MESSAGE, not just the class — this is the part that actually bites. Drop the
+      # `user.` scope and read resolves OTHER's version, then fails a step later anyway with
+      # NotFound "missing chunk", because the chunk store is namespaced per user
+      # (chunks/<user_id>/<hash>) and the bytes aren't in @user's keyspace. Same exception class,
+      # entirely different reason, tenant scoping gone. assert_raises alone cannot tell those
+      # apart and stays green on the unscoped mutant; only the message does.
+      err = assert_raises(FileLayer::NotFound) do
         adapter.read(@user, node_id:, content_token: other_version.version_id)
       end
+      assert_match(/no version/, err.message,
+                   "must fail because the version isn't in @user's scope, not incidentally")
+      # And @user's OWN bytes at that node are still readable — the guard rejects the foreign
+      # token, not the node.
+      assert_equal "mine", adapter.read(@user, node_id:)
     end
   end
 end

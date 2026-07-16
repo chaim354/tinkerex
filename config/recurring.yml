@@ -43,3 +43,15 @@ production:
     class: PendingCommitReaperJob
     queue: background
     schedule: every hour at minute 42
+
+  # Reconcile share-backed libraries with what's actually on disk. Changes made outside the app
+  # (someone drops files on the NAS in Finder) surface within this interval — inotify does not
+  # reliably fire for other machines' writes over SMB/NFS, so polling is the honest mechanism
+  # (spec decision 5). No-ops unless LIBRARY_BACKEND=share, so it is inert in a chunk deployment.
+  #
+  # `command:` rather than `class:` because this fans out one ScanJob PER USER (scan_all!) — the
+  # other entries here are all-users sweeps that a single job can do. The fanned-out jobs run on
+  # the background queue via ScanJob.queue_as.
+  library_scan:
+    command: "Library::ScanJob.scan_all!"
+    schedule: every 15 minutes

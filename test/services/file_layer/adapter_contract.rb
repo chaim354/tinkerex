@@ -11,6 +11,17 @@
 #                                     time — in chunk mode that means passing `mtime:` through
 #                                     to the commit; in share mode the filesystem supplies it.
 #                                     The mtime-unit test below cannot pass otherwise.
+#   delete_file!(node_id)          -> remove the file from the backend the way a USER would
+#                                     (chunk: tombstone the node; share: move it out of the
+#                                     indexed tree). It must NOT be the port's `delete`, which
+#                                     does not exist yet.
+#   with_transient_backend_failure { } -> make the backend fail in a way that is TEMPORARY and
+#                                     not the file's fault (a 403/5xx/network blip; an
+#                                     unmounted share), then yield. Must restore on the way out
+#                                     — the test reads the file again afterwards to prove it.
+#                                     Fault the TRANSPORT (the store/filesystem beneath the
+#                                     adapter), never the adapter's own error classification —
+#                                     stubbing that is what this test exists to check.
 module FileLayerAdapterContract
   # mtime is unix NANOSECONDS across the whole sync engine (nodes.mtime is a bigint of nanos;
   # CLAUDE.md §7). Treating nanos as seconds already shipped once as a real bug in the WebDAV
@@ -76,5 +87,53 @@ module FileLayerAdapterContract
     assert_includes [ true, false ], caps.versioned?
     assert_includes [ true, false ], caps.syncable?
     assert_includes [ true, false ], caps.presignable?
+  end
+
+  # Tombstoned means GONE, on every backend. Chunk could technically still serve a trashed
+  # node's bytes (its versions live in the DB), but Share physically cannot — its trash is a
+  # real filesystem move — so an adapter that answers differently is a divergence the maker
+  # layer would see as "the file is still there" on one deployment and "missing" on another.
+  def test_contract_read_raises_not_found_for_a_deleted_node
+    id = create_file!(name: "gone.stl", bytes: "bye")
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id) }
+  end
+
+  def test_contract_stat_raises_not_found_for_a_deleted_node
+    id = create_file!(name: "gone2.stl", bytes: "bye")
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.stat(@user, node_id: id) }
+  end
+
+  # The by-token path needs its OWN case: it resolves content directly and can bypass a
+  # liveness check that only guards the current-version path — so without this, an adapter can
+  # serve a trashed file's bytes to anyone holding a pre-deletion token and stay green. That is
+  # the path the only production caller uses (GeneratePreviewJob always passes a version_id).
+  # Cross-backend, not chunk-specific: share/S3 keep no history, so a token captured before
+  # deletion is gone there too.
+  def test_contract_read_at_a_token_captured_before_deletion_raises_not_found
+    id = create_file!(name: "gone3.stl", bytes: "bye")
+    token = adapter.stat(@user, node_id: id).content_token
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id, content_token: token) }
+  end
+
+  # The single most consequential distinction in the port. A transient backend failure must
+  # NEVER read as "the file is gone": NotFound is terminal (a preview is marked failed
+  # forever), FetchError retries. This exists because a 403 during a credentials outage was
+  # once swallowed as "missing chunk", permanently failing previews for healthy files — and
+  # for Share the same mistake means an unmounted NAS looks like the user deleted the library.
+  #
+  # NotFound and FetchError are disjoint siblings of StandardError, so assert_raises(FetchError)
+  # cannot be satisfied by the very bug it guards against.
+  def test_contract_transient_backend_failure_raises_fetch_error_not_not_found
+    id = create_file!(name: "flaky.stl", bytes: "still here")
+    with_transient_backend_failure do
+      assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
+    end
+    # The failure was TRANSIENT and the hook restored: the file was healthy all along. Without
+    # this the hook could satisfy the contract by breaking the backend permanently (unmount and
+    # never remount) — green here, damage surfacing as unrelated failures later in the suite.
+    assert_equal "still here", adapter.read(@user, node_id: id)
   end
 end

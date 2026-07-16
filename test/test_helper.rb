@@ -38,6 +38,34 @@ module ActiveSupport
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
 
+    # Pin the FileLayer backend for the duration of one test.
+    #
+    # A test whose FIXTURES are chunk-shaped (ManifestChunk rows, Storage::ChunkStore blobs) is a
+    # chunk test, and must SAY so: FileLayer.current otherwise reads the ambient LIBRARY_BACKEND,
+    # so the whole suite run under LIBRARY_BACKEND=share pointed those tests at the Share adapter,
+    # which looked for the fixtures' bytes on a disk that has none. The failure was the honest
+    # signal ("this test depends on the ambient backend"), not a bug in either adapter — and the
+    # ci.yml `test-share-backend` leg exists to keep catching it.
+    #
+    # Call it in setup. The teardown below restores the prior value whether or not it was called,
+    # so nothing leaks into the next test in the worker.
+    def pin_file_layer_backend(name)
+      # Capture the prior value ONCE. A second call in the same test would otherwise overwrite it
+      # with the first pin's value, and teardown would "restore" that into the next test in this
+      # worker — a leak that no test would report.
+      @file_layer_backend_prior = ENV["LIBRARY_BACKEND"] unless @file_layer_backend_pinned
+      @file_layer_backend_pinned = true
+      ENV["LIBRARY_BACKEND"] = name
+      FileLayer.reset!
+    end
+
+    teardown do
+      if @file_layer_backend_pinned
+        ENV["LIBRARY_BACKEND"] = @file_layer_backend_prior
+        FileLayer.reset!
+      end
+    end
+
     # Add more helper methods to be used by all tests here...
   end
 end

@@ -37,11 +37,17 @@ module FileLayer
     def build
       case ENV.fetch("LIBRARY_BACKEND", "chunk")
       when "chunk" then Chunk.new
-      when "share", "s3"
-        # Phases 2-3. Fail loudly: silently falling back to chunk mode would serve an EMPTY
-        # library while the operator believes we are reading their NAS.
-        raise NotImplementedError,
-              "LIBRARY_BACKEND=#{ENV['LIBRARY_BACKEND']} is not implemented yet (phases 2-3)"
+      when "share"
+        # Validate before constructing: Share.new defaults to ENV.fetch("LIBRARY_PATH"), which
+        # raises a bare KeyError naming nothing. The boot guard normally catches this first, but
+        # it is skipped in the test env and reads ENV once at boot — so the factory asks too, and
+        # the operator gets the same explanation either way.
+        LibraryBackendCheck.check!
+        Share.new
+      when "s3"
+        # Phase 3. Fail loudly: silently falling back to chunk mode would serve an EMPTY
+        # library while the operator believes we are reading their bucket.
+        raise NotImplementedError, "LIBRARY_BACKEND=s3 is not implemented yet (phase 3)"
       else
         raise ArgumentError, "unknown LIBRARY_BACKEND #{ENV['LIBRARY_BACKEND'].inspect}"
       end

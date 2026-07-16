@@ -1,8 +1,42 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-14 (full-stack audit fixes; FileLayer port phase 1 merged + deployed; SeaweedFS moved to .8)
+**Updated:** 2026-07-16 (FileLayer **Share adapter, phase 2a** — a read-only share-backed library)
 
-## Latest (2026-07-14): full-stack audit + the maker/file layer split begins
+## Latest (2026-07-16): phase 2a — point it at a NAS and the attachments survive
+
+`LIBRARY_BACKEND=share` + `LIBRARY_PATH=/mnt/nas/models` now **boots, indexes an existing
+directory, and serves it to the maker layer** (browse via the synthesized dir tree, attach,
+preview from real bytes on real disk). The headline promise holds end-to-end: **a user
+reorganizing their NAS in Finder keeps every project attachment**, because `Library::Reconciler`
+pairs a vanished path with its new one by `(content_hash, size)` and the node keeps its
+`node_id`. Share libraries are **current-state only** — no versions, no history, no restore
+(a Finder overwrite destroys the old bytes; that departure from §5 is deliberate and scoped to
+storage we don't own). `download` is Phase 4.
+
+**Server suite 523 → 635, green on BOTH backends** (`bin/rails test` and
+`LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test` are identical). The shared
+adapter contract runs against `Chunk` *and* `Share` in the default suite — that, not the
+`test-share-backend` CI leg, is what stops the adapters diverging; the leg catches tests that
+silently depend on the ambient backend (it found 9 immediately).
+
+**What execution actually cost, and why it's worth recording:** the plan was detailed and
+precise, which made implementing it literally the main risk. Every task carried a real defect,
+and the worst were *cross-task* and invisible to per-task review:
+- The mass-deletion guard as designed counted a **rename as a deletion**, so it would have
+  refused the phase's own headline scenario (Task 10's E2E would have died on `UnsafeScan`).
+- The `nodes` unique index and the reconciler collided: a **deleted-then-restored file crashed
+  the whole scan**. Fixed with a partial index (`WHERE deleted = false`) + tombstone-revive.
+- `Pathname#find` **silently swallows `EACCES`**, so an unreadable folder was already
+  tombstoning its entire subtree — data loss that shipped through two reviews and only
+  surfaced when the guard was wired to `unreadable_dirs`.
+- A filename that isn't valid UTF-8 (routine on a NAS with old Windows clients) **bricked
+  every subsequent scan** — caught only by the final whole-branch review, because macOS
+  cannot even create the fixture and the CI leg scans an empty tmpdir.
+
+*Open, non-correctness, commented in-code:* `Reconciler` loads every live node into memory
+(~1M AR objects) — **fix before a real 2TB NAS**; `best_pairing` is O(n²) (~2s/10k renames).
+
+## Previous (2026-07-14): full-stack audit + the maker/file layer split begins
 
 **1. A full-stack audit (server + all Rust crates) found 7 criticals + ~20 majors — all fixed,
 merged (`217b5aa`), pushed.** Each with a regression test. The ones worth remembering:
@@ -37,6 +71,7 @@ step 10 for the full picture, the settled decisions, and the two deliberate inva
   byte-for-byte). That run was also verify-on-finalize's first live exercise against real S3.
 - **Next:** `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md` (read-only
   share-backed library). `LIBRARY_BACKEND=share` currently raises `NotImplementedError` by design.
+  *(Superseded 2026-07-16 — phase 2a is done and share now boots; see the top of this file.)*
 - **A caution worth carrying:** the Phase 1 final reviewer proved by *mutation* that the branch
   had removed the only guard on multi-chunk ordered assembly — flipping `.order(:seq)` to
   `.order(seq: :desc)`, which corrupts every file over one chunk, passed the whole 522-test suite.

@@ -37,7 +37,11 @@ module Maker
       assert_equal "v1", captured[:content_token]
     end
 
+    # Pinned, not ambient: this is the only test in this class that is ABOUT a specific adapter —
+    # it says so in its name and it stages chunk-shaped fixtures. The rest exercise the shim
+    # itself (constants, delegation) and are correctly backend-agnostic, so they stay that way.
     test "read still returns real bytes end-to-end through the chunk adapter" do
+      pin_file_layer_backend("chunk")
       node_id = SecureRandom.uuid
       hash = Digest::SHA256.hexdigest("real bytes")
       Storage::ChunkStore.current.put!(@user.id, hash, "real bytes")
