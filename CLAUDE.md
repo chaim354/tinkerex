@@ -66,7 +66,8 @@ content-addressed manifest sharing chunks).
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). `Chunk` (today's version→manifest→chunk path; versioned, syncable) is the only adapter built; `share` (a mounted SMB/NFS dir) and `s3` (the user's bucket) raise `NotImplementedError` **loudly** rather than falling back. `Maker::FileBytes` is now a 19-line shim over it — the maker layer no longer knows files are chunks. A shared **adapter contract** (`test/services/file_layer/adapter_contract.rb`) is what stops future adapters diverging. See §12 step 10. |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **Two adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable) and **`Share`** (a mounted SMB/NFS dir — read-only, **current-state only**: no versions, no history, no restore). `s3` (the user's bucket) still raises `NotImplementedError` **loudly** rather than falling back. `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. A shared **adapter contract** (`test/services/file_layer/adapter_contract.rb`) is what stops the adapters diverging — **both run it in the default suite**, and that (not the CI leg) is the anti-divergence mechanism. See §12 step 10. |
+| **Library scan** | `app/services/library/` | Share-mode indexing. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). |
 | maker-app-core, juicefs-backend | `client/…` | Earlier Tauri mount-controller + JuiceFS WebDAV backend (from the abandoned path; kept for reference). |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
@@ -482,15 +483,32 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       for a mounted directory, which has nothing to presign — share streams via
       X-Accel/X-Sendfile; **S3 still presigns, so §15 holds where it was aimed** (managed/WAN
       egress). Do not "fix" these back.
-    - **NEXT: Phase 2a**, planned and ready to execute:
-      `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md` — a read-only
-      share-backed library (Share adapter + scanner + reconciler + mass-deletion guard + boot
-      guard + `nodes` migration + CI leg). It **must open with the two §9a prerequisites**
-      (tombstoned = gone; pin retryability), which sit at the port↔adapter seam. Phase 2b =
-      the write path + trash; Phase 3 = S3; Phase 4 = capability gating + `Delivery`.
-    - `LIBRARY_BACKEND=share` today raises `NotImplementedError` **by design** — a silent
+    - **Phase 2a DONE** (2026-07-16, branch `worktree-file-layer-share-phase2a`, 11 commits):
+      a **read-only share-backed library** —
+      `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md`. `LIBRARY_BACKEND=share`
+      + `LIBRARY_PATH=/mnt/nas/models` now boots, indexes an existing NAS directory, and the
+      maker layer browses/previews it with **attachments that survive a reorganization**.
+      Server suite **523 → 635**, green on *both* backends (`LIBRARY_BACKEND=share bin/rails
+      test` is a CI leg — it catches tests that silently depend on the ambient backend; the
+      shared contract is what stops the adapters diverging). Phase 2b = the write path +
+      trash; Phase 3 = S3; Phase 4 = capability gating + `Delivery` (**`download` is Phase 4**
+      — share-mode `blob` 404s today, by scope).
+    - **Hard-won during 2a — do not relitigate:** the mass-deletion guard must count the
+      **post-pairing tombstone set**, never vanished paths (a rename vanishes its old path, so
+      the naive guard refuses the reorganization the phase exists for). `Pathname#find`
+      **silently swallows `EACCES`** and drops the unreadable subtree — for a tombstoner that
+      is a mass-deletion bug wearing a clean scan; hence the hand-rolled walk + `unreadable_dirs`,
+      which must be excluded from **both** sides of the guard's fraction *and* from
+      `vanished_paths`. Filenames on a real NAS **are not guaranteed to be valid UTF-8**; one
+      that isn't used to brick every subsequent scan (macOS can't even create the fixture).
+    - *Open (non-correctness, commented in-code):* `Reconciler` loads every live node into
+      memory (~1M AR objects on a large NAS) — **fix before pointing this at a real 2TB NAS**;
+      `best_pairing` is O(n²) (~2s per 10k renames).
+    - `LIBRARY_BACKEND=s3` still raises `NotImplementedError` **by design** — a silent
       fallback to chunk mode would serve an empty library while the operator believes we're
-      reading their NAS.
+      reading their bucket. **Phase 3 trap:** the moment `FileLayer::S3` exists,
+      `ScanJob.scan_all!`'s `is_a?(FileLayer::Share)` gate quietly no-ops instead of raising.
+      An S3 library needs its own indexer; decide there deliberately (commented at the gate).
 
 ---
 
