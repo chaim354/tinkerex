@@ -52,6 +52,10 @@ module V1
         ::ManifestChunk.create!(user_id: user.id, manifest_id: "m", chunk_hash: "svgh",
                                 seq: 0, offset: 0, length: svg.bytesize)
         ::Version.create!(user_id: user.id, version_id: "vr", node_id: "ready.svg", manifest_id: "m")
+        # A preview always belongs to a real, live node in production — FileLayer#read enforces
+        # that (tombstoned = gone), so the fixture has to reflect reality.
+        user.nodes.create!(node_id: "ready.svg", name: "ready.svg", kind: "file",
+                           deleted: false, current_version_id: "vr")
         preview = user.maker_previews.create!(node_id: "ready.svg", version_id: "vr")
         ::Maker::GeneratePreviewJob.perform_now(preview.id, filename: "ready.svg")
         assert_equal "ready", preview.reload.status

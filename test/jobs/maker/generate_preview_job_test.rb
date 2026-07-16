@@ -11,12 +11,26 @@ module Maker
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
     end
 
-    def stage_version(node_id:, version_id:, bytes:, manifest_id: "m")
+    # `name:` is the file's real name on the Node row, which the job resolves when no filename
+    # arg is given; it defaults to node_id because most tests here use a node_id that already
+    # looks like a filename.
+    def stage_version(node_id:, version_id:, bytes:, manifest_id: "m", name: nil)
       hash = "h-#{version_id}"
       @store.write_blob(@user.id, hash, bytes)
       ManifestChunk.create!(user_id: @user.id, manifest_id:, chunk_hash: hash,
                             seq: 0, offset: 0, length: bytes.bytesize)
-      Version.create!(user_id: @user.id, version_id:, node_id:, manifest_id:)
+      version = Version.create!(user_id: @user.id, version_id:, node_id:, manifest_id:)
+      # A preview always belongs to a real, live node in production — FileLayer#read now
+      # enforces that (tombstoned = gone), so the fixture has to reflect reality.
+      stage_node(node_id:, version_id:, name:)
+      version
+    end
+
+    def stage_node(node_id:, version_id:, name: nil)
+      node = @user.nodes.find_or_initialize_by(node_id:)
+      node.update!(name: name || node_id, kind: "file", deleted: false,
+                   current_version_id: version_id)
+      node
     end
 
     test "renders SVG, attaches the asset, flips status to ready" do
@@ -47,8 +61,7 @@ module Maker
       # synced Node row carries the real name. With no filename arg, the job must resolve
       # the name from the node (not fall back to the extensionless node_id).
       node_id = "11111111-2222-3333-4444-555555555555"
-      stage_version(node_id:, version_id: "v1", bytes: @svg)
-      @user.nodes.create!(node_id:, name: "drawing.svg", kind: "file", parent_node_id: "root")
+      stage_version(node_id:, version_id: "v1", bytes: @svg, name: "drawing.svg")
       preview = @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail")
 
       Maker::GeneratePreviewJob.perform_now(preview.id)
@@ -62,8 +75,7 @@ module Maker
 
     test "no filename: node name with an unrenderable extension stays unsupported" do
       node_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-      stage_version(node_id:, version_id: "v2", bytes: "anything")
-      @user.nodes.create!(node_id:, name: "part.sldprt", kind: "file", parent_node_id: "root")
+      stage_version(node_id:, version_id: "v2", bytes: "anything", name: "part.sldprt")
       preview = @user.maker_previews.create!(node_id:, version_id: "v2")
 
       assert_nothing_raised do
@@ -206,17 +218,22 @@ module Maker
     end
 
     test "a real fetch/render error flips status to failed with the error message" do
-      # Version exists but its chunk bytes are missing from the store → FileBytes::NotFound.
+      # Live node + version, but the chunk bytes are missing from the store → FileBytes::NotFound.
+      # The node is staged deliberately: without it, read rejects the node as not-live and this
+      # test would still go green while never reaching the missing-chunk path it exists to cover.
       ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",
                             seq: 0, offset: 0, length: 3)
       Version.create!(user_id: @user.id, version_id: "v3", node_id: "broken.svg", manifest_id: "mx")
+      stage_node(node_id: "broken.svg", version_id: "v3")
       preview = @user.maker_previews.create!(node_id: "broken.svg", version_id: "v3")
 
       Maker::GeneratePreviewJob.perform_now(preview.id, filename: "broken.svg")
 
       preview.reload
       assert_equal "failed", preview.status
-      assert preview.error.present?
+      # Pins WHICH failure: without this, deleting the stage_node line above would leave the
+      # test green on that error, silently losing the missing-chunk coverage.
+      assert_match(/missing chunk/, preview.error.to_s)
       assert_not preview.asset.attached?
     end
   end

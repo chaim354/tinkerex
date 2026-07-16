@@ -11,6 +11,10 @@
 #                                     time — in chunk mode that means passing `mtime:` through
 #                                     to the commit; in share mode the filesystem supplies it.
 #                                     The mtime-unit test below cannot pass otherwise.
+#   delete_file!(node_id)          -> remove the file from the backend the way a USER would
+#                                     (chunk: tombstone the node; share: move it out of the
+#                                     indexed tree). It must NOT be the port's `delete`, which
+#                                     does not exist yet.
 module FileLayerAdapterContract
   # mtime is unix NANOSECONDS across the whole sync engine (nodes.mtime is a bigint of nanos;
   # CLAUDE.md §7). Treating nanos as seconds already shipped once as a real bug in the WebDAV
@@ -76,5 +80,34 @@ module FileLayerAdapterContract
     assert_includes [ true, false ], caps.versioned?
     assert_includes [ true, false ], caps.syncable?
     assert_includes [ true, false ], caps.presignable?
+  end
+
+  # Tombstoned means GONE, on every backend. Chunk could technically still serve a trashed
+  # node's bytes (its versions live in the DB), but Share physically cannot — its trash is a
+  # real filesystem move — so an adapter that answers differently is a divergence the maker
+  # layer would see as "the file is still there" on one deployment and "missing" on another.
+  def test_contract_read_raises_not_found_for_a_deleted_node
+    id = create_file!(name: "gone.stl", bytes: "bye")
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id) }
+  end
+
+  def test_contract_stat_raises_not_found_for_a_deleted_node
+    id = create_file!(name: "gone2.stl", bytes: "bye")
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.stat(@user, node_id: id) }
+  end
+
+  # The by-token path needs its OWN case: it resolves content directly and can bypass a
+  # liveness check that only guards the current-version path — so without this, an adapter can
+  # serve a trashed file's bytes to anyone holding a pre-deletion token and stay green. That is
+  # the path the only production caller uses (GeneratePreviewJob always passes a version_id).
+  # Cross-backend, not chunk-specific: share/S3 keep no history, so a token captured before
+  # deletion is gone there too.
+  def test_contract_read_at_a_token_captured_before_deletion_raises_not_found
+    id = create_file!(name: "gone3.stl", bytes: "bye")
+    token = adapter.stat(@user, node_id: id).content_token
+    delete_file!(id)
+    assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id, content_token: token) }
   end
 end
