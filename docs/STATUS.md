@@ -1,6 +1,52 @@
 # Build status — sync engine
 
-**Updated:** 2026-06-16 (file-layer hardening + prod-like infra wave: symlinks client+server, verify-on-hydrate, N-way conflict, offline primitives, both documented-reds fixed, conformance byte-perfect, ghcr+OVH/R2 prod-like box, cross-OS app build CI, sharing+encryption plans)
+**Updated:** 2026-07-14 (full-stack audit fixes; FileLayer port phase 1 merged + deployed; SeaweedFS moved to .8)
+
+## Latest (2026-07-14): full-stack audit + the maker/file layer split begins
+
+**1. A full-stack audit (server + all Rust crates) found 7 criticals + ~20 majors — all fixed,
+merged (`217b5aa`), pushed.** Each with a regression test. The ones worth remembering:
+- **A pull silently destroyed an unpushed local edit with no conflict recorded** —
+  `apply_remote`'s pending-outbox guard only protected *other* nodes squatting the name, so an
+  inbound upsert clobbered a node's own dirty manifest *and its base version*, making the later
+  push a clean fast-forward. Reachable on a **single device** via an own-echo race during a slow
+  upload. Fixed with `ApplyOutcome::dirty_local` + engine-side defer.
+- **`pull_snapshot` never swept**, so a device that full-resynced kept every server-deleted file
+  as a ghost that could **resurrect** on edit. The fault harness modeled a sweep the real code
+  never did — the soak's "0 silent losses" validated the model, not production.
+- **A bandwidth cap below ~4 MB/s livelocked the sync thread forever** (a chunk larger than the
+  token bucket's burst can never be satisfied) and hung `Daemon::stop()`.
+- **CfAPI: a remote folder rename deleted the folder's contents library-wide** (echo guard marked
+  the dir but not the children its own `remove_dir_all` touched).
+- **The desktop app kept the device token *and unpushed offline edits* in the OS temp dir**
+  (tmpfs on Linux; macOS purges `$TMPDIR`), token world-readable.
+- Server: client-supplied chunk hashes were unvalidated before becoming storage keys; `move` had
+  no cycle guard (one call wedged every subsequent search); tiered retention could prune versions
+  still referenced by **unresolved conflicts**.
+- **verify-on-finalize is now ON by default** (`SYNC_VERIFY_FINALIZE=0` to opt out). The
+  `SharedDirIO` engine suites opt out — that transport is the seam their fault tests wrap;
+  `two_device_e2e` moved to `PresignedIO` and now exercises verify for real.
+
+**2. The maker/file layer split — Phase 1 done, deployed, verified live.** See `CLAUDE.md` §12
+step 10 for the full picture, the settled decisions, and the two deliberate invariant departures.
+- `FileLayer` port + `Chunk` adapter + a shared adapter contract; `Maker::FileBytes` reduced from
+  79 lines reaching into `version.manifest_chunks`/`ChunkStore` to a **19-line shim**. The maker
+  layer no longer knows files are chunks — proven by grep, not by tests.
+- Merged `f04ef61`, deployed to `192.168.1.95`, and verified with a **live 40k-byte presigned
+  round-trip through SeaweedFS** (Mac → presigned PUT → SeaweedFS → presigned GET → fresh device,
+  byte-for-byte). That run was also verify-on-finalize's first live exercise against real S3.
+- **Next:** `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md` (read-only
+  share-backed library). `LIBRARY_BACKEND=share` currently raises `NotImplementedError` by design.
+- **A caution worth carrying:** the Phase 1 final reviewer proved by *mutation* that the branch
+  had removed the only guard on multi-chunk ordered assembly — flipping `.order(:seq)` to
+  `.order(seq: :desc)`, which corrupts every file over one chunk, passed the whole 522-test suite.
+  A bigger suite is not a stronger one. Restored and re-proven.
+
+**3. Infra:** SeaweedFS moved to **192.168.1.8:8333** (`.7` is retired; port closed). It is a
+**fresh instance with new S3 credentials** — 1Password item **`seaweednew`**, not `seaweedfs`.
+Open question: whether `my-bucket` on `.8` carries the old chunks, or only new writes work.
+
+## Previous (2026-06-16): file-layer hardening + prod-like infra wave
 
 ## Latest (2026-06-16, later): file-layer hardening + prod-like infra
 

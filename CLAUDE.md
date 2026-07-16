@@ -66,6 +66,7 @@ content-addressed manifest sharing chunks).
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). `Chunk` (today's version→manifest→chunk path; versioned, syncable) is the only adapter built; `share` (a mounted SMB/NFS dir) and `s3` (the user's bucket) raise `NotImplementedError` **loudly** rather than falling back. `Maker::FileBytes` is now a 19-line shim over it — the maker layer no longer knows files are chunks. A shared **adapter contract** (`test/services/file_layer/adapter_contract.rb`) is what stops future adapters diverging. See §12 step 10. |
 | maker-app-core, juicefs-backend | `client/…` | Earlier Tauri mount-controller + JuiceFS WebDAV backend (from the abandoned path; kept for reference). |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
@@ -460,6 +461,36 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    bandwidth controls all landed** (2026-06-15, engine-side; selective sync still needs an app
    surface). *Remaining optional file-layer item (non-correctness):* **at-rest chunk encryption**
    (deliberately last; `docs/parity-roadmap.md`, `docs/research-sync-competitors.md`).
+10. **Split the maker layer from the file layer** (2026-07-14) so a **web-only deployment can be
+    backed by a plain network share or the user's own S3** instead of the FastCDC chunk store —
+    the Immich/Photoprism "point it at my existing NAS" on-ramp. **Phase 1 DONE, merged
+    (`f04ef61`), deployed, and verified live** (a 40k-byte presigned round-trip through
+    SeaweedFS): the `FileLayer` port + `Chunk` adapter + the shared adapter contract, and
+    `Maker::FileBytes` reduced to a shim. The maker layer no longer references chunks at all
+    (`grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/`
+    returns nothing — that grep IS the proof, not the test suite).
+    - **Design:** `docs/superpowers/specs/2026-07-14-maker-file-layer-split-design.md`.
+      §2 = settled decisions (backend per **deployment**, not per user; index-existing AND
+      write-new; **current-state only, no history** on share/s3; stable `node_id` reconciled by
+      scan; periodic scan, not inotify; Rails streams share bytes). §9a = six issues the Phase 1
+      review found, deferred with reasons. **§10 is a tripwire:** if work here needs to touch
+      sync, the changelog, conflicts, locks, or the mounts, the boundary is wrong — stop.
+    - **Two deliberate invariant departures, both scoped to storage we don't own:** §5
+      ("keep versions so restore always works") cannot hold on a plain share — the user's
+      overwrite in Finder destroys the old bytes — so share/s3 libraries are **current-state
+      only** and restore stays a chunk-mode feature. §15 ("keep bytes out of Rails") cannot hold
+      for a mounted directory, which has nothing to presign — share streams via
+      X-Accel/X-Sendfile; **S3 still presigns, so §15 holds where it was aimed** (managed/WAN
+      egress). Do not "fix" these back.
+    - **NEXT: Phase 2a**, planned and ready to execute:
+      `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md` — a read-only
+      share-backed library (Share adapter + scanner + reconciler + mass-deletion guard + boot
+      guard + `nodes` migration + CI leg). It **must open with the two §9a prerequisites**
+      (tombstoned = gone; pin retryability), which sit at the port↔adapter seam. Phase 2b =
+      the write path + trash; Phase 3 = S3; Phase 4 = capability gating + `Delivery`.
+    - `LIBRARY_BACKEND=share` today raises `NotImplementedError` **by design** — a silent
+      fallback to chunk mode would serve an empty library while the operator believes we're
+      reading their NAS.
 
 ---
 
