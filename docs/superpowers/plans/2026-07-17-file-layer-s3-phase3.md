@@ -970,20 +970,53 @@ In `s3_test.rb`, add `include FileLayerWritableContract` next to the read contra
       assert_equal parent.node_id, node.parent_node_id
     end
 
-    test "write rejects a separator in the leaf name" do
-      assert_raises(FileLayer::NotFound) do
-        adapter.write(@user, parent_node_id: nil, name: "cad/gear.stl", io: StringIO.new("g"))
-      end
-    end
-
-    test "write refuses a name that escapes the prefix" do
-      [ "../outside.stl", "/etc/passwd", "a/../../outside.stl" ].each do |bad|
-        assert_raises(FileLayer::NotFound) do
+    # Assert the MESSAGE, not just the class. Every fixture below contains a separator, so it is
+    # the LEAF check that refuses them — the escape guard is never reached. 2b shipped exactly
+    # this test asserting `NotFound` by class alone, and it pinned nothing: NotFound was reachable
+    # two ways and the guard it named was dead code as far as the test was concerned. Same trap,
+    # same fix.
+    test "write rejects a name that is not a leaf" do
+      [ "cad/gear.stl", "../outside.stl", "/etc/passwd", "a/../../outside.stl", ".", "..", "" ].each do |bad|
+        err = assert_raises(FileLayer::NotFound, "#{bad.inspect} must be refused") do
           adapter.write(@user, parent_node_id: nil, name: bad, io: StringIO.new("x"))
         end
+        assert_match(/leaf name/, err.message, bad.inspect)
       end
       assert_equal 0, @fake.objects.keys.count { |k| !k.start_with?("#{PREFIX}/") },
                    "nothing may be written outside the prefix"
+    end
+
+    # THE escape guard, reached the only way it can be: through the PARENT. A separator-free leaf
+    # cannot escape once `.`/`..` are refused above, so `name` never gets here. This mirrors 2b's
+    # Share test, which had to be rewritten for the same reason — see Share#write's poisoned-parent
+    # test. Note key_for must REJECT `..`, not normalize it: `expand_path` would turn `a/../b` into
+    # a valid key and silently read the wrong object.
+    test "write through a parent whose storage_path escapes the prefix is refused" do
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 storage_path: "../escaped", mtime: 1)
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: evil.node_id, name: "pwned.stl", io: StringIO.new("x"))
+      end
+      assert_match(/escapes/, err.message)
+      assert_equal 0, @fake.objects.keys.count { |k| !k.start_with?("#{PREFIX}/") }
+    end
+
+    # The WRITABLE CONTRACT requires this, and 2b's Task 5 found this plan was missing it — which
+    # is the contract earning its keep before S3 exists. Share#write refuses an occupied
+    # destination (share.rb:88); an S3 adapter that put_object'd straight over it would diverge
+    # from its sibling on the one axis this port cannot tolerate. It matters MORE here than in
+    # chunk mode: every backend this contract covers is current-state-only (spec decision 3), so a
+    # clobber is the user's file permanently gone from a name collision in an upload form.
+    #
+    # This pins the CHECK, not atomicity neither backend offers: exist?-then-put is TOCTOU, and S3
+    # has no portable conditional put — the same race this plan already documents for `move`.
+    test "write refuses to clobber an existing object" do
+      adapter.write(@user, parent_node_id: nil, name: "keep.stl", io: StringIO.new("original"))
+      assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: nil, name: "keep.stl", io: StringIO.new("clobber"))
+      end
+      assert_equal "original", @fake.objects["#{PREFIX}/keep.stl"].body,
+                   "the user's bytes must survive a colliding upload"
     end
 
     # A failed PUT must not leave an indexed node pointing at an object that is not there:
@@ -1005,7 +1038,8 @@ In `s3_test.rb`, add `include FileLayerWritableContract` next to the read contra
 - **Order: put the object, THEN index.** Pinned above. The share writes to a temp file and renames because a half-written file is visible in Finder; **S3 needs no equivalent — `put_object` is atomic, an object appears whole or not at all.** Do not port the temp-and-rename dance; there is nothing to protect against. (Say this in the comment, or a reader who knows `Share#write` will "restore" the missing step.)
 - The identity comes from `put_object`'s response ETag → **through `ObjectIdentity.for`**, the same normalizer the observer uses. Landmine 2.
 - `mtime`: **nanos**, from the put response / a HEAD — *not* `Time.now`. `FileInfo`'s contract pins the unit and the next scan compares against what the store reports, not against what we guessed.
-- `name` is a **leaf**; the directory is `parent_node_id`. Same escape guard as `read`.
+- `name` is a **leaf**; the directory is `parent_node_id`. Same escape guard as `read`. Refuse `.` and `..` explicitly — they are separator-free, so a `File.basename`-style check passes them, and they are the only leaf values that could otherwise reach outside the prefix. That is also what makes it true that `name` can never reach the escape guard, which is why the guard's test has to come through a poisoned **parent**.
+- **Refuse an occupied destination** (`head_object` → exists → `NotFound`). **The writable contract requires this** and this plan was originally missing it — 2b's Task 5 caught the gap, which is the contract doing its job before this adapter exists. `Share#write` refuses (`share.rb:88`); an S3 adapter that put straight over the user's object would diverge from its sibling on the one axis this port cannot tolerate, and every backend here is **current-state-only**, so a clobber is the user's file permanently gone. This pins the *check*, not atomicity: `head`-then-`put` is TOCTOU and S3 has no portable conditional put — the same race this plan already documents for `move`. Say so in the comment rather than implying the check is a lock.
 - A failed put → `FetchError` (transient — the caller retries), never `NotFound`.
 - Return `FileInfo`.
 
