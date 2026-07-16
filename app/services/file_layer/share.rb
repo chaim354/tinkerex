@@ -72,6 +72,60 @@ module FileLayer
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
+    # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
+    # the instant the caller can attach to it rather than up to a scan-interval later.
+    #
+    # NO TRANSACTION, deliberately, and unlike Task 3's delete: a filesystem write cannot be
+    # rolled back, so wrapping the `create!` in one buys nothing and only widens the window in
+    # which the rename has landed but the row has not. The failure it leaves — bytes on disk, no
+    # row, because `create!` raised — is SELF-HEALING: the next scan indexes the file. (Task 3's
+    # is not, which is why only Task 3 gets one.)
+    def write(user, parent_node_id: nil, name: nil, io: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      bytes = read_capped!(io)
+      FileUtils.mkdir_p(dest.dirname)
+      # Temp-then-rename: the 15-minute scan may be walking this directory right now, and a
+      # half-written file would be indexed with a hash of its own torn state. The rename is
+      # atomic, and keeping the temp in the DESTINATION'S OWN directory is what makes it so —
+      # a temp under `.trash/` (the one prefix the Scanner truly skips) would be invisible to a
+      # racing scan, but renaming ACROSS directories raises EXDEV if the user has a second share
+      # mounted inside their library, breaking every write into that subtree. Same-directory
+      # rename cannot EXDEV, and it needs no answer to a question Task 3 has not settled yet.
+      #
+      # KNOWN, NARROW: the Scanner skips `.trash` by name and invalid-encoding names — NOT
+      # dotfiles — so a scan landing between the binwrite and the rename does index the temp.
+      # The window is one binwrite (real for a large CAD file) and the outcomes are loud, not
+      # lossy: a torn hash makes the ghost node unpairable (tombstoned next pass, or an
+      # UnsafeScan on a small library), and a complete hash makes it pair with `dest` as a move
+      # and collide with the create! below on the storage_path unique index. The real fix is a
+      # temp-prefix skip in Library::Scanner, which this task's scope does not reach; flagged for
+      # the task that owns the scanner/write-path interaction.
+      tmp = dest.dirname.join(".maker-tmp-#{SecureRandom.hex(8)}")
+      begin
+        File.binwrite(tmp, bytes)
+        File.rename(tmp, dest)
+      rescue SystemCallError => e
+        FileUtils.rm_f(tmp)
+        # Same reasoning as `read`'s rescue: a full NAS, a permissions blip, an unmounted share.
+        # Every one of them is retryable, and NONE of them means "this file is gone".
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # stat the DESTINATION after the rename — that is the mtime the next scan will stat, and
+      # the scan-agreement test pins that these two agree exactly.
+      st = File.stat(dest)
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+        storage_path: rel, parent_node_id:,
+        size: st.size, mtime: nanos(st), content_hash: Digest::SHA256.hexdigest(bytes)
+      )
+      stat(user, node_id: node.node_id)
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -79,15 +133,59 @@ module FileLayer
     # Public because it is a resolution utility rather than a read-path internal: the escape
     # guard is worth exercising directly (no `send`), and the scanner/reconciler in Tasks 5-6
     # resolve the same node -> path mapping against the same root.
-    def absolute_path(node)
-      path = @root.join(node.storage_path.to_s).expand_path
-      unless path.to_s == @root.to_s || path.to_s.start_with?("#{@root}/")
-        raise NotFound, "path escapes the library root: #{node.storage_path.inspect}"
-      end
+    #
+    # `allow_root:` is the ONLY thing separating this from the write path's resolve_inside!, so
+    # both delegate to one #resolve! rather than keeping two near-copies of the guard. Two copies
+    # of a security check drift, and this file already makes that argument for live_node!.
+    def absolute_path(node) = resolve!(node.storage_path, allow_root: true)
+
+    private
+
+    # The write path's guard: the destination must be STRICTLY inside the root. A read may resolve
+    # to the root itself (harmless — it can only ever be handed a file node, and File.binread of a
+    # directory is EISDIR anyway); a write to the root itself would be a write to the library
+    # directory as a file, so it does not get the same latitude.
+    def resolve_inside!(rel) = resolve!(rel, allow_root: false)
+
+    def resolve!(rel, allow_root:)
+      path = @root.join(rel.to_s).expand_path
+      # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
+      # has the root as a prefix would otherwise pass.
+      inside = path.to_s.start_with?("#{@root}/") || (allow_root && path.to_s == @root.to_s)
+      raise NotFound, "path escapes the library root: #{rel.inspect}" unless inside
       path
     end
 
-    private
+    # A leaf name is a leaf. `.` and `..` are separator-free, so File.basename passes them — they
+    # need naming explicitly, and refusing them here is what makes it true that no `name` value
+    # can reach the escape guard.
+    def leaf!(name)
+      return unless name.blank? || File.basename(name.to_s) != name.to_s || %w[. ..].include?(name.to_s)
+      raise NotFound, "#{name.inspect} is not a leaf name (the directory is parent_node_id's job)"
+    end
+
+    def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
+
+    def parent_dir_rel!(user, parent_node_id)
+      return nil if parent_node_id.blank?
+      parent = user.nodes.present.find_by(node_id: parent_node_id, kind: "dir") ||
+               raise(NotFound, "parent #{parent_node_id.inspect} is not a live directory")
+      parent.storage_path
+    end
+
+    # Read the cap PLUS ONE byte: reading exactly MAX_BYTES cannot distinguish "exactly at the
+    # cap" from "truncated at the cap", so an oversize upload would be silently cut in half and
+    # stored as a valid-looking file. Reads at most 256MB+1 into memory, which is the same
+    # exposure `read` already accepts (and the same constant caps it).
+    def read_capped!(io)
+      bytes = io.read(MAX_BYTES + 1).to_s.b
+      raise NotFound, "file exceeds #{MAX_BYTES} bytes" if bytes.bytesize > MAX_BYTES
+      bytes
+    end
+
+    # Duplicated from Library::Scanner#nanos deliberately: this is the exact formula the scan will
+    # compare against, and the write path must not depend on the indexer to say what time it is.
+    def nanos(st) = st.mtime.to_i * 1_000_000_000 + st.mtime.nsec
 
     # Is the share actually mounted? Emptiness is the signal: an unmounted mount point is a
     # real, readable, EMPTY directory (File.exist? returns true for it, which is why that check

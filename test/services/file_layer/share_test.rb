@@ -238,5 +238,102 @@ module FileLayer
       # rather than merely leak. Task 8's boot guard is exactly the code that sets this.
       prev.nil? ? ENV.delete("LIBRARY_PATH") : ENV["LIBRARY_PATH"] = prev
     end
+
+    # --- the write path (phase 2b) ---------------------------------------------------------
+
+    test "write stores the bytes and indexes a node the scan agrees with" do
+      info = adapter.write(@user, parent_node_id: nil, name: "new.stl", io: StringIO.new("fresh"))
+
+      assert_equal "fresh", File.binread(@root.join("new.stl")), "the bytes must be on disk"
+      node = @user.nodes.find_by!(node_id: info.node_id)
+      assert_equal "new.stl", node.storage_path
+      assert_equal Digest::SHA256.hexdigest("fresh"), node.content_hash
+      assert_equal 5, node.size
+      assert node.mtime > 1_000_000_000_000_000, "mtime must be nanos, got #{node.mtime}"
+
+      # ...and it is the FILE's mtime, not the clock's. `assert mtime > 1e15` above passes for
+      # Time.now-in-nanos, and so does everything below it (the scan re-matches by PATH and keeps
+      # the node_id either way) — so without this line the incremental-skip property is unpinned,
+      # and that property is the only reason a 2TB archive is not re-hashed on every pass.
+      st = File.stat(@root.join("new.stl"))
+      assert_equal st.mtime.to_i * 1_000_000_000 + st.mtime.nsec, node.mtime,
+                   "write must record the file's own stat — Scanner#nanos compares against it"
+
+      # The scan must AGREE with what write recorded — same node_id, no duplicate, no churn.
+      # A write that the next scan treats as a new file would orphan the attachment the caller
+      # just made.
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+      assert_equal info.node_id, @user.nodes.find_by!(storage_path: "new.stl").node_id
+    end
+
+    # `name` is a LEAF; the directory is addressed by parent_node_id. So a write into `cad/`
+    # requires cad's node to exist — which a scan produces. This is the maker layer's actual
+    # shape: the UI uploads into a folder it is already browsing, so it holds that node_id.
+    test "write into a subdirectory addressed by parent_node_id" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      parent = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl", io: StringIO.new("g"))
+
+      assert_equal "g", File.binread(@root.join("cad/gear.stl"))
+      node = @user.nodes.find_by!(node_id: info.node_id)
+      assert_equal "cad/gear.stl", node.storage_path
+      assert_equal parent.node_id, node.parent_node_id
+    end
+
+    # A leaf name is a leaf: the directory is parent_node_id's job. `.` and `..` are separator-FREE
+    # and are the only names that could otherwise reach the root or its parent, so they belong to
+    # this check and not to the escape guard. The MESSAGE is asserted because NotFound is reachable
+    # from both, and a class-only assertion is how the first draft of this test came to pin nothing.
+    test "write rejects a name that is not a leaf" do
+      [ "cad/gear.stl", "/etc/passwd", "../outside.stl", "a/../../outside.stl", ".", "..", "" ].each do |bad|
+        err = assert_raises(FileLayer::NotFound, "#{bad.inspect} must be refused") do
+          adapter.write(@user, parent_node_id: nil, name: bad, io: StringIO.new("x"))
+        end
+        assert_match(/leaf name/, err.message, bad.inspect)
+      end
+      assert_equal [], Dir.children(@root), "nothing may be created for a refused name"
+    end
+
+    # THE escape guard, reached the only way it can be: through the PARENT. A separator-free leaf
+    # cannot escape once `.`/`..` are refused above, so `name` never gets here — but a `dir` node
+    # carrying a poisoned storage_path resolves the destination outside the root, which is exactly
+    # the bug class the audit preceding this work found (and the same route share_test.rb's
+    # read-side escape test uses).
+    test "write through a parent whose storage_path escapes the root is refused" do
+      outside = Pathname.new(Dir.mktmpdir("outside"))
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 storage_path: "../#{outside.basename}", mtime: 1)
+
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: evil.node_id, name: "pwned.stl", io: StringIO.new("x"))
+      end
+      assert_match(/escapes the library root/, err.message)
+      assert_equal [], Dir.children(outside), "nothing may be written outside the root"
+    ensure
+      FileUtils.remove_entry(outside) if outside&.exist?
+    end
+
+    # A 256MB fixture is not the way to pin a 256MB cap. Stub the constant instead — the cap's
+    # BEHAVIOR is what matters, and it is identical at 4 bytes. (share_test.rb already stubs the
+    # read side's File.size for the same reason; this stubs one layer up because `write` is handed
+    # an io, not a path, so there is no File.size call to fault.)
+    test "write refuses bytes over MAX_BYTES rather than filling the NAS" do
+      original = FileLayer::MAX_BYTES
+      FileLayer.send(:remove_const, :MAX_BYTES)
+      FileLayer.const_set(:MAX_BYTES, 4)
+
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: nil, name: "big.stl", io: StringIO.new("12345"))
+      end
+      assert_match(/exceeds/, err.message)
+      assert_not File.exist?(@root.join("big.stl")), "a refused write leaves no partial file"
+      assert_nil @user.nodes.find_by(storage_path: "big.stl"), "and no node"
+    ensure
+      FileLayer.send(:remove_const, :MAX_BYTES)
+      FileLayer.const_set(:MAX_BYTES, original)
+    end
   end
 end
