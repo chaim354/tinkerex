@@ -113,5 +113,85 @@ module Library
       # content that is not the content asked for.
       assert_raises(FileLayer::NotFound) { @adapter.read(@user, node_id: id, content_token: first) }
     end
+
+    # The 2b write path's headline claim, end to end: bytes the app itself put on the share can be
+    # attached to, deleted, and restored, and the attachment holds the same node_id throughout.
+    #
+    # The reads THROUGH `attachment.node_id` are what carry this test. The delete/undelete pair
+    # never touches Maker::FileAttachment at all — no code path here can rewrite it — so asserting
+    # its node_id is unchanged proves nothing on its own. What can fail is the NODE: undelete
+    # reviving the tombstone rather than minting a new row is the whole promise, and the only way
+    # to see it is to resolve the id the attachment has been holding since before the delete.
+    test "upload, attach, delete to trash, undelete — the attachment survives all of it" do
+      info = @adapter.write(@user, parent_node_id: nil, name: "bracket.stl",
+                            io: StringIO.new("solid bracket"))
+      project = @user.maker_projects.create!(name: "Printer mods")
+      attachment = project.file_attachments.create!(user: @user, node_id: info.node_id,
+                                                    role: "model")
+      assert_equal "solid bracket", @adapter.read(@user, node_id: attachment.node_id)
+
+      @adapter.delete(@user, node_id: info.node_id)
+
+      # The attachment still NAMES the node — a project shows "file missing" rather than an
+      # attachment silently vanishing.
+      assert_equal info.node_id, attachment.reload.node_id
+      assert @user.nodes.find_by!(node_id: info.node_id).deleted
+      # ...and the bytes really MOVED, rather than a flag being flipped over a file still sitting
+      # in the library. Asserted on disk because the raise below cannot see it: `read` refuses on
+      # the tombstone in live_node! and never reaches the filesystem, so without this the delete
+      # could leave the file exactly where it was and every assertion here would still pass.
+      assert_not @root.join("bracket.stl").exist?, "delete must move the bytes out of the library"
+      assert_equal [ "solid bracket" ],
+                   Dir.glob(@root.join(".trash/**/bracket.stl")).map { |p| File.binread(p) }
+      assert_raises(FileLayer::NotFound) { @adapter.read(@user, node_id: attachment.node_id) }
+
+      # Undeleted: the same node_id resolves to the same bytes. Reviving the tombstone rather than
+      # creating a new node is what makes this hold — a fresh node_id would leave the attachment
+      # pointing at a row that no longer describes the file, and this read would raise.
+      @adapter.undelete(@user, node_id: info.node_id)
+      assert_equal info.node_id, attachment.reload.node_id
+      assert_equal "solid bracket", @adapter.read(@user, node_id: attachment.node_id),
+                   "the attachment must resolve to the bytes again after an undelete"
+    end
+
+    # The structural hazard the whole delete design is shaped around (spec §6, and the argument in
+    # Share#delete's header): bytes moved into .trash are in the one region the Scanner refuses to
+    # look at, so a live node still pointing at the old path could never be paired and the scan
+    # would want to tombstone it — or, in the other direction, a tombstone that kept its
+    # storage_path would be REVIVED by the next observation of that path. Both are invisible to
+    # the unit tests, which do not run a scan over a real trashed file.
+    test "a trash-deleted file stays deleted across a scan, and the trash is never indexed" do
+      info = @adapter.write(@user, parent_node_id: nil, name: "gone.stl", io: StringIO.new("bye"))
+      @adapter.delete(@user, node_id: info.node_id)
+
+      scan!
+      scan! # twice: a resurrection bug often needs a second pass to show
+
+      assert @user.nodes.find_by!(node_id: info.node_id).deleted,
+             "the scan must not resurrect a trashed file (the pull_snapshot ghost class, spec §6)"
+      assert_equal 0, @user.nodes.present.where(kind: "file").count
+      assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
+    end
+
+    # A UI delete is not a mass deletion, and this is where that is settled end to end. It holds
+    # for a specific reason: `deleted: true` keeps the node out of `present`, which is what
+    # observable_live_paths plucks — so a port-deleted file is invisible to vanished_paths, doomed
+    # is 0, and the guard short-circuits before it ever computes a percentage. Delete 80% of the
+    # library through the app and the arithmetic that would refuse the scan is never reached.
+    #
+    # Take the tombstone out of Share#delete and this dies with `UnsafeScan 4/5 (80.0% > 20%)`,
+    # which is the mutation this test is for.
+    test "deleting most of the library through the port does not refuse the next scan" do
+      ids = 5.times.map do |i|
+        @adapter.write(@user, parent_node_id: nil, name: "f#{i}.stl", io: StringIO.new("x#{i}")).node_id
+      end
+      ids.first(4).each { |id| @adapter.delete(@user, node_id: id) } # 80% >> the 20% threshold
+
+      assert_nothing_raised { scan! }
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+      # The survivor kept its node_id through a scan that saw four of its neighbours disappear —
+      # the scan must not have paired it against one of the trashed files.
+      assert_equal "x4", @adapter.read(@user, node_id: ids.last)
+    end
   end
 end
