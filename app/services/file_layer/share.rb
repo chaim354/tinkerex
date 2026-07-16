@@ -72,6 +72,241 @@ module FileLayer
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
+    # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
+    # the instant the caller can attach to it rather than up to a scan-interval later.
+    #
+    # NO TRANSACTION, deliberately: a filesystem write cannot be rolled back, so wrapping the
+    # `create!` in one buys nothing and only widens the window in which the rename has landed but
+    # the row has not. The failure it leaves — bytes on disk, no row, because `create!` raised —
+    # is SELF-HEALING: the next scan indexes the file. (`delete` reaches the same conclusion by a
+    # harder road — see the argument there, where a transaction would actively manufacture a
+    # silent resurrection.)
+    def write(user, parent_node_id: nil, name: nil, io: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      observable!(rel)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      bytes = read_capped!(io)
+      FileUtils.mkdir_p(dest.dirname)
+      # Temp-then-rename: the 15-minute scan may be walking this directory right now, and a
+      # half-written file would be indexed with a hash of its own torn state. The rename is
+      # atomic, and keeping the temp in the DESTINATION'S OWN directory is what makes it so —
+      # a temp under `.trash/` (the one prefix the Scanner truly skips) would be invisible to a
+      # racing scan, but renaming ACROSS directories raises EXDEV if the user has a second share
+      # mounted inside their library, breaking every write into that subtree. Same-directory
+      # rename cannot EXDEV, and it needs no answer to a question Task 3 has not settled yet.
+      #
+      # The Scanner skips this prefix at every depth — see Library::Scanner::TEMP_PREFIX, which
+      # documents what happens when it doesn't: a scan landing inside the binwrite window indexes
+      # the torn temp, the rename makes it vanish, its hash can never pair, and the resulting
+      # tombstone trips the mass-deletion guard — refusing that scan and every scan after it,
+      # permanently. Reproduced before that skip existed; do not inline the string here, because
+      # two copies that must match exactly would bring the wedge back the moment they drift.
+      tmp = dest.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
+      begin
+        File.binwrite(tmp, bytes)
+        File.rename(tmp, dest)
+      rescue SystemCallError => e
+        FileUtils.rm_f(tmp)
+        # Same reasoning as `read`'s rescue: a full NAS, a permissions blip, an unmounted share.
+        # Every one of them is retryable, and NONE of them means "this file is gone".
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # stat the DESTINATION after the rename — that is the mtime the next scan will stat, and
+      # the scan-agreement test pins that these two agree exactly.
+      st = File.stat(dest)
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+        storage_path: rel, parent_node_id:,
+        size: st.size, mtime: nanos(st), content_hash: Digest::SHA256.hexdigest(bytes)
+      )
+      stat(user, node_id: node.node_id)
+    end
+
+    # Move the file out of the indexed tree into `.trash/<node_id>/<name>` and tombstone the
+    # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not
+    # collide, and Task 4's undelete needs one unambiguous place to look.
+    #
+    # NO TRANSACTION, and this is the one place in this file where that needs arguing rather
+    # than asserting: `File.rename` is not transactional, so a `transaction do` around both
+    # would roll back the ROW while leaving the FILE in `.trash` — manufacturing exactly the
+    # silent resurrection the ordering below exists to avoid. `node.update!` is a single
+    # statement and already atomic, which is the only atomicity this needs.
+    def delete(user, node_id: nil)
+      node = live_node!(user, node_id)
+      deletable_file!(node)
+      src = absolute_path(node) # read BEFORE the update nulls storage_path
+      dest_dir = trash_dir(node.node_id)
+      begin
+        # mkdir_p is INSIDE the begin: it is I/O against the same share as the rename, and it
+        # fails for the same transient reasons (a read-only mount, a full disk, an NFS perms
+        # blip). Outside, its raw Errno escapes the SystemCallError -> FetchError mapping every
+        # other I/O call in this file goes through, and a bare Errno IS a StandardError — which
+        # is what burns a preview to a permanent "failed" instead of retrying. See read's rescue.
+        FileUtils.mkdir_p(dest_dir)
+        File.rename(src, dest_dir.join(node.name))
+      rescue Errno::EXDEV => e
+        # Do NOT fall back to copy+delete: that invents a half-state (bytes in two places, or
+        # in neither) for an operation designed around an atomic rename. Spec §6 reserves
+        # copy-then-tombstone for S3, which has no rename to lose. This is a real configuration
+        # problem — a .trash symlinked elsewhere, a submount under the root — and it is the
+        # operator's to fix, so say so and change nothing.
+        discard_empty(dest_dir)
+        raise FetchError, "#{node_id.inspect}: .trash is on a different filesystem (#{e.class}) " \
+                          "— it must live under the library root"
+      rescue SystemCallError => e
+        # Same reasoning as read's and write's rescues: an unmounted NAS, a permissions blip.
+        # Retryable, and none of them means "this file is gone".
+        discard_empty(dest_dir)
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # ORDER IS LOAD-BEARING, and it is the reverse of the intuitive one. Tombstone-then-move
+      # leaves, if the move fails, a file the user cannot see and the next scan RESURRECTS (its
+      # path is observed, so create_or_revive! finds the tombstone by storage_path and revives
+      # it). Move-then-tombstone leaves, if the update fails, a file whose bytes are in .trash
+      # and whose node is live at a path with nothing behind it — which reads as a vanished file
+      # and is what the mass-deletion guard is for. The second failure is loud; the first is
+      # silent.
+      #
+      # `deleted: true` is what keeps a UI delete out of the mass-deletion guard's numerator:
+      # vanished_paths reads the `present` scope, so a tombstoned node is invisible to it and
+      # deleting most of a library can never make the next scan refuse itself.
+      #
+      # `storage_path: nil` RELEASES the path, and is not merely tidy: Reconciler#create_or_revive!
+      # revives a tombstone BY storage_path, so a trash tombstone that kept its path would hand a
+      # NEW, unrelated file dropped there the trashed node's node_id — and with it every
+      # attachment, BOM link and tag — while the old bytes sat in .trash waiting for an undelete
+      # that would then collide. Nulling it is what makes that revive unable to fire.
+      node.update!(deleted: true, storage_path: nil)
+      nil
+    end
+
+    # Rename and/or re-parent a node, keeping its node_id — which is the port's whole promise, and
+    # the reason this exists at all rather than leaving the user to do it in Finder and wait for a
+    # scan to pair it back.
+    #
+    # DIRECTORIES ARE ALLOWED, and the asymmetry with `delete` is deliberate rather than an
+    # oversight — see deletable_file!, which predicted it. A moved directory leaves its children's
+    # bytes OBSERVABLE at the new path, so the Reconciler's move-pairing re-homes them on the next
+    # pass with their node_ids intact (probed: 2/2 children re-homed, no ghosts, and the
+    # mass-deletion guard does not fire because it counts the POST-pairing set). A DELETED
+    # directory puts them in .trash, where the scan refuses to look, so nothing can ever pair them
+    # — a permanent wedge. Observable vs. skipped is the entire difference.
+    #
+    # Only the moved node's own row is rewritten, so a moved directory's descendants keep a STALE
+    # storage_path until the next scan. Two residuals follow, and both are accepted because they
+    # are EXACTLY what the user renaming that folder in Finder already produces — the case this
+    # phase is built to survive:
+    #   1. reads of a descendant ENOENT until the scan re-homes it (its parent_node_id is NOT
+    #      stale — the dir kept its node_id — so browse never breaks; only bytes do).
+    #   2. the repair pass re-hashes the whole moved subtree (pairing has nothing else to match
+    #      on), and a descendant that is unreadable at that moment cannot be paired, so it
+    #      tombstones and re-creates with a new node_id, orphaning its attachments.
+    # Cascading the prefix rewrite to descendants here would close both. It is the right end
+    # state and it is NOT in this phase's plan — left as a deliberate decision rather than
+    # smuggled in, since it is the first thing in this adapter that would write rows for paths
+    # the op did not observe.
+    #
+    # NO TRANSACTION, for the reason the whole file gives: File.rename is not transactional, so a
+    # rollback would restore the ROW while leaving the FILE moved — the worse of the two states.
+    def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      leaf!(new_name)
+      node = live_node!(user, node_id)
+      src = absolute_path(node)
+      rel = join_rel(parent_dir_rel!(user, new_parent_node_id), new_name)
+      observable!(rel)
+      dest = resolve_inside!(rel)
+      # Refuse rather than replace. POSIX rename() would silently clobber, and the maker layer has
+      # no undo for it: the displaced file's node would still point at a path now holding someone
+      # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
+      # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      begin
+        # mkdir_p INSIDE the begin, exactly as in delete: it is I/O against the same share and
+        # fails for the same transient reasons, and outside, its raw Errno escapes the
+        # SystemCallError -> FetchError mapping and burns a preview to a permanent "failed".
+        FileUtils.mkdir_p(dest.dirname)
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      # The node_id does not change — that is the port's whole promise, and the write contract
+      # (Task 5) pins it as a cross-backend rule.
+      #
+      # KNOWN API AMBIGUITY: `new_parent_node_id: nil` means THE ROOT, so this cannot distinguish
+      # "rename in place" from "move to the root" — a caller who omits it while meaning a rename
+      # moves the file to the top of the library. The port's signature is what it is (Task 5 pins
+      # it); a caller renaming must pass the current parent_node_id. Stated here because the
+      # failure is silent and the fix is one keyword at the call site.
+      node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+      stat(user, node_id: node.node_id)
+    end
+
+    # Move the bytes back out of .trash and revive the node — the inverse of `delete`, and the
+    # mirror of the structural hazard that shapes it. delete moves bytes INTO a region the Scanner
+    # skips, which is what makes its ghosts unpairable; undelete moves them OUT, which is the safe
+    # direction: the path becomes observable and the node becomes live together, so the next scan
+    # simply matches it by path.
+    #
+    # ORDER — move, then revive — is the same trade delete makes, resolved the same way. Revive
+    # first and a failed move leaves a live node pointing at nothing while its bytes sit in .trash:
+    # unobservable, unpairable, the ghost class itself. Move first and a failed revive leaves the
+    # bytes at their real path with the node still trashed — which the next scan simply INDEXES,
+    # so the user's file is visibly back (it loses its old node_id, but nothing is lost or hidden).
+    # Loud and self-healing beats silent.
+    #
+    # (That same scan, landing inside this method's own move->revive window, is a real but narrow
+    # race: it creates a node for the observed path, and this update! then collides with the
+    # partial unique index on (user_id, storage_path) WHERE deleted = false. The result is a raw
+    # RecordNotUnique out of a file the user can see and use, under a new node_id. Recorded rather
+    # than fixed: every ordering that closes it opens the strictly worse one above.)
+    def undelete(user, node_id: nil)
+      # NOT live_node!: this operates on a tombstone by definition. `deleted: true` in the lookup
+      # is what makes undeleting a live node a clean NotFound instead of a confusing rename.
+      node = user.nodes.find_by(node_id:, deleted: true) ||
+             raise(NotFound, "node #{node_id.inspect} is not in the trash")
+      src = trash_dir(node.node_id).join(node.name)
+      unless File.exist?(src)
+        # An UNMOUNTED share makes the trashed bytes absent too — and this is the only place
+        # besides `read` where this adapter mints a "your file is gone". It must ask the same
+        # question, for the same reason: NotFound is TERMINAL, so answering it while the NAS is
+        # merely down tells the user their file is permanently lost when it is sitting safely on
+        # the share. See read's rescue for the full argument; the trade is identical.
+        unless library_present?
+          raise FetchError, "#{node_id.inspect}: the trashed bytes are missing and the library " \
+                            "root looks unmounted"
+        end
+        # The library is there and the bytes are not. The purge job (Task 6) took them, or this is
+        # a SCAN tombstone, which never had bytes in .trash to begin with. Both are terminal and
+        # both are the user's answer: it is gone.
+        raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
+      end
+
+      # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
+      # live: false — see parent_dir_rel!.
+      rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
+
+      begin
+        FileUtils.mkdir_p(dest.dirname) # inside the begin, for the reason move and delete give
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      discard_empty(trash_dir(node.node_id))
+      # Re-stat: the bytes are the same, but mtime/size are what the next scan compares against,
+      # and a stale pair would make it re-hash the file for nothing.
+      st = File.stat(dest)
+      node.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
+      stat(user, node_id: node.node_id)
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -79,15 +314,172 @@ module FileLayer
     # Public because it is a resolution utility rather than a read-path internal: the escape
     # guard is worth exercising directly (no `send`), and the scanner/reconciler in Tasks 5-6
     # resolve the same node -> path mapping against the same root.
-    def absolute_path(node)
-      path = @root.join(node.storage_path.to_s).expand_path
-      unless path.to_s == @root.to_s || path.to_s.start_with?("#{@root}/")
-        raise NotFound, "path escapes the library root: #{node.storage_path.inspect}"
-      end
+    #
+    # `allow_root:` is the ONLY thing separating this from the write path's resolve_inside!, so
+    # both delegate to one #resolve! rather than keeping two near-copies of the guard. Two copies
+    # of a security check drift, and this file already makes that argument for live_node!.
+    def absolute_path(node) = resolve!(node.storage_path, allow_root: true)
+
+    private
+
+    # Derivable from the node alone — no column. Library::Scanner::TRASH_PREFIX rather than a
+    # second ".trash" literal: the Scanner's skip and this layout are the SAME fact, and two
+    # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
+    # the identical argument, for the identical reason.)
+    def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+
+    # Deleting a DIRECTORY is refused rather than cascaded. File.rename on a directory succeeds,
+    # so without this check `delete` would move a whole subtree into .trash while leaving every
+    # child node live at a path that no longer exists — the next scan finds them all vanished,
+    # cannot pair them (their bytes are in .trash, which the scan skips), and refuses itself via
+    # the mass-deletion guard once that subtree is >20% of the library. Nothing then clears the
+    # ghosts, so the refusal is permanent: Task 2's temp-file wedge by another road.
+    #
+    # That is an instance of a STRUCTURAL property, not a coincidence: wherever this app moves
+    # bytes INTO a region the Scanner skips (.trash, .maker-tmp-) while leaving a live node
+    # pointing at the old path, it creates ghosts the Reconciler can never pair — pairing needs
+    # an OBSERVATION as the partner, and a skipped path produces none.
+    #
+    # An earlier draft of this paragraph concluded "delete is uniquely exposed, because a dir MOVE
+    # leaves the bytes observable at the new path while a dir DELETE puts them where the scan
+    # refuses to look." The principle was right and the conclusion was FALSE, which is worth
+    # leaving here as a warning: a move is only self-healing when its DESTINATION is observable,
+    # and `write`/`move` used to accept `.trash` and `.maker-tmp-x` as destinations — perfectly
+    # good leaf names — wedging the library the same way, and additionally breaking every delete
+    # in it by turning `.trash` into a file. See `observable!`, which is the guard that claim's
+    # confidence delayed. The property is structural; assume every path that writes is exposed
+    # until you have checked it, and do not trust a sentence like the one this replaced.
+    #
+    # Chunk mode cascades instead (Sync::SubtreeDelete, whole subtree under one lock). Share mode
+    # deliberately does not: 2b is file-only, `undelete` restores ONE path under ONE parent and
+    # has no subtree story, and a cascade whose inverse does not exist is a delete the user cannot
+    # undo. (Worked both ways and both collapse: nulling the children's paths makes undelete mint
+    # new node_ids and lose every attachment; keeping them reintroduces the revive-by-path bug for
+    # each child.)
+    #
+    # Named for DELETE, not for `kind`, though it looks op-agnostic: Task 4's `move` may want a
+    # kind check too, and its answer is likely DIFFERENT (a moved dir's bytes stay observable, so
+    # the scan repairs the children on the next pass — a self-healing inconsistency, not a wedge).
+    # Sharing one guard would make this message lie there. Task 4 gets its own decision.
+    def deletable_file!(node)
+      return if node.file?
+      # UnsupportedOperation, not NotImplementedError: a user clicked delete on a folder, so this is a
+      # CLIENT condition (Phase 4 -> 409/422), and it must stay catchable by `rescue StandardError`.
+      # NotImplementedError is a ScriptError and means the DEPLOYMENT is mis-wired -> 501.
+      raise UnsupportedOperation,
+            "#{node.node_id.inspect} is a #{node.kind}: share-mode delete is files only — " \
+            "deleting a directory would strand its children's nodes at paths that no longer " \
+            "exist and wedge the next scan"
+    end
+
+    # Undo the entry dir when the move it was made for never landed, mirroring write's rm_f of
+    # its temp: rmdir only ever removes an EMPTY directory, so it cannot take bytes with it.
+    def discard_empty(dir)
+      FileUtils.rmdir(dir)
+    rescue SystemCallError
+      nil # non-empty or already gone; the purge job (Task 6) sweeps it either way
+    end
+
+    # The write path's guard: the destination must be STRICTLY inside the root. A read may resolve
+    # to the root itself (harmless — it can only ever be handed a file node, and File.binread of a
+    # directory is EISDIR anyway); a write to the root itself would be a write to the library
+    # directory as a file, so it does not get the same latitude.
+    def resolve_inside!(rel) = resolve!(rel, allow_root: false)
+
+    def resolve!(rel, allow_root:)
+      path = @root.join(rel.to_s).expand_path
+      # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
+      # has the root as a prefix would otherwise pass.
+      inside = path.to_s.start_with?("#{@root}/") || (allow_root && path.to_s == @root.to_s)
+      raise NotFound, "path escapes the library root: #{rel.inspect}" unless inside
       path
     end
 
-    private
+    # A leaf name is a leaf. `.` and `..` are separator-free, so File.basename passes them — they
+    # need naming explicitly, and refusing them here is what makes it true that no `name` value
+    # can reach the escape guard.
+    def leaf!(name)
+      return unless name.blank? || File.basename(name.to_s) != name.to_s || %w[. ..].include?(name.to_s)
+      raise NotFound, "#{name.inspect} is not a leaf name (the directory is parent_node_id's job)"
+    end
+
+    # The write path must never create a path the Scanner SKIPS. `leaf!` asks a different
+    # question — "is this one path segment?" — and a reserved name passes it: `.trash` and
+    # `.maker-tmp-x` are perfectly good leaves.
+    #
+    # This is the FOURTH instance of the skip-list blind spot, and the worst, because it wedges
+    # twice. Reproduced: `write(name: ".trash")` is one upload of an ordinary-looking file, and
+    #
+    #   1. it creates a live node at a path the scan never observes -> unpairable -> tombstoned
+    #      -> the mass-deletion guard refuses that scan and EVERY SCAN AFTER IT (the ghost class
+    #      Library::Scanner::TEMP_PREFIX documents at length); and
+    #   2. `.trash` is now a FILE, so #delete's mkdir_p raises EEXIST and EVERY DELETE IN THE
+    #      LIBRARY breaks — permanently, and not fixed by clearing the ghost. Someone has to
+    #      remove the file on the NAS by hand.
+    #
+    # Nobody wrote this bug; four correct pieces grew into it. 2a shipped TRASH_PREFIX; `leaf!`
+    # was written as a leaf check; the temp-file fix grew the skip-list into a RESERVED-NAME list
+    # without telling the validator; `move` then inherited `leaf!` unexamined. The lesson for
+    # whoever adds the next skipped prefix: the Scanner's skip-list and this guard are one fact,
+    # so they share the constants rather than a copy of the strings.
+    #
+    # Checked on `rel`, not `name`: the parent contributes segments too. Root-anchored for
+    # .trash and any-depth for the temp prefix, matching Scanner#each_child exactly — a nested
+    # `cad/.trash` is the user's own folder, is indexed, and is none of our business.
+    def observable!(rel)
+      segments = rel.to_s.split("/")
+      return unless segments.first == Library::Scanner::TRASH_PREFIX ||
+                    segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) }
+      raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
+    end
+
+    def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
+
+    # Blank means THE ROOT — join_rel turns a nil dir into a bare name. That convention is what
+    # lets `parent_node_id: nil` be a real destination, and it is also why the path-less guard
+    # below is not paranoia.
+    #
+    # `live: false` relaxes the lookup to include TOMBSTONED directories, and it exists for
+    # `undelete` alone. The route is not the one it looks like: an emptied directory still exists
+    # on disk, so a scan observes it and never tombstones it (probed). But if the user then
+    # removes the empty folder in Finder, THAT scan tombstones the dir node — keeping its
+    # storage_path — and the file trashed out of it is still perfectly restorable. Refusing it
+    # would be a dead end the user can neither see nor fix, for a folder they are in the middle of
+    # restoring a file into; mkdir_p recreates the folder instead, and because a recreated folder
+    # is positive evidence, the next scan revives that very dir node by storage_path with its
+    # original node_id. Self-healing, and pinned.
+    #
+    # The WRITE path keeps live: true, and that asymmetry is the point: writing a NEW file into a
+    # folder the user deleted is a request to reconsider, while restoring a file that was already
+    # in there is a request to undo.
+    def parent_dir_rel!(user, parent_node_id, live: true)
+      return nil if parent_node_id.blank?
+      scope = live ? user.nodes.present : user.nodes
+      parent = scope.find_by(node_id: parent_node_id, kind: "dir") ||
+               raise(NotFound, "parent #{parent_node_id.inspect} is not a " \
+                               "#{'live ' if live}directory")
+      # A dir node cannot carry a nil storage_path today — delete refuses directories, and a scan
+      # tombstone keeps its path — so this is unreachable. It is here because of what happens if
+      # that ever stops being true: blank means the root, so a path-less parent would silently
+      # relocate the file to the top of the library rather than fail. Of everything this adapter
+      # can get wrong, a silent misplacement is the one it has no later way to detect.
+      raise NotFound, "parent #{parent_node_id.inspect} has no storage_path" if parent.storage_path.blank?
+      parent.storage_path
+    end
+
+    # Read the cap PLUS ONE byte: reading exactly MAX_BYTES cannot distinguish "exactly at the
+    # cap" from "truncated at the cap", so an oversize upload would be silently cut in half and
+    # stored as a valid-looking file. Reads at most 256MB+1 into memory, which is the same
+    # exposure `read` already accepts (and the same constant caps it).
+    def read_capped!(io)
+      bytes = io.read(MAX_BYTES + 1).to_s.b
+      raise NotFound, "file exceeds #{MAX_BYTES} bytes" if bytes.bytesize > MAX_BYTES
+      bytes
+    end
+
+    # Duplicated from Library::Scanner#nanos deliberately: this is the exact formula the scan will
+    # compare against, and the write path must not depend on the indexer to say what time it is.
+    def nanos(st) = st.mtime.to_i * 1_000_000_000 + st.mtime.nsec
 
     # Is the share actually mounted? Emptiness is the signal: an unmounted mount point is a
     # real, readable, EMPTY directory (File.exist? returns true for it, which is why that check

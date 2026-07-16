@@ -61,6 +61,19 @@ module Library
       assert_equal [ "keep.stl" ], observe.map(&:rel_path).sort
     end
 
+    # Share#write writes to a temp name and renames atomically into place. A scan landing inside
+    # that window must not index the temp — unlike the trash, at ANY depth, because a write into
+    # cad/ puts its temp in cad/.
+    test "Share#write's in-flight temp file is never indexed, at any depth" do
+      write!("#{Library::Scanner::TEMP_PREFIX}abc123", "torn, half-written bytes")
+      write!("cad/#{Library::Scanner::TEMP_PREFIX}def456", "torn too")
+      write!("cad/real.stl", "a real file")
+      paths = observe.map(&:rel_path)
+
+      assert_equal [ "cad", "cad/real.stl" ], paths.sort, "only real entries may be observed"
+      assert paths.none? { |p| p.include?(Library::Scanner::TEMP_PREFIX) }
+    end
+
     test "the trash exclusion is root-anchored: a user's own nested .trash is indexed" do
       write!(".trash/old.stl", "deleted")
       write!("cad/.trash/mine.stl", "the user's own folder, not ours")

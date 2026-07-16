@@ -87,6 +87,43 @@ module FileLayer
       assert_equal "AAABB", adapter.read(@user, node_id:)
     end
 
+    # Chunk mutations do NOT go through this port; they are the sync engine's, and the three ops
+    # use THREE DIFFERENT doors, verified against the callers:
+    #   write  -> Sync::Commit's two-phase flow (a device pushes; the web UI reuses it)
+    #   delete -> Sync::SubtreeDelete.call             (v1/nodes_controller.rb:46)
+    #   move   -> Sync::Mutation.apply, op: "move"     (v1/nodes_controller.rb:55)
+    # A server-side chunk-and-commit path does not exist and has no caller, so the port says so
+    # out loud rather than answering NoMethodError.
+    #
+    # Asserted PER OP, never with one blanket regex. The whole deliverable is "refuse HONESTLY,
+    # naming the real path", so a test that accepts /Sync::Commit/ for delete would pin, by name,
+    # the wrong door as right — a green test guarding misinformation. `not_names` pins that exact
+    # defect: delete/move must never cite Sync::Commit, which has no delete or move path, and it
+    # also catches a regression to one shared message listing every class (which would satisfy
+    # the positive regexes while leaving the caller to guess which door is theirs).
+    test "the write path is not chunk mode's — each op refuses, naming its OWN real path" do
+      {
+        write: {
+          call: -> { adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("b")) },
+          names: /Sync::Commit/
+        },
+        delete: {
+          call: -> { adapter.delete(@user, node_id: "n1") },
+          names: /Sync::SubtreeDelete/, not_names: /Sync::Commit/
+        },
+        move: {
+          call: -> { adapter.move(@user, node_id: "n1", new_parent_node_id: nil, new_name: "y.stl") },
+          names: /Sync::Mutation\.apply/, not_names: /Sync::Commit/
+        }
+      }.each do |op, spec|
+        err = assert_raises(NotImplementedError, "#{op} must refuse, not answer") { spec[:call].call }
+        assert_match(spec[:names], err.message, "#{op} must name the path a caller should use")
+        next unless spec[:not_names]
+        assert_no_match(spec[:not_names], err.message,
+                        "#{op} must not send the caller to Sync::Commit, which has no #{op} path")
+      end
+    end
+
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---
     # These stub the presigned-GET seam, which now lives on the adapter. If they still stubbed
     # Maker::FileBytes.http_get they would silently no-op once FileBytes becomes a shim.

@@ -16,6 +16,33 @@ module FileLayer
   # where a 403 during a chunk-store creds outage was swallowed as "missing chunk".
   FetchError = Class.new(StandardError)
 
+  # This backend cannot do this op TO THIS NODE, and no retry or reconfiguration changes that:
+  # share-mode delete refuses a directory (it would strand the children's nodes). A CLIENT
+  # condition — the user clicked delete on a folder — so Phase 4 maps it to 409/422.
+  #
+  # Distinct from NotImplementedError, and the axis is not "how unsupported": it is WHO IS
+  # WRONG and WHEN YOU CAN KNOW.
+  #
+  #   NotImplementedError -> the DEPLOYMENT is mis-wired (LIBRARY_BACKEND=chunk got a `write`).
+  #                          Knowable from FileLayer.current.class before the call, so it is
+  #                          capability-gateable and never user-triggered. Phase 4: 501.
+  #   UnsupportedOperation -> the REQUEST is wrong (a user clicked delete on a folder). Knowable
+  #                          only per-node at runtime, so Capabilities — which is per-DEPLOYMENT
+  #                          — cannot gate it. Phase 4: 409/422.
+  #
+  # A StandardError on purpose. NotImplementedError is a ScriptError, so a caller's
+  # `rescue StandardError` (GeneratePreviewJob's shape) does NOT catch it — right for a wiring
+  # bug that should reach a developer, wrong for ordinary user input, which would otherwise
+  # propagate uncaught and page on-call because someone deleted a folder.
+  #
+  # NOT named `Unsupported`, on purpose: Maker::GeneratePreviewJob::Unsupported already exists
+  # and means a genuinely different thing — "no preview renderer for .step", which is TERMINAL
+  # and correct. This one is a live request a caller could have made differently. Phase 4 has to
+  # map them to different answers (this → 409/422; the job's → its terminal status), and two
+  # classes named `Unsupported` meaning opposite things is how that mapping gets written wrong.
+  # The suffix says which of the two is unsupported: the OPERATION, not the file.
+  UnsupportedOperation = Class.new(StandardError)
+
   # Cap to protect the job host when reading a whole file into memory. Port-wide: it applies
   # to any backend, not just the chunk store.
   MAX_BYTES = 256 * 1024 * 1024

@@ -31,6 +31,28 @@ module Library
     # Root-anchored — we skip the entry and never descend, so no child can be observed either.
     TRASH_PREFIX = ".trash".freeze
 
+    # Never index Share#write's in-flight temp file. It writes bytes to a temp name and renames
+    # atomically into place, so a scan landing inside that window would otherwise index the file
+    # mid-write and then find it gone. That combination WEDGES THE LIBRARY PERMANENTLY, and it is
+    # worth spelling out because neither half is wrong on its own:
+    #
+    #   1. the scan indexes `.maker-tmp-abc` while its bytes are still torn
+    #   2. write renames it to `bracket.stl`, so the temp path vanishes
+    #   3. the torn hash can never match the finished file, so the reconciler cannot PAIR them
+    #   4. the scan therefore wants to tombstone the ghost — and on a small library that is
+    #      100% of one file, over the 20% threshold, so the mass-deletion guard REFUSES the scan
+    #   5. the refusal means the ghost is never cleared, so every subsequent scan refuses too
+    #
+    # Reproduced end-to-end before this constant existed: three consecutive scans all raised
+    # `UnsafeScan 1/1 (100.0% > 20%)`. The library never scans again until an operator raises
+    # LIBRARY_SCAN_MAX_DELETE_PCT — a permanent wedge from a sub-second race.
+    #
+    # Matched by PREFIX, not by exact name (the suffix is random), and at every depth rather than
+    # root-anchored like the trash: a write into `cad/` puts its temp file in `cad/`, and the temp
+    # is ours everywhere it appears. Share#write reads this constant rather than duplicating the
+    # string — two copies that must match exactly would resurrect the wedge the moment they drift.
+    TEMP_PREFIX = ".maker-tmp-".freeze
+
     # One filesystem entry as a stat saw it. `size` is nil for directories (a directory's
     # st_size is an allocation detail — 96, 4096 — and storing it in nodes.size would be
     # meaningless bytes in a column that means "how big is this file").
@@ -160,6 +182,7 @@ module Library
 
         rel = prefix.empty? ? name : "#{prefix}/#{name}"
         next if rel == TRASH_PREFIX
+        next if name.start_with?(TEMP_PREFIX) # see TEMP_PREFIX: indexing it wedges the library
 
         path = dir.join(name)
         stat =
