@@ -3,7 +3,9 @@ require "test_helper"
 module V1
   module Maker
     class PreviewsTest < ActionDispatch::IntegrationTest
-      setup { Storage::ChunkStore.reset! }
+      setup do
+        Storage::ChunkStore.reset!
+      end
 
       def register(email: "p@example.com")
         bootstrap_token(email: email, device_name: "laptop")
@@ -44,6 +46,11 @@ module V1
       end
 
       test "index returns an asset url once the preview is ready" do
+        # The ONLY test in this file that stages chunk-shaped bytes, so it is the only one that
+        # gets pinned. The other five (auth, tenant isolation, param validation, index filtering)
+        # are genuinely backend-agnostic — pinning them too would shield them from the exact
+        # ambient-dependence signal the ci.yml `test-share-backend` leg exists to produce.
+        pin_file_layer_backend("chunk")
         token = register
         user  = User.find_by(email: "p@example.com")
         store = Storage::ChunkStore.current

@@ -107,6 +107,41 @@ jobs:
           # REDIS_URL: redis://localhost:6379/0
         run: bin/rails db:test:prepare test
 
+  # The whole suite, run again with the share backend selected.
+  #
+  # This is NOT what stops the two adapters diverging — the shared adapter contract already does
+  # that, and it runs against BOTH in the `test:` job above (chunk_test.rb and share_test.rb each
+  # include FileLayerAdapterContract and construct their adapter explicitly, so they need no ENV).
+  #
+  # What this leg catches is narrower and otherwise invisible: tests that silently depend on the
+  # AMBIENT backend. It earned its place immediately — it found nine of them (seven preview-job
+  # tests, the maker file-bytes shim, and a previews API test), all building chunk-shaped fixtures
+  # while taking their adapter from the environment, including one whose name claimed an adapter
+  # it never pinned. Those are now pinned; this leg is what keeps the habit from creeping back.
+  #
+  # Cheap enough to justify running everything rather than a scoped subset: a tmpdir, no external
+  # services. A subset would be redundant with `test:` — the point is the ambient ENV, not the
+  # specific files.
+  test-share-backend:
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Run tests with LIBRARY_BACKEND=share
+        env:
+          RAILS_ENV: test
+          LIBRARY_BACKEND: share
+        run: |
+          export LIBRARY_PATH=$(mktemp -d)
+          bin/rails db:test:prepare test
+
   system-test:
     runs-on: [self-hosted, linux]
 
