@@ -371,5 +371,148 @@ module FileLayer
       FileLayer.send(:remove_const, :MAX_BYTES)
       FileLayer.const_set(:MAX_BYTES, original)
     end
+
+    # --- delete -> trash (phase 2b) --------------------------------------------------------
+
+    test "delete moves the file to trash keyed by node_id and tombstones the node" do
+      id = index!("bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+
+      assert_not File.exist?(@root.join("bracket.stl")), "the file leaves the indexed tree"
+      assert_equal "solid", File.binread(@root.join(".trash/#{id}/bracket.stl"))
+      assert @user.nodes.find_by!(node_id: id).deleted, "the node is tombstoned, never destroyed"
+    end
+
+    test "two deleted files of the SAME NAME do not collide in the trash" do
+      a = index!("a/bracket.stl", bytes: "one")
+      b = index!("b/bracket.stl", bytes: "two")
+      adapter.delete(@user, node_id: a)
+      adapter.delete(@user, node_id: b)
+
+      # Keyed by node_id, which is exactly why the trash is <node_id>/<name> and not <name>.
+      assert_equal "one", File.binread(@root.join(".trash/#{a}/bracket.stl"))
+      assert_equal "two", File.binread(@root.join(".trash/#{b}/bracket.stl"))
+    end
+
+    # LANDMINE 1. delete tombstones in the same breath as the move, so vanished_paths (which
+    # reads the `present` scope) never sees it. Without that, deleting a third of a library
+    # through the UI would make the very next scan refuse itself with UnsafeScan — the
+    # mass-deletion guard firing on the app's own deliberate action, and never clearing.
+    test "deleting most of the library does NOT trip the mass-deletion guard on the next scan" do
+      ids = 5.times.map { |i| index!("f#{i}.stl", bytes: "x#{i}") }
+      ids.first(4).each { |id| adapter.delete(@user, node_id: id) } # 80% >> the 20% threshold
+
+      assert_nothing_raised { Library::Scanner.call(@user, root: @root.to_s) }
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+    end
+
+    # LANDMINE 2. A trash tombstone nulls storage_path, so the reconciler's revive-by-path
+    # cannot fire for it. Otherwise a NEW file at that path would inherit the trashed node's
+    # node_id — and with it every project attachment, BOM link and tag — while the old bytes
+    # still sat in .trash waiting for an undelete that would then collide.
+    test "a NEW file at a trashed path is a NEW node, not the trashed one revived" do
+      old = index!("bracket.stl", bytes: "original")
+      adapter.delete(@user, node_id: old)
+      assert_nil @user.nodes.find_by!(node_id: old).storage_path,
+                 "a trash tombstone must release its path"
+
+      File.binwrite(@root.join("bracket.stl"), "a completely different file")
+      Library::Scanner.call(@user, root: @root.to_s)
+
+      fresh = @user.nodes.find_by!(storage_path: "bracket.stl")
+      assert_not_equal old, fresh.node_id, "the new file must not inherit the trashed identity"
+      assert @user.nodes.find_by!(node_id: old).deleted, "and the trashed node stays trashed"
+    end
+
+    # LANDMINE 3. Do not paper over EXDEV with copy+delete: that makes delete non-atomic and
+    # invents a half-state. Spec §6 reserves copy-then-tombstone for S3, which has no rename.
+    test "a cross-filesystem trash is a clear error, not a silent half-delete" do
+      id = index!("x.stl", bytes: "b")
+      original = File.method(:rename)
+      File.define_singleton_method(:rename) { |*| raise Errno::EXDEV, "simulated" }
+      begin
+        err = assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+        assert_match(/EXDEV|filesystem/i, err.message)
+      ensure
+        File.define_singleton_method(:rename, original)
+      end
+      assert_not @user.nodes.find_by!(node_id: id).deleted, "a failed move must not tombstone"
+      assert File.exist?(@root.join("x.stl")), "and must not lose the file"
+      assert_not File.exist?(@root.join(".trash/#{id}")),
+                 "and must not leave the empty entry dir it made for a move that never landed"
+    end
+
+    test "the scan never indexes the trash" do
+      id = index!("t.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
+    end
+
+    # NOT IN THE PLAN — the gap it left. Why a dir delete wedges the library permanently, and why
+    # a cascade is not the answer: see Share#deletable_file!. UnsupportedOperation (a client condition, a
+    # StandardError) rather than NotImplementedError (a mis-wired deployment, a ScriptError).
+    test "deleting a DIRECTORY is refused, not silently cascaded into a wedge" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      File.binwrite(@root.join("cad/gear.stl"), "g")
+      Library::Scanner.call(@user, root: @root.to_s)
+      dir = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir.node_id) }
+      assert_match(/director/i, err.message)
+      assert_equal "g", File.binread(@root.join("cad/gear.stl")), "the subtree is untouched"
+      assert_not @user.nodes.find_by!(node_id: dir.node_id).deleted
+      assert_not File.exist?(@root.join(".trash")), "and nothing was moved"
+    end
+
+    # mkdir_p is I/O against the same share as the rename and fails for the same transient
+    # reasons (a read-only mount, a full disk, an NFS perms blip). Outside the begin its raw
+    # Errno escaped the SystemCallError -> FetchError mapping — and a bare Errno IS a
+    # StandardError, so it burns a preview to a permanent "failed" instead of retrying: the exact
+    # bug class this file's longest comment (read's rescue) exists to prevent.
+    #
+    # The fixture is junk AT the trash path rather than a chmod, so it holds when the suite runs
+    # as root (CI containers do) — root bypasses permission bits, but a file is still not a
+    # directory.
+    test "a trash dir that cannot be created is TRANSIENT, not a raw errno" do
+      id = index!("x.stl", bytes: "b")
+      File.binwrite(@root.join(".trash"), "something is already here, and it is not a directory")
+
+      err = assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+      assert_match(/EEXIST/, err.message)
+      assert_not @user.nodes.find_by!(node_id: id).deleted, "a failed move must not tombstone"
+      assert File.exist?(@root.join("x.stl")), "and must not lose the file"
+    end
+
+    # The TAXONOMY, which is the whole point of the class and not its name: a caller's
+    # `rescue StandardError` — GeneratePreviewJob's shape, cited throughout this adapter — must
+    # catch a folder-delete refusal. NotImplementedError is a ScriptError and would sail straight
+    # through it: uncaught out of a job, and once Phase 4 maps NotImplementedError to 501, a 5xx
+    # and an on-call page because a user clicked delete on a folder.
+    test "a refused directory delete is a client condition, catchable by rescue StandardError" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      dir = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+
+      caught = begin
+        adapter.delete(@user, node_id: dir.node_id)
+        :nothing_was_raised
+      rescue StandardError => e
+        e.class
+      end
+      assert_equal FileLayer::UnsupportedOperation, caught,
+                   "a ScriptError here escapes every ordinary caller's rescue"
+    end
+
+    # The second delete of a node is NOT idempotent-and-silent: live_node! refuses it. That is
+    # the right answer — the bytes it would move are already in the trash, and a delete that
+    # "succeeded" here would rename the trashed file onto itself for a node that is already gone.
+    test "deleting an already-trashed node is refused and leaves the trashed bytes alone" do
+      id = index!("once.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+
+      assert_raises(FileLayer::NotFound) { adapter.delete(@user, node_id: id) }
+      assert_equal "b", File.binread(@root.join(".trash/#{id}/once.stl"))
+    end
   end
 end

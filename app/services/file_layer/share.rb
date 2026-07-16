@@ -75,11 +75,12 @@ module FileLayer
     # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
     # the instant the caller can attach to it rather than up to a scan-interval later.
     #
-    # NO TRANSACTION, deliberately, and unlike Task 3's delete: a filesystem write cannot be
-    # rolled back, so wrapping the `create!` in one buys nothing and only widens the window in
-    # which the rename has landed but the row has not. The failure it leaves — bytes on disk, no
-    # row, because `create!` raised — is SELF-HEALING: the next scan indexes the file. (Task 3's
-    # is not, which is why only Task 3 gets one.)
+    # NO TRANSACTION, deliberately: a filesystem write cannot be rolled back, so wrapping the
+    # `create!` in one buys nothing and only widens the window in which the rename has landed but
+    # the row has not. The failure it leaves — bytes on disk, no row, because `create!` raised —
+    # is SELF-HEALING: the next scan indexes the file. (`delete` reaches the same conclusion by a
+    # harder road — see the argument there, where a transaction would actively manufacture a
+    # silent resurrection.)
     def write(user, parent_node_id: nil, name: nil, io: nil)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
@@ -124,6 +125,65 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # Move the file out of the indexed tree into `.trash/<node_id>/<name>` and tombstone the
+    # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not
+    # collide, and Task 4's undelete needs one unambiguous place to look.
+    #
+    # NO TRANSACTION, and this is the one place in this file where that needs arguing rather
+    # than asserting: `File.rename` is not transactional, so a `transaction do` around both
+    # would roll back the ROW while leaving the FILE in `.trash` — manufacturing exactly the
+    # silent resurrection the ordering below exists to avoid. `node.update!` is a single
+    # statement and already atomic, which is the only atomicity this needs.
+    def delete(user, node_id: nil)
+      node = live_node!(user, node_id)
+      deletable_file!(node)
+      src = absolute_path(node) # read BEFORE the update nulls storage_path
+      dest_dir = trash_dir(node.node_id)
+      begin
+        # mkdir_p is INSIDE the begin: it is I/O against the same share as the rename, and it
+        # fails for the same transient reasons (a read-only mount, a full disk, an NFS perms
+        # blip). Outside, its raw Errno escapes the SystemCallError -> FetchError mapping every
+        # other I/O call in this file goes through, and a bare Errno IS a StandardError — which
+        # is what burns a preview to a permanent "failed" instead of retrying. See read's rescue.
+        FileUtils.mkdir_p(dest_dir)
+        File.rename(src, dest_dir.join(node.name))
+      rescue Errno::EXDEV => e
+        # Do NOT fall back to copy+delete: that invents a half-state (bytes in two places, or
+        # in neither) for an operation designed around an atomic rename. Spec §6 reserves
+        # copy-then-tombstone for S3, which has no rename to lose. This is a real configuration
+        # problem — a .trash symlinked elsewhere, a submount under the root — and it is the
+        # operator's to fix, so say so and change nothing.
+        discard_empty(dest_dir)
+        raise FetchError, "#{node_id.inspect}: .trash is on a different filesystem (#{e.class}) " \
+                          "— it must live under the library root"
+      rescue SystemCallError => e
+        # Same reasoning as read's and write's rescues: an unmounted NAS, a permissions blip.
+        # Retryable, and none of them means "this file is gone".
+        discard_empty(dest_dir)
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # ORDER IS LOAD-BEARING, and it is the reverse of the intuitive one. Tombstone-then-move
+      # leaves, if the move fails, a file the user cannot see and the next scan RESURRECTS (its
+      # path is observed, so create_or_revive! finds the tombstone by storage_path and revives
+      # it). Move-then-tombstone leaves, if the update fails, a file whose bytes are in .trash
+      # and whose node is live at a path with nothing behind it — which reads as a vanished file
+      # and is what the mass-deletion guard is for. The second failure is loud; the first is
+      # silent.
+      #
+      # `deleted: true` is what keeps a UI delete out of the mass-deletion guard's numerator:
+      # vanished_paths reads the `present` scope, so a tombstoned node is invisible to it and
+      # deleting most of a library can never make the next scan refuse itself.
+      #
+      # `storage_path: nil` RELEASES the path, and is not merely tidy: Reconciler#create_or_revive!
+      # revives a tombstone BY storage_path, so a trash tombstone that kept its path would hand a
+      # NEW, unrelated file dropped there the trashed node's node_id — and with it every
+      # attachment, BOM link and tag — while the old bytes sat in .trash waiting for an undelete
+      # that would then collide. Nulling it is what makes that revive unable to fire.
+      node.update!(deleted: true, storage_path: nil)
+      nil
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -138,6 +198,56 @@ module FileLayer
     def absolute_path(node) = resolve!(node.storage_path, allow_root: true)
 
     private
+
+    # Derivable from the node alone — no column. Library::Scanner::TRASH_PREFIX rather than a
+    # second ".trash" literal: the Scanner's skip and this layout are the SAME fact, and two
+    # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
+    # the identical argument, for the identical reason.)
+    def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+
+    # Deleting a DIRECTORY is refused rather than cascaded. File.rename on a directory succeeds,
+    # so without this check `delete` would move a whole subtree into .trash while leaving every
+    # child node live at a path that no longer exists — the next scan finds them all vanished,
+    # cannot pair them (their bytes are in .trash, which the scan skips), and refuses itself via
+    # the mass-deletion guard once that subtree is >20% of the library. Nothing then clears the
+    # ghosts, so the refusal is permanent: Task 2's temp-file wedge by another road.
+    #
+    # That is an instance of a STRUCTURAL property, not a coincidence: wherever this app moves
+    # bytes INTO a region the Scanner skips (.trash, .maker-tmp-) while leaving a live node
+    # pointing at the old path, it creates ghosts the Reconciler can never pair — pairing needs
+    # an OBSERVATION as the partner, and a skipped path produces none. Delete is uniquely exposed
+    # because a dir MOVE leaves the bytes observable at the new path (so move-pairing rescues the
+    # children), while a dir DELETE puts them exactly where the scan refuses to look.
+    #
+    # Chunk mode cascades instead (Sync::SubtreeDelete, whole subtree under one lock). Share mode
+    # deliberately does not: 2b is file-only, `undelete` restores ONE path under ONE parent and
+    # has no subtree story, and a cascade whose inverse does not exist is a delete the user cannot
+    # undo. (Worked both ways and both collapse: nulling the children's paths makes undelete mint
+    # new node_ids and lose every attachment; keeping them reintroduces the revive-by-path bug for
+    # each child.)
+    #
+    # Named for DELETE, not for `kind`, though it looks op-agnostic: Task 4's `move` may want a
+    # kind check too, and its answer is likely DIFFERENT (a moved dir's bytes stay observable, so
+    # the scan repairs the children on the next pass — a self-healing inconsistency, not a wedge).
+    # Sharing one guard would make this message lie there. Task 4 gets its own decision.
+    def deletable_file!(node)
+      return if node.file?
+      # UnsupportedOperation, not NotImplementedError: a user clicked delete on a folder, so this is a
+      # CLIENT condition (Phase 4 -> 409/422), and it must stay catchable by `rescue StandardError`.
+      # NotImplementedError is a ScriptError and means the DEPLOYMENT is mis-wired -> 501.
+      raise UnsupportedOperation,
+            "#{node.node_id.inspect} is a #{node.kind}: share-mode delete is files only — " \
+            "deleting a directory would strand its children's nodes at paths that no longer " \
+            "exist and wedge the next scan"
+    end
+
+    # Undo the entry dir when the move it was made for never landed, mirroring write's rm_f of
+    # its temp: rmdir only ever removes an EMPTY directory, so it cannot take bytes with it.
+    def discard_empty(dir)
+      FileUtils.rmdir(dir)
+    rescue SystemCallError
+      nil # non-empty or already gone; the purge job (Task 6) sweeps it either way
+    end
 
     # The write path's guard: the destination must be STRICTLY inside the root. A read may resolve
     # to the root itself (harmless — it can only ever be handed a file node, and File.binread of a
