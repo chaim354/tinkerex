@@ -26,7 +26,7 @@
 **Deferred to Phase 3:** the S3 adapter (it inherits the write contract — that is the contract's whole point).
 **Deferred to Phase 4:** capability gating + 501s in the web UI, and `download`/`Delivery`. **2b wires no controller.** `FilesController` keeps using `Sync::Commit` for chunk mode; routing the web UI to the port is Phase 4's job. A write path with only tests as consumers is the plan's deliberate decomposition — do not "helpfully" wire the UI.
 
-**Non-negotiable:** every commit leaves `bin/rails test` green. Baseline **635 runs, 1814 assertions, 0 failures, 0 errors, 5 skips**, and `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test` must stay **identical** — the suite is backend-independent and must remain so.
+**Non-negotiable:** every commit leaves `bin/rails test` green. Baseline at the start of 2b was **635 runs, 1814 assertions, 0 failures, 0 errors, 5 skips**; **Task 1 has landed (`63a330c`) and the measured baseline for Tasks 2–9 is now 636 runs, 1823 assertions, 0 failures, 0 errors, 5 skips.** `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test` must stay **identical** — the suite is backend-independent and must remain so.
 
 **Tripwire (spec §10):** must not touch sync, the changelog, conflicts, locks, or the mount adapters. **This plan brushes right against it:** chunk-mode writes and chunk-mode trash live in `Sync::Commit` and `Sync::Trash`. If a task seems to need either, the boundary is wrong — STOP and report. The correct answer is always "Chunk refuses; Share implements."
 
@@ -56,13 +56,17 @@ And the process lessons, which cost real rework:
 - **NEVER `git checkout` to revert a mutation** — an agent destroyed its own uncommitted implementation that way. File backup + `cmp`.
 - **The plan can be wrong. Report it.** That was the highest-value output of every 2a task.
 
-### Why this plan gives you tests but not implementations
+### Why this plan's code is different from 2a's — read before trusting a snippet
 
-A deliberate departure from 2a's format, and from the plan-writing default of "show the code in every step." The evidence: **2a's plan supplied a full implementation for every task, and every one of them was wrong** — a dead `- unmatched_obs.map { nil }.compact`, a `FileLayer.current.root` that simply crashes (`Chunk` has no `root`), an errno whitelist that failed open, a guard whose design refused the phase's own headline test, and two that would have shipped silent data loss. The implementers' best work came from treating those snippets as suspect and deriving against the real code; their worst came from transcribing faithfully.
+2a's plan supplied a full implementation for every task, **and every one of them was wrong** — a dead `- unmatched_obs.map { nil }.compact`, a `FileLayer.current.root` that simply crashes (`Chunk` has no `root`), an errno whitelist that failed open, a guard whose design refused the phase's own headline test, and two that would have shipped silent data loss. The implementers' best work came from treating those snippets as suspect and deriving against the real code; their worst came from transcribing faithfully.
 
-Meanwhile 2a's plan-supplied **tests** were mostly right, and where one was wrong (an EDIT fixture that contradicted the incremental-skip requirement) the contradiction was *findable* precisely because it was written down.
+This plan first responded by withholding implementations entirely. **That has now changed, and the reason matters:** the code below was not written from memory of the codebase — it was **executed against it**. Every method here was prototyped by reopening `FileLayer::Share` in a `bin/rails runner` process on this worktree at `63a330c`, run against the real `Library::Scanner`, the real `Library::Reconciler`, the real `nodes` table and the real `Maker::FileAttachment`, and observed to pass the tests in this plan. Both landmine mutations were run and **observed to fail the right test for the right reason**. What killed 2a's snippets was that they were plausible; what is different here is not confidence, it is a transcript.
 
-So: the tests here are complete and are the specification — read them as the definition of done. The implementations are given as **constraints and seams**, and you derive the code against the files as they actually are. If a constraint here turns out to be wrong, **that is the expected outcome — report it.**
+**That verification is per-task and is stated per-task.** Each task below carries a `**Verified:**` line saying what was actually executed. Where a claim could not be executed, the task says so instead of guessing.
+
+**What this does NOT buy you:** the prototype ran in one process against a rolled-back transaction, not under the real suite's parallel forked processes, and not through Zeitwerk-autoloaded source. **Rubocop has not seen it.** Treat the code as a verified starting point that still has to go RED-then-GREEN under `bin/rails test` — not as something to paste and commit. And the standing rule holds: **if a snippet here turns out to be wrong, that is a finding, and reporting it is worth more than fixing it quietly.**
+
+The tests remain the specification — read them as the definition of done. **Six of them were wrong as first written and are corrected below**; each correction carries a note saying what was wrong, because the correction is less valuable than the reason.
 
 ---
 
@@ -215,6 +219,13 @@ EOF
 - Modify: `app/services/file_layer/share.rb`
 - Modify: `test/services/file_layer/share_test.rb`
 
+**Verified:** every test and the implementation below were executed against the real `Library::Scanner` and `nodes` table on this worktree and observed green — including the stubbed-`MAX_BYTES` case and the poisoned-parent escape case.
+
+**Two corrections to this task's first draft, both found by running it:**
+
+1. **The escape test was dead coverage.** Its fixtures were `["../outside.stl", "/etc/passwd", "a/../../outside.stl"]` — *every one contains a separator*, so the leaf-name check in the test above it refuses all three and **the escape guard is never reached**. `NotFound` raised two ways, asserted by class only: 2a's exact "a test that cannot fail is decoration" pattern. Corrected below by splitting it: separator-free `.`/`..` fixtures for the leaf check, and a **poisoned parent node** (a `dir` node whose `storage_path` is `../evil`) for the escape guard — which mirrors how `share_test.rb`'s existing read-side escape test reaches it, via `index!(path: "../…")`. **A separator-free leaf name cannot escape the root once `.`/`..`/`""` are refused, so the parent is the only real route — that is why the guard has to stay anyway.**
+2. **The scan-agreement test did not pin scan agreement.** A `Time.now`-nanos mtime passes it: the next scan re-hashes the file but still matches it *by path*, keeps the node_id, and the count stays 1. The incremental-skip property — the whole reason a 2TB archive isn't re-read every pass — was unpinned. Corrected by asserting `node.mtime` equals **the file's own stat**, not merely that it is nanos-shaped.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `share_test.rb`'s Share-specific section:
@@ -229,6 +240,14 @@ Append to `share_test.rb`'s Share-specific section:
       assert_equal Digest::SHA256.hexdigest("fresh"), node.content_hash
       assert_equal 5, node.size
       assert node.mtime > 1_000_000_000_000_000, "mtime must be nanos, got #{node.mtime}"
+
+      # ...and it is the FILE's mtime, not the clock's. `assert mtime > 1e15` above passes for
+      # Time.now-in-nanos, and so does everything below it (the scan re-matches by PATH and keeps
+      # the node_id either way) — so without this line the incremental-skip property is unpinned,
+      # and that property is the only reason a 2TB archive is not re-hashed on every pass.
+      st = File.stat(@root.join("new.stl"))
+      assert_equal st.mtime.to_i * 1_000_000_000 + st.mtime.nsec, node.mtime,
+                   "write must record the file's own stat — Scanner#nanos compares against it"
 
       # The scan must AGREE with what write recorded — same node_id, no duplicate, no churn.
       # A write that the next scan treats as a new file would orphan the attachment the caller
@@ -254,43 +273,157 @@ Append to `share_test.rb`'s Share-specific section:
       assert_equal parent.node_id, node.parent_node_id
     end
 
-    # A leaf name is a leaf. A separator in it is either a caller bug or a traversal attempt,
-    # and the escape guard below only catches the latter.
-    test "write rejects a separator in the leaf name" do
-      assert_raises(FileLayer::NotFound) do
-        adapter.write(@user, parent_node_id: nil, name: "cad/gear.stl", io: StringIO.new("g"))
-      end
-    end
-
-    test "write refuses a name that escapes the root" do
-      [ "../outside.stl", "/etc/passwd", "a/../../outside.stl" ].each do |bad|
-        assert_raises(FileLayer::NotFound) do
+    # A leaf name is a leaf: the directory is parent_node_id's job. `.` and `..` are separator-FREE
+    # and are the only names that could otherwise reach the root or its parent, so they belong to
+    # this check and not to the escape guard. The MESSAGE is asserted because NotFound is reachable
+    # from both, and a class-only assertion is how the first draft of this test came to pin nothing.
+    test "write rejects a name that is not a leaf" do
+      [ "cad/gear.stl", "/etc/passwd", "../outside.stl", "a/../../outside.stl", ".", "..", "" ].each do |bad|
+        err = assert_raises(FileLayer::NotFound, "#{bad.inspect} must be refused") do
           adapter.write(@user, parent_node_id: nil, name: bad, io: StringIO.new("x"))
         end
-        assert_not File.exist?("/etc/passwd.tmp"), "nothing may be written outside the root"
+        assert_match(/leaf name/, err.message, bad.inspect)
       end
+      assert_equal [], Dir.children(@root), "nothing may be created for a refused name"
     end
 
+    # THE escape guard, reached the only way it can be: through the PARENT. A separator-free leaf
+    # cannot escape once `.`/`..` are refused above, so `name` never gets here — but a `dir` node
+    # carrying a poisoned storage_path resolves the destination outside the root, which is exactly
+    # the bug class the audit preceding this work found (and the same route share_test.rb's
+    # read-side escape test uses).
+    test "write through a parent whose storage_path escapes the root is refused" do
+      outside = Pathname.new(Dir.mktmpdir("outside"))
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 storage_path: "../#{outside.basename}", mtime: 1)
+
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: evil.node_id, name: "pwned.stl", io: StringIO.new("x"))
+      end
+      assert_match(/escapes the library root/, err.message)
+      assert_equal [], Dir.children(outside), "nothing may be written outside the root"
+    ensure
+      FileUtils.remove_entry(outside) if outside&.exist?
+    end
+
+    # A 256MB fixture is not the way to pin a 256MB cap. Stub the constant instead — the cap's
+    # BEHAVIOR is what matters, and it is identical at 4 bytes. (share_test.rb already stubs the
+    # read side's File.size for the same reason; this stubs one layer up because `write` is handed
+    # an io, not a path, so there is no File.size call to fault.)
     test "write refuses bytes over MAX_BYTES rather than filling the NAS" do
-      skip "MAX_BYTES is 256MB; allocating it is wasteful" # see Step 3's note
+      original = FileLayer::MAX_BYTES
+      FileLayer.send(:remove_const, :MAX_BYTES)
+      FileLayer.const_set(:MAX_BYTES, 4)
+
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: nil, name: "big.stl", io: StringIO.new("12345"))
+      end
+      assert_match(/exceeds/, err.message)
+      assert_not File.exist?(@root.join("big.stl")), "a refused write leaves no partial file"
+      assert_nil @user.nodes.find_by(storage_path: "big.stl"), "and no node"
+    ensure
+      FileLayer.send(:remove_const, :MAX_BYTES)
+      FileLayer.const_set(:MAX_BYTES, original)
     end
 ```
 
-Delete the `MAX_BYTES` skip if you can pin it cheaply (a stubbed `MAX_BYTES`, not a 256MB allocation); otherwise drop the test rather than ship a permanent skip that reads as coverage.
+The `MAX_BYTES` skip is **resolved, not deferred**: stubbing the constant pins the behavior at 4 bytes with no allocation. `remove_const` + `const_set` (rather than `const_set` alone) is what keeps Ruby from printing an "already initialized constant" warning on every run. The suite forks *processes*, so the stub cannot leak into a parallel test — but the `ensure` restores it anyway, because it can leak into the rest of *this* process.
 
 - [ ] **Step 2: Run to see them fail** — `NoMethodError: undefined method 'write'`.
 
 - [ ] **Step 3: Implement**
 
-In `share.rb`. Key constraints, each of which a test above pins:
-- Resolve the destination through the **same escape guard** `read` uses (`absolute_path`-shaped). The audit that preceded this work found exactly this bug class.
-- Write to a temp file in the destination directory and `File.rename` into place, so a reader never sees a half-written file (the scan may run concurrently).
-- Index the node **in the same transaction**, with the real post-write `stat` — hash, size, and **nanosecond** mtime. Do not compute mtime as `Time.now`: the contract pins the unit, and the file's own stat is the truth the next scan will compare against.
-- Return `FileInfo`.
+**Verified against the real Scanner/Reconciler; still has to go green under the real suite.** The `nanos` helper duplicates `Library::Scanner#nanos` deliberately — that formula is the one the scan compares against, and reaching into the Scanner for it would couple the adapter to the indexer.
+
+```ruby
+    def write(user, parent_node_id: nil, name: nil, io: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      bytes = read_capped!(io)
+      FileUtils.mkdir_p(dest.dirname)
+      # Temp-then-rename: the 15-minute scan may be walking this directory right now, and a
+      # half-written file would be indexed with a hash of its own torn state. The temp name is a
+      # DOTFILE so a racing scan skips it (Scanner only skips `.trash` by name, but a dotfile is
+      # at least not a plausible STL) — and the rename is atomic within the directory.
+      tmp = dest.dirname.join(".maker-tmp-#{SecureRandom.hex(8)}")
+      begin
+        File.binwrite(tmp, bytes)
+        File.rename(tmp, dest)
+      rescue SystemCallError => e
+        FileUtils.rm_f(tmp)
+        # Same reasoning as `read`'s rescue: a full NAS, a permissions blip, an unmounted share.
+        # Every one of them is retryable, and NONE of them means "this file is gone".
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # stat the DESTINATION after the rename — that is the mtime the next scan will stat, and
+      # the incremental-skip test above pins that these two agree exactly.
+      st = File.stat(dest)
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+        storage_path: rel, parent_node_id:,
+        size: st.size, mtime: nanos(st), content_hash: Digest::SHA256.hexdigest(bytes)
+      )
+      stat(user, node_id: node.node_id)
+    end
+
+    private
+
+    # A leaf name is a leaf. `.` and `..` are separator-free, so File.basename passes them — they
+    # need naming explicitly, and refusing them here is what makes it true that no `name` value
+    # can reach the escape guard.
+    def leaf!(name)
+      if name.blank? || File.basename(name.to_s) != name.to_s || %w[. ..].include?(name.to_s)
+        raise NotFound, "#{name.inspect} is not a leaf name (the directory is parent_node_id's job)"
+      end
+    end
+
+    def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
+
+    # `live:` is false for undelete only: its node's parent may itself be a tombstoned directory
+    # (the scan tombstones an emptied dir), and refusing to restore into it would strand the file.
+    def parent_dir_rel!(user, parent_node_id, live: true)
+      return nil if parent_node_id.blank?
+      scope = live ? user.nodes.present : user.nodes
+      parent = scope.find_by(node_id: parent_node_id, kind: "dir") ||
+               raise(NotFound, "parent #{parent_node_id.inspect} is not a live directory")
+      parent.storage_path
+    end
+
+    # The write path's escape guard. It is NOT absolute_path: that one takes a node (there is no
+    # node yet) and it ALLOWS a path resolving to the root itself, which is right for a read that
+    # can never ask for it and wrong for a write, where the destination must be strictly INSIDE.
+    def resolve_inside!(rel)
+      path = @root.join(rel.to_s).expand_path
+      raise NotFound, "path escapes the library root: #{rel.inspect}" unless path.to_s.start_with?("#{@root}/")
+      path
+    end
+
+    # Read the cap PLUS ONE byte: reading exactly MAX_BYTES cannot distinguish "exactly at the
+    # cap" from "truncated at the cap", so an oversize upload would be silently cut in half and
+    # stored as a valid-looking file. Reads at most 256MB+1 into memory, which is the same
+    # exposure `read` already accepts (and the same constant caps it).
+    def read_capped!(io)
+      bytes = io.read(MAX_BYTES + 1).to_s.b
+      raise NotFound, "file exceeds #{MAX_BYTES} bytes" if bytes.bytesize > MAX_BYTES
+      bytes
+    end
+
+    # Duplicated from Library::Scanner#nanos deliberately: this is the exact formula the scan will
+    # compare against, and the write path must not depend on the indexer to say what time it is.
+    def nanos(st) = st.mtime.to_i * 1_000_000_000 + st.mtime.nsec
+```
+
+**Note on "the same transaction":** this task's first draft said to index the node "in the same transaction" as the write. There is no transaction here and there should not be — a filesystem write cannot be rolled back, so wrapping the `create!` in one buys nothing and would only widen the window in which a rename has landed but the row has not. (Task 3's `delete` is different, and says why.) The failure mode this leaves — bytes on disk, no row, because `create!` raised — is **self-healing: the next scan indexes the file.** That is not true of Task 3, which is why only Task 3 gets a transaction.
 
 - [ ] **Step 4: Green, then prove the scan-agreement test can fail**
 
-Mutate: make `write` record `mtime: Time.now.to_i` (seconds, the bug that shipped twice in the mount adapters). The nanos assertion must fail. Byte-exact abort-if-unchanged guard; `grep -c` with an expected count. Revert via file backup + `cmp`. **Report the result.**
+Mutate: make `write` record `mtime: Time.now.to_i` (seconds, the bug that shipped twice in the mount adapters). The nanos assertion must fail. Then a second, sharper mutation: `mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond)` — correct *units*, wrong *source*. **The nanos assertion passes; only the new stat-equality assertion catches it.** That is the whole reason it was added — report both.
+
+Byte-exact abort-if-unchanged guard; `grep -c` with an expected count. Revert via file backup + `cmp`. **Report the results.**
 
 - [ ] **Step 5: Full suite + commit** — report ACTUAL counts.
 
@@ -385,16 +518,63 @@ Mutate: make `write` record `mtime: Time.now.to_i` (seconds, the bug that shippe
 
 - [ ] **Step 3: Implement**
 
-Constraints each test above pins:
-- `.trash/<node_id>/<name>`, `mkdir_p` the node_id dir.
-- `File.rename` — atomic within a filesystem. **`Errno::EXDEV` → `FetchError`** (transient-shaped: the operator can fix the mount), and **must not tombstone**. Order matters: **move first, tombstone only if the move succeeded.** A tombstone with the bytes still in place is a file the user can't see but the scan will resurrect; a move with no tombstone is Landmine 1.
-- The tombstone sets `deleted: true` **and `storage_path: nil`** (Landmine 2), in one transaction.
-- Note the Reconciler deliberately runs **without** a transaction (a multi-hour hash of a 2TB tree must not pin one). `delete` is a single small operation — a transaction here is correct and does not contradict that.
+**Verified — and this is the task where that means the most.** Both landmine mechanisms were checked against the real `Library::Reconciler`, not against a reading of it:
+
+- **Landmine 2's premise is CONFIRMED at `app/services/library/reconciler.rb:330`.** `create_or_revive!` opens with `@user.nodes.where(storage_path: o.rel_path, deleted: true, kind: "file")` — revive is **by `storage_path`**, exactly as the landmine states. A `NULL` `storage_path` is therefore unfindable by it (verified by query: the lookup returns `nil`), and `nodes.storage_path` is nullable, and the partial unique index is `(user_id, storage_path) WHERE deleted = false` so tombstones never collide. The landmine is correctly stated and the mechanism is real.
+- **`vanished_paths` cannot see a tombstone** — it reads `live_file_paths`, which is `present.where(kind: "file").where.not(storage_path: nil)` (`reconciler.rb:404`). A trash tombstone is excluded **twice over** (deleted *and* NULL path). Landmine 1's mechanism is real.
+- **Both mutations were executed and both fail the right test:** skipping the tombstone raises `UnsafeScan` with `scan would tombstone 4/5 observable files (80.0% > 20%)`; retaining `storage_path` revives the trashed `node_id` onto the new file. **Neither test is decoration.**
+
+```ruby
+    def delete(user, node_id: nil)
+      node = live_node!(user, node_id)
+      src = absolute_path(node)
+      dest_dir = trash_dir(node.node_id)
+      FileUtils.mkdir_p(dest_dir)
+      begin
+        File.rename(src, dest_dir.join(node.name))
+      rescue Errno::EXDEV => e
+        # Landmine 3. Do NOT fall back to copy+delete: that invents a half-state (bytes in two
+        # places, or in neither) for an operation the spec designed around an atomic rename.
+        # Spec §6 reserves copy-then-tombstone for S3, which has no rename to lose. This is a
+        # real configuration problem — a .trash symlinked elsewhere, a submount under the root —
+        # and it is the operator's to fix, so say so and change nothing.
+        raise FetchError, "#{node_id.inspect}: .trash is on a different filesystem (#{e.class}) " \
+                          "— it must live under the library root"
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # ORDER IS LOAD-BEARING, and it is the reverse of the intuitive one. Tombstone-then-move
+      # leaves, if the move fails, a file the user cannot see and the next scan RESURRECTS (its
+      # path is observed, so create_or_revive! finds the tombstone by storage_path and revives
+      # it). Move-then-tombstone leaves, if the update fails, a file whose bytes are in .trash and
+      # whose node is live at a path with nothing behind it — which reads as a vanished file and
+      # is what the mass-deletion guard is for. The second failure is loud; the first is silent.
+      #
+      # deleted: true is LANDMINE 1 — vanished_paths reads the `present` scope, so a tombstoned
+      # node is invisible to it and a UI delete can never trip the guard.
+      # storage_path: nil is LANDMINE 2 — it releases the path so create_or_revive!'s
+      # revive-by-path can never hand a NEW file this node's identity. See the tombstone table above.
+      node.update!(deleted: true, storage_path: nil)
+      nil
+    end
+
+    private
+
+    # Derivable from the node alone — no column. Scanner::TRASH_PREFIX rather than a second
+    # ".trash" literal: the Scanner's skip and this layout are the SAME fact, and two copies of it
+    # is how the trash quietly starts getting indexed.
+    def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+```
+
+**On the transaction.** The first draft said the move and the tombstone go "in one transaction". They cannot, meaningfully, and pretending otherwise is worse than not trying: `File.rename` is not transactional, so a `transaction` block around both would roll back the *row* while leaving the *file* in `.trash` — manufacturing precisely the silent resurrection the comment above rejects. `node.update!` is a single statement and already atomic, which is the only atomicity this needs. The Reconciler's class header explains why *it* has no transaction (a 2TB hash must not pin one); `delete` has none for a different and simpler reason. **If you find yourself adding `transaction do` here, re-read this paragraph first.**
 
 - [ ] **Step 4: Prove Landmines 1 and 2 can fail (mutation)**
 
-- Landmine 1: make `delete` skip the tombstone → the guard test must fail with `UnsafeScan`.
-- Landmine 2: make the tombstone retain `storage_path` → the new-file test must fail by inheriting the node_id.
+Both were executed while writing this plan and both behave as claimed — reproduce them, do not take this on faith:
+
+- Landmine 1: make `delete` skip the tombstone → the guard test must fail with `UnsafeScan` (`4/5 observable files (80.0% > 20%)`).
+- Landmine 2: make the tombstone retain `storage_path` (`update!(deleted: true)` only) → the new-file test must fail by inheriting the node_id.
 
 Byte-exact abort-if-unchanged guard, `grep -c` with expected counts, revert by file backup + `cmp`. **Report both.**
 
@@ -433,11 +613,28 @@ Byte-exact abort-if-unchanged guard, `grep -c` with expected counts, revert by f
       assert_equal "bbb", File.binread(@root.join("b.stl")), "the destination is untouched"
     end
 
-    test "move refuses a destination that escapes the root" do
+    # Same correction as Task 2's: "../escaped.stl" contains a separator, so it is the LEAF check
+    # that refuses it, not the escape guard — assert the message so this test names what it pins.
+    test "move refuses a new_name that is not a leaf" do
       id = index!("a.stl", bytes: "aaa")
-      assert_raises(FileLayer::NotFound) do
+      err = assert_raises(FileLayer::NotFound) do
         adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "../escaped.stl")
       end
+      assert_match(/leaf name/, err.message)
+      assert File.exist?(@root.join("a.stl")), "a refused move must not move anything"
+    end
+
+    # And the escape guard on move's destination, reached the only way it can be — through a
+    # poisoned parent, exactly as in Task 2.
+    test "move into a parent whose storage_path escapes the root is refused" do
+      id = index!("a.stl", bytes: "aaa")
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 storage_path: "../evil-#{SecureRandom.hex(4)}", mtime: 1)
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: id, new_parent_node_id: evil.node_id, new_name: "a.stl")
+      end
+      assert_match(/escapes the library root/, err.message)
+      assert File.exist?(@root.join("a.stl")), "the file stays put"
     end
 
     test "undelete moves the bytes back and revives the node with its node_id" do
@@ -462,10 +659,96 @@ Byte-exact abort-if-unchanged guard, `grep -c` with expected counts, revert by f
                    "undelete must never clobber a live file"
       assert File.exist?(@root.join(".trash/#{id}/bracket.stl")), "the trashed bytes survive"
     end
+
+    # A trash tombstone has a NULL storage_path (Landmine 2), so undelete must RECONSTRUCT the
+    # destination from parent_node_id + name. Every test above deletes a root-level file, where
+    # that reconstruction is indistinguishable from "just use the name" — so without this case the
+    # parent leg is unpinned and a file deleted out of cad/ would be restored to the root.
+    test "undelete restores into the original subdirectory, not the root" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      parent = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl", io: StringIO.new("gg"))
+
+      adapter.delete(@user, node_id: info.node_id)
+      adapter.undelete(@user, node_id: info.node_id)
+
+      assert_equal "gg", File.binread(@root.join("cad/gear.stl"))
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: info.node_id).storage_path
+    end
 ```
 
 - [ ] **Step 2: Run to see them fail.**
-- [ ] **Step 3: Implement.** `undelete` restores to `node.name` at the node's original parent; it must refuse rather than clobber (the last test). Reviving sets `deleted: false` and restores `storage_path`.
+
+- [ ] **Step 3: Implement**
+
+**Verified:** both methods and all six tests were executed against the real code and observed green, including the subdirectory case.
+
+```ruby
+    def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      leaf!(new_name)
+      node = live_node!(user, node_id)
+      src = absolute_path(node)
+      rel = join_rel(parent_dir_rel!(user, new_parent_node_id), new_name)
+      dest = resolve_inside!(rel)
+      # Refuse rather than replace. POSIX rename() would silently clobber, and the maker layer has
+      # no undo for it: the displaced file's node would still point at a path now holding someone
+      # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
+      # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      FileUtils.mkdir_p(dest.dirname)
+      begin
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      # The node_id does not change — that is the port's whole promise, and the write contract
+      # (Task 5) pins it as a cross-backend rule.
+      node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+      stat(user, node_id: node.node_id)
+    end
+
+    def undelete(user, node_id: nil)
+      # NOT live_node!: this operates on a tombstone by definition. `deleted: true` in the lookup
+      # is what makes undeleting a live node a clean NotFound instead of a confusing rename.
+      node = user.nodes.find_by(node_id:, deleted: true) ||
+             raise(NotFound, "node #{node_id.inspect} is not in the trash")
+      src = trash_dir(node.node_id).join(node.name)
+      # The purge job (Task 6) may have taken the bytes, and a scan tombstone never had any in
+      # .trash to begin with. Both are terminal and both are the user's answer: it is gone.
+      raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)" unless File.exist?(src)
+
+      # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
+      # live: false — the parent directory may itself have been tombstoned by a scan once this
+      # file left it (tombstone_vanished_dirs), and refusing to restore into it would strand the
+      # file for a reason the user cannot see or fix.
+      rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
+
+      FileUtils.mkdir_p(dest.dirname)
+      begin
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      # Best-effort: rmdir only succeeds when the entry dir is empty, which is the normal case and
+      # the only one where removing it is right. A non-empty one is a surprise worth leaving for
+      # the purge job rather than deleting on a guess.
+      begin
+        FileUtils.rmdir(trash_dir(node.node_id))
+      rescue SystemCallError
+        nil
+      end
+      # Re-stat: the bytes are the same, but mtime/size are what the next scan compares against,
+      # and a stale pair would make it re-hash the file for nothing.
+      st = File.stat(dest)
+      node.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
+      stat(user, node_id: node.node_id)
+    end
+```
+
 - [ ] **Step 4: Full suite + commit** — report ACTUAL counts.
 
 ---
@@ -492,6 +775,19 @@ Create `test/services/file_layer/adapter_write_contract.rb`:
 # Include this into a writable adapter's test case. Share includes it now; S3 in Phase 3 —
 # that is the point. The read contract's hooks (adapter, @user) are assumed; include this
 # alongside it.
+#
+# One ADDITIONAL hook the including test case must define:
+#   with_transient_write_failure { } -> make the WRITE transport fail temporarily and not the
+#                                    file's fault (a PUT 5xx; a full or unmounted share), then
+#                                    yield. Restore on the way out.
+#                                    SEPARATE from the read contract's
+#                                    with_transient_backend_failure on purpose: read and write
+#                                    are different transports (Share: File.binread vs
+#                                    File.binwrite; S3: GET vs PUT), and the read hook's test
+#                                    ends by re-reading the file to prove the fault was
+#                                    transient — one hook faulting both would stop that
+#                                    assertion isolating the read path. Fault the TRANSPORT,
+#                                    never the adapter's own error classification.
 #
 # These assert only what is BACKEND-AGNOSTIC. Share's `.trash/<node_id>/<name>` layout is NOT
 # in here: S3 trashes by key prefix, and encoding one backend's storage layout in a shared
@@ -545,11 +841,57 @@ module FileLayerWritableContract
 end
 ```
 
-**`undelete` is an addition beyond the spec's port list** (§3.2 lists `write`/`delete`/`move` and says only *"undelete is a move back"*). A trash tombstone has a NULL `storage_path` (Landmine 2), so `move` cannot address it — a distinct verb is the honest shape. Flagged so it is a decision, not a smuggled API. If you disagree, argue it before implementing.
+#### The two open questions on this task — both now RESOLVED against the real code
 
-**`with_transient_backend_failure`** already exists in `share_test.rb` (it faults `File.binread`). The last test above needs it to fault the **write** transport too — check whether it does, and if not, decide: widen that hook, or add a second one. Report which and why.
+**1. `undelete` beyond the spec's port list — KEEP IT. The argument checks out.**
 
-- [ ] **Step 2: Include it in `share_test.rb`; run.** It must pass **without changing `Share`** — if it doesn't, either the contract over-specifies or Share has a real defect. Report which.
+Spec §3.2 lists only `write`/`delete`/`move` and says *"undelete is a move back"*. That is not implementable here, and the reason is mechanical rather than stylistic: `move`'s first act is `live_node!`, and a trash tombstone is not live; even if it were let through, `move` resolves its source via `absolute_path(node)`, which reads `node.storage_path` — **NULL on a trash tombstone (Landmine 2)** — so it would resolve to the library root and rename the whole library. The bytes are not at `storage_path` anyway; they are at `.trash/<node_id>/<name>`, which only a trash-aware verb knows how to find.
+
+**Verified, not reasoned:** `reconciler.rb:330`'s revive is by `storage_path`, which is what forces the NULL in the first place; a query for a NULL-path tombstone by path returns `nil`. So the NULL is load-bearing, and "undelete is a move back" is precluded *by the fix for Landmine 2*. A distinct verb is the honest shape. **This is a deliberate divergence from the spec's port list — record it in Task 9's docs, don't let it be discovered later.**
+
+**2. `with_transient_backend_failure` does NOT fault the write path — ADD A SECOND HOOK.**
+
+**Checked by execution, not by reading:** the existing hook (`share_test.rb:44`) faults `File.binread`. Under it, `Share#write` **succeeds and returns a `FileInfo`** — the write transport is `File.binwrite`, which the hook never touches. The contract's last test would fail against a correct implementation.
+
+**Decision: a second hook, `with_transient_write_failure`, not a widened one.** Widening the existing hook to fault both would silently weaken the *read* contract it was written for: `test_contract_transient_backend_failure_raises_fetch_error_not_not_found` ends by re-reading the file to prove the fault was transient, and a hook that also broke writes would make that assertion's meaning ambiguous — it would no longer be isolating the read path. The read contract's own header is explicit that the hook must "fault the TRANSPORT... never the adapter's own error classification"; **read and write are different transports** (`File.binread` vs `File.binwrite`), so they get different hooks. That also keeps Phase 3's S3 adapter honest: its read fault (a GET 5xx) and its write fault (a PUT 5xx) are genuinely different things, and a single hook would force it to pretend otherwise.
+
+Add to `share_test.rb`, next to the existing hook:
+
+```ruby
+    # Share's transient WRITE failure. A separate hook from with_transient_backend_failure on
+    # purpose: read and write are different transports (binread vs binwrite), and the read
+    # contract's test ends by re-reading the file to prove the fault was transient — a hook that
+    # broke both would make that assertion stop isolating the read path. S3 will do the same
+    # (a GET 5xx and a PUT 5xx are not the same fault).
+    def with_transient_write_failure
+      original = File.method(:binwrite)
+      File.define_singleton_method(:binwrite) { |*| raise Errno::EACCES, "simulated" }
+      yield
+    ensure
+      File.define_singleton_method(:binwrite, original)
+    end
+```
+
+and the contract's last test becomes:
+
+```ruby
+  # Terminal-vs-retryable, the port's most consequential distinction, applies to writes too:
+  # a transient backend failure must NEVER read as "the file is gone".
+  def test_write_contract_transient_failure_on_write_raises_fetch_error
+    with_transient_write_failure do
+      assert_raises(FileLayer::FetchError) do
+        adapter.write(@user, parent_node_id: nil, name: "flaky.stl", io: StringIO.new("b"))
+      end
+    end
+    # ...and it left no half-state: a node whose bytes never landed is a browse entry that 404s
+    # forever. Verified: the implementation creates the row only after the rename returns.
+    assert_nil @user.nodes.find_by(storage_path: "flaky.stl")
+  end
+```
+
+Update the contract module's header to document `with_transient_write_failure` alongside the hooks it inherits from the read contract. **Verified:** faulting `File.binwrite` against the Task 2 implementation raises `FileLayer::FetchError` and leaves no node.
+
+- [ ] **Step 2: Include it in `share_test.rb`; run.** It must pass **without changing `Share`** — if it doesn't, either the contract over-specifies or Share has a real defect. Report which. (Prototyped: all five contract tests pass against Tasks 2–4's implementations unmodified.)
 
 - [ ] **Step 3: Prove it constrains** — mutate `Share#move` to not preserve `node_id`; the contract test must fail. Report.
 
@@ -586,11 +928,16 @@ module Library
 
     # Build a trash entry as Share#delete would, then age it by backdating the ENTRY DIR's
     # mtime — that is what the job reads, so no column is needed to know when it was trashed.
+    #
+    # `.to_time` is REQUIRED, not tidiness: Time.current returns an ActiveSupport::TimeWithZone,
+    # and File.utime raises `TypeError: can't convert ActiveSupport::TimeWithZone into time` on
+    # one. (This plan's first draft omitted it and every test in this file errored. Found by
+    # running it.)
     def trash!(node_id, name, bytes, age_days:)
       dir = @root.join(".trash", node_id)
       FileUtils.mkdir_p(dir)
       File.binwrite(dir.join(name), bytes)
-      at = Time.current - age_days.days
+      at = (Time.current - age_days.days).to_time
       File.utime(at, at, dir)
       # The fixture must actually age: a backdate that silently no-ops would leave every test
       # below asserting nothing. (mtime granularity and tmpfs both bite here.)
@@ -638,17 +985,143 @@ module Library
       assert_nothing_raised { Library::TrashPurgeJob.perform_now(root: @root.to_s, trash_days: 30) }
     end
 
-    test "purge_all! no-ops unless the backend is share" do
-      # Same shape as ScanJob's gate test — read it and match. The gate asks FileLayer.current,
-      # not a third ENV reader.
+    # The NEGATIVE half of the schedule's gate, matching ScanJobTest's pair exactly (read them:
+    # test/jobs/library/scan_job_test.rb:113 and :123). On its own this passes for a
+    # `def purge_all!; end`, which is why the positive half below is not optional.
+    test "purge_all! no-ops when the deployment is not share-backed" do
+      with_env("LIBRARY_BACKEND" => "chunk") do
+        assert_no_enqueued_jobs { Library::TrashPurgeJob.purge_all! }
+      end
+    end
+
+    # The POSITIVE half: proves the no-op above is the gate working, not the method doing nothing.
+    # Also pins the root as the ADAPTER's (validated by LibraryBackendCheck) and as a String —
+    # Pathname is not an ActiveJob-serializable argument and raises SerializationError at enqueue.
+    #
+    # Unlike ScanJob this does NOT fan out per user: .trash is one directory under one root, and
+    # its entries are keyed by node_id, so one job purges the whole thing. (A share deployment is
+    # single-user in practice anyway — but the reason this is one job and ScanJob is N is the
+    # filesystem's shape, not the user count.)
+    test "purge_all! enqueues one job with the adapter's root" do
+      Dir.mktmpdir do |dir|
+        with_env("LIBRARY_BACKEND" => "share", "LIBRARY_PATH" => dir) do
+          assert_enqueued_with(job: Library::TrashPurgeJob,
+                               # expand_path, matching Share#root — NOT realpath, which would
+                               # resolve macOS's /var -> /private/var symlink and diverge.
+                               args: [ { root: File.expand_path(dir), trash_days: 30 } ]) do
+            Library::TrashPurgeJob.purge_all!
+          end
+        end
+      end
+    end
+
+    private
+
+    # Mirrors ScanJobTest's helper. FileLayer is reset so the memoized adapter cannot leak the
+    # previous test's backend into this one.
+    def with_env(vars)
+      prior = vars.keys.index_with { |k| ENV[k] }
+      vars.each { |k, v| ENV[k] = v }
+      FileLayer.reset!
+      yield
+    ensure
+      prior.each { |k, v| ENV[k] = v }
+      FileLayer.reset!
     end
   end
 end
 ```
 
-The last test is a stub on purpose: **read `test/jobs/library/scan_job_test.rb`'s equivalent and match its idiom** rather than inventing a second one. Write it out fully before implementing.
+The test case needs `include ActiveJob::TestHelper` and `setup { FileLayer.reset! }` / `teardown { FileLayer.reset! }`, exactly as `ScanJobTest` does — `assert_no_enqueued_jobs`/`assert_enqueued_with` come from the former, and without the resets the memoized `FileLayer.current` leaks a backend between tests.
 
-- [ ] **Step 2-4:** run → implement → green. Mutate the age comparison (`>` → `<`) and confirm a test dies. Report.
+- [ ] **Step 2: Run to see them fail.**
+
+- [ ] **Step 3: Implement**
+
+**Verified:** the age arithmetic, the `trash_days: 0` case, the mutation, and the missing-`.trash` case were all executed standalone. **`Dir.children` on a missing `.trash` raises `Errno::ENOENT`** — the no-op test pins that, so it must be guarded or rescued.
+
+```ruby
+module Library
+  # Purge trash entries past the retention window. Share#delete renames a file to
+  # .trash/<node_id>/<name> rather than unlinking it, so this is what actually reclaims the space
+  # — without it a share library grows forever and the "delete" the user performed never lands.
+  #
+  # The ENTRY DIRECTORY's mtime is when it was trashed: mkdir_p stamps it at delete time, and
+  # nothing touches it afterwards. That is why no `trashed_at` column exists — the filesystem
+  # already records it, and a column would be a second copy to keep in sync (spec decision 3:
+  # share libraries are current-state only; the disk is the truth).
+  #
+  # The node row is NEVER destroyed, only its bytes. The row is what makes a project say "file
+  # missing" instead of an attachment silently vanishing, and it costs a few hundred bytes.
+  class TrashPurgeJob < ApplicationJob
+    queue_as :background
+    discard_on ActiveRecord::RecordNotFound
+
+    DEFAULT_TRASH_DAYS = 30
+
+    # Same division as ScanJob's, for the same reason: purge_all! is a SCHEDULE (recurring.yml
+    # fires it in chunk deployments too, where no-opping is the answer to a question nobody
+    # asked); #perform is a COMMAND, and a caller who named a root deserves the operation.
+    def perform(root:, trash_days: nil)
+      days = trash_days || Integer(ENV.fetch("LIBRARY_TRASH_DAYS", DEFAULT_TRASH_DAYS.to_s))
+      # 0 (or negative) is the documented "keep forever" (spec §3.5). This guard is the whole
+      # test: `Time.now - 0*86400` is NOW, so the obvious implementation purges the ENTIRE trash
+      # on a config value that means the opposite — a data-loss bug wearing a config knob.
+      return if days <= 0
+
+      trash = Pathname.new(root).join(Library::Scanner::TRASH_PREFIX)
+      # No trash yet (nothing ever deleted) is the normal state of a fresh library, not an error.
+      # Dir.children raises ENOENT on a missing directory, so this guard is load-bearing.
+      return unless trash.directory?
+
+      cutoff = Time.now - days * 86_400
+      Dir.children(trash.to_s).each do |entry|
+        dir = trash.join(entry)
+        begin
+          # `<` cutoff: OLDER than the window. Inverting this purges everything EXCEPT what should
+          # go — the mutation Step 4 requires you to run.
+          next unless dir.directory? && dir.mtime < cutoff
+          FileUtils.remove_entry(dir)
+        rescue SystemCallError => e
+          # One unreadable entry must not abort the sweep, and must never be retried into a
+          # failure: the next run picks it up. Same posture as the Scanner's per-entry rescues.
+          Rails.logger.warn("Library::TrashPurgeJob: cannot purge #{entry.inspect}: " \
+                            "#{e.class} (#{e.message})")
+        end
+      end
+    end
+
+    # PHASE 3 TRAP, the same one ScanJob.scan_all! carries (read the comment there): the moment
+    # FileLayer::S3 exists this is_a? quietly answers false and the purge SILENTLY STOPS. S3's
+    # trash is a key prefix, not a directory — it needs its own reaper. Decide here deliberately
+    # rather than inherit this false.
+    def self.purge_all!
+      adapter = FileLayer.current
+      return unless adapter.is_a?(FileLayer::Share)
+
+      # .to_s: Pathname is not an ActiveJob-serializable argument.
+      perform_later(root: adapter.root.to_s,
+                    trash_days: Integer(ENV.fetch("LIBRARY_TRASH_DAYS", DEFAULT_TRASH_DAYS.to_s)))
+    end
+  end
+end
+```
+
+`recurring.yml`, under `production:` (do not restructure it — it never runs in dev, and that is deliberate), placed next to `library_scan`. `command:` rather than `class:`, matching `library_scan`, because the gate lives in a class method rather than in `perform`:
+
+```yaml
+  # Reclaim space from FileLayer::Share#delete, which renames into .trash/<node_id>/<name> rather
+  # than unlinking — so without this a share library grows forever and the user's delete never
+  # actually lands. LIBRARY_TRASH_DAYS (default 30) is the undo window; 0 means keep forever.
+  # No-ops unless LIBRARY_BACKEND=share, so it is inert in a chunk deployment. Daily and off-peak:
+  # the window is measured in days, so nothing is gained by sweeping more often.
+  library_trash_purge:
+    command: "Library::TrashPurgeJob.purge_all!"
+    schedule: every day at 3am
+```
+
+- [ ] **Step 4: Green, then mutate.** Flip the age comparison (`<` → `>`); the "purges entries older than LIBRARY_TRASH_DAYS and leaves fresh ones" test must die on **both** assertions (`old` survives, `fresh` is purged). Then delete the `days <= 0` guard; the "0 means never purge" test must die. Byte-exact abort-if-unchanged guard, `grep -c` with expected counts, revert by file backup + `cmp`. **Report both.**
+
 - [ ] **Step 5: Commit.**
 
 ---
@@ -665,6 +1138,7 @@ The last test is a stub on purpose: **read `test/jobs/library/scan_job_test.rb`'
 
 ```ruby
   test "share mode refuses to boot on a read-only root" do
+    skip "root bypasses permission bits" if Process.uid.zero?
     Dir.mktmpdir do |d|
       File.chmod(0o500, d)
       begin
@@ -677,13 +1151,83 @@ The last test is a stub on purpose: **read `test/jobs/library/scan_job_test.rb`'
       end
     end
   end
+
+  # The probe WRITES into a directory we do not own. It must leave nothing behind — a leaked
+  # dotfile is not cosmetic here: Share#library_present? uses "the root is empty" as its
+  # unmounted signal (and its header already names a stale .DS_Store as the known way that
+  # fails), so a leaked probe file makes an unmounted share read as mounted and turns every
+  # FetchError into a terminal NotFound. Verified: a stale dotfile does exactly that.
+  test "the writability probe leaves nothing behind" do
+    Dir.mktmpdir do |d|
+      LibraryBackendCheck.check!(backend: "share", path: d)
+      assert_equal [], Dir.children(d), "the probe must clean up after itself"
+    end
+  end
+
+  # Chunk mode must not touch the filesystem at all — the guard returns before any probe.
+  test "chunk mode writes no probe" do
+    Dir.mktmpdir do |d|
+      LibraryBackendCheck.check!(backend: "chunk", path: d)
+      assert_equal [], Dir.children(d)
+    end
+  end
 ```
 
-**`File.writable?` is not sufficient and must not be the implementation** — it checks POSIX mode bits, not effective access, and is wrong under NFS/SMB ACLs, which is exactly the deployment this phase targets. Do a **real** write: create and remove a temp entry in the root, and map the failure. Note the boot guard runs at boot in a directory we do not own — the probe must clean up after itself, and must not disturb a library.
+**Skip under root** (`Process.uid.zero?`) rather than ship a test that silently passes for the wrong reason — CI containers run as root. Precedent: `share_test.rb:143` (`skip "root bypasses permission bits" if Process.uid.zero?`). The two non-chmod tests above hold under root and carry what they can.
 
-**Skip under root** (`Process.uid.zero?`) rather than ship a test that silently passes for the wrong reason — CI containers run as root. 2a's precedent: `share_test.rb`'s chmod tests skip honestly, and the non-chmod cases carry the rule when they do.
+- [ ] **Step 2: Run to see them fail.**
 
-- [ ] **Step 2-4:** run → implement → green. Mutate the check away; the test must die. Report.
+- [ ] **Step 3: Implement**
+
+**`File.writable?` is not sufficient and must not be the implementation** — it checks POSIX mode bits, not effective access, and is wrong under exactly the NFS/SMB ACLs this backend targets. A **real touch-probe** is the mechanism. **Verified:** on a `0500` directory the probe raises `EACCES` and reports unwritable; on a healthy one it leaves `Dir.children == []`.
+
+Extend `check!` (after the existing `readable?` check) and add:
+
+```ruby
+    raise Error, "LIBRARY_PATH #{path.inspect} is not readable" unless File.readable?(path)
+    writable!(path)
+  end
+
+  # A REAL write, not File.writable?. File.writable? tests POSIX mode bits against the process
+  # uid/gid — it does not consult NFSv4/SMB ACLs, an SMB share's read-only export flag, or a
+  # remount-ro, and every one of those is a live possibility for the mounted directory this
+  # backend exists to serve. On those it cheerfully answers true for a root we cannot write, and
+  # the operator learns the truth from a failed upload instead of a refused boot. The only honest
+  # question is "can we create a file here?", so ask it.
+  #
+  # A DOTFILE with a random suffix: the Scanner walks this root every 15 minutes and only skips
+  # `.trash` by name, so a probe that lingers could be indexed as a library file; the random
+  # suffix means two boots (or a boot racing a purge) cannot collide on the name.
+  def self.writable!(path)
+    probe = File.join(path, ".maker-write-probe-#{Process.pid}-#{SecureRandom.hex(4)}")
+    begin
+      File.binwrite(probe, "")
+    rescue SystemCallError => e
+      raise Error, "LIBRARY_PATH #{path.inspect} is not writable (#{e.class}: #{e.message}) — " \
+                   "phase 2b writes uploads and moves deletes into .trash/, so a read-only " \
+                   "share cannot back a library. Check the mount options and the export's " \
+                   "permissions for the user this process runs as."
+    ensure
+      # MUST NOT leak. Share#library_present? reads "the root is empty" as "unmounted", so a
+      # stale probe dotfile would make an unmounted share look mounted and flip every transient
+      # ENOENT to a terminal NotFound — burning every preview in the library. Its header already
+      # names a stale .DS_Store as this exact failure; do not add a second source of it.
+      begin
+        File.unlink(probe)
+      rescue SystemCallError
+        nil
+      end
+    end
+  end
+```
+
+`SecureRandom` is available here — this file is `require`d from an initializer that runs after Rails has loaded, and `FileLayer.build` calls `check!` at runtime. **Verified** (`defined?(SecureRandom) == "constant"` in the boot process).
+
+**Known limitation — write it into the file's header comment, which already documents what this guard does not catch, and which §15 says must stay true.** The `ensure` covers every ordinary failure, but a `SIGKILL` between `binwrite` and `unlink` leaks a probe dotfile into the root, and `Share#library_present?` will then read an unmounted share as mounted until someone removes it. This is the same known hole the Share header already names for a stale `.DS_Store`, not a new class of one — and the alternative (probing nothing) trades a rare, self-inflicted false-mounted for a routine, silent read-only library. Stated so it is a documented trade rather than a discovery.
+
+**The reach beyond this task's file list, which is deliberate and small:** `FileLayer.build` calls `check!` (`app/services/file_layer.rb`), so every `LIBRARY_BACKEND=share` adapter construction now touch-probes its root. That is correct — the factory's comment says it calls `check!` precisely so the operator gets the same explanation whether or not the boot guard ran — and it is why the CI leg (`LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test`) exercises the probe for free. **If that leg goes red on a `Dir.children` assertion somewhere, this is why.**
+
+- [ ] **Step 4: Green, then mutate.** Delete the `writable!(path)` call; the read-only test must die. Then replace the touch-probe body with `raise Error unless File.writable?(path)` — **it stays green**, which is the honest statement of what this test can and cannot pin: a unit test on a tmpdir cannot tell the two apart, because only an ACL-bearing filesystem can. Report both, and report that the second mutation survives — the reason for the touch-probe is the deployment target, not the test.
 - [ ] **Step 5: Commit.**
 
 ---
@@ -742,10 +1286,12 @@ Through the real stack — real tmpdir, real scan, real adapter:
     end
 ```
 
-`@adapter` and `scan!` are already defined in this file's `setup` (2a). The maker API is verified: `@user.maker_projects`, and `Project` declares `has_many :file_attachments, -> { order(:position) }, as: :attachable`, so `create!(user:, node_id:, role: "model")` is valid.
+`@adapter` and `scan!` are already defined in this file's `setup` (2a) — `@adapter = FileLayer::Share.new(root: @root.to_s)` at `share_library_test.rb:20`, `def scan! = Library::Scanner.call(@user, root: @root.to_s)` at `:28`. **Do not pass `max_delete_pct:` to `scan!`** — this file deliberately runs against the deployment's real threshold, because "a UI delete is not a mass deletion" is the third test's whole point, and an override would disable the mechanism under test.
+
+**The maker API is verified by execution, not by reading the association:** `User.reflect_on_association(:maker_projects).class_name == "Maker::Project"`; `Maker::Project.reflect_on_association(:file_attachments)` is a `has_many` of `Maker::FileAttachment` with `as: :attachable`; `Maker::FileAttachment` has columns `user_id`, `node_id`, `role`, `position`, `version_id`. `project.file_attachments.create!(user:, node_id:, role: "model")` was executed and succeeded. (A grep would have been the wrong tool here — the `as: :attachable` sits on a continuation line and a single-line grep misses it. That exact false negative already bit this plan's author once.)
 
 - [ ] **Step 2: Green.**
-- [ ] **Step 3: Prove it can fail** — disable the tombstone in `delete`; the E2E must die. Report.
+- [ ] **Step 3: Prove it can fail** — disable the tombstone in `delete`; the E2E must die. Report. (Expected: the third test dies with `UnsafeScan`, `4/5 observable files (80.0% > 20%)` — the same mutation as Task 3's Landmine 1, now at the integration layer.)
 - [ ] **Step 4: Both suites + commit** — `bin/rails test` AND `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test`, both green, **identical counts**. Report both.
 
 ---
@@ -755,7 +1301,15 @@ Through the real stack — real tmpdir, real scan, real adapter:
 **Files:**
 - Modify: `CLAUDE.md`, `docs/STATUS.md`
 
-CLAUDE.md §15 requires it when the architecture moves. 2a's entries say the Share adapter is **read-only** and that 2b is next; both become false. Record: the write path is Share-only and why (chunk writes are the sync engine's); the trash layout and that it is keyed by `node_id`; the two tombstone kinds (Landmine 2) — that distinction is the thing a future reader will otherwise "simplify" away; `LIBRARY_TRASH_DAYS`.
+CLAUDE.md §15 requires it when the architecture moves. 2a's entries say the Share adapter is **read-only** and that 2b is next; both become false. **The specific now-false strings to grep for** (verified present at `63a330c`): in CLAUDE.md's §3 component table, `**`Share`** (a mounted SMB/NFS dir — read-only, **current-state only**...)`; and in §12 step 10, `Phase 2b = the write path + trash`. `docs/STATUS.md` carries the same 2a framing.
+
+Record:
+- the write path is **Share-only**, and why (chunk-mode writes are the sync engine's `Sync::Commit`; the port refuses them by name)
+- the trash layout `.trash/<node_id>/<name>`, **keyed by node_id** — and that this is why two same-named deletes don't collide
+- **the two tombstone kinds** (Landmine 2: scan tombstone keeps `storage_path` and is revivable by the scan; trash tombstone NULLs it and is revivable only by `undelete`). This is the thing a future reader will otherwise "simplify" away, and the simplification silently hands a new file an old file's attachments.
+- **`undelete` is a fourth port verb, diverging from spec §3.2's three** — and why the spec's "undelete is a move back" is precluded by the Landmine 2 fix. Record it here or it gets rediscovered as an inconsistency.
+- `LIBRARY_TRASH_DAYS` (default 30; **0 means keep forever**, not purge everything)
+- the boot guard now **touch-probes** for writability, and why `File.writable?` is not the check
 
 - [ ] **Step 1:** update both, grep for now-false claims, commit.
 
@@ -763,12 +1317,13 @@ CLAUDE.md §15 requires it when the architecture moves. 2a's entries say the Sha
 
 ## Definition of done
 
-- [ ] `bin/rails test` green; report the count and the delta from 635
-- [ ] `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test` green, **identical count**
+- [ ] `bin/rails test` green; report the count and the delta from **636** (Task 1 has landed at `63a330c`: 635 + 1, verified)
+- [ ] `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test` green, **identical count** (note: this leg now exercises Task 7's touch-probe, via `FileLayer.build` → `check!`)
 - [ ] `FileLayer::Share` passes **both** contracts — read and writable — unmodified
 - [ ] `FileLayer::Chunk` refuses `write`/`delete`/`move`, naming `Sync::Commit`
 - [ ] Point it at a real folder: write a file, delete it, confirm it is in `.trash/<node_id>/<name>`, undelete it, confirm the bytes come back
-- [ ] Mutation results reported for: Landmine 1 (guard), Landmine 2 (revive), the write contract, and the purge age comparison
+- [ ] Mutation results reported for: Landmine 1 (guard), Landmine 2 (revive), Task 2's **two** mtime mutations (wrong unit AND wrong source), the write contract, the purge age comparison + the `days <= 0` guard, and Task 7's **two** (the check removed; `File.writable?` substituted — the second is expected to SURVIVE, and reporting that is the point)
+- [ ] `Dir.children(root)` is empty after a boot check — no leaked write probe
 - [ ] No sync/changelog/conflict/lock/mount edits (spec §10); no controller wiring (Phase 4)
 
 ## Next
