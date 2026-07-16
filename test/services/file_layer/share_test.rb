@@ -1,11 +1,16 @@
 require "test_helper"
 require_relative "adapter_contract"
+require_relative "adapter_write_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
   # the file on disk IS the truth, and content_token is its content hash.
   class ShareTest < ActiveSupport::TestCase
     include FileLayerAdapterContract
+    # Share implements the port's write path, so it answers the write contract too. Chunk does
+    # not include this — its write/delete/move raise, by design (Task 1). That split IS the
+    # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
+    include FileLayerWritableContract
 
     setup do
       @root = Pathname.new(Dir.mktmpdir("share-test"))
@@ -47,6 +52,19 @@ module FileLayer
       yield
     ensure
       File.define_singleton_method(:binread, original)
+    end
+
+    # Share's transient WRITE failure. A separate hook from with_transient_backend_failure on
+    # purpose: read and write are different transports (binread vs binwrite), and the read
+    # contract's test ends by re-reading the file to prove the fault was transient — a hook that
+    # broke both would make that assertion stop isolating the read path. S3 will do the same
+    # (a GET 5xx and a PUT 5xx are not the same fault).
+    def with_transient_write_failure
+      original = File.method(:binwrite)
+      File.define_singleton_method(:binwrite) { |*| raise Errno::EACCES, "simulated" }
+      yield
+    ensure
+      File.define_singleton_method(:binwrite, original)
     end
 
     # --- Share-specific tests -------------------------------------------------------------
