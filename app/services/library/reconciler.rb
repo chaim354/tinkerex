@@ -220,27 +220,52 @@ module Library
 
     # Step 1. Returns the observations that no live node claims — the input to step 2.
     def match_live_paths(files)
-      # KNOWN LIMITATION: this loads every live node into memory (~1M AR objects on a large NAS).
-      # It must be batched before a real NAS is pointed at this; Task 10's synthetic E2E will not
-      # surface it, and Task 8 has not wired the backend factory yet.
-      live_by_path = @user.nodes.present.where.not(storage_path: nil).index_by(&:storage_path)
+      # PLUCKED, not loaded: the decisions below read exactly three columns (kind, mtime, size)
+      # and in the common case write NOTHING, so instantiating an AR object per live node buys
+      # nothing and costs the whole tree's worth of memory.
+      #
+      # THE COMMON CASE IS A NO-OP SCAN — every 15 minutes, forever, with nothing changed. The
+      # previous `index_by(&:storage_path)` loaded a full AR object per live node to discover
+      # precisely that. Plucking the columns it actually reads, and materializing a node ONLY in
+      # the two branches that write, leaves a no-op pass loading zero AR objects. Measured:
+      #
+      #   20k-file no-op scan   0.159s / 552k objects (27.6/file)  ->  0.061s / 311k (15.6/file)
+      #   50k-node no-op scan   +67.1 MB RSS                        ->  +22.7 MB RSS
+      #
+      # The allocations that remain are the pluck's own rows and the Observations, not the tree.
+      #
+      # The `id` is plucked solely so a branch that DOES write can load its row. That costs one
+      # SELECT per written node — a real regression against the single query this used to do —
+      # and it is the right trade: a node only reaches those branches if its bytes are being
+      # hashed (a file read that dwarfs a primary-key lookup) or its kind changed (rare), while
+      # the pass that pays nothing is the one that runs every quarter hour.
+      live = @user.nodes.present.where.not(storage_path: nil)
+                  .pluck(:storage_path, :id, :kind, :mtime, :size)
+                  .to_h { |path, id, kind, mtime, size| [ path, [ id, kind, mtime, size ] ] }
 
       files.reject do |o|
-        node = live_by_path[o.rel_path]
-        next false if node.nil?
+        row = live[o.rel_path]
+        next false if row.nil?
+        id, kind, mtime, size = row
 
-        if !node.file?
+        # NOTE: `kind` is the RAW DB value here (pluck bypasses the model), not `node.file?`.
+        # Identical today — kind is a plain string column. But if it ever became an AR enum,
+        # pluck would hand back the integer and this branch would fire for EVERY node,
+        # tombstoning the whole library on the next scan. Remote; cheap to say; and this file
+        # has punished exactly this shape of assumption before.
+        if kind != "file"
           # The path used to be a directory (or a symlink) and is now a file. Reusing the row
           # would silently change a node's kind under everything that points at it; a clean
           # break is the honest answer.
-          node.update!(deleted: true)
+          @user.nodes.find(id).update!(deleted: true)
           next false # ...and the observation still needs a node: hand it to step 2.
         end
 
-        if node.mtime == o.mtime && node.size == o.size
+        if mtime == o.mtime && size == o.size
           # Unchanged (path, mtime, size): skip WITHOUT hashing. This is the whole reason
           # Observation carries a stat and not a hash — it is what keeps a 2TB archive from
-          # being re-read on every pass.
+          # being re-read on every pass. Note this returns before the row is ever loaded: in a
+          # no-op scan every file lands here, which is what makes the pass cost a single pluck.
           next true
         end
 
@@ -248,7 +273,8 @@ module Library
         # A file we cannot read is NOT a file that is gone: leave the node exactly as it was.
         # It is claimed either way (its path is observed, so vanished_paths never listed it),
         # so nothing below can tombstone it. The next pass picks it up when the blip clears.
-        node.update!(size: o.size, mtime: o.mtime, content_hash: hash) if hash
+        # The row is loaded only once `hash` proves there is something to write.
+        @user.nodes.find(id).update!(size: o.size, mtime: o.mtime, content_hash: hash) if hash
         true
       end
     end
@@ -273,14 +299,24 @@ module Library
       # be created half-indexed (a node with a nil content_hash is a preview that can never be
       # keyed). Leaving it out entirely means the next pass indexes it properly.
       candidates = unmatched.filter_map { |o| (h = hash_for(o)) && [ o, h ] }
+      # Bucketed by the pairing key, so a vanished node probes only the byte-identical
+      # candidates instead of scanning all of them. `group_by` preserves each bucket's original
+      # order, and a missing key reads as nil rather than mutating the hash.
+      by_key = candidates.group_by { |o, h| [ h, o.size ] }
       moves = []
       doomed = []
+      claimed = {}.compare_by_identity
 
       vanished.each do |node|
-        idx = best_pairing(candidates, node)
-        if idx
-          # Consumed from `candidates` as we go, so no two nodes can claim one observation.
-          o, hash = candidates.delete_at(idx)
+        pair = best_pairing(by_key, node)
+        if pair
+          # Consumed as we go — from the bucket, so no later node can pair with it, and from
+          # `claimed`, so it is excluded from the leftovers handed to steps 3 & 4. Both are
+          # keyed by object identity: two candidates are `==` if their observation and hash
+          # match, and `delete`/`reject` would then drop the wrong one.
+          o, hash = pair
+          by_key[[ hash, o.size ]].delete_if { |c| c.equal?(pair) }
+          claimed[pair] = true
           moves << [ node, o, hash ]
         else
           # Tombstone, never destroy: a project shows "file missing" instead of an attachment
@@ -291,7 +327,8 @@ module Library
         end
       end
 
-      [ moves, doomed, candidates ]
+      # `candidates`, minus what pairing consumed, in its original order.
+      [ moves, doomed, candidates.reject { |p| claimed.key?(p) } ]
     end
 
     # Step 2, APPLY.
@@ -306,15 +343,54 @@ module Library
     # Several byte-identical files make pairing non-unique (a CAD library is full of them), so
     # "the right answer" does not exist. Prefer the candidate sharing the longest directory
     # prefix with the old path, then lexical: any DETERMINISTIC answer beats a crash or a lost
-    # file. Returns nil when nothing matches.
+    # file. Returns the [observation, hash] pair, or nil when nothing matches.
     #
-    # O(n*m) by design: 10k renamed files measures at ~2s of CPU, which is dwarfed by the hashing
-    # those same 10k files already require. Not worth an index until that ceases to be true.
-    def best_pairing(candidates, node)
+    # Why bucketing gives the SAME answer the old full scan gave — and the argument matters,
+    # because the obvious one is wrong. It is NOT "the tie-break key is unique so min_by cannot
+    # tie": that leans on rel_path uniqueness, a property of the INPUT that nothing here
+    # enforces, so a future second observation source would appear to invalidate this code when
+    # it in fact would not.
+    #
+    # The real guarantee is order, and it holds even when the key ties: `group_by` preserves
+    # array order, so a bucket IS exactly the subsequence the old `each_index.select` walked, in
+    # the same order — and `min_by` returns the FIRST minimum. Same sequence, same rule, same
+    # element.
+    #
+    # Do not weaken the key to just the prefix length. That is not a correctness argument (the
+    # above still holds) but a legibility one: a key that ties often makes the answer depend on
+    # an ordering nobody reading this would think to check.
+    #
+    # This used to scan every candidate per vanished node, under a comment claiming "O(n*m) by
+    # design: 10k renamed files measures at ~2s of CPU, which is dwarfed by the hashing those
+    # same 10k files already require." BOTH halves were wrong, which is why it survived:
+    #
+    #   - the number was off by ~4.5x. A full 10k all-renamed reconcile measured 8.88s, not ~2s,
+    #     and the shape was plainly super-linear: 2k/5k/10k = 0.93s / 3.09s / 8.88s.
+    #   - "dwarfed by the hashing" cannot hold, because hashing is LINEAR and this was QUADRATIC.
+    #     A crossover is built into the claim: it stops being true exactly when the library grows
+    #     big enough for it to matter. Extrapolated, 100k renames ran ~15 min — and ScanJob fires
+    #     every 15 minutes, so a large reorganization was on course to overlap itself.
+    #
+    # Bucketing by the pairing key makes the common case (distinct bytes -> buckets of 1) a hash
+    # lookup. Measured, all-files-renamed, distinct bytes:
+    #
+    #    2k   0.93s -> 0.64s     10k   8.88s -> 3.09s
+    #    5k   3.09s -> 1.52s     50k   (not attempted before) -> 19.05s
+    #
+    # What remains at 10k+ is the per-move UPDATE and the hashing, which are linear and real; the
+    # quadratic term is gone from the distinct-bytes case.
+    #
+    # HONEST REMAINING BOUND: a bucket of N byte-identical files still costs O(N) per probe, so a
+    # library that is one file duplicated N times stays quadratic — measured all-identical, 2k
+    # 2.36s -> 2.01s and 5k 12.59s -> 10.64s, i.e. barely improved. That is INHERENT to the
+    # tie-break above, which must compare the old path against every identical candidate in order
+    # to be deterministic; it is not an oversight, and removing it would trade a crash-free
+    # guarantee for speed. The realistic shape is many small buckets, not one enormous one.
+    def best_pairing(by_key, node)
       return nil if node.content_hash.blank?
-      candidates.each_index
-                .select { |i| candidates[i][1] == node.content_hash && candidates[i][0].size == node.size }
-                .min_by { |i| [ -common_prefix_len(node.storage_path, candidates[i][0].rel_path), candidates[i][0].rel_path ] }
+      bucket = by_key[[ node.content_hash, node.size ]]
+      return nil if bucket.nil? || bucket.empty?
+      bucket.min_by { |o, _h| [ -common_prefix_len(node.storage_path, o.rel_path), o.rel_path ] }
     end
 
     # Steps 3 & 4. A file reappearing where a tombstoned one used to be REVIVES that node rather
