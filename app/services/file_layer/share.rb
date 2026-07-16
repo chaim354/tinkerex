@@ -96,15 +96,13 @@ module FileLayer
       # mounted inside their library, breaking every write into that subtree. Same-directory
       # rename cannot EXDEV, and it needs no answer to a question Task 3 has not settled yet.
       #
-      # KNOWN, NARROW: the Scanner skips `.trash` by name and invalid-encoding names — NOT
-      # dotfiles — so a scan landing between the binwrite and the rename does index the temp.
-      # The window is one binwrite (real for a large CAD file) and the outcomes are loud, not
-      # lossy: a torn hash makes the ghost node unpairable (tombstoned next pass, or an
-      # UnsafeScan on a small library), and a complete hash makes it pair with `dest` as a move
-      # and collide with the create! below on the storage_path unique index. The real fix is a
-      # temp-prefix skip in Library::Scanner, which this task's scope does not reach; flagged for
-      # the task that owns the scanner/write-path interaction.
-      tmp = dest.dirname.join(".maker-tmp-#{SecureRandom.hex(8)}")
+      # The Scanner skips this prefix at every depth — see Library::Scanner::TEMP_PREFIX, which
+      # documents what happens when it doesn't: a scan landing inside the binwrite window indexes
+      # the torn temp, the rename makes it vanish, its hash can never pair, and the resulting
+      # tombstone trips the mass-deletion guard — refusing that scan and every scan after it,
+      # permanently. Reproduced before that skip existed; do not inline the string here, because
+      # two copies that must match exactly would bring the wedge back the moment they drift.
+      tmp = dest.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
       begin
         File.binwrite(tmp, bytes)
         File.rename(tmp, dest)

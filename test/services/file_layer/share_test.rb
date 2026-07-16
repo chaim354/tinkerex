@@ -241,6 +241,42 @@ module FileLayer
 
     # --- the write path (phase 2b) ---------------------------------------------------------
 
+    # THE WEDGE, reproduced end to end. This is not a restatement of the Scanner's skip test — it
+    # drives the actual failure that skip exists to stop, so that removing the skip fails HERE,
+    # in the write path that caused it, and not only in a scanner unit test someone might read as
+    # cosmetic.
+    #
+    # Before the skip existed this reproduced exactly: three consecutive scans each raised
+    # `UnsafeScan 1/1 (100.0% > 20%)`. Neither half was wrong alone — write's temp file is right,
+    # and the guard refusing to tombstone 100% of a library is right — but together they wedge it
+    # permanently, from a sub-second race, with no operator recourse short of raising the
+    # threshold on a library that is not actually being deleted.
+    test "a scan racing write's temp file does not wedge the library forever" do
+      # The scan lands mid-binwrite and sees the temp TORN — so its hash can never match the
+      # finished file, which is what makes the ghost unpairable and therefore fatal.
+      torn = @root.join("#{Library::Scanner::TEMP_PREFIX}deadbeef")
+      File.binwrite(torn, "torn-half")
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_equal 0, @user.nodes.where("storage_path LIKE ?", "#{Library::Scanner::TEMP_PREFIX}%").count,
+                   "the in-flight temp must never become a node — that ghost is what wedges the scan"
+
+      # write finishes: different (complete) bytes, renamed into place.
+      File.binwrite(torn, "the-complete-file-bytes")
+      File.rename(torn, @root.join("done.stl"))
+
+      # Three passes, not one: the wedge is defined by never clearing, so a single green scan
+      # would not distinguish "fixed" from "not yet refused".
+      3.times do
+        # assert_nothing_raised takes no message arg; the rescue names the scan that refused.
+        begin
+          Library::Scanner.call(@user, root: @root.to_s)
+        rescue Library::Scanner::UnsafeScan => e
+          flunk "the scan refused itself — the library is wedged: #{e.message}"
+        end
+      end
+      assert_equal [ "done.stl" ], @user.nodes.present.where(kind: "file").pluck(:storage_path)
+    end
+
     test "write stores the bytes and indexes a node the scan agrees with" do
       info = adapter.write(@user, parent_node_id: nil, name: "new.stl", io: StringIO.new("fresh"))
 
