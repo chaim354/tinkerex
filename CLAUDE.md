@@ -66,8 +66,8 @@ content-addressed manifest sharing chunks).
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **Two adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable) and **`Share`** (a mounted SMB/NFS dir — read-only, **current-state only**: no versions, no history, no restore). `s3` (the user's bucket) still raises `NotImplementedError` **loudly** rather than falling back. `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. A shared **adapter contract** (`test/services/file_layer/adapter_contract.rb`) is what stops the adapters diverging — **both run it in the default suite**, and that (not the CI leg) is the anti-divergence mechanism. See §12 step 10. |
-| **Library scan** | `app/services/library/` | Share-mode indexing. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **Two adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable) and **`Share`** (a mounted SMB/NFS dir — **current-state only**: no versions, no history, no restore). **The write path is Share-only** (`write`/`delete`/`move`/**`undelete`**, phase 2b): chunk-mode writes belong to the **sync engine**, so `Chunk` refuses them **per-op, naming the real door each time** — `write` → `Sync::Commit`'s two-phase flow, `delete` → **`Sync::SubtreeDelete.call`** (cascades the tombstone to the subtree; `Sync::Mutation.apply, op: "delete"` tombstones only the node it's given and orphans descendants), `move` → `Sync::Mutation.apply, op: "move"`. **One shared refusal message is how an earlier draft told delete/move callers to use `Sync::Commit`, which has neither path** — keep them separate. `s3` (the user's bucket) still raises `NotImplementedError` **loudly** rather than falling back. `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. **Two contracts** stop the adapters diverging, both in the default suite: `adapter_contract.rb` (read — runs against **both** adapters) and `adapter_write_contract.rb` (`FileLayerWritableContract` — `Share` today; **S3 inherits it in Phase 3, which is its whole purpose**, and it already caught that Phase 3's plan was missing `write`'s clobber guard). See §12 step 10. |
+| **Library scan** | `app/services/library/` | Share-mode indexing. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). **The Scanner's skip-lists are also blind spots — 2b's structural finding, and the root cause of BOTH permanent wedges it found:** wherever the app moves bytes **into** a skipped region (`TRASH_PREFIX` = `.trash`, root-anchored; `TEMP_PREFIX` = `.maker-tmp-`, skipped **at any depth**) while leaving a live node pointing at the old path, it creates ghosts the `Reconciler` **can never pair** — pairing needs an *observation* as the partner, and a skipped path produces none; the tombstone then trips the mass-deletion guard, **refusing that scan and every scan after it, permanently**. The asymmetry that makes `delete` uniquely dangerous: a **move** leaves the bytes *observable* at the new path (self-healing), a **delete** puts them where the scan refuses to look. `Library::TrashPurgeJob` reclaims `.trash` past `LIBRARY_TRASH_DAYS`. |
 | maker-app-core, juicefs-backend | `client/…` | Earlier Tauri mount-controller + JuiceFS WebDAV backend (from the abandoned path; kept for reference). |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
@@ -394,10 +394,14 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    `Provider::ingest_bytes` → push). Hydrated files persist offline (Drop disconnects only).
    `Provider::bind_library` guards reused-DB library-mixing across all mounts. Reuses the
    Option-B seams (real nanos mtime → `FILETIME`). Pure logic unit-tested; FFI typechecks for the
-   Windows target + compiled by the `cfapi-windows` CI job. **WinFsp is still the default**
-   Windows backend. **Remaining (detailed handoff + per-step plan):
-   `docs/plan-windows-cfapi-migration.md`** — Phase 2b (new files/deletes/renames),
-   remote-files-while-mounted, flip CfAPI to default, pin/unpin + lifecycle polish.
+   Windows target + compiled by the `cfapi-windows` CI job. ~~**WinFsp is still the default**
+   Windows backend.~~ **Remaining (detailed handoff + per-step plan):
+   `docs/plan-windows-cfapi-migration.md`** — ~~Phase 2b (new files/deletes/renames),
+   remote-files-while-mounted, flip CfAPI to default, pin/unpin + lifecycle polish.~~
+   *(Superseded 2026-06-14 — this paragraph is a snapshot of 2026-06-12: **CfAPI is now the
+   DEFAULT** Windows backend, its Phase 2b is complete, and WinFsp sits behind the
+   `winfsp-backend` feature. See the `fs-cfapi` row in §3. Note this "Phase 2b" is the **CfAPI
+   migration's**, unrelated to the FileLayer Share phase 2b in step 10.)*
 5. ~~**Real OAuth/OIDC** replacing the placeholder device-token bootstrap~~ **PARTLY DONE**
    (2026-06-12): the account-takeover hole is closed — `register` is new-account-only and
    additional devices join via a **single-use pairing code** (`DevicePairing`); the app
@@ -484,15 +488,64 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       X-Accel/X-Sendfile; **S3 still presigns, so §15 holds where it was aimed** (managed/WAN
       egress). Do not "fix" these back.
     - **Phase 2a DONE** (2026-07-16, branch `worktree-file-layer-share-phase2a`, 11 commits):
-      a **read-only share-backed library** —
+      a share-backed library that was **read-only as of 2a** (the write path is 2b, below) —
       `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md`. `LIBRARY_BACKEND=share`
       + `LIBRARY_PATH=/mnt/nas/models` now boots, indexes an existing NAS directory, and the
       maker layer browses/previews it with **attachments that survive a reorganization**.
       Server suite **523 → 635**, green on *both* backends (`LIBRARY_BACKEND=share bin/rails
       test` is a CI leg — it catches tests that silently depend on the ambient backend; the
-      shared contract is what stops the adapters diverging). Phase 2b = the write path +
-      trash; Phase 3 = S3; Phase 4 = capability gating + `Delivery` (**`download` is Phase 4**
-      — share-mode `blob` 404s today, by scope).
+      shared contract is what stops the adapters diverging).
+    - **Phase 2b DONE** (2026-07-16, branch `worktree-file-layer-share-phase2b`) — **the write
+      path + trash**, Share-only (a share library can now *grow*, not just be indexed). Suite
+      **635 → 698**, still identical on both backends. The decisions a future reader must not
+      undo:
+      - **THE TWO TOMBSTONE KINDS — the thing most likely to get "simplified" away.** A **scan**
+        tombstone **keeps** `storage_path` and is revivable by the scan's revive-by-path; a
+        **trash** tombstone **NULLs it** (`deleted: true, storage_path: nil`) and is revivable
+        only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new,
+        unrelated file the trashed node's `node_id`** — and with it every project attachment,
+        BOM link and tag — while the old bytes sit in `.trash` awaiting an `undelete` that then
+        collides. Silent.
+      - **Trash layout `.trash/<node_id>/<name>`, keyed by `node_id`** — which is *why* two
+        same-named deletes can't collide, and why `undelete` has one unambiguous place to look.
+      - **`undelete` is a FOURTH port verb**, diverging from spec §3.2's three. The spec's
+        *"undelete is just a move back"* is **precluded**: `move` starts with `live_node!` (a
+        tombstone isn't live) and resolves its source via `absolute_path` → `storage_path`,
+        which is NULL — it would rename the library root. Recorded so it isn't rediscovered as
+        an inconsistency.
+      - **Order is load-bearing, both ways:** `delete` is **move-then-tombstone** (the reverse
+        fails *silently* — the next scan resurrects it); `undelete` is **move-then-revive**.
+        `EXDEV` → `FetchError`, **never** a copy+delete fallback.
+      - **`delete` refuses directories** (`FileLayer::UnsupportedOperation` — a *client*
+        condition, not `NotImplementedError`, which means the deployment is mis-wired): a dir
+        delete strands the children's nodes at paths that no longer exist while their bytes sit
+        in `.trash`, where the scan refuses to look → the second permanent wedge (reproduced;
+        the cheap cascade was tried and collapses both ways). **`move` ALLOWS directories** — a
+        moved dir leaves the bytes *observable*, so pairing rescues the children. That asymmetry
+        is the point, not an oversight.
+      - **An unmounted share must never read as "your file is permanently gone":** `undelete`
+        raises `FetchError`, not `NotFound`, when the library looks unmounted (same trade as
+        `read`'s rescue — `NotFound` is terminal).
+      - **`LIBRARY_TRASH_DAYS`** (default **30**; **`0` = keep forever, NOT purge everything** —
+        `0.days.ago` is *now*, so the obvious implementation deletes the lot). Purges by
+        **entry-dir mtime**, **never** touches the row, and **empties `.trash` but never removes
+        `.trash` itself** (an empty root reads as unmounted → would flip `undelete`'s `NotFound`
+        to `FetchError`).
+      - **The boot guard touch-probes** for writability. **`File.writable?` is not the check** —
+        it tests POSIX mode bits, not effective access, and is wrong under exactly the NFS/SMB
+        ACLs this backend targets. The probe uses `TEMP_PREFIX` so a leak can't be indexed. The
+        initializer had to move to **`after_initialize`**: app constants aren't autoloadable
+        while initializers run, so the naive version raised `uninitialized constant Library` and
+        **took the boot down while every test stayed green** (the test env skips it).
+      - **`Share#write`** stamps the node's mtime from **the file's own stat**, not the clock —
+        the scan compares against it.
+    - **Next: Phase 3 = S3** (inherits `FileLayerWritableContract` — that is the point of it);
+      **Phase 4 = capability gating + `Delivery`** (**`download` is Phase 4** — share-mode
+      `blob` 404s today, by scope: it resolves `node.current_version`, which a share node has
+      no such thing as). **`Capabilities` cannot express "the port's write path works here"** —
+      Phase 4 adds **`port_writable`**, defined as *which upload flow the UI drives*, **NOT**
+      "accepts uploads" (chunk mode accepts uploads fine, via `Sync::Commit`; getting that
+      wrong would hide upload in chunk mode).
     - **Hard-won during 2a — do not relitigate:** the mass-deletion guard must count the
       **post-pairing tombstone set**, never vanished paths (a rename vanishes its old path, so
       the naive guard refuses the reorganization the phase exists for). `Pathname#find`
@@ -501,14 +554,18 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       which must be excluded from **both** sides of the guard's fraction *and* from
       `vanished_paths`. Filenames on a real NAS **are not guaranteed to be valid UTF-8**; one
       that isn't used to brick every subsequent scan (macOS can't even create the fixture).
-    - *Open (non-correctness, commented in-code):* `Reconciler` loads every live node into
-      memory (~1M AR objects on a large NAS) — **fix before pointing this at a real 2TB NAS**;
-      `best_pairing` is O(n²) (~2s per 10k renames).
+    - *Open (non-correctness, commented in-code) — carried from 2a and **now more urgent**, since
+      the write path gives a share library a way to grow:* `Reconciler` loads every live node
+      into memory (~1M AR objects on a large NAS) — **fix before pointing this at a real 2TB
+      NAS**; `best_pairing` is O(n*m) (~2s per 10k renames).
     - `LIBRARY_BACKEND=s3` still raises `NotImplementedError` **by design** — a silent
       fallback to chunk mode would serve an empty library while the operator believes we're
-      reading their bucket. **Phase 3 trap:** the moment `FileLayer::S3` exists,
-      `ScanJob.scan_all!`'s `is_a?(FileLayer::Share)` gate quietly no-ops instead of raising.
-      An S3 library needs its own indexer; decide there deliberately (commented at the gate).
+      reading their bucket. **Phase 3 trap, now in TWO places:** the moment `FileLayer::S3`
+      exists, the `is_a?(FileLayer::Share)` gate in **`ScanJob.scan_all!`** *and* in
+      **`TrashPurgeJob.purge_all!`** quietly answers false and silently no-ops — the purge just
+      stops. An S3 library needs its own indexer, and its own reaper keyed on the objects'
+      `last_modified` (an S3 trash is a key prefix with no directory mtime to age against).
+      Decide there deliberately rather than inherit the false (commented at both gates).
 
 ---
 

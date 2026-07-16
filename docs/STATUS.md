@@ -1,8 +1,92 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-16 (FileLayer **Share adapter, phase 2a** — a read-only share-backed library)
+**Updated:** 2026-07-16 (FileLayer **Share adapter, phase 2b** — the write path + trash)
 
-## Latest (2026-07-16): phase 2a — point it at a NAS and the attachments survive
+## Latest (2026-07-16, later): phase 2b — the share library can now grow
+
+Phase 2a made a NAS directory *readable*. **2b makes it writable**: `write`/`delete`/`move`/
+`undelete` through the port, with a trash. **The write path is Share-only, and that is the
+boundary, not a gap** — chunk-mode writes belong to the sync engine, so `Chunk` **refuses them
+per-op, naming the real door each time**: `write` → `Sync::Commit`'s two-phase flow, `delete` →
+**`Sync::SubtreeDelete.call`** (it cascades the tombstone to the subtree; `Sync::Mutation.apply,
+op: "delete"` tombstones only the node given and orphans the descendants), `move` →
+`Sync::Mutation.apply, op: "move"`. One *shared* refusal message is how an earlier draft told
+delete/move callers to use `Sync::Commit`, which has neither path.
+
+**Server suite 635 → 698, still identical on both backends** (`bin/rails test` and
+`LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test`). `FileLayerWritableContract`
+(`test/services/file_layer/adapter_write_contract.rb`) is a **second** contract module beside the
+read one: the read contract runs against *both* adapters, the write contract runs against `Share`
+alone because `Chunk` doesn't implement it — and **S3 inherits it in Phase 3, which is its entire
+purpose**. It has already earned its keep: it caught that Phase 3's plan was missing `write`'s
+clobber guard.
+
+**The structural finding — the most valuable thing 2b learned, and the root cause of BOTH
+permanent wedges it found:** *the Scanner's skip-lists are also blind spots.* Wherever the app
+moves bytes **into** a skipped region (`.trash`, `.maker-tmp-`) while leaving a live node pointing
+at the old path, it creates ghosts the `Reconciler` **can never pair** — pairing needs an
+*observation* as its partner, and a skipped path produces none. The tombstone then trips the
+mass-deletion guard, **refusing that scan and every scan after it, permanently**. Both wedges were
+reproduced:
+- **The temp-file race:** a scan landing inside `write`'s `binwrite` window indexed the torn temp;
+  the rename made it vanish; its hash could never pair. Fixed by `Scanner::TEMP_PREFIX`
+  (`.maker-tmp-`, skipped **at any depth**; `.trash` is skipped root-anchored).
+- **The directory delete:** it would strand the children's nodes at paths that no longer exist
+  while their bytes sat in `.trash`. Hence `delete` **refuses directories**
+  (`FileLayer::UnsupportedOperation` — a *client* condition; `NotImplementedError` is a
+  `ScriptError` and means the deployment is mis-wired). The cheap cascade was tried and collapses
+  both ways.
+
+**The asymmetry is the point:** a **move** leaves the bytes *observable* at the new path, so
+pairing rescues the children — which is why `move` **allows** directories and `delete` does not.
+Opposite answers to what looks like the same question.
+
+**Decisions that must not be "simplified" away:**
+- **THE TWO TOMBSTONE KINDS.** A **scan** tombstone **keeps** `storage_path` and is revivable by
+  the scan's revive-by-path; a **trash** tombstone **NULLs** it (`deleted: true, storage_path:
+  nil`) and is revivable only by `undelete`. Collapsing them hands a **new, unrelated file the
+  trashed node's `node_id`** — and with it every attachment, BOM link and tag — while the old
+  bytes wait in `.trash` for an undelete that then collides. Silent, and the likeliest future
+  regression in this phase.
+- **Trash layout `.trash/<node_id>/<name>`, keyed by `node_id`** — which is why two same-named
+  deletes don't collide, and why `undelete` has one unambiguous place to look.
+- **`undelete` is a FOURTH port verb**, diverging from spec §3.2's three. The spec's *"undelete is
+  a move back"* is **precluded** by the Landmine 2 fix: `move` opens with `live_node!` (a tombstone
+  isn't live) and resolves its source via `absolute_path` → `storage_path`, which is NULL — it
+  would rename the library root.
+- **Order, both ways:** `delete` is **move-then-tombstone** (the reverse fails *silently* — the
+  next scan resurrects it); `undelete` is **move-then-revive**. `EXDEV` → `FetchError`, **never** a
+  copy+delete fallback.
+- **An unmounted share must never read as "your file is permanently gone":** `undelete` raises
+  `FetchError`, not `NotFound`, when the library looks unmounted (`NotFound` is terminal).
+- **`LIBRARY_TRASH_DAYS`** (default **30**; **`0` = keep forever, NOT purge everything** —
+  `0.days.ago` is *now*, so the obvious implementation deletes the lot; the guard runs first).
+  `TrashPurgeJob` purges by **entry-dir mtime**, **never** touches the row, and **empties `.trash`
+  but never removes `.trash` itself** (an empty root reads as unmounted → would flip `undelete`'s
+  `NotFound` to `FetchError`).
+- **The boot guard touch-probes.** **`File.writable?` is not the check** — it tests POSIX mode bits
+  rather than effective access, and is wrong under exactly the NFS/SMB ACLs this backend targets.
+  The probe is named with `TEMP_PREFIX` so a leak can't be indexed. The initializer had to move to
+  **`after_initialize`**: app constants aren't autoloadable while initializers run, so the naive
+  version raised `uninitialized constant Library` and **took the boot down while every test stayed
+  green** — the test env skips the initializer, so no test can catch it.
+- **`Share#write`** stamps the node's mtime from **the file's own stat**, not the clock — the scan
+  compares against it.
+
+*Open, carried from 2a and **now more urgent** (the write path gives a share library a way to
+grow):* `Reconciler` loads every live node into memory (~1M AR objects) — **fix before a real 2TB
+NAS**; `best_pairing` is O(n*m) (~2s/10k renames). Both commented in-code.
+
+**Still deferred:** Phase 3 = S3 (inherits the write contract). Phase 4 = capability gating +
+`Delivery` — **`download` is Phase 4**; share-mode `blob` 404s today by scope (it resolves
+`node.current_version`, which a share node has none of). **`Capabilities` cannot express "the
+port's write path works here"**: Phase 4 adds **`port_writable`**, defined as *which upload flow
+the UI drives*, **NOT** "accepts uploads" — chunk mode accepts uploads fine, via `Sync::Commit`,
+and getting that wrong would hide upload in chunk mode. **Phase 3 trap, now in two places:** the
+`is_a?(FileLayer::Share)` gate in `ScanJob.scan_all!` *and* `TrashPurgeJob.purge_all!` quietly
+answers false the moment `FileLayer::S3` exists — the purge silently stops.
+
+## Previous (2026-07-16): phase 2a — point it at a NAS and the attachments survive
 
 `LIBRARY_BACKEND=share` + `LIBRARY_PATH=/mnt/nas/models` now **boots, indexes an existing
 directory, and serves it to the maker layer** (browse via the synthesized dir tree, attach,
