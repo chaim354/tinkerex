@@ -341,6 +341,45 @@ module FileLayer
     # and are the only names that could otherwise reach the root or its parent, so they belong to
     # this check and not to the escape guard. The MESSAGE is asserted because NotFound is reachable
     # from both, and a class-only assertion is how the first draft of this test came to pin nothing.
+    # A RESERVED name is a perfectly good leaf, which is exactly why `leaf!` does not catch it.
+    # Both entry points, both prefixes: `move` inherited `leaf!` unexamined, so it had the bug too.
+    test "write and move refuse a path the scan would skip" do
+      %w[.trash .maker-tmp-abc].each do |reserved|
+        err = assert_raises(FileLayer::NotFound, "write(#{reserved.inspect}) must be refused") do
+          adapter.write(@user, parent_node_id: nil, name: reserved, io: StringIO.new("x"))
+        end
+        assert_match(/reserved path/, err.message, reserved)
+
+        id = index!("mv-#{reserved.delete('.')}.stl", bytes: "b")
+        err = assert_raises(FileLayer::NotFound, "move to #{reserved.inspect} must be refused") do
+          adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: reserved)
+        end
+        assert_match(/reserved path/, err.message, reserved)
+      end
+      assert_not File.exist?(@root.join(".trash")), "nothing may be created at a reserved path"
+    end
+
+    # THE WEDGE this guard exists for, driven end to end. It wedges TWICE, and the second half is
+    # the one a scanner-only test would miss entirely: `.trash` becomes a FILE, so delete's
+    # mkdir_p raises EEXIST and EVERY delete in the library breaks — permanently, and not fixed by
+    # clearing the ghost.
+    test "an upload named .trash does not wedge the scan or break delete library-wide" do
+      real = index!("real.stl", bytes: "a real file")
+      assert_raises(FileLayer::NotFound) do
+        adapter.write(@user, parent_node_id: nil, name: ".trash", io: StringIO.new("evil"))
+      end
+
+      3.times do
+        begin
+          Library::Scanner.call(@user, root: @root.to_s)
+        rescue Library::Scanner::UnsafeScan => e
+          flunk "the scan refused itself — a ghost at an unobservable path wedged it: #{e.message}"
+        end
+      end
+      # The second wedge: delete must still work for every OTHER file in the library.
+      assert_nothing_raised { adapter.delete(@user, node_id: real) }
+    end
+
     test "write rejects a name that is not a leaf" do
       [ "cad/gear.stl", "/etc/passwd", "../outside.stl", "a/../../outside.stl", ".", "..", "" ].each do |bad|
         err = assert_raises(FileLayer::NotFound, "#{bad.inspect} must be refused") do

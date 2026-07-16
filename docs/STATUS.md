@@ -41,6 +41,16 @@ reproduced:
 pairing rescues the children — which is why `move` **allows** directories and `delete` does not.
 Opposite answers to what looks like the same question.
 
+**And then the asymmetry itself was too confident.** "A move leaves the bytes observable" holds
+only when the *destination* is observable — and `write`/`move` happily accepted `.trash` and
+`.maker-tmp-x`, which are perfectly good leaf names. One ordinary upload named `.trash` wedged
+the scan **and** turned `.trash` into a file, breaking **every delete in the library**,
+permanently, unfixable by clearing the ghost. Found by the whole-branch review, after three
+per-task reviews and the sentence above had each explained why it couldn't happen. Fixed by
+`Share#observable!`. **The lesson is the meta one: every explanation of this bug class so far has
+been the thing that hid the next instance of it.** Assume any path that writes is exposed until
+checked.
+
 **Decisions that must not be "simplified" away:**
 - **THE TWO TOMBSTONE KINDS.** A **scan** tombstone **keeps** `storage_path` and is revivable by
   the scan's revive-by-path; a **trash** tombstone **NULLs** it (`deleted: true, storage_path:

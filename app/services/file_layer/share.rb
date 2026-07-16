@@ -84,6 +84,7 @@ module FileLayer
     def write(user, parent_node_id: nil, name: nil, io: nil)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      observable!(rel)
       dest = resolve_inside!(rel)
       raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
 
@@ -217,6 +218,7 @@ module FileLayer
       node = live_node!(user, node_id)
       src = absolute_path(node)
       rel = join_rel(parent_dir_rel!(user, new_parent_node_id), new_name)
+      observable!(rel)
       dest = resolve_inside!(rel)
       # Refuse rather than replace. POSIX rename() would silently clobber, and the maker layer has
       # no undo for it: the displaced file's node would still point at a path now holding someone
@@ -336,9 +338,17 @@ module FileLayer
     # That is an instance of a STRUCTURAL property, not a coincidence: wherever this app moves
     # bytes INTO a region the Scanner skips (.trash, .maker-tmp-) while leaving a live node
     # pointing at the old path, it creates ghosts the Reconciler can never pair — pairing needs
-    # an OBSERVATION as the partner, and a skipped path produces none. Delete is uniquely exposed
-    # because a dir MOVE leaves the bytes observable at the new path (so move-pairing rescues the
-    # children), while a dir DELETE puts them exactly where the scan refuses to look.
+    # an OBSERVATION as the partner, and a skipped path produces none.
+    #
+    # An earlier draft of this paragraph concluded "delete is uniquely exposed, because a dir MOVE
+    # leaves the bytes observable at the new path while a dir DELETE puts them where the scan
+    # refuses to look." The principle was right and the conclusion was FALSE, which is worth
+    # leaving here as a warning: a move is only self-healing when its DESTINATION is observable,
+    # and `write`/`move` used to accept `.trash` and `.maker-tmp-x` as destinations — perfectly
+    # good leaf names — wedging the library the same way, and additionally breaking every delete
+    # in it by turning `.trash` into a file. See `observable!`, which is the guard that claim's
+    # confidence delayed. The property is structural; assume every path that writes is exposed
+    # until you have checked it, and do not trust a sentence like the one this replaced.
     #
     # Chunk mode cascades instead (Sync::SubtreeDelete, whole subtree under one lock). Share mode
     # deliberately does not: 2b is file-only, `undelete` restores ONE path under ONE parent and
@@ -391,6 +401,36 @@ module FileLayer
     def leaf!(name)
       return unless name.blank? || File.basename(name.to_s) != name.to_s || %w[. ..].include?(name.to_s)
       raise NotFound, "#{name.inspect} is not a leaf name (the directory is parent_node_id's job)"
+    end
+
+    # The write path must never create a path the Scanner SKIPS. `leaf!` asks a different
+    # question — "is this one path segment?" — and a reserved name passes it: `.trash` and
+    # `.maker-tmp-x` are perfectly good leaves.
+    #
+    # This is the FOURTH instance of the skip-list blind spot, and the worst, because it wedges
+    # twice. Reproduced: `write(name: ".trash")` is one upload of an ordinary-looking file, and
+    #
+    #   1. it creates a live node at a path the scan never observes -> unpairable -> tombstoned
+    #      -> the mass-deletion guard refuses that scan and EVERY SCAN AFTER IT (the ghost class
+    #      Library::Scanner::TEMP_PREFIX documents at length); and
+    #   2. `.trash` is now a FILE, so #delete's mkdir_p raises EEXIST and EVERY DELETE IN THE
+    #      LIBRARY breaks — permanently, and not fixed by clearing the ghost. Someone has to
+    #      remove the file on the NAS by hand.
+    #
+    # Nobody wrote this bug; four correct pieces grew into it. 2a shipped TRASH_PREFIX; `leaf!`
+    # was written as a leaf check; the temp-file fix grew the skip-list into a RESERVED-NAME list
+    # without telling the validator; `move` then inherited `leaf!` unexamined. The lesson for
+    # whoever adds the next skipped prefix: the Scanner's skip-list and this guard are one fact,
+    # so they share the constants rather than a copy of the strings.
+    #
+    # Checked on `rel`, not `name`: the parent contributes segments too. Root-anchored for
+    # .trash and any-depth for the temp prefix, matching Scanner#each_child exactly — a nested
+    # `cad/.trash` is the user's own folder, is indexed, and is none of our business.
+    def observable!(rel)
+      segments = rel.to_s.split("/")
+      return unless segments.first == Library::Scanner::TRASH_PREFIX ||
+                    segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) }
+      raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 
     def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
