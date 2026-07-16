@@ -184,6 +184,127 @@ module FileLayer
       nil
     end
 
+    # Rename and/or re-parent a node, keeping its node_id — which is the port's whole promise, and
+    # the reason this exists at all rather than leaving the user to do it in Finder and wait for a
+    # scan to pair it back.
+    #
+    # DIRECTORIES ARE ALLOWED, and the asymmetry with `delete` is deliberate rather than an
+    # oversight — see deletable_file!, which predicted it. A moved directory leaves its children's
+    # bytes OBSERVABLE at the new path, so the Reconciler's move-pairing re-homes them on the next
+    # pass with their node_ids intact (probed: 2/2 children re-homed, no ghosts, and the
+    # mass-deletion guard does not fire because it counts the POST-pairing set). A DELETED
+    # directory puts them in .trash, where the scan refuses to look, so nothing can ever pair them
+    # — a permanent wedge. Observable vs. skipped is the entire difference.
+    #
+    # Only the moved node's own row is rewritten, so a moved directory's descendants keep a STALE
+    # storage_path until the next scan. Two residuals follow, and both are accepted because they
+    # are EXACTLY what the user renaming that folder in Finder already produces — the case this
+    # phase is built to survive:
+    #   1. reads of a descendant ENOENT until the scan re-homes it (its parent_node_id is NOT
+    #      stale — the dir kept its node_id — so browse never breaks; only bytes do).
+    #   2. the repair pass re-hashes the whole moved subtree (pairing has nothing else to match
+    #      on), and a descendant that is unreadable at that moment cannot be paired, so it
+    #      tombstones and re-creates with a new node_id, orphaning its attachments.
+    # Cascading the prefix rewrite to descendants here would close both. It is the right end
+    # state and it is NOT in this phase's plan — left as a deliberate decision rather than
+    # smuggled in, since it is the first thing in this adapter that would write rows for paths
+    # the op did not observe.
+    #
+    # NO TRANSACTION, for the reason the whole file gives: File.rename is not transactional, so a
+    # rollback would restore the ROW while leaving the FILE moved — the worse of the two states.
+    def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      leaf!(new_name)
+      node = live_node!(user, node_id)
+      src = absolute_path(node)
+      rel = join_rel(parent_dir_rel!(user, new_parent_node_id), new_name)
+      dest = resolve_inside!(rel)
+      # Refuse rather than replace. POSIX rename() would silently clobber, and the maker layer has
+      # no undo for it: the displaced file's node would still point at a path now holding someone
+      # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
+      # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
+      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+
+      begin
+        # mkdir_p INSIDE the begin, exactly as in delete: it is I/O against the same share and
+        # fails for the same transient reasons, and outside, its raw Errno escapes the
+        # SystemCallError -> FetchError mapping and burns a preview to a permanent "failed".
+        FileUtils.mkdir_p(dest.dirname)
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      # The node_id does not change — that is the port's whole promise, and the write contract
+      # (Task 5) pins it as a cross-backend rule.
+      #
+      # KNOWN API AMBIGUITY: `new_parent_node_id: nil` means THE ROOT, so this cannot distinguish
+      # "rename in place" from "move to the root" — a caller who omits it while meaning a rename
+      # moves the file to the top of the library. The port's signature is what it is (Task 5 pins
+      # it); a caller renaming must pass the current parent_node_id. Stated here because the
+      # failure is silent and the fix is one keyword at the call site.
+      node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+      stat(user, node_id: node.node_id)
+    end
+
+    # Move the bytes back out of .trash and revive the node — the inverse of `delete`, and the
+    # mirror of the structural hazard that shapes it. delete moves bytes INTO a region the Scanner
+    # skips, which is what makes its ghosts unpairable; undelete moves them OUT, which is the safe
+    # direction: the path becomes observable and the node becomes live together, so the next scan
+    # simply matches it by path.
+    #
+    # ORDER — move, then revive — is the same trade delete makes, resolved the same way. Revive
+    # first and a failed move leaves a live node pointing at nothing while its bytes sit in .trash:
+    # unobservable, unpairable, the ghost class itself. Move first and a failed revive leaves the
+    # bytes at their real path with the node still trashed — which the next scan simply INDEXES,
+    # so the user's file is visibly back (it loses its old node_id, but nothing is lost or hidden).
+    # Loud and self-healing beats silent.
+    #
+    # (That same scan, landing inside this method's own move->revive window, is a real but narrow
+    # race: it creates a node for the observed path, and this update! then collides with the
+    # partial unique index on (user_id, storage_path) WHERE deleted = false. The result is a raw
+    # RecordNotUnique out of a file the user can see and use, under a new node_id. Recorded rather
+    # than fixed: every ordering that closes it opens the strictly worse one above.)
+    def undelete(user, node_id: nil)
+      # NOT live_node!: this operates on a tombstone by definition. `deleted: true` in the lookup
+      # is what makes undeleting a live node a clean NotFound instead of a confusing rename.
+      node = user.nodes.find_by(node_id:, deleted: true) ||
+             raise(NotFound, "node #{node_id.inspect} is not in the trash")
+      src = trash_dir(node.node_id).join(node.name)
+      unless File.exist?(src)
+        # An UNMOUNTED share makes the trashed bytes absent too — and this is the only place
+        # besides `read` where this adapter mints a "your file is gone". It must ask the same
+        # question, for the same reason: NotFound is TERMINAL, so answering it while the NAS is
+        # merely down tells the user their file is permanently lost when it is sitting safely on
+        # the share. See read's rescue for the full argument; the trade is identical.
+        unless library_present?
+          raise FetchError, "#{node_id.inspect}: the trashed bytes are missing and the library " \
+                            "root looks unmounted"
+        end
+        # The library is there and the bytes are not. The purge job (Task 6) took them, or this is
+        # a SCAN tombstone, which never had bytes in .trash to begin with. Both are terminal and
+        # both are the user's answer: it is gone.
+        raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
+      end
+
+      # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
+      # live: false — see parent_dir_rel!.
+      rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
+      dest = resolve_inside!(rel)
+      raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
+
+      begin
+        FileUtils.mkdir_p(dest.dirname) # inside the begin, for the reason move and delete give
+        File.rename(src, dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+      end
+      discard_empty(trash_dir(node.node_id))
+      # Re-stat: the bytes are the same, but mtime/size are what the next scan compares against,
+      # and a stale pair would make it re-hash the file for nothing.
+      st = File.stat(dest)
+      node.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
+      stat(user, node_id: node.node_id)
+    end
+
     # Resolve a node's path and refuse anything that escapes the root. Belt and braces: paths
     # come from our own scanner, but the audit that preceded this work found exactly this bug
     # class in client-supplied chunk hashes used as storage keys.
@@ -274,10 +395,35 @@ module FileLayer
 
     def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
 
-    def parent_dir_rel!(user, parent_node_id)
+    # Blank means THE ROOT — join_rel turns a nil dir into a bare name. That convention is what
+    # lets `parent_node_id: nil` be a real destination, and it is also why the path-less guard
+    # below is not paranoia.
+    #
+    # `live: false` relaxes the lookup to include TOMBSTONED directories, and it exists for
+    # `undelete` alone. The route is not the one it looks like: an emptied directory still exists
+    # on disk, so a scan observes it and never tombstones it (probed). But if the user then
+    # removes the empty folder in Finder, THAT scan tombstones the dir node — keeping its
+    # storage_path — and the file trashed out of it is still perfectly restorable. Refusing it
+    # would be a dead end the user can neither see nor fix, for a folder they are in the middle of
+    # restoring a file into; mkdir_p recreates the folder instead, and because a recreated folder
+    # is positive evidence, the next scan revives that very dir node by storage_path with its
+    # original node_id. Self-healing, and pinned.
+    #
+    # The WRITE path keeps live: true, and that asymmetry is the point: writing a NEW file into a
+    # folder the user deleted is a request to reconsider, while restoring a file that was already
+    # in there is a request to undo.
+    def parent_dir_rel!(user, parent_node_id, live: true)
       return nil if parent_node_id.blank?
-      parent = user.nodes.present.find_by(node_id: parent_node_id, kind: "dir") ||
-               raise(NotFound, "parent #{parent_node_id.inspect} is not a live directory")
+      scope = live ? user.nodes.present : user.nodes
+      parent = scope.find_by(node_id: parent_node_id, kind: "dir") ||
+               raise(NotFound, "parent #{parent_node_id.inspect} is not a " \
+                               "#{'live ' if live}directory")
+      # A dir node cannot carry a nil storage_path today — delete refuses directories, and a scan
+      # tombstone keeps its path — so this is unreachable. It is here because of what happens if
+      # that ever stops being true: blank means the root, so a path-less parent would silently
+      # relocate the file to the top of the library rather than fail. Of everything this adapter
+      # can get wrong, a silent misplacement is the one it has no later way to detect.
+      raise NotFound, "parent #{parent_node_id.inspect} has no storage_path" if parent.storage_path.blank?
       parent.storage_path
     end
 

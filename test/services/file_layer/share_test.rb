@@ -514,5 +514,315 @@ module FileLayer
       assert_raises(FileLayer::NotFound) { adapter.delete(@user, node_id: id) }
       assert_equal "b", File.binread(@root.join(".trash/#{id}/once.stl"))
     end
+
+    # --- move (phase 2b) -------------------------------------------------------------------
+
+    test "move renames on disk and keeps the node_id — the attachment survives" do
+      id = index!("old.stl", bytes: "same")
+      adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "new.stl")
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "new.stl", node.storage_path
+      assert_equal "same", File.binread(@root.join("new.stl"))
+      assert_not File.exist?(@root.join("old.stl"))
+      # The scan must agree rather than seeing a delete+create.
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_equal id, @user.nodes.find_by!(storage_path: "new.stl").node_id
+    end
+
+    test "move refuses to overwrite an existing file" do
+      a = index!("a.stl", bytes: "aaa")
+      index!("b.stl", bytes: "bbb")
+      assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: a, new_parent_node_id: nil, new_name: "b.stl")
+      end
+      assert_equal "bbb", File.binread(@root.join("b.stl")), "the destination is untouched"
+    end
+
+    # Same correction as write's: "../escaped.stl" contains a separator, so it is the LEAF check
+    # that refuses it, not the escape guard — assert the message so this test names what it pins.
+    test "move refuses a new_name that is not a leaf" do
+      id = index!("a.stl", bytes: "aaa")
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "../escaped.stl")
+      end
+      assert_match(/leaf name/, err.message)
+      assert File.exist?(@root.join("a.stl")), "a refused move must not move anything"
+    end
+
+    # And the escape guard on move's destination, reached the only way it can be — through a
+    # poisoned parent, exactly as in write.
+    test "move into a parent whose storage_path escapes the root is refused" do
+      id = index!("a.stl", bytes: "aaa")
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 storage_path: "../evil-#{SecureRandom.hex(4)}", mtime: 1)
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: id, new_parent_node_id: evil.node_id, new_name: "a.stl")
+      end
+      assert_match(/escapes the library root/, err.message)
+      assert File.exist?(@root.join("a.stl")), "the file stays put"
+    end
+
+    # move OUT of a subdirectory to the root. `new_parent_node_id: nil` is the root — the same
+    # "blank means root" join_rel/parent_dir_rel! convention `write` already uses — and this is
+    # the only test that exercises the nil branch as a DESTINATION rather than as "the caller
+    # didn't say", which is the ambiguity documented on #move.
+    test "move to the root clears parent_node_id and lands the bytes at the top level" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      parent = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl", io: StringIO.new("gg"))
+
+      adapter.move(@user, node_id: info.node_id, new_parent_node_id: nil, new_name: "gear.stl")
+
+      node = @user.nodes.find_by!(node_id: info.node_id)
+      assert_equal "gear.stl", node.storage_path
+      assert_nil node.parent_node_id
+      assert_equal "gg", File.binread(@root.join("gear.stl"))
+      assert_not File.exist?(@root.join("cad/gear.stl"))
+    end
+
+    # NOT IN THE PLAN, and the asymmetry with delete is the point. Share#deletable_file! refuses a
+    # directory DELETE because it strands the children's nodes at paths the scan refuses to look
+    # behind (.trash) — a permanent wedge. It predicted move's answer would be different; it is,
+    # and this pins WHY: a moved directory leaves its children's bytes OBSERVABLE at the new path,
+    # so the Reconciler's move-pairing re-homes them on the next pass with their node_ids intact.
+    # Self-healing, not a wedge — so move allows what delete refuses. See #move's comment for the
+    # two residuals this accepts (both identical to the user renaming the folder in Finder).
+    test "moving a DIRECTORY is allowed: the next scan re-homes the children, node_ids intact" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      dir = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      gear = adapter.write(@user, parent_node_id: dir.node_id, name: "gear.stl", io: StringIO.new("gg"))
+      brk  = adapter.write(@user, parent_node_id: dir.node_id, name: "brk.stl", io: StringIO.new("bb"))
+
+      adapter.move(@user, node_id: dir.node_id, new_parent_node_id: nil, new_name: "cad2")
+
+      assert_equal "gg", File.binread(@root.join("cad2/gear.stl")), "the subtree moved with it"
+      # The children's storage_path is STALE until the next scan — the accepted window, identical
+      # to a Finder rename. Their parent_node_id is not stale (the dir kept its node_id), so
+      # browse-by-parent never breaks; only byte reads do, and only until the scan.
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: gear.node_id).storage_path
+
+      # 2/2 files "vanish" from their old paths, which is 100% — far over the 20% guard. It does
+      # NOT refuse, because the guard counts the POST-pairing tombstone set and pairing explains
+      # both. A dir move being mistaken for a mass deletion is exactly what that design prevents.
+      assert_nothing_raised { Library::Scanner.call(@user, root: @root.to_s) }
+
+      assert_equal gear.node_id, @user.nodes.find_by!(storage_path: "cad2/gear.stl").node_id,
+                   "the attachment survives the folder move — the phase's headline promise"
+      assert_equal brk.node_id, @user.nodes.find_by!(storage_path: "cad2/brk.stl").node_id
+      assert_equal 2, @user.nodes.present.where(kind: "file").count, "no duplicates, no ghosts"
+    end
+
+    # --- undelete (phase 2b) ---------------------------------------------------------------
+
+    test "undelete moves the bytes back and revives the node with its node_id" do
+      id = index!("bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+      adapter.undelete(@user, node_id: id)
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_not node.deleted
+      assert_equal "bracket.stl", node.storage_path
+      assert_equal "solid", File.binread(@root.join("bracket.stl"))
+      assert_not File.exist?(@root.join(".trash/#{id}")), "the trash entry is consumed"
+    end
+
+    test "undelete refuses when something else now occupies the path" do
+      id = index!("bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+      File.binwrite(@root.join("bracket.stl"), "someone else's file")
+
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_equal "someone else's file", File.binread(@root.join("bracket.stl")),
+                   "undelete must never clobber a live file"
+      assert File.exist?(@root.join(".trash/#{id}/bracket.stl")), "the trashed bytes survive"
+    end
+
+    # A trash tombstone has a NULL storage_path (Landmine 2), so undelete must RECONSTRUCT the
+    # destination from parent_node_id + name. Every other test here deletes a root-level file,
+    # where that reconstruction is indistinguishable from "just use the name" — so without this
+    # case the parent leg is unpinned and a file deleted out of cad/ would be restored to the root.
+    test "undelete restores into the original subdirectory, not the root" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      parent = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl", io: StringIO.new("gg"))
+
+      adapter.delete(@user, node_id: info.node_id)
+      adapter.undelete(@user, node_id: info.node_id)
+
+      assert_equal "gg", File.binread(@root.join("cad/gear.stl"))
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: info.node_id).storage_path
+    end
+
+    # THE test the `live: false` kwarg exists for, and the ONLY one that fails without it.
+    #
+    # The plan justified `live: false` with "the parent may have been tombstoned by a scan once
+    # this file left it (tombstone_vanished_dirs)". That reason is FALSE — probed: an emptied
+    # directory still EXISTS on disk, so the scan observes it and never tombstones it. The real
+    # route is one step further along: the user deletes the last file through the UI and then
+    # removes the now-empty folder in Finder. THAT scan tombstones the dir (keeping its
+    # storage_path), and undelete must still be able to put the file back.
+    #
+    # `present`-scoping the parent lookup here would answer "parent ... is not a live directory"
+    # — a dead end the user can neither see nor fix, for a folder they are in the middle of
+    # restoring a file into. Restoring is self-healing instead: mkdir_p recreates the folder, and
+    # because a recreated folder is POSITIVE EVIDENCE (an observation), the next scan revives the
+    # very same dir node by storage_path — original node_id and all. Pinned below, because a
+    # transiently-tombstoned parent would otherwise be a silent gap.
+    test "undelete restores into a parent the scan tombstoned after the folder was removed" do
+      FileUtils.mkdir_p(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s)
+      parent = @user.nodes.find_by!(storage_path: "cad", kind: "dir")
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl", io: StringIO.new("gg"))
+      adapter.delete(@user, node_id: info.node_id)
+
+      # The user removes the emptied folder in Finder; the scan tombstones the dir node.
+      FileUtils.rmdir(@root.join("cad"))
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+      assert parent.reload.deleted, "precondition: the parent dir node is a tombstone"
+      assert_equal "cad", parent.storage_path, "precondition: a scan tombstone KEEPS its path"
+
+      adapter.undelete(@user, node_id: info.node_id)
+
+      assert_equal "gg", File.binread(@root.join("cad/gear.stl")), "the folder is recreated for it"
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: info.node_id).storage_path
+
+      # ...and the transient inconsistency (a live node under a tombstoned parent) heals on the
+      # next pass, with the ORIGINAL dir node_id — so nothing pointing at that folder is orphaned.
+      Library::Scanner.call(@user, root: @root.to_s)
+      assert_not parent.reload.deleted
+      assert_equal parent.node_id, @user.nodes.find_by!(storage_path: "cad", kind: "dir").node_id
+    end
+
+    # NOT IN THE PLAN. A tombstoned dir keeps its storage_path today, so dropping `present` from
+    # the parent lookup cannot currently return a path-less row — but "cannot currently" is the
+    # whole reason to say it out loud: join_rel(nil, name) means THE ROOT, so a parent that ever
+    # loses its path would silently restore the file to the top of the library instead of failing.
+    # A silent misplacement is the failure this adapter is least able to detect later.
+    test "undelete refuses a parent with no storage_path rather than silently restoring to the root" do
+      pathless = @user.nodes.create!(node_id: SecureRandom.uuid, name: "ghost", kind: "dir",
+                                     storage_path: nil, mtime: 1)
+      id = index!("gear.stl", bytes: "gg")
+      @user.nodes.find_by!(node_id: id).update!(parent_node_id: pathless.node_id)
+      adapter.delete(@user, node_id: id)
+
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/has no storage_path/, err.message)
+      assert_not File.exist?(@root.join("gear.stl")), "and it did NOT land in the root"
+      assert File.exist?(@root.join(".trash/#{id}/gear.stl")), "the trashed bytes are untouched"
+    end
+
+    # The purge job (Task 6) may have taken the bytes, and a SCAN tombstone never had any in
+    # .trash to begin with. Both are terminal and both are the user's answer: it is gone.
+    test "undelete of a node whose trashed bytes are gone is terminal NotFound" do
+      index!("sibling.stl", bytes: "the library is mounted") # a non-empty root == mounted
+      id = index!("purged.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      FileUtils.remove_entry(@root.join(".trash/#{id}"))
+
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/purged/, err.message)
+    end
+
+    # NOT IN THE PLAN, and the correction it needed. The plan raised a bare NotFound whenever the
+    # trashed bytes were absent — but an UNMOUNTED share makes them absent too, and NotFound is
+    # TERMINAL: it tells the user their file is permanently gone (and, once Phase 4 maps it, 404s)
+    # when the NAS is merely down and the bytes are sitting safely on it. That is precisely the
+    # verdict `read`'s longest comment refuses to make, for precisely this reason — so undelete,
+    # the only OTHER place this adapter mints a "your file is gone", asks the same question.
+    test "undelete with the library unmounted is TRANSIENT, not a false 'purged'" do
+      id = index!("nas.stl", bytes: "on the nas")
+      adapter.delete(@user, node_id: id)
+      FileUtils.remove_entry(@root.join(".trash")) # the unmount shape: the root exists, and is empty
+
+      assert_empty Dir.children(@root), "precondition: an unmounted root exists but is empty"
+      err = assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: id) }
+      assert_match(/unmounted/, err.message)
+      assert @user.nodes.find_by!(node_id: id).deleted, "and the node stays trashed, undeletable later"
+    end
+
+    test "undeleting a LIVE node is a clean NotFound, not a confusing rename" do
+      id = index!("live.stl", bytes: "here")
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/not in the trash/, err.message)
+      assert_equal "here", File.binread(@root.join("live.stl"))
+    end
+
+    test "a user cannot undelete ANOTHER user's trashed node" do
+      id = index!("mine.stl", bytes: "my bytes")
+      adapter.delete(@user, node_id: id)
+      other = User.create!(email: "share-other-#{SecureRandom.hex(4)}@example.com")
+
+      assert_raises(FileLayer::NotFound) { adapter.undelete(other, node_id: id) }
+      assert_equal "my bytes", File.binread(@root.join(".trash/#{id}/mine.stl"))
+    end
+
+    # undelete re-stats rather than trusting the size/mtime the node carried when it was trashed.
+    # Those are what the next scan's (path, mtime, size) skip-check compares against, and a stale
+    # pair makes it re-hash the file for nothing — the incremental-skip property `write` pins for
+    # the same reason. The mtime is preserved by rename, so this asserts AGREEMENT with the file.
+    test "undelete records the restored file's own stat, so the next scan skips it" do
+      id = index!("bracket.stl", bytes: "solid")
+      @user.nodes.find_by!(node_id: id).update!(size: 999, mtime: 1) # a stale pair, as a purge would leave
+      adapter.delete(@user, node_id: id)
+      adapter.undelete(@user, node_id: id)
+
+      st = File.stat(@root.join("bracket.stl"))
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal st.size, node.size
+      assert_equal st.mtime.to_i * 1_000_000_000 + st.mtime.nsec, node.mtime
+    end
+
+    # The mirror of delete's Landmine 1, and the structural finding behind it: delete moves bytes
+    # INTO a region the Scanner skips, undelete moves them OUT. Out is the safe direction — the
+    # path becomes observable and the node becomes live in the same breath — so the scan simply
+    # matches it by path. Pinned because "it works out" is not the same as "nobody checked".
+    test "undelete leaves no ghost for the next scan: no tombstone, no duplicate, no re-create" do
+      ids = 5.times.map { |i| index!("f#{i}.stl", bytes: "x#{i}") }
+      ids.first(4).each { |id| adapter.delete(@user, node_id: id) }
+      ids.first(4).each { |id| adapter.undelete(@user, node_id: id) }
+
+      assert_nothing_raised { Library::Scanner.call(@user, root: @root.to_s) }
+      assert_equal 5, @user.nodes.present.where(kind: "file").count
+      assert_equal ids.sort, @user.nodes.present.where(kind: "file").pluck(:node_id).sort,
+                   "every file kept its ORIGINAL node_id through delete -> undelete -> scan"
+      assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
+    end
+
+    # mkdir_p is I/O against the same share as the rename and fails for the same transient
+    # reasons — the same bug Task 3's delete had to fix, in the two methods that copied its shape.
+    # Junk AT the destination's parent path rather than a chmod, so it holds when the suite runs
+    # as root (CI containers do): root bypasses permission bits, but a file is still not a
+    # directory.
+    test "move: a destination dir that cannot be created is TRANSIENT, not a raw errno" do
+      id = index!("a.stl", bytes: "aaa")
+      File.binwrite(@root.join("blocker"), "not a directory")
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "blocker", kind: "dir",
+                                 storage_path: "blocker/deep", mtime: 1)
+
+      err = assert_raises(FileLayer::FetchError) do
+        adapter.move(@user, node_id: id, new_parent_node_id: evil.node_id, new_name: "a.stl")
+      end
+      assert_match(/ENOTDIR|EEXIST/, err.message)
+      assert File.exist?(@root.join("a.stl")), "a failed move must not lose the file"
+      assert_equal "a.stl", @user.nodes.find_by!(node_id: id).storage_path, "and must not re-path it"
+    end
+
+    test "undelete: a destination dir that cannot be created is TRANSIENT, not a raw errno" do
+      dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "blocker", kind: "dir",
+                                storage_path: "blocker/deep", mtime: 1)
+      id = index!("a.stl", bytes: "aaa")
+      @user.nodes.find_by!(node_id: id).update!(parent_node_id: dir.node_id)
+      adapter.delete(@user, node_id: id)
+      File.binwrite(@root.join("blocker"), "not a directory")
+
+      err = assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: id) }
+      assert_match(/ENOTDIR|EEXIST/, err.message)
+      assert @user.nodes.find_by!(node_id: id).deleted, "a failed restore must stay trashed"
+      assert File.exist?(@root.join(".trash/#{id}/a.stl")), "and must not lose the bytes"
+    end
   end
 end
