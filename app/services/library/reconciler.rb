@@ -125,7 +125,9 @@ module Library
       doomed.each { |node| node.update!(deleted: true) }
       leftovers.each { |o, hash| create_or_revive!(o, hash) }  # 3 & 4
       tombstone_vanished_dirs(dirs)
-      nil # Task 9 can define a result when it knows what it wants to read.
+      # nil on purpose. Task 9's ScanJob reads #unreadable_dirs off the Scanner instance and
+      # wants nothing from this return value, so there is still no caller to design a result for.
+      nil
     end
 
     private
@@ -157,8 +159,9 @@ module Library
     # (a library of directories and no files) with the root present but empty, and ensure_dirs
     # revives a tombstoned directory by storage_path with its original node_id on the next pass.
     # No attachment points at a dir node. Threading dirs into both sides would disturb the
-    # numerator/denominator symmetry for a low payoff; it belongs with Task 9 or Phase 2b. Stated
-    # so that work argues with this position rather than discovering the gap.
+    # numerator/denominator symmetry for a low payoff; it belongs with Phase 2b, whose write path
+    # would add a second producer of observations. Stated so that work argues with this position
+    # rather than discovering the gap.
     def guard_mass_deletion!(doomed_count, observable_count)
       return if doomed_count.zero? || observable_count.zero?
 
