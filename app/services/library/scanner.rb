@@ -46,8 +46,12 @@ module Library
     # the observations are a complete picture of the tree.
     attr_reader :unreadable_dirs
 
+    # The root is handed to the Reconciler rather than left for it to look up: it needs to
+    # resolve a rel_path back to real bytes to hash it, and reaching for FileLayer.current.root
+    # would couple it to the deployment-wide backend — which is Chunk (no root at all) whenever
+    # a scan runs outside a share deployment. We already know the root; pass it.
     def call
-      Library::Reconciler.new(@user, observations: observe).call
+      Library::Reconciler.new(@user, observations: observe, root: @root).call
     end
 
     # Walk the tree and return one Observation per entry. Public because it is the whole of this
