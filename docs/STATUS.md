@@ -1,8 +1,46 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-16 (FileLayer **Share adapter, phase 2b** — the write path + trash)
+**Updated:** 2026-07-16 (**Reconciler scaling** — the no-op scan and move-pairing, before S3)
 
-## Latest (2026-07-16, later): phase 2b — the share library can now grow
+## Latest (2026-07-16): the Reconciler scales, and its own comment was the problem
+
+Both limitations 2a and 2b carried as "fix before a real 2TB NAS" are closed. They were fixed
+**before Phase 3 deliberately**: S3 is where someone actually points 2M objects at this, so the
+limitation stops being theoretical exactly when that adapter lands.
+
+| | before | after |
+|---|---|---|
+| 20k no-op scan | 0.159s, 552k objects | **0.061s, 311k** |
+| 50k no-op, RSS | +67 MB | **+23 MB** |
+| 10k renames | **9.0s** | **3.5s** |
+| 50k renames | ~4 min (extrapolated) | **18.6s** |
+
+**The no-op scan is the common case** — every 15 minutes, forever, nothing changed — and it was
+instantiating a live AR node per file to discover that. It now `pluck`s the four columns it
+compares and materializes AR objects only in the two branches that *write*: zero of them in a
+no-op scan. `best_pairing` buckets candidates by `[hash, size]` rather than scanning all of them
+per vanished node.
+
+**The lesson is the comment, not the code.** The old one read: *"O(n*m) by design: 10k renamed
+files measures at ~2s of CPU, which is dwarfed by the hashing those same 10k files already
+require. Not worth an index until that ceases to be true."* It was wrong twice — **10k measured
+at 9s, 4.5x the claim** — and wrong in principle: hashing is **linear**, that scan was
+**quadratic**, so "dwarfed by the hashing" had a crossover built into it, and the crossover is a
+reorganization big enough to matter. A confident number nobody re-measured is why it survived
+two phases. Both comments now carry measured figures.
+
+**Behavior is byte-identical**, and that claim was attacked rather than asserted: two independent
+seeded differential probes (100 seeds total, different op mixes — renames, edits, touch-only
+rehashes, unreadable blips, kind collisions, pools of byte-identical files), each dumping every
+node column *plus a log of which files were hashed*, digest-matched across before and after. The
+read log mattered: the no-op skip is pure performance and leaves **no trace in the node table**,
+so without it the probe would have been blind to half the change.
+
+*Still inherent, documented:* an all-byte-identical bucket costs O(N) per probe. The
+deterministic tie-break has to compare the old path against every identical candidate, and
+removing it would trade the no-crash/no-lost-file guarantee for speed.
+
+## Previous (2026-07-16): phase 2b — the share library can now grow
 
 Phase 2a made a NAS directory *readable*. **2b makes it writable**: `write`/`delete`/`move`/
 `undelete` through the port, with a trash. **The write path is Share-only, and that is the
@@ -83,9 +121,9 @@ checked.
 - **`Share#write`** stamps the node's mtime from **the file's own stat**, not the clock — the scan
   compares against it.
 
-*Open, carried from 2a and **now more urgent** (the write path gives a share library a way to
-grow):* `Reconciler` loads every live node into memory (~1M AR objects) — **fix before a real 2TB
-NAS**; `best_pairing` is O(n*m) (~2s/10k renames). Both commented in-code.
+~~*Open, carried from 2a:* `Reconciler` loads every live node into memory; `best_pairing` is
+O(n*m) (~2s/10k renames).~~ **Both FIXED 2026-07-16** — see the section at the top of this file.
+The "~2s" was measured at **9s**.
 
 **Still deferred:** Phase 3 = S3 (inherits the write contract). Phase 4 = capability gating +
 `Delivery` — **`download` is Phase 4**; share-mode `blob` 404s today by scope (it resolves
@@ -129,6 +167,7 @@ and the worst were *cross-task* and invisible to per-task review:
 
 *Open, non-correctness, commented in-code:* `Reconciler` loads every live node into memory
 (~1M AR objects) — **fix before a real 2TB NAS**; `best_pairing` is O(n²) (~2s/10k renames).
+*(Superseded 2026-07-16 — both fixed; see the top of this file. The "~2s" measured at 9s.)*
 
 ## Previous (2026-07-14): full-stack audit + the maker/file layer split begins
 

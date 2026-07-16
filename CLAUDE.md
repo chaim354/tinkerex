@@ -556,10 +556,21 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       which must be excluded from **both** sides of the guard's fraction *and* from
       `vanished_paths`. Filenames on a real NAS **are not guaranteed to be valid UTF-8**; one
       that isn't used to brick every subsequent scan (macOS can't even create the fixture).
-    - *Open (non-correctness, commented in-code) — carried from 2a and **now more urgent**, since
-      the write path gives a share library a way to grow:* `Reconciler` loads every live node
-      into memory (~1M AR objects on a large NAS) — **fix before pointing this at a real 2TB
-      NAS**; `best_pairing` is O(n*m) (~2s per 10k renames).
+    - ~~*Open (non-correctness) — carried from 2a:* `Reconciler` loads every live node into
+      memory; `best_pairing` is O(n*m) (~2s per 10k renames).~~ **FIXED (2026-07-16), and the
+      "~2s" was wrong — it measured 9s, 4.5x the claim.** The no-op scan (every 15 min, forever,
+      nothing changed) `pluck`ed the four columns it compares instead of instantiating a live
+      node per file, and materializes AR objects only in the two branches that WRITE — zero of
+      them in a no-op scan (50k nodes: **+67 -> +23 MB**; 20k no-op: **0.159 -> 0.061s**).
+      `best_pairing` buckets candidates by `[hash, size]` instead of scanning them all per
+      vanished node (**10k renames 9.0 -> 3.5s; 50k renames ~4min -> 18.6s**, near-linear).
+      **The old comment's argument is the lesson:** *"dwarfed by the hashing, not worth an index"*
+      — hashing is LINEAR and that scan was QUADRATIC, so the crossover was built in; a
+      reorganization big enough to matter is exactly where it stops being true. Behavior is
+      byte-identical (two independent seeded differential probes, 100 seeds, digest match).
+      *Still inherent:* an all-byte-identical bucket costs O(N) per probe — the deterministic
+      tie-break must compare the old path against every identical candidate, and removing that
+      trades the no-lost-file guarantee for speed.
     - `LIBRARY_BACKEND=s3` still raises `NotImplementedError` **by design** — a silent
       fallback to chunk mode would serve an empty library while the operator believes we're
       reading their bucket. **Phase 3 trap, now in TWO places:** the moment `FileLayer::S3`
