@@ -15,6 +15,13 @@
 #                                     (chunk: tombstone the node; share: move it out of the
 #                                     indexed tree). It must NOT be the port's `delete`, which
 #                                     does not exist yet.
+#   with_transient_backend_failure { } -> make the backend fail in a way that is TEMPORARY and
+#                                     not the file's fault (a 403/5xx/network blip; an
+#                                     unmounted share), then yield. Must restore on the way out
+#                                     — the test reads the file again afterwards to prove it.
+#                                     Fault the TRANSPORT (the store/filesystem beneath the
+#                                     adapter), never the adapter's own error classification —
+#                                     stubbing that is what this test exists to check.
 module FileLayerAdapterContract
   # mtime is unix NANOSECONDS across the whole sync engine (nodes.mtime is a bigint of nanos;
   # CLAUDE.md §7). Treating nanos as seconds already shipped once as a real bug in the WebDAV
@@ -109,5 +116,24 @@ module FileLayerAdapterContract
     token = adapter.stat(@user, node_id: id).content_token
     delete_file!(id)
     assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id, content_token: token) }
+  end
+
+  # The single most consequential distinction in the port. A transient backend failure must
+  # NEVER read as "the file is gone": NotFound is terminal (a preview is marked failed
+  # forever), FetchError retries. This exists because a 403 during a credentials outage was
+  # once swallowed as "missing chunk", permanently failing previews for healthy files — and
+  # for Share the same mistake means an unmounted NAS looks like the user deleted the library.
+  #
+  # NotFound and FetchError are disjoint siblings of StandardError, so assert_raises(FetchError)
+  # cannot be satisfied by the very bug it guards against.
+  def test_contract_transient_backend_failure_raises_fetch_error_not_not_found
+    id = create_file!(name: "flaky.stl", bytes: "still here")
+    with_transient_backend_failure do
+      assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
+    end
+    # The failure was TRANSIENT and the hook restored: the file was healthy all along. Without
+    # this the hook could satisfy the contract by breaking the backend permanently (unmount and
+    # never remount) — green here, damage surfacing as unrelated failures later in the suite.
+    assert_equal "still here", adapter.read(@user, node_id: id)
   end
 end

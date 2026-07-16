@@ -110,6 +110,19 @@ module FileLayer
       OpenURI::HTTPError.new("#{status} Err", io)
     end
 
+    # Contract hook. Chunk's transient failure: a presign-only store whose GET returns 403 —
+    # the exact credentials-outage shape that caused the original incident.
+    #
+    # `current=` is a global, so it's reset on the way out rather than left for the next
+    # test's setup to mop up: the contract calls this hook, and a leaked PresignOnlyStore
+    # would surface as an unrelated failure elsewhere in the worker.
+    def with_transient_backend_failure(&block)
+      Storage::ChunkStore.current = PresignOnlyStore.new
+      with_http_get_raising(http_error(403), &block)
+    ensure
+      Storage::ChunkStore.reset!
+    end
+
     test "a 404 on the presigned GET is a missing chunk (terminal NotFound)" do
       id = create_file!(name: "e.stl", bytes: "gone")
       Storage::ChunkStore.current = PresignOnlyStore.new
