@@ -55,3 +55,16 @@ production:
   library_scan:
     command: "Library::ScanJob.scan_all!"
     schedule: every 15 minutes
+
+  # Reclaim space from FileLayer::Share#delete, which renames into .trash/<node_id>/<name> rather
+  # than unlinking — so without this a share library grows forever and the user's delete never
+  # actually lands. LIBRARY_TRASH_DAYS (default 30) is the undo window; 0 means keep forever.
+  # No-ops unless LIBRARY_BACKEND=share, so it is inert in a chunk deployment.
+  #
+  # `command:` rather than `class:`, matching library_scan, because the backend gate lives in a
+  # class method rather than in #perform (a caller who names a root deserves the operation). Daily
+  # and off-peak: the window is measured in DAYS, so nothing is gained by sweeping more often, and
+  # an hour apart from version_retention keeps the two off each other's I/O.
+  library_trash_purge:
+    command: "Library::TrashPurgeJob.purge_all!"
+    schedule: every day at 3am
