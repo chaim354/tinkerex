@@ -69,6 +69,58 @@ module Web
       assert_match(/inline/, response.headers["Content-Disposition"])
     end
 
+    # --- Acceleration: TWO tests, because either one alone proves nothing ------------------
+    #
+    # When Rack::Sendfile accelerates it sets Content-Length: 0 and REPLACES THE BODY WITH [].
+    # So "sent the header" and "served the bytes" are MUTUALLY EXCLUSIVE outcomes: a test
+    # asserting only the header passes while serving nothing, and a test asserting only the
+    # bytes passes while the header silently never fires. Both, or neither means anything.
+    #
+    # The nastiest version of that: acceleration engages ONLY when the body responds to
+    # `to_path` (rack-3.2.6/lib/rack/sendfile.rb:131). send_file's body does; send_data's never
+    # does. A send_data implementation would pass every bytes test in this file forever while
+    # making the whole mechanism permanently dead code, with nothing red anywhere.
+    test "with no sendfile variation -- THIS deployment -- Rails serves the bytes itself" do
+      id = index!("plain.stl", "real bytes")
+      get blob_file_path(id)
+
+      assert_response :success
+      assert_equal "real bytes", response.body,
+                   "no proxy here (Kamal + kamal-proxy, not nginx): Rack::Files must actually serve"
+      assert_nil response.headers["x-sendfile"], "nothing to hand off to"
+    end
+
+    # The accelerated path.
+    #
+    # THE VARIATION IS SET VIA rack env, NOT VIA Rails.application.config, and that is a
+    # correction to this task's plan rather than a shortcut. Rails builds the middleware stack
+    # ONCE at boot -- `middleware.use ::Rack::Sendfile, config.action_dispatch.x_sendfile_header`
+    # -- so Rack::Sendfile's @variation is frozen to nil here before any test runs (verified:
+    # the stack's Sendfile entry has args == [nil]). Mutating the config mid-suite reaches
+    # nothing. Rack::Sendfile#variation is `@variation || env["sendfile.type"]`, so env is the
+    # only seam that exists after boot, and it is the SAME branch production takes.
+    #
+    # It is not a security hole either: `sendfile.type` is a rack env key, not an HTTP header.
+    # Rack maps request headers to HTTP_* keys only, so no client can set it -- which is exactly
+    # why Rack deliberately stopped reading HTTP_X_SENDFILE_TYPE (see its `variation` comment).
+    #
+    # x-sendfile rather than x-accel-redirect on purpose: Rack's x-accel-redirect branch ALSO
+    # needs an x-accel-mapping header from nginx to translate the filesystem path into an
+    # internal URI, and without one it logs "x-accel-mapping header missing" to rack.errors and
+    # serves normally -- it fails safe, and silently. That asymmetry is the real X-Accel footgun,
+    # and it is why the knob is DOCUMENTED for the operator instead of shipped as our own code.
+    test "with a sendfile variation, the proxy gets the path and the body is empty" do
+      id = index!("accel.stl", "real bytes")
+
+      get blob_file_path(id), env: { "sendfile.type" => "x-sendfile" }
+
+      assert_equal @root.join("accel.stl").to_s, response.headers["x-sendfile"],
+                   "the proxy must be handed the real filesystem path -- which needs a body " \
+                   "that responds to to_path, i.e. send_file and never send_data"
+      assert_equal "0", response.headers["Content-Length"]
+      assert_empty response.body, "when accelerated Rack replaces the body -- WE must not serve"
+    end
+
     test "another user's node is 404, never their bytes" do
       id = index!("mine.stl", "secret")
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com",

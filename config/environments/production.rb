@@ -33,6 +33,29 @@ Rails.application.configure do
   # Skip http-to-https redirect for the default health check endpoint.
   # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
 
+  # Hand share-backed downloads off to a front proxy instead of streaming them through Puma.
+  # COMMENTED BECAUSE THIS DEPLOYMENT IS kamal-proxy, NOT nginx OR Apache — and that is the
+  # whole reason it stays commented rather than a note about taste. Rack::Sendfile is in the
+  # stack; when this is set it replaces the response body with [] and Content-Length with 0,
+  # trusting the proxy to serve the file from the path in the header. kamal-proxy does not
+  # implement x-sendfile, so enabling this here would silently serve EMPTY BODIES for every
+  # share-mode download. Only set it if you have actually put such a proxy in front.
+  #
+  # Applies to LIBRARY_BACKEND=share only: it is the one backend with a filesystem path to hand
+  # over (chunk and s3 redirect to presigned URLs — bytes never reach Rails at all, CLAUDE.md
+  # §15). Rack acts only on a body that responds to to_path, which is why FilesController#blob
+  # uses send_file and not send_data.
+  #
+  #   Apache (mod_xsendfile), or nginx with XSendFile-style handling:
+  #     config.action_dispatch.x_sendfile_header = "x-sendfile"
+  #
+  #   nginx: x-accel-redirect ALSO needs a mapping, and without one Rack logs
+  #   "x-accel-mapping header missing" and serves the bytes normally — it fails safe, but
+  #   silently, so a misconfiguration looks like it works and merely never accelerates:
+  #     config.action_dispatch.x_sendfile_header = "x-accel-redirect"
+  #   plus, in nginx, an `internal` location over the library root and:
+  #     proxy_set_header x-accel-mapping /mnt/nas/=/files/;
+  #
   # Log to STDOUT with the current request id as a default log tag.
   config.log_tags = [ :request_id ]
   config.logger   = ActiveSupport::TaggedLogging.logger(STDOUT)
