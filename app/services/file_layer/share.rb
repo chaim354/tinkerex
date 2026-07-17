@@ -412,10 +412,28 @@ module FileLayer
     # guard is worth exercising directly (no `send`), and the scanner/reconciler in Tasks 5-6
     # resolve the same node -> path mapping against the same root.
     #
-    # `allow_root:` is the ONLY thing separating this from the write path's resolve_inside!, so
-    # both delegate to one #resolve! rather than keeping two near-copies of the guard. Two copies
-    # of a security check drift, and this file already makes that argument for live_node!.
-    def absolute_path(node) = resolve!(node.storage_path, allow_root: true)
+    # A BLANK storage_path IS NOT A PATH, and refusing it here is the whole method. `@root.join("")`
+    # is the ROOT, so this used to hand a live NULL-path node's DIRECTORY back as its file: #read
+    # got EISDIR (an accident that reads as FetchError) and #download -- which does not read, it
+    # answers Delivery::SendFile(path:) -- handed the controller the library root to send_file.
+    # `delete`/`move` escaped only by accident too (EINVAL from renaming a dir into itself). The
+    # accidents are not the guard; this is. S3#key_for has had exactly this check since Phase 3,
+    # and closing the asymmetry is the point.
+    #
+    # Reachable by DATA, not by a caller: on share every producer of a live NULL-path node is
+    # 501-gated as of Phase 4, so the gates are what make it unreachable rather than this adapter.
+    # A DB flipped chunk->share reaches it directly -- chunk nodes never carry a storage_path.
+    #
+    # THE `allow_root:` LATITUDE IS GONE WITH IT, so this is now resolve_inside! plus the blank
+    # check. It was justified as "a read may resolve to the root itself (harmless -- File.binread
+    # of a directory is EISDIR anyway)", and Phase 4's #download is what made that false: SendFile
+    # never reads. Nothing legitimate wanted it -- the ONLY storage_path values that resolve to the
+    # root are blank, "." and "a/..", none of which any producer writes and none of which is a file.
+    def absolute_path(node)
+      rel = node.storage_path.to_s
+      raise NotFound, "node #{node.node_id.inspect} has no storage_path" if rel.blank?
+      resolve_inside!(rel)
+    end
 
     private
 
@@ -477,18 +495,18 @@ module FileLayer
       nil # non-empty or already gone; the purge job (Task 6) sweeps it either way
     end
 
-    # The write path's guard: the destination must be STRICTLY inside the root. A read may resolve
-    # to the root itself (harmless — it can only ever be handed a file node, and File.binread of a
-    # directory is EISDIR anyway); a write to the root itself would be a write to the library
-    # directory as a file, so it does not get the same latitude.
-    def resolve_inside!(rel) = resolve!(rel, allow_root: false)
-
-    def resolve!(rel, allow_root:)
+    # THE guard, for reads and writes alike: the resolved path must be STRICTLY inside the root.
+    # One mode, because neither door has a use for the root itself — a write to it would be a write
+    # to the library directory as a file, and a read of it is the hole #absolute_path now closes.
+    # (It took an `allow_root:` parameter until that fix, on the read path's behalf; the parameter
+    # is gone rather than left switched off, so there is nothing to switch back on.)
+    def resolve_inside!(rel)
       path = @root.join(rel.to_s).expand_path
       # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
       # has the root as a prefix would otherwise pass.
-      inside = path.to_s.start_with?("#{@root}/") || (allow_root && path.to_s == @root.to_s)
-      raise NotFound, "path escapes the library root: #{rel.inspect}" unless inside
+      unless path.to_s.start_with?("#{@root}/")
+        raise NotFound, "path escapes the library root: #{rel.inspect}"
+      end
       path
     end
 

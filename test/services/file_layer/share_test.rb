@@ -255,6 +255,41 @@ module FileLayer
       FileUtils.remove_entry(outside) if outside&.exist?
     end
 
+    # A BLANK storage_path RESOLVES TO THE LIBRARY ROOT, and until this guard #download answered it
+    # with Delivery::SendFile(path: <the root>) -- a DIRECTORY handed to send_file. That is the
+    # same hole the two tests above close, wearing the one shape they cannot see: the path does not
+    # escape the root, it IS the root.
+    #
+    # TWO TESTS, NOT ONE LOOPING OVER TWO VERBS, because the verbs failed DIFFERENTLY and a loop
+    # asserts only until the first one raises. Read escaped by ACCIDENT (File.binread of a
+    # directory is EISDIR -> the errno mapping answers FetchError, which reads like a working guard
+    # while telling the user to retry a condition that will never clear). Download had no accident
+    # available: it never reads, it answers SendFile(path:), so it handed the controller the root.
+    # One test would have proven only whichever ran first.
+    def null_path_node!
+      id = create_file!(name: "n.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, nil)
+      id
+    end
+
+    # The CLASS is the assertion here: FetchError vs NotFound is exactly the difference between the
+    # EISDIR accident and the guard, and both are "read raised something".
+    test "read refuses a NULL storage_path instead of resolving to the library root" do
+      err = assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: null_path_node!) }
+      assert_match(/has no storage_path/, err.message,
+                   "the refusal must be the guard, not the EISDIR accident behind it")
+    end
+
+    # LANDMINE 2's shape that the escape-guard tests above cannot see: this path does not ESCAPE
+    # the root, it IS the root. Delivery::SendFile carries a path a controller will send_file
+    # unread, so a directory reaching it is the whole bug.
+    test "download refuses a NULL storage_path instead of handing back the library root" do
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: null_path_node!, disposition: "attachment")
+      end
+      assert_match(/has no storage_path/, err.message)
+    end
+
     # The guard is `start_with?("#{root}/")`, not `start_with?(root)`, precisely so a SIBLING
     # directory whose name merely has the root as a prefix cannot pass. Dropping the trailing
     # slash leaks this and nothing else catches it.
