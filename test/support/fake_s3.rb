@@ -82,12 +82,18 @@ class FakeS3
   # could yield `sha256:`; replacing that fixture with the real observer is what proved it could
   # not. Kept because they are the correct shape for whoever implements that rung -- not because
   # anything asserts on them.
-  def seed!(key, body, last_modified: Time.at(1_700_000_000), checksum_sha256: nil, checksum_type: nil)
+  # `etag:` overrides the derived one, and models the object a real bucket is full of: anything
+  # uploaded MULTIPART carries "<hex>-<parts>", which is an md5-of-md5s and not the content's md5
+  # at all. Default is the single-part truth (the ETag IS the md5), so only a test that means to
+  # exercise rung 3 has to say so.
+  def seed!(key, body, last_modified: Time.at(1_700_000_000), etag: nil, checksum_sha256: nil,
+            checksum_type: nil)
     # The ETag is QUOTED, and those two literal quotes are the point rather than a typo: S3 wraps
     # every ETag in them, in list, head AND put responses (Landmine 2). A fake that handed back a
     # bare hex string would let the adapter skip normalization and stay green, then unpair every
-    # move in production. FileLayer::S3::ObjectIdentity is the one place they come off.
-    @objects[key] = Obj.new(body.b, last_modified, %Q("#{Digest::MD5.hexdigest(body)}"),
+    # move in production. FileLayer::S3::ObjectIdentity is the one place they come off. An
+    # overridden etag is quoted here too, for the same reason and by the same rule.
+    @objects[key] = Obj.new(body.b, last_modified, %Q("#{etag || Digest::MD5.hexdigest(body)}"),
                             checksum_sha256, checksum_type)
   end
 

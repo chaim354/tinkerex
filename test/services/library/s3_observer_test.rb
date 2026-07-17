@@ -366,6 +366,56 @@ module Library
       assert_equal id, @user.nodes.find_by!(storage_path: "cad/new.stl").node_id
     end
 
+    # ---------------------------------------------------------------- the unpairable warning
+    #
+    # The other half of the headline promise: where it does NOT hold, say so. An `etag:` identity is
+    # rung 3 -- not content-determined -- so a move of that object cannot pair and its attachments
+    # re-point. Nothing else in the system would ever mention it, which is what makes this advisory
+    # the feature rather than a log line.
+    #
+    # Asserted on the LOG, deliberately, because the log IS the feature: a `count` reader exposed
+    # for a test would prove only that we can count, which is what the method did for a whole phase
+    # while the diagnostic its comment promised did not exist.
+
+    test "a bucket with multipart ETags warns once, with the count and the consequence" do
+      2.times { |i| @fake.seed!("#{PREFIX}/big#{i}.stl", "x#{i}", etag: "#{'a' * 32}-#{i + 2}") }
+      @fake.seed!("#{PREFIX}/small.stl", "single-part")
+
+      log = capture_log { scan! }
+
+      # The COUNT, not merely that something was said: it names the 2 multipart objects and not the
+      # single-part one beside them.
+      assert_match(/\b2 object\(s\)/, log)
+      # ONE line, however many objects -- a bucket this backend targets holds millions.
+      assert_equal 1, log.scan(/no content-determined identity/).length
+      # In the operator's terms. "not content-determined" is our vocabulary; what they need to know
+      # is that renaming these breaks the attachments on them.
+      assert_match(/renaming/, log)
+      assert_match(/attachment/, log)
+      assert_match(/WARN/, log, "it is a promise the operator was made and is not getting")
+    end
+
+    # ADVISORY, not a gate. The objects are indexed exactly like any other -- only their moves are
+    # invisible. Refusing to index them would deny the user a library to punish their storage class.
+    test "an unpairable object is still indexed like any other" do
+      @fake.seed!("#{PREFIX}/big.stl", "hello", etag: "#{'a' * 32}-7")
+      scan!
+
+      node = @user.nodes.find_by!(storage_path: "big.stl")
+      assert_equal 5, node.size
+      assert_equal "etag:#{'a' * 32}-7", node.content_hash
+    end
+
+    # SILENT WHEN THERE IS NOTHING TO SAY. A warning that fires on every scan of every healthy
+    # bucket is a warning nobody reads by the time a real one arrives.
+    test "an all-single-part bucket says nothing" do
+      3.times { |i| @fake.seed!("#{PREFIX}/s#{i}.stl", "x#{i}") }
+
+      log = capture_log { scan! }
+
+      assert_no_match(/content-determined/, log)
+    end
+
     # ---------------------------------------------------------------- what a scan costs
 
     # The identity is FREE in the listing, so the observer must never HEAD or GET to get it. A HEAD
@@ -413,6 +463,26 @@ module Library
     test "call returns the observer, mirroring Scanner.call" do
       @fake.seed!("#{PREFIX}/a.stl", "x")
       assert_kind_of Library::S3Observer, scan!
+    end
+
+    private
+
+    # Same idiom as ScanJob's suite: the warning is a real Rails.logger line, so read it there
+    # rather than through a seam invented for the test.
+    #
+    # The FORMATTER is the one addition, and it is not decoration: ActiveSupport::Logger's default
+    # writes the message alone, so the severity never reaches `io` and an assertion on the LEVEL
+    # would be unfalsifiable -- `warn` and `info` produce identical output. Downgrading this
+    # advisory to info is exactly the regression worth catching, so the level has to be visible.
+    def capture_log
+      io = StringIO.new
+      prior = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(io)
+      Rails.logger.formatter = ->(severity, _time, _progname, msg) { "#{severity} #{msg}\n" }
+      yield
+      io.string
+    ensure
+      Rails.logger = prior
     end
   end
 end

@@ -81,9 +81,11 @@ module FileLayer
           "etag:#{tag}"
         end
 
-        # Can `identity` pair a move? Asked by the observer and the diagnostics so a user can be
-        # TOLD "moves are not detectable for N objects in this bucket" rather than left to
-        # discover it when a rename orphans their attachments.
+        # Can `identity` pair a move? Asked by Library::S3Observer, once per scan, to count the
+        # objects on rung 3 and WARN — so an operator is told "moves are not detectable for N
+        # objects in this bucket" rather than left to discover it when a rename orphans their
+        # attachments. That is the method's only production caller, and the only one it needs:
+        # the answer is advisory, and nothing branches on it.
         #
         # Unknown shapes answer false, deliberately. nodes.content_hash is SHARED with share
         # mode, which stores a bare Digest::SHA256 hexdigest with no prefix at all -- so this

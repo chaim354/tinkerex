@@ -115,6 +115,7 @@ module Library
     def observe
       files = []
       dirs  = Set.new
+      unpairable = 0
 
       each_object do |rel, obj, marker|
         if marker
@@ -126,15 +127,53 @@ module Library
           next
         end
 
-        files << file_observation(rel, obj)
+        o = file_observation(rel, obj)
+        unpairable += 1 unless FileLayer::S3::ObjectIdentity.content_determined?(o.content_hash)
+        files << o
+
         parent = File.dirname(rel)
         dirs.merge(dir_chain(parent)) unless parent == "."
       end
 
+      warn_unpairable(unpairable)
       dir_observations(dirs) + files
     end
 
     private
+
+    # THE ONE THING THE LADDER'S RUNG 3 CANNOT SAY FOR ITSELF. An `etag:` identity is not
+    # content-determined, so a move of that object does not pair: the Reconciler sees the old path
+    # vanish and a new one appear, tombstones one and mints the other, and every attachment on it
+    # re-points to a new node_id. That is the SAFE direction (a missed rename, never a wrong
+    # pairing — see the ladder's header), and it is silent, which is the problem: on such a bucket
+    # the phase's headline promise — your attachments survive a reorganization — simply does not
+    # hold, and nothing else in this system would ever mention it.
+    #
+    # THE SHAPE THAT MAKES THIS MORE THAN A MULTIPART FOOTNOTE: an SSE-KMS-encrypted object has a
+    # 32-hex ETag that is NOT the content MD5. It takes rung 2 and gets stamped `md5:`, so this
+    # count reads ZERO on a fully-KMS bucket while no move pairs at all — a re-encrypt on copy
+    # changes the ETag. So a zero here is "nothing we can SEE", not "moves are fine". The warning
+    # is correct where it fires and silent where it cannot; do not read it as a guarantee.
+    #
+    # ADVISORY: it does not raise and does not skip. An unpairable object is indexed, read, written
+    # and deleted like any other — only its moves are invisible, and refusing the scan over that
+    # would deny the user a library to punish their storage class.
+    #
+    # ONCE PER SCAN, WITH A COUNT, NEVER PER OBJECT: a bucket this backend targets can hold
+    # millions, and a log line per object is how a log stops being read at all (the Scanner's own
+    # argument for not logging its routine skips). warn, not info: it is a promise the operator was
+    # made and is not getting.
+    def warn_unpairable(count)
+      return if count.zero?
+
+      Rails.logger.warn(
+        "library s3 scan: #{count} object(s) in this bucket have no content-determined identity " \
+        "(a multipart ETag, or an ETag this store computes some other way) — moving or renaming " \
+        "them will not be paired, so each one becomes a delete plus a create and any project " \
+        "attachment, BOM link or tag on it re-points to the new file. Every other operation is " \
+        "unaffected."
+      )
+    end
 
     # LANDMINE 4 — THE MOST IMPORTANT METHOD IN THIS FILE, and the one most likely to be
     # "simplified" into a data-loss bug.
