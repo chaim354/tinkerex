@@ -157,5 +157,63 @@ module V1
       assert_response :not_found
       assert_no_match(/unavailable/, response.body)
     end
+
+    # EVERY TEST ABOVE PASSES WITHOUT A CHUNK STORE ONLY BECAUSE THE TEST ENV HAS ONE, and that
+    # made all nine of them unable to fail for the reason they exist. They set FileLayer.current
+    # and never touch STORAGE_BACKEND, which Storage::ChunkStore defaults to `memory` IN TEST and
+    # `s3` EVERYWHERE ELSE -- so a real share deployment, configured exactly as docs/STATUS.md
+    # documents it (LIBRARY_* set, CHUNK_* unset), built S3ChunkStore.from_env on every v1 request
+    # and answered `KeyError: CHUNK_BUCKET` -> 500. Login, /v1/maker/*, and every endpoint gated
+    # above: 500 rather than the 501 this phase exists to give. The gate was unreachable and the
+    # suite was green.
+    #
+    # So this test sets STORAGE_BACKEND to what PRODUCTION defaults to and leaves CHUNK_* unset --
+    # a share operator's real environment, not a simulation of one -- and asserts the four answers
+    # a stranger, a client, and the API itself must get. Without the before_actions' capability
+    # gate all four are 500.
+    #
+    # It asserts the WHOLE surface rather than just login: `stash_request_base_url` runs before
+    # every action in two controllers, so one endpoint proves one endpoint.
+    class NoChunkStoreTest < ActionDispatch::IntegrationTest
+      setup do
+        @root = Pathname.new(Dir.mktmpdir("gate"))
+        FileLayer.current = FileLayer::Share.new(root: @root.to_s)
+        @storage_backend = ENV["STORAGE_BACKEND"]
+        ENV["STORAGE_BACKEND"] = "s3" # production's default; CHUNK_* deliberately absent
+        Storage::ChunkStore.reset!
+      end
+      teardown do
+        ENV["STORAGE_BACKEND"] = @storage_backend
+        ENV.delete("STORAGE_BACKEND") if @storage_backend.nil?
+        Storage::ChunkStore.reset!
+        FileLayer.reset!
+        FileUtils.remove_entry(@root) if @root&.exist?
+      end
+
+      test "a share deployment with no chunk store configured can still enroll a device" do
+        user = User.create!(email: "nochunk-#{SecureRandom.hex(4)}@example.com",
+                            password: "correct horse battery staple", confirmed_at: Time.current)
+        post "/v1/devices/login",
+             params: { email: user.email, password: "correct horse battery staple" }
+        assert_response :created, "the API's only credential must be mintable without a chunk store"
+
+        token = JSON.parse(response.body)["device_token"]
+        get "/v1/maker/projects", headers: { "Authorization" => "Bearer #{token}" }
+        assert_response :success, "the maker layer IS the product in share mode"
+      end
+
+      test "a gated endpoint still answers 501, not the 500 the chunk store used to raise" do
+        account = bootstrap_account(email: "nochunk-gate-#{SecureRandom.hex(4)}@example.com")
+        get "/v1/tree", headers: { "Authorization" => "Bearer #{account['device_token']}" }
+        assert_response :not_implemented
+        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
+                     "the 501 must be the capability gate, not a stray halt")
+      end
+
+      test "the anonymous redeem side 404s without a chunk store -- a stranger gets no 500 page" do
+        get "/v1/share/nonexistent-token"
+        assert_response :not_found
+      end
+    end
   end
 end
