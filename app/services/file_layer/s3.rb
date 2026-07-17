@@ -103,6 +103,28 @@ module FileLayer
       )
     end
 
+    # What is in this deployment's trash: the objects WE copied to the trash prefix, which
+    # `undelete` can copy back.
+    #
+    # `storage_path: nil` is the filter, for the reason Share#trashed argues at length: it reads
+    # the two-tombstone-kinds distinction (2b Landmine 2), which this backend inherits exactly —
+    # `delete` NULLs the path, the Reconciler's scan tombstone keeps it, and only the first has
+    # bytes anywhere `undelete` can find them. Listing a scan tombstone would offer a Restore
+    # button that cannot work.
+    #
+    # DUPLICATED FROM Share#trashed RATHER THAN SHARED, and the duplication is this file's
+    # standing trade (live_node!, leaf!, join_rel, nanos all make it): Share and S3 implement the
+    # same port independently, and a base class between them is the one place one backend's
+    # assumptions could leak into the other. Six lines is the cheaper trade. The READ CONTRACT is
+    # what keeps the two answers the same, which is why it is asserted there and not here.
+    def trashed(user)
+      user.nodes.where(deleted: true, storage_path: nil).order(updated_at: :desc, name: :asc)
+          .map do |n|
+        TrashEntry.new(node_id: n.node_id, name: n.name, kind: n.kind,
+                       size: n.size, deleted_at: n.updated_at)
+      end
+    end
+
     # The SERVER-SIDE read: preview jobs and the like, which genuinely need the bytes here.
     # It is NOT the download path — S3 is presignable (see #capabilities), so Phase 4's Delivery
     # hands the user a signed URL and the bytes never touch Rails (§15). Chunk mode draws the

@@ -44,6 +44,12 @@ module FileLayer
       Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     end
 
+    # The web UI's delete, which here is the port's: bytes to `.trash`, then the tombstone. NOT
+    # delete_file! above — that is the user removing the file in Finder, which produces a SCAN
+    # tombstone whose bytes are gone for good. The two hooks are the two tombstone kinds, and the
+    # difference is exactly what #trashed filters on.
+    def trash_file!(node_id) = adapter.delete(@user, node_id:)
+
     # Share's transient failure: the bytes are there, we just can't read them right now —
     # an unmounted NAS, a permissions blip. Must NOT read as "the user deleted the file".
     def with_transient_backend_failure
@@ -928,6 +934,30 @@ module FileLayer
       assert_match(/ENOTDIR|EEXIST/, err.message)
       assert @user.nodes.find_by!(node_id: id).deleted, "a failed restore must stay trashed"
       assert File.exist?(@root.join(".trash/#{id}/a.stl")), "and must not lose the bytes"
+    end
+
+    # THE FILTER #trashed TURNS ON, and it cannot live in the shared contract: chunk mode has no
+    # scan tombstone to exclude (nothing polls its store), so there is no backend-neutral way to
+    # ask this. S3Test carries the identical test for the identical reason — the Reconciler that
+    # mints this tombstone is shared between the two backends, and the filter that must exclude it
+    # is not.
+    #
+    # A file the user deleted in Finder is GONE: its bytes were never moved to `.trash`, so
+    # `undelete` cannot bring it back. Listing it would offer a Restore button that always fails.
+    test "a file deleted on the NAS is not in the trash — there is nothing to restore" do
+      # BALLAST, NOT DECORATION: with only one file, removing it empties the root, and an empty
+      # root is how this adapter recognises an UNMOUNTED share — so undelete would answer
+      # FetchError ("try again later") instead of NotFound ("it's gone"), and the assertion below
+      # would be pinning the unmounted heuristic rather than the trash filter. A real library has
+      # other files in it.
+      create_file!(name: "ballast.stl", bytes: "still here")
+      id = create_file!(name: "onnas.stl", bytes: "aaa")
+      delete_file!(id) # rm on the share, then a scan: a SCAN tombstone, storage_path kept
+
+      assert @user.nodes.find_by!(node_id: id).deleted, "the scan must have tombstoned it"
+      assert_not_includes adapter.trashed(@user).map(&:node_id), id
+      # The reason it must not be listed, asserted rather than assumed.
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
     end
   end
 end

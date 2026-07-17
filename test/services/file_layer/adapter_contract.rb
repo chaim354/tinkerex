@@ -15,6 +15,11 @@
 #                                     (chunk: tombstone the node; share: move it out of the
 #                                     indexed tree). It must NOT be the port's `delete`, which
 #                                     does not exist yet.
+#   trash_file!(node_id)           -> delete the file the way THIS DEPLOYMENT'S WEB UI does, i.e.
+#                                     the branch FilesController#destroy makes: chunk ->
+#                                     Sync::Mutation's tombstone, share/s3 -> the port's `delete`.
+#                                     Distinct from delete_file! above ON PURPOSE — see the trash
+#                                     tests, where the difference is the whole point.
 #   with_off_box_presigning { }    -> configure this backend's STORE so that, if it has any way
 #                                     at all to mint a URL pointing OFF-BOX, it will. Then yield;
 #                                     restore on the way out. A backend with no URL signer
@@ -277,6 +282,36 @@ module FileLayerAdapterContract
     token = adapter.stat(@user, node_id: id).content_token
     delete_file!(id)
     assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id, content_token: token) }
+  end
+
+  # THE TRASH, AND THE HOOK NAMES WHAT `delete_file!` DELIBERATELY DOES NOT: `delete_file!` is
+  # the user removing the file OUT OF BAND (a tombstone set by the v1 API; an `rm` on the NAS),
+  # which on share/s3 is exactly the case that is NOT a trash — the bytes are gone from storage we
+  # do not own. `trash_file!` is the user clicking Delete IN THE WEB UI, which is the branch
+  # FilesController#destroy makes: chunk -> Sync::Mutation, share/s3 -> the port's `delete`. Two
+  # hooks because they are two different events; conflating them is what makes an adapter list a
+  # file it can never restore.
+  #
+  # Backend-neutral by construction: what "in the trash" means differs (chunk keeps every version
+  # forever; share/s3 moved the bytes to `.trash`), but "the thing I just deleted is listed, at
+  # its real size, and can be told apart from a live file" is one answer everywhere. The SIZE is
+  # the assertion Task 7 reported as missing: the trash view read current_user.versions, which is
+  # empty on share and s3, so every Size cell was an em-dash.
+  def test_contract_trashed_lists_a_file_this_deployment_trashed
+    id = create_file!(name: "binned.stl", bytes: "0123456789")
+    trash_file!(id)
+
+    entry = adapter.trashed(@user).find { |e| e.node_id == id }
+    assert entry, "a file deleted through this deployment's UI must be in its trash"
+    assert_equal "binned.stl", entry.name
+    assert_equal "file", entry.kind
+    assert_equal 10, entry.size, "the trash must report the real size, not nil"
+    assert entry.deleted_at.present?, "the trash view sorts and displays by deleted_at"
+  end
+
+  def test_contract_trashed_never_lists_a_live_file
+    id = create_file!(name: "alive.stl", bytes: "here")
+    assert_not_includes adapter.trashed(@user).map(&:node_id), id
   end
 
   # The single most consequential distinction in the port. A transient backend failure must

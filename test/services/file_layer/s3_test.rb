@@ -91,6 +91,12 @@ module FileLayer
       node.update!(deleted: true)
     end
 
+    # The web UI's delete, which here is the port's: copy to the trash prefix, delete the source,
+    # then the tombstone. NOT delete_file! above — that is the user removing the object with
+    # rclone or the S3 console, which produces a SCAN tombstone whose bytes are gone for good. The
+    # two hooks are the two tombstone kinds, and the difference is what #trashed filters on.
+    def trash_file!(node_id) = adapter.delete(@user, node_id:)
+
     # S3's transient failure: the bytes are there, we cannot read them right now -- an expired
     # credential, a 5xx, a network blip. Must NOT read as "the user deleted it". Faults the
     # TRANSPORT (the client), never the adapter's own classification -- stubbing that is what the
@@ -1214,6 +1220,30 @@ module FileLayer
       refute caps.versioned?, "the object IS the truth — restore is a chunk-mode feature"
       refute caps.syncable?
       assert caps.presignable?, "a bucket has a URL signer — §15 survives here"
+    end
+
+    # THE FILTER #trashed TURNS ON. It cannot live in the shared contract — chunk mode has no scan
+    # tombstone to exclude — so it is asserted on both backends that DO have one. ShareTest
+    # carries the identical test: the Reconciler that mints this tombstone is shared between the
+    # two, and the filter that must exclude it is duplicated, which is precisely why one test is
+    # not enough.
+    #
+    # An object the user deleted with rclone or the console is GONE: nothing was ever copied to
+    # the trash prefix, so `undelete` cannot bring it back. Listing it would offer a Restore
+    # button that always fails.
+    test "an object deleted out of band is not in the trash — there is nothing to restore" do
+      # BALLAST, NOT DECORATION: with only one object, deleting it empties the prefix, and an
+      # empty prefix is how this adapter recognises an unreachable bucket — so undelete would
+      # answer FetchError ("try again later") instead of NotFound ("it's gone"), and the assertion
+      # below would pin that heuristic rather than the trash filter. A real bucket has other
+      # objects in it.
+      create_file!(name: "ballast.stl", bytes: "still here")
+      id = create_file!(name: "outofband.stl", bytes: "aaa")
+      delete_file!(id) # deleted from the bucket + tombstoned: a SCAN tombstone, storage_path kept
+
+      assert_not_includes adapter.trashed(@user).map(&:node_id), id
+      # The reason it must not be listed, asserted rather than assumed.
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
     end
   end
 end

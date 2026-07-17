@@ -55,6 +55,15 @@ module FileLayer
       @user.nodes.find_by!(node_id:).update!(deleted: true)
     end
 
+    # In chunk mode the web UI's delete and the out-of-band one ARE the same event: both are the
+    # tombstone, because the bytes belong to the sync engine and versions are kept regardless
+    # (§5). That is why every tombstone here is restorable and #trashed filters nothing —
+    # the two hooks coincide on this backend alone, and they must not be collapsed for it.
+    def trash_file!(node_id)
+      Sync::Mutation.apply(user: @user, node: @user.nodes.find_by!(node_id:),
+                           op: "delete") { |n| n.deleted = true }
+    end
+
     # The read path's core loop walks Version#manifest_chunks, which is `.order(:seq)`
     # (app/models/version.rb). NOTHING else asserts that ordering, and getting it wrong corrupts
     # the bytes of EVERY file larger than one chunk — silently, since each chunk is individually

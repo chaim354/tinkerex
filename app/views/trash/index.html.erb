@@ -5,9 +5,14 @@
   <%= link_to "← Back to Files", files_path, class: "linkbtn" %>
 </div>
 
-<p class="muted">Deleted files are kept (along with their versions) and can be restored.</p>
+<%# One sentence true on every backend. It used to say deleted files are kept "along with their
+    versions", which is chunk mode's mechanism: a share/s3 library has no versions and reclaims
+    .trash after LIBRARY_TRASH_DAYS. Branching the copy on `versioned?` would spell retention as
+    an inference off a capability about history — two questions that merely agree on today's three
+    backends. Promising nothing about duration is the honest way to say one thing. %>
+<p class="muted">Files you delete are moved here, and can be restored to your library.</p>
 
-<% if @nodes.empty? %>
+<% if @entries.empty? %>
   <p class="empty muted">Trash is empty.</p>
 <% else %>
   <table class="files">
@@ -15,22 +20,23 @@
       <tr><th>Name</th><th>Kind</th><th class="num">Size</th><th>Deleted</th><th></th></tr>
     </thead>
     <tbody>
-      <% @nodes.each do |node| %>
-        <% version = node.file? ? @versions_by_node[node.current_version_id] : nil %>
+      <% @entries.each do |entry| %>
         <tr>
           <td>
-            <% if node.dir? %>
-              <span class="dir">📁 <%= node.name %></span>
+            <% if entry.kind == "dir" %>
+              <span class="dir">📁 <%= entry.name %></span>
             <% else %>
-              <%= node.name %>
+              <%= entry.name %>
             <% end %>
           </td>
-          <td class="muted"><%= node.kind %></td>
-          <td class="num muted"><%= version ? number_to_human_size(version.size) : "—" %></td>
-          <td class="muted"><%= node.updated_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
+          <td class="muted"><%= entry.kind %></td>
+          <%# nil only for a directory, which HAS no size — the one em-dash in this UI that is not
+              a backend lie. %>
+          <td class="num muted"><%= entry.size ? number_to_human_size(entry.size) : "—" %></td>
+          <td class="muted"><%= entry.deleted_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
           <td class="row-actions">
-            <%= button_to "Restore", restore_trash_path(node.node_id), method: :post,
-                  form: { data: { turbo_confirm: "Restore #{node.name}?" } }, class: "linkbtn" %>
+            <%= button_to "Restore", restore_trash_path(entry.node_id), method: :post,
+                  form: { data: { turbo_confirm: "Restore #{entry.name}?" } }, class: "linkbtn" %>
           </td>
         </tr>
       <% end %>

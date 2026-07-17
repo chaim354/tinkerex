@@ -40,6 +40,40 @@ module FileLayer
       )
     end
 
+    # What is in this deployment's trash: the files WE moved to `.trash/<node_id>/<name>`, which
+    # `undelete` can move back. A read verb, so it is answered here even though it reports on the
+    # write path's leavings.
+    #
+    # `storage_path: nil` IS THE FILTER, AND IT IS THE TWO-TOMBSTONE-KINDS DISTINCTION (2b
+    # Landmine 2) BEING READ RATHER THAN A CLEVER PREDICATE. There are exactly two ways a node
+    # here becomes deleted, and only one of them is a trash:
+    #
+    #   - a TRASH tombstone (`delete` above): the bytes are in `.trash` and storage_path is NULLED
+    #     — precisely so a scan cannot revive it by path. `undelete` moves them back.
+    #   - a SCAN tombstone (Reconciler): the user removed the file in Finder, so the bytes are
+    #     GONE from storage we do not own, and the row KEEPS its storage_path (that is what lets a
+    #     restored file revive its old node). `undelete` on one raises NotFound — there is nothing
+    #     in `.trash` to move.
+    #
+    # So listing scan tombstones would offer a Restore button that cannot work. A row you can
+    # never recover is not trash, it is history — and a share-backed library has no history (spec
+    # §2 decision 4). Chunk mode filters nothing because there the two kinds do not exist.
+    #
+    # WHAT IT STILL CANNOT KNOW, stated so it is not read as a stronger promise than it is: a
+    # trash tombstone whose bytes Library::TrashPurgeJob has already reclaimed still has a NULL
+    # storage_path (the purge sweeps `.trash` by entry-dir mtime and deliberately never touches
+    # the row), so it is listed and its Restore raises NotFound. Deciding otherwise would mean a
+    # HEAD/stat per trashed node per page load, against a NAS, to catch a case the user is told
+    # about honestly when they click. The filter is exact for the kind it names; it does not claim
+    # the bytes are still there.
+    def trashed(user)
+      user.nodes.where(deleted: true, storage_path: nil).order(updated_at: :desc, name: :asc)
+          .map do |n|
+        TrashEntry.new(node_id: n.node_id, name: n.name, kind: n.kind,
+                       size: n.size, deleted_at: n.updated_at)
+      end
+    end
+
     def read(user, node_id:, content_token: nil)
       node = live_node!(user, node_id)
 
