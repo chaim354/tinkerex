@@ -141,6 +141,68 @@ module FileLayerWritableContract
     end
   end
 
+  # THE SKIP-LIST COUPLING, pinned for every writable backend. The observers skip OS clutter
+  # (.DS_Store, ._*, __MACOSX/, macOS volume metadata) so it never becomes a node; the moment they
+  # do, those names join `.trash`/`.maker-tmp-` as UNOBSERVABLE, so the write path must refuse them
+  # as destinations too — or an upload named `.DS_Store`, a rename onto one, or a restore into a
+  # `__MACOSX/` parent lands a live node at a path no scan can ever pair, which wedges the
+  # mass-deletion guard PERMANENTLY (the blind spot phase 2b/4 paid for four times). The reject
+  # predicate (`observable!`) and the observer skip are the SAME Library::OsClutter definition, so
+  # they cannot drift. This is in the shared contract, not each adapter's suite, because the names,
+  # the class and the message are identical on every current-state-only backend — the divergence
+  # this module exists to stop.
+  #
+  # NotFound, NOT UnsupportedOperation, and the class is deliberate: it matches the existing
+  # `.trash`/`.maker-tmp-` reserved-path refusal (Share#observable!/S3#observable! both raise
+  # NotFound with /reserved path/), which is the class this coupling extends. A clobber is
+  # UnsupportedOperation; a reserved/unobservable destination is NotFound. Two different refusals.
+  OS_CLUTTER_DESTINATIONS = %w[.DS_Store ._resource.stl __MACOSX .Spotlight-V100].freeze
+
+  def test_write_contract_write_refuses_os_clutter_destinations
+    OS_CLUTTER_DESTINATIONS.each do |name|
+      err = assert_raises(FileLayer::NotFound, "write(#{name.inspect}) must be refused") do
+        adapter.write(@user, parent_node_id: nil, name: name, io: StringIO.new("x"))
+      end
+      assert_match(/reserved path/, err.message, name)
+      assert_nil @user.nodes.find_by(storage_path: name),
+                 "#{name.inspect} must not have landed a node — that is the wedge this prevents"
+    end
+  end
+
+  def test_write_contract_move_refuses_os_clutter_destinations
+    OS_CLUTTER_DESTINATIONS.each do |name|
+      info = adapter.write(@user, parent_node_id: nil, name: "mv-#{name.delete('.')}.stl",
+                                  io: StringIO.new("b"))
+      err = assert_raises(FileLayer::NotFound, "move to #{name.inspect} must be refused") do
+        adapter.move(@user, node_id: info.node_id, new_parent_node_id: nil, new_name: name)
+      end
+      assert_match(/reserved path/, err.message, name)
+    end
+  end
+
+  # undelete does not take a destination from the caller — it RECONSTRUCTS one from the tombstone's
+  # PARENT (delete NULLs the node's own storage_path). So a clutter segment reaches `observable!`
+  # through a poisoned parent, not an argument, which is the exact route write/move cannot cover.
+  # The poisoned-row standard (update_column) is the same one the reserved-path and escape-guard
+  # tests use: storage_path is a plain column, and "no caller writes anything bad today" is the
+  # assumption this coupling has been wrong about repeatedly.
+  def test_write_contract_undelete_refuses_an_os_clutter_parent
+    parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "sub", kind: "dir",
+                                 deleted: false, storage_path: "sub")
+    child = adapter.write(@user, parent_node_id: parent.node_id, name: "a.stl",
+                                 io: StringIO.new("bytes"))
+    adapter.delete(@user, node_id: child.node_id)
+
+    parent.update_column(:storage_path, "__MACOSX")
+    err = assert_raises(FileLayer::NotFound, "undelete into a __MACOSX parent must be refused") do
+      adapter.undelete(@user, node_id: child.node_id)
+    end
+    assert_match(/reserved path/, err.message)
+    # The restore was refused, not half-done: the node stays tombstoned and its bytes stay in the
+    # trash, where a corrected undelete can still find them.
+    assert @user.nodes.find_by!(node_id: child.node_id).deleted
+  end
+
   # Terminal-vs-retryable, the port's most consequential distinction, applies to writes too:
   # a transient backend failure must NEVER read as "the file is gone".
   def test_write_contract_transient_failure_on_write_raises_fetch_error

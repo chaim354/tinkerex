@@ -820,7 +820,13 @@ module FileLayer
     # move is self-healing because the bytes stay observable" — is false exactly when the
     # DESTINATION is the unobservable one.
     def observable!(rel)
-      return unless rel.to_s.split("/").first == Library::Scanner::TRASH_PREFIX
+      # TRASH_PREFIX is root-anchored (a nested `cad/.trash` is the user's own folder). OS clutter
+      # (.DS_Store, ._*, __MACOSX/, macOS volume metadata) is any-depth and rejected via the SAME
+      # Library::OsClutter predicate the S3Observer skips on — so an object the write path creates
+      # can never sit at a key the scan will never observe. TEMP_PREFIX stays absent here: it is a
+      # Share concept (this adapter writes no temp keys, see #write).
+      return unless rel.to_s.split("/").first == Library::Scanner::TRASH_PREFIX ||
+                    Library::OsClutter.ignore?(rel)
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

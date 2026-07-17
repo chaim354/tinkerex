@@ -86,6 +86,28 @@ module Library
       assert_not_includes paths, ".trash/old.stl"
     end
 
+    # OS-generated clutter is never observed, so it never becomes a node. This is the observer
+    # half of the ignore-list; the write-guard half (that nothing may WRITE to these paths, or a
+    # ghost wedges the scan) is pinned in the write contract. The predicate is Library::OsClutter,
+    # shared verbatim with the S3 observer and both adapters' observable! guards.
+    test "OS clutter is never indexed — .DS_Store, ._*, __MACOSX subtree, volume metadata" do
+      write!(".DS_Store", "junk")
+      write!("cad/.DS_Store", "junk at depth")
+      write!("._resource", "an AppleDouble fork")
+      write!("cad/._bracket.stl", "an AppleDouble fork at depth")
+      write!("__MACOSX/junk.txt", "from a zip extraction")
+      write!("__MACOSX/nested/more.txt", "the __MACOSX subtree nests")
+      write!(".Spotlight-V100/store.db", "macOS volume metadata")
+      write!("cad/bracket.stl", "a real file")
+      write!("top.stl", "another real file")
+      paths = observe.map(&:rel_path).sort
+
+      assert_equal [ "cad", "cad/bracket.stl", "top.stl" ], paths
+      assert paths.none? { |p| p.include?("__MACOSX") },
+             "a __MACOSX directory contributes ZERO nodes — the subtree is skipped, not descended"
+      assert paths.none? { |p| p.include?(".Spotlight-V100") }
+    end
+
     test "does not index or follow symlinks" do
       write!("real/inside.stl", "y")
       File.symlink(@root.join("real").to_s, @root.join("link").to_s)
@@ -526,6 +548,48 @@ module Library
 
       assert_match(/1 directories were unreadable and excluded/, err.message)
       assert_match(/"vault"/, err.message, "name them — that is the diagnosis")
+    end
+
+    # THE TRANSITION. A library indexed BEFORE the ignore-list existed carries a few clutter
+    # nodes (the deployed share measured ~2.1% — ~9 of 427). On the first scan after the list
+    # lands they are no longer OBSERVED, so they tombstone cleanly — and crucially NO ghost forms,
+    # because no live node persists at a skipped path once the reconcile runs. At that fraction
+    # (well under the 20% guard) the scan must proceed, not refuse, and stay stable on the next
+    # pass. If the ignore-list were NOT wired, the on-disk clutter would be observed, re-pair to
+    # these nodes by path, and survive — so this doubles as a guard against the skip silently
+    # regressing.
+    test "existing indexed clutter tombstones on the next scan, and does not trip the guard" do
+      50.times { |i| write!("real#{i}.stl", "body-#{i}") }
+      scan!
+      assert_equal 50, @user.nodes.present.where(kind: "file").count
+
+      # The clutter as an old scan would have left it: real files on disk AND live nodes for them.
+      write!(".DS_Store", "finder junk")
+      write!("._resource", "an AppleDouble fork")
+      write!("__MACOSX/junk.txt", "from a zip")
+      root_clutter = [ ".DS_Store", "._resource" ].map do |rel|
+        @user.nodes.create!(node_id: SecureRandom.uuid, name: rel, kind: "file", deleted: false,
+                            storage_path: rel, parent_node_id: nil, size: 1, mtime: 1,
+                            content_hash: "deadbeef")
+      end
+      macosx = @user.nodes.create!(node_id: SecureRandom.uuid, name: "__MACOSX", kind: "dir",
+                                   deleted: false, storage_path: "__MACOSX", parent_node_id: nil)
+      macosx_child = @user.nodes.create!(node_id: SecureRandom.uuid, name: "junk.txt", kind: "file",
+                                         deleted: false, storage_path: "__MACOSX/junk.txt",
+                                         parent_node_id: macosx.node_id, size: 1, mtime: 1,
+                                         content_hash: "deadbeef")
+
+      # ~4% of 53 files — comfortably under the 20% guard, like the real ~2% transition.
+      assert_nothing_raised { scan! }
+
+      (root_clutter + [ macosx, macosx_child ]).each do |n|
+        assert @user.nodes.find_by!(node_id: n.node_id).deleted,
+               "#{n.storage_path} is now clutter and must be tombstoned, not left indexed"
+      end
+      assert_equal 50, @user.nodes.present.where(kind: "file").count, "no real file was touched"
+
+      # Stable: a second pass does not re-tombstone or resurrect anything, and never wedges.
+      assert_nothing_raised { scan! }
     end
 
     # --- the escape hatch -------------------------------------------------------------------

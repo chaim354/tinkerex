@@ -169,6 +169,59 @@ module Library
       assert @user.nodes.find_by(storage_path: "fine.stl")
     end
 
+    # ---------------------------------------------------------------- OS-generated clutter
+
+    # OS clutter is never indexed, exactly as on the share walk — the same Library::OsClutter
+    # predicate drives both observers and both adapters' observable! guards. An object named
+    # `.DS_Store`, `._*`, or living under a `__MACOSX/`/volume-metadata prefix is skipped in the
+    # observer, which is what keeps it out of `vanished_paths` and off the tombstoner.
+    test "OS clutter is never indexed — .DS_Store, ._*, __MACOSX subtree, volume metadata" do
+      @fake.seed!("#{PREFIX}/.DS_Store", "finder junk")
+      @fake.seed!("#{PREFIX}/cad/.DS_Store", "junk at depth")
+      @fake.seed!("#{PREFIX}/._resource", "an AppleDouble fork")
+      @fake.seed!("#{PREFIX}/cad/._bracket.stl", "an AppleDouble fork at depth")
+      @fake.seed!("#{PREFIX}/__MACOSX/junk.txt", "from a zip extraction")
+      @fake.seed!("#{PREFIX}/__MACOSX/nested/more.txt", "the subtree nests")
+      @fake.seed!("#{PREFIX}/.Spotlight-V100/store.db", "macOS volume metadata")
+      @fake.seed!("#{PREFIX}/cad/bracket.stl", "a real file")
+      scan!
+
+      # Only the real dir and the real file — no clutter file, and no synthesized `__MACOSX` or
+      # `.Spotlight-V100` directory node.
+      assert_equal [ "cad", "cad/bracket.stl" ], @user.nodes.present.order(:storage_path).pluck(:storage_path)
+    end
+
+    # THE TRANSITION. A bucket indexed before the ignore-list existed carries a few clutter nodes.
+    # On the first scan after the list lands they are no longer observed, so they tombstone
+    # cleanly, and at that small fraction the mass-deletion guard proceeds rather than refusing.
+    # If the ignore-list were NOT wired the clutter objects would be observed, re-pair by path, and
+    # survive — so this doubles as a regression guard on the skip.
+    test "existing indexed clutter tombstones on the next scan, and does not trip the guard" do
+      50.times { |i| @fake.seed!("#{PREFIX}/real#{i}.stl", "body-#{i}") }
+      scan!
+      assert_equal 50, files.count
+
+      @fake.seed!("#{PREFIX}/.DS_Store", "finder junk")
+      @fake.seed!("#{PREFIX}/__MACOSX/junk.txt", "from a zip")
+      clutter = [
+        @user.nodes.create!(node_id: SecureRandom.uuid, name: ".DS_Store", kind: "file",
+                            deleted: false, storage_path: ".DS_Store", parent_node_id: nil,
+                            size: 1, mtime: 1, content_hash: "md5:deadbeef"),
+        @user.nodes.create!(node_id: SecureRandom.uuid, name: "junk.txt", kind: "file",
+                            deleted: false, storage_path: "__MACOSX/junk.txt", parent_node_id: nil,
+                            size: 1, mtime: 1, content_hash: "md5:deadbeef")
+      ]
+
+      assert_nothing_raised { scan! }
+
+      clutter.each do |n|
+        assert @user.nodes.find_by!(node_id: n.node_id).deleted,
+               "#{n.storage_path} is now clutter and must be tombstoned"
+      end
+      assert_equal 50, files.count, "no real object was touched"
+      assert_nothing_raised { scan! } # stable on the next pass — no wedge
+    end
+
     # ---------------------------------------------------------------- LANDMINE 6: non-UTF-8 keys
 
     # PLAN DRIFT, VERIFIED, AND THE PLAN'S TEST IS IMPOSSIBLE AS WRITTEN.
