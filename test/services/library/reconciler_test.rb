@@ -430,5 +430,100 @@ module Library
       end
       assert_match(/unreadable_dirs/, err.message)
     end
+
+    # --- an observation that already KNOWS its identity ---------------------------------------
+
+    # LANDMINE 1. An observer that already KNOWS the identity (S3 gets it free in the
+    # listing) must be able to say so. Without this the Reconciler lazily hashes, which for
+    # S3 means downloading the object -- a full egress of the bucket on first scan, and
+    # Digest::SHA256.hexdigest(reader.call(...)) loads the whole thing into memory besides.
+    test "an observation may supply its own content_hash, and the reader is never called" do
+      called = false
+      obs = [ Library::Observation.new(rel_path: "a.stl", size: 3, mtime: T0, dir: false,
+                                       content_hash: "md5:supplied") ]
+      Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [],
+                              reader: ->(_) { called = true; "aaa" }).call
+
+      node = @user.nodes.find_by!(storage_path: "a.stl")
+      assert_equal "md5:supplied", node.content_hash, "the supplied identity must be stored verbatim"
+      assert_not called, "a supplied hash must never be recomputed -- for S3 that is an egress bill"
+    end
+
+    test "a supplied hash pairs a move exactly as a computed one does" do
+      obs1 = [ Library::Observation.new(rel_path: "old.stl", size: 4, mtime: T0, dir: false,
+                                        content_hash: "md5:same") ]
+      Library::Reconciler.new(@user, observations: obs1, unreadable_dirs: [], reader: ->(_) { "xxxx" }).call
+      id = @user.nodes.find_by!(storage_path: "old.stl").node_id
+
+      obs2 = [ Library::Observation.new(rel_path: "new/moved.stl", size: 4, mtime: T0, dir: false,
+                                        content_hash: "md5:same") ]
+      Library::Reconciler.new(@user, observations: obs2, unreadable_dirs: [], reader: ->(_) { "xxxx" },
+                             max_delete_pct: 100).call
+
+      assert_equal id, @user.nodes.find_by!(storage_path: "new/moved.stl").node_id,
+                   "move-pairing must not care WHERE the identity came from"
+    end
+
+    # The incremental skip compares (mtime, size). S3's last_modified is SECOND-granularity
+    # (verified), so that pair is coarser there than a share's nanoseconds. When the observer
+    # supplies an identity, comparing it directly is free, exact, and closes the window.
+    test "a supplied hash that CHANGED is applied even when mtime and size did not" do
+      obs = ->(hash) { [ Library::Observation.new(rel_path: "e.stl", size: 3, mtime: T0,
+                                                  dir: false, content_hash: hash) ] }
+      Library::Reconciler.new(@user, observations: obs.call("md5:v1"), unreadable_dirs: [],
+                              reader: ->(_) { "aaa" }).call
+      id = @user.nodes.find_by!(storage_path: "e.stl").node_id
+
+      Library::Reconciler.new(@user, observations: obs.call("md5:v2"), unreadable_dirs: [],
+                              reader: ->(_) { "bbb" }).call
+
+      node = @user.nodes.find_by!(storage_path: "e.stl")
+      assert_equal id, node.node_id, "an edit in place is not a new file"
+      assert_equal "md5:v2", node.content_hash,
+                   "an identical (mtime, size) must not mask a changed identity"
+    end
+
+    # The share path is UNCHANGED: no supplied hash means hash lazily, skip on (mtime, size).
+    # This is the regression guard for the whole 2a design, which this task edits underneath.
+    test "with no supplied hash the lazy path is untouched: unchanged means not hashed" do
+      calls = 0
+      reader = ->(_) { calls += 1; "aaa" }
+      obs = [ Library::Observation.new(rel_path: "b.stl", size: 3, mtime: T0, dir: false) ]
+
+      Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [], reader:).call
+      assert_equal 1, calls, "a new file is hashed once"
+
+      Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [], reader:).call
+      assert_equal 1, calls, "unchanged (path, mtime, size) must still be skipped without hashing"
+    end
+
+    # A supplied identity that is UNCHANGED must still skip: the no-op scan is the pass that
+    # runs every 15 minutes forever, and it is the one that must cost a single pluck. This is
+    # the identity-carrying twin of the lazy skip above.
+    test "a supplied hash that did NOT change skips: a no-op scan writes nothing" do
+      obs = [ Library::Observation.new(rel_path: "c.stl", size: 3, mtime: T0, dir: false,
+                                       content_hash: "md5:same") ]
+      Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [], reader: ->(_) { "aaa" }).call
+      node = @user.nodes.find_by!(storage_path: "c.stl")
+      before = node.updated_at
+
+      travel 1.second do
+        Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [], reader: ->(_) { "aaa" }).call
+      end
+      assert_equal before, node.reload.updated_at, "an unchanged identity must not rewrite the row"
+    end
+
+    # The Scanner's four-argument call sites must keep working, and a nil content_hash must be
+    # the same value as an absent one -- `==` is what group_by and the pairing buckets key on.
+    test "content_hash defaults to nil, and a four-arg Observation equals the explicit-nil one" do
+      four = Library::Observation.new("x.stl", 3, T0, false)
+      assert_nil four.content_hash
+      assert_equal four, Library::Observation.new(rel_path: "x.stl", size: 3, mtime: T0,
+                                                  dir: false, content_hash: nil)
+      assert_equal "md5:h", four.with(content_hash: "md5:h").content_hash,
+                   "#with must survive the default -- the S3 observer builds on it"
+      assert_same Library::Observation, Library::Scanner::Observation,
+                  "the Scanner's constant must still resolve to the one class"
+    end
   end
 end

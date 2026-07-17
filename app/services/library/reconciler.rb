@@ -19,6 +19,23 @@ module Library
   # The Scanner OBSERVES; this DECIDES. The split is what lets the matching algorithm be tested
   # without a filesystem (inject `reader:`) and the walk be tested without a database.
   #
+  # WHERE THE IDENTITY COMES FROM, and why this is asymmetric. Steps 1 and 2 both turn on
+  # content_hash, and this class was built to compute it LAZILY — `reader:`/`root:`, on demand,
+  # only for a file the (mtime, size) skip says actually changed. That is right when identity
+  # costs a read of the bytes, which on a mounted share it does: it is what keeps a 2TB archive
+  # from being re-read every pass.
+  #
+  # It is exactly wrong for an observer that gets identity FREE. S3 hands the ETag over in the
+  # listing, so lazily "saving" a read would mean downloading the object to recompute a value we
+  # were already given — a full egress of the bucket to index a library the user already has.
+  # So an Observation MAY carry its own content_hash (Library::Observation), and when it does
+  # this class takes it verbatim: hash_for never calls the reader, and the skip compares the
+  # identity rather than inferring change from a coarser (mtime, size). An observer that cannot
+  # know it leaves the field nil and gets the lazy path, unchanged.
+  #
+  # The rule underneath both: an observer is never made to pay twice for something it already
+  # knows, and never made to claim something it does not.
+  #
   # WHY THIS WRITES `nodes` DIRECTLY, bypassing Sync::Mutation — whose header states that every
   # change to the tree funnels through it: no `next_seq!`, no changelog entry, `updated_seq`
   # stays 0. Share libraries are `syncable: false` (FileLayer::Share#capabilities), so there are
@@ -220,9 +237,9 @@ module Library
 
     # Step 1. Returns the observations that no live node claims — the input to step 2.
     def match_live_paths(files)
-      # PLUCKED, not loaded: the decisions below read exactly three columns (kind, mtime, size)
-      # and in the common case write NOTHING, so instantiating an AR object per live node buys
-      # nothing and costs the whole tree's worth of memory.
+      # PLUCKED, not loaded: the decisions below read exactly four columns (kind, mtime, size,
+      # content_hash) and in the common case write NOTHING, so instantiating an AR object per live
+      # node buys nothing and costs the whole tree's worth of memory.
       #
       # THE COMMON CASE IS A NO-OP SCAN — every 15 minutes, forever, with nothing changed. The
       # previous `index_by(&:storage_path)` loaded a full AR object per live node to discover
@@ -239,14 +256,25 @@ module Library
       # and it is the right trade: a node only reaches those branches if its bytes are being
       # hashed (a file read that dwarfs a primary-key lookup) or its kind changed (rare), while
       # the pass that pays nothing is the one that runs every quarter hour.
+      # `content_hash` is plucked for the identity skip below — a sixth value out of the query
+      # that was already reading the row, not a sixth query. It is NOT free, and the number is
+      # here so the next person does not have to re-derive it: one more string materialized per
+      # live node. A/B'd on one machine, 20k-file no-op scan, 5 columns -> 6:
+      #
+      #   0.024s / 160k objects (8.0/file)  ->  0.028s / 180k objects (9.0/file)
+      #
+      # +1 object/file exactly, ~17% on a pass that is pluck-bound by construction. Paid because
+      # the skip cannot compare an identity it did not read, and (mtime, size) alone is provably
+      # too coarse for S3 (see #unchanged?). It does not scale with library SIZE any differently
+      # than the five columns already did.
       live = @user.nodes.present.where.not(storage_path: nil)
-                  .pluck(:storage_path, :id, :kind, :mtime, :size)
-                  .to_h { |path, id, kind, mtime, size| [ path, [ id, kind, mtime, size ] ] }
+                  .pluck(:storage_path, :id, :kind, :mtime, :size, :content_hash)
+                  .to_h { |path, id, kind, mtime, size, hash| [ path, [ id, kind, mtime, size, hash ] ] }
 
       files.reject do |o|
         row = live[o.rel_path]
         next false if row.nil?
-        id, kind, mtime, size = row
+        id, kind, mtime, size, content_hash = row
 
         # NOTE: `kind` is the RAW DB value here (pluck bypasses the model), not `node.file?`.
         # Identical today — kind is a plain string column. But if it ever became an AR enum,
@@ -261,11 +289,10 @@ module Library
           next false # ...and the observation still needs a node: hand it to step 2.
         end
 
-        if mtime == o.mtime && size == o.size
-          # Unchanged (path, mtime, size): skip WITHOUT hashing. This is the whole reason
-          # Observation carries a stat and not a hash — it is what keeps a 2TB archive from
-          # being re-read on every pass. Note this returns before the row is ever loaded: in a
-          # no-op scan every file lands here, which is what makes the pass cost a single pluck.
+        if unchanged?(o, mtime, size, content_hash)
+          # Skip WITHOUT hashing, and — note the early return — without ever loading the row. In
+          # a no-op scan every file lands here, which is what makes that pass cost a single
+          # pluck, and the no-op scan is the one that runs every 15 minutes forever.
           next true
         end
 
@@ -277,6 +304,37 @@ module Library
         @user.nodes.find(id).update!(size: o.size, mtime: o.mtime, content_hash: hash) if hash
         true
       end
+    end
+
+    # "This observation says nothing the node does not already record" — the incremental skip,
+    # and the reason a 2TB archive is not re-read every pass. `mtime`/`size`/`content_hash` are
+    # the node's plucked values; `o` is what the observer just saw.
+    #
+    # NO SUPPLIED IDENTITY (every share scan today): (mtime, size), exactly as before. A stat is
+    # all the Scanner has, and asking for more would mean reading the bytes — which is the cost
+    # this skip exists to avoid. Bit-for-bit the 2a behavior, and pinned as such by a test.
+    #
+    # A SUPPLIED IDENTITY additionally has to match. The observer already knows it and comparing
+    # it costs nothing (no read, no reader), so refusing to look at it would be a choice to be
+    # wrong for free — and on S3 it is the difference that matters: `last_modified` is
+    # SECOND-granularity, so an edit landing inside the same second as the last one, at the same
+    # size, is invisible to (mtime, size) and would be skipped forever. Comparing the identity
+    # closes that window exactly.
+    #
+    # Why the (mtime, size) half still applies when an identity IS supplied — a deliberate
+    # departure from the plan, which said the skip should compare identity INSTEAD. Identical
+    # bytes re-uploaded under a new `last_modified` (a copy, a re-sync, a lifecycle transition)
+    # change the mtime and nothing else. Comparing identity alone would skip that and leave
+    # nodes.mtime stale forever — the UI's date, permanently wrong, for no gain. Falling through
+    # costs one SELECT and one UPDATE for an event that is rare, and costs the no-op scan nothing
+    # at all: unchanged bytes at an unchanged mtime still skip here, before the row is loaded.
+    # This can never skip something the plan's version would have applied — it only applies more.
+    # (It does assume an observer's mtime is STABLE for an unmodified entry. One that stamped the
+    # clock instead would turn every no-op scan into a full write pass — slow, not wrong, and it
+    # would be a broken observer either way. S3's last_modified is stable.)
+    def unchanged?(o, mtime, size, content_hash)
+      return false if o.content_hash && o.content_hash != content_hash
+      mtime == o.mtime && size == o.size
     end
 
     # The nodes behind vanished_paths. Re-read after step 1 so anything step 1 tombstoned (a
@@ -298,6 +356,17 @@ module Library
       # filter_map: an unreadable NEW file yields no hash, so it cannot be paired and must not
       # be created half-indexed (a node with a nil content_hash is a preview that can never be
       # keyed). Leaving it out entirely means the next pass indexes it properly.
+      #
+      # READ THIS BEFORE "FIXING" IT. Dropping an observation here does not skip a step for it —
+      # `candidates` is what becomes `leftovers`, which is what create_or_revive! indexes, so a
+      # dropped observation is NEVER INDEXED AT ALL. No error, no log, no node. The comment above
+      # is what makes that acceptable, and it rests entirely on hash_for's nil being TRANSIENT:
+      # its only nil comes from `rescue SystemCallError`, i.e. an EACCES/ENOENT blip on a share,
+      # which clears and the next pass indexes the file. An observer whose identity could be
+      # PERMANENTLY underivable would be invisible here forever instead — a file in the library
+      # that simply never appears. That is why FileLayer::S3::ObjectIdentity is TOTAL (md5: /
+      # sha256: / etag:, never nil): nothing from S3 can reach this branch, so the assumption
+      # above stays true and this line stays as it is. Weakening either half re-arms it.
       candidates = unmatched.filter_map { |o| (h = hash_for(o)) && [ o, h ] }
       # Bucketed by the pairing key, so a vanished node probes only the byte-identical
       # candidates instead of scanning all of them. `group_by` preserves each bucket's original
@@ -482,13 +551,21 @@ module Library
            .order(:storage_path).pluck(:storage_path)
     end
 
-    # Hash on demand — only for a file whose (path, mtime, size) says it actually changed.
+    # Hash on demand — only for a file whose (path, mtime, size) says it actually changed, and
+    # only for an observer that does not already know the answer.
+    #
+    # An observation that CARRIES its identity is taken verbatim and the reader is never called.
+    # That is not an optimization: an S3 lister gets the identity free in the listing, so "saving"
+    # a read here would mean downloading the object to recompute something we were handed — a full
+    # egress of the bucket on first scan. The value is opaque (a share's bare SHA-256 hex; S3's
+    # namespaced md5:/sha256:/etag:) and only ever compared for equality — see Library::Observation.
     #
     # The filesystem path goes through Digest::SHA256.file (streaming: a 2GB STEP file must not
     # be read into memory to be hashed). Returns nil when the bytes cannot be read; every caller
     # treats nil as "skip this file", never as "this file is gone". A permission blip, a stale
     # NFS handle, or an unmounted subtree must never tombstone anything.
     def hash_for(o)
+      return o.content_hash if o.content_hash
       return Digest::SHA256.hexdigest(@reader.call(o.rel_path)) if @reader
       Digest::SHA256.file(@root.join(o.rel_path)).hexdigest
     rescue SystemCallError => e
