@@ -7,8 +7,8 @@
 `LIBRARY_BACKEND=chunk|share|s3` all **boot, index, write, deliver, and tell the truth about
 themselves**. The maker/file-layer split is **complete**.
 
-**Server suite 871 → 947, identical on all three legs** — `bin/rails test`,
-`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **947 runs, 2902 assertions, 0 failures,
+**Server suite 871 → 954, identical on all three legs** — `bin/rails test`,
+`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **954 runs, 2931 assertions, 0 failures,
 0 errors, 5 skips**. (Run the legs **sequentially**: three Rails suites contend on one SQLite
 test DB and give a false red in parallel. The share/s3 legs do not run bare — the boot guard
 refuses without their env.)
@@ -24,6 +24,39 @@ capability named; `/v1/tree` and `/v1/changes` **501**; `/v1/maker/projects` **2
 device **enrolled successfully in share mode** — the concrete proof of the `devices` non-gate.
 Rebooted in chunk mode on the same code: `/v1/tree` and `/v1/changes` back to **200**, and the
 upload form switched to `begin_upload`/`finalize_upload` (share mode had rendered `POST /files`).
+
+> **That run originally needed `STORAGE_BACKEND=memory`, and the caveat was load-bearing enough to
+> be a bug.** `V1::BaseController#stash_request_base_url` resolved `Storage::ChunkStore.current` on
+> every v1 request, and `STORAGE_BACKEND` defaults to **`s3` outside the test env** → `KeyError:
+> CHUNK_BUCKET`. So a share operator following **the env in the box below** — `LIBRARY_*` set,
+> `CHUNK_*` unset, exactly as documented — got **500 on the entire v1 API**, including the
+> endpoints this paragraph reports as 501: the gate was correct and unreachable. **Fixed
+> 2026-07-17** (the stash is gated on the capability that names a chunk data plane) and pinned by
+> `V1::CapabilityGatingTest::NoChunkStoreTest`, which sets `STORAGE_BACKEND` to production's
+> default with `CHUNK_*` unset — the nine gating tests before it set `FileLayer.current` and never
+> touched `STORAGE_BACKEND`, so none of them could fail for the reason they existed.
+>
+> **The paragraph above was then re-driven with NO `STORAGE_BACKEND` set at all** (2026-07-17):
+> `/v1/devices/login` **201**, `/v1/maker/projects` **200**, `/v1/tree` **501**, `/v1/changes`
+> **501**, `/v1/nodes/:id/versions` **501**, anonymous `/v1/share/:token` **404**. It is now true
+> as written, on the env a share operator actually sets.
+
+**A share or s3 deployment sets NO chunk-store env** — no `STORAGE_BACKEND`, no `CHUNK_*`. Those
+configure the *sync engine's* chunk store, which such a deployment does not have (`syncable:
+false`: no changelog, no chunks, no devices). The library backend is the only storage knob:
+
+```sh
+# share — a mounted SMB/NFS directory
+LIBRARY_BACKEND=share LIBRARY_PATH=/mnt/nas/models
+
+# s3 — the user's own bucket (REGION defaults to "auto"; ENDPOINT for R2/SeaweedFS/MinIO,
+# PREFIX for a sub-root, both genuinely optional)
+LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=… LIBRARY_S3_ACCESS_KEY_ID=… LIBRARY_S3_SECRET_ACCESS_KEY=…
+```
+
+`LibraryBackendCheck` refuses the boot and names the missing knob, so a typo stops the deploy
+rather than surfacing as a 500 later. `LIBRARY_BACKEND` is unset/`chunk` for the sync product,
+which is where `STORAGE_BACKEND` + `CHUNK_*` belong (`docs/SYNC_SERVER.md`).
 
 **What was actually broken.** A share- or s3-backed library rendered a Download button that
 **404'd**, a Size column of em-dashes, and "No content yet." for a file with bytes on the user's

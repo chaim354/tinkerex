@@ -687,9 +687,9 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         outright, so `indexable?`'s guards against those are unreachable on this store while
         remaining correct for AWS, which permits them.
     - **Phase 4 DONE** (2026-07-17, branch `worktree-file-layer-phase4`, 10 commits) — **the web
-      UI and the v1 API stop lying about what this deployment can do.** Suite **871 → 947**,
+      UI and the v1 API stop lying about what this deployment can do.** Suite **871 → 954**,
       **identical on all three legs** (`bin/rails test`, `LIBRARY_BACKEND=share`,
-      `LIBRARY_BACKEND=s3` — each **947 runs / 2902 assertions / 0 failures / 0 errors / 5
+      `LIBRARY_BACKEND=s3` — each **954 runs / 2931 assertions / 0 failures / 0 errors / 5
       skips**). Plan: `docs/superpowers/plans/2026-07-17-file-layer-capability-gating-phase4.md`.
       **The split is complete: `LIBRARY_BACKEND=chunk|share|s3` all boot, index, write, deliver,
       and tell the truth about themselves.** The decisions a future reader must not undo:
@@ -757,15 +757,47 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         and this is why. (The `chunks.size == 1` half is load-bearing too: a redirect names ONE
         object, so redirecting a multi-chunk file would hand the browser its first chunk with a
         200 and the right filename — **silent truncation**.)
+      - **A final whole-branch review found five more, all fixed before merge (2026-07-17), and
+        the pattern in them is the lesson.** Four of the five were **already recorded as
+        unreachable, deferred, or verified** — the review's contribution was *checking* rather
+        than *reasoning*, and every check that mattered was a probe:
+        - 🔴 **A share/s3 deployment's ENTIRE v1 API answered 500** — `stash_request_base_url`
+          resolved `Storage::ChunkStore.current` before every v1 action, and `STORAGE_BACKEND`
+          defaults to **`s3` outside test** → `KeyError: CHUNK_BUCKET` for an operator who
+          correctly set only `LIBRARY_*`. Login, `/v1/maker/*`, the anonymous `/v1/share/:token`,
+          and **every gated endpoint 500 instead of 501** — the gate was perfect and unreachable,
+          producing exactly the 500 spec §6 forbids. **The suite was green with and without the
+          fix**: all nine gating tests set `FileLayer.current` and never touched
+          `STORAGE_BACKEND`, which is **`memory` in test and `s3` in production** — so *none of
+          them could fail for the reason they existed*, including the one Task 7 had just written
+          to replace a vacuous test. Now gated on the capability that names a chunk data plane
+          (`syncable`; `versioned` on `V1::ShareController`, matching its own owner-side gate) and
+          pinned by `NoChunkStoreTest`, which runs with production's default and `CHUNK_*` unset.
+          **A share/s3 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`** — `docs/STATUS.md`
+          now says so, and the hand-verification it records was re-driven without them.
+        - 🟠 **`FilesController#destroy` orphaned a directory's children in chunk mode** —
+          `Sync::Mutation.apply(op: "delete")` tombstones only the node it is handed, so
+          `/v1/tree` kept serving live children under a deleted parent while a
+          changelog-following device dropped the subtree. **`Chunk::DELETE_MSG` named the right
+          door (`Sync::SubtreeDelete`) three lines above the branch that used the wrong one.**
+          Pre-existing; what Phase 4 added is the contradiction.
+        - 🟠 **`Share#absolute_path` resolved a NULL `storage_path` to the library root** — and
+          `#download` handed that **directory** to `send_file`. `read`/`delete`/`move` escaped
+          only by *accident* (EISDIR, EINVAL); `download` has no read to hide behind. `allow_root:`
+          is **gone**, not switched off: its justification ("a read may resolve to the root —
+          harmless, `File.binread` of a directory is EISDIR anyway") was made false by Phase 4's
+          `download`, and no producer ever wanted it. `S3#key_for` has had the check since Phase 3.
+        - 🟡 **`Share#undelete` was missing `observable!` — and the "unreachable" was wrong.** It
+          reconstructs its destination from the tombstone's **parent**, so a poisoned parent
+          restores into `.maker-tmp-evil/` → a live node the Scanner skips at any depth → an
+          unpairable ghost → **permanent mass-deletion wedge**. **The FOURTH instance of 2b's
+          skip-list blind spot, each found only after the previous explanation said it couldn't
+          happen.** All three writing paths now ask.
       - **Shipped knowingly, do not let these fall off** (detail + numbers in `docs/STATUS.md`):
         a **measured N+1 in `FilesController#index`** (`stat` per node — 0.254 ms/node, **~508 ms
         at 2000 nodes**, where the old *lying* code took 2 queries; correctness first, the honest
-        fix is a bulk `stat_all` verb or pagination); **`Share#undelete` is missing `observable!`
-        while `S3#undelete` has it** (unreachable today, but an adapter divergence on a verb the
-        web now drives, and the write contract does not pin it); **`Share#absolute_path` resolves
-        a NULL `storage_path` to the library root** under `allow_root: true` (7b removed the only
-        producer; the latent hole remains); **`Share#write`/`S3#write` raise `NotFound` for a
-        clobber**, so a duplicate-name upload says "File not found"; and an **unexplained
+        fix is a bulk `stat_all` verb or pagination); **`Share#write`/`S3#write` raise `NotFound`
+        for a clobber**, so a duplicate-name upload says "File not found"; and an **unexplained
         intermittent** — two agents each saw one `1 errors` run that never reproduced (~73 and
         ~15+ subsequent full runs), neither captured the message. **Recorded as unexplained: not
         fixed, and not established as pre-existing.**
