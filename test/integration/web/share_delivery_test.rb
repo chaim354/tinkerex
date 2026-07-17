@@ -106,5 +106,51 @@ module Web
       assert_equal "File not found.", flash[:alert]
       assert_not_includes response.body.to_s, @root.to_s, "never leak the library root"
     end
+
+    # LANDMINE 2, at the layer it actually moved to. Task 2 pins that Share#download refuses a
+    # poisoned path. This pins the OTHER half: that the controller does not resolve one itself.
+    # The guard lives in exactly one place -- Share#absolute_path -- and a controller that
+    # builds or re-validates a path either bypasses it or becomes a second copy that drifts.
+    #
+    # update_column bypasses validation on purpose: this is a row a future bug could produce, not
+    # one a caller can make today. storage_path is written by our own observer (a walk under the
+    # root) or by Share#write (already guarded) -- but it is a plain DB column, and 2b's #write
+    # takes a `name` from the UI. "No caller passes anything bad today" is the assumption that
+    # ages badly, and Delivery::SendFile is a Data object anyone can construct with anything, so
+    # the type carries no guarantee whatsoever.
+    # THE `..` COUNT IS COMPUTED, NOT WRITTEN DOWN, and that is the whole test. A literal
+    # "../../../etc/passwd" -- this test's first draft -- lands on /var/folders/24/etc/passwd from
+    # a macOS tmpdir six levels deep. That path does not exist, so the request 404s on ENOENT and
+    # the test passes IDENTICALLY with the escape guard deleted: verified by mutation, it was the
+    # only one of these two that stayed green. It asserted nothing about traversal at all.
+    #
+    # The depth of Dir.mktmpdir is environment-specific (a Linux CI runner's /tmp is two levels,
+    # this box's is six), so no hardcoded count is right everywhere -- which means a literal is
+    # not merely wrong here, it is untrustworthy anywhere. relative_path_from computes the exact
+    # payload that reaches /etc/passwd from wherever the root actually is.
+    test "a poisoned storage_path cannot be downloaded through the controller" do
+      id = index!("innocent.stl", "b")
+      File.binwrite(@root.join("decoy.stl"), "so the library does not look unmounted")
+      traversal = Pathname.new("/etc/passwd").relative_path_from(@root).to_s
+      assert_equal "/etc/passwd", @root.join(traversal).expand_path.to_s,
+                   "the payload must actually reach /etc/passwd, or this test proves nothing"
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, traversal)
+
+      get blob_file_path(id)
+
+      assert_not_equal File.read("/etc/passwd"), response.body, "traversal must not serve"
+      assert_not_includes response.body.to_s, "root:", "and must not leak /etc/passwd's contents"
+    end
+
+    # An absolute storage_path is the same attack with a different spelling: root.join("/etc/x")
+    # in Pathname yields "/etc/x", NOT root + "/etc/x". A guard testing only for ".." misses it.
+    test "an ABSOLUTE storage_path cannot be downloaded either" do
+      id = index!("innocent2.stl", "b")
+      File.binwrite(@root.join("decoy2.stl"), "so the library does not look unmounted")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, "/etc/passwd")
+
+      get blob_file_path(id)
+      assert_not_includes response.body.to_s, "root:"
+    end
   end
 end
