@@ -54,6 +54,16 @@ class FilesController < ApplicationController
                                             "presigned flow. Chunk mode accepts uploads; it " \
                                             "just does not take the bytes through Rails (§15)."
 
+  # THE RESCAN GATE, AND WHY IT IS NOT require_capability!. That concern renders a JSON 501 --
+  # the v1 API's shape, right for a machine client. #rescan is a browser action reached from a
+  # button, so its refusal is the SAME idiom every rescue_from below uses: redirect to files_path
+  # with a flash alert. A human who somehow POSTs here (the button is hidden in chunk mode) gets a
+  # page, not raw JSON. It still reads capabilities through the ONE named mechanism the concern
+  # exposes (`capabilities`), so there is no second way to reach them (§9a-3). Defense in depth:
+  # the hidden button is UX, this gate is the guarantee -- an ungated POST would enqueue a job
+  # whose #perform then raises ArgumentError, since a chunk backend has no observer.
+  before_action :require_scannable!, only: :rescan
+
   # Content types safe to render inline in the app origin. Raster images only — deliberately
   # NO image/svg+xml (SVG can carry <script>) and NO text/html, which would be stored XSS.
   SAFE_INLINE_TYPES = %w[
@@ -308,7 +318,33 @@ class FilesController < ApplicationController
     redirect_to files_path, notice: "Deleted #{node.name}."
   end
 
+  # POST /files/rescan — trigger an immediate reconcile of a share/s3 library instead of waiting
+  # for the 15-minute recurring Library::ScanJob.
+  #
+  # ENQUEUE, NOT INLINE. A scan walks the whole NAS or lists the whole bucket; running it in the
+  # request would block Puma and could time out on a large library. perform_later hands it to
+  # Solid Queue (which runs in Puma via SOLID_QUEUE_IN_PUMA -- the same worker the recurring sweep
+  # already relies on), and the user refreshes in a moment. This is a COMMAND for one user, so it
+  # calls #perform with `user_id:` directly -- ScanJob.scan_all! is the all-users schedule gate,
+  # not the per-user door. The gate above (require_scannable!) is what keeps this off chunk mode,
+  # where #perform would raise ArgumentError for want of an observer.
+  def rescan
+    Library::ScanJob.perform_later(user_id: current_user.id)
+    redirect_to files_path(folder: params[:folder].presence),
+                notice: "Rescan started — refresh in a moment."
+  end
+
   private
+
+  # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
+  # the SAME `capabilities` the views and the v1 gate read (no second path to the answer), but
+  # answers the WEB way -- a redirect with an alert, not the concern's JSON 501.
+  def require_scannable!
+    return if capabilities.scannable?
+
+    redirect_to files_path,
+                alert: "This library doesn't support manual rescans."
+  end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the
   # current_user owns and has not deleted; anything else — absent, blank, a file, a foreign or
