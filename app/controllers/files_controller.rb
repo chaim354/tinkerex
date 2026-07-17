@@ -240,11 +240,37 @@ class FilesController < ApplicationController
     end
   end
 
-  # DELETE /files/:id — soft-delete (tombstone); versions + chunks are kept (GC sweeps).
+  # DELETE /files/:id — remove the file from the library, however THIS deployment holds it.
+  #
+  # THE SAME BRANCH THE UPLOAD MAKES, ON THE SAME CAPABILITY, AND FOR THE SAME REASON: a delete
+  # is a write, so `port_writable` — "which door do bytes go in?" — already answers it. The read
+  # contract pins that answer to what the adapters really do (Task 1's
+  # test_contract_port_writable_agrees_with_what_delete_and_move_actually_do), so this is not an
+  # inference: false here means Chunk#delete raises, true means the port implements it.
+  #
+  # THE TOMBSTONE IS ONLY HALF A DELETE, AND ON SHARE/S3 THE WRONG HALF ALONE UNDOES ITSELF. This
+  # action used to call Sync::Mutation unconditionally. In chunk mode that IS the delete — the
+  # bytes are the sync engine's and the tombstone is the whole truth. On share/s3 the bytes are a
+  # file on the user's NAS or an object in their bucket, and a tombstone does not move them: the
+  # file stays exactly where it was, THE NEXT SCAN OBSERVES IT, and Reconciler#create_or_revive!
+  # revives the tombstone by storage_path. The user deletes a file, watches it disappear, and it
+  # comes back within the scan interval. Verified before this fix.
+  #
+  # FileLayer#delete is the whole delete: it moves the bytes to `.trash/<node_id>/<name>` FIRST
+  # and tombstones after (2b's order — reversed, a failed move leaves a tombstone the scan
+  # resurrects), and NULLs storage_path, which is what makes that revive unable to fire and what
+  # makes `undelete` the only way back. See TrashController, which is the other end of it.
+  #
+  # No broadcast on the port branch: there is no changelog to advance and no devices to nudge
+  # (syncable: false). Only Sync::Mutation returns a seq, so only that branch has one to send.
   def destroy
     node = current_user.nodes.find_by!(node_id: params[:id])
-    seq = Sync::Mutation.apply(user: current_user, node:, op: "delete") { |n| n.deleted = true }
-    LibraryChannel.broadcast_change(current_user, seq)
+    if capabilities.port_writable?
+      FileLayer.current.delete(current_user, node_id: node.node_id)
+    else
+      seq = Sync::Mutation.apply(user: current_user, node:, op: "delete") { |n| n.deleted = true }
+      LibraryChannel.broadcast_change(current_user, seq)
+    end
     redirect_to files_path, notice: "Deleted #{node.name}."
   end
 

@@ -153,9 +153,15 @@ module Web
       assert_select ".preview-fallback"
     end
 
+    # CHUNK MODE'S DELETE IS Sync::Mutation AND MUST STAY Sync::Mutation. #destroy branches on
+    # port_writable, and the share/s3 half calls FileLayer#delete -- but here the bytes belong to
+    # the sync engine, the tombstone IS the whole delete, and changing what Sync::* does is the
+    # tripwire (spec §10). So the assertions below are about the MECHANISM, not just the outcome:
+    # a tombstone alone is what a port delete would also produce.
     test "delete tombstones the node and removes it from the list" do
       sign_in
       node_id = upload("trash.txt", "bye".b)
+      before = User.find_by(email: "web@example.com").head_seq
       delete file_path(node_id)
       assert_redirected_to files_path
 
@@ -164,6 +170,13 @@ module Web
       assert_equal 0, user.nodes.present.count
       # Version is retained (keep-versions rule).
       assert user.versions.where(node_id:).exists?
+
+      # Sync::Mutation, and nothing else here, appends a changelog entry and advances head_seq --
+      # so this is what distinguishes "the sync engine deleted it" from "the port did". A
+      # syncing device learns about this delete ONLY through this entry.
+      entry = user.changelog_entries.where(node_id:).order(:seq).last
+      assert_equal "delete", entry.op
+      assert_operator user.head_seq, :>, before
     end
 
     # THE OTHER HALF OF CAPABILITY GATING, and the half a plan forgets. A gate that hides a
