@@ -610,12 +610,10 @@ module FileLayer
       assert_nil seen, "a sha256 checksum is NOT an ETag: sent as one it would refuse every copy"
     end
 
-    # THE FAKE CANNOT CATCH THIS ONE, which is exactly why it is asserted at the wire.
+    # ASSERTED AT THE WIRE, which is what makes this test independent of the fake's decoder.
     #
     # aws-sdk-s3 does NOT escape copy_source — it puts the string on the wire verbatim (verified
-    # by capturing x-amz-copy-source at the :sign step), so the caller must encode it. FakeS3
-    # decodes with CGI.unescape, and CGI.escape/CGI.unescape are inverses — so an adapter using
-    # CGI.escape passes every test in this file and is WRONG against every real store:
+    # by capturing x-amz-copy-source at the :sign step), so the caller must encode it.
     #
     #   CGI.escape("Bracket v2.stl") -> "Bracket+v2.stl"
     #
@@ -626,8 +624,21 @@ module FileLayer
     # follows the delete — so the user's file is permanently gone and the trash holds a copy of
     # someone else's. A space in a filename is the single most common thing in a CAD library.
     #
-    # Per-segment ERB::Util.url_encode is correct against BOTH: "%20" round-trips through the
-    # fake's CGI.unescape AND decodes to a space on a real store.
+    # WHY THIS COMMENT CHANGED (2026-07-17, the first real-bucket run). It used to open "THE FAKE
+    # CANNOT CATCH THIS ONE" and explain that FakeS3's CGI.unescape is CGI.escape's inverse, so a
+    # form-encoding adapter passed every test in this file. That was TRUE and is now FALSE: the
+    # fake decodes with URI::DEFAULT_PARSER.unescape, which is what a real store does, so it
+    # misses "Bracket+v2.stl" exactly as SeaweedFS does (verified: the real store answers
+    # Aws::S3::Errors::InvalidArgument, NOT a space-decoded hit).
+    #
+    # THE WIRE ASSERTION STAYS, and its reason is now the general one rather than a workaround for
+    # a fake that forgave the bug: a round-trip through ANY test double can only ever prove the
+    # double and the code agree, which is the precise mechanism that hid this bug at 79/80 green.
+    # The wire format is the thing the store actually sees, so it is the thing to pin. The fake
+    # agreeing with reality is defense in depth underneath it, not a replacement for it.
+    #
+    # Per-segment ERB::Util.url_encode is correct against BOTH: "%20" decodes to a space in the
+    # fake AND on a real store (checked live for space, "+", "%", unicode, "&", "#", "?").
     test "the copy source is URL-encoded the way REAL S3 decodes it, not form-encoded" do
       id = create_file!(name: "Bracket v2.stl", bytes: "solid")
       seen = nil
@@ -641,6 +652,40 @@ module FileLayer
       assert_equal "b/#{PREFIX}/Bracket%20v2.stl", seen,
                    "a space must go on the wire as %20 — CGI.escape's + is a literal plus to S3"
       assert_equal "solid", @fake.objects["#{PREFIX}/.trash/#{id}/Bracket v2.stl"].body
+    end
+
+    # A TEST OF THE FAKE, deliberately, and the only one in this file — because this fake's
+    # decoder is load-bearing infrastructure for every copy test above it, and it was WRONG until
+    # the first real-bucket run (2026-07-17) looked.
+    #
+    # The property under test is the one whose ABSENCE hid the CGI.escape bug at 79/80 green:
+    # a form-encoded copy source must MISS, here, exactly as it misses on a real store. Without
+    # this, nothing stops the fake drifting back to CGI.unescape — a one-word edit that silently
+    # re-forgives the whole class of bug and leaves the wire assertion above as the only guard for
+    # the copy paths that happen to have one.
+    #
+    # The expected values are not invented; they were read off SeaweedFS 4.39:
+    #   copy_source ".../plus/Bracket+Mount.stl" against a bucket holding "plus/Bracket Mount.stl"
+    #   -> Aws::S3::Errors::InvalidArgument. The store does not read "+" as a space. Neither may
+    #   this fake.
+    test "FakeS3 decodes a copy source like a real store: percent-decoding, never form-decoding" do
+      @fake.seed!("plus/Bracket Mount.stl", "the real bytes")
+
+      # "%20" IS a space to a real store, so the fake must find the object.
+      @fake.client.copy_object(bucket: "b", key: "plus/ok.stl",
+                               copy_source: "b/plus/Bracket%20Mount.stl")
+      assert_equal "the real bytes", @fake.objects["plus/ok.stl"].body,
+                   "%20 must decode to a space, as it does on a real store"
+
+      # "+" is a LITERAL PLUS to a real store, so a form-encoded source names a key that does not
+      # exist and the copy must fail. Green here is the bug.
+      assert_raises(Aws::S3::Errors::NoSuchKey,
+                    "a form-encoded '+' must NOT resolve to a space — that is the CGI.escape " \
+                    "bug this fake once forgave") do
+        @fake.client.copy_object(bucket: "b", key: "plus/bad.stl",
+                                 copy_source: "b/plus/Bracket+Mount.stl")
+      end
+      assert_nil @fake.objects["plus/bad.stl"], "nothing may be written by a copy that must fail"
     end
 
     # --- the 5GB copy cap -----------------------------------------------------------------

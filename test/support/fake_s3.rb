@@ -1,4 +1,7 @@
 require "aws-sdk-s3"
+# Explicit, because #do_copy's URI::DEFAULT_PARSER is the one thing in this file that must not
+# quietly depend on someone else having required it — see the decoder note there.
+require "uri"
 
 # A stateful, hermetic S3 for the suite: real Aws::S3::Client, real request/response
 # serialization, real error classes -- backed by a Hash instead of a network.
@@ -143,7 +146,27 @@ class FakeS3
 
   def do_copy(ctx)
     src = ctx.params[:copy_source].to_s.split("/", 2).last
-    src = CGI.unescape(src)
+    # PERCENT-DECODING, NOT FORM-DECODING, and the difference is the bug this fake already hid
+    # once. `x-amz-copy-source` is decoded per RFC 3986, where "+" is a LITERAL PLUS; CGI.unescape
+    # is form decoding (application/x-www-form-urlencoded), where "+" means SPACE.
+    #
+    # CGI.unescape here made this fake THE EXACT INVERSE OF THE ADAPTER'S OLD BUG: the adapter
+    # encoded with CGI.escape ("Bracket Mount.stl" -> "Bracket+Mount.stl"), this decoded it back
+    # to a space, the object was found, and 79/80 tests were green while every real store missed
+    # the key. A fake whose decoder is the inverse of the WRONG encoder cannot fail on the one
+    # thing it most needs to catch.
+    #
+    # VERIFIED AGAINST A REAL STORE (SeaweedFS 4.39, 2026-07-17), not reasoned: copy_source
+    # "<bucket>/plus/Bracket+Mount.stl" against a bucket holding "plus/Bracket Mount.stl" is
+    # REFUSED (Aws::S3::Errors::InvalidArgument) — the store does not read "+" as a space. This
+    # parser reproduces that: URI::DEFAULT_PARSER.unescape("Bracket+Mount.stl") is unchanged,
+    # while "%20" decodes to a space and "%C3%96" to "Ö", exactly as the store does.
+    #
+    # The adapter's per-segment ERB::Util.url_encode round-trips through this for every name
+    # tried on the real store (space, "+", "%", unicode, "&", "#", "?"). The wire-level assertion
+    # in s3_test.rb ("the copy source is URL-encoded the way REAL S3 decodes it") remains the
+    # primary guard; this makes the fake agree with the store rather than quietly forgive it.
+    src = URI::DEFAULT_PARSER.unescape(src)
     o = @objects[src] or return "NoSuchKey"
     # copy_source_if_match is the conditional that makes the trash copy safe against a
     # concurrent overwrite. Honor it, or the test that pins it would pass vacuously.
