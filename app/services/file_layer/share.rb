@@ -21,7 +21,11 @@ module FileLayer
       # learned by walking the root on a timer (Library::Scanner). This is the capability
       # Library::ScanJob.scan_all! gates on; before it, that gate was `is_a?(FileLayer::Share)`,
       # i.e. this very fact spelled as a class check, which is why it broke when S3 arrived.
-      Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true)
+      #
+      # port_writable: true — there is no sync engine here, so the port IS the write path
+      # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
+      Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
+                       port_writable: true)
     end
 
     def stat(user, node_id:)

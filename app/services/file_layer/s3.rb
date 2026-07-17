@@ -76,7 +76,13 @@ module FileLayer
       # all write to it without telling us. Library::S3Observer is the poll. Answering this
       # honestly is the whole of Phase 3's trap: the gate used to be `is_a?(FileLayer::Share)`,
       # which answered false for this adapter and silently never indexed the library.
-      Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true)
+      #
+      # port_writable: true ALONGSIDE presignable: true, which looks like a contradiction and is
+      # not: presignable is about handing the browser a URL to READ from, port_writable about
+      # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
+      # so until it does, the UI POSTs to the port and #write puts the object.
+      Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
+                       port_writable: true)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what

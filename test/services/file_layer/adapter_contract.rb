@@ -82,12 +82,109 @@ module FileLayerAdapterContract
            "mtime must be unix nanoseconds, got #{mtime} (a seconds value is ~1.7e9)"
   end
 
-  def test_contract_capabilities_answers_all_four_questions
+  def test_contract_capabilities_answers_all_five_questions
     caps = adapter.capabilities
     assert_includes [ true, false ], caps.versioned?
     assert_includes [ true, false ], caps.syncable?
     assert_includes [ true, false ], caps.presignable?
     assert_includes [ true, false ], caps.scannable?
+    assert_includes [ true, false ], caps.port_writable?
+  end
+
+  # `port_writable` PINNED AGAINST WHAT write ACTUALLY DOES — Phase 4's Landmine 1.
+  #
+  # Capabilities are five hand-written booleans per adapter, and until Phase 3 NOTHING read them,
+  # so no wrong one had ever been noticed. Phase 4 makes the UI hide features on them and the API
+  # answer 501 on them, at which point a wrong boolean stops being inert documentation and becomes
+  # a feature that silently vanishes — or one that is offered and then fails.
+  #
+  # Nothing mechanically ties `port_writable: false` to `write` actually raising. This does. It
+  # lives in the READ contract, which EVERY adapter runs, rather than in any one adapter's test,
+  # because "the adapters cannot diverge" is the contract's whole job.
+  #
+  # The spec predicted exactly this drift for `presignable` (§9a-3: answered statically, but a
+  # property of the store, with Chunk.fetch duck-typing the same question elsewhere). This is the
+  # mechanism that would have caught it.
+  def test_contract_port_writable_agrees_with_what_write_actually_does
+    if adapter.capabilities.port_writable?
+      info = adapter.write(@user, parent_node_id: nil, name: "caps.stl", io: StringIO.new("w"))
+      assert_equal "w", adapter.read(@user, node_id: info.node_id),
+                   "port_writable? is true, so the port's write path must actually work"
+    else
+      err = assert_raises(NotImplementedError) do
+        adapter.write(@user, parent_node_id: nil, name: "caps.stl", io: StringIO.new("w"))
+      end
+      # Assert the MESSAGE, not just the class: NotImplementedError is reachable from five places
+      # in this codebase (FileLayer.build, ChunkStore's abstract methods, Sync::RetentionPolicy),
+      # so the class alone would let an unrelated raise satisfy this.
+      assert_match(/Sync::Commit/, err.message,
+                   "a refusal must name the path the caller SHOULD use")
+    end
+  end
+
+  # The same pin for delete and move, so an adapter cannot answer port_writable? false and then
+  # refuse only part of the path — which Phase 4's UI would meet as a 500 rather than a gate.
+  #
+  # EACH OP NAMES ITS OWN DOOR, and that is the point rather than pedantry. An earlier draft of
+  # Chunk used ONE shared refusal string, which sent delete and move callers to Sync::Commit — a
+  # class with neither path (CLAUDE.md §3, the FileLayer row). A single /Sync::Commit/ asserted
+  # across all three ops passes for that draft, so it would be a test named for a lesson while
+  # licensing the mistake. The doors are asserted per-op, and asserted DISTINCT: a re-merged
+  # message fails here before it can send anyone to the wrong file.
+  #
+  # Naming Sync:: classes in a shared contract is a chunk-specific fact, and it is here for the
+  # reason test_contract_scannable_... gives above: a FALSE half can only be pinned by an adapter
+  # that answers false, and Chunk is the only one running this contract that does.
+  def test_contract_port_writable_agrees_with_what_delete_and_move_actually_do
+    doors = {
+      Sync::SubtreeDelete => -> { adapter.delete(@user, node_id: "n1") },
+      Sync::Mutation => -> { adapter.move(@user, node_id: "n1", new_parent_node_id: nil,
+                                          new_name: "y.stl") }
+    }
+
+    if adapter.capabilities.port_writable?
+      # The TRUE half needs pinning as much as the false one, and an early `return` here is a test
+      # that cannot fail on two of the three adapters. "n1" exists nowhere, so a port that owns
+      # this path reaches its ordinary liveness check and answers NotFound. The assertion is exact
+      # rather than incidental: NotImplementedError is a ScriptError, NOT a StandardError, so an
+      # adapter that refuses cannot be mistaken for one that merely didn't find the node — it
+      # blows straight through assert_raises and errors the test.
+      doors.each_value do |op|
+        assert_raises(FileLayer::NotFound, "port_writable? is true, so this op must not refuse " \
+                                           "the path — it must look for the node") { op.call }
+      end
+      return
+    end
+
+    messages = doors.map do |door, op|
+      err = assert_raises(NotImplementedError) { op.call }
+      assert_match(/#{Regexp.escape(door.name)}/, err.message,
+                   "a refusal must name the door THIS op uses, not a neighbour's")
+      err.message
+    end
+    assert_equal messages.uniq.size, messages.size,
+                 "delete and move have different doors, so they cannot share a refusal message"
+  end
+
+  # `presignable` is the store's property, not the adapter's opinion (§9a-3). This does not fix
+  # that — it pins the claim to something observable, so a future divergence fails a test instead
+  # of silently disabling a UI affordance.
+  #
+  # NOTE what this does NOT assert: that a presignable adapter DELIVERS by redirect. Different
+  # questions — Chunk is presignable on all three stores, but two of them presign to URLs Rails
+  # itself serves.
+  def test_contract_presignable_is_not_merely_asserted
+    # `download` is Phase 4 Task 2's seam and there is no other observable form of this claim on
+    # the port today: presignable is invisible until something asks for a URL. Task 2 deletes this
+    # line — an unconditional skip is loud in the run and cannot be mistaken for a passing test,
+    # which a `respond_to?(:download)` guard would quietly become forever.
+    skip "download lands in Task 2; presignable has no observable seam on the port until it does"
+
+    caps = adapter.capabilities
+    return unless caps.presignable?
+    id = create_file!(name: "presign.stl", bytes: "p")
+    assert adapter.download(@user, node_id: id, disposition: "attachment"),
+           "a presignable adapter must be able to produce a Delivery"
   end
 
   # `scannable` PINNED AGAINST AN INDEPENDENT FACT — and the shape of this test is the whole point
