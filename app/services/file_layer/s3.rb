@@ -158,7 +158,101 @@ module FileLayer
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
+    # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
+    # the instant the caller can attach to it rather than up to a scan-interval later. The mirror
+    # of Share#write, and FileLayerWritableContract is what holds the two to the same answers.
+    #
+    # NO TEMP-AND-RENAME, and its ABSENCE is the thing to read carefully here, because a reader who
+    # knows Share#write will see a missing step and "restore" it. Share writes to a temp file and
+    # renames because a half-written file is VISIBLE in the share the whole time it is being
+    # written — a scan landing in that window indexes a torn file, and S3 has no such window:
+    # put_object is atomic, the object appears whole or not at all. There is nothing to protect
+    # against, and inventing a temp key here would add a second, unobservable key (the exact ghost
+    # class 2b documents at length) to solve a problem this backend does not have.
+    #
+    # NO TRANSACTION, for Share's reason: the put cannot be rolled back, so wrapping the create!
+    # in one buys nothing and only widens the window in which the object has landed and the row
+    # has not. That failure is self-healing — the next scan indexes the object.
+    #
+    # COST, stated rather than hidden: one HEAD (the clobber check) + one PUT + one HEAD (the
+    # mtime — see below). Two billed HEADs per write. The first is what the write contract
+    # requires; the second is what the store's own clock costs.
+    def write(user, parent_node_id: nil, name: nil, io: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      observable!(rel)
+      key = key_for_rel(rel)
+      # Read BEFORE the clobber check, deliberately: reading up to 256MB between the HEAD and the
+      # PUT would widen the very race the check already cannot win (below). The bytes are needed
+      # either way, and buffering them for a write that is about to be refused costs nothing but
+      # memory we were going to spend.
+      bytes = read_capped!(io)
+
+      begin
+        # REFUSE AN OCCUPIED DESTINATION. This is a write-contract rule, not this adapter's taste,
+        # and it matters MORE here than it would in chunk mode: every backend the contract covers
+        # is current-state-only (spec decision 3), so a clobber is the user's file PERMANENTLY
+        # gone from a name collision in an upload form — there is no version to restore. Share
+        # refuses (share.rb:89); an S3 adapter that put straight over it would diverge from its
+        # sibling on the one axis this port cannot tolerate.
+        #
+        # IT IS A CHECK, NOT A LOCK, and saying so is the point of this paragraph. head-then-put
+        # is TOCTOU: a concurrent writer between the two still wins, and S3 has no portable
+        # conditional put (R2/SeaweedFS/Ceph), so there is no primitive here that would close it.
+        # What this stops is the ORDINARY case — a user re-uploading a name that is already there
+        # — which is the case that actually destroys data. It does not claim atomicity.
+        #
+        # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant"
+        # and clobber: object_exists? lets those through to the rescue below. Fail safe.
+        raise NotFound, "#{rel.inspect} already exists" if object_exists?(key)
+
+        put = @client.put_object(bucket: @bucket, key:, body: bytes)
+        # The ONLY source of the object's mtime. put_object's response carries no last_modified
+        # (verified against the SDK's PutObjectOutput members — the plan offered "the put response
+        # / a HEAD" and only the HEAD exists), and Time.now is NOT an acceptable substitute: the
+        # next scan compares the node against what the STORE reports, so a clock we guessed makes
+        # every written file look changed on the very next pass. FileInfo's contract pins the unit
+        # — unix NANOSECONDS, converted by the adapter — and seconds-as-nanos has shipped twice in
+        # this codebase.
+        head = @client.head_object(bucket: @bucket, key:)
+      rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+        # A failed write is TRANSIENT — the caller retries. Never NotFound: a full/throttled/
+        # unreachable store does not mean "this file is gone", and NotFound is terminal. Same
+        # direction as read's rescue and Share#write's, for the same reason.
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+
+      # INDEX ONLY AFTER THE PUT LANDS. The order is the point: a node indexed for bytes that
+      # never arrived is an attachment resolving to a permanent NotFound, which is strictly worse
+      # than no attachment at all — the user can retry an upload that failed loudly, and cannot
+      # fix a file that browses fine and 404s forever. Pinned by the write contract.
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+        storage_path: rel, parent_node_id:,
+        size: bytes.bytesize, mtime: nanos(head.last_modified),
+        # Through ObjectIdentity.for — the ONE normalizer, the same call the observer makes.
+        # NEVER the raw ETag: S3 wraps every one in literal quotes, in put responses exactly as in
+        # listings, so a write storing the quoted form and a scan storing the stripped one give
+        # one object two identities. Every written file then reads as changed on the next pass and
+        # move-pairing never pairs — the phase's headline promise, inverted by two quotes.
+        content_hash: ObjectIdentity.for(etag: put.etag)
+      )
+      stat(user, node_id: node.node_id)
+    end
+
     private
+
+    # Does an object already live at this key? NotFound/NoSuchKey mean vacant — the fake and the
+    # real SDK both answer a missing key with Errors::NotFound on a HEAD (there is no body to
+    # carry a NoSuchKey code), and both are named because an S3-compatible store may pick either.
+    # EVERY other error propagates to the caller's rescue: an AccessDenied read as "vacant" is how
+    # a credentials blip turns into an overwrite of the user's file.
+    def object_exists?(key)
+      @client.head_object(bucket: @bucket, key:)
+      true
+    rescue ::Aws::S3::Errors::NotFound, ::Aws::S3::Errors::NoSuchKey
+      false
+    end
 
     # prefix + storage_path, and the guard that makes that concatenation safe.
     #
@@ -181,11 +275,92 @@ module FileLayer
     def key_for(node)
       rel = node.storage_path.to_s
       raise NotFound, "node #{node.node_id.inspect} has no storage_path" if rel.blank?
+      key_for_rel(rel)
+    end
+
+    # The guard itself, on a RELATIVE path rather than a node, because the write path composes a
+    # rel from a parent + a leaf and has no node to hand it until after the put. One copy: two
+    # copies of a security check drift, and this file already makes that argument for live_node!.
+    def key_for_rel(rel)
+      rel = rel.to_s
       if rel.start_with?("/") || rel.split("/").include?("..")
         raise NotFound, "storage_path escapes the library prefix: #{rel.inspect}"
       end
       [ @prefix, rel ].compact.join("/")
     end
+
+    # A leaf name is a leaf; the directory is parent_node_id's job. Mirrors Share#leaf!, including
+    # its reason for naming `.` and `..` explicitly: they are SEPARATOR-FREE, so File.basename
+    # passes them, and they are the only leaf values that could compose a key outside the prefix.
+    # Refusing them here is what makes it true that no `name` can ever reach the escape guard —
+    # which is why the guard's own test has to come through a poisoned PARENT.
+    def leaf!(name)
+      return unless name.blank? || File.basename(name.to_s) != name.to_s || %w[. ..].include?(name.to_s)
+      raise NotFound, "#{name.inspect} is not a leaf name (the directory is parent_node_id's job)"
+    end
+
+    # The write path must never create a key the observer SKIPS. `leaf!` asks a different question
+    # — "is this one path segment?" — and `.trash` is a perfectly good leaf.
+    #
+    # NOT IN THE PLAN, and added deliberately: this is the structural blind spot 2b hit FOUR times
+    # on the share, and it transfers to S3 with one half amputated and the other intact. The half
+    # that does NOT transfer: S3 has no directories, so a `.trash` OBJECT cannot collide with the
+    # `.trash/<node_id>/<name>` KEYS that Task 6's delete writes — nothing here breaks every delete
+    # in the library the way Share's EEXIST did. The half that DOES: Task 7's observer skips the
+    # `.trash` prefix, so an object written there is a live node at a key the scan never observes
+    # -> unpairable ghost -> tombstone -> the mass-deletion guard refuses that scan AND EVERY SCAN
+    # AFTER IT. One ordinary-looking upload, permanent.
+    #
+    # Library::Scanner::TRASH_PREFIX rather than a second ".trash" literal — the skip and this
+    # guard are ONE FACT, and two copies of it is how the trash quietly starts getting indexed
+    # (Share#trash_dir and Share#observable! share the constant for the identical reason). Task 7's
+    # observer is told to mirror the same constant.
+    #
+    # Root-anchored: a nested `cad/.trash` is the user's own folder, is indexed, and is none of our
+    # business. TEMP_PREFIX is deliberately NOT checked here — it is a Share concept (this adapter
+    # writes no temp keys, see #write) and the S3 observer has no reason to skip it, so an object
+    # named `.maker-tmp-x` is observable and therefore harmless.
+    #
+    # NOTE FOR TASK 6: `move`'s destination needs this same guard. 2b's retracted sentence — "a
+    # move is self-healing because the bytes stay observable" — is false exactly when the
+    # DESTINATION is the unobservable one.
+    def observable!(rel)
+      return unless rel.to_s.split("/").first == Library::Scanner::TRASH_PREFIX
+      raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
+    end
+
+    def join_rel(dir_rel, name) = dir_rel.blank? ? name.to_s : "#{dir_rel}/#{name}"
+
+    # Blank means THE ROOT — join_rel turns a nil dir into a bare name, which is what lets
+    # `parent_node_id: nil` be a real destination (the write contract's convention throughout).
+    # Mirrors Share#parent_dir_rel!, minus its `live:` flag: that exists for undelete alone, which
+    # is Task 6's.
+    def parent_dir_rel!(user, parent_node_id)
+      return nil if parent_node_id.blank?
+      parent = user.nodes.present.find_by(node_id: parent_node_id, kind: "dir") ||
+               raise(NotFound, "parent #{parent_node_id.inspect} is not a live directory")
+      # Blank means the root, so a path-less parent would silently relocate the file to the TOP of
+      # the library rather than fail. Of everything this adapter can get wrong, a silent
+      # misplacement is the one it has no later way to detect. (Share argues this at length.)
+      raise NotFound, "parent #{parent_node_id.inspect} has no storage_path" if parent.storage_path.blank?
+      parent.storage_path
+    end
+
+    # Read the cap PLUS ONE byte, for the reason #read's ranged GET gives: reading exactly
+    # MAX_BYTES cannot distinguish "exactly at the cap" from "truncated at the cap", so an oversize
+    # upload would be silently cut in half and stored as a valid-looking file. NotFound for "too
+    # big" matches Share and #read — the shared wart (spec 9a-5), not a local choice.
+    def read_capped!(io)
+      bytes = io.read(MAX_BYTES + 1).to_s.b
+      raise NotFound, "file exceeds #{MAX_BYTES} bytes" if bytes.bytesize > MAX_BYTES
+      bytes
+    end
+
+    # S3's last_modified is a second-granularity Time; the column is unix NANOSECONDS. This is the
+    # conversion FileInfo's contract requires of every adapter, and it is the exact formula the
+    # observer applies to a listing's last_modified — the two must agree or every written file
+    # looks changed on the next scan.
+    def nanos(time) = time.to_i * 1_000_000_000 + time.nsec
 
     # Is there a library at this prefix at all? The mirror of Share#library_present?, and the
     # emptiness signal is the same one: a wrong bucket/prefix or a revoked credential is an empty
