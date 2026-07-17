@@ -44,6 +44,26 @@ module FileLayerAdapterContract
   # is ~1.7e9 and milliseconds ~1.7e12, both far below this floor.
   NANOS_FLOOR = 1_000_000_000_000_000 # 1e15
 
+  # Count the SQL this block really issues. Hand-rolled rather than Rails' assert_queries_count
+  # because the assertion here is a COMPARISON of two counts, not a match against a literal —
+  # see test_contract_stat_all_costs_a_number_of_queries..., where a literal would encode one
+  # backend's query shape into a contract every backend runs.
+  #
+  # SCHEMA/TRANSACTION and PRAGMA are excluded: they are the adapter's cost only by accident of
+  # being first, and a warm-up call in the test is what keeps them out of the measurement anyway.
+  def count_contract_queries
+    n = 0
+    sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+      unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+        n += 1
+      end
+    end
+    yield
+    n
+  ensure
+    ActiveSupport::Notifications.unsubscribe(sub)
+  end
+
   def test_contract_stat_describes_an_existing_file
     id = create_file!(name: "a.stl", bytes: "hello")
     info = adapter.stat(@user, node_id: id)
@@ -56,6 +76,71 @@ module FileLayerAdapterContract
 
   def test_contract_stat_raises_not_found_for_an_unknown_node
     assert_raises(FileLayer::NotFound) { adapter.stat(@user, node_id: "no-such-node") }
+  end
+
+  # stat_all IS stat, in bulk — so it must not become a SECOND answer to the same question.
+  # FilesController#index calls stat_all and #show calls stat, and a user who clicks a row must
+  # not watch the size change: two views disagreeing about one file is §9a-1's bug wearing the
+  # port's own clothes, and it is the exact failure `file_info` exists as one copy to prevent.
+  #
+  # Compared as whole FileInfos rather than field by field: FileInfo is a Data, so `==` is value
+  # equality across every member, and a new member added later is covered without touching this.
+  def test_contract_stat_all_answers_exactly_what_stat_answers
+    ids = 3.times.map { |i| create_file!(name: "bulk#{i}.stl", bytes: "b" * (i + 1)) }
+    infos = adapter.stat_all(@user, node_ids: ids)
+
+    assert_equal ids.size, infos.size
+    ids.each do |id|
+      assert_equal adapter.stat(@user, node_id: id), infos[id],
+                   "stat_all must answer exactly what stat answers for #{id} — the browse view " \
+                   "and the detail view describing one file differently is the divergence the " \
+                   "port exists to prevent"
+    end
+  end
+
+  # THE ABSENT KEY IS THE ANSWER, and it is a cross-backend rule rather than each adapter's taste.
+  # stat is asked about ONE node and NotFound is its whole answer; a bulk caller holds a LIST, and
+  # a row tombstoned between its query and this one must not take the page down. An adapter that
+  # raised here instead would 404 an entire browse page on whichever deployment happened to race —
+  # a divergence no caller could see coming, because the port's signature is the same on all three.
+  def test_contract_stat_all_omits_what_stat_raises_not_found_for
+    live = create_file!(name: "still-here.stl", bytes: "x")
+    gone = create_file!(name: "removed.stl", bytes: "y")
+    delete_file!(gone)
+
+    infos = adapter.stat_all(@user, node_ids: [ live, gone, "no-such-node" ])
+
+    assert infos.key?(live), "a live node must be described"
+    assert_not infos.key?(gone),
+               "a tombstoned node must be OMITTED — stat raises NotFound for it, and tombstoned " \
+               "means gone on every backend"
+    assert_not infos.key?("no-such-node"), "an unknown node must be omitted, not raise"
+  end
+
+  # THE POINT OF THE VERB, PINNED — and without this the whole thing is decoration.
+  #
+  # Every other test here passes for `node_ids.map { |id| stat(user, node_id: id) }`, which is the
+  # N+1 this verb exists to remove: it answers stat exactly (that is its definition), and it omits
+  # nothing... it RAISES, so only the test above rejects it. Nothing else here can tell a bulk read
+  # from a loop, so a future "simplification" back to a loop would land green.
+  #
+  # Asserted as CONSTANT IN N rather than against a per-adapter number: chunk needs two queries
+  # (nodes + a plucked batch of sizes) and share/s3 need one, so any literal here would either
+  # encode one backend's shape into a shared contract or be loose enough to pass for a loop at
+  # small N. "The cost does not grow with the list" is the property the caller actually needs, it
+  # is the same sentence on all three, and a loop fails it by construction.
+  def test_contract_stat_all_costs_a_number_of_queries_that_does_not_grow_with_the_list
+    few  = 2.times.map { |i| create_file!(name: "few#{i}.stl", bytes: "f") }
+    many = 20.times.map { |i| create_file!(name: "many#{i}.stl", bytes: "m") }
+
+    adapter.stat_all(@user, node_ids: few) # warm: first-touch schema/statement loads are not the cost
+    few_queries  = count_contract_queries { adapter.stat_all(@user, node_ids: few) }
+    many_queries = count_contract_queries { adapter.stat_all(@user, node_ids: many) }
+
+    assert_equal few_queries, many_queries,
+                 "#{adapter.class}#stat_all cost #{few_queries} queries for 2 nodes and " \
+                 "#{many_queries} for 20 — it is looping #stat, which is the N+1 the verb exists " \
+                 "to remove (measured at 2000 nodes: 4000 queries and 527ms of a 676ms page)"
   end
 
   def test_contract_read_returns_the_bytes

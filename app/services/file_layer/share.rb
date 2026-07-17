@@ -29,15 +29,17 @@ module FileLayer
     end
 
     def stat(user, node_id:)
-      node = live_node!(user, node_id)
-      FileInfo.new(
-        node_id: node.node_id,
-        name: node.name,
-        kind: node.kind,
-        size: node.size.to_i,
-        mtime: node.mtime,
-        content_token: node.content_hash
-      )
+      file_info(live_node!(user, node_id))
+    end
+
+    # ONE query for the whole list — see Chunk#stat_all, which argues why this is a port verb and
+    # why a missing node is an absent key rather than a raise. Cheaper here than there only
+    # because #stat is already answered from the node alone: there is no second lookup to batch,
+    # so the N+1 this closes was N queries, not 2N (measured: 2000 queries / 271 ms at 2000
+    # nodes). The share is NOT touched, for the reason #stat gives — a browse view must not put
+    # a NAS round-trip behind every row.
+    def stat_all(user, node_ids:)
+      user.nodes.present.where(node_id: node_ids).to_h { |n| [ n.node_id, file_info(n) ] }
     end
 
     # What is in this deployment's trash: the files WE moved to `.trash/<node_id>/<name>`, which
@@ -640,6 +642,22 @@ module FileLayer
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
+    end
+
+    # The one place a node becomes a FileInfo, shared by stat and stat_all — the browse view and
+    # the detail view answering differently about the same file is the §9a-1 bug in a new
+    # spelling, and one copy is what makes that impossible rather than unlikely. Duplicated in
+    # S3#file_info rather than shared with it, which is this adapter's standing trade (live_node!,
+    # leaf!, join_rel, nanos all make it); the READ CONTRACT is what keeps the two answers equal.
+    def file_info(node)
+      FileInfo.new(
+        node_id: node.node_id,
+        name: node.name,
+        kind: node.kind,
+        size: node.size.to_i,
+        mtime: node.mtime,
+        content_token: node.content_hash
+      )
     end
   end
 end
