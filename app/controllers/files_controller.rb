@@ -106,7 +106,13 @@ class FilesController < ApplicationController
     end
   end
 
-  # GET /files — flat list of the user's (non-deleted) files + dirs.
+  # GET /files — ONE folder's children (not the whole library), so the tree the backends all
+  # build in `nodes.parent_node_id` is actually navigable instead of dumped flat. `params[:folder]`
+  # is a parent node_id; absent/blank/invalid = the library root.
+  #
+  # SCOPED BY parent_node_id, WHICH IS A node_id STRING, NOT the DB integer `id` — the same key
+  # Node#children walks, and the same tree all three backends populate, so this filter is
+  # backend-neutral (it never touches the port beyond the stat_all every row already needs).
   #
   # Size/content come from the PORT, not from Version — see #show, where the argument is made.
   # This action had the same bug in a second spelling: @versions_by_node came from
@@ -117,12 +123,9 @@ class FilesController < ApplicationController
   # not an association), which at 2000 nodes was 4000 queries and 527 ms of a 676 ms page — where
   # the Version-based code it replaced took 2 queries. Routing the views through the port was
   # correct and this is what it cost; the port answering the question the caller actually has
-  # ("describe these N nodes") is what gives that back. See Chunk#stat_all.
-  #
-  # STILL O(n) ROWS, deliberately and unchanged: this page has never paginated, and it did not
-  # start here. Pagination bounds the RENDER — measured at ~150-170 ms for 2000 rows, the whole
-  # of what is left — which is a file-browser decision on its own merits, not this regression.
-  # The two compose; neither substitutes for the other.
+  # ("describe these N nodes") is what gives that back. See Chunk#stat_all. Folder scoping only
+  # makes each page SMALLER — it does not replace stat_all, which is still the right shape for a
+  # folder of 2000 children.
   #
   # The `select!` is the race, answered honestly: a node tombstoned between these two queries is
   # simply not listed. Looping `stat` raised NotFound there, and rescue_from turned one vanished
@@ -130,7 +133,10 @@ class FilesController < ApplicationController
   # (test_contract_stat_all_omits_what_stat_raises_not_found_for), and this is what consumes it —
   # so `info` is never nil in the view.
   def index
-    @nodes = current_user.nodes.present.order(kind: :desc, name: :asc).to_a
+    @folder = current_folder
+    @crumbs = folder_crumbs(@folder)
+    @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
+                         .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
   end
@@ -303,6 +309,36 @@ class FilesController < ApplicationController
   end
 
   private
+
+  # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the
+  # current_user owns and has not deleted; anything else — absent, blank, a file, a foreign or
+  # nonexistent id — falls back to the library root (nil). `find_by` returns nil rather than
+  # raising, so a bogus id renders root instead of a 500, and the `current_user.nodes` scope is
+  # what makes a foreign id un-findable rather than a leak. The whole tree lives under one user,
+  # so there is nothing to escape into once the lookup is user-scoped.
+  def current_folder
+    id = params[:folder].presence
+    return nil if id.nil?
+
+    current_user.nodes.present.find_by(node_id: id, kind: "dir")
+  end
+
+  # The path from the library root down to `folder`, root-most first, for the breadcrumb. Walks
+  # up parent_node_id — the SAME string key #index scopes on — re-scoping every hop to
+  # current_user so a foreign or broken parent stops the walk (it resolves to nil) rather than
+  # leaking a node or the loop running off the user's tree. A `visited` set stops a cycle a
+  # corrupt row could introduce from spinning forever. `folder` nil (root) yields [].
+  def folder_crumbs(folder)
+    crumbs = []
+    visited = Set.new
+    node = folder
+    while node && visited.add?(node.node_id)
+      crumbs.unshift(node)
+      node = node.parent_node_id &&
+             current_user.nodes.present.find_by(node_id: node.parent_node_id, kind: "dir")
+    end
+    crumbs
+  end
 
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
