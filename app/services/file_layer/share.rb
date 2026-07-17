@@ -387,6 +387,17 @@ module FileLayer
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.
       rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
+      # THE FOURTH INSTANCE OF THE SKIP-LIST BLIND SPOT, and it was reported as unreachable, which
+      # was wrong. `rel` is reconstructed from the PARENT, so a parent whose storage_path is
+      # `.maker-tmp-evil` restores the file to `.maker-tmp-evil/a.stl`: a live node at a path the
+      # Scanner skips at any depth -> an observation can never partner it -> an unpairable ghost ->
+      # a tombstone -> the mass-deletion guard refuses that scan and every scan after it. Probed,
+      # via the same poisoned-row standard (update_column) the escape-guard tests use.
+      #
+      # S3#undelete has had this since Phase 3; this is the divergence, not a new rule. Every
+      # writing path here now asks -- write, move, and undelete -- which is the structural finding
+      # rather than three coincidences: assume every path that writes is exposed until checked.
+      observable!(rel)
       dest = resolve_inside!(rel)
       raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
 

@@ -448,6 +448,40 @@ module FileLayer
       assert_not File.exist?(@root.join(".trash")), "nothing may be created at a reserved path"
     end
 
+    # AND `undelete`, WHICH WAS REPORTED AS UNREACHABLE. It is not. It differs from write/move in
+    # the one way that matters: it does not take a path from a caller, it RECONSTRUCTS one from the
+    # tombstone's PARENT (2b's delete NULLs storage_path), so the reserved segment arrives through
+    # a poisoned parent rather than through an argument -- which is why `leaf!` cannot see it and
+    # why the two tests above, which poison the argument, do not cover it.
+    #
+    # update_column is the same poisoned-row standard the escape-guard tests use, for the same
+    # reason: storage_path is a plain DB column, and "no caller writes anything bad today" is the
+    # assumption this file has now been wrong about four times.
+    #
+    # A ghost HERE is the worst kind: the restored node is LIVE at a path the Scanner skips at any
+    # depth, so no observation can ever partner it, the Reconciler tombstones it, and the
+    # mass-deletion guard refuses that scan and every scan after it. The scan is driven rather than
+    # merely asserting the raise, because the raise is the mechanism and the wedge is the point.
+    test "undelete refuses to restore into a path the scan would skip" do
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   storage_path: "cad")
+      FileUtils.mkdir_p(@root.join("cad"))
+      id = index!("cad/a.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:parent_node_id, parent.node_id)
+      adapter.delete(@user, node_id: id)
+
+      parent.update_column(:storage_path, ".maker-tmp-evil")
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/reserved path/, err.message,
+                   "NotFound is reachable from the tombstone lookup too -- pin the guard")
+
+      assert_not File.exist?(@root.join(".maker-tmp-evil/a.stl")),
+                 "the bytes must stay in .trash, where undelete can still find them"
+      3.times do
+        assert_nothing_raised { Library::Scanner.call(@user, root: @root.to_s) }
+      end
+    end
+
     # THE WEDGE this guard exists for, driven end to end. It wedges TWICE, and the second half is
     # the one a scanner-only test would miss entirely: `.trash` becomes a FILE, so delete's
     # mkdir_p raises EEXIST and EVERY delete in the library breaks — permanently, and not fixed by
