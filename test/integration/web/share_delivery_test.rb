@@ -247,6 +247,29 @@ module Web
       assert @user.nodes.find_by(storage_path: "up.stl"), "and the node must be indexed"
     end
 
+    # WHAT THE USER IS TOLD, which is the whole of this bug -- and the reason it is asserted here
+    # and not only in the adapter's suite. Share#write has always refused a clobber and the bytes
+    # have always survived; it raised NotFound to do it, and FilesController maps that to "File
+    # not found." So the user re-uploaded a name they already had, watched the app tell them the
+    # file was missing, and could see it in the list behind the alert. The adapter tests could not
+    # catch that -- they assert a class, and the class was the bug.
+    test "a duplicate-name upload says the name is taken, not 'File not found'" do
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("first"), "application/octet-stream",
+                                           original_filename: "dupe.stl")
+      }
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("second"), "application/octet-stream",
+                                           original_filename: "dupe.stl")
+      }
+
+      assert_redirected_to files_path
+      assert_match(/already exists/, flash[:alert])
+      assert_no_match(/not found/i, flash[:alert],
+                      "the file is demonstrably there -- NotFound is the one thing this is not")
+      assert_equal "first", File.binread(@root.join("dupe.stl")), "the original bytes survive"
+    end
+
     # The button has to match the flow. The JS uploader drives begin_upload, which now 501s here,
     # so rendering it in share mode would ship a button that cannot work -- Landmine 5's shape,
     # one task later: the API tells the truth while the page still lies.

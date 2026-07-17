@@ -288,7 +288,7 @@ module FileLayer
         #
         # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant"
         # and clobber: object_exists? lets those through to the rescue below. Fail safe.
-        raise NotFound, "#{rel.inspect} already exists" if object_exists?(key)
+        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(key)
 
         put = @client.put_object(bucket: @bucket, key:, body: bytes)
         # The ONLY source of the object's mtime. put_object's response carries no last_modified
@@ -428,7 +428,7 @@ module FileLayer
         # be clobbered. What this stops is the ORDINARY case — a user moving onto a name that is
         # already there. It does not claim an atomicity S3 does not offer. (write's clobber check
         # makes the identical argument; the port cannot tolerate the two diverging on it.)
-        raise NotFound, "#{rel.inspect} already exists" if object_exists?(dest_key)
+        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(dest_key)
 
         copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
         @client.delete_object(bucket: @bucket, key: src_key)
@@ -492,7 +492,9 @@ module FileLayer
           raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
         end
 
-        raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if object_exists?(dest_key)
+        if object_exists?(dest_key)
+          raise UnsupportedOperation, "#{rel.inspect} is occupied — undelete must not clobber"
+        end
 
         # No if_match: the trashed bytes are ours, written by our own delete, and their identity is
         # not what node.content_hash records (that is the identity of the object at its ORIGINAL

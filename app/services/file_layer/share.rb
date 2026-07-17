@@ -185,7 +185,7 @@ module FileLayer
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
       observable!(rel)
       dest = resolve_inside!(rel)
-      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest)
 
       bytes = read_capped!(io)
       FileUtils.mkdir_p(dest.dirname)
@@ -323,7 +323,7 @@ module FileLayer
       # no undo for it: the displaced file's node would still point at a path now holding someone
       # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
       # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
-      raise NotFound, "#{rel.inspect} already exists" if File.exist?(dest)
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest)
 
       begin
         # mkdir_p INSIDE the begin, exactly as in delete: it is I/O against the same share and
@@ -401,7 +401,9 @@ module FileLayer
       # rather than three coincidences: assume every path that writes is exposed until checked.
       observable!(rel)
       dest = resolve_inside!(rel)
-      raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
+      if File.exist?(dest)
+        raise UnsupportedOperation, "#{rel.inspect} is occupied — undelete must not clobber"
+      end
 
       begin
         FileUtils.mkdir_p(dest.dirname) # inside the begin, for the reason move and delete give
