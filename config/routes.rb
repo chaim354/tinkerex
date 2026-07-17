@@ -29,6 +29,10 @@ Rails.application.routes.draw do
     collection do
       post "begin_upload"
       post "finalize_upload"
+      # On-demand reconcile for a scannable (share/s3) library — index changes made directly on
+      # the NAS/bucket now, instead of waiting for the 15-minute recurring Library::ScanJob.
+      # Gated on the `scannable` capability in FilesController (chunk mode refuses).
+      post "rescan"
     end
     member do
       get "blob"

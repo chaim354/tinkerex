@@ -52,6 +52,20 @@
   </section>
 <% end %>
 
+<%#
+  RESCAN, offered ONLY on a scannable (share/s3) library: the catalog there is periodically
+  polled from the store (spec decision 5), so a user who just edited files on the NAS can catch
+  the index up now instead of waiting for the 15-minute recurring Library::ScanJob. Chunk mode's
+  catalog is the sync engine's changelog -- nothing to poll -- so the button is hidden AND
+  FilesController#rescan refuses the POST (require_scannable!). `capabilities.scannable?` RAISES
+  if misspelled (the concern's helper, not an ivar with &.), so a typo fails at render in a test
+  rather than silently vanishing. `folder:` rides along so the redirect lands back in this folder.
+%>
+<% if capabilities.scannable? %>
+  <%= button_to "Rescan library", rescan_files_path(folder: @folder&.node_id),
+                class: "linkbtn", data: { turbo: false } %>
+<% end %>
+
 <% if @nodes.empty? %>
   <p class="empty muted">No files yet. Upload one to get started.</p>
 <% else %>
