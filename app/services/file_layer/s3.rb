@@ -323,6 +323,13 @@ module FileLayer
     # `new_parent_node_id: nil` means THE ROOT, so this cannot distinguish "rename in place" from
     # "move to the root" — a caller who omits it while meaning a rename moves the file to the top
     # of the library. A caller renaming must pass the current parent_node_id.
+    #
+    # A MOVE CHANGES THE FILE'S MODIFICATION DATE, and Share's does not. A copy IS a new object, so
+    # the destination carries a fresh Last-Modified; the next scan observes it and rewrites
+    # nodes.mtime, and the user sees a file they moved report as modified today. Share#move is one
+    # rename() and preserves it. Inherent — S3 has no rename, and no way to set Last-Modified —
+    # and self-healing (the date is merely newer, never wrong about the bytes). Recorded so it is
+    # not rediscovered as a bug; not worth a copy-back or a stored original.
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       leaf!(new_name)
       node = live_node!(user, node_id)

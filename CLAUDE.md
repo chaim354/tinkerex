@@ -566,10 +566,10 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       *Still inherent:* an all-byte-identical bucket costs O(N) per probe — the deterministic
       tie-break must compare the old path against every identical candidate, and removing that
       trades the no-lost-file guarantee for speed.
-    - **Phase 3 DONE** (2026-07-17, branch `worktree-file-layer-s3-phase3`, 9 commits) — **the
+    - **Phase 3 DONE** (2026-07-17, branch `worktree-file-layer-s3-phase3`, 13 commits) — **the
       user's own S3 bucket as a library**, `LIBRARY_BACKEND=s3` + `LIBRARY_S3_*`. It boots,
       indexes an existing bucket, and reads/writes/deletes/moves through the port. Suite
-      **698 → 866**, **identical on all three backends** (`bin/rails test`,
+      **698 → 870**, **identical on all three backends** (`bin/rails test`,
       `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3` — the last is a new CI leg, self-hosted, no
       external service: a real `Aws::S3::Client` with stub lambdas, real error classes, real
       pagination at 2 keys/page). **The Phase 3 trap is DISARMED:** both gates
@@ -593,6 +593,13 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         (a nil hash there is an EACCES blip the next pass fixes); **permanent** here.
         **Quotes come off in exactly ONE place** — S3 wraps every ETag in literal quotes, in
         list, head *and* put responses, so mixing the forms unpairs every move on every scan.
+        **`S3Observer` WARNS once per scan** with the count of rung-3 objects, because where the
+        headline promise does not hold the operator has to be told — silence there is a promise
+        made and not kept. Advisory only (never raises, never skips, never logs per object — a
+        target bucket holds millions). **Its blind spot is recorded at the method:** an
+        **SSE-KMS** object has a 32-hex ETag that is **not** the content md5, so it takes rung 2,
+        is stamped `md5:`, and the count reads **zero while no move pairs at all** (a re-encrypt
+        on copy changes the ETag). A zero means "nothing we can see", **not** "moves are fine".
       - **Download-and-hash was rejected on the spec's own terms:** a full billed egress of the
         bucket to index a library the user already has is precisely the cost the "point it at my
         existing storage" on-ramp exists to avoid (§1).

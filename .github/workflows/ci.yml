@@ -153,7 +153,7 @@ jobs:
   # headline E2E (test/integration/library/s3_library_test.rb) likewise pins its own adapter.
   #
   # HONEST RESULT, unlike the share leg's: this one found ZERO ambient-dependent tests on the way
-  # in — all three legs report an identical 866/2549/0. The share leg earned its place immediately
+  # in — all three legs report an identical 870/2564/0. The share leg earned its place immediately
   # by finding nine; this one is a regression guard from birth rather than a bug-finder, which is
   # the outcome to expect once the habit it enforces is already established. It stays because the
   # cost is a tmpdir-free run with no external services, and because "nothing depends on the

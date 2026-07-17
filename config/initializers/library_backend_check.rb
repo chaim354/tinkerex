@@ -1,9 +1,11 @@
-# Boot-time library-backend configuration check (phase 2a).
+# Boot-time library-backend configuration check (phase 2a; s3 added in phase 3).
 #
-# Refuses to boot a LIBRARY_BACKEND=share deployment whose LIBRARY_PATH is unset, missing, not a
-# directory, or unreadable — following the postgres_pooler_check precedent, because a
-# misconfiguration that only appears on the first request is worse than one that stops the boot.
-# See lib/library_backend_check.rb. No-op for chunk mode.
+# Refuses to boot a misconfigured scanned deployment — following the postgres_pooler_check
+# precedent, because a misconfiguration that only appears on the first request is worse than one
+# that stops the boot. `share`: LIBRARY_PATH unset, missing, not a directory, unreadable or not
+# writable. `s3`: the required LIBRARY_S3_* knobs unset — presence only, NEVER the network, so a
+# boot cannot depend on a third party being up. See lib/library_backend_check.rb, whose header
+# gives the asymmetry in full. No-op for chunk mode.
 require "library_backend_check"
 
 # Skip in the test env: the suite constructs adapters with explicit tmpdir roots and must not

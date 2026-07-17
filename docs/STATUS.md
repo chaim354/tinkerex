@@ -8,8 +8,8 @@
 deletes/moves through the port. **The third adapter, and the one the port was shaped for:** it
 inherits `FileLayerWritableContract` from Share, which was that contract's entire purpose.
 
-**Server suite 698 → 866, identical on all three backends** — `bin/rails test`,
-`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **866 runs, 2549 assertions, 0 failures,
+**Server suite 698 → 870, identical on all three backends** — `bin/rails test`,
+`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **870 runs, 2564 assertions, 0 failures,
 0 errors, 5 skips**. The s3 leg is new in `ci.yml` (`test-s3-backend`, self-hosted, **no external
 service**): `test/support/fake_s3.rb` is a real `Aws::S3::Client` with stub lambdas, real error
 classes, and real pagination at 2 keys/page.
