@@ -20,6 +20,25 @@ module FileLayer
   # share-mode delete refuses a directory (it would strand the children's nodes). A CLIENT
   # condition — the user clicked delete on a folder — so Phase 4 maps it to 409/422.
   #
+  # THE SECOND INSTANCE IS A CLOBBER — write/move/undelete onto a name that is already taken —
+  # and it is here rather than in a class of its own BECAUSE OF THE AXIS BELOW, which is the only
+  # reason the taxonomy is worth having. "Unsupported" reads oddly for it at first glance (share
+  # and s3 support writing perfectly well; they refuse THIS one), and that reading is the "how
+  # unsupported" axis this comment rejects. On the real axis a clobber and a directory delete are
+  # the SAME shape: the client is wrong, it is knowable only per-path at runtime, no per-deployment
+  # capability can gate it, and the caller could have made the request differently (pick another
+  # name). The suffix already says which of the two is unsupported — the OPERATION, not the file.
+  #
+  # These raised NotFound until the Phase 4 follow-up, so a duplicate-name upload told the user
+  # "File not found." about a file that was demonstrably there — the one thing NotFound must never
+  # say. FetchError would have been worse, not better: it is the RETRYABLE answer, and retrying a
+  # clobber fails identically forever.
+  #
+  # If a caller ever needs to tell a clobber FROM a directory delete — say, to offer "rename and
+  # retry" for one and not the other — the answer is a SUBCLASS of this, not a sibling: every
+  # existing rescue keeps working and the 422 mapping is unchanged. Nothing branches on it today,
+  # and the message already distinguishes them for the human who reads it.
+  #
   # Distinct from NotImplementedError, and the axis is not "how unsupported": it is WHO IS
   # WRONG and WHEN YOU CAN KNOW.
   #

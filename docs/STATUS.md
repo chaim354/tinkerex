@@ -1,17 +1,66 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-17 (**phase 4 — capability gating + `Delivery`; the split is complete**)
+**Updated:** 2026-07-17 (**phase 4 follow-up — the N+1, the clobber class, s3 write coverage**)
 
-## Latest (2026-07-17): phase 4 — the UI and the API stop lying
+## Latest (2026-07-17): the phase 4 follow-up — three items closed
 
-`LIBRARY_BACKEND=chunk|share|s3` all **boot, index, write, deliver, and tell the truth about
-themselves**. The maker/file-layer split is **complete**.
-
-**Server suite 871 → 954, identical on all three legs** — `bin/rails test`,
-`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **954 runs, 2931 assertions, 0 failures,
+**Server suite 954 → 978, identical on all three legs** — `bin/rails test`,
+`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **978 runs, 3029 assertions, 0 failures,
 0 errors, 5 skips**. (Run the legs **sequentially**: three Rails suites contend on one SQLite
 test DB and give a false red in parallel. The share/s3 legs do not run bare — the boot guard
 refuses without their env.)
+
+- **`stat_all` — a bulk read verb, in the shared read contract on all three adapters.** Phase 4's
+  measured N+1 is closed. `GET /files` at 2000 nodes, **before → after**:
+
+  | backend | page | queries |
+  |---|---|---|
+  | chunk | 676.4 ms → **159.3 ms** | 4002 → **4** |
+  | share | 439.0 ms → **160.0 ms** | 2002 → **3** |
+  | s3    | 444.0 ms → **162.0 ms** | 2002 → **3** |
+
+  **`stat_all` and NOT pagination, and they were never alternatives**: `stat_all` removes the
+  per-row query, pagination bounds the render. The port is the file layer's lane, and the evidence
+  the verb was missing is that **`Chunk#trashed` had already hand-rolled its exact two-query shape
+  privately** — `FilesController#index` could not, because it holds an *adapter*, not a `Chunk`. A
+  second bulk caller would have re-invented that query a third time. See the open list above for
+  why pagination is not deferred work this creates.
+  **The contract pins three things, and only the third is load-bearing against a loop:** stat_all
+  answers exactly what stat answers; a missing node is an **absent key, not a raise** (stat is
+  asked about one node, so NotFound is its whole answer — a bulk caller holds a list, and one row
+  tombstoned mid-page must not 404 the page, which is what looping stat did); and **the query
+  count does not grow with the list**. Mutation-verified: reverting all three adapters to a loop
+  is RED on the third test *only* — the other two stay green, because a loop is behaviorally
+  identical. Nothing else could tell a bulk read from an N+1.
+
+- **A clobber is `UnsupportedOperation`, not `NotFound`.** A duplicate-name upload told the user
+  **"File not found."** about a file sitting in the list behind the alert. Not a new class: the
+  port's taxonomy sorts on **who is wrong and when you can know**, not on "how unsupported", and
+  on that axis a clobber is the same shape as the directory delete the class was written for
+  (client, runtime, per-path, ungateable by a per-deployment capability). `FetchError` would have
+  been worse — it is the *retryable* answer, and retrying a clobber fails identically forever.
+  **All three verbs, both adapters**: `write`/`move`/`undelete` all meet "the destination is
+  taken", and fixing only the `write` the review named would have left renaming onto a taken name
+  saying "File not found." while uploading onto one got an honest 422 — one condition, two
+  answers, inside one adapter. The write contract now pins the class **per-verb**.
+
+- **The s3 web write path is covered — and the coverage found a 500 on its first run.**
+  `s3_delivery_test.rb` was delivery-only; nothing drove `FilesController#create`/`#destroy` or
+  `TrashController` in s3 mode, while share had all three. **`TrashController` rescues `NotFound`
+  but not `UnsupportedOperation`**, so the clobber fix (one commit earlier) turned an
+  occupied-destination restore into an uncaught 500 — while **the controller's own rescue comment
+  already named that case** ("something is already at that path") as one of the four it exists to
+  catch. The class moved out from under a sentence that still claimed it. **Reading the rescue
+  would not have shown this; driving it did**, which is the whole argument for the coverage.
+  Reachable on **share** by the same route, so both adapters now pin it. The gap was in the
+  **controller**, not in either adapter — which is exactly why no adapter suite could have found
+  it.
+
+## Previous (2026-07-17): phase 4 — the UI and the API stop lying
+
+`LIBRARY_BACKEND=chunk|share|s3` all **boot, index, write, deliver, and tell the truth about
+themselves**. The maker/file-layer split is **complete**. (Suite **871 → 954** at the time; the
+current count is in the section above.)
 
 **Hand-verified against a real folder** (2026-07-17, not only in the suite — the DoD required it):
 a real `LIBRARY_BACKEND=share` server over a real directory, scanned, then driven through the real
@@ -165,22 +214,26 @@ bodies** for every share-mode download.
 
 ### Open, and shipped knowingly
 
-- **A measured N+1 in `FilesController#index`:** `stat` per node, **0.254 ms/node → ~508 ms at
-  2000 nodes**, where the old (lying) code took **2 queries total**. Shipped deliberately —
-  correctness first: the page **lies on every share/s3 deployment today**, and it was already
-  unpaginated and O(n) rows. The honest fix is a **bulk `stat_all` port verb** or pagination, and
-  it needs contract coverage on all three adapters.
-- **`Share#undelete` is missing `observable!`; `S3#undelete` has it.** Unreachable today (nothing
-  can name a node into a skipped path), but it is an **adapter divergence on a verb the web now
-  drives**, and the write contract does not pin it.
-- **`Share#absolute_path` resolves a NULL `storage_path` to the library root** under
-  `allow_root: true`. Task 7b removed the only producer of that state; **the latent hole remains**.
-- **`Share#write`/`S3#write` raise `FileLayer::NotFound` for a clobber**, so a duplicate-name
-  upload tells the user **"File not found."** Pre-existing 2b/P3 error-class choice, now user-visible.
+~~Four of the five items that stood here are **CLOSED** (2026-07-17, the phase 4 follow-up —
+see the section below).~~ Two of them — `Share#undelete`'s missing `observable!` and
+`Share#absolute_path`'s `allow_root:` — had **already been fixed by phase 4's own whole-branch
+review** and were left standing here anyway: this list was written before that review and never
+retracted, so it claimed two holes the code did not have. Verified against the code rather than
+the history (`allow_root` survives only in the comments that describe its removal). **A stale
+open-list is worse than no open-list** — it spends the next reader's attention on work that is
+already done, and it is exactly the failure mode of asserting a fact in prose that the code
+answers.
+
 - **An unexplained intermittent.** Two different agents each saw a single `1 errors` run that
   **never reproduced** (~73 and ~15+ subsequent full runs respectively, including cold-bootsnap
   and targeted-seed loops). Neither captured the message. **Recorded as unexplained** — not fixed,
-  not established as pre-existing.
+  not established as pre-existing. **Not seen again** across the follow-up's full-suite runs
+  (3 × 978 sequential legs + many targeted runs), which is not evidence it is gone.
+- **`FilesController#index` is still unpaginated / O(n) rows**, and that is a decision rather than
+  a leftover: it has never paginated, and the N+1 fix below did not change it. What remains at
+  2000 nodes is **~160 ms of render**, now **identical on all three backends** — which is the
+  evidence that the port's cost is gone and the residual is HTML. Pagination is a file-browser
+  decision on its own merits; it is not this regression's fix and never was.
 
 ## Previous (2026-07-17): phase 3 — point it at your own S3 bucket
 

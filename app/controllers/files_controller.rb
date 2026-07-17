@@ -111,11 +111,28 @@ class FilesController < ApplicationController
   # Size/content come from the PORT, not from Version — see #show, where the argument is made.
   # This action had the same bug in a second spelling: @versions_by_node came from
   # current_user.versions, which is empty on share and s3, so every Size cell was an em-dash.
+  #
+  # `stat_all`, NOT a loop over `stat`, and the difference was measured rather than assumed: the
+  # loop cost one query per row on share/s3 and TWO on chunk (Node#current_version is a find_by,
+  # not an association), which at 2000 nodes was 4000 queries and 527 ms of a 676 ms page — where
+  # the Version-based code it replaced took 2 queries. Routing the views through the port was
+  # correct and this is what it cost; the port answering the question the caller actually has
+  # ("describe these N nodes") is what gives that back. See Chunk#stat_all.
+  #
+  # STILL O(n) ROWS, deliberately and unchanged: this page has never paginated, and it did not
+  # start here. Pagination bounds the RENDER — measured at ~150-170 ms for 2000 rows, the whole
+  # of what is left — which is a file-browser decision on its own merits, not this regression.
+  # The two compose; neither substitutes for the other.
+  #
+  # The `select!` is the race, answered honestly: a node tombstoned between these two queries is
+  # simply not listed. Looping `stat` raised NotFound there, and rescue_from turned one vanished
+  # row into a 404 for the ENTIRE page. An absent key is stat_all's cross-backend contract
+  # (test_contract_stat_all_omits_what_stat_raises_not_found_for), and this is what consumes it —
+  # so `info` is never nil in the view.
   def index
     @nodes = current_user.nodes.present.order(kind: :desc, name: :asc).to_a
-    @info_by_node = @nodes.index_by(&:node_id).transform_values do |node|
-      FileLayer.current.stat(current_user, node_id: node.node_id)
-    end
+    @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
+    @nodes.select! { |node| @info_by_node.key?(node.node_id) }
   end
 
   # GET /files/:node_id — view/preview a single file + metadata.

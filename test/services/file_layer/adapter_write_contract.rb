@@ -93,13 +93,52 @@ module FileLayerWritableContract
   # documents for `move`'s identical check. This pins the CHECK, which is what stops the ordinary
   # case (a user re-uploading a name that is already there) from destroying data. It does not
   # claim an atomicity neither backend offers.
+  #
+  # UnsupportedOperation, NOT NotFound, AND THE CLASS IS THE HALF THAT REACHES THE USER. Both
+  # adapters raised NotFound here until the Phase 4 follow-up, and FilesController maps that to
+  # "File not found." — told to someone looking at the file it is about. The bytes surviving is
+  # only half of "refuses"; the other half is saying so intelligibly, and a test that asserted the
+  # bytes alone passed for the nonsense answer (it did, for two phases).
+  #
+  # In the CONTRACT rather than each adapter's test because the class is the port's, not the
+  # backend's: FileLayer's taxonomy sorts on WHO IS WRONG and WHEN YOU CAN KNOW, and by that axis
+  # a clobber is the client, at runtime, per-path — the same shape as the directory delete the
+  # class was written for. See FileLayer::UnsupportedOperation, which carries the full argument.
   def test_write_contract_write_refuses_to_clobber_an_existing_name
     adapter.write(@user, parent_node_id: nil, name: "keep.stl", io: StringIO.new("original"))
-    assert_raises(FileLayer::NotFound) do
+    err = assert_raises(FileLayer::UnsupportedOperation) do
       adapter.write(@user, parent_node_id: nil, name: "keep.stl", io: StringIO.new("clobber"))
     end
+    assert_match(/already exists/, err.message,
+                 "the refusal must say the name is taken — this message is rendered to the user")
     assert_equal "original", adapter.read(@user, node_id: @user.nodes.find_by!(storage_path: "keep.stl").node_id),
                  "the existing bytes must survive — on a current-state-only backend there is no restore"
+  end
+
+  # THE SAME CONDITION MUST GET THE SAME ANSWER FROM EVERY VERB THAT CAN MEET IT, which is why
+  # this exists next to the test above rather than being folded into it. "The destination is
+  # taken" is one condition; write, move and undelete can all hit it. Fixing only `write` — the
+  # one the review named — would have left a user renaming onto a taken name with "File not
+  # found." while uploading onto one got an honest 422: one condition, two answers, inside one
+  # adapter. That is the drift this module exists to stop, so it is pinned per-verb.
+  #
+  # NOT a test that undelete/move refuse a clobber AT ALL — each adapter's own suite already pins
+  # that, with the storage-layout assertions this module deliberately has no business making. This
+  # pins only the CLASS, which is the part that is the port's.
+  def test_write_contract_every_verb_answers_a_taken_destination_the_same_way
+    a = adapter.write(@user, parent_node_id: nil, name: "occupied.stl", io: StringIO.new("first"))
+    b = adapter.write(@user, parent_node_id: nil, name: "mover.stl", io: StringIO.new("second"))
+
+    assert_raises(FileLayer::UnsupportedOperation, "move onto a taken name") do
+      adapter.move(@user, node_id: b.node_id, new_parent_node_id: nil, new_name: "occupied.stl")
+    end
+
+    # Trash `a`, then put a NEW file at its old name: undelete now has nowhere to land.
+    adapter.delete(@user, node_id: a.node_id)
+    adapter.write(@user, parent_node_id: nil, name: "occupied.stl", io: StringIO.new("squatter"))
+    assert_raises(FileLayer::UnsupportedOperation, "undelete into a taken name") do
+      adapter.undelete(@user, node_id: a.node_id)
+    end
   end
 
   # Terminal-vs-retryable, the port's most consequential distinction, applies to writes too:

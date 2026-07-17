@@ -66,7 +66,7 @@ content-addressed manifest sharing chunks).
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **All three adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable), **`Share`** (a mounted SMB/NFS dir) and **`S3`** (the user's own bucket, phase 3) — share and s3 are both **current-state only**: no versions, no history, no restore. **The reads are `stat`/`read`/**`download`**/**`trashed`** — every adapter answers all four. **The write path is Share + S3** (`write`/`delete`/`move`/**`undelete`**): chunk-mode writes belong to the **sync engine**, so `Chunk` refuses them **per-op, naming the real door each time** — `write` → `Sync::Commit`'s two-phase flow, `delete` → **`Sync::SubtreeDelete.call`** (cascades the tombstone to the subtree; `Sync::Mutation.apply, op: "delete"` tombstones only the node it's given and orphans descendants), `move` → `Sync::Mutation.apply, op: "move"`. **One shared refusal message is how an earlier draft told delete/move callers to use `Sync::Commit`, which has neither path** — keep them separate. **`S3` is the one backend where `presignable` is TRUE and `versioned` is FALSE**, and that combination is its point, not an oversight: §15 (bytes out of Rails) **survives** here — a bucket has a URL signer, which is exactly what a mounted directory lacks — while §5 (keep versions) does **not**. The other two have the pair agreeing (chunk true/true, share false/false), so S3 is the counterexample that forbids collapsing one into the other. **Both `delete` and `move` refuse directories on S3**, diverging from Share, which allows dir *moves* — Share's permission rests entirely on `rename()` being one atomic syscall that carries the bytes, and here there is no directory and no rename (a dir node's key simply does not exist). `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. **Two contracts** stop the adapters diverging, both in the default suite: `adapter_contract.rb` (read — now runs against **all three**, and since phase 4 it **pins every capability to what the adapter actually does**, so a hand-written `Data` literal cannot lie about its own backend) and `adapter_write_contract.rb` (`FileLayerWritableContract` — `Share` **and `S3`**; inheriting it was the whole purpose of phase 3, and it had already caught that phase 3's plan was missing `write`'s clobber guard). **`download(user, node_id:, disposition:, content_type: nil)` answers a `Delivery`** — `Redirect(url)` (chunk single-chunk + s3; §15 holds) / `SendFile(path)` (share; §15 cannot) / `Stream(enum)` (chunk multi-chunk) — and `FilesController` consumes it **without ever constructing a path**. **`disposition:` is required, not defaulted**: nil makes `ContentDisposition.format` emit a header with *no disposition type*, which browsers resolve as **inline** — a silent cross-backend divergence, on S3 only, where the value is signed into the URL. `Chunk#trashed` **delegates to `Sync::Trash`** rather than minting a rival definition of "the trash". See §12 step 10. |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **All three adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable), **`Share`** (a mounted SMB/NFS dir) and **`S3`** (the user's own bucket, phase 3) — share and s3 are both **current-state only**: no versions, no history, no restore. **The reads are `stat`/**`stat_all`**/`read`/**`download`**/**`trashed`** — every adapter answers all five. **`stat_all(user, node_ids:)` -> a Hash keyed by node_id** is the BULK read a browse view needs: looping `stat` was a measured N+1 (2000 nodes = 4000 queries / 527ms on chunk), and a **missing node is an ABSENT KEY, not a raise** — `stat` is asked about one node so NotFound is its whole answer, while a bulk caller holds a list and one row tombstoned mid-page must not 404 the page. **The write path is Share + S3** (`write`/`delete`/`move`/**`undelete`**): chunk-mode writes belong to the **sync engine**, so `Chunk` refuses them **per-op, naming the real door each time** — `write` → `Sync::Commit`'s two-phase flow, `delete` → **`Sync::SubtreeDelete.call`** (cascades the tombstone to the subtree; `Sync::Mutation.apply, op: "delete"` tombstones only the node it's given and orphans descendants), `move` → `Sync::Mutation.apply, op: "move"`. **One shared refusal message is how an earlier draft told delete/move callers to use `Sync::Commit`, which has neither path** — keep them separate. **`S3` is the one backend where `presignable` is TRUE and `versioned` is FALSE**, and that combination is its point, not an oversight: §15 (bytes out of Rails) **survives** here — a bucket has a URL signer, which is exactly what a mounted directory lacks — while §5 (keep versions) does **not**. The other two have the pair agreeing (chunk true/true, share false/false), so S3 is the counterexample that forbids collapsing one into the other. **Both `delete` and `move` refuse directories on S3**, diverging from Share, which allows dir *moves* — Share's permission rests entirely on `rename()` being one atomic syscall that carries the bytes, and here there is no directory and no rename (a dir node's key simply does not exist). `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. **Two contracts** stop the adapters diverging, both in the default suite: `adapter_contract.rb` (read — now runs against **all three**, and since phase 4 it **pins every capability to what the adapter actually does**, so a hand-written `Data` literal cannot lie about its own backend) and `adapter_write_contract.rb` (`FileLayerWritableContract` — `Share` **and `S3`**; inheriting it was the whole purpose of phase 3, and it had already caught that phase 3's plan was missing `write`'s clobber guard). **`download(user, node_id:, disposition:, content_type: nil)` answers a `Delivery`** — `Redirect(url)` (chunk single-chunk + s3; §15 holds) / `SendFile(path)` (share; §15 cannot) / `Stream(enum)` (chunk multi-chunk) — and `FilesController` consumes it **without ever constructing a path**. **`disposition:` is required, not defaulted**: nil makes `ContentDisposition.format` emit a header with *no disposition type*, which browsers resolve as **inline** — a silent cross-backend divergence, on S3 only, where the value is signed into the URL. `Chunk#trashed` **delegates to `Sync::Trash`** rather than minting a rival definition of "the trash". See §12 step 10. |
 | **Library scan** | `app/services/library/` | Share- **and S3-mode** indexing, gated on the **`scannable`** capability (*"does this backend's catalog come from polling the store?"* — chunk **false**, its tree is the changelog; share/s3 **true**). **`scannable` is not `!syncable?`** (equal today only by coincidence of having three backends — a notification-driven backend would answer false to both, and deriving would poll it forever) and **not Phase 4's `port_writable`** — which they **agree with on every backend we have** (chunk false/false, share and s3 true/true), so the distinction has to be *argued* rather than observed: `scannable` asks where the **catalog** comes from, `port_writable` asks which door **bytes** go in, and the same notification-driven backend splits both (push-notified → `scannable` false, while its uploads still go through the port). Agreement across three samples is not identity; it is three samples. *(An earlier version of this row claimed chunk answers `port_writable` **true** and used that to call the two opposites. Both halves were wrong — chunk is `port_writable: false` — and the true-reading is the "accepts uploads" misreading Phase 4 rejects; see `capabilities.rb`.)* **The Reconciler is the reusable half, and the Scanner is not:** the spec (§9.3) said Phase 3 "reuses the scanner", but a `Dir.children`/`lstat`/symlink walk is irreducibly filesystem-shaped, so S3 gets its own **`S3Observer`** over `list_objects_v2` and both feed the *same* `Reconciler` — which matters because **every one of 2a's bugs lived in the logic a second copy would have duplicated**. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). **The Scanner's skip-lists are also blind spots — 2b's structural finding, and the root cause of BOTH permanent wedges it found:** wherever the app moves bytes **into** a skipped region (`TRASH_PREFIX` = `.trash`, root-anchored; `TEMP_PREFIX` = `.maker-tmp-`, skipped **at any depth**) while leaving a live node pointing at the old path, it creates ghosts the `Reconciler` **can never pair** — pairing needs an *observation* as the partner, and a skipped path produces none; the tombstone then trips the mass-deletion guard, **refusing that scan and every scan after it, permanently**. **THREE instances so far, each found only after the previous "explanation" said it couldn't happen**: `write`'s temp file; `delete` on a directory; and `write`/`move` accepting `.trash` or `.maker-tmp-x` as a destination — an ordinary-looking upload that wedges the scan *and* turns `.trash` into a file, breaking **every delete in the library**, permanently (`Share#observable!`). A tempting sentence that 2b had to retract: *"delete is uniquely exposed, because a move leaves the bytes observable at the new path."* False — a move is self-healing only when its **destination** is observable. **Assume every path that writes is exposed until you have checked it.** `Library::TrashPurgeJob` reclaims `.trash` past `LIBRARY_TRASH_DAYS`. **`S3Observer` (phase 3) is 2a's lesson in a new spelling — a listing is NOT a snapshot:** `list_objects_v2` paginates, and a failure on page 7 of 40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library. It is `Pathname#find`/`EACCES` again, with one difference that removes the escape hatch: `unreadable_dirs` scopes a gap to a *subtree*, and a page boundary is an arbitrary key range that scopes to nothing. **Complete-or-abort is the only honest answer** (`Scanner::UnsafeScan`). Two more it must not inherit by assumption: **dir-marker objects** (`cad/`, minted by the S3 console) would otherwise become a phantom *file* node beside the real dir node; and **`valid_encoding?` does NOT transfer from the Scanner** — it asks about the string's **tag**, and an ASCII-8BIT string is *always* valid, so the naive port waves a `\xFF` key straight into `storage_path` (the SDK raises on the whole page first, so the guard is a backstop that names the bucket rather than a wedge). |
 | maker-app-core, juicefs-backend | `client/…` | Earlier Tauri mount-controller + JuiceFS WebDAV backend (from the abandoned path; kept for reference). |
 
@@ -474,8 +474,11 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
     (`f04ef61`), deployed, and verified live** (a 40k-byte presigned round-trip through
     SeaweedFS): the `FileLayer` port + `Chunk` adapter + the shared adapter contract, and
     `Maker::FileBytes` reduced to a shim. The maker layer no longer references chunks at all
-    (`grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/`
-    returns nothing — that grep IS the proof, not the test suite).
+    (`grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/
+    | grep -v ':[0-9]*: *#'` returns nothing — that grep IS the proof, not the test suite. The
+    `grep -v` is load-bearing, not noise: without it the check reports two COMMENTS in
+    `maker/file_bytes.rb` that describe the very coupling that was removed, so the bare grep has
+    not returned nothing since phase 1 shipped. A proof that cries wolf gets ignored.)
     - **Design:** `docs/superpowers/specs/2026-07-14-maker-file-layer-split-design.md`.
       §2 = settled decisions (backend per **deployment**, not per user; index-existing AND
       write-new; **current-state only, no history** on share/s3; stable `node_id` reconciled by
@@ -687,10 +690,11 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         outright, so `indexable?`'s guards against those are unreachable on this store while
         remaining correct for AWS, which permits them.
     - **Phase 4 DONE** (2026-07-17, branch `worktree-file-layer-phase4`, 10 commits) — **the web
-      UI and the v1 API stop lying about what this deployment can do.** Suite **871 → 954**,
-      **identical on all three legs** (`bin/rails test`, `LIBRARY_BACKEND=share`,
-      `LIBRARY_BACKEND=s3` — each **954 runs / 2931 assertions / 0 failures / 0 errors / 5
-      skips**). Plan: `docs/superpowers/plans/2026-07-17-file-layer-capability-gating-phase4.md`.
+      UI and the v1 API stop lying about what this deployment can do.** Suite **871 → 954** *(a
+      snapshot at phase 4 — the CURRENT count is in the follow-up bullet below; this line records
+      what the phase moved, not what the suite is today)*, **identical on all three legs**
+      (`bin/rails test`, `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`).
+      Plan: `docs/superpowers/plans/2026-07-17-file-layer-capability-gating-phase4.md`.
       **The split is complete: `LIBRARY_BACKEND=chunk|share|s3` all boot, index, write, deliver,
       and tell the truth about themselves.** The decisions a future reader must not undo:
       - **`port_writable` IS NOT "accepts uploads", and this is the single most likely thing here
@@ -713,7 +717,9 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         **anywhere below**, laundering an s3 **misconfiguration** at `FileLayer.build` into a
         routine-looking response. **`NotImplementedError` stays un-rescued, and that is a
         feature** — it is a programming error, it should be loud, and the gates are what keep it
-        unreachable. `grep -rn "rescue.*NotImplementedError" app lib` returns nothing; keep it so.
+        unreachable. `grep -rn "rescue.*NotImplementedError" app lib | grep -v ':[0-9]*: *#'` returns nothing;
+        keep it so. (The `grep -v` matters for the same reason the maker grep's does: three
+        COMMENTS say the words, so the bare form has never returned nothing.)
       - **What is gated, and what deliberately is not.** Gated: `changes`, `tree`, `conflicts`,
         `locks`, `commits`, `chunks#download`, v1 `trash`, `nodes`, `share_links`. **Ungated on
         purpose:** **`devices`** — the plan said to gate it, and gating it would have made a share
@@ -793,14 +799,67 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
           unpairable ghost → **permanent mass-deletion wedge**. **The FOURTH instance of 2b's
           skip-list blind spot, each found only after the previous explanation said it couldn't
           happen.** All three writing paths now ask.
-      - **Shipped knowingly, do not let these fall off** (detail + numbers in `docs/STATUS.md`):
-        a **measured N+1 in `FilesController#index`** (`stat` per node — 0.254 ms/node, **~508 ms
-        at 2000 nodes**, where the old *lying* code took 2 queries; correctness first, the honest
-        fix is a bulk `stat_all` verb or pagination); **`Share#write`/`S3#write` raise `NotFound`
-        for a clobber**, so a duplicate-name upload says "File not found"; and an **unexplained
-        intermittent** — two agents each saw one `1 errors` run that never reproduced (~73 and
-        ~15+ subsequent full runs), neither captured the message. **Recorded as unexplained: not
-        fixed, and not established as pre-existing.**
+      - ~~**Shipped knowingly, do not let these fall off:** a measured N+1 in
+        `FilesController#index`; `Share#write`/`S3#write` raise `NotFound` for a clobber.~~
+        **BOTH CLOSED by the phase 4 follow-up — see the bullet below.** The **unexplained
+        intermittent** stays open: two agents each saw one `1 errors` run that never reproduced
+        (~73 and ~15+ subsequent full runs), neither captured the message. **Recorded as
+        unexplained: not fixed, and not established as pre-existing.** Not seen again across the
+        follow-up's runs either, which is not evidence it is gone.
+    - **Phase 4 follow-up DONE** (2026-07-17, branch `worktree-file-layer-followup`, 4 commits) —
+      the three items phase 4 left open. Suite **954 → 978**, **identical on all three legs**
+      (each **978 runs / 3029 assertions / 0 failures / 0 errors / 5 skips**). The decisions a
+      future reader must not undo:
+      - **`stat_all` IS A PORT VERB, AND IT IS NOT PAGINATION'S RIVAL.** The measured N+1 is
+        closed: `GET /files` at 2000 nodes went **chunk 676→159 ms / 4002→4 queries**, **share
+        439→160 / 2002→3**, **s3 444→162 / 2002→3**. The two fixes solve *different* problems and
+        compose — `stat_all` removes the per-row query, pagination bounds the render — and this
+        phase did the port one because the port is its lane. **The evidence the verb was missing:
+        `Chunk#trashed` had already hand-rolled its exact two-query shape privately** ("One query,
+        not one per node"), because the port could not express it and `FilesController#index`
+        holds an *adapter*, not a `Chunk`. **Pagination is NOT deferred work this created**: the
+        page never paginated, and what is left at 2000 nodes is ~160 ms of render — **now
+        identical on all three backends**, which is the evidence the port's cost is gone and the
+        residual is HTML.
+      - **THE CONTRACT'S THIRD TEST IS THE ONLY ONE A LOOP FAILS**, and that is the lesson, not a
+        detail. `stat_all` is pinned on three things in the shared READ contract (all three
+        adapters): it answers exactly what `stat` answers; **a missing node is an ABSENT KEY, not
+        a raise** (stat is asked about ONE node so NotFound is its whole answer — a bulk caller
+        holds a LIST, and a row tombstoned mid-page must not 404 the page, which is what looping
+        stat did); and **the query count does not grow with the list**. Mutation-verified:
+        reverting all three adapters to `node_ids.map { stat }` is RED on the third **only** — the
+        first two stay GREEN, because a loop is behaviorally identical. Asserted as *constant in
+        N* rather than against a literal, since chunk needs 2 queries and share/s3 need 1: a
+        literal would encode one backend's shape into a contract every backend runs.
+      - **A CLOBBER IS `UnsupportedOperation`, ON THE AXIS THE TAXONOMY ACTUALLY HAS.** Both
+        adapters raised `NotFound`, so a duplicate-name upload said **"File not found."** about a
+        file in the list behind the alert. "Unsupported" reads oddly for it — share and s3 support
+        writing fine, they refuse *this one* — and **that reading is the "how unsupported" axis
+        `file_layer.rb` explicitly rejects**. On the real axis (**who is wrong, and when can you
+        know**) a clobber is indistinguishable from the directory delete the class was written
+        for. `FetchError` would be worse, not better: it is the RETRYABLE answer and a clobber
+        never succeeds on retry. **If a caller ever needs to branch, the answer is a SUBCLASS** —
+        every rescue keeps working.
+      - **ALL THREE VERBS MOVED TOGETHER.** "The destination is taken" is ONE condition and
+        `write`/`move`/`undelete` all meet it; fixing only the `write` the review named would have
+        left renaming onto a taken name saying "File not found." while uploading onto one got an
+        honest 422 — **one condition, two answers, inside one adapter**. The write contract pins
+        the class **per-verb** for that reason.
+      - **THE s3 WEB-WRITE COVERAGE FOUND A 500 ON ITS FIRST RUN, AND THE SHAPE IS THE POINT.**
+        `TrashController` rescues `NotFound` but not `UnsupportedOperation`, so the clobber fix
+        turned an occupied-destination restore into an uncaught 500 — **while the controller's own
+        rescue comment already named that case** ("something is already at that path") as one of
+        the four it exists to catch. The class moved out from under a sentence that still claimed
+        it. Reading the rescue would not have shown it; **driving it did.** Reachable on share by
+        the same route, so both adapters pin it now. **The gap was in the CONTROLLER, not in
+        either adapter** — which is why no adapter suite could have found it, and the answer to
+        "the `port_writable` branch is shared, so the asymmetry is low-risk".
+      - **`docs/STATUS.md`'s open list was itself stale**, and two of its five entries claimed
+        holes the code did not have: `Share#undelete`'s missing `observable!` and
+        `Share#absolute_path`'s `allow_root:` were **both fixed by phase 4's own whole-branch
+        review** and never retracted (`allow_root` survives only in the comments describing its
+        removal — verified against the code, not the history). **A stale open-list is worse than
+        none**: it spends the next reader's attention on finished work.
 
 ---
 

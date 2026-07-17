@@ -92,15 +92,16 @@ module FileLayer
     # (FileInfo's contract: adapters CONVERT, they do not pass a Time through; the observer is
     # where an S3 last_modified, which is a second-granularity Time, becomes nanos).
     def stat(user, node_id:)
-      node = live_node!(user, node_id)
-      FileInfo.new(
-        node_id: node.node_id,
-        name: node.name,
-        kind: node.kind,
-        size: node.size.to_i,
-        mtime: node.mtime,
-        content_token: node.content_hash
-      )
+      file_info(live_node!(user, node_id))
+    end
+
+    # ONE query for the whole list, and NO bucket call — see Chunk#stat_all for why this is a port
+    # verb and why a missing node is an absent key rather than a raise, and #stat above for why
+    # the bucket is not asked. The billing argument #stat makes ("a stat is what a browse view
+    # calls per row") is what this method is: a HEAD per row was never on the table, but a DB
+    # round-trip per row was, and 2000 of them cost 271 ms of a 444 ms page.
+    def stat_all(user, node_ids:)
+      user.nodes.present.where(node_id: node_ids).to_h { |n| [ n.node_id, file_info(n) ] }
     end
 
     # What is in this deployment's trash: the objects WE copied to the trash prefix, which
@@ -287,7 +288,7 @@ module FileLayer
         #
         # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant"
         # and clobber: object_exists? lets those through to the rescue below. Fail safe.
-        raise NotFound, "#{rel.inspect} already exists" if object_exists?(key)
+        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(key)
 
         put = @client.put_object(bucket: @bucket, key:, body: bytes)
         # The ONLY source of the object's mtime. put_object's response carries no last_modified
@@ -427,7 +428,7 @@ module FileLayer
         # be clobbered. What this stops is the ORDINARY case — a user moving onto a name that is
         # already there. It does not claim an atomicity S3 does not offer. (write's clobber check
         # makes the identical argument; the port cannot tolerate the two diverging on it.)
-        raise NotFound, "#{rel.inspect} already exists" if object_exists?(dest_key)
+        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(dest_key)
 
         copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
         @client.delete_object(bucket: @bucket, key: src_key)
@@ -491,7 +492,9 @@ module FileLayer
           raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
         end
 
-        raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if object_exists?(dest_key)
+        if object_exists?(dest_key)
+          raise UnsupportedOperation, "#{rel.inspect} is occupied — undelete must not clobber"
+        end
 
         # No if_match: the trashed bytes are ours, written by our own delete, and their identity is
         # not what node.content_hash records (that is the identity of the object at its ORIGINAL
@@ -893,6 +896,22 @@ module FileLayer
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
         raise(NotFound, "node #{node_id.inspect} is deleted or does not exist")
+    end
+
+    # The one place a node becomes a FileInfo, shared by stat and stat_all — the browse view and
+    # the detail view answering differently about the same file is the §9a-1 bug in a new
+    # spelling, and one copy makes it impossible rather than unlikely. Duplicated from
+    # Share#file_info rather than shared, which is this file's standing trade (see #trashed): the
+    # READ CONTRACT is what keeps the two answers equal, which is why it is asserted there.
+    def file_info(node)
+      FileInfo.new(
+        node_id: node.node_id,
+        name: node.name,
+        kind: node.kind,
+        size: node.size.to_i,
+        mtime: node.mtime,
+        content_token: node.content_hash
+      )
     end
 
     def build_client(region:, access_key_id:, secret_access_key:, endpoint:)

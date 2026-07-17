@@ -966,7 +966,7 @@ module FileLayer
     test "move refuses to overwrite an existing object" do
       a = create_file!(name: "a.stl", bytes: "aaa")
       create_file!(name: "b.stl", bytes: "bbb")
-      assert_raises(FileLayer::NotFound) do
+      assert_raises(FileLayer::UnsupportedOperation) do
         adapter.move(@user, node_id: a, new_parent_node_id: nil, new_name: "b.stl")
       end
       assert_equal "bbb", @fake.objects["#{PREFIX}/b.stl"].body, "the destination is untouched"
@@ -1116,7 +1116,7 @@ module FileLayer
       adapter.delete(@user, node_id: id)
       @fake.seed!("#{PREFIX}/bracket.stl", "someone else's file")
 
-      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_raises(FileLayer::UnsupportedOperation) { adapter.undelete(@user, node_id: id) }
       assert_equal "someone else's file", @fake.objects["#{PREFIX}/bracket.stl"].body,
                    "undelete must never clobber a live object"
       assert @fake.objects["#{PREFIX}/.trash/#{id}/bracket.stl"], "the trashed bytes survive"
