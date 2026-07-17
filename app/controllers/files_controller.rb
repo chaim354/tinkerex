@@ -21,6 +21,18 @@
 class FilesController < ApplicationController
   before_action :authenticate_user!
 
+  # ONE named mechanism for what this deployment can do, reachable from the views. Not two: a
+  # view reaching for FileLayer.current.capabilities inline while a controller also sets @caps
+  # is how the two answers drift apart, which is §9a-3's complaint and Landmine 1's whole shape.
+  #
+  # A METHOD RATHER THAN AN IVAR, DELIBERATELY, AND THE REASON IS THAT .erb HAS NO TYPE CHECKER.
+  # `<% if @caps&.versioned %>` on a nil @caps is silently FALSY -- the feature just vanishes
+  # from the page and nothing anywhere goes red. `<% if capabilities.versioned? %>` raises
+  # NameError if the helper is missing and NoMethodError if the predicate is misspelled. Both are
+  # loud, at render, in a test. Prefer the form that raises: a capability gate that fails open is
+  # a bug you find in production, and one that fails closed is a feature you never notice left.
+  helper_method :capabilities
+
   # Content types safe to render inline in the app origin. Raster images only — deliberately
   # NO image/svg+xml (SVG can carry <script>) and NO text/html, which would be stored XSS.
   SAFE_INLINE_TYPES = %w[
@@ -46,17 +58,30 @@ class FilesController < ApplicationController
   end
 
   # GET /files — flat list of the user's (non-deleted) files + dirs.
+  #
+  # Size/content come from the PORT, not from Version — see #show, where the argument is made.
+  # This action had the same bug in a second spelling: @versions_by_node came from
+  # current_user.versions, which is empty on share and s3, so every Size cell was an em-dash.
   def index
     @nodes = current_user.nodes.present.order(kind: :desc, name: :asc).to_a
-    @versions_by_node = current_user.versions
-      .where(node_id: @nodes.map(&:node_id))
-      .index_by(&:version_id)
+    @info_by_node = @nodes.index_by(&:node_id).transform_values do |node|
+      FileLayer.current.stat(current_user, node_id: node.node_id)
+    end
   end
 
   # GET /files/:node_id — view/preview a single file + metadata.
+  #
+  # THE PORT, NOT Version, AND THAT IS THE SAME FIX AS #blob RATHER THAN SCOPE CREEP. `Version`
+  # is a chunk-mode concept: on share and s3 `node.current_version` is nil, and a view that
+  # branches on it renders Size "—", Current version "—" and "No content yet." for a file with
+  # bytes on the user's NAS -- next to a Download button that now works. Each half is defensible
+  # alone and the combination is incoherent, which is exactly why it had to be one task.
+  #
+  # FileInfo is backend-neutral by construction; being the one object every adapter must answer
+  # with is the port's whole job.
   def show
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
-    @version = @node.current_version
+    @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
   end
 
@@ -157,6 +182,8 @@ class FilesController < ApplicationController
   end
 
   private
+
+  def capabilities = FileLayer.current.capabilities
 
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")

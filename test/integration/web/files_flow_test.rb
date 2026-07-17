@@ -166,6 +166,30 @@ module Web
       assert user.versions.where(node_id:).exists?
     end
 
+    # THE OTHER HALF OF CAPABILITY GATING, and the half a plan forgets. A gate that hides a
+    # feature in share mode is half-right; a gate that hides it in the product's MAIN deployment
+    # is a straightforward bug, and it is the easy one to ship -- `port_writable` reads like
+    # "accepts uploads", which chunk mode very much does (that is what Sync::Commit IS).
+    #
+    # So this is the counterpart to share_delivery_test.rb's "does not offer a version": the same
+    # two surfaces, asserted present rather than absent. Without it, a gate that fired everywhere
+    # would leave both suites green while the product lost its upload button and its versions.
+    test "chunk mode keeps version history and the upload control" do
+      sign_in
+      node_id = upload("v.stl", "bytes")
+
+      get file_path(node_id)
+      assert_response :success
+      assert_match(/Current version/i, response.body,
+                   "chunk is the versioned backend -- the gate must not fire here")
+      assert_match(/5 Bytes/i, response.body, "size must survive the move from Version to the port")
+
+      get files_path
+      assert_match(/upload/i, response.body,
+                   "chunk mode uploads via the two-phase flow -- port_writable: false does NOT " \
+                   "mean 'no uploads', and reading it that way hides this button in production")
+    end
+
     test "isolation: a user cannot see or fetch another user's file" do
       sign_in("alice@example.com")
       alice_node = upload("secret.txt", "alice only".b)

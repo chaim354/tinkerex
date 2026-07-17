@@ -159,6 +159,57 @@ module Web
       assert_not_includes response.body.to_s, @root.to_s, "never leak the library root"
     end
 
+    # --- LANDMINE 5: the page must stop lying ----------------------------------------------
+    #
+    # Fixing #blob while `show` still reads Version ships a page that calls the file EMPTY next
+    # to a Download button that works. The view is not wrong about Version -- there genuinely is
+    # no Version here -- it is asking the wrong object. Version is a chunk-mode concept; the port
+    # is the backend-neutral one, which is why routing the views through FileLayer#stat is the
+    # same fix as #blob rather than scope creep.
+    test "the show page reports the real size and does NOT say 'No content yet'" do
+      id = index!("bracket.stl", "solid bracket")
+      get file_path(id)
+
+      assert_response :success
+      assert_no_match(/No content yet/, response.body,
+                      "the file has 13 bytes sitting on the user's NAS")
+      assert_match(/13 Bytes/i, response.body)
+    end
+
+    # THIS IS NOT THE PLAN'S TEST, AND THE PLAN'S VERSION WAS DECORATION. It asserted
+    # no_match(/Restore/i) and no_match(/Version history/i) on the show page -- but the web UI
+    # has no Restore and no version-history surface on this page at all (they are the Tauri
+    # app's), so both assertions pass with this task's implementation reverted, with the view
+    # deleted, and indeed with Phase 4 never written. They pin nothing.
+    #
+    # The version-shaped thing that IS on this page is the "Current version" row, and it is the
+    # one that must disappear on an unversioned backend. Unlike the plan's, this test is red
+    # before the implementation -- verified.
+    test "the show page does not offer a version on an unversioned backend" do
+      id = index!("bracket.stl", "solid")
+      get file_path(id)
+
+      assert_response :success
+      assert_no_match(/Current version/i, response.body,
+                      "share keeps no history (capabilities.versioned? == false) -- do not offer it")
+    end
+
+    # The index had the same bug in a second spelling: @versions_by_node comes from
+    # current_user.versions, which is empty in share mode, so every Size cell rendered an
+    # em-dash. Asserting only that the filenames appear -- the plan's version -- passes today,
+    # before any of this, because listing `nodes` was never the broken part.
+    test "the index reports real sizes, not the em-dash of a Version that does not exist" do
+      index!("a.stl", "aaa")
+      index!("cad/b.stl", "bbbb")
+      get files_path
+
+      assert_response :success
+      assert_match(/a\.stl/, response.body)
+      assert_match(/b\.stl/, response.body)
+      assert_match(/3 Bytes/, response.body)
+      assert_match(/4 Bytes/, response.body)
+    end
+
     # LANDMINE 2, at the layer it actually moved to. Task 2 pins that Share#download refuses a
     # poisoned path. This pins the OTHER half: that the controller does not resolve one itself.
     # The guard lives in exactly one place -- Share#absolute_path -- and a controller that
