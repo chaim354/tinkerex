@@ -79,11 +79,17 @@ module Library
     # class load. 2a hit exactly that: MAX_DELETE_PCT frozen at class load could not be varied by
     # tests, and a knob the real entry point cannot reach is a knob only ENV-mutation can use.
     #
-    # PHASE 3 TRAP, the same one ScanJob.scan_all! carries (read the comment there): the moment
-    # FileLayer::S3 exists this is_a? quietly answers false and the purge SILENTLY STOPS. An S3
-    # trash is a key PREFIX, not a directory, and has no directory mtime to age against — it needs
-    # its own reaper, keyed on the objects' last_modified. Decide there deliberately rather than
-    # inherit this false.
+    # PHASE 3 TRAP — ARMED AS OF TASK 3 (2026-07-17), the same one ScanJob.scan_all! carries (read
+    # the comment there). No longer a prediction: FileLayer::S3 exists, so this is_a? answers false
+    # and purge_all! SILENTLY NO-OPS — reproduced, returns nil and enqueues nothing under
+    # LIBRARY_BACKEND=s3. The bytes an s3 user deletes are never reclaimed and they are never told.
+    #
+    # Note this gate is the QUIETER of the two, which is why it is named separately rather than
+    # folded into ScanJob's: a library that is never indexed is at least visible as an empty
+    # library, whereas a trash that is never purged looks exactly like a working one until the
+    # storage bill arrives. An S3 trash is a key PREFIX, not a directory, and has no directory
+    # mtime to age against — it needs its own reaper keyed on the objects' last_modified.
+    # Task 8 decides here deliberately. DO NOT SHIP PHASE 3 WITH THIS GATE UNCHANGED.
     def self.purge_all!
       adapter = FileLayer.current
       return unless adapter.is_a?(FileLayer::Share)

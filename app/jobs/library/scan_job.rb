@@ -59,11 +59,18 @@ module Library
     # a second one; a literal third copy here would be the one that drifts. Asking FileLayer.current
     # also hands us a root that check! has already validated (exists, is a directory, is readable)
     # instead of a raw ENV string — one fewer way for the two to disagree.
-    # PHASE 3 TRAP: today an s3 deployment raises NotImplementedError out of FileLayer.current
-    # above, which is loud and correct. The moment FileLayer::S3 exists, this is_a? quietly
-    # answers false and the scan SILENTLY STOPS — the exact silent-no-op this job's design
-    # argues against. An S3 library needs its own indexer (it has no walkable Pathname root);
-    # whoever builds it must decide here deliberately rather than inherit this false.
+    # PHASE 3 TRAP — ARMED AS OF TASK 3 (2026-07-17). This comment used to say "the moment
+    # FileLayer::S3 exists"; it exists, so the trap is no longer a prediction. FileLayer.current
+    # now RETURNS a FileLayer::S3 for an s3 deployment instead of raising NotImplementedError, so
+    # this is_a? quietly answers false and scan_all! SILENTLY NO-OPS: an s3 library is never
+    # indexed, nothing raises, nothing logs, and the whole suite stays green. Reproduced, not
+    # reasoned — scan_all! returns nil and enqueues zero jobs under LIBRARY_BACKEND=s3.
+    #
+    # This is the exact silent-no-op this job's own design argues against two paragraphs up, and
+    # it is left live DELIBERATELY for one task only: Task 8 wires the s3 scan and must decide
+    # here on purpose rather than inherit this false. An S3 library needs its own indexer (it has
+    # no walkable Pathname root, and `adapter.root` below does not exist on S3).
+    # DO NOT SHIP PHASE 3 WITH THIS GATE UNCHANGED.
     def self.scan_all!
       adapter = FileLayer.current
       return unless adapter.is_a?(FileLayer::Share)

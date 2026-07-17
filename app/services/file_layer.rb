@@ -72,9 +72,13 @@ module FileLayer
         LibraryBackendCheck.check!
         Share.new
       when "s3"
-        # Phase 3. Fail loudly: silently falling back to chunk mode would serve an EMPTY
-        # library while the operator believes we are reading their bucket.
-        raise NotImplementedError, "LIBRARY_BACKEND=s3 is not implemented yet (phase 3)"
+        # Validate before constructing, for the same reason as share and a sharper one: S3.from_env
+        # fetches five knobs, so a bare KeyError would name exactly ONE of them and the operator
+        # would learn the rest one restart at a time. check! names them all at once. It must be
+        # asked HERE and not left to the boot guard alone — the guard is skipped in the test env
+        # and reads ENV once at boot.
+        LibraryBackendCheck.check!
+        S3.from_env
       else
         raise ArgumentError, "unknown LIBRARY_BACKEND #{ENV['LIBRARY_BACKEND'].inspect}"
       end

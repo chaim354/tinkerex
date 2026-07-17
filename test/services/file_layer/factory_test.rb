@@ -45,13 +45,52 @@ module FileLayer
       end
     end
 
-    # s3 is Phase 3. Until then an operator setting it must get a loud error, never a silent
-    # fallback to chunk mode (which would read the WRONG library).
-    test "s3 is not yet implemented and says so" do
+    S3_ENV = {
+      "LIBRARY_S3_BUCKET" => "b", "LIBRARY_S3_ACCESS_KEY_ID" => "ak",
+      "LIBRARY_S3_SECRET_ACCESS_KEY" => "sk", "LIBRARY_S3_REGION" => "us-east-1"
+    }.freeze
+
+    test "LIBRARY_BACKEND=s3 selects the S3 adapter" do
       with_backend("s3") do
-        err = assert_raises(NotImplementedError) { FileLayer.current }
-        assert_match(/s3/, err.message)
+        with_env(S3_ENV) { assert_instance_of FileLayer::S3, FileLayer.current }
       end
+    end
+
+    # The same contract the share leg has, and for a sharper reason: S3.from_env's ENV.fetch would
+    # raise KeyError naming ONE knob, so an operator who set none would learn them one restart at
+    # a time. The guard names them all at once — the factory must ask it BEFORE constructing, or
+    # that message is unreachable in the test env (where the boot guard is skipped) and after any
+    # post-boot ENV change.
+    test "LIBRARY_BACKEND=s3 without credentials explains itself rather than raising KeyError" do
+      with_backend("s3") do
+        with_env(S3_ENV.transform_values { nil }) do
+          err = assert_raises(LibraryBackendCheck::Error) { FileLayer.current }
+          assert_match(/LIBRARY_S3_BUCKET/, err.message,
+                       "must name the missing settings, not incidentally fail some other way")
+          assert_match(/LIBRARY_S3_SECRET_ACCESS_KEY/, err.message)
+        end
+      end
+    end
+
+    # Constructing the adapter must not reach the network either — the factory runs at boot.
+    test "building the S3 adapter does not require the bucket to be reachable" do
+      assert_nothing_raised do
+        FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                          secret_access_key: "sk", endpoint: "http://127.0.0.1:1")
+      end
+    end
+
+    # The counterexample this whole adapter is, stated as an assertion. Every OTHER backend has
+    # presignable == versioned (chunk true/true, share false/false), so a reader could reasonably
+    # conclude the two co-vary and "simplify" one into the other. S3 is why they cannot: it holds
+    # the user's own bytes with no history (spec decision 3 — §5 does not survive), yet it CAN
+    # mint a URL (§15 survives, which is what Phase 4's Redirect is built on).
+    test "S3 is presignable but NOT versioned — the pair does not co-vary" do
+      caps = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                               secret_access_key: "sk").capabilities
+      assert caps.presignable?, "S3 can mint a URL: §15 survives here"
+      assert_not caps.versioned?, "S3 keeps no history: §5 does not survive here"
+      assert_not caps.syncable?
     end
 
     # Pinned rather than ambient: memoization is backend-agnostic, so the backend should be the
@@ -77,13 +116,20 @@ module FileLayer
 
     # Nil means "unset it" — ENV["X"] = nil deletes the key, which is exactly the
     # operator-forgot-to-set-it case the factory has to explain.
-    def with_library_path(value)
-      prior = ENV["LIBRARY_PATH"]
-      ENV["LIBRARY_PATH"] = value
+    def with_library_path(value, &block)
+      with_env({ "LIBRARY_PATH" => value }, &block)
+    end
+
+    # with_library_path generalized to N knobs, because s3 has five. Same nil-means-unset rule,
+    # and the same restore-the-prior discipline: the factory reads the PROCESS ENV, so these
+    # tests must mutate it — and a leak would silently reconfigure the next test in this worker.
+    def with_env(vars)
+      prior = vars.keys.to_h { |k| [ k, ENV[k] ] }
+      vars.each { |k, v| ENV[k] = v }
       FileLayer.reset!
       yield
     ensure
-      ENV["LIBRARY_PATH"] = prior
+      prior.each { |k, v| ENV[k] = v }
       FileLayer.reset!
     end
   end

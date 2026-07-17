@@ -1,8 +1,24 @@
-# Refuse to boot a share-backed deployment whose library root is unusable, rather than surfacing
-# it as a 500 on the first request. Mirrors lib/postgres_pooler_check.rb, which exists for the
-# same reason: a misconfiguration that only shows up later is worse than one that stops the boot.
+# Refuse to boot a deployment whose library backend is misconfigured, rather than surfacing it as
+# a 500 on the first request. Mirrors lib/postgres_pooler_check.rb, which exists for the same
+# reason: a misconfiguration that only shows up later is worse than one that stops the boot.
 #
-# WHAT THIS DOES *NOT* CATCH: an unmounted share. An unmounted mount point is a real, readable,
+# The two backends get DIFFERENT DEPTHS of check, and the asymmetry is deliberate rather than an
+# unfinished s3 leg:
+#
+#   share -> config presence AND a real filesystem probe. The mount is local, the probe is
+#            microseconds, and File.writable? genuinely lies under the ACLs this backend targets
+#            (see #writable!), so the filesystem is the only honest oracle available.
+#   s3    -> config presence ONLY, NEVER the network. Boot must not depend on a third party being
+#            reachable — that trades a clear config error for a crash loop on someone else's
+#            outage. Reachability and credential validity surface on first use as FileLayer::
+#            FetchError, which is retryable BY DESIGN. See #check_s3!.
+#
+# WHAT THIS DOES *NOT* CATCH, s3: a bucket that does not exist, credentials that are wrong or
+# expired, a prefix that is empty or points at the wrong place, and an endpoint that is
+# unreachable. ALL of them are boot-invisible by the decision above — every one is a first-use
+# FetchError. The knobs being PRESENT is the whole of s3's boot claim; do not read it as more.
+#
+# WHAT THIS DOES *NOT* CATCH, share: an unmounted share. An unmounted mount point is a real, readable,
 # writable, EMPTY directory — File.exist? and File.directory? both return true for it, and the
 # write probe below SUCCEEDS on it (onto the underlying disk) — so no check here can distinguish
 # "mounted" from "unmounted" (FileLayer::Share#library_present? uses emptiness as the signal at
@@ -22,12 +38,61 @@
 module LibraryBackendCheck
   Error = Class.new(StandardError)
 
-  # Reads the same ENV vars, with the same default, as FileLayer.build — the factory calls this
-  # too, so a bad LIBRARY_PATH gets this explanation even when the boot guard did not run (the
-  # test env) or when ENV changed after boot.
-  def self.check!(backend: ENV.fetch("LIBRARY_BACKEND", "chunk"), path: ENV["LIBRARY_PATH"])
-    return unless backend == "share"
+  # The knobs an s3 library cannot be built without. NOT LIBRARY_S3_REGION — it defaults to
+  # "auto" (R2's value, matching Storage::S3ChunkStore's own default), and NOT LIBRARY_S3_ENDPOINT
+  # or LIBRARY_S3_PREFIX, which are genuinely optional (endpoint = R2/SeaweedFS/MinIO; prefix = a
+  # sub-root within the bucket, whose absence means "the whole bucket" and is a valid choice).
+  S3_REQUIRED = %w[LIBRARY_S3_BUCKET LIBRARY_S3_ACCESS_KEY_ID LIBRARY_S3_SECRET_ACCESS_KEY].freeze
 
+  # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
+  # too, so a bad configuration gets this explanation even when the boot guard did not run (the
+  # test env) or when ENV changed after boot.
+  #
+  # ONE injection seam: `env`. This used to be `check!(backend:, path:)`, and phase 3 could have
+  # bolted an `env:` beside it for s3's five knobs — but `path:` was only ever env["LIBRARY_PATH"]
+  # spelled differently, and two ways to inject config into one method is how the third backend
+  # invents a third way. `backend:` defaults out of the same Hash (kwarg defaults evaluate left to
+  # right, so `env` is bound by the time it is read), which also retires a second, separate read
+  # of the real ENV.
+  #
+  # A hybrid was considered and is a TRAP, recorded so it is not "restored": `path: nil` cannot
+  # mean both "unset" and "not passed". The existing share tests pass `path: nil` and expect a
+  # raise, but the share CI leg runs with LIBRARY_PATH set — so a `path:` defaulting to
+  # env["LIBRARY_PATH"] would silently read the ambient value and those tests would stop testing.
+  def self.check!(env: ENV, backend: env.fetch("LIBRARY_BACKEND", "chunk"))
+    case backend
+    when "share" then check_share!(env["LIBRARY_PATH"])
+    when "s3"    then check_s3!(env)
+    end
+    # No `else`: an unknown backend is FileLayer.build's ArgumentError to raise, not this guard's.
+    # Duplicating it here would give the operator two different messages for one typo.
+  end
+
+  # Config PRESENCE only — this must never reach the network, and that is a design decision rather
+  # than an omission. The share leg touch-probes because File.writable? genuinely lies under the
+  # NFS/SMB ACLs it targets, so the filesystem is the only honest oracle. S3 is different in kind:
+  # a live round-trip at boot would make our process's ability to START depend on a third party
+  # being reachable, turning a transient blip — or a bucket that is merely slow this second — into
+  # a crash loop, right when an operator most needs the app up to look at it. Credential and
+  # reachability errors surface on first USE as FetchError, which is retryable BY DESIGN (see
+  # FileLayer::FetchError). Presence is what boot can honestly check; validity is not.
+  def self.check_s3!(env)
+    # blank?, not key? — "" and "   " are the same operator error as unset (an empty line in a
+    # .env, a shell variable that expanded to nothing), and calling them configured just hands
+    # the SDK a blank bucket to fail on later, naming none of our knobs.
+    missing = S3_REQUIRED.reject { |knob| env[knob].present? }
+    return if missing.empty?
+
+    # ALL of them, in one message. A guard that reveals one missing knob per restart makes the
+    # operator do N boots to learn N facts we already know here.
+    raise Error, "LIBRARY_BACKEND=s3 requires #{missing.join(', ')} — set " \
+                 "#{'it' if missing.one?}#{'them' unless missing.one?} to the bucket and " \
+                 "credentials for the S3-compatible storage holding the library. Optional: " \
+                 "LIBRARY_S3_REGION (default \"auto\"), LIBRARY_S3_ENDPOINT (set for " \
+                 "R2/SeaweedFS/MinIO), LIBRARY_S3_PREFIX (the library's root in the bucket)."
+  end
+
+  def self.check_share!(path)
     raise Error, "LIBRARY_BACKEND=share requires LIBRARY_PATH (the mounted directory to index)" if path.blank?
     unless File.exist?(path)
       raise Error, "LIBRARY_PATH #{path.inspect} does not exist — check the path is spelled " \
