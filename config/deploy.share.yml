@@ -6,9 +6,12 @@
 # store. Current-state only: no versions/history/restore. The library streams bytes THROUGH
 # Rails (a mounted dir has nothing to presign) — the one place §15 deliberately does not hold.
 #
-# The "share" here is a local directory on the VM (there is no NAS mounted on this box), owned
-# by uid 1000 = the container user, so the boot-time write probe passes. A real deployment
-# would bind-mount an actual SMB/NFS mount point; the code path is identical.
+# The library is the Unraid host's "3D Printing" SMB share (host 192.168.1.146, guest/no-auth),
+# surfaced into the container via a Docker CIFS volume rather than a host mount — so no
+# host-level `sudo mount`, no cifs-utils, no fstab. The one host prerequisite is the `cifs`
+# KERNEL module being loaded (`/etc/modules-load.d/cifs.conf`; Docker's cifs volume mounts via
+# the kernel at container start). uid/gid 1000 so the container user can read AND write (the
+# boot guard write-probes, and deletes move files into a .trash/ folder inside the share).
 #
 # STORAGE_BACKEND=memory neutralizes the chunk-store env inherited from deploy.yml (see the
 # note in deploy.s3.yml). A share deployment needs no chunk store and no S3 credentials at all.
@@ -16,12 +19,16 @@
 proxy:
   host: share.tinkerex.local
 
-# Destination-scoped SQLite volume, PLUS a bind mount of the host library directory into the
-# container at /library (where LIBRARY_PATH points). The seeded dir was created on the box:
-#   /home/kamal1/tinkerex-library-share  (owned by uid 1000)
+# Destination-scoped SQLite volume, PLUS the CIFS library volume at /library (where LIBRARY_PATH
+# points). The CIFS volume is created out-of-band on the box (Kamal only ensures it EXISTS; if it
+# were ever removed, Kamal would recreate it as a PLAIN empty local volume — so do not delete it):
+#   docker volume create --driver local --opt type=cifs \
+#     --opt device="//192.168.1.146/3D Printing" \
+#     --opt o="guest,uid=1000,gid=1000,vers=3.0,file_mode=0664,dir_mode=0775" \
+#     tinkerex_library_3dprinting
 volumes:
   - "tinkerex_storage_share:/rails/storage"
-  - "/home/kamal1/tinkerex-library-share:/library"
+  - "tinkerex_library_3dprinting:/library"
 
 env:
   # Redeclared to DROP the inherited CHUNK_SECRET_ACCESS_KEY — a share container holds no
