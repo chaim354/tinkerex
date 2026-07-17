@@ -49,16 +49,74 @@ module FileLayer
     # mtime is converted to unix NANOSECONDS here (FileInfo: adapters CONVERT). S3's
     # last_modified is a second-granularity Time, so this is where the seconds-as-nanos bug the
     # contract's NANOS_FLOOR pins would enter if it entered at all.
-    def create_file!(name:, bytes:)
+    def create_file!(name:, bytes:, checksum_sha256: nil, checksum_type: nil)
       key = "#{PREFIX}/#{name}"
-      @fake.seed!(key, bytes, last_modified: Time.now)
+      @fake.seed!(key, bytes, last_modified: Time.now, checksum_sha256:, checksum_type:)
       obj = @fake.objects.fetch(key)
       @user.nodes.create!(
         node_id: SecureRandom.uuid, name: File.basename(name), kind: "file", deleted: false,
         storage_path: name, size: bytes.bytesize,
-        content_hash: FileLayer::S3::ObjectIdentity.for(etag: obj.etag),
+        content_hash: FileLayer::S3::ObjectIdentity.for(etag: obj.etag, checksum_sha256:,
+                                                        checksum_type:),
         mtime: obj.last_modified.to_i * 1_000_000_000 + obj.last_modified.nsec
       ).node_id
+    end
+
+    # A SCAN, stood in for. Task 6's tests need one — the whole landmine is about what the next
+    # scan DECIDES about a tombstone — and Library::S3Observer is Task 7's and does not exist.
+    #
+    # PLAN DRIFT, deliberate and reported, and the THIRD instance of the same one (Task 4's
+    # create_file! and Task 5's identity-agreement test each took it for the same reason): the
+    # plan's Task 6 tests call Library::S3Observer.call, from a task two steps downstream. This
+    # drives Library::Reconciler DIRECTLY instead.
+    #
+    # WHY THAT IS A FAITHFUL STAND-IN AND NOT A CONVENIENT ONE. The split is the point: "the
+    # Scanner OBSERVES; this DECIDES" (Reconciler's header). Every assertion below turns on a
+    # DECISION — revive-by-path vs. create-a-new-node, pair-vs-tombstone, whether the guard fires
+    # — and the Reconciler is the thing that makes all of them. Task 7's observer will differ only
+    # in where the observations come from, and it is REQUIRED to reuse this same Reconciler
+    # (the plan's Task 7 is explicit: "a new observer, the same Reconciler", because duplicating
+    # it would duplicate the guard and the pairing, "which is where every one of 2a's bugs lived").
+    # So this exercises the identical decider on identical input.
+    #
+    # The identity goes through ObjectIdentity.for — the one normalizer the observer must also use
+    # — so this cannot quietly disagree with the thing it stands in for. Computing an md5 by hand
+    # here is exactly how a helper drifts from production.
+    #
+    # The `.trash` skip is Task 7's rule, mirrored here from the SAME constant the adapter's
+    # observable! and trash_key read. If Task 7's observer forgets to skip it, THAT is Task 7's
+    # test to fail — this one asserts the adapter behaves correctly given an observer that does.
+    def scan!(max_delete_pct: nil)
+      observations = @fake.objects.filter_map do |key, o|
+        rel = key.delete_prefix("#{PREFIX}/")
+        next if rel.split("/").first == Library::Scanner::TRASH_PREFIX
+        Library::Observation.new(
+          rel_path: rel, size: o.body.bytesize, dir: false,
+          mtime: o.last_modified.to_i * 1_000_000_000 + o.last_modified.nsec,
+          content_hash: FileLayer::S3::ObjectIdentity.for(etag: o.etag,
+                                                          checksum_sha256: o.checksum_sha256,
+                                                          checksum_type: o.checksum_type)
+        )
+      end
+      # The reader RAISES rather than returning bytes, and that is an assertion in itself: an
+      # observation carrying its own content_hash must never make the Reconciler read the object.
+      # If it ever did, indexing a bucket would mean a full egress of it (Observation's header).
+      Library::Reconciler.new(
+        @user, observations:, unreadable_dirs: [], max_delete_pct:,
+        reader: ->(_rel) { raise "the S3 observer supplies the identity; the reader must not run" }
+      ).call
+    end
+
+    # An attachment is WHY node_id stability is the port's promise: it is a bare string column
+    # with no foreign key (maker_file_attachments.node_id), so a node_id that changes does not
+    # error — it silently resolves to nothing. That is what "orphaned" means below, concretely.
+    def attach!(node_id)
+      project = Maker::Project.create!(user: @user, name: "bracket-project-#{SecureRandom.hex(4)}")
+      Maker::FileAttachment.create!(user: @user, attachable: project, node_id:, role: "model")
+    end
+
+    def orphaned?(attachment)
+      @user.nodes.present.find_by(node_id: attachment.node_id).nil?
     end
 
     # S3's "delete" as a USER would do it: the object leaves the bucket (deleted in the console,
@@ -395,6 +453,624 @@ module FileLayer
       # lookup (CLAUDE.md §8's whole tenancy mechanism) stands between them and the file.
       assert_raises(FileLayer::NotFound) { adapter.read(other, node_id: id) }
       assert_raises(FileLayer::NotFound) { adapter.stat(other, node_id: id) }
+    end
+
+    # --- delete -> trash (task 6) ---------------------------------------------------------
+
+    test "delete copies to the trash prefix keyed by node_id, then removes the original" do
+      id = create_file!(name: "bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+
+      assert_nil @fake.objects["#{PREFIX}/bracket.stl"], "the object leaves the indexed keyspace"
+      assert_equal "solid", @fake.objects["#{PREFIX}/.trash/#{id}/bracket.stl"].body
+      assert @user.nodes.find_by!(node_id: id).deleted, "the node is tombstoned, never destroyed"
+    end
+
+    test "two deleted objects of the SAME NAME do not collide in the trash" do
+      x = create_file!(name: "a/bracket.stl", bytes: "one")
+      y = create_file!(name: "b/bracket.stl", bytes: "two")
+      adapter.delete(@user, node_id: x)
+      adapter.delete(@user, node_id: y)
+
+      assert_equal "one", @fake.objects["#{PREFIX}/.trash/#{x}/bracket.stl"].body
+      assert_equal "two", @fake.objects["#{PREFIX}/.trash/#{y}/bracket.stl"].body
+    end
+
+    # LANDMINE 3, half one. Spec §6 says "tombstone only after the copy confirms". A failed copy
+    # that tombstoned would hide a file that is still there — and the next scan, finding no live
+    # node and (2b Landmine 2) no tombstone at that path to revive, CREATES A NEW NODE with a new
+    # node_id. Every attachment orphaned, silently.
+    test "a failed COPY tombstones nothing and loses nothing" do
+      id = create_file!(name: "x.stl", bytes: "b")
+      @fake.fault!(:copy_object, "InternalError")
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+
+      assert_not @user.nodes.find_by!(node_id: id).deleted, "a failed copy must not tombstone"
+      assert_equal "b", @fake.objects["#{PREFIX}/x.stl"].body, "and must not lose the object"
+      assert_equal 0, @fake.calls[:delete_object], "and must not proceed to the delete"
+    end
+
+    # LANDMINE 3, HALF TWO — the half spec §6 does NOT say, and the one that bites. This is the
+    # task's headline test.
+    #
+    # Tombstoning after the copy but before the delete leaves the object live at its original key
+    # with the node tombstoned and storage_path NULL. The next scan observes the key, no live node
+    # claims it, revive-by-path CANNOT fire (2b nulls storage_path on a trash tombstone), so it
+    # creates a NEW node. The attachment is orphaned by a scan that did nothing wrong.
+    #
+    # Tombstone LAST — after the DELETE confirms. Then a failed delete is merely a delete that did
+    # not happen: the object is at its key, the node is live and matches by path, the next scan is
+    # a no-op, and the user retries.
+    #
+    # Only visible by reading §6 together with a landmine settled in a DIFFERENT PHASE. That is
+    # the cross-task shape that has produced every serious defect in this project.
+    test "a failed DELETE after a successful copy tombstones nothing, and the attachment survives" do
+      id = create_file!(name: "y.stl", bytes: "b")
+      attachment = attach!(id)
+      @fake.fault!(:delete_object, "InternalError")
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_not node.deleted, "the tombstone goes LAST — after the delete confirms"
+      assert_equal "y.stl", node.storage_path, "and the path is not released either"
+      assert_equal "b", @fake.objects["#{PREFIX}/y.stl"].body
+
+      # ...and the state is CONSISTENT: the next scan is a no-op, not a resurrection.
+      @fake.clear_faults!
+      assert_nothing_raised { scan! }
+      assert_equal id, @user.nodes.find_by!(storage_path: "y.stl").node_id
+
+      # THE POINT OF THE ORDERING, stated in the only terms that matter. node_id is a bare string
+      # column with no FK, so the wrong order does not error — the attachment just stops resolving.
+      assert_not orphaned?(attachment),
+                 "tombstoning before the delete confirms orphans every attachment on the node"
+    end
+
+    # 2b LANDMINE 1, inherited. delete tombstones in the same breath as the move, so
+    # vanished_paths (which uses the `present` scope) never sees it. Without that, deleting most
+    # of a library through the UI makes the very next scan refuse itself with UnsafeScan — the
+    # guard firing on the app's own deliberate action.
+    test "deleting most of the library does NOT trip the mass-deletion guard on the next scan" do
+      ids = 5.times.map { |i| create_file!(name: "f#{i}.stl", bytes: "x#{i}") }
+      ids.first(4).each { |id| adapter.delete(@user, node_id: id) } # 80% >> the 20% threshold
+
+      assert_nothing_raised { scan! }
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+    end
+
+    # 2b LANDMINE 2, inherited. A trash tombstone releases its path, so revive-by-path cannot hand
+    # a NEW object the trashed node's identity — and with it every attachment and tag — while the
+    # old bytes sit in .trash awaiting an undelete that would then collide.
+    test "a NEW object at a trashed path is a NEW node, not the trashed one revived" do
+      old = create_file!(name: "bracket.stl", bytes: "original")
+      adapter.delete(@user, node_id: old)
+      assert_nil @user.nodes.find_by!(node_id: old).storage_path,
+                 "a trash tombstone must release its path"
+
+      @fake.seed!("#{PREFIX}/bracket.stl", "a completely different file")
+      scan!
+
+      fresh = @user.nodes.find_by!(storage_path: "bracket.stl")
+      assert_not_equal old, fresh.node_id, "the new object must not inherit the trashed identity"
+      assert @user.nodes.find_by!(node_id: old).deleted
+    end
+
+    test "the scan never indexes the trash prefix" do
+      id = create_file!(name: "t.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      scan!(max_delete_pct: 100)
+      assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
+    end
+
+    test "deleting an already-trashed node is refused and leaves the trashed bytes alone" do
+      id = create_file!(name: "once.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      assert_raises(FileLayer::NotFound) { adapter.delete(@user, node_id: id) }
+      assert_equal "b", @fake.objects["#{PREFIX}/.trash/#{id}/once.stl"].body
+    end
+
+    test "a user cannot delete ANOTHER user's file by node_id" do
+      id = create_file!(name: "mine.stl", bytes: "b")
+      other = User.create!(email: "s3-other-#{SecureRandom.hex(4)}@example.com")
+      assert_raises(FileLayer::NotFound) { adapter.delete(other, node_id: id) }
+      assert_equal "b", @fake.objects["#{PREFIX}/mine.stl"].body
+    end
+
+    # --- the copy's preconditions and its wire format -------------------------------------
+
+    # THE CONDITIONAL COPY, exercised for real rather than faulted. The plan's version of this
+    # test did `@fake.fault!(:copy_object, "PreconditionFailed")`, which only proves that error
+    # maps to FetchError — it would pass IDENTICALLY with copy_source_if_match never sent at all.
+    # Vacuous for the thing it names. FakeS3#do_copy genuinely honors the header (deliberately),
+    # so this drives a REAL concurrent overwrite: delete the precondition from the adapter and
+    # the copy succeeds, nothing raises, and this fails.
+    #
+    # Why it matters: if the object changed between our listing and our copy, an unconditional
+    # copy trashes bytes the user never meant to lose and then deletes them from their key.
+    test "a concurrent overwrite makes the trash copy refuse rather than trash the wrong bytes" do
+      id = create_file!(name: "raced.stl", bytes: "original")
+      # Another tool overwrites the object AFTER the scan indexed it: new bytes, new ETag.
+      @fake.seed!("#{PREFIX}/raced.stl", "overwritten by someone else")
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+
+      assert_not @user.nodes.find_by!(node_id: id).deleted
+      assert_equal "overwritten by someone else", @fake.objects["#{PREFIX}/raced.stl"].body,
+                   "the bytes we did not index must not be trashed"
+      assert_equal 0, @fake.calls[:delete_object], "and must not be deleted from their key"
+    end
+
+    # The ladder's rungs are not interchangeable as PRECONDITIONS, and this is where that bites.
+    # An md5:/etag: identity IS the object's ETag and can be matched. A sha256: identity is a
+    # CHECKSUM, not an ETag — sending it as one would make every If-Match fail, so every delete
+    # and every move of such an object would refuse forever. We send nothing instead and take the
+    # unconditional behavior (which is what a store ignoring the header gives anyway).
+    #
+    # NOT "HEAD for the current ETag first", which is the other option the plan offered: that is
+    # precondition theater. The window worth guarding is between the SCAN and the DELETE — hours
+    # — and a HEAD taken milliseconds before the copy would happily match an overwrite that landed
+    # an hour ago, i.e. exactly the bytes this precondition exists to refuse to trash. It buys a
+    # billed request and a false sense of safety.
+    test "an md5 identity is sent as the copy precondition, QUOTED; a sha256 identity is not sent" do
+      seen = :never_called
+      @fake.client.stub_responses(:copy_object, lambda { |ctx|
+        seen = ctx.params[:copy_source_if_match]
+        { copy_object_result: { etag: '"x"' } }
+      })
+
+      adapter.delete(@user, node_id: create_file!(name: "m.stl", bytes: "mm"))
+      assert_equal %Q("#{Digest::MD5.hexdigest('mm')}"), seen,
+                   "the md5 rung IS the ETag — send it in the quoted form S3 itself emits"
+
+      sha = create_file!(name: "s.stl", bytes: "ss", checksum_sha256: "Ynl0ZXM=",
+                         checksum_type: "FULL_OBJECT")
+      assert_equal "sha256:Ynl0ZXM=", @user.nodes.find_by!(node_id: sha).content_hash
+      adapter.delete(@user, node_id: sha)
+      assert_nil seen, "a sha256 checksum is NOT an ETag: sent as one it would refuse every copy"
+    end
+
+    # THE FAKE CANNOT CATCH THIS ONE, which is exactly why it is asserted at the wire.
+    #
+    # aws-sdk-s3 does NOT escape copy_source — it puts the string on the wire verbatim (verified
+    # by capturing x-amz-copy-source at the :sign step), so the caller must encode it. FakeS3
+    # decodes with CGI.unescape, and CGI.escape/CGI.unescape are inverses — so an adapter using
+    # CGI.escape passes every test in this file and is WRONG against every real store:
+    #
+    #   CGI.escape("Bracket v2.stl") -> "Bracket+v2.stl"
+    #
+    # CGI.escape is FORM encoding (application/x-www-form-urlencoded), where "+" means space. Real
+    # S3 decodes the copy source per RFC 3986, where "+" is a LITERAL PLUS. So "Bracket v2.stl"
+    # would be copied from the key "Bracket+v2.stl" — a different object. Traced through #delete:
+    # the copy reads the wrong key (or 404s), the delete removes the RIGHT key, and the tombstone
+    # follows the delete — so the user's file is permanently gone and the trash holds a copy of
+    # someone else's. A space in a filename is the single most common thing in a CAD library.
+    #
+    # Per-segment ERB::Util.url_encode is correct against BOTH: "%20" round-trips through the
+    # fake's CGI.unescape AND decodes to a space on a real store.
+    test "the copy source is URL-encoded the way REAL S3 decodes it, not form-encoded" do
+      id = create_file!(name: "Bracket v2.stl", bytes: "solid")
+      seen = nil
+      @fake.client.handle(step: :sign) do |ctx|
+        seen = ctx.http_request.headers["x-amz-copy-source"] if ctx.operation_name == :copy_object
+        @handler.call(ctx)
+      end
+
+      adapter.delete(@user, node_id: id)
+
+      assert_equal "b/#{PREFIX}/Bracket%20v2.stl", seen,
+                   "a space must go on the wire as %20 — CGI.escape's + is a literal plus to S3"
+      assert_equal "solid", @fake.objects["#{PREFIX}/.trash/#{id}/Bracket v2.stl"].body
+    end
+
+    # --- the 5GB copy cap -----------------------------------------------------------------
+
+    # copy_object is capped at 5GiB: it ERRORS, it does not truncate. Both delete and move are
+    # copy-then-delete, so neither can run above it.
+    #
+    # Refused from node.size BEFORE the request, and the tombstone never happens — 2b's EXDEV
+    # shape: a clear error, never a silent half-delete. UnsupportedOperation because it is a
+    # PERMANENT property of this node on this backend (a client condition -> 409/422), not
+    # FetchError, which would tell the user to retry an operation that can never succeed.
+    test "delete refuses an object over the copy cap rather than half-deleting it" do
+      id = create_file!(name: "huge.stl", bytes: "b")
+      @user.nodes.find_by!(node_id: id).update_column(:size, FileLayer::S3::COPY_MAX_BYTES + 1)
+
+      err = assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: id) }
+      assert_match(/5 ?GiB|copy cap|too large/i, err.message)
+      assert_equal 0, @fake.calls[:copy_object], "refused BEFORE any request left the process"
+      assert_equal 0, @fake.calls[:delete_object]
+      assert_not @user.nodes.find_by!(node_id: id).deleted, "and nothing is tombstoned"
+      assert_equal "b", @fake.objects["#{PREFIX}/huge.stl"].body
+    end
+
+    test "move refuses an object over the copy cap" do
+      id = create_file!(name: "huge.stl", bytes: "b")
+      @user.nodes.find_by!(node_id: id).update_column(:size, FileLayer::S3::COPY_MAX_BYTES + 1)
+
+      assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "huge2.stl")
+      end
+      assert_equal 0, @fake.calls[:copy_object]
+      assert_equal "huge.stl", @user.nodes.find_by!(node_id: id).storage_path
+    end
+
+    # The size guard reads node.size, which the scan wrote — so it is STALE if the object grew
+    # since. The store's own refusal is the backstop, and it must land in the fail-safe direction:
+    # whatever error an S3-compatible store picks for an over-cap copy, it is a ServiceError, so
+    # it maps to FetchError and NOTHING IS TOMBSTONED. That is the property that matters, and it
+    # does not depend on the error's NAME — which is just as well: see COPY_MAX_BYTES, where the
+    # plan's "verify the exact error class" turns out to be unfalsifiable.
+    test "a store-side copy refusal is transient and tombstones nothing, whatever it is called" do
+      id = create_file!(name: "grown.stl", bytes: "b")
+      @fake.fault!(:copy_object, "InvalidRequest") # what AWS answers an over-cap copy source
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: id) }
+      assert_not @user.nodes.find_by!(node_id: id).deleted
+      assert_equal "b", @fake.objects["#{PREFIX}/grown.stl"].body
+    end
+
+    # --- directories: this backend's own answer -------------------------------------------
+
+    # CAN a dir node reach here? YES — Task 7 synthesizes dir nodes from key prefixes, so a user
+    # can click delete on a folder in the browse UI. It is not a hypothetical.
+    #
+    # WITHOUT this guard the failure is not loud, it is a LIE: a dir node's storage_path is "cad",
+    # so key_for composes "library/cad" — a key that does not exist, because S3 has no directories
+    # and the dir is a synthesis of a prefix. The copy 404s, that maps to FetchError (correctly —
+    # every unknown store error must), and the user is told to RETRY, forever, an operation that
+    # can never succeed. Verified by mutation: delete the guard and this test sees FetchError.
+    #
+    # WHY REFUSE RATHER THAN CASCADE — Share's argument transfers, and gets worse. Share: "a
+    # cascade whose inverse does not exist is a delete the user cannot undo" (undelete restores
+    # ONE path under ONE parent; 2b is file-only). On S3 a cascade is additionally N copies + N
+    # deletes with no atomicity across them, so a failure at object 400 of 1000 leaves half the
+    # subtree in .trash and half live, with no undo for either half.
+    #
+    # The CONCLUSION matches Share's; the ARGUMENT does not, and that is why Share named its guard
+    # deletable_file! per-op rather than by kind. Share refuses because File.rename on a directory
+    # SUCCEEDS and strands the children (its danger is that it works too well). This refuses
+    # because there is nothing to copy at all.
+    test "deleting a DIRECTORY is refused as a client condition, not a retry-forever FetchError" do
+      dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                deleted: false, storage_path: "cad", mtime: 1)
+      create_file!(name: "cad/gear.stl", bytes: "g")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.delete(@user, node_id: dir.node_id)
+      end
+      assert_match(/files only/, err.message)
+      assert_equal 0, @fake.calls[:copy_object], "refused BEFORE any request left the process"
+      assert_not @user.nodes.find_by!(node_id: dir.node_id).deleted
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body, "the children are untouched"
+    end
+
+    # A DELIBERATE DIVERGENCE FROM SHARE, which ALLOWS a directory move. Share's permission rests
+    # entirely on File.rename being ONE ATOMIC SYSCALL that carries the bytes with it: the
+    # children stay OBSERVABLE at the new path, so the next scan re-homes them with their node_ids
+    # intact. That primitive does not exist here.
+    #
+    # On S3 "moving cad/ to cad2/" is 2N non-atomic requests, and the tempting cheap version —
+    # rewrite the dir node's storage_path and touch no keys — is silent corruption: the children's
+    # KEYS stay at cad/*, their nodes still say cad/*, and the next scan re-synthesizes a dir node
+    # at the cad/ prefix. The tree then claims a folder the bytes are not in.
+    #
+    # So both verbs refuse dirs here, and unlike Share the two refusals come from ONE fact —
+    # there is no directory and there is no rename — rather than from Share's observable-vs-skipped
+    # asymmetry. This is a real capability regression against Share, and it is the honest one:
+    # a user renaming a folder in their own S3 console does the same 2N copies, and the observer
+    # pairs every child back by (content_hash, size). We decline to ORIGINATE it, not to survive it.
+    test "moving a DIRECTORY is refused: S3 has no directory and no rename" do
+      dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                deleted: false, storage_path: "cad", mtime: 1)
+      gear = create_file!(name: "cad/gear.stl", bytes: "g")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.move(@user, node_id: dir.node_id, new_parent_node_id: nil, new_name: "cad2")
+      end
+      assert_match(/files only/, err.message)
+      assert_equal 0, @fake.calls[:copy_object]
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: gear).storage_path
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body
+    end
+
+    # UnsupportedOperation is a StandardError, and that is load-bearing rather than taxonomy: a
+    # user clicked delete on a folder, so GeneratePreviewJob's `rescue StandardError` shape must
+    # catch it. NotImplementedError is a ScriptError and would propagate uncaught and page on-call.
+    test "a refused directory delete is a client condition, catchable by rescue StandardError" do
+      dir = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                deleted: false, storage_path: "cad", mtime: 1)
+      caught = begin
+        adapter.delete(@user, node_id: dir.node_id)
+        nil
+      rescue StandardError => e
+        e
+      end
+      assert_instance_of FileLayer::UnsupportedOperation, caught
+    end
+
+    # --- move (task 6) --------------------------------------------------------------------
+
+    test "move copies to the new key, removes the original, and keeps the node_id" do
+      id = create_file!(name: "old.stl", bytes: "same")
+      attachment = attach!(id)
+      adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "new.stl")
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "new.stl", node.storage_path
+      assert_equal "new.stl", node.name
+      assert_equal "same", @fake.objects["#{PREFIX}/new.stl"].body
+      assert_nil @fake.objects["#{PREFIX}/old.stl"], "S3 has no rename: the original is removed"
+
+      scan!
+      assert_equal id, @user.nodes.find_by!(storage_path: "new.stl").node_id, "the scan must agree"
+      assert_not orphaned?(attachment), "the attachment survives the move — the port's promise"
+    end
+
+    test "move into a subdirectory addressed by parent_node_id" do
+      id = create_file!(name: "loose.stl", bytes: "g")
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   deleted: false, storage_path: "cad", mtime: 1)
+      adapter.move(@user, node_id: id, new_parent_node_id: parent.node_id, new_name: "gear.stl")
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "cad/gear.stl", node.storage_path
+      assert_equal parent.node_id, node.parent_node_id
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body
+      assert_nil @fake.objects["#{PREFIX}/loose.stl"]
+    end
+
+    test "move refuses to overwrite an existing object" do
+      a = create_file!(name: "a.stl", bytes: "aaa")
+      create_file!(name: "b.stl", bytes: "bbb")
+      assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: a, new_parent_node_id: nil, new_name: "b.stl")
+      end
+      assert_equal "bbb", @fake.objects["#{PREFIX}/b.stl"].body, "the destination is untouched"
+      assert_equal "aaa", @fake.objects["#{PREFIX}/a.stl"].body, "and the source survives"
+      assert_equal 0, @fake.calls[:copy_object], "checked BEFORE copying"
+    end
+
+    # A clobber check that fails for a reason OTHER than absence must not read as "vacant" — the
+    # same fail-safe direction write's HEAD takes, and the same credentials-outage shape.
+    test "a move whose clobber check fails transiently refuses rather than assuming vacant" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+      @fake.fault!(:head_object, "AccessDenied")
+      assert_raises(FileLayer::FetchError) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "b.stl")
+      end
+      assert_equal 0, @fake.calls[:copy_object]
+    end
+
+    # "../escaped.stl" contains a separator, so it is the LEAF check that refuses it — assert the
+    # MESSAGE so this test names what it actually pins (2b shipped this asserting NotFound by class
+    # alone, and it pinned nothing).
+    test "move refuses a new_name that is not a leaf" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+      [ "cad/gear.stl", "../escaped.stl", "/etc/passwd", ".", "..", "" ].each do |bad|
+        err = assert_raises(FileLayer::NotFound, "#{bad.inspect} must be refused") do
+          adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: bad)
+        end
+        assert_match(/leaf name/, err.message, bad.inspect)
+      end
+      assert_equal 0, @fake.calls[:copy_object], "refused BEFORE any request left the process"
+      assert_equal "aaa", @fake.objects["#{PREFIX}/a.stl"].body
+    end
+
+    # THE escape guard on move's DESTINATION, reached the only way it can be — through the parent.
+    #
+    # assert_raises IS THE LOAD HERE, unlike the read path's escape tests where it is decoration.
+    # Same split Task 5 found for write, and for the same reason: with the guard deleted this
+    # composes "library/../escaped/pwned.stl" and copy_object SUCCEEDS — nothing raises, and the
+    # bytes land outside the prefix. On the read side a bogus key merely 404s, so the raise happens
+    # anyway and only the call count carries any weight. Work out which case a test is in.
+    test "move to a destination that escapes the prefix is refused" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+      evil = @user.nodes.create!(node_id: SecureRandom.uuid, name: "evil", kind: "dir",
+                                 deleted: false, storage_path: "../escaped", mtime: 1)
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: id, new_parent_node_id: evil.node_id, new_name: "pwned.stl")
+      end
+      assert_match(/escapes/, err.message)
+      assert_equal 0, @fake.calls[:copy_object], "refused BEFORE any request left the process"
+      assert_equal 0, @fake.objects.keys.count { |k| !k.start_with?("#{PREFIX}/") },
+                   "nothing may be written outside the prefix"
+    end
+
+    # THE FLAG TASK 5 LEFT FOR TASK 6, in its own words: "move's destination needs this same
+    # guard". A move into .trash is a live node at a key Task 7's observer never observes ->
+    # unpairable ghost -> tombstone -> the mass-deletion guard refuses that scan and every scan
+    # after it. 2b's retracted sentence — "a move is self-healing because the bytes stay
+    # observable" — is false exactly when the DESTINATION is the unobservable one.
+    test "move refuses a destination the scan does not index" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil,
+                     new_name: Library::Scanner::TRASH_PREFIX)
+      end
+      assert_match(/reserved/, err.message)
+      assert_equal 0, @fake.calls[:copy_object]
+
+      # ...and a NESTED .trash is the user's own folder: observed, indexed, none of our business.
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   deleted: false, storage_path: "cad", mtime: 1)
+      assert_nothing_raised do
+        adapter.move(@user, node_id: id, new_parent_node_id: parent.node_id,
+                     new_name: Library::Scanner::TRASH_PREFIX)
+      end
+    end
+
+    # The row is updated LAST, so a failed copy/delete leaves the node pointing at bytes that are
+    # still there. And a failure BETWEEN the copy and the delete is self-healing rather than
+    # silent: both keys exist, so the next scan pairs old->new by (content_hash, size) and re-homes
+    # the node with its node_id. Unlike delete, there is no tombstone to get wrong here — which is
+    # exactly why delete is the dangerous one.
+    test "a failed move leaves the node and the bytes where they were" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+      @fake.fault!(:copy_object, "InternalError")
+
+      assert_raises(FileLayer::FetchError) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "b.stl")
+      end
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "a.stl", node.storage_path
+      assert_equal "aaa", @fake.objects["#{PREFIX}/a.stl"].body
+      assert_equal 0, @fake.calls[:delete_object]
+    end
+
+    # --- undelete (task 6) ----------------------------------------------------------------
+
+    test "undelete copies the bytes back and revives the node with its node_id" do
+      id = create_file!(name: "bracket.stl", bytes: "solid")
+      attachment = attach!(id)
+      adapter.delete(@user, node_id: id)
+      assert orphaned?(attachment), "a trashed file's attachment is dangling by construction"
+
+      adapter.undelete(@user, node_id: id)
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_not node.deleted
+      assert_equal "bracket.stl", node.storage_path
+      assert_equal "solid", @fake.objects["#{PREFIX}/bracket.stl"].body
+      assert_nil @fake.objects["#{PREFIX}/.trash/#{id}/bracket.stl"], "the trash entry is consumed"
+      assert_not orphaned?(attachment), "and the attachment resolves again"
+    end
+
+    test "undelete restores into the original subdirectory, not the root" do
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   deleted: false, storage_path: "cad", mtime: 1)
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl",
+                           io: StringIO.new("g"))
+      adapter.delete(@user, node_id: info.node_id)
+      adapter.undelete(@user, node_id: info.node_id)
+
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: info.node_id).storage_path
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body
+    end
+
+    # The `live: false` parent lookup, and S3 needs it MORE than Share does: trashing the only
+    # file under a prefix makes that prefix disappear, so Task 7's observer — which synthesizes
+    # dirs FROM prefixes — tombstones the dir node. Refusing here would make the last file in any
+    # folder permanently unrestorable, which is the common case rather than an edge one.
+    #
+    # No mkdir_p is needed (S3 has no directories): writing the key makes the prefix exist again,
+    # and the observer revives that very dir node by storage_path with its original node_id.
+    test "undelete restores into a parent the scan tombstoned after the folder emptied" do
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   deleted: false, storage_path: "cad", mtime: 1)
+      info = adapter.write(@user, parent_node_id: parent.node_id, name: "gear.stl",
+                           io: StringIO.new("g"))
+      adapter.delete(@user, node_id: info.node_id)
+      parent.update!(deleted: true) # the prefix is empty now; the observer tombstones the dir
+
+      assert_nothing_raised { adapter.undelete(@user, node_id: info.node_id) }
+      assert_equal "cad/gear.stl", @user.nodes.find_by!(node_id: info.node_id).storage_path
+      assert_equal "g", @fake.objects["#{PREFIX}/cad/gear.stl"].body
+    end
+
+    test "undelete refuses when something else now occupies the key" do
+      id = create_file!(name: "bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+      @fake.seed!("#{PREFIX}/bracket.stl", "someone else's file")
+
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_equal "someone else's file", @fake.objects["#{PREFIX}/bracket.stl"].body,
+                   "undelete must never clobber a live object"
+      assert @fake.objects["#{PREFIX}/.trash/#{id}/bracket.stl"], "the trashed bytes survive"
+    end
+
+    test "undeleting a LIVE node is a clean NotFound, not a confusing copy" do
+      id = create_file!(name: "live.stl", bytes: "b")
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_equal 0, @fake.calls[:copy_object]
+    end
+
+    test "a user cannot undelete ANOTHER user's trashed node" do
+      id = create_file!(name: "mine.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      other = User.create!(email: "s3-other-#{SecureRandom.hex(4)}@example.com")
+      assert_raises(FileLayer::NotFound) { adapter.undelete(other, node_id: id) }
+    end
+
+    test "undelete of a node whose trashed bytes are gone is terminal NotFound" do
+      id = create_file!(name: "purged.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      @fake.objects.delete("#{PREFIX}/.trash/#{id}/purged.stl")
+      create_file!(name: "other.stl", bytes: "the library is populated") # so the probe says present
+
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/purged/, err.message)
+    end
+
+    # AN UNMOUNTED LIBRARY MUST NEVER READ AS "YOUR FILE IS PERMANENTLY GONE". Share raises
+    # FetchError, not NotFound, when the trashed bytes are missing AND the root looks unmounted.
+    # S3's equivalent of "unmounted" is a credentials outage / a wrong bucket / a mistyped prefix —
+    # which is exactly what FetchError already means, and it makes EVERY object 404 at once.
+    # NotFound is terminal; a genuinely purged file retried is harmless, a live library burned to
+    # "your file is gone" is not. Same trade, same direction as read's (spec §6).
+    test "undelete with the library prefix EMPTY is transient, not a false 'purged'" do
+      id = create_file!(name: "gone.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      @fake.objects.clear # the bucket is wrong/empty/unreachable, not "the purge job ran"
+
+      assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: id) }
+      assert @user.nodes.find_by!(node_id: id).deleted, "and it stays restorable"
+    end
+
+    # The probe is itself I/O against the store that just failed, so it fails too during a real
+    # outage. It must not turn a transient answer terminal on its way out.
+    test "an undelete whose trash HEAD fails transiently stays transient" do
+      id = create_file!(name: "flaky.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      @fake.fault!(:head_object, "AccessDenied")
+
+      assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: id) }
+      assert @user.nodes.find_by!(node_id: id).deleted
+    end
+
+    # ORDER: copy -> revive -> sweep the trash copy. The redundant copy is dropped LAST, after the
+    # node is live, and the sweep is BEST-EFFORT rather than raising — the same "the destructive
+    # act goes last" rule delete's tombstone follows, applied to undelete's one destructive act.
+    #
+    # Copy -> delete-trash -> revive (the order that mirrors Share) is the LANDMINE AGAIN: a failed
+    # delete-trash would raise with the node still trashed and the bytes already at their real key,
+    # so the next scan observes an unclaimed path, cannot revive by path (storage_path is NULL),
+    # and mints a NEW node — orphaning every attachment. Share cannot have both copies at once
+    # (rename is atomic) and so cannot reach for this; we can, and having both beats having neither.
+    test "a failed trash sweep still leaves the file restored, not half-undeleted" do
+      id = create_file!(name: "swept.stl", bytes: "b")
+      attachment = attach!(id)
+      adapter.delete(@user, node_id: id)
+      @fake.fault!(:delete_object, "InternalError")
+
+      assert_nothing_raised { adapter.undelete(@user, node_id: id) }
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_not node.deleted, "the undelete SUCCEEDED — the leftover is the purge job's problem"
+      assert_equal "swept.stl", node.storage_path
+      assert_equal "b", @fake.objects["#{PREFIX}/swept.stl"].body
+      assert_not orphaned?(attachment)
+
+      # ...and the next scan is a no-op rather than a resurrection or a duplicate.
+      @fake.clear_faults!
+      assert_nothing_raised { scan!(max_delete_pct: 100) }
+      assert_equal id, @user.nodes.find_by!(storage_path: "swept.stl").node_id
+      assert_equal 1, @user.nodes.present.where(kind: "file").count
+    end
+
+    # A failed COPY must leave the node trashed and the trashed bytes intact — the file is still
+    # restorable, and the user retries. Never a revive whose bytes never arrived.
+    test "a failed undelete copy revives nothing and keeps the trashed bytes" do
+      id = create_file!(name: "back.stl", bytes: "b")
+      adapter.delete(@user, node_id: id)
+      @fake.fault!(:copy_object, "InternalError")
+
+      assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: id) }
+
+      assert @user.nodes.find_by!(node_id: id).deleted, "still trashed, still restorable"
+      assert_equal "b", @fake.objects["#{PREFIX}/.trash/#{id}/back.stl"].body
+      assert_nil @fake.objects["#{PREFIX}/back.stl"]
     end
 
     test "s3 is the unversioned, unsyncable, PRESIGNABLE backend" do
