@@ -29,7 +29,17 @@ class TrashController < ApplicationController
   # that path" are one condition — the user cannot act on the difference, and none of them means
   # the restore happened. The message promises nothing it cannot keep: notably NOT "it's gone",
   # which is false for the occupied-destination case.
-  rescue_from ActiveRecord::RecordNotFound, FileLayer::NotFound do
+  #
+  # UnsupportedOperation IS IN THIS LIST BECAUSE THE FOURTH CONDITION ABOVE IS ITS ONLY WAY HERE.
+  # `undelete` raised NotFound for an occupied destination until the clobber fix; the class moved,
+  # and this rescue's INTENT did not — the sentence above already named that case as one it
+  # catches. Left out, an ordinary "something is at that path now" restore became a 500 rather
+  # than the alert this line was written to give it (caught by s3_write_test.rb, not by reading).
+  #
+  # NOT mapped to e.message the way FilesController maps it: there the message IS the answer (the
+  # name is taken, pick another); here the flattening above is deliberate and predates this.
+  rescue_from ActiveRecord::RecordNotFound, FileLayer::NotFound,
+              FileLayer::UnsupportedOperation do
     redirect_to trash_index_path, alert: "Couldn't restore that item."
   end
 

@@ -67,6 +67,26 @@ module Web
       assert_equal "solid bracket", response.body
     end
 
+    # A restore whose destination is now taken must be an ALERT, not a 500. TrashController's
+    # rescue lists exactly this case ("something is already at that path"), and it reached it via
+    # FileLayer::NotFound until the clobber fix moved the class -- at which point the rescue's
+    # sentence still named the case and the rescue no longer caught it. Both adapters can meet it,
+    # so both pin it (s3_write_test.rb has the mirror); this is the share half.
+    test "restoring into an occupied path is refused with an alert, not a 500" do
+      id = index!("bracket.stl", "solid")
+      delete file_path(id)
+      File.binwrite(@root.join("bracket.stl"), "someone else's file")
+
+      post restore_trash_path(id)
+
+      assert_redirected_to trash_index_path
+      assert_match(/Couldn't restore/, flash[:alert])
+      assert_equal "someone else's file", File.binread(@root.join("bracket.stl")),
+                   "restore must never clobber a live file"
+      assert @root.join(".trash", id, "bracket.stl").exist?,
+             "and the trashed bytes must survive the refusal"
+    end
+
     # THE LIE TASK 7 REPORTED, in the spelling it reported it in. The size lives on the node row
     # here, not on a Version, and the page has to read the port to find it.
     test "the trash reports a real size on the share backend -- it used to be an em-dash" do
