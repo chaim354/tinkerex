@@ -8,11 +8,43 @@
 deletes/moves through the port. **The third adapter, and the one the port was shaped for:** it
 inherits `FileLayerWritableContract` from Share, which was that contract's entire purpose.
 
-**Server suite 698 → 870, identical on all three backends** — `bin/rails test`,
-`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **870 runs, 2564 assertions, 0 failures,
-0 errors, 5 skips**. The s3 leg is new in `ci.yml` (`test-s3-backend`, self-hosted, **no external
+**Server suite 698 → 871, identical on all three backends** — `bin/rails test`,
+`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **871 runs, 2567 assertions, 0 failures,
+0 errors, 5 skips**. (870/2564 until the real-bucket run below added the test pinning FakeS3's
+copy-source decoder.) The s3 leg is new in `ci.yml` (`test-s3-backend`, self-hosted, **no external
 service**): `test/support/fake_s3.rb` is a real `Aws::S3::Client` with stub lambdas, real error
 classes, and real pagination at 2 keys/page.
+
+**The real-bucket run happened (2026-07-17, SeaweedFS 4.39 on a local scratch instance)** — the
+DoD's requirement, and the first time any of this met a store instead of a hand-written fake. Its
+purpose was adversarial: `FakeS3` had already hidden one silent data-loss bug by being the exact
+inverse of the code's misunderstanding, so the question was where else the two disagree.
+
+**No fault was found in the adapter or the observer.** Confirmed by observation: `copy_object`
+stamps a **new** `Last-Modified` (the trash-retention window's premise); the ETag arrives
+**quoted** in put/head/list and the SDK does not strip it (so `ObjectIdentity`'s single strip
+point is load-bearing, and `MD5_ETAG` does not match the raw 34-char form); `copy_source_if_match`
+**is honored** (mismatch → `PreconditionFailed`); a multipart ETag really carries `-N`, takes
+rung 3 and fires the warn; the real page size is **1000** and the observer saw all **1050** of a
+>1000-object bucket; **head and list agree exactly**, so a written file does not churn and the
+scan is idempotent; and the **headline E2E passes on a real store** — an out-of-band
+reorganization through the S3 API, and the attachment still resolves with its `node_id` intact.
+Delete → `.trash` → undelete round-trips, a deleted-today entry **survives** a 30-day window, and
+an expired one is really purged.
+
+**The one real divergence was in the fake**, on the same bug's home turf: `do_copy` decoded with
+`CGI.unescape` (form decoding, `+` = space) where a real store percent-decodes (`+` = literal
+plus — verified: SeaweedFS answers `InvalidArgument`). The adapter has been correct since the
+`url_encode` fix, so this was the **missing regression guard**, not a live bug: reverting the
+adapter to `CGI.escape` still passed against the fake. Fixed, and pinned by a mutation-checked
+test of the fake itself. **The lesson is the phase's own, restated:** a round-trip through a
+double proves only that the double and the code agree — assert the **wire**.
+
+**Still unverified:** `copy_object`'s 5GB cap and its error class (cannot stage 5GB; the SDK mints
+error classes via `const_missing`, so "the class exists" is not a check); **R2/MinIO/Ceph**
+specifics — only SeaweedFS was exercised, and AWS may well be *stricter* where SeaweedFS is
+lenient (it collapses `a//b`, refuses `./..` keys, has no checksum API, and returns
+`copy_object_result.etag` unquoted where AWS quotes it — none of which production reads today).
 
 **The Phase 3 trap is disarmed.** Both gates — `ScanJob.scan_all!` and `TrashPurgeJob.purge_all!`
 — were `is_a?(FileLayer::Share)`, which would have answered **false** for the new adapter and

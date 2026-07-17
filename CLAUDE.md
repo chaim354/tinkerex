@@ -569,7 +569,7 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
     - **Phase 3 DONE** (2026-07-17, branch `worktree-file-layer-s3-phase3`, 13 commits) — **the
       user's own S3 bucket as a library**, `LIBRARY_BACKEND=s3` + `LIBRARY_S3_*`. It boots,
       indexes an existing bucket, and reads/writes/deletes/moves through the port. Suite
-      **698 → 870**, **identical on all three backends** (`bin/rails test`,
+      **698 → 871**, **identical on all three backends** (`bin/rails test`,
       `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3` — the last is a new CI leg, self-hosted, no
       external service: a real `Aws::S3::Client` with stub lambdas, real error classes, real
       pagination at 2 keys/page). **The Phase 3 trap is DISARMED:** both gates
@@ -646,13 +646,42 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         portable conditional put (R2/SeaweedFS/Ceph). It stops the ordinary case; it does not
         claim atomicity. **`put_object`'s response carries no `last_modified`** (verified) →
         **two billed HEADs per write**, stated rather than hidden.
-      - **WHAT IS NOT VERIFIED — everything is hermetic; NO REAL-BUCKET RUN HAPPENED, and the
-        DoD requires one.** Unverified against a live store: `copy_object`'s 5GB cap **and its
-        error class** (the SDK mints error classes via `const_missing`, so "the class exists" is
-        **not a check** — the assertion is unfalsifiable, which is why the guard depends on no
-        name and refuses from `node.size` instead); `copy_source_if_match` being honored;
-        quoted-vs-bare If-Match; whether SeaweedFS/MinIO/R2 paginate as modeled; real-world
-        non-UTF-8 key frequency.
+      - **THE REAL-BUCKET RUN HAPPENED** (2026-07-17, SeaweedFS **4.39** on a local scratch
+        instance — the DoD's requirement, closed). The whole point was to find where the
+        hand-written `FakeS3` and a real store still disagree, since the fake had already hidden
+        one silent data-loss bug by being the exact inverse of the code's misunderstanding.
+        **Nothing the adapter or the observer does was found wrong.** What the store confirmed,
+        by observation rather than reasoning: **`copy_object` stamps a NEW `Last-Modified`** (+2s
+        on a copy of an aged object — the premise of the whole trash-retention window, and the
+        one the fake models only *since* a review reasoned it out); **the ETag arrives QUOTED**
+        (34 chars, in put, head AND list — the SDK does **not** strip them, so
+        `ObjectIdentity`'s one strip point is load-bearing exactly as claimed, and `MD5_ETAG`
+        does *not* match the raw form); **`copy_source_if_match` IS honored** (matching → copy;
+        mismatched → `Aws::S3::Errors::PreconditionFailed`; quoted *and* bare both accepted);
+        **a multipart ETag really carries `-N`**, lands on rung 3 and fires the warn; **the real
+        page size is 1000** and the observer saw all 1050 of a >1000-object bucket; **the
+        headline E2E passes on a real store** (out-of-band reorganization via the S3 API, five
+        ballast files, attachment still resolves with `node_id` intact); and **head and list
+        agree exactly** on `last_modified`/etag/size, so a written file does **not** churn on
+        the next scan and the scan is idempotent.
+        **THE ONE REAL DIVERGENCE FOUND WAS IN THE FAKE, and it is the same bug's home turf:**
+        `do_copy` decoded with `CGI.unescape` (form decoding, `+` = space) while a real store
+        percent-decodes (`+` = literal plus, verified: the store answers `InvalidArgument`). The
+        adapter has been right since the `url_encode` fix, so this was the **missing regression
+        guard**, not a live bug — reverting the adapter to `CGI.escape` still passed against the
+        fake. Fixed + pinned by a test of the fake itself (mutation-checked).
+        **STILL UNVERIFIED:** `copy_object`'s 5GB cap **and its error class** (cannot stage 5GB;
+        the SDK mints error classes via `const_missing`, so "the class exists" is **not a
+        check** — which is why the guard depends on no name and refuses from `node.size`
+        instead); **R2/MinIO/Ceph specifics** (only SeaweedFS was exercised — and note AWS
+        itself may differ where SeaweedFS is lenient); real-world non-UTF-8 key frequency.
+        **Store-specific observations, none load-bearing today:** SeaweedFS returns
+        `copy_object_result.etag` **unquoted** while put/head/list quote it (AWS quotes it too;
+        nothing in production reads it); it has **no checksum API** at all (`checksum_sha256`
+        nil, `checksum_algorithm` `[]`), so the `sha256:` rung is unreachable there by a second
+        route on top of the listing one; and it **collapses `a//b`** and **refuses `./..`** keys
+        outright, so `indexable?`'s guards against those are unreachable on this store while
+        remaining correct for AWS, which permits them.
     - **Next: Phase 4 = capability gating + `Delivery`.** **`download` is Phase 4** — share-mode
       `blob` still 404s **by scope** (it resolves `node.current_version`, which a share/s3 node
       has no such thing as); S3's `presignable: true` is what Phase 4's `Redirect` is built on.
