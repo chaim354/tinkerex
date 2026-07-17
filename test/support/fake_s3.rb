@@ -150,7 +150,14 @@ class FakeS3
     if (want = ctx.params[:copy_source_if_match]) && want != o.etag
       return "PreconditionFailed"
     end
-    @objects[ctx.params[:key]] = o.dup
+    # A COPY IS A NEW OBJECT, so it gets a NEW Last-Modified -- real S3, and every store this
+    # backend points at (SeaweedFS/MinIO/R2/Ceph). Carrying the source's timestamp forward is not a
+    # harmless simplification: `delete` is copy-to-.trash-then-delete-original and
+    # TrashPurgeJob#purge_s3! ages an entry on the TRASH OBJECT's last_modified -- which on a real
+    # store IS the delete time. Inherit it and a two-year-old file deleted today is born aged, and a
+    # 30-day window purges it the same day, inside the window the operator configured, with no
+    # version to restore. The bytes are the ETag's; the timestamp is the copy's.
+    @objects[ctx.params[:key]] = o.dup.tap { |c| c.last_modified = Time.now }
     { copy_object_result: { etag: o.etag } }
   end
 

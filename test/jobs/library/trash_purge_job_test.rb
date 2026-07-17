@@ -382,6 +382,45 @@ module Library
       assert_equal 0, fake.calls[:delete_object], "not even the entries page 1 fully showed"
     end
 
+    # THROUGH THE REAL `delete`, AND THE ONLY TEST HERE THAT IS. Every other s3 purge test seeds a
+    # trash object with an explicit last_modified, which quietly asserts nothing about the thing the
+    # whole window rests on: THAT A TRASH OBJECT'S AGE IS ITS DELETE TIME, not its file's age.
+    #
+    # It holds because S3#delete is a COPY, and a copy is a NEW OBJECT with a NEW Last-Modified —
+    # real S3, and every store this backend points at (SeaweedFS/MinIO/R2/Ceph). So a file the user
+    # made two years ago and deleted today is a trash object from today, and the 30-day window means
+    # 30 days from the DELETE.
+    #
+    # A fake that copied the source's timestamp forward would invert it — the same file would be
+    # purged the day it was deleted, inside the window the operator configured, with no version to
+    # restore. FakeS3#do_copy did exactly that, and nothing could see it: no test reached delete.
+    # This is the CGI.escape shape again (a fake disagreeing with reality where the suite cannot
+    # look), so the link is asserted end-to-end rather than reasoned about.
+    test "a two-year-old file deleted today survives the window — the trash ages from the DELETE" do
+      fake = FakeS3.new
+      body = "an old bracket"
+      fake.seed!("library/old.stl", body, last_modified: 2.years.ago)
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "old.stl", kind: "file",
+                                 storage_path: "old.stl", size: body.bytesize,
+                                 content_hash: "md5:#{Digest::MD5.hexdigest(body)}",
+                                 mtime: 2.years.ago.to_i * 1_000_000_000)
+
+      adapter = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                  secret_access_key: "sk", prefix: "library", client: fake.client)
+      FileLayer.current = adapter
+      adapter.delete(@user, node_id: node.node_id)
+
+      trash_key = "library/.trash/#{node.node_id}/old.stl"
+      assert fake.objects[trash_key], "delete moves the bytes to .trash"
+
+      Library::TrashPurgeJob.perform_now(trash_days: 30)
+
+      assert fake.objects[trash_key],
+             "a file deleted TODAY must survive a 30-day window, however old the file itself was"
+    ensure
+      FileLayer.reset!
+    end
+
     # THE SHARE'S "NEVER REMOVE `.trash` ITSELF" RULE HAS NO S3 ANALOGUE, and this test pins what
     # happens instead. It is the one place the two reapers genuinely diverge, so it is written down
     # rather than discovered.
