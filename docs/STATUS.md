@@ -1,8 +1,179 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-16 (**Reconciler scaling** — the no-op scan and move-pairing, before S3)
+**Updated:** 2026-07-17 (**phase 3 — the user's own S3 bucket as a library**)
 
-## Latest (2026-07-16): the Reconciler scales, and its own comment was the problem
+## Latest (2026-07-17): phase 3 — point it at your own S3 bucket
+
+`LIBRARY_BACKEND=s3` + `LIBRARY_S3_*` boots, indexes an existing bucket, and reads/writes/
+deletes/moves through the port. **The third adapter, and the one the port was shaped for:** it
+inherits `FileLayerWritableContract` from Share, which was that contract's entire purpose.
+
+**Server suite 698 → 866, identical on all three backends** — `bin/rails test`,
+`LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **866 runs, 2549 assertions, 0 failures,
+0 errors, 5 skips**. The s3 leg is new in `ci.yml` (`test-s3-backend`, self-hosted, **no external
+service**): `test/support/fake_s3.rb` is a real `Aws::S3::Client` with stub lambdas, real error
+classes, and real pagination at 2 keys/page.
+
+**The Phase 3 trap is disarmed.** Both gates — `ScanJob.scan_all!` and `TrashPurgeJob.purge_all!`
+— were `is_a?(FileLayer::Share)`, which would have answered **false** for the new adapter and
+silently no-opped: the library never indexed, the purge simply stopped. They now key on a new
+**`scannable`** capability, asking one question: *does this backend's catalog come from polling
+the store?* Chunk **false** (its tree is the changelog — nothing to scan, nothing that changes
+behind our back); share/s3 **true**.
+
+**`scannable` is neither of the two things it looks like**, and both near-misses matter:
+- **Not `!syncable?`.** They are equal today by *coincidence of having exactly three backends*.
+  A notification-driven backend (S3 event notifications, a webhook) answers **false to both** —
+  and a derived `scannable` would poll it every 15 minutes forever. Two questions that share an
+  answer today are still two questions. **A coincidence was encoded once already** (`is_a?(Share)`)
+  and silently became wrong the moment the second backend arrived; that is the whole reason this
+  capability exists.
+- **Not Phase 4's `port_writable`.** Chunk answers **true** there and **false** here. Opposite
+  answers for one backend is the proof they are different questions, not one wearing two names.
+
+### The identity ladder — an S3 object has no free content hash
+
+The port asks **two different questions** of one value, and conflating them is a data-loss bug:
+`content_token` need only be an opaque content-**state** token (an ETag is one), but
+`content_hash` must be content-**determined** for move-pairing — and **a multipart ETag is not**
+(same bytes, different part size, different ETag). So one namespaced value, a strength ladder:
+
+| rung | value | content-determined? | cost |
+|---|---|---|---|
+| 1 | `sha256:<b64>` | yes — **FULL_OBJECT only** | a HEAD per object |
+| 2 | `md5:<hex>` | yes — a single-part ETag **is** the md5 | free (in the listing) |
+| 3 | `etag:<raw>` | **no** — moves degrade to delete+create | free |
+
+A **COMPOSITE** sha256 is a checksum-of-checksums — the same defect as a multipart ETag wearing a
+better name — so rung 1 requires the *type*, not the checksum alone. Rung 2 is **32 hex**, not
+merely "dash-free": this backend points at S3-*compatible* stores (SeaweedFS/MinIO/Ceph) free to
+emit any shape, and calling an unknown string `md5:` is the lie the namespacing exists to prevent.
+Rung 3's failure direction is the safe one — a **missed** rename, never a **wrong** pairing (a
+false positive would fuse two files into one identity and swap their attachments).
+
+**The ladder is TOTAL by construction — it never returns nil — and that is the guard, not
+tidiness.** `Reconciler#plan_moves` **drops** a nil-hash observation from `candidates`, and
+candidates is what becomes the leftovers that get indexed. A nil hash means **the object is never
+indexed at all**: no error, no log, no node. The Reconciler's comment reasons "the next pass
+indexes it properly" — true for a share (a nil hash there is an EACCES blip) and **permanently
+false** for S3. **Quotes come off in exactly one place**: S3 wraps every ETag in literal quotes in
+list, head *and* put responses, so mixing the forms gives one object two identities → every object
+reads as changed on every scan and move-pairing never pairs.
+
+**Download-and-hash was rejected on the spec's own terms:** a full billed egress of the bucket to
+index a library the user already has is precisely the cost the "point it at my existing storage"
+on-ramp exists to avoid.
+
+### `LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — and the plan's cost model was unachievable
+
+The plan priced it at "one HEAD per object on every **first sight**". **That layer cannot deliver
+it: an observer does not know which objects are new — the Reconciler does.** So a HEAD there is
+per-object-per-**scan**: on a 2M-object bucket, **2M billed requests every 15 minutes**, not 2M
+once. Costing an operator that under a flag advertised as costing 2M once is worse than not
+offering the flag. **Consequence: the `sha256:` rung is unreachable from any production path
+today** — `list_objects_v2` returns `checksum_type` but never the checksum *value*, and `write`
+uses put_object's ETag. **Do not document the env var as working.**
+
+### Landmine 3 — the tombstone goes after the DELETE, not just after the copy
+
+Spec §6 says *"tombstone only after the copy confirms"*. **Correct and not sufficient**, and the
+gap is only visible read against 2b's storage_path-nulling — a landmine settled in a *different
+phase*:
+
+- `copy → TOMBSTONE → delete`, **delete fails**: the object is still live at its key, but the node
+  is tombstoned with `storage_path` NULL, so the next scan observes the key, finds no live node
+  claiming it, and **cannot revive by path**. It mints a **new `node_id`** → **every attachment
+  orphaned**, by a scan that did nothing wrong, with no error anywhere.
+- `copy → delete → TOMBSTONE`, **delete fails**: no tombstone, node live, path matches, next scan
+  is a no-op. The user retries. **Consistent.**
+
+Proven end-to-end with a real attachment. `undelete` is the same landmine wearing another hat:
+copy → revive → sweep the trash copy **best-effort, last**.
+
+### The `CGI.escape` bug — the phase's sharpest find, and it is a lesson about testing
+
+aws-sdk-s3 does **not** escape `copy_source` (verified by capturing `x-amz-copy-source` at the
+`:sign` step). `CGI.escape` is the obvious reach and is **form** encoding, so
+`"Bracket v2.stl"` → `"Bracket+v2.stl"`, and real S3 decodes per RFC 3986 where `+` is a **literal
+plus**. In `delete` the user never sees an error: **the copy reads a nonexistent key, the delete
+removes the right one, the tombstone follows** → the file is permanently gone with someone else's
+bytes in its trash slot. A space in a filename is the most ordinary thing in a CAD library.
+
+**`FakeS3` hid it by being the exact inverse** (`CGI.unescape`) — `CGI.escape`/`unescape` are
+inverses, so the wrong encoder was **green across 79/80 tests** and broken against every real
+store. Fixed with per-segment `ERB::Util.url_encode`, and asserted **at the wire** rather than
+through the fake.
+
+> **A hermetic fake built from the same misunderstanding as the code confirms the
+> misunderstanding.** Assert the WIRE format, not the round-trip. Watch for this shape wherever a
+> fake and the code under test share an assumption.
+
+### The other decisions worth not undoing
+
+- **S3 is the one backend where `presignable` is TRUE and `versioned` is FALSE**, and that
+  combination is the point. Every other backend has the two agreeing (chunk true/true, share
+  false/false), so a reader could infer they co-vary — S3 is the counterexample. **§15 (bytes out
+  of Rails) SURVIVES here** (a bucket has a URL signer, exactly what a mounted directory lacks;
+  Phase 4's `Redirect` is built on it) **while §5 (keep versions) does not**.
+- **The boot guard does no network.** A boot that depends on a third party being up turns a blip
+  into a crash loop. Config *presence* is what boot can honestly check; credential *validity*
+  surfaces on first use as a retryable `FetchError`.
+- **`key_for` rejects, never normalizes.** `expand_path` would turn `a/../b` into a *valid* key
+  and silently read the wrong object. Not theoretical: we sign **path-style** URLs, so a `..`
+  segment lands in the URL path and any normalizing proxy resolves it out of our bucket.
+- **`write` has no temp-and-rename, and its ABSENCE is the thing to read carefully** — someone who
+  knows `Share#write` will see a missing step and "restore" it. Share renames because a
+  half-written file is *visible* the whole time it is written; **put_object is atomic**, so there
+  is nothing to protect against, and a temp key would only add a second unobservable ghost.
+  Clobber is **refused** (every backend here is current-state-only → a clobber is the user's file
+  permanently gone from a name collision in an upload form) — but it is a `head`-then-`put`
+  **check, not a lock**: TOCTOU, and S3 has no portable conditional put. It stops the ordinary
+  case; it does not claim atomicity. **`put_object`'s response carries no `last_modified`**
+  (verified) → **two billed HEADs per write**, stated rather than hidden.
+- **Both `delete` and `move` refuse directories**, diverging from Share, which allows dir *moves*.
+  Share's permission rests **entirely** on `rename()` being one atomic syscall that carries the
+  bytes, leaving the children observable at the new path for the scan to re-home. Here there is
+  **no directory and no rename**: a dir node's key does not exist, so unguarded the copy 404s → a
+  `FetchError` telling the user to retry, forever, an operation that can never succeed. A cascade
+  is N copies + N deletes with no atomicity and no undo for a half-finished one. **One fact, both
+  verbs** — where Share needed two arguments to reach two different answers. A real capability
+  regression against Share for `move`, and the honest one: we decline to *originate* it, not to
+  survive it (a user renaming a folder in their own console is paired back by the observer).
+- **The Reconciler is the reusable half; the Scanner is not.** The spec (§9.3) says Phase 3
+  "reuses the scanner" — **it cannot**: a `Dir.children`/`lstat`/symlink walk is irreducibly
+  filesystem-shaped. `Library::S3Observer` is its own observer over `list_objects_v2`, feeding the
+  *same* (deliberately filesystem-free) Reconciler — which is what matters, because **every one of
+  2a's bugs lived in the logic a second copy would have duplicated**.
+- **Landmine 4 — a partial listing is indistinguishable from a mass deletion.** `list_objects_v2`
+  paginates, and a failure on page 7 of 40 is a **well-formed lie** that looks exactly like the
+  user deleting 82% of their library. It is **2a's `Pathname#find`/`EACCES` bug with a different
+  spelling**, minus the escape hatch: `unreadable_dirs` scopes a gap to a *subtree*, and a page
+  boundary is an arbitrary key range that scopes to nothing. **Complete-or-abort is the only
+  honest answer** (`Scanner::UnsafeScan`).
+- **Landmine 6 — dir-marker objects** (`cad/`, minted by the S3 console) would become a phantom
+  *file* node beside the real dir node. And **`valid_encoding?` does NOT transfer from the
+  Scanner**: it asks about the string's **tag**, and an ASCII-8BIT string is *always* valid
+  (verified), so the naive port waves a `\xFF` key straight into `storage_path`.
+
+### What is NOT verified — no real-bucket run happened
+
+**Everything above is hermetic.** The DoD requires a real-bucket run; it has not been done. Still
+unverified against a live store:
+
+- `copy_object`'s **5GB cap and its error class**. The SDK mints error classes via
+  `const_missing`, so `Aws::S3::Errors::TotallyMadeUpNonsenseError` resolves as readily as a real
+  one — **"the class exists" is not a check**, the assertion is unfalsifiable. Hence the guard
+  depends on **no name** and refuses from `node.size` instead, with the store's own refusal as a
+  backstop landing in the same safe place (ServiceError → FetchError → **nothing tombstoned**).
+- `copy_source_if_match` being honored, and quoted-vs-bare If-Match.
+- Whether SeaweedFS/MinIO/R2 paginate as modeled.
+- Real-world non-UTF-8 key frequency.
+
+**Next: Phase 4 = capability gating + `Delivery`.** `download` is Phase 4 — share-mode `blob`
+still 404s **by scope** (it resolves `node.current_version`, which a share/s3 node has no such
+thing as). Phase 4 adds **`port_writable`**.
+
+## Previous (2026-07-16): the Reconciler scales, and its own comment was the problem
 
 Both limitations 2a and 2b carried as "fix before a real 2TB NAS" are closed. They were fixed
 **before Phase 3 deliberately**: S3 is where someone actually points 2M objects at this, so the
@@ -133,6 +304,8 @@ the UI drives*, **NOT** "accepts uploads" — chunk mode accepts uploads fine, v
 and getting that wrong would hide upload in chunk mode. **Phase 3 trap, now in two places:** the
 `is_a?(FileLayer::Share)` gate in `ScanJob.scan_all!` *and* `TrashPurgeJob.purge_all!` quietly
 answers false the moment `FileLayer::S3` exists — the purge silently stops.
+*(Superseded 2026-07-17 — the trap was real and is **disarmed**: both gates now key on the
+`scannable` capability. This paragraph is a snapshot of 2b; see the top of this file.)*
 
 ## Previous (2026-07-16): phase 2a — point it at a NAS and the attachments survive
 
