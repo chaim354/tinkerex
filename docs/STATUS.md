@@ -1,6 +1,48 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-17 (**phase 4 follow-up — the N+1, the clobber class, s3 write coverage**)
+**Updated:** 2026-07-17 (**three backends LIVE on the box + three web-UI features**)
+
+## Latest (2026-07-17 PM): all three FileLayer backends deployed live, web UI usable
+
+**The whole maker/file-layer split (phases 1–4 + follow-up) is on `main` and DEPLOYED.** Three
+containers run on the Unraid VM `192.168.1.95` from one image, one per `LIBRARY_BACKEND`,
+host-routed through one shared kamal-proxy — verified each booted into its own distinct backend:
+
+| host | backend | scannable | syncable | port_writable |
+|---|---|---|---|---|
+| `chunk.tinkerex.local` | Chunk | false | true | false |
+| `s3.tinkerex.local` | S3 (SeaweedFS `my-bucket`, prefix `library/`) | true | false | true |
+| `share.tinkerex.local` | Share → **the real Unraid `3D Printing` SMB share** | true | false | true |
+
+- **Deploy mechanics:** `config/deploy.{s3,share}.yml` overlays; each destination has its OWN
+  SQLite volume (a shared one would put three apps on one DB); share/s3 set
+  `STORAGE_BACKEND=memory` to neutralize the chunk env Kamal's `deep_merge` can't delete — inert
+  only because the Phase 4 `syncable?` gate stops a share/s3 container ever building a chunk store
+  (without it every v1 request 500s). Client `/etc/hosts` → `192.168.1.95 chunk./s3./share.tinkerex.local`.
+- **The share is a real NAS mount:** a **Docker CIFS volume** (`tinkerex_library_3dprinting`,
+  guest, `uid/gid=1000`) over `//192.168.1.146/3D Printing` — no host `sudo mount`, no cifs-utils;
+  only the `cifs` kernel module is needed (persisted in `/etc/modules-load.d/cifs.conf`).
+  **Do NOT `docker volume rm` it** — Kamal would recreate it as a plain EMPTY local volume and the
+  library would silently go blank. Scanned live: **418 real files** indexed, `node_id`s stable.
+- **Three web-UI features shipped this session** (all on `main`, all deployed, TDD + mutation-verified,
+  all three legs green):
+  - **Folder navigation** (`5c415ff`) — `#index` scopes to `params[:folder]` (validated: ownership
+    + `kind: dir` + fallback-to-root), folder rows link, breadcrumb. Was a flat dump of every node.
+  - **OS-clutter ignore-list** (`b047a11`) — `Library::OsClutter.ignore?` (`.DS_Store`/`__MACOSX`/`._*`
+    + volume metadata) is ONE shared predicate feeding **both** the observer skips AND the
+    `observable!` write guards, so skip-set == write-refuse-set by construction (skipping a name
+    without refusing it on write is the skip-list wedge). Existing clutter tombstoned cleanly (2%).
+  - **On-demand "Rescan library" button** (`3cb2617`) — `POST /files/rescan` enqueues `ScanJob`,
+    gated on `scannable?` (absent + refused in chunk mode). Complements the 15-min recurring scan.
+- **Suite: 1007 runs / 3213 assertions / 0F / 0E / 5 skips, identical on all three legs.**
+
+**Operational gotchas for the next agent:** (1) **1Password re-locks mid-session** — `op read`/`op
+item get` then HANG; the deploy secret-guard aborts cleanly *before* touching anything, so a failed
+deploy is safe to retry once the vault is reopened. Registry token = 1Password item `ghcr.io`
+field `password` (NOT the `gh` CLI token — no `packages` scope); chunk/s3-library secret =
+`op://Personal/seaweednew/secret key`. (2) The **s3 library is up but its `library/` prefix is
+EMPTY** — nothing seeded yet. (3) Deploy: `bin/kamal deploy` (chunk builds+pushes), then
+`-d s3`, `-d share` (reuse the image). See `docs/DEPLOY.md` + the `deploy-build-workflow` handoff.
 
 ## Latest (2026-07-17): the phase 4 follow-up — three items closed
 
