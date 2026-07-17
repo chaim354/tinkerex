@@ -5,7 +5,21 @@ module Web
   # machinery the desktop client uses, with the memory chunk store backed by the dev blob
   # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
   class FilesFlowTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
+    # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
+    # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
+    # ignores LIBRARY_BACKEND, so it passed on the share/s3 legs by being blind to the backend
+    # rather than by being right. Routing #blob through FileLayer.current is what made the
+    # dependency real, and the share leg reported it immediately (ActionController::MissingFile --
+    # the Share adapter looking for these chunks' bytes on a disk that has none).
+    #
+    # That is the honest signal test_helper documents at pin_file_layer_backend, not a regression:
+    # nothing about the assertions below changed, only the declaration of which deployment they
+    # are about.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     # Sign in via the real password auth. Creates a confirmed account if needed, then
     # logs in (sets the signed session cookie) — the web UI works behind real auth.

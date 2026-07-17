@@ -105,8 +105,34 @@ module FileLayer
     # is one signature, and a caller who may omit it here but not on S3 is a caller who learns
     # the rule from whichever backend they happened to develop against. See S3#download, where
     # omitting it silently produces a header with no disposition type at all.
+    # THE EXISTENCE CHECK IS NOT DECORATION, and it is here rather than in the controller because
+    # only this class can answer the question honestly. Without it a vanished file reaches
+    # send_file, which raises ActionController::MissingFile — mapped to :internal_server_error
+    # (verified: it has no rescue_response of its own), so an ordinary "the user deleted it on
+    # the NAS" pages on-call as a 500.
+    #
+    # Mapping MissingFile to a 404 in the controller would fix that symptom and re-open the one
+    # #read exists to prevent: an UNMOUNTED share makes every file vanish at once, and the
+    # controller cannot tell that from a deletion — `library_present?` is this object's knowledge,
+    # not the web layer's. So this reuses #read's exact reasoning: ENOENT + a library that looks
+    # unmounted is the RETRYABLE answer, never the terminal one (spec §6). An unmounted NAS must
+    # never read to a user as "your file is permanently gone".
+    #
+    # Known, accepted race: the file can vanish between this stat and send_file's open, which
+    # degrades to the MissingFile 500 above. That is a genuine "it changed under us" — narrow and
+    # honest — where the unchecked version made it the ORDINARY case.
     def download(user, node_id:, disposition:, content_type: nil)
-      Delivery::SendFile.new(path: absolute_path(live_node!(user, node_id)).to_s)
+      path = absolute_path(live_node!(user, node_id))
+      File.stat(path) # raises; the rescues below map it exactly as #read does
+      Delivery::SendFile.new(path: path.to_s)
+    rescue Errno::ENOENT => e
+      unless library_present?
+        raise FetchError, "#{node_id.inspect}: ENOENT and the library root looks unmounted"
+      end
+      raise NotFound, "#{node_id.inspect}: #{e.class}"
+    rescue SystemCallError => e
+      # Every other errno is transient — see #read's argument, which applies here unchanged.
+      raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
     # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
