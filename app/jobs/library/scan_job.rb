@@ -1,8 +1,15 @@
 module Library
-  # Periodic reconcile of a share-backed library. Changes made outside the app (someone drops
-  # files on the NAS in Finder) surface within the interval — inotify/FSEvents are unreliable to
-  # absent over SMB/NFS for changes made by OTHER machines, which is the actual use case, so
-  # polling is the honest mechanism (spec decision 5).
+  # Periodic reconcile of a SCANNED library — share-backed or s3-backed. Changes made outside the
+  # app (someone drops files on the NAS in Finder, or runs `aws s3 mv`) surface within the interval
+  # — inotify/FSEvents are unreliable to absent over SMB/NFS for changes made by OTHER machines,
+  # and a bucket tells us nothing at all unless asked, so polling is the honest mechanism (spec
+  # decision 5).
+  #
+  # ONE JOB, TWO OBSERVERS, ONE RECONCILER (see .observer_for). Library::Scanner walks a
+  # filesystem, Library::S3Observer lists a bucket, and both hand Library::Observation to the same
+  # Library::Reconciler — which is where every decision (move-pairing, revive-by-path, the
+  # mass-deletion guard) actually lives. A second reconciler would be a second home for every bug
+  # 2a found in the first.
   #
   # WHY THE BACKEND GATE IS ON .scan_all! AND NOT ON #perform. They are different kinds of thing:
   # `scan_all!` is a SCHEDULE — recurring.yml fires it in every deployment including chunk-mode
@@ -34,20 +41,30 @@ module Library
     # The 15-minute schedule is itself the retry, and it is a better one than any backoff: it
     # re-observes the world instead of replaying a stale verdict.
 
-    # `root` is REQUIRED rather than defaulting to ENV["LIBRARY_PATH"]. scan_all! always passes it
-    # (from the validated adapter, below), so a default would only serve a hand-rolled call — and
-    # it would serve it a raw, unvalidated ENV read that is nil in every non-share deployment,
-    # making `Pathname.new(nil)` the operator's error message. Requiring it means the caller's
-    # mistake is named at the call site.
-    def perform(user_id:, root:)
+    # `root:` NAMES A SHARE ROOT, and it is optional for one reason: an s3 library has no name
+    # that may be written down here.
+    #
+    # ActiveJob SERIALIZES arguments into the queue's database, where they persist until the job
+    # runs — and after it fails. A share's target is a path, which is safe to write there and
+    # genuinely useful (an operator reading the failed-jobs table sees WHICH root refused). An s3
+    # library's target is a bucket plus the credentials to reach it, which must never be written
+    # there. So the s3 fan-out names only the user and this job resolves FileLayer.current, from
+    # the same validated ENV the fan-out itself read a moment earlier.
+    #
+    # THIS IS NOT THE GATE, and the distinction is the whole of Phase 3's trap. `root:` given =
+    # a caller named a share root and gets it scanned, whatever the deployment is (pinned by a
+    # test). `root:` omitted = "this deployment's library", which resolves to a scannable adapter
+    # or RAISES. Neither branch can silently do nothing, which is the property that matters:
+    # `scan_all!` may decline to schedule, but `perform` always performs or says why.
+    def perform(user_id:, root: nil)
       user = User.find(user_id)
 
-      # `new` + `call` rather than `Scanner.call`, which returns the instance only on success:
-      # holding the scanner means #unreadable_dirs is still reachable, and that is the whole
-      # reason Task 5 exposed it.
-      scanner = Library::Scanner.new(user, root:)
-      scanner.call
-      warn_unreadable(scanner, user)
+      # `new` + `call` rather than `.call`, which returns the instance only on success: holding
+      # the observer means #unreadable_dirs is still reachable, and that is the whole reason
+      # Task 5 exposed it (and Task 7 gave S3Observer the same method for the same caller — here).
+      observer = root ? Library::Scanner.new(user, root:) : observer_for(user)
+      observer.call
+      warn_unreadable(observer, user)
     end
 
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
@@ -59,22 +76,77 @@ module Library
     # a second one; a literal third copy here would be the one that drifts. Asking FileLayer.current
     # also hands us a root that check! has already validated (exists, is a directory, is readable)
     # instead of a raw ENV string — one fewer way for the two to disagree.
-    # PHASE 3 TRAP: today an s3 deployment raises NotImplementedError out of FileLayer.current
-    # above, which is loud and correct. The moment FileLayer::S3 exists, this is_a? quietly
-    # answers false and the scan SILENTLY STOPS — the exact silent-no-op this job's design
-    # argues against. An S3 library needs its own indexer (it has no walkable Pathname root);
-    # whoever builds it must decide here deliberately rather than inherit this false.
+    #
+    # THE PHASE 3 TRAP, DISARMED (2026-07-17, Task 8). This gate WAS `is_a?(FileLayer::Share)`.
+    # That was correct — Share was the only scanned backend — and it went silently wrong the day
+    # FileLayer::S3 landed: it answered false, scan_all! enqueued nothing, raised nothing, logged
+    # nothing, and an s3 library was simply never indexed while every test stayed green. It was
+    # reproduced in exactly that state before this line changed.
+    #
+    # THE LESSON, WHICH IS NOT "ADD S3": `is_a?(Share) || is_a?(S3)` would be the same bug with a
+    # longer fuse — the third backend inherits the same false from a check it has never heard of.
+    # The gate asks a CAPABILITY the adapter ANSWERS, so a new backend cannot be silently excluded
+    # from the scan: it must state `scannable:` to construct its Capabilities at all (Data.define
+    # requires every member), and whichever it states, this gate obeys it. The default is not
+    # "false", it is "you must say".
     def self.scan_all!
       adapter = FileLayer.current
-      return unless adapter.is_a?(FileLayer::Share)
+      return unless adapter.capabilities.scannable?
 
-      # .to_s: ActiveJob serializes arguments and Pathname is not a supported type — passing the
-      # adapter's Pathname straight through raises SerializationError at enqueue.
-      root = adapter.root.to_s
-      User.find_each { |user| perform_later(user_id: user.id, root:) }
+      # The s3 fan-out names NO target: a bucket + credentials must not be serialized into the
+      # queue's database (see #perform). Share's root is a path, which is safe there and useful in
+      # a failed-jobs row — and .to_s because ActiveJob cannot serialize a Pathname (it raises
+      # SerializationError at enqueue).
+      args = adapter.is_a?(FileLayer::Share) ? { root: adapter.root.to_s } : {}
+      User.find_each { |user| perform_later(user_id: user.id, **args) }
+    end
+
+    # THE DISPATCH — deliberately NOT the gate, and the difference is why an is_a? is honest here
+    # and was dishonest as a gate. The gate's failure mode was SILENCE: a backend it did not
+    # recognize got SKIPPED, and skipping looks exactly like a library with nothing in it. Here an
+    # unrecognized adapter yields nil and the caller raises. A future backend that answers
+    # `scannable: true` and forgets to add itself here gets a failed job naming the class; it does
+    # not get an empty library.
+    #
+    # IT ASKS NO CAPABILITY, and that is what makes it worth testing. `scannable` is a DECLARATION
+    # ("poll me"); this is an independent FACT ("something exists that can"). The contract asserts
+    # the two agree — a comparison with meaning only because neither side is derived from the
+    # other. When the check lived inside this method the contract test was circular and a Chunk
+    # mutated to `scannable: true` sailed straight through it (found by mutation, not by review).
+    #
+    # PUBLIC, and a class method, for that test. It stays in the job rather than becoming
+    # `adapter.observer_for(user)` because the direction of that dependency matters: FileLayer is
+    # the PORT and Library::* is a consumer of it, so an adapter that constructed an observer would
+    # have the port reaching up into the catalog layer.
+    def self.observer_for(user, adapter)
+      case adapter
+      when FileLayer::Share then Library::Scanner.new(user, root: adapter.root)
+      when FileLayer::S3    then Library::S3Observer.new(user, adapter:)
+      end
     end
 
     private
+
+    def observer_for(user)
+      adapter = FileLayer.current
+      observer = self.class.observer_for(user, adapter)
+      return observer if observer
+
+      # Both messages, because they are different mistakes with different fixes — and neither may
+      # be a silent no-op.
+      raise ArgumentError,
+            if adapter.capabilities.scannable?
+              "#{adapter.class} says it is scannable but Library::ScanJob has no observer for " \
+              "it — add one to .observer_for. (Refusing loudly rather than skipping: a scan " \
+              "that silently does nothing is indistinguishable from an empty library, which is " \
+              "the exact bug this job's gate shipped in Phase 3.)"
+            else
+              "#{adapter.class} is not a scanned backend (its catalog does not come from " \
+              "polling a store), so there is nothing for a scan to do. Chunk-mode libraries " \
+              "are maintained by the sync engine's changelog. Pass root: to scan a share " \
+              "directory explicitly."
+            end
+    end
 
     # The operator signal for a half-mounted NAS. This matters precisely when the mass-deletion
     # guard does NOT trip: a small unreadable subtree stays under the threshold, so the scan

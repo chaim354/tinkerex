@@ -53,10 +53,13 @@ module Library
     # string — two copies that must match exactly would resurrect the wedge the moment they drift.
     TEMP_PREFIX = ".maker-tmp-".freeze
 
-    # One filesystem entry as a stat saw it. `size` is nil for directories (a directory's
-    # st_size is an allocation detail — 96, 4096 — and storing it in nodes.size would be
-    # meaningless bytes in a column that means "how big is this file").
-    Observation = Data.define(:rel_path, :size, :mtime, :dir)
+    # One filesystem entry as a stat saw it. The definition moved to Library::Observation once a
+    # second observer (Phase 3's S3 lister) needed to produce them without being a filesystem
+    # walk; this alias is why every call site that names Scanner::Observation still resolves to
+    # the one class. `size` is nil for directories, and `content_hash` defaults to nil — see that
+    # file for why an observer may supply an identity, and why THIS one never does: a stat cannot
+    # know it, and reading the bytes to find out is the exact cost the lazy hash exists to avoid.
+    Observation = Library::Observation
 
     # Returns the scanner, not the reconcile's result, so a caller can ask #unreadable_dirs.
     # ScanJob needs it: "N directories were unreadable" is the operator signal for a half-mounted

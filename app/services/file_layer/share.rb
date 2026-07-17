@@ -16,7 +16,12 @@ module FileLayer
     def capabilities
       # No history (nothing to restore), no sync engine (web-only), nothing to presign (a
       # mounted directory has no URL signer). The UI reads this to hide Restore/History.
-      Capabilities.new(versioned: false, syncable: false, presignable: false)
+      #
+      # scannable: true — the user drops files on the NAS in Finder, so the catalog can only be
+      # learned by walking the root on a timer (Library::Scanner). This is the capability
+      # Library::ScanJob.scan_all! gates on; before it, that gate was `is_a?(FileLayer::Share)`,
+      # i.e. this very fact spelled as a class check, which is why it broke when S3 arrived.
+      Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true)
     end
 
     def stat(user, node_id:)

@@ -142,6 +142,51 @@ jobs:
           export LIBRARY_PATH=$(mktemp -d)
           bin/rails db:test:prepare test
 
+  # The whole suite again with the s3 backend selected — the sibling of test-share-backend, and it
+  # buys the same narrow thing for the same reason: it catches tests that silently depend on the
+  # AMBIENT backend.
+  #
+  # This is NOT what stops the adapters diverging. Both shared contracts already do that, and they
+  # run against FileLayer::S3 in the `test:` job above (s3_test.rb includes FileLayerAdapterContract
+  # AND FileLayerWritableContract, constructing its adapter explicitly with an injected stub client,
+  # so it needs no ENV) — S3 inheriting the write contract is the whole point of Phase 3. The
+  # headline E2E (test/integration/library/s3_library_test.rb) likewise pins its own adapter.
+  #
+  # HONEST RESULT, unlike the share leg's: this one found ZERO ambient-dependent tests on the way
+  # in — all three legs report an identical 870/2564/0. The share leg earned its place immediately
+  # by finding nine; this one is a regression guard from birth rather than a bug-finder, which is
+  # the outcome to expect once the habit it enforces is already established. It stays because the
+  # cost is a tmpdir-free run with no external services, and because "nothing depends on the
+  # ambient backend" is exactly the kind of claim that decays silently without a leg asserting it.
+  #
+  # NO EXTERNAL SERVICE, deliberately: spec §7 gives S3 a stubbed client, and LibraryBackendCheck's
+  # s3 leg is config-PRESENCE only and never touches the network (boot must not depend on a third
+  # party being reachable). So these knobs point at nothing real on purpose — the bucket does not
+  # exist and the credentials are not credentials. Any test that made a real S3 call would fail
+  # here, which is a feature.
+  test-s3-backend:
+    runs-on: [self-hosted, linux]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+
+      - name: Run tests with LIBRARY_BACKEND=s3
+        env:
+          RAILS_ENV: test
+          LIBRARY_BACKEND: s3
+          LIBRARY_S3_BUCKET: ci-not-a-real-bucket
+          LIBRARY_S3_REGION: us-east-1
+          LIBRARY_S3_ACCESS_KEY_ID: ci
+          LIBRARY_S3_SECRET_ACCESS_KEY: ci
+          LIBRARY_S3_PREFIX: library
+        run: bin/rails db:test:prepare test
+
   system-test:
     runs-on: [self-hosted, linux]
 
