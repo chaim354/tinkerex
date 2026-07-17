@@ -15,6 +15,16 @@
 #                                     (chunk: tombstone the node; share: move it out of the
 #                                     indexed tree). It must NOT be the port's `delete`, which
 #                                     does not exist yet.
+#   with_off_box_presigning { }    -> configure this backend's STORE so that, if it has any way
+#                                     at all to mint a URL pointing OFF-BOX, it will. Then yield;
+#                                     restore on the way out. A backend with no URL signer
+#                                     (Share) defines it as a bare `yield` — installing one there
+#                                     would be faking the capability into existence rather than
+#                                     observing it, and the presignable test below would then pin
+#                                     the fixture instead of the adapter. Chunk needs real work
+#                                     here (its memory/local stores presign to URLs RAILS serves,
+#                                     so only an S3ChunkStore makes it redirect); S3 is always
+#                                     off-box and yields.
 #   with_transient_backend_failure { } -> make the backend fail in a way that is TEMPORARY and
 #                                     not the file's fault (a 403/5xx/network blip; an
 #                                     unmounted share), then yield. Must restore on the way out
@@ -166,25 +176,47 @@ module FileLayerAdapterContract
                  "delete and move have different doors, so they cannot share a refusal message"
   end
 
-  # `presignable` is the store's property, not the adapter's opinion (§9a-3). This does not fix
-  # that — it pins the claim to something observable, so a future divergence fails a test instead
-  # of silently disabling a UI affordance.
+  # `presignable` PINNED AGAINST WHETHER A URL IS ACTUALLY REACHABLE — Landmine 1, and the exact
+  # capability §9a-3 predicted would drift ("answered statically, but a property of the store").
   #
-  # NOTE what this does NOT assert: that a presignable adapter DELIVERS by redirect. Different
-  # questions — Chunk is presignable on all three stores, but two of them presign to URLs Rails
-  # itself serves.
-  def test_contract_presignable_is_not_merely_asserted
-    # `download` is Phase 4 Task 2's seam and there is no other observable form of this claim on
-    # the port today: presignable is invisible until something asks for a URL. Task 2 deletes this
-    # line — an unconditional skip is loud in the run and cannot be mistaken for a passing test,
-    # which a `respond_to?(:download)` guard would quietly become forever.
-    skip "download lands in Task 2; presignable has no observable seam on the port until it does"
-
-    caps = adapter.capabilities
-    return unless caps.presignable?
+  # THE OBVIOUS VERSION OF THIS TEST CANNOT FAIL, and why is the whole design here. Task 1 left
+  # this behind as a placeholder, and the shape it sketched was:
+  #
+  #     return unless caps.presignable?
+  #     assert adapter.download(@user, node_id: id, disposition: "attachment")
+  #
+  # Both halves are inert. The `return` makes a FALSE claim unfalsifiable BY CONSTRUCTION — flip
+  # Chunk to `presignable: false` and the test simply never runs — and `assert <a Delivery>` is
+  # satisfied by ANY Delivery, so flipping Share to `presignable: true` passes too, on the
+  # strength of the SendFile it hands back. Verified by mutation rather than by reading: both
+  # mutants were green. A pin that passes for every possible value of the thing it pins is
+  # decoration with a `?` on the end.
+  #
+  # So this asks the question the capability actually answers — "can this backend hand the
+  # browser a URL instead of proxying the bytes through Rails?" (§15) — and compares the
+  # DECLARATION against the Delivery the adapter really produces. Neither side is computed from
+  # the other: no adapter's `download` reads `capabilities`, and the hook below configures a
+  # STORE, not a claim. That independence is what test_contract_scannable_... argues for at
+  # length, and it is the only reason a hardcoded boolean is worth trusting.
+  #
+  # Every adapter's declaration fails when flipped — chunk true->false, share false->true, s3
+  # true->false, all three verified by mutation — which is the property that makes this a pin
+  # rather than a comment. Note the FALSE half is the one the obvious version cannot reach, and
+  # Share is the only adapter that answers false today: without it, nothing here would be tested
+  # in that direction at all.
+  def test_contract_presignable_agrees_with_whether_a_url_is_actually_reachable
+    # BEFORE the hook: a backend whose store is swapped for a presign-only one has nowhere to put
+    # the bytes (Chunk's create_file! would PUT over the network).
     id = create_file!(name: "presign.stl", bytes: "p")
-    assert adapter.download(@user, node_id: id, disposition: "attachment"),
-           "a presignable adapter must be able to produce a Delivery"
+
+    with_off_box_presigning do
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+      assert_equal adapter.capabilities.presignable?, d.is_a?(FileLayer::Delivery::Redirect),
+                   "#{adapter.class} declares presignable=#{adapter.capabilities.presignable?} " \
+                   "but download handed back a #{d.class.name.demodulize} with its store given " \
+                   "every chance to presign — a backend that claims a URL it cannot mint (or " \
+                   "the reverse) silently disables the redirect §15 depends on"
+    end
   end
 
   # `scannable` PINNED AGAINST AN INDEPENDENT FACT — and the shape of this test is the whole point

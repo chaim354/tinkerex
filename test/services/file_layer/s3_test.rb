@@ -120,6 +120,118 @@ module FileLayer
       @fake.clear_faults!
     end
 
+    # Contract hook, and a bare yield is the honest implementation: a bucket's presigned URL
+    # ALWAYS points off-box. There is no other configuration of this backend to reach for.
+    def with_off_box_presigning = yield
+
+    # --- download: the presigned redirect (Task 2) ----------------------------------------
+
+    # THE ASSERTIONS ARE ON THE URL, WHICH IS THE WIRE. That is not incidental here: a presigned
+    # URL is not a round-trip through FakeS3 — it is the exact string the browser will send to a
+    # real store, minted by the real SDK's real SigV4 signer. Phase 3's sharpest bug (CGI.escape)
+    # was hidden for 79/80 tests by a fake that shared the adapter's misunderstanding, and the
+    # lesson was: assert the thing the store actually sees.
+    #
+    # The call count is the §15 assertion, and it is the one that would catch a "simplification"
+    # into get_object + send_data: presigning must not touch the bytes AT ALL.
+    test "download presigns a GET — the bytes never touch Rails" do
+      id = create_file!(name: "p.stl", bytes: "presigned")
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+
+      assert_kind_of FileLayer::Delivery::Redirect, d
+      assert_includes d.url, "X-Amz-Signature", "it must be a signed URL, not a bare object URL"
+      assert_includes d.url, "#{PREFIX}/p.stl"
+      assert_equal 0, @fake.calls[:get_object], "§15: the bytes must never pass through Rails"
+    end
+
+    # LANDMINE 3, and this test is the reason `download` takes `disposition:` at all.
+    #
+    # A redirect bypasses EVERY header the controller sets — including the attachment disposition
+    # #blob forces for SVG and HTML (which a browser would otherwise execute) and the ?download=1
+    # control. Without the override, the same UI button behaves differently depending on the
+    # deployment's backend, which is the divergence these contracts exist to prevent.
+    #
+    # THE SIGNATURE CHECK IS THE POINT, and `assert_includes url, "response-content-disposition"`
+    # (the plan's version) is what it replaces. That assertion cannot tell a SIGNED override from
+    # a string concatenated onto a finished URL — and a concatenated one is worse than none: a
+    # real store rejects the whole request as a signature mismatch, so every download 403s. Here
+    # the same URL minted with a different disposition MUST carry a different signature, which is
+    # only true if the parameter is an input to SigV4's canonical query string. That is what
+    # "tamper-proof" means, asserted rather than asserted-about.
+    test "the disposition policy is SIGNED INTO the presigned URL, not silently dropped" do
+      id = create_file!(name: "evil.svg", bytes: "<svg onload=alert(1)>")
+
+      attach = adapter.download(@user, node_id: id, disposition: "attachment",
+                                content_type: "application/octet-stream")
+      q = CGI.parse(URI(attach.url).query)
+
+      # The exact values, not merely the keys: the controller's policy has to arrive intact.
+      # The RFC 5987 `filename*` half is not incidental — it is what #blob already emits (both go
+      # through ActionDispatch::Http::ContentDisposition.format), so a name with a space or a
+      # unicode character survives the redirect exactly as it survives the stream. Spelled out
+      # literally rather than built by calling the same formatter, which would assert the code
+      # against itself.
+      assert_equal [ %q(attachment; filename="evil.svg"; filename*=UTF-8''evil.svg) ],
+                   q["response-content-disposition"],
+                   "the browser must be told to download it, with the real filename"
+      assert_equal [ "application/octet-stream" ], q["response-content-type"],
+                   "and never image/svg+xml, which the store would otherwise serve executable"
+
+      inline = adapter.download(@user, node_id: id, disposition: "inline",
+                                content_type: "application/octet-stream")
+      assert_not_equal q["X-Amz-Signature"], CGI.parse(URI(inline.url).query)["X-Amz-Signature"],
+                       "changing the disposition MUST change the signature — otherwise the " \
+                       "override is a query param bolted onto a URL signed without it, which a " \
+                       "real store answers with a signature mismatch, not the file"
+    end
+
+    # The policy is the CALLER'S, not the adapter's: the controller owns which disposition
+    # (SAFE_INLINE_TYPES is a web concern, not a storage one) and the adapter owns the mechanism.
+    # An adapter that hardcoded "attachment" would pass the test above and break inline preview.
+    test "an inline disposition is honored too — the policy is the caller's, not the adapter's" do
+      id = create_file!(name: "ok.png", bytes: "\x89PNG".b)
+      d = adapter.download(@user, node_id: id, disposition: "inline", content_type: "image/png")
+      q = CGI.parse(URI(d.url).query)
+
+      assert_equal [ %q(inline; filename="ok.png"; filename*=UTF-8''ok.png) ],
+                   q["response-content-disposition"]
+      assert_equal [ "image/png" ], q["response-content-type"]
+    end
+
+    # content_type is OPTIONAL — the controller may have no opinion, and then the object's own
+    # Content-Type is the right answer. Verified against the real SDK: a nil param is omitted
+    # from the URL entirely rather than signed as an empty string (which would make the store
+    # serve the file as "").
+    test "download without a content_type leaves the object's own type alone" do
+      id = create_file!(name: "q.stl", bytes: "b")
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+      q = CGI.parse(URI(d.url).query)
+
+      assert_equal [ %q(attachment; filename="q.stl"; filename*=UTF-8''q.stl) ],
+                   q["response-content-disposition"]
+      assert_empty q["response-content-type"], "an absent override must not be signed as empty"
+    end
+
+    # The escape guard, on the download path. update_column bypasses validation — a poisoned row
+    # of the shape a future bug could produce — and a presigned URL for an escaped key is a signed
+    # grant to read outside the library prefix, which is strictly worse than a failed read.
+    test "download refuses a storage_path that escapes the prefix" do
+      id = create_file!(name: "a.stl", bytes: "b")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, "../../etc/passwd")
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+      assert_match(/escapes the library prefix/, err.message)
+    end
+
+    test "download raises NotFound for a deleted node" do
+      id = create_file!(name: "gone.stl", bytes: "b")
+      delete_file!(id)
+      assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+    end
+
     # --- S3-specific --------------------------------------------------------------
 
     test "write puts the object under the prefix and indexes it" do

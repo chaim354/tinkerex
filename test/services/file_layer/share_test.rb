@@ -67,6 +67,54 @@ module FileLayer
       File.define_singleton_method(:binwrite, original)
     end
 
+    # Contract hook, and a BARE YIELD is the honest implementation rather than a stub-out. A
+    # mounted directory has no URL signer — that is the whole reason presignable is false here —
+    # so there is nothing to configure. Installing one would fake the capability into existence
+    # and make the contract's presignable test pin this fixture instead of the adapter.
+    def with_off_box_presigning = yield
+
+    # --- download (Task 2) ----------------------------------------------------------------
+
+    # Share is the backend where §15 cannot hold: a directory has nothing to presign, so Rails
+    # serves the bytes. SendFile carries the path rather than the bytes, which is what lets the
+    # controller hand it to send_file and keep a 2GB file off the Rails heap.
+    test "download hands back the absolute path, resolved through the escape guard" do
+      id = create_file!(name: "d.stl", bytes: "bytes")
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+      assert_kind_of FileLayer::Delivery::SendFile, d
+      assert_equal @root.join("d.stl").to_s, d.path
+      assert File.exist?(d.path)
+    end
+
+    # LANDMINE 2. Delivery::SendFile is a Data object anyone can construct with any path, so the
+    # TYPE carries no guarantee whatsoever — the guard has to live at the only place that
+    # PRODUCES one, which is why #download resolves through the same #absolute_path #read uses
+    # rather than reaching for node.storage_path itself.
+    #
+    # update_column bypasses validation: a poisoned row of the shape a future bug could produce.
+    # storage_path is written by our own scanner today, but it is a plain DB column and 2b's
+    # `write` already takes a name from the UI — "no caller passes anything bad today" is exactly
+    # the assumption that ages badly. download must refuse rather than hand a controller a path
+    # outside the root, because the controller's job is to send_file whatever it is given.
+    test "download refuses a storage_path that escapes the root" do
+      id = create_file!(name: "d.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, "../../../etc/passwd")
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+      # Assert the MESSAGE: NotFound is reachable from live_node! too, so the class alone would be
+      # satisfied by an adapter that never resolved the path at all.
+      assert_match(/escapes the library root/, err.message)
+    end
+
+    test "download raises NotFound for a deleted node" do
+      id = create_file!(name: "gone.stl", bytes: "b")
+      delete_file!(id)
+      assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+    end
+
     # --- Share-specific tests -------------------------------------------------------------
     # The contract above is RED until the scanner lands (create_file! indexes a real file), but
     # the load-bearing parts of this adapter — the errno mapping, the path-escape guard,

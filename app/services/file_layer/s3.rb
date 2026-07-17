@@ -168,6 +168,57 @@ module FileLayer
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
+    # Hand the browser this file's bytes — as a SIGNED URL, so they never touch Rails. This is
+    # where §15 survives on a no-history backend, and it is what presignable: true buys (see
+    # #capabilities): a bucket has a URL signer, which is precisely what a mounted directory
+    # lacks. Phase 4's Redirect is built on it.
+    #
+    # NO NETWORK AND NO BYTES: presigning is local HMAC (CLAUDE.md §14 — you can verify a URL is
+    # correct without the store being reachable). A `get_object` here would defeat the entire
+    # purpose, so #read stays the server-side path (preview jobs) and this stays the user's.
+    #
+    # THE DISPOSITION IS SIGNED IN, AND THAT IS THE POINT OF THE `disposition:` KEYWORD.
+    #
+    # A redirect bypasses every header the controller would otherwise set — the attachment
+    # disposition FilesController forces for SVG and HTML (which a browser executes), the
+    # nosniff, and the ?download=1 control. The browser leaves for the bucket and gets whatever
+    # Content-Type the object carries. Left alone, the SAME UI button behaves differently
+    # depending on the deployment's backend, which is the divergence the contracts exist to
+    # prevent. (Be accurate about the severity: the redirect goes to the bucket's ORIGIN, so an
+    # SVG executes there and not in our session — this is behavioral parity plus defense in
+    # depth for a self-host that fronts its bucket on a sibling domain, not stored XSS.)
+    #
+    # response-content-disposition / response-content-type are S3's own overrides, and SigV4
+    # signs the whole canonical query string — so they are TAMPER-PROOF rather than merely
+    # present: a user editing `attachment` to `inline` in the URL bar invalidates the signature
+    # and the store refuses the request. That is the difference between this and appending the
+    # params to a finished URL, which would 403 every download instead.
+    #
+    # THE CONTROLLER OWNS THE POLICY, THIS OWNS THE MECHANISM. Which types may render inline is
+    # SAFE_INLINE_TYPES — a web concern that has no business in a storage adapter — so it arrives
+    # as an argument. A nil content_type means "no opinion, serve the object's own type", and the
+    # SDK omits the param entirely rather than signing an empty string (verified).
+    #
+    # `disposition:` IS REQUIRED, on all three adapters, and the ArgumentError is the feature.
+    # ContentDisposition.format(disposition: nil) returns "; filename=..." — a header with NO
+    # disposition type — which a browser resolves by falling back to inline. So a caller who
+    # forgot it would ship exactly the SVG-executes-at-the-bucket case above, silently, on this
+    # backend only, while chunk and share (which ignore the value) stayed correct. A default here
+    # would make the port's own signature the source of a cross-backend divergence.
+    def download(user, node_id:, disposition:, content_type: nil)
+      # The same liveness guard read applies, and key_for is the same escape guard: a presigned
+      # URL for an escaped key is a signed GRANT to read outside the library prefix, which is
+      # worse than a failed read.
+      node = live_node!(user, node_id)
+      params = {
+        bucket: @bucket, key: key_for(node), expires_in: DOWNLOAD_EXPIRES_IN,
+        response_content_disposition:
+          ActionDispatch::Http::ContentDisposition.format(disposition:, filename: node.name)
+      }
+      params[:response_content_type] = content_type if content_type.present?
+      Delivery::Redirect.new(url: presigner.presigned_url(:get_object, **params))
+    end
+
     # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
     # the instant the caller can attach to it rather than up to a scan-interval later. The mirror
     # of Share#write, and FileLayerWritableContract is what holds the two to the same answers.
@@ -448,6 +499,25 @@ module FileLayer
     def listing_prefix = @prefix && "#{@prefix}/"
 
     private
+
+    # How long a download URL stays good. Matches Storage::S3ChunkStore#presign_get's hour, which
+    # is the same question answered for the same reason: long enough that a big file over a slow
+    # link finishes, short enough that a URL pasted into a chat is not a lasting grant.
+    DOWNLOAD_EXPIRES_IN = 3600
+
+    # Built LAZILY, not in the constructor, and that is a boot-path rule rather than a style
+    # choice: `aws-sdk-s3` is `require: false` in the Gemfile and #build_client is what requires
+    # it, so an injected `client:` (the test seam) never loads the gem. Constructing a Presigner
+    # eagerly would drag the require back into every path, including the ones that inject.
+    #
+    # Local HMAC — no network, no round-trip, nothing to memoize for performance. It is memoized
+    # because there is no reason to rebuild it.
+    def presigner
+      @presigner ||= begin
+        require "aws-sdk-s3"
+        ::Aws::S3::Presigner.new(client: @client)
+      end
+    end
 
     # 5 GiB — `copy_object`'s hard cap. It ERRORS above it; it does not truncate. Both `delete` and
     # `move` are copy-then-delete, so this is the size above which neither can run. Multipart copy

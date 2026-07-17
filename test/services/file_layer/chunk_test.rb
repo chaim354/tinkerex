@@ -160,6 +160,106 @@ module FileLayer
       Storage::ChunkStore.reset!
     end
 
+    # A REAL Storage::S3ChunkStore — the only store whose presigned URL points OFF-BOX, which is
+    # the condition #blob redirects on and #download preserves.
+    #
+    # REAL rather than a double, and not for purity: the condition under test is literally
+    # `store.is_a?(Storage::S3ChunkStore)`, so a stand-in would have to BE one to exercise it.
+    #
+    # NO NETWORK, and that is a property of the class rather than luck: Aws::S3::Client.new is
+    # lazy (it does not connect) and presigning is local HMAC — CLAUDE.md §14, "server presigning
+    # is local (HMAC): you can verify chunk URLs are correct without the storage being
+    # reachable". Verified against the real SDK, and the endpoint below is unroutable on purpose
+    # so a regression that tried to FETCH through it would fail loudly rather than quietly go out
+    # to the internet from the suite.
+    #
+    # NOTE FOR CALLERS: seed the file BEFORE entering this block. S3ChunkStore has no `put!` (only
+    # the memory and local stores do — it is a presign-only store by design), so create_file!
+    # inside here raises NoMethodError.
+    #
+    # `current=` is a global, so it is reset on the way out exactly as with_transient_backend_failure
+    # does: a leaked S3ChunkStore would surface as an unrelated failure elsewhere in the worker.
+    def with_s3_chunk_store
+      Storage::ChunkStore.current = Storage::S3ChunkStore.new(
+        bucket: "b", region: "us-east-1", access_key_id: "ak", secret_access_key: "sk",
+        endpoint: "https://s3.example.invalid"
+      )
+      yield
+    ensure
+      Storage::ChunkStore.reset!
+    end
+
+    # Contract hook. Chunk presigns on ALL THREE stores, so "give this backend every chance to
+    # mint an off-box URL" means handing it the one store whose URLs are not served by Rails.
+    alias_method :with_off_box_presigning, :with_s3_chunk_store
+
+    # --- download: #blob's behavior, moved behind the port (Task 2) ------------------------
+
+    # Chunk's delivery is today's stitched-chunk enumerator, unchanged: the bytes come from a
+    # presigned GET per chunk (Chunk.fetch), so Rails stitches but never holds the whole file.
+    test "download streams the stitched chunks" do
+      id = create_file!(name: "s.stl", bytes: "streamed")
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+      assert_kind_of FileLayer::Delivery::Stream, d
+      assert_equal "streamed", d.enum.to_a.join
+    end
+
+    # PRESERVED FROM #blob, exactly. This is NOT the presignable? question — the memory and local
+    # stores presign too, but to URLs RAILS ITSELF SERVES, so redirecting to them would move the
+    # bytes through Rails via an extra hop. The condition is "does the presigned URL point
+    # OFF-BOX", which is a THIRD question, and today only S3ChunkStore answers it yes.
+    test "a single-chunk file on real object storage redirects, as blob already did" do
+      id = create_file!(name: "one.stl", bytes: "single") # seeded first — see with_s3_chunk_store
+      with_s3_chunk_store do
+        d = adapter.download(@user, node_id: id, disposition: "attachment")
+        assert_kind_of FileLayer::Delivery::Redirect, d
+        assert_includes d.url, "X-Amz-Signature", "a signed URL, not a bare object URL"
+      end
+    end
+
+    # THE OTHER HALF OF THE SAME CONDITION, and it is NOT in the plan — which pinned only the
+    # `store.is_a?(S3ChunkStore)` half, leaving `chunks.size == 1` free to be deleted with the
+    # whole suite green.
+    #
+    # What that costs is not a style regression: a multi-chunk file whose download redirects
+    # sends the browser to the presigned URL of its FIRST CHUNK ONLY. The user saves a 2GB CAD
+    # file and gets the first 4MB of it, named correctly, with a 200 — SILENT TRUNCATION, and on
+    # the backend §15 exists for. Verified by mutation: dropping `chunks.size == 1` passes every
+    # other test in this file.
+    test "a MULTI-chunk file on real object storage streams — it must not redirect to chunk one" do
+      node_id = SecureRandom.uuid
+      store = Storage::ChunkStore.current
+      h1 = Digest::SHA256.hexdigest("AAA")
+      h2 = Digest::SHA256.hexdigest("BB")
+      store.put!(@user.id, h1, "AAA")
+      store.put!(@user.id, h2, "BB")
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(
+        user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
+        name: "multi.stl", base_version_id: nil, size: 5,
+        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
+        manifest: [
+          { "hash" => h1, "offset" => 0, "length" => 3 },
+          { "hash" => h2, "offset" => 3, "length" => 2 }
+        ]
+      )
+      Sync::Commit.finalize(user: @user, commit_id: cid)
+
+      with_s3_chunk_store do
+        d = adapter.download(@user, node_id:, disposition: "attachment")
+        assert_kind_of FileLayer::Delivery::Stream, d,
+                       "redirecting a multi-chunk file serves ONLY its first chunk"
+      end
+    end
+
+    test "download raises NotFound for a deleted node, exactly as read does" do
+      id = create_file!(name: "gone.stl", bytes: "b")
+      delete_file!(id)
+      assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+    end
+
     test "a 404 on the presigned GET is a missing chunk (terminal NotFound)" do
       id = create_file!(name: "e.stl", bytes: "gone")
       Storage::ChunkStore.current = PresignOnlyStore.new

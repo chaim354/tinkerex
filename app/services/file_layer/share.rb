@@ -81,6 +81,34 @@ module FileLayer
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
+    # Hand the browser this file's bytes — as a PATH, because there is nothing here to presign.
+    # This is the backend where §15 ("keep bytes out of Rails") genuinely cannot hold: a mounted
+    # directory has no URL signer, which is exactly what presignable: false records. Spec §9's
+    # deliberate departure, scoped to storage we do not own. Do not "fix" it back.
+    #
+    # SendFile carries the path rather than the bytes, so the controller can hand it to send_file
+    # and keep a 2GB file off the Rails heap (and let x_sendfile_header pass it to a proxy where
+    # an operator has configured one).
+    #
+    # THROUGH #absolute_path, WHICH IS THE WHOLE POINT OF THIS METHOD BEING SHORT. Delivery::
+    # SendFile is a Data object anyone can construct with anything, so the TYPE guarantees
+    # nothing: this is the only thing standing between a poisoned storage_path and a controller
+    # that will send_file whatever it is handed. The same choke point #read resolves through —
+    # not a copy of it, because two copies of an escape guard drift and this file already makes
+    # that argument for live_node!.
+    #
+    # `disposition:`/`content_type:` are the controller's policy and are applied THERE, by
+    # send_file's own options. They are on the signature because S3's Redirect must sign them
+    # into the URL at mint time (see Delivery); a transport that applies them later ignores them.
+    #
+    # `disposition:` is REQUIRED even though this adapter never reads it — the port's signature
+    # is one signature, and a caller who may omit it here but not on S3 is a caller who learns
+    # the rule from whichever backend they happened to develop against. See S3#download, where
+    # omitting it silently produces a header with no disposition type at all.
+    def download(user, node_id:, disposition:, content_type: nil)
+      Delivery::SendFile.new(path: absolute_path(live_node!(user, node_id)).to_s)
+    end
+
     # Store new bytes at `name` under `parent_node_id` and index the result, so the node exists
     # the instant the caller can attach to it rather than up to a scan-interval later.
     #
