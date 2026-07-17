@@ -66,8 +66,8 @@ content-addressed manifest sharing chunks).
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once`. Pluggable `ChunkIO` (shared-dir for tests, presigned for R2/SeaweedFS). |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **All three adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable), **`Share`** (a mounted SMB/NFS dir) and **`S3`** (the user's own bucket, phase 3) — share and s3 are both **current-state only**: no versions, no history, no restore. **The write path is Share + S3** (`write`/`delete`/`move`/**`undelete`**): chunk-mode writes belong to the **sync engine**, so `Chunk` refuses them **per-op, naming the real door each time** — `write` → `Sync::Commit`'s two-phase flow, `delete` → **`Sync::SubtreeDelete.call`** (cascades the tombstone to the subtree; `Sync::Mutation.apply, op: "delete"` tombstones only the node it's given and orphans descendants), `move` → `Sync::Mutation.apply, op: "move"`. **One shared refusal message is how an earlier draft told delete/move callers to use `Sync::Commit`, which has neither path** — keep them separate. **`S3` is the one backend where `presignable` is TRUE and `versioned` is FALSE**, and that combination is its point, not an oversight: §15 (bytes out of Rails) **survives** here — a bucket has a URL signer, which is exactly what a mounted directory lacks — while §5 (keep versions) does **not**. The other two have the pair agreeing (chunk true/true, share false/false), so S3 is the counterexample that forbids collapsing one into the other. **Both `delete` and `move` refuse directories on S3**, diverging from Share, which allows dir *moves* — Share's permission rests entirely on `rename()` being one atomic syscall that carries the bytes, and here there is no directory and no rename (a dir node's key simply does not exist). `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. **Two contracts** stop the adapters diverging, both in the default suite: `adapter_contract.rb` (read — now runs against **all three**) and `adapter_write_contract.rb` (`FileLayerWritableContract` — `Share` **and `S3`**; inheriting it was the whole purpose of phase 3, and it had already caught that phase 3's plan was missing `write`'s clobber guard). See §12 step 10. |
-| **Library scan** | `app/services/library/` | Share- **and S3-mode** indexing, gated on the **`scannable`** capability (*"does this backend's catalog come from polling the store?"* — chunk **false**, its tree is the changelog; share/s3 **true**). **`scannable` is not `!syncable?`** (equal today only by coincidence of having three backends — a notification-driven backend would answer false to both, and deriving would poll it forever) and **not Phase 4's `port_writable`** (chunk answers *true* there and *false* here — opposite answers for one backend proves they are different questions). **The Reconciler is the reusable half, and the Scanner is not:** the spec (§9.3) said Phase 3 "reuses the scanner", but a `Dir.children`/`lstat`/symlink walk is irreducibly filesystem-shaped, so S3 gets its own **`S3Observer`** over `list_objects_v2` and both feed the *same* `Reconciler` — which matters because **every one of 2a's bugs lived in the logic a second copy would have duplicated**. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). **The Scanner's skip-lists are also blind spots — 2b's structural finding, and the root cause of BOTH permanent wedges it found:** wherever the app moves bytes **into** a skipped region (`TRASH_PREFIX` = `.trash`, root-anchored; `TEMP_PREFIX` = `.maker-tmp-`, skipped **at any depth**) while leaving a live node pointing at the old path, it creates ghosts the `Reconciler` **can never pair** — pairing needs an *observation* as the partner, and a skipped path produces none; the tombstone then trips the mass-deletion guard, **refusing that scan and every scan after it, permanently**. **THREE instances so far, each found only after the previous "explanation" said it couldn't happen**: `write`'s temp file; `delete` on a directory; and `write`/`move` accepting `.trash` or `.maker-tmp-x` as a destination — an ordinary-looking upload that wedges the scan *and* turns `.trash` into a file, breaking **every delete in the library**, permanently (`Share#observable!`). A tempting sentence that 2b had to retract: *"delete is uniquely exposed, because a move leaves the bytes observable at the new path."* False — a move is self-healing only when its **destination** is observable. **Assume every path that writes is exposed until you have checked it.** `Library::TrashPurgeJob` reclaims `.trash` past `LIBRARY_TRASH_DAYS`. **`S3Observer` (phase 3) is 2a's lesson in a new spelling — a listing is NOT a snapshot:** `list_objects_v2` paginates, and a failure on page 7 of 40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library. It is `Pathname#find`/`EACCES` again, with one difference that removes the escape hatch: `unreadable_dirs` scopes a gap to a *subtree*, and a page boundary is an arbitrary key range that scopes to nothing. **Complete-or-abort is the only honest answer** (`Scanner::UnsafeScan`). Two more it must not inherit by assumption: **dir-marker objects** (`cad/`, minted by the S3 console) would otherwise become a phantom *file* node beside the real dir node; and **`valid_encoding?` does NOT transfer from the Scanner** — it asks about the string's **tag**, and an ASCII-8BIT string is *always* valid, so the naive port waves a `\xFF` key straight into `storage_path` (the SDK raises on the whole page first, so the guard is a backstop that names the bucket rather than a wedge). |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, selected per deployment by `LIBRARY_BACKEND` (mirrors `Storage::ChunkStore.current`). **All three adapters are built:** `Chunk` (version→manifest→chunk; versioned, syncable), **`Share`** (a mounted SMB/NFS dir) and **`S3`** (the user's own bucket, phase 3) — share and s3 are both **current-state only**: no versions, no history, no restore. **The reads are `stat`/`read`/**`download`**/**`trashed`** — every adapter answers all four. **The write path is Share + S3** (`write`/`delete`/`move`/**`undelete`**): chunk-mode writes belong to the **sync engine**, so `Chunk` refuses them **per-op, naming the real door each time** — `write` → `Sync::Commit`'s two-phase flow, `delete` → **`Sync::SubtreeDelete.call`** (cascades the tombstone to the subtree; `Sync::Mutation.apply, op: "delete"` tombstones only the node it's given and orphans descendants), `move` → `Sync::Mutation.apply, op: "move"`. **One shared refusal message is how an earlier draft told delete/move callers to use `Sync::Commit`, which has neither path** — keep them separate. **`S3` is the one backend where `presignable` is TRUE and `versioned` is FALSE**, and that combination is its point, not an oversight: §15 (bytes out of Rails) **survives** here — a bucket has a URL signer, which is exactly what a mounted directory lacks — while §5 (keep versions) does **not**. The other two have the pair agreeing (chunk true/true, share false/false), so S3 is the counterexample that forbids collapsing one into the other. **Both `delete` and `move` refuse directories on S3**, diverging from Share, which allows dir *moves* — Share's permission rests entirely on `rename()` being one atomic syscall that carries the bytes, and here there is no directory and no rename (a dir node's key simply does not exist). `Maker::FileBytes` is a 19-line shim over it — the maker layer no longer knows files are chunks. **Two contracts** stop the adapters diverging, both in the default suite: `adapter_contract.rb` (read — now runs against **all three**, and since phase 4 it **pins every capability to what the adapter actually does**, so a hand-written `Data` literal cannot lie about its own backend) and `adapter_write_contract.rb` (`FileLayerWritableContract` — `Share` **and `S3`**; inheriting it was the whole purpose of phase 3, and it had already caught that phase 3's plan was missing `write`'s clobber guard). **`download(user, node_id:, disposition:, content_type: nil)` answers a `Delivery`** — `Redirect(url)` (chunk single-chunk + s3; §15 holds) / `SendFile(path)` (share; §15 cannot) / `Stream(enum)` (chunk multi-chunk) — and `FilesController` consumes it **without ever constructing a path**. **`disposition:` is required, not defaulted**: nil makes `ContentDisposition.format` emit a header with *no disposition type*, which browsers resolve as **inline** — a silent cross-backend divergence, on S3 only, where the value is signed into the URL. `Chunk#trashed` **delegates to `Sync::Trash`** rather than minting a rival definition of "the trash". See §12 step 10. |
+| **Library scan** | `app/services/library/` | Share- **and S3-mode** indexing, gated on the **`scannable`** capability (*"does this backend's catalog come from polling the store?"* — chunk **false**, its tree is the changelog; share/s3 **true**). **`scannable` is not `!syncable?`** (equal today only by coincidence of having three backends — a notification-driven backend would answer false to both, and deriving would poll it forever) and **not Phase 4's `port_writable`** — which they **agree with on every backend we have** (chunk false/false, share and s3 true/true), so the distinction has to be *argued* rather than observed: `scannable` asks where the **catalog** comes from, `port_writable` asks which door **bytes** go in, and the same notification-driven backend splits both (push-notified → `scannable` false, while its uploads still go through the port). Agreement across three samples is not identity; it is three samples. *(An earlier version of this row claimed chunk answers `port_writable` **true** and used that to call the two opposites. Both halves were wrong — chunk is `port_writable: false` — and the true-reading is the "accepts uploads" misreading Phase 4 rejects; see `capabilities.rb`.)* **The Reconciler is the reusable half, and the Scanner is not:** the spec (§9.3) said Phase 3 "reuses the scanner", but a `Dir.children`/`lstat`/symlink walk is irreducibly filesystem-shaped, so S3 gets its own **`S3Observer`** over `list_objects_v2` and both feed the *same* `Reconciler` — which matters because **every one of 2a's bugs lived in the logic a second copy would have duplicated**. `Scanner` **observes** a share root (hand-rolled walk — `Pathname#find` silently swallows `EACCES` and drops the subtree; `ignore_error: false` aborts the whole walk, order-dependently) and exposes `#unreadable_dirs`. `Reconciler` **decides**: live path-match → move-pair by `(content_hash, size)` → revive tombstone → create. The pairing is what makes **a rename keep its `node_id`, so project attachments survive a NAS reorganization** — the phase's headline promise. Its mass-deletion guard fires on the **post-pairing tombstone count** against the **observable** library, so a reorganization is never mistaken for a deletion. `ScanJob` polls every 15 min (`recurring.yml`, production only). **The Scanner's skip-lists are also blind spots — 2b's structural finding, and the root cause of BOTH permanent wedges it found:** wherever the app moves bytes **into** a skipped region (`TRASH_PREFIX` = `.trash`, root-anchored; `TEMP_PREFIX` = `.maker-tmp-`, skipped **at any depth**) while leaving a live node pointing at the old path, it creates ghosts the `Reconciler` **can never pair** — pairing needs an *observation* as the partner, and a skipped path produces none; the tombstone then trips the mass-deletion guard, **refusing that scan and every scan after it, permanently**. **THREE instances so far, each found only after the previous "explanation" said it couldn't happen**: `write`'s temp file; `delete` on a directory; and `write`/`move` accepting `.trash` or `.maker-tmp-x` as a destination — an ordinary-looking upload that wedges the scan *and* turns `.trash` into a file, breaking **every delete in the library**, permanently (`Share#observable!`). A tempting sentence that 2b had to retract: *"delete is uniquely exposed, because a move leaves the bytes observable at the new path."* False — a move is self-healing only when its **destination** is observable. **Assume every path that writes is exposed until you have checked it.** `Library::TrashPurgeJob` reclaims `.trash` past `LIBRARY_TRASH_DAYS`. **`S3Observer` (phase 3) is 2a's lesson in a new spelling — a listing is NOT a snapshot:** `list_objects_v2` paginates, and a failure on page 7 of 40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library. It is `Pathname#find`/`EACCES` again, with one difference that removes the escape hatch: `unreadable_dirs` scopes a gap to a *subtree*, and a page boundary is an arbitrary key range that scopes to nothing. **Complete-or-abort is the only honest answer** (`Scanner::UnsafeScan`). Two more it must not inherit by assumption: **dir-marker objects** (`cad/`, minted by the S3 console) would otherwise become a phantom *file* node beside the real dir node; and **`valid_encoding?` does NOT transfer from the Scanner** — it asks about the string's **tag**, and an ASCII-8BIT string is *always* valid, so the naive port waves a `\xFF` key straight into `storage_path` (the SDK raises on the whole page first, so the guard is a backstop that names the bucket rather than a wedge). |
 | maker-app-core, juicefs-backend | `client/…` | Earlier Tauri mount-controller + JuiceFS WebDAV backend (from the abandoned path; kept for reference). |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
@@ -468,7 +468,9 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    (deliberately last; `docs/parity-roadmap.md`, `docs/research-sync-competitors.md`).
 10. **Split the maker layer from the file layer** (2026-07-14) so a **web-only deployment can be
     backed by a plain network share or the user's own S3** instead of the FastCDC chunk store —
-    the Immich/Photoprism "point it at my existing NAS" on-ramp. **Phase 1 DONE, merged
+    the Immich/Photoprism "point it at my existing NAS" on-ramp. **✅ COMPLETE (2026-07-17,
+    phases 1 → 4):** `LIBRARY_BACKEND=chunk|share|s3` all boot, index, write, deliver, and **tell
+    the truth about themselves**. **Phase 1 DONE, merged
     (`f04ef61`), deployed, and verified live** (a 40k-byte presigned round-trip through
     SeaweedFS): the `FileLayer` port + `Chunk` adapter + the shared adapter contract, and
     `Maker::FileBytes` reduced to a shim. The maker layer no longer references chunks at all
@@ -484,9 +486,11 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       ("keep versions so restore always works") cannot hold on a plain share — the user's
       overwrite in Finder destroys the old bytes — so share/s3 libraries are **current-state
       only** and restore stays a chunk-mode feature. §15 ("keep bytes out of Rails") cannot hold
-      for a mounted directory, which has nothing to presign — share streams via
-      X-Accel/X-Sendfile; **S3 still presigns, so §15 holds where it was aimed** (managed/WAN
-      egress). Do not "fix" these back.
+      for a mounted directory, which has nothing to presign — share streams via **`send_file`**
+      (X-Accel/X-Sendfile *only* if an operator puts a proxy that implements it in front; this
+      deployment is kamal-proxy, so `x_sendfile_header` is nil and Rack::Files is the only branch
+      that runs — see Phase 4 below); **S3 still presigns, so §15 holds where it was aimed**
+      (managed/WAN egress). Do not "fix" these back.
     - **Phase 2a DONE** (2026-07-16, branch `worktree-file-layer-share-phase2a`, 11 commits):
       a share-backed library that was **read-only as of 2a** (the write path is 2b, below) —
       `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md`. `LIBRARY_BACKEND=share`
@@ -682,14 +686,89 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
         route on top of the listing one; and it **collapses `a//b`** and **refuses `./..`** keys
         outright, so `indexable?`'s guards against those are unreachable on this store while
         remaining correct for AWS, which permits them.
-    - **Next: Phase 4 = capability gating + `Delivery`.** **`download` is Phase 4** — share-mode
-      `blob` still 404s **by scope** (it resolves `node.current_version`, which a share/s3 node
-      has no such thing as); S3's `presignable: true` is what Phase 4's `Redirect` is built on.
-      **`Capabilities` cannot express "the port's write path works here"** — Phase 4 adds
-      **`port_writable`**, defined as *which upload flow the UI drives*, **NOT** "accepts
-      uploads" (chunk mode accepts uploads fine, via `Sync::Commit`; getting that wrong would
-      hide upload in chunk mode). That definition is also exactly why it is **not** `scannable`
-      wearing another name — chunk answers *true* to `port_writable` and *false* to `scannable`.
+    - **Phase 4 DONE** (2026-07-17, branch `worktree-file-layer-phase4`, 10 commits) — **the web
+      UI and the v1 API stop lying about what this deployment can do.** Suite **871 → 947**,
+      **identical on all three legs** (`bin/rails test`, `LIBRARY_BACKEND=share`,
+      `LIBRARY_BACKEND=s3` — each **947 runs / 2902 assertions / 0 failures / 0 errors / 5
+      skips**). Plan: `docs/superpowers/plans/2026-07-17-file-layer-capability-gating-phase4.md`.
+      **The split is complete: `LIBRARY_BACKEND=chunk|share|s3` all boot, index, write, deliver,
+      and tell the truth about themselves.** The decisions a future reader must not undo:
+      - **`port_writable` IS NOT "accepts uploads", and this is the single most likely thing here
+        to be misread.** It answers one question for one caller — **which upload flow the UI
+        drives**: *true* → POST the bytes to the port (share, s3); *false* → drive `Sync::Commit`'s
+        two-phase presigned flow (chunk). Chunk mode accepts uploads **all day** — that *is*
+        `Sync::Commit` — so reading the name as "can this deployment take uploads" **hides the
+        upload button in the product's main deployment**. The name is about the **port's** write
+        path, not the deployment's. (It is also not `!syncable?` and not `scannable`; the full
+        argument lives at `app/services/file_layer/capabilities.rb`, which is where a future
+        reader will actually be standing.)
+      - **The 501 is a capability gate BEFORE the call, never a `rescue NotImplementedError`** —
+        and the *reasoning* is recorded (`app/controllers/concerns/library_capabilities.rb`),
+        not just the rule, because otherwise someone adds "a backstop rescue": (1)
+        `NotImplementedError` is a **`ScriptError`, not a `StandardError`**, so `rescue => e` and
+        ActiveJob's `retry_on` **silently do not catch it** — the rescue-based gate does not have
+        a gap, it does not work, failing to exactly the 500 the spec forbids; (2) a 501 from
+        `Chunk#write` would be **factually wrong** — it means *the caller used the wrong door*,
+        not that the deployment can't take uploads; (3) a controller rescue catches it from
+        **anywhere below**, laundering an s3 **misconfiguration** at `FileLayer.build` into a
+        routine-looking response. **`NotImplementedError` stays un-rescued, and that is a
+        feature** — it is a programming error, it should be loud, and the gates are what keep it
+        unreachable. `grep -rn "rescue.*NotImplementedError" app lib` returns nothing; keep it so.
+      - **What is gated, and what deliberately is not.** Gated: `changes`, `tree`, `conflicts`,
+        `locks`, `commits`, `chunks#download`, v1 `trash`, `nodes`, `share_links`. **Ungated on
+        purpose:** **`devices`** — the plan said to gate it, and gating it would have made a share
+        deployment's **entire v1 API unauthenticatable** (a device token is the only credential
+        the API accepts, `/v1/maker/*` included) *while the plan's own "maker is NOT gated" test
+        stayed green*, because it minted a token in Ruby instead of calling the endpoint a real
+        client must call; and **`V1::ShareController`** — the anonymous redeem side of **public
+        file links**, nothing to do with `FileLayer::Share`, where a 501 would disclose the
+        backend to any stranger holding any string and the existing 404 is honest and terminal.
+        Two gates are **not** the capability they look like: **`chunks#download` → `syncable`,
+        NOT `presignable`** (S3 answers `presignable: true` while having no chunk to hydrate),
+        and **v1 `trash` → `syncable`** (it is the *chunk* trash — tombstone + retained version —
+        and running its restore against a 2b share tombstone would revive a node with
+        `storage_path` NULLed while its bytes sit in `.trash`). `begin_upload`/`finalize_upload`
+        gate on **`syncable`**, not on `!port_writable?`: they need `Sync::Commit`, which is what
+        `syncable` names — a backend with neither flow would be told "use the two-phase flow" by
+        the derived gate and 500 inside it.
+      - **The web trash is backend-neutral; the v1 trash is 501-gated. Same word, two surfaces,
+        two answers, deliberately.** `trashed` is a **read** every adapter answers (chunk
+        delegates to `Sync::Trash`), and `TrashController#restore` branches on `port_writable?`
+        exactly as `#destroy` does — because what "restore" *means* differs (a tombstone in chunk
+        mode, moved bytes on share/s3). The v1 trash is an API for the chunk mechanism only.
+      - **`Delivery`'s three variants** — `Redirect(url)` / `SendFile(path)` / `Stream(enum)` —
+        are three **mechanisms**, not three styles, and **§15 survives on S3 (`Redirect`) but not
+        on share** (spec §2 decision 6): a mounted directory has nothing to presign. Do not "fix"
+        the share case back to a presign. The disposition is **not** carried on the type: it goes
+        *in* to `#download` and comes out *applied* (Redirect signs it into the URL, SendFile
+        passes it, Stream sets a header).
+      - **`send_file` + `x_sendfile_header` is the whole X-Accel story — there is no nginx here.**
+        Deployment is **Kamal + kamal-proxy** (a Go proxy) and `x_sendfile_header` is **nil**, so
+        `Rack::Sendfile` no-ops and the `Rack::Files` branch is **the only one that runs**. We
+        call `send_file` and let Rails' existing knob do it; **nothing hand-rolled**. The knob is
+        documented **commented** in `production.rb` on purpose: kamal-proxy does not implement
+        x-sendfile, so enabling it would **silently serve empty bodies** for every share download.
+      - **`FetchError` → 503** and **`UnsupportedOperation` → 422**, mapped once at
+        `FilesController` rather than per-action. The 503 matters: an unmounted NAS must never
+        read as the terminal 404 "your file is gone".
+      - **`Chunk#download`'s `is_a?(S3ChunkStore)` is deliberately NOT `presignable?`** — the
+        memory and local stores presign to URLs **Rails itself serves**, so redirecting to one
+        sends the browser back through us. §9a-3/§9a-4 stay open; Phase 4 does not force them,
+        and this is why. (The `chunks.size == 1` half is load-bearing too: a redirect names ONE
+        object, so redirecting a multi-chunk file would hand the browser its first chunk with a
+        200 and the right filename — **silent truncation**.)
+      - **Shipped knowingly, do not let these fall off** (detail + numbers in `docs/STATUS.md`):
+        a **measured N+1 in `FilesController#index`** (`stat` per node — 0.254 ms/node, **~508 ms
+        at 2000 nodes**, where the old *lying* code took 2 queries; correctness first, the honest
+        fix is a bulk `stat_all` verb or pagination); **`Share#undelete` is missing `observable!`
+        while `S3#undelete` has it** (unreachable today, but an adapter divergence on a verb the
+        web now drives, and the write contract does not pin it); **`Share#absolute_path` resolves
+        a NULL `storage_path` to the library root** under `allow_root: true` (7b removed the only
+        producer; the latent hole remains); **`Share#write`/`S3#write` raise `NotFound` for a
+        clobber**, so a duplicate-name upload says "File not found"; and an **unexplained
+        intermittent** — two agents each saw one `1 errors` run that never reproduced (~73 and
+        ~15+ subsequent full runs), neither captured the message. **Recorded as unexplained: not
+        fixed, and not established as pre-existing.**
 
 ---
 
