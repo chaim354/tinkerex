@@ -153,11 +153,16 @@ module Web
       assert_select ".preview-fallback"
     end
 
-    # CHUNK MODE'S DELETE IS Sync::Mutation AND MUST STAY Sync::Mutation. #destroy branches on
+    # CHUNK MODE'S DELETE BELONGS TO THE SYNC ENGINE AND MUST STAY THERE. #destroy branches on
     # port_writable, and the share/s3 half calls FileLayer#delete -- but here the bytes belong to
     # the sync engine, the tombstone IS the whole delete, and changing what Sync::* does is the
     # tripwire (spec §10). So the assertions below are about the MECHANISM, not just the outcome:
     # a tombstone alone is what a port delete would also produce.
+    #
+    # (The door is Sync::SubtreeDelete, and on this fixture -- a childless file -- it collects
+    # exactly one node and mints exactly the single entry asserted below. An earlier version of
+    # this comment named Sync::Mutation, which the action did call and which orphans a directory's
+    # children; the test could not tell, because a file has none. See the directory test below.)
     test "delete tombstones the node and removes it from the list" do
       sign_in
       node_id = upload("trash.txt", "bye".b)
@@ -171,12 +176,41 @@ module Web
       # Version is retained (keep-versions rule).
       assert user.versions.where(node_id:).exists?
 
-      # Sync::Mutation, and nothing else here, appends a changelog entry and advances head_seq --
+      # The sync engine, and nothing else here, appends a changelog entry and advances head_seq --
       # so this is what distinguishes "the sync engine deleted it" from "the port did". A
       # syncing device learns about this delete ONLY through this entry.
       entry = user.changelog_entries.where(node_id:).order(:seq).last
       assert_equal "delete", entry.op
       assert_operator user.head_seq, :>, before
+    end
+
+    # DELETING A DIRECTORY MUST TAKE ITS CHILDREN, and before this it did not: #destroy called
+    # Sync::Mutation.apply(op: "delete"), which tombstones ONLY the node it is handed. The
+    # directory went, the child stayed live pointing at a deleted parent, and /v1/tree -- which
+    # serves `nodes.present` -- kept serving it, while a changelog-following device dropped the
+    # whole subtree client-side. The two views of one library disagreed, permanently, from a
+    # button the UI renders for every directory.
+    #
+    # The child's own `delete` entry is asserted rather than just its tombstone: a device converges
+    # via the changelog, so a cascade that skipped the entry would leave the same divergence with a
+    # tidier database.
+    test "deleting a directory tombstones its children too, and tells the changelog about each" do
+      sign_in
+      user = User.find_by(email: "web@example.com")
+      user.nodes.create!(node_id: "dir-1", name: "cad", kind: "dir")
+      user.nodes.create!(node_id: "kid-1", name: "a.stl", kind: "file", parent_node_id: "dir-1")
+      user.nodes.create!(node_id: "kid-2", name: "b.stl", kind: "file", parent_node_id: "dir-1")
+
+      delete file_path("dir-1")
+      assert_redirected_to files_path
+
+      assert_equal 0, user.nodes.present.count,
+                   "a live child under a deleted parent is what /v1/tree would serve"
+      %w[dir-1 kid-1 kid-2].each do |id|
+        assert user.nodes.find_by(node_id: id).deleted?, "#{id} should be tombstoned"
+        assert user.changelog_entries.exists?(node_id: id, op: "delete"),
+               "#{id} needs its own changelog entry -- it is how a device learns"
+      end
     end
 
     # THE OTHER HALF OF CAPABILITY GATING, and the half a plan forgets. A gate that hides a
