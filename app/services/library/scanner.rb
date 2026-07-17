@@ -186,6 +186,12 @@ module Library
         rel = prefix.empty? ? name : "#{prefix}/#{name}"
         next if rel == TRASH_PREFIX
         next if name.start_with?(TEMP_PREFIX) # see TEMP_PREFIX: indexing it wedges the library
+        # OS-generated clutter (.DS_Store, ._*, __MACOSX/, macOS volume metadata) — the SAME
+        # Library::OsClutter predicate the write guards reject on, so the skip and the refusal
+        # cannot drift. Skipping HERE keeps it out of vanished_paths, so an ignored file is never
+        # tombstoned. No log line: like the trash skip, this fires on routine noise every scan
+        # forever, and logging routine correctness is how a log stops being read.
+        next if Library::OsClutter.ignore?(rel)
 
         path = dir.join(name)
         stat =

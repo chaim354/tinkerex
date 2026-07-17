@@ -558,8 +558,13 @@ module FileLayer
     # `cad/.trash` is the user's own folder, is indexed, and is none of our business.
     def observable!(rel)
       segments = rel.to_s.split("/")
+      # OS clutter (.DS_Store, ._*, __MACOSX/, macOS volume metadata) joined the unobservable set
+      # the moment the observers began skipping it — so a write/move/undelete onto one of these
+      # names is the same wedge `.trash` was: a live node at a path no scan can pair. The reject
+      # predicate is the SAME Library::OsClutter the observers skip on (see that module).
       return unless segments.first == Library::Scanner::TRASH_PREFIX ||
-                    segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) }
+                    segments.any? { |s| s.start_with?(Library::Scanner::TEMP_PREFIX) } ||
+                    Library::OsClutter.ignore?(rel)
       raise NotFound, "#{rel.inspect} is a reserved path the library scan does not index"
     end
 

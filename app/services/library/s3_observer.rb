@@ -385,6 +385,15 @@ module Library
       # `.maker-tmp-x` invisible, which is the ghost-making shape rather than a guard against it.
       return false if segs.first == Library::Scanner::TRASH_PREFIX
 
+      # OS-generated clutter (.DS_Store, ._*, __MACOSX/, macOS volume metadata) — the SAME
+      # Library::OsClutter predicate FileLayer::S3#observable! rejects on, so the skip and the
+      # write refusal are one fact and cannot drift. Skipping HERE keeps it out of vanished_paths,
+      # so an ignored key is never tombstoned. Any depth (unlike TRASH_PREFIX, which is
+      # root-anchored): a `__MACOSX/` or `.DS_Store` anywhere in the bucket is clutter. No log
+      # line: routine noise on every scan of every bucket, and a log nobody reads by the time a
+      # real warning arrives is worse than none.
+      return false if Library::OsClutter.ignore?(rel)
+
       true
     end
 
