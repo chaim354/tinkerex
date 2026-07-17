@@ -5,6 +5,24 @@
 </div>
 
 <%#
+  Breadcrumb: root -> current folder, each segment a link. Root always shows; @crumbs is [] at
+  the root, so this collapses to just "Files" there. Segments walk down the path the controller
+  built by climbing parent_node_id (already user-scoped), so nothing here re-derives the tree or
+  trusts params[:folder] a second time. aria-current marks the leaf for assistive tech.
+%>
+<nav class="breadcrumb" aria-label="Folder path">
+  <%= link_to "Files", files_path %>
+  <% @crumbs.each_with_index do |crumb, i| %>
+    <span class="sep" aria-hidden="true">/</span>
+    <% if i == @crumbs.length - 1 %>
+      <%= link_to crumb.name, files_path(folder: crumb.node_id), "aria-current": "page" %>
+    <% else %>
+      <%= link_to crumb.name, files_path(folder: crumb.node_id) %>
+    <% end %>
+  <% end %>
+</nav>
+
+<%#
   ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask "can
   this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes go in, and
   the answer is the deployment's, not the user's. Rendering the wrong form is not a cosmetic bug:
@@ -58,7 +76,9 @@
             <% if node.file? %>
               <%= link_to node.name, file_path(node.node_id) %>
             <% else %>
-              <span class="dir">📁 <%= node.name %></span>
+              <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a
+                  file preview. Same node_id key #index scopes children on. %>
+              <%= link_to "📁 #{node.name}", files_path(folder: node.node_id), class: "dir" %>
             <% end %>
           </td>
           <td class="muted"><%= node.kind %></td>

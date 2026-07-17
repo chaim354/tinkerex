@@ -198,9 +198,15 @@ module Web
     # current_user.versions, which is empty in share mode, so every Size cell rendered an
     # em-dash. Asserting only that the filenames appear -- the plan's version -- passes today,
     # before any of this, because listing `nodes` was never the broken part.
+    #
+    # BOTH FILES AT ROOT, not one nested in cad/ as this test first read: the index now scopes to
+    # ONE folder's children (folder navigation), so a nested cad/b.stl no longer appears on the
+    # root page — it lives inside cad. The point of this test is real sizes vs the em-dash of a
+    # missing Version, which two root files prove exactly as well; the nesting was incidental. See
+    # folder_nav_test.rb for the child-scoping itself.
     test "the index reports real sizes, not the em-dash of a Version that does not exist" do
       index!("a.stl", "aaa")
-      index!("cad/b.stl", "bbbb")
+      index!("b.stl", "bbbb")
       get files_path
 
       assert_response :success

@@ -40,6 +40,10 @@ a:hover { text-decoration: underline; }
 
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .page-head h1 { margin: 0; font-size: 22px; }
+
+.breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 16px; font-size: 14px; }
+.breadcrumb .sep { color: var(--muted); }
+.breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 600; }
 .page-actions, .row-actions { display: flex; gap: 8px; align-items: center; }
 
 .uploader {
