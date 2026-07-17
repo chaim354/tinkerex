@@ -21,13 +21,14 @@ module FileLayer
       assert_raises(NoMethodError) { info.name = "b.stl" }
     end
 
-    test "Capabilities answers the four questions" do
+    test "Capabilities answers the five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
-                                         scannable: false)
+                                         scannable: false, port_writable: true)
       assert caps.versioned?
       assert caps.syncable?
       assert_not caps.presignable?
       assert_not caps.scannable?
+      assert caps.port_writable?
     end
 
     # Data.define requires EVERY member, and that is the mechanism the scan gate rests on rather

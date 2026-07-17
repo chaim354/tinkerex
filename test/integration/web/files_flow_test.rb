@@ -5,7 +5,21 @@ module Web
   # machinery the desktop client uses, with the memory chunk store backed by the dev blob
   # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
   class FilesFlowTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
+    # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
+    # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
+    # ignores LIBRARY_BACKEND, so it passed on the share/s3 legs by being blind to the backend
+    # rather than by being right. Routing #blob through FileLayer.current is what made the
+    # dependency real, and the share leg reported it immediately (ActionController::MissingFile --
+    # the Share adapter looking for these chunks' bytes on a disk that has none).
+    #
+    # That is the honest signal test_helper documents at pin_file_layer_backend, not a regression:
+    # nothing about the assertions below changed, only the declaration of which deployment they
+    # are about.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     # Sign in via the real password auth. Creates a confirmed account if needed, then
     # logs in (sets the signed session cookie) — the web UI works behind real auth.
@@ -139,9 +153,20 @@ module Web
       assert_select ".preview-fallback"
     end
 
+    # CHUNK MODE'S DELETE BELONGS TO THE SYNC ENGINE AND MUST STAY THERE. #destroy branches on
+    # port_writable, and the share/s3 half calls FileLayer#delete -- but here the bytes belong to
+    # the sync engine, the tombstone IS the whole delete, and changing what Sync::* does is the
+    # tripwire (spec §10). So the assertions below are about the MECHANISM, not just the outcome:
+    # a tombstone alone is what a port delete would also produce.
+    #
+    # (The door is Sync::SubtreeDelete, and on this fixture -- a childless file -- it collects
+    # exactly one node and mints exactly the single entry asserted below. An earlier version of
+    # this comment named Sync::Mutation, which the action did call and which orphans a directory's
+    # children; the test could not tell, because a file has none. See the directory test below.)
     test "delete tombstones the node and removes it from the list" do
       sign_in
       node_id = upload("trash.txt", "bye".b)
+      before = User.find_by(email: "web@example.com").head_seq
       delete file_path(node_id)
       assert_redirected_to files_path
 
@@ -150,6 +175,100 @@ module Web
       assert_equal 0, user.nodes.present.count
       # Version is retained (keep-versions rule).
       assert user.versions.where(node_id:).exists?
+
+      # The sync engine, and nothing else here, appends a changelog entry and advances head_seq --
+      # so this is what distinguishes "the sync engine deleted it" from "the port did". A
+      # syncing device learns about this delete ONLY through this entry.
+      entry = user.changelog_entries.where(node_id:).order(:seq).last
+      assert_equal "delete", entry.op
+      assert_operator user.head_seq, :>, before
+    end
+
+    # DELETING A DIRECTORY MUST TAKE ITS CHILDREN, and before this it did not: #destroy called
+    # Sync::Mutation.apply(op: "delete"), which tombstones ONLY the node it is handed. The
+    # directory went, the child stayed live pointing at a deleted parent, and /v1/tree -- which
+    # serves `nodes.present` -- kept serving it, while a changelog-following device dropped the
+    # whole subtree client-side. The two views of one library disagreed, permanently, from a
+    # button the UI renders for every directory.
+    #
+    # The child's own `delete` entry is asserted rather than just its tombstone: a device converges
+    # via the changelog, so a cascade that skipped the entry would leave the same divergence with a
+    # tidier database.
+    test "deleting a directory tombstones its children too, and tells the changelog about each" do
+      sign_in
+      user = User.find_by(email: "web@example.com")
+      user.nodes.create!(node_id: "dir-1", name: "cad", kind: "dir")
+      user.nodes.create!(node_id: "kid-1", name: "a.stl", kind: "file", parent_node_id: "dir-1")
+      user.nodes.create!(node_id: "kid-2", name: "b.stl", kind: "file", parent_node_id: "dir-1")
+
+      delete file_path("dir-1")
+      assert_redirected_to files_path
+
+      assert_equal 0, user.nodes.present.count,
+                   "a live child under a deleted parent is what /v1/tree would serve"
+      %w[dir-1 kid-1 kid-2].each do |id|
+        assert user.nodes.find_by(node_id: id).deleted?, "#{id} should be tombstoned"
+        assert user.changelog_entries.exists?(node_id: id, op: "delete"),
+               "#{id} needs its own changelog entry -- it is how a device learns"
+      end
+    end
+
+    # THE OTHER HALF OF CAPABILITY GATING, and the half a plan forgets. A gate that hides a
+    # feature in share mode is half-right; a gate that hides it in the product's MAIN deployment
+    # is a straightforward bug, and it is the easy one to ship -- `port_writable` reads like
+    # "accepts uploads", which chunk mode very much does (that is what Sync::Commit IS).
+    #
+    # So this is the counterpart to share_delivery_test.rb's "does not offer a version": the same
+    # two surfaces, asserted present rather than absent. Without it, a gate that fired everywhere
+    # would leave both suites green while the product lost its upload button and its versions.
+    test "chunk mode keeps version history and the upload control" do
+      sign_in
+      node_id = upload("v.stl", "bytes")
+
+      get file_path(node_id)
+      assert_response :success
+      assert_match(/Current version/i, response.body,
+                   "chunk is the versioned backend -- the gate must not fire here")
+      assert_match(/5 Bytes/i, response.body, "size must survive the move from Version to the port")
+
+      get files_path
+      assert_match(/upload/i, response.body,
+                   "chunk mode uploads via the two-phase flow -- port_writable: false does NOT " \
+                   "mean 'no uploads', and reading it that way hides this button in production")
+      # WHICH upload control, not just that one exists. Both branches of the view say "Upload a
+      # file", so /upload/i alone stays green with the branch INVERTED -- chunk mode would render
+      # the direct form, POST /files, and take a 501. Verified by mutation: only the share side
+      # caught it. This is the chunk-side half.
+      assert_match(/data-controller="uploader"/, response.body,
+                   "chunk mode must drive the two-phase flow, not POST the bytes to the port")
+    end
+
+    # The other direction of the upload branch. Chunk mode CAN accept uploads -- it does so all
+    # day via the two-phase presigned flow -- it just cannot take the bytes through Rails (§15).
+    # So the direct endpoint is an honest 501, and it must NAME the flow that does work: a bare
+    # 501 here would read as "uploads are off", which is exactly wrong.
+    test "the direct upload answers 501 in chunk mode, naming the two-phase flow" do
+      sign_in
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
+      assert_response :not_implemented
+      assert_match(/port_writable_unavailable/, response.body,
+                   "the 501 must be the capability gate, not a routing or auth accident")
+      assert_match(/begin_upload/, response.body,
+                   "a refusal must name the path the caller SHOULD use -- as Chunk#write does")
+    end
+
+    # THE GATE IS NOT AUTH AND NOT A MISSING ROUTE, proven: the same POST, unauthenticated,
+    # redirects to login. If POST /files were unrouted this would 404 instead, and the 501 above
+    # would have proved nothing.
+    test "the direct upload route exists and is behind auth" do
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
+      assert_redirected_to new_user_session_path
     end
 
     test "isolation: a user cannot see or fetch another user's file" do

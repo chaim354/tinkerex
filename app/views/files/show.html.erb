@@ -1,5 +1,19 @@
 <% content_for :title, "#{@node.name} — Tinkerex" %>
 
+<%#
+  Reads @info (FileLayer::FileInfo) rather than a Version: Version is chunk-mode only, and on a
+  share/s3 library this page used to report the truth about the wrong object -- Size "—" and
+  "No content yet." for a file sitting on the user's NAS.
+
+  `capabilities` is the controller's helper_method. It is called, not ivar-dereferenced with &.,
+  because a nil ivar is silently falsy in .erb and would make a gated feature disappear with
+  nothing red anywhere; `capabilities.versioned?` raises instead. Loud beats convenient here.
+
+  content_token, not size, is the "has content" test: it is nil exactly when there is nothing to
+  show -- no version yet in chunk mode, a directory in any mode -- whereas a size of 0 is a real
+  empty file the user created.
+%>
+
 <div class="page-head">
   <h1><%= @node.name %></h1>
   <div class="page-actions">
@@ -11,20 +25,24 @@
 </div>
 
 <dl class="meta">
-  <dt>Name</dt><dd><%= @node.name %></dd>
-  <dt>Size</dt><dd><%= @version ? number_to_human_size(@version.size) : "—" %></dd>
-  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: @node.name) %></dd>
-  <dt>Current version</dt><dd class="mono"><%= @version&.version_id || "—" %></dd>
-  <dt>Modified</dt><dd><%= @node.mtime ? Time.at(@node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
+  <dt>Name</dt><dd><%= @info.name %></dd>
+  <dt>Size</dt><dd><%= @info.content_token ? number_to_human_size(@info.size) : "—" %></dd>
+  <dt>Type</dt><dd class="mono"><%= Marcel::MimeType.for(name: @info.name) %></dd>
+  <% if capabilities.versioned? %>
+    <dt>Current version</dt><dd class="mono"><%= @info.content_token || "—" %></dd>
+  <% end %>
+  <%# FileInfo#mtime is unix NANOSECONDS, the same convention as the nodes column this replaced.
+      Reading it as seconds is the nanos-overflow bug this codebase has shipped twice. %>
+  <dt>Modified</dt><dd><%= @info.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
 </dl>
 
 <div class="preview">
-  <% if @version.nil? %>
+  <% if @info.content_token.nil? %>
     <p class="muted">No content yet.</p>
   <% elsif @kind == :image %>
     <img src="<%= blob_file_path(@node.node_id) %>" alt="<%= @node.name %>" class="preview-image">
   <% elsif @kind == :text %>
-    <%# Inline text preview — fetched from the blob endpoint (presigned bytes). %>
+    <%# Inline text preview — fetched from the blob endpoint (however this backend delivers). %>
     <pre class="preview-text"
          data-controller="textpreview"
          data-textpreview-url-value="<%= blob_file_path(@node.node_id) %>">Loading…</pre>

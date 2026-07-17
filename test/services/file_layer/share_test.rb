@@ -44,6 +44,12 @@ module FileLayer
       Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     end
 
+    # The web UI's delete, which here is the port's: bytes to `.trash`, then the tombstone. NOT
+    # delete_file! above — that is the user removing the file in Finder, which produces a SCAN
+    # tombstone whose bytes are gone for good. The two hooks are the two tombstone kinds, and the
+    # difference is exactly what #trashed filters on.
+    def trash_file!(node_id) = adapter.delete(@user, node_id:)
+
     # Share's transient failure: the bytes are there, we just can't read them right now —
     # an unmounted NAS, a permissions blip. Must NOT read as "the user deleted the file".
     def with_transient_backend_failure
@@ -65,6 +71,54 @@ module FileLayer
       yield
     ensure
       File.define_singleton_method(:binwrite, original)
+    end
+
+    # Contract hook, and a BARE YIELD is the honest implementation rather than a stub-out. A
+    # mounted directory has no URL signer — that is the whole reason presignable is false here —
+    # so there is nothing to configure. Installing one would fake the capability into existence
+    # and make the contract's presignable test pin this fixture instead of the adapter.
+    def with_off_box_presigning = yield
+
+    # --- download (Task 2) ----------------------------------------------------------------
+
+    # Share is the backend where §15 cannot hold: a directory has nothing to presign, so Rails
+    # serves the bytes. SendFile carries the path rather than the bytes, which is what lets the
+    # controller hand it to send_file and keep a 2GB file off the Rails heap.
+    test "download hands back the absolute path, resolved through the escape guard" do
+      id = create_file!(name: "d.stl", bytes: "bytes")
+      d = adapter.download(@user, node_id: id, disposition: "attachment")
+      assert_kind_of FileLayer::Delivery::SendFile, d
+      assert_equal @root.join("d.stl").to_s, d.path
+      assert File.exist?(d.path)
+    end
+
+    # LANDMINE 2. Delivery::SendFile is a Data object anyone can construct with any path, so the
+    # TYPE carries no guarantee whatsoever — the guard has to live at the only place that
+    # PRODUCES one, which is why #download resolves through the same #absolute_path #read uses
+    # rather than reaching for node.storage_path itself.
+    #
+    # update_column bypasses validation: a poisoned row of the shape a future bug could produce.
+    # storage_path is written by our own scanner today, but it is a plain DB column and 2b's
+    # `write` already takes a name from the UI — "no caller passes anything bad today" is exactly
+    # the assumption that ages badly. download must refuse rather than hand a controller a path
+    # outside the root, because the controller's job is to send_file whatever it is given.
+    test "download refuses a storage_path that escapes the root" do
+      id = create_file!(name: "d.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, "../../../etc/passwd")
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+      # Assert the MESSAGE: NotFound is reachable from live_node! too, so the class alone would be
+      # satisfied by an adapter that never resolved the path at all.
+      assert_match(/escapes the library root/, err.message)
+    end
+
+    test "download raises NotFound for a deleted node" do
+      id = create_file!(name: "gone.stl", bytes: "b")
+      delete_file!(id)
+      assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: id, disposition: "attachment")
+      end
     end
 
     # --- Share-specific tests -------------------------------------------------------------
@@ -199,6 +253,41 @@ module FileLayer
       end
     ensure
       FileUtils.remove_entry(outside) if outside&.exist?
+    end
+
+    # A BLANK storage_path RESOLVES TO THE LIBRARY ROOT, and until this guard #download answered it
+    # with Delivery::SendFile(path: <the root>) -- a DIRECTORY handed to send_file. That is the
+    # same hole the two tests above close, wearing the one shape they cannot see: the path does not
+    # escape the root, it IS the root.
+    #
+    # TWO TESTS, NOT ONE LOOPING OVER TWO VERBS, because the verbs failed DIFFERENTLY and a loop
+    # asserts only until the first one raises. Read escaped by ACCIDENT (File.binread of a
+    # directory is EISDIR -> the errno mapping answers FetchError, which reads like a working guard
+    # while telling the user to retry a condition that will never clear). Download had no accident
+    # available: it never reads, it answers SendFile(path:), so it handed the controller the root.
+    # One test would have proven only whichever ran first.
+    def null_path_node!
+      id = create_file!(name: "n.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:storage_path, nil)
+      id
+    end
+
+    # The CLASS is the assertion here: FetchError vs NotFound is exactly the difference between the
+    # EISDIR accident and the guard, and both are "read raised something".
+    test "read refuses a NULL storage_path instead of resolving to the library root" do
+      err = assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: null_path_node!) }
+      assert_match(/has no storage_path/, err.message,
+                   "the refusal must be the guard, not the EISDIR accident behind it")
+    end
+
+    # LANDMINE 2's shape that the escape-guard tests above cannot see: this path does not ESCAPE
+    # the root, it IS the root. Delivery::SendFile carries a path a controller will send_file
+    # unread, so a directory reaching it is the whole bug.
+    test "download refuses a NULL storage_path instead of handing back the library root" do
+      err = assert_raises(FileLayer::NotFound) do
+        adapter.download(@user, node_id: null_path_node!, disposition: "attachment")
+      end
+      assert_match(/has no storage_path/, err.message)
     end
 
     # The guard is `start_with?("#{root}/")`, not `start_with?(root)`, precisely so a SIBLING
@@ -357,6 +446,40 @@ module FileLayer
         assert_match(/reserved path/, err.message, reserved)
       end
       assert_not File.exist?(@root.join(".trash")), "nothing may be created at a reserved path"
+    end
+
+    # AND `undelete`, WHICH WAS REPORTED AS UNREACHABLE. It is not. It differs from write/move in
+    # the one way that matters: it does not take a path from a caller, it RECONSTRUCTS one from the
+    # tombstone's PARENT (2b's delete NULLs storage_path), so the reserved segment arrives through
+    # a poisoned parent rather than through an argument -- which is why `leaf!` cannot see it and
+    # why the two tests above, which poison the argument, do not cover it.
+    #
+    # update_column is the same poisoned-row standard the escape-guard tests use, for the same
+    # reason: storage_path is a plain DB column, and "no caller writes anything bad today" is the
+    # assumption this file has now been wrong about four times.
+    #
+    # A ghost HERE is the worst kind: the restored node is LIVE at a path the Scanner skips at any
+    # depth, so no observation can ever partner it, the Reconciler tombstones it, and the
+    # mass-deletion guard refuses that scan and every scan after it. The scan is driven rather than
+    # merely asserting the raise, because the raise is the mechanism and the wedge is the point.
+    test "undelete refuses to restore into a path the scan would skip" do
+      parent = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                   storage_path: "cad")
+      FileUtils.mkdir_p(@root.join("cad"))
+      id = index!("cad/a.stl", bytes: "bytes")
+      @user.nodes.find_by!(node_id: id).update_column(:parent_node_id, parent.node_id)
+      adapter.delete(@user, node_id: id)
+
+      parent.update_column(:storage_path, ".maker-tmp-evil")
+      err = assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
+      assert_match(/reserved path/, err.message,
+                   "NotFound is reachable from the tombstone lookup too -- pin the guard")
+
+      assert_not File.exist?(@root.join(".maker-tmp-evil/a.stl")),
+                 "the bytes must stay in .trash, where undelete can still find them"
+      3.times do
+        assert_nothing_raised { Library::Scanner.call(@user, root: @root.to_s) }
+      end
     end
 
     # THE WEDGE this guard exists for, driven end to end. It wedges TWICE, and the second half is
@@ -880,6 +1003,30 @@ module FileLayer
       assert_match(/ENOTDIR|EEXIST/, err.message)
       assert @user.nodes.find_by!(node_id: id).deleted, "a failed restore must stay trashed"
       assert File.exist?(@root.join(".trash/#{id}/a.stl")), "and must not lose the bytes"
+    end
+
+    # THE FILTER #trashed TURNS ON, and it cannot live in the shared contract: chunk mode has no
+    # scan tombstone to exclude (nothing polls its store), so there is no backend-neutral way to
+    # ask this. S3Test carries the identical test for the identical reason — the Reconciler that
+    # mints this tombstone is shared between the two backends, and the filter that must exclude it
+    # is not.
+    #
+    # A file the user deleted in Finder is GONE: its bytes were never moved to `.trash`, so
+    # `undelete` cannot bring it back. Listing it would offer a Restore button that always fails.
+    test "a file deleted on the NAS is not in the trash — there is nothing to restore" do
+      # BALLAST, NOT DECORATION: with only one file, removing it empties the root, and an empty
+      # root is how this adapter recognises an UNMOUNTED share — so undelete would answer
+      # FetchError ("try again later") instead of NotFound ("it's gone"), and the assertion below
+      # would be pinning the unmounted heuristic rather than the trash filter. A real library has
+      # other files in it.
+      create_file!(name: "ballast.stl", bytes: "still here")
+      id = create_file!(name: "onnas.stl", bytes: "aaa")
+      delete_file!(id) # rm on the share, then a scan: a SCAN tombstone, storage_path kept
+
+      assert @user.nodes.find_by!(node_id: id).deleted, "the scan must have tombstoned it"
+      assert_not_includes adapter.trashed(@user).map(&:node_id), id
+      # The reason it must not be listed, asserted rather than assumed.
+      assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
     end
   end
 end

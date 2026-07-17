@@ -5,7 +5,17 @@ module Web
   # a Restore button un-tombstones them and returns them to the normal file listing,
   # and a user can never see/restore another user's trash.
   class TrashFlowTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # Chunk-shaped: it uploads through the two-phase flow (begin_upload, which Phase 4 Task 7
+    # gates on `syncable`) and restores by re-pointing at a retained version -- Sync::Trash, which
+    # TrashController still drives on this backend and must keep driving (spec §10).
+    #
+    # Its share-mode counterpart is ShareTrashTest, where "restore" means moving bytes back out of
+    # `.trash`. The page is one page over the port's `trashed`/`undelete`; these two suites are
+    # what pin that the two mechanisms both still work behind it.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     PASSWORD = "correct horse battery staple".freeze
 

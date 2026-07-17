@@ -4,27 +4,55 @@
   <h1>Files</h1>
 </div>
 
-<section class="uploader"
-         data-controller="uploader"
-         data-uploader-begin-url-value="<%= begin_upload_files_path %>"
-         data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-  <label class="upload-btn">
-    <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
-    <span>Upload a file</span>
-  </label>
-  <span class="upload-status" data-uploader-target="status"></span>
-</section>
+<%#
+  ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask "can
+  this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes go in, and
+  the answer is the deployment's, not the user's. Rendering the wrong form is not a cosmetic bug:
+  the JS uploader would drive begin_upload, which FilesController answers 501 on a share/s3
+  library, so the button would simply fail.
+%>
+<% if capabilities.port_writable? %>
+  <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
+  <%= form_with url: files_path, method: :post, class: "uploader",
+                data: { turbo: false }, html: { multipart: true } do |f| %>
+    <label class="upload-btn">
+      <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+      <span>Upload a file</span>
+    </label>
+  <% end %>
+<% else %>
+  <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
+  <section class="uploader"
+           data-controller="uploader"
+           data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+           data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
+    <label class="upload-btn">
+      <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+      <span>Upload a file</span>
+    </label>
+    <span class="upload-status" data-uploader-target="status"></span>
+  </section>
+<% end %>
 
 <% if @nodes.empty? %>
   <p class="empty muted">No files yet. Upload one to get started.</p>
 <% else %>
+<%#
+  Size/Version come from @info_by_node (FileLayer::FileInfo), not from Version rows: on share and
+  s3 there are none, so every Size cell here rendered an em-dash. See show.html.erb's header for
+  why `capabilities` is called rather than dereferenced off an ivar with `&.`.
+%>
   <table class="files">
     <thead>
-      <tr><th>Name</th><th>Kind</th><th class="num">Size</th><th>Version</th><th>Modified</th><th></th></tr>
+      <tr>
+        <th>Name</th><th>Kind</th><th class="num">Size</th>
+        <% if capabilities.versioned? %><th>Version</th><% end %>
+        <th>Modified</th><th></th>
+      </tr>
     </thead>
     <tbody>
       <% @nodes.each do |node| %>
-        <% version = node.file? ? @versions_by_node[node.current_version_id] : nil %>
+        <% info = @info_by_node[node.node_id] %>
         <tr>
           <td>
             <% if node.file? %>
@@ -34,9 +62,11 @@
             <% end %>
           </td>
           <td class="muted"><%= node.kind %></td>
-          <td class="num muted"><%= version ? number_to_human_size(version.size) : "—" %></td>
-          <td class="muted mono"><%= version ? version.version_id.first(8) : "—" %></td>
-          <td class="muted"><%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
+          <td class="num muted"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
+          <% if capabilities.versioned? %>
+            <td class="muted mono"><%= info.content_token&.first(8) || "—" %></td>
+          <% end %>
+          <td class="muted"><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
           <td class="row-actions">
             <% if node.file? %>
               <%= link_to "Download", blob_file_path(node.node_id, download: 1) %>

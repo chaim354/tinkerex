@@ -21,7 +21,11 @@ module FileLayer
       # learned by walking the root on a timer (Library::Scanner). This is the capability
       # Library::ScanJob.scan_all! gates on; before it, that gate was `is_a?(FileLayer::Share)`,
       # i.e. this very fact spelled as a class check, which is why it broke when S3 arrived.
-      Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true)
+      #
+      # port_writable: true — there is no sync engine here, so the port IS the write path
+      # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
+      Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
+                       port_writable: true)
     end
 
     def stat(user, node_id:)
@@ -34,6 +38,40 @@ module FileLayer
         mtime: node.mtime,
         content_token: node.content_hash
       )
+    end
+
+    # What is in this deployment's trash: the files WE moved to `.trash/<node_id>/<name>`, which
+    # `undelete` can move back. A read verb, so it is answered here even though it reports on the
+    # write path's leavings.
+    #
+    # `storage_path: nil` IS THE FILTER, AND IT IS THE TWO-TOMBSTONE-KINDS DISTINCTION (2b
+    # Landmine 2) BEING READ RATHER THAN A CLEVER PREDICATE. There are exactly two ways a node
+    # here becomes deleted, and only one of them is a trash:
+    #
+    #   - a TRASH tombstone (`delete` above): the bytes are in `.trash` and storage_path is NULLED
+    #     — precisely so a scan cannot revive it by path. `undelete` moves them back.
+    #   - a SCAN tombstone (Reconciler): the user removed the file in Finder, so the bytes are
+    #     GONE from storage we do not own, and the row KEEPS its storage_path (that is what lets a
+    #     restored file revive its old node). `undelete` on one raises NotFound — there is nothing
+    #     in `.trash` to move.
+    #
+    # So listing scan tombstones would offer a Restore button that cannot work. A row you can
+    # never recover is not trash, it is history — and a share-backed library has no history (spec
+    # §2 decision 4). Chunk mode filters nothing because there the two kinds do not exist.
+    #
+    # WHAT IT STILL CANNOT KNOW, stated so it is not read as a stronger promise than it is: a
+    # trash tombstone whose bytes Library::TrashPurgeJob has already reclaimed still has a NULL
+    # storage_path (the purge sweeps `.trash` by entry-dir mtime and deliberately never touches
+    # the row), so it is listed and its Restore raises NotFound. Deciding otherwise would mean a
+    # HEAD/stat per trashed node per page load, against a NAS, to catch a case the user is told
+    # about honestly when they click. The filter is exact for the kind it names; it does not claim
+    # the bytes are still there.
+    def trashed(user)
+      user.nodes.where(deleted: true, storage_path: nil).order(updated_at: :desc, name: :asc)
+          .map do |n|
+        TrashEntry.new(node_id: n.node_id, name: n.name, kind: n.kind,
+                       size: n.size, deleted_at: n.updated_at)
+      end
     end
 
     def read(user, node_id:, content_token: nil)
@@ -74,6 +112,60 @@ module FileLayer
       # cannot list every errno an SMB/NFS mount can produce — ENOTCONN, EHOSTDOWN, ENETDOWN,
       # ESTALE, EIO, ELOOP, ENOTDIR — so the DEFAULT must be the recoverable answer. Only
       # ENOENT can mean "genuinely deleted", so only ENOENT is terminal.
+      raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
+    end
+
+    # Hand the browser this file's bytes — as a PATH, because there is nothing here to presign.
+    # This is the backend where §15 ("keep bytes out of Rails") genuinely cannot hold: a mounted
+    # directory has no URL signer, which is exactly what presignable: false records. Spec §9's
+    # deliberate departure, scoped to storage we do not own. Do not "fix" it back.
+    #
+    # SendFile carries the path rather than the bytes, so the controller can hand it to send_file
+    # and keep a 2GB file off the Rails heap (and let x_sendfile_header pass it to a proxy where
+    # an operator has configured one).
+    #
+    # THROUGH #absolute_path, WHICH IS THE WHOLE POINT OF THIS METHOD BEING SHORT. Delivery::
+    # SendFile is a Data object anyone can construct with anything, so the TYPE guarantees
+    # nothing: this is the only thing standing between a poisoned storage_path and a controller
+    # that will send_file whatever it is handed. The same choke point #read resolves through —
+    # not a copy of it, because two copies of an escape guard drift and this file already makes
+    # that argument for live_node!.
+    #
+    # `disposition:`/`content_type:` are the controller's policy and are applied THERE, by
+    # send_file's own options. They are on the signature because S3's Redirect must sign them
+    # into the URL at mint time (see Delivery); a transport that applies them later ignores them.
+    #
+    # `disposition:` is REQUIRED even though this adapter never reads it — the port's signature
+    # is one signature, and a caller who may omit it here but not on S3 is a caller who learns
+    # the rule from whichever backend they happened to develop against. See S3#download, where
+    # omitting it silently produces a header with no disposition type at all.
+    # THE EXISTENCE CHECK IS NOT DECORATION, and it is here rather than in the controller because
+    # only this class can answer the question honestly. Without it a vanished file reaches
+    # send_file, which raises ActionController::MissingFile — mapped to :internal_server_error
+    # (verified: it has no rescue_response of its own), so an ordinary "the user deleted it on
+    # the NAS" pages on-call as a 500.
+    #
+    # Mapping MissingFile to a 404 in the controller would fix that symptom and re-open the one
+    # #read exists to prevent: an UNMOUNTED share makes every file vanish at once, and the
+    # controller cannot tell that from a deletion — `library_present?` is this object's knowledge,
+    # not the web layer's. So this reuses #read's exact reasoning: ENOENT + a library that looks
+    # unmounted is the RETRYABLE answer, never the terminal one (spec §6). An unmounted NAS must
+    # never read to a user as "your file is permanently gone".
+    #
+    # Known, accepted race: the file can vanish between this stat and send_file's open, which
+    # degrades to the MissingFile 500 above. That is a genuine "it changed under us" — narrow and
+    # honest — where the unchecked version made it the ORDINARY case.
+    def download(user, node_id:, disposition:, content_type: nil)
+      path = absolute_path(live_node!(user, node_id))
+      File.stat(path) # raises; the rescues below map it exactly as #read does
+      Delivery::SendFile.new(path: path.to_s)
+    rescue Errno::ENOENT => e
+      unless library_present?
+        raise FetchError, "#{node_id.inspect}: ENOENT and the library root looks unmounted"
+      end
+      raise NotFound, "#{node_id.inspect}: #{e.class}"
+    rescue SystemCallError => e
+      # Every other errno is transient — see #read's argument, which applies here unchanged.
       raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
     end
 
@@ -295,6 +387,17 @@ module FileLayer
       # Reconstructed from parent + name, because delete released storage_path (Landmine 2).
       # live: false — see parent_dir_rel!.
       rel = join_rel(parent_dir_rel!(user, node.parent_node_id, live: false), node.name)
+      # THE FOURTH INSTANCE OF THE SKIP-LIST BLIND SPOT, and it was reported as unreachable, which
+      # was wrong. `rel` is reconstructed from the PARENT, so a parent whose storage_path is
+      # `.maker-tmp-evil` restores the file to `.maker-tmp-evil/a.stl`: a live node at a path the
+      # Scanner skips at any depth -> an observation can never partner it -> an unpairable ghost ->
+      # a tombstone -> the mass-deletion guard refuses that scan and every scan after it. Probed,
+      # via the same poisoned-row standard (update_column) the escape-guard tests use.
+      #
+      # S3#undelete has had this since Phase 3; this is the divergence, not a new rule. Every
+      # writing path here now asks -- write, move, and undelete -- which is the structural finding
+      # rather than three coincidences: assume every path that writes is exposed until checked.
+      observable!(rel)
       dest = resolve_inside!(rel)
       raise NotFound, "#{rel.inspect} is occupied — undelete must not clobber" if File.exist?(dest)
 
@@ -320,10 +423,28 @@ module FileLayer
     # guard is worth exercising directly (no `send`), and the scanner/reconciler in Tasks 5-6
     # resolve the same node -> path mapping against the same root.
     #
-    # `allow_root:` is the ONLY thing separating this from the write path's resolve_inside!, so
-    # both delegate to one #resolve! rather than keeping two near-copies of the guard. Two copies
-    # of a security check drift, and this file already makes that argument for live_node!.
-    def absolute_path(node) = resolve!(node.storage_path, allow_root: true)
+    # A BLANK storage_path IS NOT A PATH, and refusing it here is the whole method. `@root.join("")`
+    # is the ROOT, so this used to hand a live NULL-path node's DIRECTORY back as its file: #read
+    # got EISDIR (an accident that reads as FetchError) and #download -- which does not read, it
+    # answers Delivery::SendFile(path:) -- handed the controller the library root to send_file.
+    # `delete`/`move` escaped only by accident too (EINVAL from renaming a dir into itself). The
+    # accidents are not the guard; this is. S3#key_for has had exactly this check since Phase 3,
+    # and closing the asymmetry is the point.
+    #
+    # Reachable by DATA, not by a caller: on share every producer of a live NULL-path node is
+    # 501-gated as of Phase 4, so the gates are what make it unreachable rather than this adapter.
+    # A DB flipped chunk->share reaches it directly -- chunk nodes never carry a storage_path.
+    #
+    # THE `allow_root:` LATITUDE IS GONE WITH IT, so this is now resolve_inside! plus the blank
+    # check. It was justified as "a read may resolve to the root itself (harmless -- File.binread
+    # of a directory is EISDIR anyway)", and Phase 4's #download is what made that false: SendFile
+    # never reads. Nothing legitimate wanted it -- the ONLY storage_path values that resolve to the
+    # root are blank, "." and "a/..", none of which any producer writes and none of which is a file.
+    def absolute_path(node)
+      rel = node.storage_path.to_s
+      raise NotFound, "node #{node.node_id.inspect} has no storage_path" if rel.blank?
+      resolve_inside!(rel)
+    end
 
     private
 
@@ -385,18 +506,18 @@ module FileLayer
       nil # non-empty or already gone; the purge job (Task 6) sweeps it either way
     end
 
-    # The write path's guard: the destination must be STRICTLY inside the root. A read may resolve
-    # to the root itself (harmless — it can only ever be handed a file node, and File.binread of a
-    # directory is EISDIR anyway); a write to the root itself would be a write to the library
-    # directory as a file, so it does not get the same latitude.
-    def resolve_inside!(rel) = resolve!(rel, allow_root: false)
-
-    def resolve!(rel, allow_root:)
+    # THE guard, for reads and writes alike: the resolved path must be STRICTLY inside the root.
+    # One mode, because neither door has a use for the root itself — a write to it would be a write
+    # to the library directory as a file, and a read of it is the hole #absolute_path now closes.
+    # (It took an `allow_root:` parameter until that fix, on the read path's behalf; the parameter
+    # is gone rather than left switched off, so there is nothing to switch back on.)
+    def resolve_inside!(rel)
       path = @root.join(rel.to_s).expand_path
       # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
       # has the root as a prefix would otherwise pass.
-      inside = path.to_s.start_with?("#{@root}/") || (allow_root && path.to_s == @root.to_s)
-      raise NotFound, "path escapes the library root: #{rel.inspect}" unless inside
+      unless path.to_s.start_with?("#{@root}/")
+        raise NotFound, "path escapes the library root: #{rel.inspect}"
+      end
       path
     end
 

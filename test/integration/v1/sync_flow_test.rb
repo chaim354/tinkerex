@@ -2,7 +2,15 @@ require "test_helper"
 
 module V1
   class SyncFlowTest < ActionDispatch::IntegrationTest
-    setup { Storage::ChunkStore.reset! }
+    # The v1 sync surface is mounted ONLY in chunk mode (spec §3.3), so as of Phase 4 Task 7 this
+    # suite has to say which deployment it is about -- the mechanism test_helper documents at
+    # pin_file_layer_backend. It passed on the share/s3 legs before only because these endpoints
+    # were blind to the backend: they answered a device asking for a changelog identically whether
+    # or not the deployment had one. That blindness WAS the bug the gate fixes.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     def register(email: "maker@example.com", name: "laptop")
       bootstrap_account(email: email, device_name: name)

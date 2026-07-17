@@ -21,8 +21,11 @@ Rails.application.routes.draw do
     member { post "restore" }
   end
 
-  # File library: list / view / upload (begin+finalize) / download / delete.
-  resources :files, only: %i[index show destroy] do
+  # File library: list / view / upload / download / delete. TWO upload routes, because there are
+  # two flows and each deployment has exactly one: `create` takes the bytes for a share/s3
+  # library (nothing to presign), begin+finalize is the chunk store's two-phase presigned flow.
+  # FilesController gates each on a capability, so the wrong one for this deployment answers 501.
+  resources :files, only: %i[index create show destroy] do
     collection do
       post "begin_upload"
       post "finalize_upload"
