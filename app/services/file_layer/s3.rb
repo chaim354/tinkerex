@@ -72,7 +72,11 @@ module FileLayer
     # syncable? is false: this is the web-over-your-own-storage product, with no sync engine, no
     # changelog and no devices (§10 tripwire).
     def capabilities
-      Capabilities.new(versioned: false, syncable: false, presignable: true)
+      # scannable: true — the bucket is the user's, and s3 mv / Cyberduck / rclone / the console
+      # all write to it without telling us. Library::S3Observer is the poll. Answering this
+      # honestly is the whole of Phase 3's trap: the gate used to be `is_a?(FileLayer::Share)`,
+      # which answered false for this adapter and silently never indexed the library.
+      Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what

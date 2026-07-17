@@ -82,11 +82,43 @@ module FileLayerAdapterContract
            "mtime must be unix nanoseconds, got #{mtime} (a seconds value is ~1.7e9)"
   end
 
-  def test_contract_capabilities_answers_all_three_questions
+  def test_contract_capabilities_answers_all_four_questions
     caps = adapter.capabilities
     assert_includes [ true, false ], caps.versioned?
     assert_includes [ true, false ], caps.syncable?
     assert_includes [ true, false ], caps.presignable?
+    assert_includes [ true, false ], caps.scannable?
+  end
+
+  # `scannable` PINNED AGAINST AN INDEPENDENT FACT — and the shape of this test is the whole point
+  # of it, so read the trap before changing it.
+  #
+  # Until Phase 3, Capabilities had ZERO consumers: every flag was a boolean nothing read, so no
+  # wrong one had ever been noticed. `scannable` is the first that is LOAD-BEARING —
+  # Library::ScanJob.scan_all! gates on it, so a backend that answers it wrong is silently never
+  # indexed, which is the exact failure the capability was introduced to end.
+  #
+  # THE OBVIOUS TEST CANNOT FAIL. Asserting that `scan_all!` acts iff `scannable?` is circular: the
+  # gate READS the capability, so the two agree by construction. Written that way first, and a
+  # Chunk mutated to `scannable: true` passed it — caught by mutation, not by review.
+  #
+  # So this compares the DECLARATION ("poll me") against a fact derived from somewhere else
+  # entirely: whether an observer exists that could. ScanJob.observer_for is a plain class dispatch
+  # that asks no capability, so neither side of this assertion is computed from the other, and both
+  # halves fail when flipped (verified by mutating each adapter in turn).
+  #
+  # Phase 2b declined to add a capability precisely because a task could only pin the TRUE half —
+  # the FALSE half has to be pinned by a backend that answers false, and Chunk is the only module
+  # that runs this contract and does. Both halves are pinned here, by one test, because every
+  # adapter runs it.
+  def test_contract_scannable_matches_whether_a_scan_observer_exists_for_this_backend
+    observer = Library::ScanJob.observer_for(@user, adapter)
+
+    assert_equal adapter.capabilities.scannable?, !observer.nil?,
+                 "#{adapter.class} declares scannable=#{adapter.capabilities.scannable?} but " \
+                 "Library::ScanJob.observer_for #{observer ? "built a #{observer.class}" : 'has no observer for it'}" \
+                 " — a backend that claims to be polled with nothing to poll it (or the reverse) " \
+                 "is silently never indexed"
   end
 
   # Tombstoned means GONE, on every backend. Chunk could technically still serve a trashed

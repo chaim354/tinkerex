@@ -1,5 +1,6 @@
 require "test_helper"
 require "tmpdir"
+require_relative "../../support/fake_s3"
 
 module Library
   class ScanJobTest < ActiveSupport::TestCase
@@ -134,7 +135,91 @@ module Library
       end
     end
 
+    # THE PHASE 3 TRAP, PINNED. Until this test existed the gate was `is_a?(FileLayer::Share)` —
+    # correct while Share was the only scanned backend, and silently wrong the moment FileLayer::S3
+    # landed: scan_all! answered false, enqueued nothing, raised nothing, and an s3 library was
+    # never indexed while the whole suite stayed green. Reproduced before the fix, not reasoned.
+    #
+    # The gate now asks a CAPABILITY (`scannable?`), so this test is not really about s3 — it is
+    # about the NEXT backend, which must state its own answer rather than inherit a false from an
+    # is_a? it never heard of.
+    test "scan_all! fans out for an s3 deployment, not only a share one" do
+      user = user!
+      with_env(S3_ENV) do
+        assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: user.id } ]) do
+          Library::ScanJob.scan_all!
+        end
+      end
+    end
+
+    # The s3 fan-out carries NO target, and that asymmetry with share's `root:` is deliberate
+    # rather than an omission. ActiveJob SERIALIZES arguments into the queue's database, where
+    # they sit until the job runs and after it fails — so an s3 target, which is a bucket plus
+    # the credentials to reach it, must never be one. The job resolves FileLayer.current instead,
+    # from the same validated ENV the fan-out read.
+    test "the s3 fan-out puts no bucket and no credentials in the job payload" do
+      user!
+      with_env(S3_ENV) do
+        Library::ScanJob.scan_all!
+        args = enqueued_jobs.last["arguments"].first
+        assert_equal [ "user_id" ], args.keys.grep_v(/_aj_/),
+                     "an s3 scan job names only the user — the target comes from the deployment"
+      end
+    end
+
+    # The other half of the trap: a gate that enqueues a job that does nothing is no better than a
+    # gate that enqueues nothing. This drives the REAL observer against a REAL Aws::S3::Client
+    # (FakeS3 stubs the transport, not the SDK) and asserts a row lands.
+    test "a scan with no root indexes the deployment's s3 bucket" do
+      fake = FakeS3.new
+      user = user!
+      fake.seed!("library/j.stl", "bytes")
+
+      with_injected_s3(fake) do
+        Library::ScanJob.perform_now(user_id: user.id)
+      end
+
+      assert user.nodes.find_by(storage_path: "j.stl"), "the scan must index the object"
+    end
+
+    # A chunk deployment has no store to poll, so a rootless scan has nothing to do — but it must
+    # SAY so rather than no-op. `perform` is a command: the one thing it may never do is silently
+    # nothing (that is the failure this whole task exists to remove, and putting it back here
+    # would just relocate it from scan_all! to perform).
+    test "a rootless scan in chunk mode raises rather than silently doing nothing" do
+      user = user!
+      with_env("LIBRARY_BACKEND" => "chunk") do
+        err = assert_raises(ArgumentError) { Library::ScanJob.perform_now(user_id: user.id) }
+        assert_match(/not a scanned backend/, err.message)
+      end
+    end
+
     private
+
+    # FileLayer.current= rather than ENV, because the fake CLIENT has to be injected and the
+    # ENV-based idioms rebuild from ENV (FileLayer.build constructs a real client). Prior art:
+    # file_bytes_test.rb:30.
+    #
+    # THE ensure IS LOAD-BEARING. A direct `FileLayer.current =` does NOT set test_helper's
+    # @file_layer_backend_pinned, so its teardown will not clean up after this — without the
+    # reset! the adapter leaks into the next test in this forked worker and fails there as
+    # something unrelated, a whole debugging session away from the cause.
+    def with_injected_s3(fake)
+      FileLayer.current = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                            secret_access_key: "sk", prefix: "library",
+                                            client: fake.client)
+      yield
+    ensure
+      FileLayer.reset!
+    end
+
+    # The three knobs LibraryBackendCheck requires for s3 (region/endpoint/prefix are optional).
+    # Frozen at parse time rather than built per test: these are constants of the deployment
+    # shape, not fixtures.
+    S3_ENV = {
+      "LIBRARY_BACKEND" => "s3", "LIBRARY_S3_BUCKET" => "b",
+      "LIBRARY_S3_ACCESS_KEY_ID" => "ak", "LIBRARY_S3_SECRET_ACCESS_KEY" => "sk"
+    }.freeze
 
     def user!
       User.create!(email: "job-#{SecureRandom.hex(6)}@example.com")
