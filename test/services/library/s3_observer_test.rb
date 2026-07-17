@@ -1,0 +1,418 @@
+require "test_helper"
+require_relative "../../support/fake_s3"
+
+module Library
+  # Observes a bucket the way Scanner observes a directory: it OBSERVES, the Reconciler DECIDES.
+  # Same Reconciler, same guard, same pairing -- which is the point, because that is where every
+  # one of Phase 2a's bugs lived. The listing is the only thing that differs, and it is where this
+  # backend's landmines are.
+  class S3ObserverTest < ActiveSupport::TestCase
+    PREFIX = "library".freeze
+
+    setup do
+      @fake = FakeS3.new
+      @user = User.create!(email: "obs-#{SecureRandom.hex(4)}@example.com")
+    end
+
+    def adapter(client: nil)
+      FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                        secret_access_key: "sk", prefix: PREFIX, client: client || @fake.client)
+    end
+
+    def scan!(**kw) = Library::S3Observer.call(@user, adapter: adapter, **kw)
+
+    def files = @user.nodes.present.where(kind: "file")
+
+    # ---------------------------------------------------------------- the basics
+
+    test "indexes an object with size, identity, and NANOSECOND mtime" do
+      @fake.seed!("#{PREFIX}/a.stl", "hello", last_modified: Time.at(1_700_000_000))
+      scan!
+
+      node = @user.nodes.find_by!(storage_path: "a.stl")
+      assert_equal "a.stl", node.name
+      assert_equal "file", node.kind
+      assert_equal 5, node.size
+      assert_equal "md5:#{Digest::MD5.hexdigest('hello')}", node.content_hash
+      # S3's last_modified is SECOND-granularity, but the column and FileInfo's contract are NANOS
+      # end-to-end. Passing seconds through is the bug that shipped twice for real in the mount
+      # adapters.
+      assert_equal 1_700_000_000_000_000_000, node.mtime
+    end
+
+    test "the identity never carries the quotes S3 wraps every ETag in" do
+      @fake.seed!("#{PREFIX}/q.stl", "quoted")
+      scan!
+      assert_not_includes @user.nodes.find_by!(storage_path: "q.stl").content_hash, '"'
+    end
+
+    test "excludes the trash prefix" do
+      @fake.seed!("#{PREFIX}/.trash/n1/old.stl", "deleted")
+      @fake.seed!("#{PREFIX}/live.stl", "x")
+      scan!
+
+      assert_equal 0, @user.nodes.where("storage_path LIKE '.trash%'").count
+      assert @user.nodes.find_by(storage_path: "live.stl")
+    end
+
+    test "an object outside the prefix is not in this library" do
+      @fake.seed!("somewhere-else/other.stl", "not ours")
+      @fake.seed!("#{PREFIX}/ours.stl", "ours")
+      scan!
+
+      assert_equal 1, files.count
+      assert @user.nodes.find_by(storage_path: "ours.stl")
+    end
+
+    # A sibling keyspace, not a subdirectory: prefix "library" must not swallow "libraryX/". This
+    # is what the trailing slash on FileLayer::S3#listing_prefix buys, and it is asserted here
+    # because the observer is the only caller that lists the whole library.
+    test "a sibling prefix sharing our prefix's leading characters is not in this library" do
+      @fake.seed!("#{PREFIX}-other/nope.stl", "theirs")
+      @fake.seed!("#{PREFIX}/yes.stl", "ours")
+      scan!
+
+      assert_equal 1, files.count
+      assert @user.nodes.find_by(storage_path: "yes.stl")
+    end
+
+    # ---------------------------------------------------------------- LANDMINE 6: no directories
+
+    # S3 has no directories -- the tree is synthesized from key prefixes, or parent_node_id
+    # resolves to nothing and browse/search/tags stop working below the top level.
+    test "synthesizes directory nodes from key prefixes so the tree still has parents" do
+      @fake.seed!("#{PREFIX}/cad/brackets/b.stl", "x")
+      scan!
+
+      file     = @user.nodes.find_by!(storage_path: "cad/brackets/b.stl")
+      brackets = @user.nodes.find_by!(storage_path: "cad/brackets")
+      cad      = @user.nodes.find_by!(storage_path: "cad")
+
+      assert_equal "dir", cad.kind
+      assert_equal "dir", brackets.kind
+      assert_equal brackets.node_id, file.parent_node_id
+      assert_equal cad.node_id, brackets.parent_node_id
+      assert_nil cad.parent_node_id
+    end
+
+    # nil, not 0 and not the newest child's mtime: S3 has no directory mtime, so there is nothing
+    # to report. Pins that the nullable column and Reconciler#ensure_dirs really do tolerate it --
+    # confirmed rather than assumed, per the plan's instruction.
+    test "a synthesized directory carries no mtime and no size" do
+      @fake.seed!("#{PREFIX}/cad/b.stl", "x")
+      scan!
+
+      cad = @user.nodes.find_by!(storage_path: "cad")
+      assert_nil cad.mtime
+      assert_nil cad.size
+    end
+
+    # The S3 console (and most tools) make a "folder" as a ZERO-BYTE object with a TRAILING SLASH.
+    # Index it as a file and File.basename("cad/") gives "cad" -- a phantom file node named `cad`
+    # at storage_path "cad/", living beside the real dir node `cad`. Distinct strings, so the
+    # partial unique index permits BOTH, and the phantom is in every browse view forever.
+    test "a zero-byte directory-marker object is a directory, not a phantom file" do
+      @fake.seed!("#{PREFIX}/cad/", "")
+      @fake.seed!("#{PREFIX}/cad/real.stl", "x")
+      scan!
+
+      assert_equal 1, files.count, "the only file is real.stl -- the marker is not a file"
+      assert_nil @user.nodes.find_by(storage_path: "cad/"), "no node may carry a trailing slash"
+      assert_equal "dir", @user.nodes.find_by!(storage_path: "cad").kind
+    end
+
+    # The test above cannot tell "the marker became a directory" from "the marker was dropped on
+    # the floor" -- `cad/real.stl` synthesizes `cad` either way. This one can: the marker is the
+    # ONLY evidence the folder exists. An empty folder made in the console should appear as one.
+    test "a directory-marker object with no children is still a directory" do
+      @fake.seed!("#{PREFIX}/empty-folder/", "")
+      scan!
+
+      node = @user.nodes.find_by!(storage_path: "empty-folder")
+      assert_equal "dir", node.kind
+      assert_equal 0, files.count
+    end
+
+    # The library root's own marker object addresses nothing inside the library.
+    test "a marker object for the prefix itself is not a node" do
+      @fake.seed!("#{PREFIX}/", "")
+      @fake.seed!("#{PREFIX}/real.stl", "x")
+      scan!
+
+      assert_equal 1, @user.nodes.present.count, "only real.stl -- the root marker is not an entry"
+      assert @user.nodes.find_by(storage_path: "real.stl")
+    end
+
+    # LANDMINE 6's phantom arriving by a SECOND route. S3's keyspace is flat, so "cad//x.stl" is a
+    # perfectly legal key and is not a path: File.dirname gives "cad/", whose ancestor chain mints
+    # a dir node at storage_path "cad/" beside the real `cad` -- the identical phantom the
+    # trailing-slash rule prevents, wearing different punctuation.
+    test "a key with an empty path segment is skipped, not turned into a phantom directory" do
+      @fake.seed!("#{PREFIX}/cad//x.stl", "x")
+      @fake.seed!("#{PREFIX}/cad/ok.stl", "y")
+      scan!
+
+      assert_equal 1, files.count
+      assert @user.nodes.find_by(storage_path: "cad/ok.stl")
+      assert_nil @user.nodes.find_by(storage_path: "cad/"), "no node may carry a trailing slash"
+      assert_nil @user.nodes.find_by(storage_path: "cad//x.stl")
+    end
+
+    # A ".." segment would mint a node FileLayer::S3#key_for_rel then refuses to read as a prefix
+    # escape -- a file in the library that can never be opened.
+    test "a key with a .. segment is skipped rather than indexed as an unreadable node" do
+      @fake.seed!("#{PREFIX}/cad/../escape.stl", "x")
+      @fake.seed!("#{PREFIX}/fine.stl", "y")
+      scan!
+
+      assert_equal 1, files.count
+      assert @user.nodes.find_by(storage_path: "fine.stl")
+    end
+
+    # ---------------------------------------------------------------- LANDMINE 6: non-UTF-8 keys
+
+    # PLAN DRIFT, VERIFIED, AND THE PLAN'S TEST IS IMPOSSIBLE AS WRITTEN.
+    #
+    # The plan seeds `"#{PREFIX}/bad\xFF.stl".b` into the fake and asserts `assert_nothing_raised
+    # { scan! }`, expecting the observer's skip to swallow it. It cannot: the key never reaches the
+    # observer. `Aws::S3::Plugins::Http200Errors#check_for_error` force_encodes the WHOLE response
+    # body to UTF-8 and `match?`es it for "<Error>", so one bad byte anywhere in the listing raises
+    # out of `list_objects_v2` itself. Verified against aws-sdk-s3 1.226.0, with the backtrace, and
+    # it is NOT a stub artifact: `normalize_encoding` force_encodes any ASCII-8BIT body, and an
+    # ASCII-8BIT body is exactly what a real wire response is.
+    #
+    # So the honest answer is not to skip the key -- we never get the key -- but to refuse the page.
+    # A bare ArgumentError would abort too (nothing is reconciled either way), so the value of
+    # catching it is the DIAGNOSIS: "one or more keys are not valid UTF-8" is actionable, "invalid
+    # byte sequence in UTF-8" thrown from inside a gem is not.
+    #
+    # Both key shapes are covered because they fail by DIFFERENT doors, and only one of them is
+    # real: a UTF-8-tagged invalid key raises ArgumentError from the SDK's own http_200_errors
+    # plugin (the production path), while the plan's ASCII-8BIT key raises
+    # Encoding::UndefinedConversionError from the stub's serializer (hermetic-test-only). Asserting
+    # only the plan's shape would pin the fake's behavior and miss the SDK's.
+    {
+      "tagged UTF-8 (what a real wire response yields)" => "#{PREFIX}/bad\xFF.stl".dup.force_encoding("UTF-8"),
+      "tagged binary (the plan's fixture)"              => "#{PREFIX}/bad\xFF.stl".b
+    }.each do |shape, bad_key|
+      test "a non-UTF-8 key -- #{shape} -- refuses the scan rather than bricking it silently" do
+        @fake.seed!("#{PREFIX}/good.stl", "fine")
+        scan!
+        assert_equal 1, files.count
+
+        @fake.objects[bad_key] = @fake.objects["#{PREFIX}/good.stl"]
+
+        error = assert_raises(Library::Scanner::UnsafeScan) { scan! }
+        assert_match(/not valid UTF-8/, error.message)
+        assert_equal 1, files.count, "a listing we could not decode must never tombstone anything"
+      end
+    end
+
+    # Pins the SDK behavior the tests above rest on, directly, so the day aws-sdk-s3 changes it we
+    # find out here rather than by the observer's rescue quietly becoming dead code. ArgumentError
+    # is the SDK's real one; EncodingError is the stub serializer's. Both are caught; neither is
+    # a ServiceError, which is why the rescue needs them named at all.
+    test "aws-sdk-s3 itself raises on a listing containing a non-UTF-8 key" do
+      @fake.seed!("#{PREFIX}/good.stl", "fine")
+      @fake.objects["#{PREFIX}/bad\xFF.stl".dup.force_encoding("UTF-8")] =
+        @fake.objects["#{PREFIX}/good.stl"]
+
+      error = assert_raises(ArgumentError) do
+        @fake.client.list_objects_v2(bucket: "b", prefix: "#{PREFIX}/")
+      end
+      assert_match(/invalid byte sequence/, error.message)
+      assert_not_kind_of Aws::S3::Errors::ServiceError, error,
+                         "if this ever becomes a ServiceError the observer's rescue order matters"
+    end
+
+    # A listing client the SDK cannot be made to be: it hands back a key the SDK would have raised
+    # on. This is the ONLY way to reach the observer's own valid_encoding? skip, which is defence
+    # in depth for a client other than aws-sdk-s3 (`client:` is an injection seam) or an SDK that
+    # stops raising. Without this the skip is untested code that looks tested.
+    class RawKeyListing
+      Object_  = Struct.new(:key, :size, :etag, :last_modified)
+      Response = Struct.new(:contents, :is_truncated, :next_continuation_token)
+
+      def initialize(keys) = @keys = keys
+
+      def list_objects_v2(**)
+        Response.new(@keys.map { |k| Object_.new(k, 1, %q("0cc175b9c0f1b6a831c399e269772661"),
+                                                 Time.at(1_700_000_000)) }, false, nil)
+      end
+    end
+
+    # BOTH TAGS, and the binary one is the whole reason this test exists. `valid_encoding?` -- the
+    # Scanner's line, which looks like it transfers verbatim -- asks whether the bytes are valid in
+    # the encoding the String is TAGGED with, and an ASCII-8BIT string is ALWAYS valid: every byte
+    # sequence is legal binary. The Scanner is safe because Dir.children tags names UTF-8; a client
+    # is under no such obligation. The naive check waved "bad\xFF.stl".b straight through into
+    # storage_path, and this fixture is what caught it.
+    [ [ "tagged UTF-8", "#{PREFIX}/bad\xFF.stl".dup.force_encoding("UTF-8") ],
+      [ "tagged binary", "#{PREFIX}/bad\xFF.stl".b ] ].each do |shape, bad_key|
+      test "the observer skips a non-UTF-8 key (#{shape}) handed to it directly, and keeps the others" do
+        client = RawKeyListing.new([ "#{PREFIX}/good.stl", bad_key ])
+        observer = Library::S3Observer.new(@user, adapter: adapter(client:))
+
+        observed = nil
+        assert_nothing_raised { observed = observer.observe }
+
+        assert_equal [ "good.stl" ], observed.reject(&:dir).map(&:rel_path),
+                     "one unindexable key must not lose the others, and must not be tombstoned"
+      end
+    end
+
+    # A key whose bytes ARE valid UTF-8 but arrives tagged binary is a real object with a real
+    # name, and must be indexed -- as a UTF-8 String, not a binary one, or storage_path carries a
+    # binary blob into a text column. The skip above must not overreach into this.
+    test "a binary-tagged key whose bytes are valid UTF-8 is indexed, re-tagged as UTF-8" do
+      client = RawKeyListing.new([ "#{PREFIX}/café.stl".b ])
+      observed = Library::S3Observer.new(@user, adapter: adapter(client:)).observe.reject(&:dir)
+
+      assert_equal [ "café.stl" ], observed.map(&:rel_path)
+      assert_equal Encoding::UTF_8, observed.first.rel_path.encoding
+    end
+
+    # ---------------------------------------------------------------- LANDMINE 4: partial listings
+
+    # The fake paginates at 2 keys a page, so this really does cross page boundaries.
+    test "paginates: every object across several pages is indexed" do
+      7.times { |i| @fake.seed!("#{PREFIX}/f#{i}.stl", "body-#{i}") }
+      scan!
+
+      assert_equal 7, files.count, "a listing that stops at page 1 silently loses the rest"
+      assert_operator @fake.calls[:list_objects_v2], :>, 1, "the fixture must cross a page boundary"
+    end
+
+    # THE LANDMINE-4 TEST, and the one the mutation is run against.
+    #
+    # A listing that fails on the LAST page of a long one is the realistic shape, and it is the
+    # shape the mass-deletion guard CANNOT save us from: 18 of 20 files are observed, the missing 2
+    # are 10% of the library, that is under the 20% threshold, and the guard waves it through. The
+    # observer's abort is the only thing between the user and two silently tombstoned files.
+    #
+    # This is deliberately NOT the plan's fixture (see below): faulting page 1 yields zero
+    # observations, which trips the guard by itself, so the plan's version passes with the abort
+    # deleted. Here, deleting the abort tombstones 2 files and both assertions fail.
+    test "a listing that fails mid-pagination ABORTS, under a threshold the guard would allow" do
+      20.times { |i| @fake.seed!("#{PREFIX}/f#{i}.stl", "body-#{i}") }
+      scan!
+      assert_equal 20, files.count
+
+      # 10 pages at 2 keys each; let 9 through and kill the 10th. 18 observed, 2 "vanished" = 10%,
+      # comfortably under the default 20% guard.
+      @fake.fault_after!(:list_objects_v2, 9, "InternalError")
+
+      assert_raises(Library::Scanner::UnsafeScan) { scan! }
+
+      @fake.clear_faults!
+      assert_equal 20, files.count, "a partial listing must never be mistaken for a deletion"
+    end
+
+    # The plan's fixture, with the guard TAKEN OUT OF THE WAY. As the plan wrote it (default
+    # threshold) this passes whether or not the observer aborts -- zero observations trip the
+    # mass-deletion guard, which raises the same UnsafeScan from a different place for a different
+    # reason. max_delete_pct: 100 disables the guard, so the only thing that can raise here is the
+    # observer, and the only thing that can save the 6 files is its abort.
+    test "a listing that fails on its FIRST page aborts on its own, without the guard's help" do
+      6.times { |i| @fake.seed!("#{PREFIX}/f#{i}.stl", "body-#{i}") }
+      scan!(max_delete_pct: 100)
+      assert_equal 6, files.count
+
+      @fake.fault!(:list_objects_v2, "InternalError")
+      assert_raises(Library::Scanner::UnsafeScan) { scan!(max_delete_pct: 100) }
+
+      @fake.clear_faults!
+      assert_equal 6, files.count
+    end
+
+    # "There is more, and no, you may not have it." Real S3 cannot answer this way; an
+    # S3-COMPATIBLE store is not bound by that, and the result is an incomplete listing wearing a
+    # success. The SDK cannot be stubbed into it, so the client is hand-rolled.
+    class TruncatedWithoutToken
+      Response = Struct.new(:contents, :is_truncated, :next_continuation_token)
+      def list_objects_v2(**) = Response.new([], true, nil)
+    end
+
+    test "a listing that is truncated but gives no continuation token aborts" do
+      observer = Library::S3Observer.new(@user, adapter: adapter(client: TruncatedWithoutToken.new))
+      error = assert_raises(Library::Scanner::UnsafeScan) { observer.observe }
+      assert_match(/continuation token/, error.message)
+    end
+
+    # ---------------------------------------------------------------- wired to the real decider
+
+    # The mass-deletion guard is the RECONCILER's, and this proves the observer is actually wired
+    # to it rather than reimplementing a laxer one of its own.
+    test "a genuinely emptied bucket trips the mass-deletion guard" do
+      3.times { |i| @fake.seed!("#{PREFIX}/g#{i}.stl", "x#{i}") }
+      scan!
+      @fake.objects.clear
+
+      assert_raises(Library::Scanner::UnsafeScan) { scan! }
+      assert_equal 3, files.count
+    end
+
+    # THE PHASE'S HEADLINE PROMISE, through the real observer: a reorganization in the bucket keeps
+    # the node_id, so every project attachment, BOM link and tag on that file survives it.
+    test "a rename in the bucket keeps the node_id -- the attachment survives" do
+      @fake.seed!("#{PREFIX}/old.stl", "same bytes")
+      scan!
+      id = @user.nodes.find_by!(storage_path: "old.stl").node_id
+
+      body = @fake.objects.delete("#{PREFIX}/old.stl")
+      @fake.objects["#{PREFIX}/cad/new.stl"] = body
+      scan!(max_delete_pct: 100)
+
+      assert_equal id, @user.nodes.find_by!(storage_path: "cad/new.stl").node_id
+    end
+
+    # ---------------------------------------------------------------- what a scan costs
+
+    # The identity is FREE in the listing, so the observer must never HEAD or GET to get it. A HEAD
+    # per object is a billed request per object on EVERY scan (every 15 minutes, forever); a GET
+    # per object is a full egress of the bucket. That cost is the exact thing the "point it at my
+    # existing storage" on-ramp exists to avoid.
+    test "a scan costs listings only -- no HEAD, no GET" do
+      5.times { |i| @fake.seed!("#{PREFIX}/f#{i}.stl", "x#{i}") }
+      scan!
+
+      assert_equal 0, @fake.calls[:head_object], "a HEAD per object is a bill on every scan"
+      assert_equal 0, @fake.calls[:get_object], "a GET per object is an egress of the bucket"
+    end
+
+    # The other half of the same promise, and the one that would actually bite: the Reconciler
+    # hashes LAZILY by default, so an observation arriving WITHOUT a content_hash makes it read the
+    # bytes to compute one. Every file observation must carry its identity, or indexing a bucket
+    # means downloading it. S3Observer::NEVER_READ is the production tripwire for this; this
+    # asserts the condition that keeps it from ever firing.
+    test "every file observation carries its own identity, so the reader is never needed" do
+      @fake.seed!("#{PREFIX}/a.stl", "x")
+      @fake.seed!("#{PREFIX}/cad/b.stl", "y")
+
+      observed = Library::S3Observer.new(@user, adapter: adapter).observe
+      observed.reject(&:dir).each do |o|
+        assert o.content_hash.present?, "#{o.rel_path} has no identity -- the Reconciler would GET it"
+      end
+    end
+
+    test "the reader the observer hands the Reconciler raises rather than silently downloading" do
+      assert_raises(RuntimeError) { Library::S3Observer::NEVER_READ.call("a.stl") }
+    end
+
+    # ---------------------------------------------------------------- unreadable_dirs
+
+    # ALWAYS [], and it is a CLAIM the Reconciler requires be made out loud: "the listing was
+    # complete". It is true because the only two outcomes are complete (nothing unobserved) and
+    # aborted (nothing reconciled) -- never partial. ScanJob reads this off the observer exactly as
+    # it reads it off the Scanner.
+    test "unreadable_dirs is empty, because a listing is complete or it is not a listing" do
+      @fake.seed!("#{PREFIX}/a.stl", "x")
+      assert_equal [], scan!.unreadable_dirs
+    end
+
+    test "call returns the observer, mirroring Scanner.call" do
+      @fake.seed!("#{PREFIX}/a.stl", "x")
+      assert_kind_of Library::S3Observer, scan!
+    end
+  end
+end

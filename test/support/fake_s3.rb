@@ -27,13 +27,40 @@ class FakeS3
     @objects = {}
     @calls = Hash.new(0)
     @faults = {}
+    @faults_after = {}
   end
 
   # Force an operation to fail. `error` is an SDK error name ("NoSuchKey", "AccessDenied",
   # "InternalError") or an exception instance -- the transient/terminal split is what the
   # contract's most consequential test turns on.
   def fault!(operation, error) = @faults[operation] = error
-  def clear_faults! = @faults.clear
+
+  # Force an operation to fail only AFTER it has succeeded `calls` times -- i.e. MID-PAGINATION.
+  #
+  # THIS EXISTS BECAUSE `fault!` CANNOT TEST LANDMINE 4, and the distinction is the landmine.
+  # Faulting every call makes page 1 fail, which yields ZERO observations -- and zero observations
+  # trips the Reconciler's mass-deletion guard all on its own. So a test built on `fault!` passes
+  # whether or not the observer aborts: remove the abort entirely and the guard raises the same
+  # UnsafeScan, from a different place, for a different reason. A test that cannot fail.
+  #
+  # The real shape is a listing that dies on page 19 of 20: most of the library IS observed, the
+  # missing share lands UNDER the threshold, and the guard waves it through while the observer's
+  # abort is the only thing standing between the user and a silent tombstoning. That needs a fault
+  # that arrives partway, which needs this.
+  #
+  # `calls` counts from NOW, not from the fake's birth -- the baseline is folded in here. A test
+  # that scans once to seed and then scans again to break has already spent a dozen list calls by
+  # the time it says "fail after 9 more", and reading the counter absolutely would fault instantly
+  # on the second scan's FIRST page: back to a page-1 failure, i.e. back to the vacuous test this
+  # method exists to escape, silently.
+  def fault_after!(operation, calls, error)
+    @faults_after[operation] = [ @calls[operation] + calls, error ]
+  end
+
+  def clear_faults!
+    @faults.clear
+    @faults_after.clear
+  end
 
   def client
     @client ||= Aws::S3::Client.new(
@@ -44,6 +71,17 @@ class FakeS3
 
   # Seed an object as if some other tool had put it there -- which is the whole premise of
   # this backend: the bucket already has the user's files in it.
+  #
+  # `checksum_sha256`/`checksum_type` HAVE NO CALLER as of Task 7, and that is a finding rather
+  # than rot. They model the real API faithfully (head_object returns the checksum VALUE;
+  # list_objects_v2 returns only the ALGORITHM -- see do_head/do_list), and the ladder's rung 1
+  # needs the value. But the value is reachable only via a HEAD per object, which is
+  # LIBRARY_S3_HEAD_FOR_CHECKSUM and is not implemented, so NO production path mints a `sha256:`
+  # identity today: Library::S3Observer lists (no checksum) and FileLayer::S3#write reads
+  # put_object's ETag. s3_test.rb used to pass these to its create_file! and thereby implied a scan
+  # could yield `sha256:`; replacing that fixture with the real observer is what proved it could
+  # not. Kept because they are the correct shape for whoever implements that rung -- not because
+  # anything asserts on them.
   def seed!(key, body, last_modified: Time.at(1_700_000_000), checksum_sha256: nil, checksum_type: nil)
     # The ETag is QUOTED, and those two literal quotes are the point rather than a typo: S3 wraps
     # every ETag in them, in list, head AND put responses (Landmine 2). A fake that handed back a
@@ -66,7 +104,12 @@ class FakeS3
 
   def guard(op)
     @calls[op] += 1
-    @faults[op]
+    return @faults[op] if @faults[op]
+
+    # `@calls[op]` was just incremented, so `> after` makes call number after+1 the first to fail:
+    # fault_after!(:list_objects_v2, 9, ...) lets nine pages through and kills the tenth.
+    after, error = @faults_after[op]
+    error if after && @calls[op] > after
   end
 
   def do_put(ctx)

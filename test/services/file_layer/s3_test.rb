@@ -32,79 +32,42 @@ module FileLayer
                                      secret_access_key: "sk", prefix: PREFIX, client: @fake.client)
     end
 
-    # Seed the object as another tool would have, then index it the way a completed scan would.
-    # That is the backend's actual premise: the bucket already has the user's files in it.
+    # Seed the object as another tool would have, then index it with THE REAL OBSERVER. That is
+    # the backend's actual premise: the bucket already has the user's files in it, and a scan is
+    # what puts them in `nodes`.
     #
-    # PLAN DRIFT, deliberate and reported: the plan called Library::S3Observer here and expected
-    # this file to stay RED until Task 7 builds it. It indexes directly instead, mirroring
-    # share_test's own `index!` — a `nodes` row IS what a completed scan produces, so the adapter
-    # under test sees the identical input either way, and the contract runs GREEN now rather than
-    # after a task that has nothing to do with stat/read. Task 7 owns proving the observer writes
-    # these columns; this file owns the adapter's behavior given them.
+    # THE STAND-IN IS GONE. Tasks 4-6 built this by hand (Library::S3Observer did not exist yet)
+    # and argued it could not drift because it routed the identity through the same
+    # ObjectIdentity.for the observer would. Task 7 replaced it with the observer and ran both:
+    # 79 of 80 tests agreed. The 80th did not, and the FIXTURE was the one that was wrong -- see
+    # the sha256 half of the copy-precondition test below. That is the entire argument for doing
+    # this rather than trusting the reasoning: a hand-built fixture agreeing with production is a
+    # claim, and this makes it a fact.
     #
-    # The identity goes through ObjectIdentity.for — the same call the observer will make — so
-    # this fixture cannot quietly disagree with the thing it stands in for. Computing an md5 by
-    # hand here is exactly how a helper drifts from production.
-    #
-    # mtime is converted to unix NANOSECONDS here (FileInfo: adapters CONVERT). S3's
-    # last_modified is a second-granularity Time, so this is where the seconds-as-nanos bug the
-    # contract's NANOS_FLOOR pins would enter if it entered at all.
-    def create_file!(name:, bytes:, checksum_sha256: nil, checksum_type: nil)
-      key = "#{PREFIX}/#{name}"
-      @fake.seed!(key, bytes, last_modified: Time.now, checksum_sha256:, checksum_type:)
-      obj = @fake.objects.fetch(key)
-      @user.nodes.create!(
-        node_id: SecureRandom.uuid, name: File.basename(name), kind: "file", deleted: false,
-        storage_path: name, size: bytes.bytesize,
-        content_hash: FileLayer::S3::ObjectIdentity.for(etag: obj.etag, checksum_sha256:,
-                                                        checksum_type:),
-        mtime: obj.last_modified.to_i * 1_000_000_000 + obj.last_modified.nsec
-      ).node_id
+    # max_delete_pct: 100 because a fixture is not about the mass-deletion guard -- the Reconciler
+    # documents that keyword for exactly this. Several tests here seed a second file into a
+    # one-file bucket, which is a 0% deletion; but some delete a node and then create another, and
+    # a helper that could refuse a scan depending on the test's history is a helper that fails
+    # somewhere unrelated to what it is testing.
+    def create_file!(name:, bytes:)
+      @fake.seed!("#{PREFIX}/#{name}", bytes, last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+      @user.nodes.find_by!(storage_path: name).node_id
     end
 
-    # A SCAN, stood in for. Task 6's tests need one — the whole landmine is about what the next
-    # scan DECIDES about a tombstone — and Library::S3Observer is Task 7's and does not exist.
+    # A SCAN. The real one -- Library::S3Observer over this fake's client, the same call
+    # Library::ScanJob makes in production.
     #
-    # PLAN DRIFT, deliberate and reported, and the THIRD instance of the same one (Task 4's
-    # create_file! and Task 5's identity-agreement test each took it for the same reason): the
-    # plan's Task 6 tests call Library::S3Observer.call, from a task two steps downstream. This
-    # drives Library::Reconciler DIRECTLY instead.
+    # Task 6's tests need a scan (the whole landmine is about what the next scan DECIDES about a
+    # tombstone) and drove Library::Reconciler directly because the observer did not exist. It does
+    # now, so they drive the observer, and the `.trash` skip / prefix stripping / identity that
+    # those tests used to mirror by hand are now the production code paths rather than a faithful
+    # copy of them.
     #
-    # WHY THAT IS A FAITHFUL STAND-IN AND NOT A CONVENIENT ONE. The split is the point: "the
-    # Scanner OBSERVES; this DECIDES" (Reconciler's header). Every assertion below turns on a
-    # DECISION — revive-by-path vs. create-a-new-node, pair-vs-tombstone, whether the guard fires
-    # — and the Reconciler is the thing that makes all of them. Task 7's observer will differ only
-    # in where the observations come from, and it is REQUIRED to reuse this same Reconciler
-    # (the plan's Task 7 is explicit: "a new observer, the same Reconciler", because duplicating
-    # it would duplicate the guard and the pairing, "which is where every one of 2a's bugs lived").
-    # So this exercises the identical decider on identical input.
-    #
-    # The identity goes through ObjectIdentity.for — the one normalizer the observer must also use
-    # — so this cannot quietly disagree with the thing it stands in for. Computing an md5 by hand
-    # here is exactly how a helper drifts from production.
-    #
-    # The `.trash` skip is Task 7's rule, mirrored here from the SAME constant the adapter's
-    # observable! and trash_key read. If Task 7's observer forgets to skip it, THAT is Task 7's
-    # test to fail — this one asserts the adapter behaves correctly given an observer that does.
+    # The observer's own suite (test/services/library/s3_observer_test.rb) owns proving it observes
+    # correctly; this file owns the adapter's behavior across a scan.
     def scan!(max_delete_pct: nil)
-      observations = @fake.objects.filter_map do |key, o|
-        rel = key.delete_prefix("#{PREFIX}/")
-        next if rel.split("/").first == Library::Scanner::TRASH_PREFIX
-        Library::Observation.new(
-          rel_path: rel, size: o.body.bytesize, dir: false,
-          mtime: o.last_modified.to_i * 1_000_000_000 + o.last_modified.nsec,
-          content_hash: FileLayer::S3::ObjectIdentity.for(etag: o.etag,
-                                                          checksum_sha256: o.checksum_sha256,
-                                                          checksum_type: o.checksum_type)
-        )
-      end
-      # The reader RAISES rather than returning bytes, and that is an assertion in itself: an
-      # observation carrying its own content_hash must never make the Reconciler read the object.
-      # If it ever did, indexing a bucket would mean a full egress of it (Observation's header).
-      Library::Reconciler.new(
-        @user, observations:, unreadable_dirs: [], max_delete_pct:,
-        reader: ->(_rel) { raise "the S3 observer supplies the identity; the reader must not run" }
-      ).call
+      Library::S3Observer.call(@user, adapter:, max_delete_pct:)
     end
 
     # An attachment is WHY node_id stability is the port's promise: it is a bare string column
@@ -624,9 +587,25 @@ module FileLayer
       assert_equal %Q("#{Digest::MD5.hexdigest('mm')}"), seen,
                    "the md5 rung IS the ETag — send it in the quoted form S3 itself emits"
 
-      sha = create_file!(name: "s.stl", bytes: "ss", checksum_sha256: "Ynl0ZXM=",
-                         checksum_type: "FULL_OBJECT")
-      assert_equal "sha256:Ynl0ZXM=", @user.nodes.find_by!(node_id: sha).content_hash
+      # THE sha256 IDENTITY IS SET BY HAND, and the reason is a finding rather than a shortcut.
+      #
+      # This used to pass `checksum_sha256:`/`checksum_type:` to create_file!, which seeded them on
+      # the object and handed them to ObjectIdentity.for — implying a scan of such an object yields
+      # `sha256:`. IT DOES NOT, AND CANNOT. `list_objects_v2` returns `checksum_algorithm` and
+      # `checksum_type` but NEVER the checksum VALUE, so rung 1 is unreachable from a listing by
+      # construction; it needs a HEAD per object, which is `LIBRARY_S3_HEAD_FOR_CHECKSUM` and is
+      # not implemented (see Library::S3Observer#file_observation). Task 7 caught this by replacing
+      # this file's hand-built fixture with the real observer: 79 of 80 tests agreed, and this was
+      # the 80th. The fixture was wrong, not the observer.
+      #
+      # So NO PRODUCTION PATH mints a `sha256:` identity today, and this is an artificial node on
+      # purpose. The test stays because the adapter must not send one as an ETag if it ever meets
+      # one — from a future HEAD rung, or from `nodes.content_hash` being SHARED with share mode,
+      # whose values are bare SHA-256 hex with no prefix at all. Deleting the test would delete the
+      # guard for the case that actually arrives first.
+      sha = create_file!(name: "s.stl", bytes: "ss")
+      @user.nodes.find_by!(node_id: sha).update!(content_hash: "sha256:Ynl0ZXM=")
+
       adapter.delete(@user, node_id: sha)
       assert_nil seen, "a sha256 checksum is NOT an ETag: sent as one it would refuse every copy"
     end

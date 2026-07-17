@@ -421,6 +421,15 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # nil prefix means the whole bucket. The trailing slash is what keeps a prefix a DIRECTORY
+    # boundary: without it, prefix "cad" would also match the sibling "cadence/..." keyspace.
+    #
+    # PUBLIC because Library::S3Observer lists this library and must list exactly the keyspace this
+    # adapter addresses. The alternative is the observer composing "#{adapter.prefix}/" itself —
+    # a second copy of the trailing-slash rule above, in the one place where disagreeing with it
+    # means indexing a neighbouring prefix's objects as if they were the user's library.
+    def listing_prefix = @prefix && "#{@prefix}/"
+
     private
 
     # 5 GiB — `copy_object`'s hard cap. It ERRORS above it; it does not truncate. Both `delete` and
@@ -767,10 +776,6 @@ module FileLayer
       # OPEN here would be the bug — it would promote the outage to "your file is gone".
       false
     end
-
-    # nil prefix means the whole bucket. The trailing slash is what keeps a prefix a DIRECTORY
-    # boundary: without it, prefix "cad" would also match the sibling "cadence/..." keyspace.
-    def listing_prefix = @prefix && "#{@prefix}/"
 
     # The liveness guard both stat and read apply — a tombstoned node is GONE on every backend
     # (contract: test_contract_read_raises_not_found_for_a_deleted_node). Duplicated from Share
