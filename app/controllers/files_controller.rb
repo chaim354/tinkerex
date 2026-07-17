@@ -21,17 +21,38 @@
 class FilesController < ApplicationController
   before_action :authenticate_user!
 
-  # ONE named mechanism for what this deployment can do, reachable from the views. Not two: a
-  # view reaching for FileLayer.current.capabilities inline while a controller also sets @caps
-  # is how the two answers drift apart, which is §9a-3's complaint and Landmine 1's whole shape.
+  # ONE named mechanism for what this deployment can do, reachable from the views AND from the v1
+  # API. Not two: a view reaching for FileLayer.current.capabilities inline while a controller
+  # also sets @caps is how the two answers drift apart, which is §9a-3's complaint and Landmine
+  # 1's whole shape. The `capabilities` helper this controller used to define privately now lives
+  # in the concern -- the same argument that forbids two answers in a view forbids two ways to
+  # reach them.
+  include LibraryCapabilities
+
+  # THE UPLOAD BRANCH. Two flows, one per deployment, and BOTH refusals are honest: neither
+  # deployment can do the other's flow.
   #
-  # A METHOD RATHER THAN AN IVAR, DELIBERATELY, AND THE REASON IS THAT .erb HAS NO TYPE CHECKER.
-  # `<% if @caps&.versioned %>` on a nil @caps is silently FALSY -- the feature just vanishes
-  # from the page and nothing anywhere goes red. `<% if capabilities.versioned? %>` raises
-  # NameError if the helper is missing and NoMethodError if the predicate is misspelled. Both are
-  # loud, at render, in a test. Prefer the form that raises: a capability gate that fails open is
-  # a bug you find in production, and one that fails closed is a feature you never notice left.
-  helper_method :capabilities
+  #   port_writable: false (chunk) -> the two-phase presigned flow below. Bytes go browser ->
+  #     storage, never through Rails (§15).
+  #   port_writable: true (share, s3) -> #create: the bytes come up in one multipart POST and
+  #     land on the port.
+  #
+  # begin/finalize are gated on `syncable` rather than on `!port_writable`, and the difference is
+  # the whole reason port_writable is a stated capability instead of an inference: these two
+  # actions do not need "the port refuses writes", they need Sync::Commit -- which is what
+  # `syncable` names, and which is the same gate V1::CommitsController uses for the same
+  # machinery. A backend with neither flow (port_writable false, syncable false) would be told
+  # "yes, use the two-phase flow" by the derived gate and 500 in Sync::Commit; the stated one
+  # tells it the truth. `port_writable` still selects which form the UI renders -- that is its
+  # one job, and it is a different question from this one.
+  require_capability! :syncable, only: %i[begin_upload finalize_upload],
+                                 hint: "Upload through POST /files, which writes to this " \
+                                       "deployment's library backend directly."
+  require_capability! :port_writable, only: :create,
+                                      hint: "Upload through POST /files/begin_upload then " \
+                                            "POST /files/finalize_upload -- the two-phase " \
+                                            "presigned flow. Chunk mode accepts uploads; it " \
+                                            "just does not take the bytes through Rails (§15)."
 
   # Content types safe to render inline in the app origin. Raster images only — deliberately
   # NO image/svg+xml (SVG can carry <script>) and NO text/html, which would be stored XSS.
@@ -54,6 +75,34 @@ class FilesController < ApplicationController
     respond_to do |format|
       format.html { redirect_to files_path, alert: "File not found." }
       format.any  { head :not_found }
+    end
+  end
+
+  # THE THREE PORT CONDITIONS, MAPPED IN ONE PLACE, AND THE POINT IS THAT THEY ARE DIFFERENT
+  # ANSWERS. NotImplementedError is deliberately absent from all of them (see
+  # LibraryCapabilities): it is a wiring bug, it should be a loud 500, and the gates above are
+  # what keep it unreachable.
+  #
+  # FetchError = we could not reach the bytes RIGHT NOW: an unmounted share, a full NAS, a creds
+  # blip, a 5xx from the bucket. 503 + a retry-shaped message, and above all NOT the 404 above:
+  # "your file is gone" is terminal and this condition is not. Share#download raises this and
+  # nothing caught it before this task, so an unmounted library 500'd -- the fix waited for here
+  # deliberately, because a lone rescue in one action would have been a second copy of a mapping
+  # that belongs at the controller.
+  rescue_from FileLayer::FetchError do
+    respond_to do |format|
+      format.html { redirect_to files_path, alert: "Couldn't reach your library. Try again." }
+      format.any  { render json: { error: "fetch_error" }, status: :service_unavailable }
+    end
+  end
+
+  # UnsupportedOperation = the REQUEST is wrong for THIS node (share-mode delete on a directory).
+  # A client condition, knowable only per-node at runtime, so Capabilities -- which is
+  # per-deployment -- cannot gate it and 501 would be the wrong answer twice over.
+  rescue_from FileLayer::UnsupportedOperation do |e|
+    respond_to do |format|
+      format.html { redirect_to files_path, alert: e.message }
+      format.any  { render json: { error: e.message }, status: :unprocessable_entity }
     end
   end
 
@@ -83,6 +132,24 @@ class FilesController < ApplicationController
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
+  end
+
+  # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
+  #
+  # This is the flow §15 does not describe, on the deployments §15 was not aimed at: a mounted
+  # directory has nothing to presign, so the bytes must pass through Rails to reach it (spec §2
+  # decision 6). S3 could presign a PUT and one day should (spec §5.2, not this phase), which is
+  # why the capability is `port_writable` and not `share?`.
+  #
+  # No FileLayer::Chunk path here, and no server-side chunk-and-commit either: Chunk#write raises
+  # on purpose, the gate above is what makes that unreachable, and a second write path into the
+  # chunk store would duplicate Sync::Commit, move bytes through Rails, and reach into the sync
+  # engine (spec §10).
+  def create
+    upload = params.require(:file)
+    info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
+                                   name: upload.original_filename, io: upload)
+    redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}."
   end
 
   # --- Upload: phase 1 (begin) -------------------------------------------------
@@ -182,8 +249,6 @@ class FilesController < ApplicationController
   end
 
   private
-
-  def capabilities = FileLayer.current.capabilities
 
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")

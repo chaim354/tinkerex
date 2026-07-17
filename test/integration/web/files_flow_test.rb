@@ -188,6 +188,40 @@ module Web
       assert_match(/upload/i, response.body,
                    "chunk mode uploads via the two-phase flow -- port_writable: false does NOT " \
                    "mean 'no uploads', and reading it that way hides this button in production")
+      # WHICH upload control, not just that one exists. Both branches of the view say "Upload a
+      # file", so /upload/i alone stays green with the branch INVERTED -- chunk mode would render
+      # the direct form, POST /files, and take a 501. Verified by mutation: only the share side
+      # caught it. This is the chunk-side half.
+      assert_match(/data-controller="uploader"/, response.body,
+                   "chunk mode must drive the two-phase flow, not POST the bytes to the port")
+    end
+
+    # The other direction of the upload branch. Chunk mode CAN accept uploads -- it does so all
+    # day via the two-phase presigned flow -- it just cannot take the bytes through Rails (§15).
+    # So the direct endpoint is an honest 501, and it must NAME the flow that does work: a bare
+    # 501 here would read as "uploads are off", which is exactly wrong.
+    test "the direct upload answers 501 in chunk mode, naming the two-phase flow" do
+      sign_in
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
+      assert_response :not_implemented
+      assert_match(/port_writable_unavailable/, response.body,
+                   "the 501 must be the capability gate, not a routing or auth accident")
+      assert_match(/begin_upload/, response.body,
+                   "a refusal must name the path the caller SHOULD use -- as Chunk#write does")
+    end
+
+    # THE GATE IS NOT AUTH AND NOT A MISSING ROUTE, proven: the same POST, unauthenticated,
+    # redirects to login. If POST /files were unrouted this would 404 instead, and the 501 above
+    # would have proved nothing.
+    test "the direct upload route exists and is behind auth" do
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
+      assert_redirected_to new_user_session_path
     end
 
     test "isolation: a user cannot see or fetch another user's file" do

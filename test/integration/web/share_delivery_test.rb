@@ -210,6 +210,84 @@ module Web
       assert_match(/4 Bytes/, response.body)
     end
 
+    # --- The upload branch, share side ------------------------------------------------------
+    #
+    # Both directions are honest 501s: share has no chunk store to presign into, and chunk mode
+    # genuinely cannot take bytes through Rails (§15). See files_flow_test.rb for the other half.
+
+    # Share mode has no chunk store, so there is nothing to presign into and no manifest to begin.
+    # 501 -- "this deployment can't do that" -- rather than a 500 out of Sync::Commit or (worse) a
+    # pending_commit that can never be finalized.
+    test "begin_upload answers 501 in share mode" do
+      post begin_upload_files_path,
+           params: { name: "x.stl", size: 1, manifest: [ { hash: "a" * 64, offset: 0, length: 1 } ] },
+           as: :json
+      assert_response :not_implemented
+      # The body, not just the status: a missing route and a halted filter both look like this
+      # from the outside. And the refusal must name the door that WORKS -- a bare "no" reads as
+      # "uploads are off", which is exactly wrong on a backend that uploads fine.
+      assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s)
+      assert_match(/upload/i, JSON.parse(response.body)["error"].to_s)
+    end
+
+    test "finalize_upload answers 501 in share mode" do
+      post finalize_upload_files_path, params: { commit_id: SecureRandom.uuid }, as: :json
+      assert_response :not_implemented
+      assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s)
+    end
+
+    # The share/s3 flow: the bytes come straight up in a multipart POST and land on the port.
+    test "the direct upload writes through the port in share mode" do
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("uploaded bytes"), "application/octet-stream",
+                                           original_filename: "up.stl")
+      }
+      assert_response :redirect
+      assert_equal "uploaded bytes", File.binread(@root.join("up.stl")), "the bytes must reach the NAS"
+      assert @user.nodes.find_by(storage_path: "up.stl"), "and the node must be indexed"
+    end
+
+    # The button has to match the flow. The JS uploader drives begin_upload, which now 501s here,
+    # so rendering it in share mode would ship a button that cannot work -- Landmine 5's shape,
+    # one task later: the API tells the truth while the page still lies.
+    test "the index offers the direct upload form, not the two-phase uploader" do
+      get files_path
+      assert_response :success
+      assert_match(/upload/i, response.body, "share mode uploads -- the control must be there")
+      assert_no_match(/data-controller="uploader"/, response.body,
+                      "the two-phase uploader drives begin_upload, which answers 501 here")
+    end
+
+    # An unmounted library is not a missing file, and keeping those two apart is the whole point
+    # of FetchError. Before this task Share#download raised it and NOTHING rescued it -> a 500.
+    # Task 5/6 deliberately left it: a lone rescue in one action would have been a second copy of
+    # a mapping that belongs at the controller, next to the 404 it must not become.
+    #
+    # 503 for a machine: retryable, and distinguishable from "gone" by status alone. The HTML
+    # branch redirects with an honest alert instead, matching the shipped RecordNotFound handler
+    # exactly -- and what matters in both is the SAME thing: never "your file is gone", which is
+    # terminal and false. The library is fine; we could not reach it this second.
+    test "an unmounted library is 503 to a client -- NOT 'your file is gone'" do
+      id = index!("mounted.stl", "bytes")
+      # Emptiness is how Share detects an unmounted mount point (see Share#mounted?).
+      FileUtils.rm_rf(Dir.glob(@root.join("*")))
+
+      get blob_file_path(id), as: :json
+      assert_response :service_unavailable
+      assert_equal "fetch_error", JSON.parse(response.body)["error"]
+      assert_no_match(/not_found/, response.body.to_s, "'gone' is terminal; this is not")
+    end
+
+    test "an unmounted library tells the browser to retry, and does not say the file is gone" do
+      id = index!("mounted2.stl", "bytes")
+      FileUtils.rm_rf(Dir.glob(@root.join("*")))
+
+      get blob_file_path(id)
+      assert_redirected_to files_path
+      assert_match(/reach your library/i, flash[:alert])
+      assert_no_match(/not found/i, flash[:alert].to_s)
+    end
+
     # LANDMINE 2, at the layer it actually moved to. Task 2 pins that Share#download refuses a
     # poisoned path. This pins the OTHER half: that the controller does not resolve one itself.
     # The guard lives in exactly one place -- Share#absolute_path -- and a controller that

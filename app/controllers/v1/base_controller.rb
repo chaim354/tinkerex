@@ -1,6 +1,12 @@
 module V1
   class BaseController < ActionController::API
     include Authentication
+    # Brings `require_capability!` to the subclasses that need it. Included HERE rather than
+    # per-controller so the 501 has one shape across the API; WHICH controllers gate is decided
+    # per controller, by what each one actually does in share mode. Auth is included first and so
+    # runs first: an unauthenticated request to a gated endpoint gets 401, not a 501 that would
+    # disclose the deployment's backend to a stranger.
+    include LibraryCapabilities
 
     rescue_from ActiveRecord::RecordNotFound, with: :not_found
     rescue_from ActionController::ParameterMissing, with: :bad_request

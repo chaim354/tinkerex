@@ -1,5 +1,13 @@
 module V1
   class DevicesController < BaseController
+    # DELIBERATELY NOT capability-gated, and it is the one non-gate on this API that has to be
+    # argued rather than assumed -- "a share deployment has no devices to sync" is true and is
+    # the wrong reading. A Device is not only a sync participant: its token is the ONLY
+    # credential the whole v1 API accepts (see Authentication), including /v1/maker/*. Gating
+    # enrollment on `syncable` would make a share deployment's API unauthenticatable, taking the
+    # maker layer -- the entire product in that mode -- down with it, at the login endpoint,
+    # where nobody would look for it.
+    #
     # Device-login enrollment is the ONE v1 endpoint that authenticates by human
     # credentials, not a device token — so skip the Bearer gate here.
     skip_before_action :authenticate_device!, only: :login

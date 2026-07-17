@@ -6,7 +6,15 @@ module V1
   # the pairing-code flow. The v1 sync endpoints keep using the returned device token.
   class DeviceLoginTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
-    setup { Storage::ChunkStore.reset! }
+    # Enrollment itself is NOT capability-gated and must never be (a device token is the only
+    # credential the whole v1 API takes, maker layer included -- see V1::DevicesController). This
+    # suite pins chunk because one test proves the minted token works by fetching /v1/tree, and
+    # /v1/tree is the sync surface. The share-mode counterpart -- that enrollment still works and
+    # still opens the maker layer -- is in capability_gating_test.rb.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
 
     def login(email:, password:, device_name: "laptop")
       post "/v1/devices/login",

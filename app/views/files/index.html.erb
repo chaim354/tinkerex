@@ -4,16 +4,35 @@
   <h1>Files</h1>
 </div>
 
-<section class="uploader"
-         data-controller="uploader"
-         data-uploader-begin-url-value="<%= begin_upload_files_path %>"
-         data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-  <label class="upload-btn">
-    <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
-    <span>Upload a file</span>
-  </label>
-  <span class="upload-status" data-uploader-target="status"></span>
-</section>
+<%#
+  ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask "can
+  this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes go in, and
+  the answer is the deployment's, not the user's. Rendering the wrong form is not a cosmetic bug:
+  the JS uploader would drive begin_upload, which FilesController answers 501 on a share/s3
+  library, so the button would simply fail.
+%>
+<% if capabilities.port_writable? %>
+  <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
+  <%= form_with url: files_path, method: :post, class: "uploader",
+                data: { turbo: false }, html: { multipart: true } do |f| %>
+    <label class="upload-btn">
+      <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+      <span>Upload a file</span>
+    </label>
+  <% end %>
+<% else %>
+  <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
+  <section class="uploader"
+           data-controller="uploader"
+           data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+           data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
+    <label class="upload-btn">
+      <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+      <span>Upload a file</span>
+    </label>
+    <span class="upload-status" data-uploader-target="status"></span>
+  </section>
+<% end %>
 
 <% if @nodes.empty? %>
   <p class="empty muted">No files yet. Upload one to get started.</p>
