@@ -1,0 +1,42 @@
+# Kamal destination overlay: the S3-backed LIBRARY on the Unraid box (deep-merged over deploy.yml).
+#   Deploy with:  kamal deploy -d s3
+#
+# Same image, same box (192.168.1.95) as the chunk deploy — this runs a SECOND container
+# (tinkerex-web-s3, destination-namespaced) whose FileLayer is backed by the user's own S3
+# bucket instead of the FastCDC chunk store. Current-state only: no versions/history/restore.
+#
+# Storage note: this reuses the SAME SeaweedFS bucket as chunk (my-bucket) under a distinct
+# LIBRARY_S3_PREFIX (library/). The prefixes (chunks/ vs library/) are disjoint and are
+# addressed by two different containers with different backends, so nothing walks both. It
+# therefore reuses the chunk credentials (seaweednew) — no new bucket, no new secret to source.
+#
+# STORAGE_BACKEND=memory neutralizes the chunk-store env this overlay INHERITS from deploy.yml
+# (Kamal deep_merge has no delete, so the base's STORAGE_BACKEND=s3 + CHUNK_* cannot be removed,
+# only overridden). It is belt-and-braces: FileLayer::S3 reports syncable=false, so
+# V1::BaseController's syncable? gate never builds Storage::ChunkStore anyway.
+
+proxy:
+  host: s3.tinkerex.local
+
+# A destination-scoped volume — the base's shared "tinkerex_storage" would put three
+# containers on ONE SQLite database. Each backend gets its own.
+volumes:
+  - "tinkerex_storage_s3:/rails/storage"
+
+env:
+  # env.secret is an ARRAY: Kamal REPLACES it wholesale (deep_merge unions hashes, replaces
+  # arrays), so RAILS_MASTER_KEY must be re-listed or boot dies with "Missing secret_key_base".
+  # LIBRARY_S3_SECRET_ACCESS_KEY is added in .kamal/secrets-common (= the seaweednew secret).
+  secret:
+    - RAILS_MASTER_KEY
+    - LIBRARY_S3_SECRET_ACCESS_KEY
+  clear:
+    STORAGE_BACKEND: memory
+    LIBRARY_BACKEND: s3
+    LIBRARY_S3_ENDPOINT: http://192.168.1.8:8333
+    LIBRARY_S3_BUCKET: my-bucket
+    LIBRARY_S3_PREFIX: library/
+    LIBRARY_S3_REGION: us-east-1
+    # Same SeaweedFS identity as CHUNK_ACCESS_KEY_ID (seaweednew). Not a secret — the ID is
+    # already in git in deploy.yml; only the secret key is shell/1Password-sourced.
+    LIBRARY_S3_ACCESS_KEY_ID: 2ER1TJXNXU15ECJ3YRQK

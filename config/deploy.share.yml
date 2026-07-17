@@ -1,0 +1,34 @@
+# Kamal destination overlay: the SHARE-backed LIBRARY on the Unraid box (deep-merged over deploy.yml).
+#   Deploy with:  kamal deploy -d share
+#
+# Same image, same box (192.168.1.95) as the chunk deploy — a THIRD container
+# (tinkerex-web-share) whose FileLayer is backed by a mounted DIRECTORY instead of the chunk
+# store. Current-state only: no versions/history/restore. The library streams bytes THROUGH
+# Rails (a mounted dir has nothing to presign) — the one place §15 deliberately does not hold.
+#
+# The "share" here is a local directory on the VM (there is no NAS mounted on this box), owned
+# by uid 1000 = the container user, so the boot-time write probe passes. A real deployment
+# would bind-mount an actual SMB/NFS mount point; the code path is identical.
+#
+# STORAGE_BACKEND=memory neutralizes the chunk-store env inherited from deploy.yml (see the
+# note in deploy.s3.yml). A share deployment needs no chunk store and no S3 credentials at all.
+
+proxy:
+  host: share.tinkerex.local
+
+# Destination-scoped SQLite volume, PLUS a bind mount of the host library directory into the
+# container at /library (where LIBRARY_PATH points). The seeded dir was created on the box:
+#   /home/kamal1/tinkerex-library-share  (owned by uid 1000)
+volumes:
+  - "tinkerex_storage_share:/rails/storage"
+  - "/home/kamal1/tinkerex-library-share:/library"
+
+env:
+  # Redeclared to DROP the inherited CHUNK_SECRET_ACCESS_KEY — a share container holds no
+  # storage credential. RAILS_MASTER_KEY must stay or boot dies with "Missing secret_key_base".
+  secret:
+    - RAILS_MASTER_KEY
+  clear:
+    STORAGE_BACKEND: memory
+    LIBRARY_BACKEND: share
+    LIBRARY_PATH: /library

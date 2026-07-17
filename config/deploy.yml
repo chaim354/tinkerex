@@ -24,9 +24,15 @@ ssh:
 #
 # Don't use this when deploying to multiple web servers (then you have to terminate SSL at your load balancer).
 #
-# proxy:
-#   ssl: true
-#   host: app.example.com
+# Host-routed: three LIBRARY_BACKEND deployments (chunk here, plus `-d s3` and `-d share`) share
+# this one box and one kamal-proxy. Each destination registers a DISTINCT hostname; without a
+# host, three catch-alls would collide and the last deploy would silently win. Add to /etc/hosts
+# on any client that will reach them:
+#   192.168.1.95  chunk.tinkerex.local s3.tinkerex.local share.tinkerex.local
+# NOTE: once this host is set, the bare IP (http://192.168.1.95) no longer routes to chunk —
+# use http://chunk.tinkerex.local.
+proxy:
+  host: chunk.tinkerex.local
 
 # Shared container registry: GitHub Container Registry (ghcr.io). The Mac builds the
 # image once and pushes here; both servers (Unraid + OVH) pull the same image. Auth is a
