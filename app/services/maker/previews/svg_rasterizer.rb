@@ -30,6 +30,19 @@ module Maker
         false
       end
 
+      # THE THUMBNAIL STYLESHEET, injected into every render (resvg --stylesheet). It makes an
+      # otherwise-invisible drawing legible without altering its geometry, and it is why one
+      # rasterizer covers user SVGs AND our own DXF/LightBurn output:
+      #   * `vector-effect: non-scaling-stroke; stroke-width: 1.5px` — a maker's laser/CAD source
+      #     (Tinkercad, LightBurn, a DXF) sets a HAIRLINE stroke in real-world units (e.g.
+      #     stroke-width="0.001mm" or "0.5" drawing units). Fitted into a ~512px thumbnail that
+      #     collapses to a sub-pixel line and the preview reads as an EMPTY canvas. non-scaling-stroke
+      #     pins the width to device pixels (independent of the viewBox scale) and 1.5px makes it
+      #     visible, while leaving the SHAPE untouched. A presentation-attribute stroke-width is
+      #     overridden by this rule (an inline style= would win, an acceptable gap).
+      # Applied to `*`, so a fill-only shape (no stroke) is unaffected — nothing to stroke.
+      STYLESHEET = "* { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }\n".freeze
+
       # SVG bytes/string -> PNG bytes (a size×size raster; the SVG's preserveAspectRatio fits it).
       def to_png(svg, size: 512)
         Tempfile.create([ "resvg-in", ".svg" ]) do |fin|
@@ -37,17 +50,26 @@ module Maker
           fin.write(svg.to_s.b)
           fin.flush
 
-          out_path = "#{fin.path}.png"
-          begin
-            _stdout, stderr, status = Open3.capture3(
-              bin, "--width", size.to_s, "--height", size.to_s, fin.path, out_path
-            )
-            unless status.success? && File.exist?(out_path) && File.size?(out_path)
-              raise RasterizeError, "resvg failed (#{status.exitstatus}): #{stderr.to_s[0, 300]}"
+          Tempfile.create([ "resvg-css", ".css" ]) do |fcss|
+            fcss.write(STYLESHEET)
+            fcss.flush
+
+            out_path = "#{fin.path}.png"
+            begin
+              # --background white: render onto an OPAQUE white canvas rather than transparent.
+              # Thumbnails sit on a light card, and a transparent PNG of thin geometry reads as
+              # blank; white gives dark geometry consistent contrast. --stylesheet: see STYLESHEET.
+              _stdout, stderr, status = Open3.capture3(
+                bin, "--width", size.to_s, "--height", size.to_s,
+                "--background", "white", "--stylesheet", fcss.path, fin.path, out_path
+              )
+              unless status.success? && File.exist?(out_path) && File.size?(out_path)
+                raise RasterizeError, "resvg failed (#{status.exitstatus}): #{stderr.to_s[0, 300]}"
+              end
+              File.binread(out_path)
+            ensure
+              File.delete(out_path) if File.exist?(out_path)
             end
-            File.binread(out_path)
-          ensure
-            File.delete(out_path) if File.exist?(out_path)
           end
         end
       rescue Errno::ENOENT, Errno::EACCES => e
