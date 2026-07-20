@@ -186,6 +186,9 @@ class FilesController < ApplicationController
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
+    token = @info&.content_token
+    @thumbnail = token && current_user.maker_previews
+                            .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
@@ -430,6 +433,9 @@ class FilesController < ApplicationController
     return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
     return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
                         c h cpp html css toml ini cfg conf sh gcode].include?(ext)
+    # A file we can render a server-side thumbnail for (stl, 3mf, dxf, lbrn2, step, obj, ...) but
+    # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
+    return :thumbnail if Maker::Previews::Registry.for(ext)
     :other
   end
 end

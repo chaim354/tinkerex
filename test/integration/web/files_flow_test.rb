@@ -84,6 +84,20 @@ module Web
       assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
     end
 
+    test "the detail page shows a ready thumbnail for a CAD file instead of 'No inline preview'" do
+      user = sign_in
+      node_id = upload("widget.3mf", "zzz".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select "img.preview-image"
+      assert_no_match(/No inline preview/, response.body)
+    end
+
     # ---- Fix 9: sniffable user content is served as a download, never inline ---
 
     test "an SVG blob is served as an attachment (no stored XSS on the app origin)" do
