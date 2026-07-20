@@ -169,7 +169,9 @@ module Maker
       assert_equal "\x89PNG".b, preview.asset.download[0, 4].b
     end
 
-    test "a 3MF with no embedded thumbnail flips to failed (no F3D fallback yet)" do
+    test "a 3MF with neither an embedded thumbnail nor a mesh flips to failed" do
+      # nothumb.3mf has no embedded PNG and no <mesh>, so both the thumbnail and the mesh-render
+      # fallback fail. (A 3MF with a mesh renders via the STL thumbnailer — see three_mf_test.)
       nothumb = File.binread(Rails.root.join("test/fixtures/files/nothumb.3mf"))
       stage_version(node_id: "bare.3mf", version_id: "vbare", bytes: nothumb)
       preview = @user.maker_previews.create!(node_id: "bare.3mf", version_id: "vbare")

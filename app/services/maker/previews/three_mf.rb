@@ -31,13 +31,22 @@ module Maker
       # Returns { bytes:, content_type:, width:, height: }. The embedded image is returned
       # verbatim (already a web-renderable PNG/JPEG); width/height come from the PNG/JPEG header
       # when cheaply parseable, else nil. Raises NoThumbnail if the container has no thumbnail.
-      def render(threemf_bytes, size: 512) # rubocop:disable Lint/UnusedMethodArgument
+      def render(threemf_bytes, size: 512)
         path, bytes = extract_thumbnail(threemf_bytes)
-        raise NoThumbnail, "3MF has no embedded thumbnail" if bytes.nil?
+        if bytes
+          content_type = path.end_with?(".jpg", ".jpeg") ? "image/jpeg" : "image/png"
+          w, h = png_dimensions(bytes)
+          return { bytes: bytes.b, content_type:, width: w, height: h }
+        end
 
-        content_type = path.end_with?(".jpg", ".jpeg") ? "image/jpeg" : "image/png"
-        w, h = png_dimensions(bytes)
-        { bytes: bytes.b, content_type:, width: w, height: h }
+        # No embedded slicer thumbnail (most CAD-exported 3MFs — Shapr3D, Onshape, Fusion — have
+        # none). Render the MESH itself, GL-free, by converting it to a binary STL and reusing the
+        # deployed STL thumbnailer. Raises NoThumbnail only when there is neither a thumbnail nor a
+        # readable mesh.
+        stl = mesh_to_stl(threemf_bytes)
+        raise NoThumbnail, "3MF has no embedded thumbnail and no readable mesh" if stl.nil?
+
+        Maker::Previews::Stl.render(stl, size:)
       end
 
       # → [path, bytes] of the chosen embedded thumbnail, or [nil, nil].
@@ -88,6 +97,64 @@ module Maker
         target.delete_prefix("/")
       rescue StandardError
         nil
+      end
+
+      # --- Mesh fallback: 3MF geometry -> binary STL -> the GL-free STL thumbnailer -----------
+      #
+      # A 3MF is an OPC/zip whose `3D/*.model` is XML carrying <vertices>/<triangles>. We deref the
+      # triangle indices into vertex coordinates and write a binary STL, then hand it to the same
+      # `stl-thumbnailer` the STL renderer uses — no GPU/OpenGL, no F3D. Multiple meshes are all
+      # emitted (indices are dereferenced per-mesh, so concatenation is safe); build-item transforms
+      # are ignored — good enough for a single-object thumbnail, which is the common case.
+
+      # -> binary STL bytes, or nil when there is no usable mesh.
+      def mesh_to_stl(threemf_bytes)
+        facets = []
+        Zip::File.open_buffer(StringIO.new(threemf_bytes.b)) do |zip|
+          zip.entries.select { |e| e.name =~ /\.model\z/i }.each do |entry|
+            collect_facets(entry.get_input_stream.read, facets)
+          end
+        end
+        return nil if facets.empty?
+
+        build_binary_stl(facets)
+      rescue Zip::Error
+        nil
+      end
+
+      def collect_facets(model_xml, facets)
+        doc = Nokogiri::XML(model_xml)
+        doc.remove_namespaces!
+        doc.xpath("//mesh").each do |mesh|
+          verts = mesh.xpath("./vertices/vertex").map { |v| [ v["x"].to_f, v["y"].to_f, v["z"].to_f ] }
+          mesh.xpath("./triangles/triangle").each do |t|
+            a = verts[t["v1"].to_i]; b = verts[t["v2"].to_i]; c = verts[t["v3"].to_i]
+            facets << [ a, b, c ] if a && b && c
+          end
+        end
+      end
+
+      # Binary STL: 80-byte header, uint32 LE triangle count, then per triangle a normal + 3
+      # vertices (12 LE float32) + a uint16 attribute-byte-count.
+      def build_binary_stl(facets)
+        io = StringIO.new.tap(&:binmode)
+        io.write("\x00".b * 80)
+        io.write([ facets.size ].pack("V"))
+        facets.each do |(a, b, c)|
+          io.write((triangle_normal(a, b, c) + a + b + c).pack("e12"))
+          io.write([ 0 ].pack("v"))
+        end
+        io.string
+      end
+
+      def triangle_normal(a, b, c)
+        ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+        vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+        nx = (uy * vz) - (uz * vy)
+        ny = (uz * vx) - (ux * vz)
+        nz = (ux * vy) - (uy * vx)
+        len = Math.sqrt((nx * nx) + (ny * ny) + (nz * nz))
+        len.zero? ? [ 0.0, 0.0, 0.0 ] : [ nx / len, ny / len, nz / len ]
       end
 
       # Cheap PNG/JPEG header sniff for natural dimensions; nil when not a PNG IHDR.

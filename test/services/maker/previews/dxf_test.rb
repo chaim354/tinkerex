@@ -37,6 +37,51 @@ module Maker
         assert_equal %w[LINE CIRCLE LWPOLYLINE ARC], types
       end
 
+      test "old-style POLYLINE reclaims its points from following VERTEX entities" do
+        # A POLYLINE keeps its vertices in separate VERTEX sub-entities (terminated by SEQEND), not
+        # in its own group codes. Before the fold, this rendered as an EMPTY canvas — CAD DXFs are
+        # dominated by these. Points here: (0,0) (10,0) (10,10); SVG flips Y.
+        dxf = <<~DXF
+          0
+          SECTION
+          2
+          ENTITIES
+          0
+          POLYLINE
+          66
+          1
+          70
+          0
+          0
+          VERTEX
+          10
+          0
+          20
+          0
+          0
+          VERTEX
+          10
+          10
+          20
+          0
+          0
+          VERTEX
+          10
+          10
+          20
+          10
+          0
+          SEQEND
+          0
+          ENDSEC
+          0
+          EOF
+        DXF
+        svg = Maker::Previews::Dxf.to_svg(dxf)
+        assert_includes svg, "<polyline"
+        assert_match(/points="0,0 10,0 10,-10"/, svg)
+      end
+
       test "sizes the viewBox to the entity bounding box" do
         svg = Maker::Previews::Dxf.to_svg(@dxf)
         assert_match(/viewBox="[-\d. ]+"/, svg)

@@ -61,13 +61,47 @@ module Maker
         pairs.each do |(code, value)|
           if code.zero? # a "0" code starts a new entity (or section marker)
             entities << current if current
-            current = ENTITY_TYPES.include?(value) ? { type: value, codes: Hash.new { |h, k| h[k] = [] } } : nil
+            # VERTEX is captured too (not drawn itself) so old-style POLYLINE can reclaim its
+            # points — see fold_polyline_vertices.
+            current =
+              if ENTITY_TYPES.include?(value) || value == "VERTEX"
+                { type: value, codes: Hash.new { |h, k| h[k] = [] } }
+              end
           elsif current
             current[:codes][code] << value
           end
         end
         entities << current if current
-        entities
+        fold_polyline_vertices(entities)
+      end
+
+      # Old-style POLYLINE (as opposed to LWPOLYLINE) stores its points in the VERTEX entities that
+      # FOLLOW it, terminated by SEQEND — NOT in its own group codes. The parser would otherwise
+      # keep a POLYLINE with a single 10/20 pair and drop every VERTEX, so the polyline rendered as
+      # nothing (a real DXF from many CAD tools is dominated by these). Attach each run of VERTEX
+      # points to the preceding POLYLINE as :verts and drop the VERTEX records. LWPOLYLINE is
+      # untouched — its points are inline repeated 10/20 codes.
+      def fold_polyline_vertices(entities)
+        out = []
+        poly = nil
+        entities.each do |e|
+          case e[:type]
+          when "POLYLINE"
+            e[:verts] = []
+            poly = e
+            out << e
+          when "VERTEX"
+            next unless poly
+
+            x = e[:codes][10].first
+            y = e[:codes][20].first
+            poly[:verts] << [ x, y ] if x && y
+          else
+            poly = nil
+            out << e
+          end
+        end
+        out
       end
 
       ENTITY_TYPES = %w[LINE LWPOLYLINE POLYLINE CIRCLE ARC].freeze
@@ -129,9 +163,17 @@ module Maker
       # which covers LWPOLYLINE (the common modern form) directly.
       def polyline_svg(entity, bbox)
         c = entity[:codes]
-        xs = c[10].map { |v| Float(v, exception: false) }
-        ys = c[20].map { |v| Float(v, exception: false) }
-        pts = xs.zip(ys).reject { |(x, y)| x.nil? || y.nil? }.map { |(x, y)| flip(x, y) }
+        raw =
+          if entity[:verts]&.any?
+            # Old-style POLYLINE: points reclaimed from its VERTEX sub-entities.
+            entity[:verts].map { |(x, y)| [ Float(x, exception: false), Float(y, exception: false) ] }
+          else
+            # LWPOLYLINE: points are repeated 10/20 group codes on the entity itself.
+            xs = c[10].map { |v| Float(v, exception: false) }
+            ys = c[20].map { |v| Float(v, exception: false) }
+            xs.zip(ys)
+          end
+        pts = raw.reject { |(x, y)| x.nil? || y.nil? }.map { |(x, y)| flip(x, y) }
         return nil if pts.length < 2
 
         pts.each { |(x, y)| bbox.add(x, y) }
