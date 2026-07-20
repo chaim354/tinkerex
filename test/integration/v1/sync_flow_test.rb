@@ -2,6 +2,7 @@ require "test_helper"
 
 module V1
   class SyncFlowTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
     # The v1 sync surface is mounted ONLY in chunk mode (spec §3.3), so as of Phase 4 Task 7 this
     # suite has to say which deployment it is about -- the mechanism test_helper documents at
     # pin_file_layer_backend. It passed on the share/s3 legs before only because these endpoints
@@ -42,6 +43,14 @@ module V1
     def upload_chunks(began)
       (began["put_urls"] || {}).each_value do |url|
         put url, params: "x", headers: { "CONTENT_TYPE" => "application/octet-stream" }
+      end
+    end
+
+    test "finalizing a commit of a renderable file eagerly enqueues a thumbnail" do
+      token = register["device_token"]
+      chunks = [ { hash: "c" * 64, offset: 0, length: 10 } ]
+      assert_enqueued_with(job: ::Maker::GeneratePreviewJob) do
+        commit_file(token, name: "widget.stl", chunks:)
       end
     end
 

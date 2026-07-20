@@ -5,6 +5,8 @@ module Library
   # that loses its node_id breaks every project attachment, BOM link, tag, and preview pointing
   # at that file — so these cases ARE the product promise.
   class ReconcilerTest < ActiveSupport::TestCase
+    include ActiveJob::TestHelper
+
     setup { @user = User.create!(email: "rec-#{SecureRandom.hex(4)}@example.com") }
 
     T0 = 1_700_000_000_000_000_000
@@ -43,6 +45,14 @@ module Library
       node = @user.nodes.find_by!(storage_path: "a.stl")
       assert_equal Digest::SHA256.hexdigest("aaa"), node.content_hash
       assert_equal 3, node.size
+    end
+
+    test "a scan that brings in a renderable file eagerly enqueues a thumbnail" do
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        reconcile([ obs("part.stl", "aaa") ], { "part.stl" => "aaa" })
+      end
+      node = @user.nodes.find_by!(storage_path: "part.stl")
+      assert @user.maker_previews.exists?(node_id: node.node_id, kind: "thumbnail")
     end
 
     test "a RENAME keeps the node_id — the attachment survives" do

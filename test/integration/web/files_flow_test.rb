@@ -5,6 +5,7 @@ module Web
   # machinery the desktop client uses, with the memory chunk store backed by the dev blob
   # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
   class FilesFlowTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
     # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
     # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
     # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
@@ -53,6 +54,13 @@ module Web
     test "requires login" do
       get files_path
       assert_redirected_to new_user_session_path
+    end
+
+    test "finalizing a chunk upload of a renderable file eagerly enqueues a thumbnail" do
+      sign_in
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        upload("bracket.stl", "solid bracket\nendsolid\n".b)
+      end
     end
 
     # ---- Fix 9: sniffable user content is served as a download, never inline ---

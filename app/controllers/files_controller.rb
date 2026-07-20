@@ -182,6 +182,7 @@ class FilesController < ApplicationController
     upload = params.require(:file)
     info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
                                    name: upload.original_filename, io: upload)
+    enqueue_preview(node_id: info.node_id, name: upload.original_filename)
     redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}."
   end
 
@@ -220,6 +221,8 @@ class FilesController < ApplicationController
       user: current_user, commit_id: params.require(:commit_id), verify: true
     )
     LibraryChannel.broadcast_change(current_user, seq)
+    node = current_user.nodes.find_by(node_id: version.node_id)
+    enqueue_preview(node_id: version.node_id, name: node&.name || version.node_id) if node
     render json: { version_id: version.version_id, seq: }
   rescue Sync::Commit::ChunksMissing => e
     render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity
@@ -335,6 +338,19 @@ class FilesController < ApplicationController
   end
 
   private
+
+  # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
+  # is the per-backend content id that keys maker_previews.version_id (FileLayer::FileInfo), so a
+  # new content supersedes. Never raises into the request -- a preview is best-effort UX, not part
+  # of the write's success; a vanished/unmounted file just means the scan will catch up later.
+  def enqueue_preview(node_id:, name:)
+    info = FileLayer.current.stat(current_user, node_id:)
+    return unless info&.content_token
+
+    ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
+  rescue FileLayer::NotFound, FileLayer::FetchError
+    nil
+  end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
   # the SAME `capabilities` the views and the v1 gate read (no second path to the answer), but
