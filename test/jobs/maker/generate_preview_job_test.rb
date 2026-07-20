@@ -37,23 +37,29 @@ module Maker
       node
     end
 
-    test "renders SVG, attaches the asset, flips status to ready" do
+    test "renders SVG to a PNG when resvg is present; unsupported when absent" do
       stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
       preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")
 
-      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "drawing.svg")
+      assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "drawing.svg") }
 
       preview.reload
-      assert_equal "ready", preview.status
-      assert preview.asset.attached?
-      assert_equal "image/svg+xml", preview.asset.content_type
-      assert_equal @svg.b, preview.asset.download.b
-      assert_nil preview.error
+      if Maker::Previews::Svg.available?
+        assert_equal "ready", preview.status
+        assert_equal "image/png", preview.asset.content_type
+        assert_equal "\x89PNG".b, preview.asset.download[0, 4].b
+      else
+        assert_equal "unsupported", preview.status
+        assert_not preview.asset.attached?
+      end
     end
 
     test "derives the extension from node_id when no filename is given" do
-      stage_version(node_id: "drawing.svg", version_id: "v1", bytes: @svg)
-      preview = @user.maker_previews.create!(node_id: "drawing.svg", version_id: "v1")
+      # 3MF (embedded-thumbnail extract) is always available (pure Ruby), so this orchestration
+      # test — about resolving the extension from node_id — does not depend on the resvg toolchain.
+      threemf = File.binread(Rails.root.join("test/fixtures/files/cube.3mf"))
+      stage_version(node_id: "drawing.3mf", version_id: "v1", bytes: threemf)
+      preview = @user.maker_previews.create!(node_id: "drawing.3mf", version_id: "v1")
 
       Maker::GeneratePreviewJob.perform_now(preview.id)
 
@@ -63,9 +69,11 @@ module Maker
     test "no filename: resolves the renderable name from the Node row (extensionless node_id)" do
       # The regression the smoke caught: node_id is a UUID with no extension, but the
       # synced Node row carries the real name. With no filename arg, the job must resolve
-      # the name from the node (not fall back to the extensionless node_id).
+      # the name from the node (not fall back to the extensionless node_id). Uses the
+      # always-available 3MF renderer so this stays a pure orchestration test.
       node_id = "11111111-2222-3333-4444-555555555555"
-      stage_version(node_id:, version_id: "v1", bytes: @svg, name: "drawing.svg")
+      threemf = File.binread(Rails.root.join("test/fixtures/files/cube.3mf"))
+      stage_version(node_id:, version_id: "v1", bytes: threemf, name: "drawing.3mf")
       preview = @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail")
 
       Maker::GeneratePreviewJob.perform_now(preview.id)
@@ -73,7 +81,7 @@ module Maker
       preview.reload
       assert_equal "ready", preview.status
       assert preview.asset.attached?
-      assert_equal "image/svg+xml", preview.asset.content_type
+      assert_equal "image/png", preview.asset.content_type
       assert_nil preview.error
     end
 
@@ -174,30 +182,36 @@ module Maker
       assert_not preview.asset.attached?
     end
 
-    test "renders a LightBurn .lbrn2 → ready SVG" do
+    test "renders a LightBurn .lbrn2 to PNG when resvg is present; unsupported when absent" do
       lbrn2 = File.binread(Rails.root.join("test/fixtures/files/sample.lbrn2"))
       stage_version(node_id: "art.lbrn2", version_id: "vlb", bytes: lbrn2)
       preview = @user.maker_previews.create!(node_id: "art.lbrn2", version_id: "vlb")
 
-      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "art.lbrn2")
+      assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "art.lbrn2") }
 
       preview.reload
-      assert_equal "ready", preview.status
-      assert_equal "image/svg+xml", preview.asset.content_type
-      assert_includes preview.asset.download, "<svg"
+      if Maker::Previews::Lbrn2.available?
+        assert_equal "ready", preview.status
+        assert_equal "image/png", preview.asset.content_type
+      else
+        assert_equal "unsupported", preview.status
+      end
     end
 
-    test "renders a DXF → ready SVG" do
+    test "renders a DXF to PNG when resvg is present; unsupported when absent" do
       dxf = File.binread(Rails.root.join("test/fixtures/files/sample.dxf"))
       stage_version(node_id: "plate.dxf", version_id: "vdxf", bytes: dxf)
       preview = @user.maker_previews.create!(node_id: "plate.dxf", version_id: "vdxf")
 
-      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "plate.dxf")
+      assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "plate.dxf") }
 
       preview.reload
-      assert_equal "ready", preview.status
-      assert_equal "image/svg+xml", preview.asset.content_type
-      assert_includes preview.asset.download, "<line"
+      if Maker::Previews::Dxf.available?
+        assert_equal "ready", preview.status
+        assert_equal "image/png", preview.asset.content_type
+      else
+        assert_equal "unsupported", preview.status
+      end
     end
 
     test "an STL preview renders via the euc Stl renderer (unsupported only if its binary is absent)" do
