@@ -16,8 +16,11 @@ addon proves the framework spans client-only tools too.
 
 **In scope:**
 - The addon **seam** (registry + `Tools::` controllers + a `/tools` gallery).
-- A generic **state store** (`Maker::AddonState`) — "auto stores parameters" for every addon.
-- **Library integration** — addon outputs written as library nodes (so they auto-preview + version).
+- A generic **state store** (`Maker::AddonState`) — "auto stores parameters" for every addon — plus
+  a **tied bundle of output files** (`Maker::AddonFile`): any number of files of any type produced by
+  one save, grouped together (for boxes: the SVG *and* the parameters that made it).
+- **Generic library write** — an addon hands the framework a SET of files (any type); they are stored
+  in the file library and tied to the state in one go. The framework never inspects the bytes.
 - The **Boxes addon**: a forked `boxes.py` running as a **separate Python sidecar** (GPL-isolated),
   with the UI, parameter persistence, and library-save owned by Rails.
 
@@ -56,9 +59,10 @@ Four reusable framework parts (§3–§6); the Boxes addon (§7–§8) is the fi
 
 **Units, each independently testable:**
 - `Maker::Addons::Registry` — addon_key → metadata (title, icon, description, mount). (§3)
-- `Maker::AddonState` — the generic per-user JSON store. (§4)
-- `Maker::Addons::LibraryOutput` — a small helper that writes an addon's produced bytes into the
-  library via `FileLayer` and links the resulting node to an `AddonState`. (§5)
+- `Maker::AddonState` + `Maker::AddonFile` — the generic per-user state (JSON) and its tied bundle
+  of output files (any type, any count, each with a role). (§4)
+- `Maker::Addons::LibraryOutput` — the one generic helper that writes a SET of addon-produced files
+  (any type) into the library via `FileLayer` and ties them all to an `AddonState` via `AddonFile`. (§5)
 - `BoxesClient` — a typed HTTP client for the sidecar (list generators, generate). Stub-friendly. (§7)
 - `Tools::BaseController` + `Tools::BoxesController` — the gallery and the box-generator UI. (§8)
 - **boxes-sidecar** — the forked `boxes.py` + a thin API, its own image + GPL LICENSE. (§7)
@@ -92,27 +96,34 @@ same graceful-degradation posture the preview renderers take.
 
 ---
 
-## 4. "Auto stores parameters" — `Maker::AddonState`
+## 4. The generic state + output-bundle model (`Maker::AddonState` + `Maker::AddonFile`)
 
-One model, every addon's persistence:
+The framework is **format- and count-agnostic**: one saved addon thing is a **state** (structured
+data, for reload) plus a **bundle of any number of output files of any type**, all tied together.
+Two small models, shared by every addon:
 
 ```
-maker_addon_states
-  id
-  user_id      (belongs_to user, scoped)
-  addon_key    (string, e.g. "boxes")
-  name         (string — the user's label for this saved doc/config)
-  data         (json — the addon's own schema; for boxes: {generator, params})
-  node_id      (string, nullable — links a produced library file, §5)
-  created_at / updated_at
-  index (user_id, addon_key)
+maker_addon_states                         maker_addon_files   (the tie — one state, many files)
+  id                                         id
+  user_id   (belongs_to user, scoped)        addon_state_id  (belongs_to, dependent: :destroy)
+  addon_key (string, e.g. "boxes")           node_id         (string — a library node)
+  name      (string — user's label)          role            (string — "output" | "parameters" | ...)
+  data      (json — the addon's own shape)    content_type    (string)
+  created_at / updated_at                     position        (int — stable ordering)
+  index (user_id, addon_key)                  index (addon_state_id), unique (addon_state_id, node_id)
 ```
 
-- For **Boxes**: one saved box = one `AddonState` with `data = {generator:, params:}` and `node_id`
-  pointing at the generated SVG in the library. Reopen → reload params → tweak → regenerate → update.
-- For a future **notes/drawing** addon: `data = {content: ...}`, no `node_id` needed.
-- `data` is opaque to the framework — each addon owns its own shape. Backend-neutral: `AddonState`
-  is ordinary Rails, unaffected by `LIBRARY_BACKEND`.
+- **`AddonState has_many :files` (`AddonFile`)** — this is the "tie all the files output at one go"
+  requirement. One save = one state + N linked library nodes, each with a **role** so the addon (and
+  the UI) knows what each file is. For **Boxes**, one saved box ties together: the **`box.svg`**
+  (`role: "output"`) and the **`box.params.json`** (`role: "parameters"`) — and later a `box.dxf` /
+  `box.gcode` with no model change, because the bundle is just "N files with roles".
+- **`data` is opaque to the framework** — each addon owns its shape (boxes: `{generator, params}`;
+  notes: `{content}`). It is the structured copy used to **reload** the tool; the same params are
+  ALSO emitted into the bundle as a `parameters` file so they are a first-class, downloadable,
+  portable artifact next to the output (the user's "the svg AND the parameters used to make it").
+- Every addon persists the **same way** through the same two models — nothing here is boxes-specific.
+  Backend-neutral (ordinary Rails, unaffected by `LIBRARY_BACKEND`).
 
 A thin `V1::Maker::AddonStatesController`-style JSON surface is **not** required for v1 (the boxes UI
 is server-rendered and talks to its own controller); a client-only addon (notes) will need a small
@@ -120,23 +131,34 @@ JSON CRUD endpoint, added when that addon lands.
 
 ---
 
-## 5. Library integration (`Maker::Addons::LibraryOutput`)
+## 5. Library integration — store ANY files an addon sends (`Maker::Addons::LibraryOutput`)
 
-Addon outputs are first-class library files, not a parallel store:
+The one generic write path. An addon hands over **a set of files of any type**; the framework writes
+them all into the library through the existing `FileLayer` port and ties them to the state in one go:
 
 ```ruby
-# Writes `bytes` as `name` into the user's library (a Tools/ folder by convention) via the port,
-# and links the node to `state`. Returns the FileInfo. Backend-neutral (chunk/share/s3 all work
-# through FileLayer). On chunk mode this is the two-phase Sync::Commit path the web upload uses;
-# on share/s3 it is FileLayer#write. Reuses existing write plumbing — no new bytes-through-Rails path.
-Maker::Addons::LibraryOutput.write(user:, name:, bytes:, content_type:, state: nil)
+# `files`: [{ name:, bytes:, content_type:, role: }, ...] — ANY number, ANY type. Each is written
+# into the user's library under a per-save folder, then linked to `state` as an AddonFile carrying
+# its role. Returns the AddonFiles. Backend-neutral: chunk mode uses the two-phase Sync::Commit path
+# the web upload uses; share/s3 use FileLayer#write. Reuses existing write plumbing — no new
+# bytes-through-Rails path, and each written node gets a preview enqueued by the eager seam.
+Maker::Addons::LibraryOutput.write(user:, state:, folder:, files:)
 ```
 
-- A generated **box SVG lands in the library and immediately gets a thumbnail** (the SVG renderer we
-  just shipped) + versioning. Regenerating a saved box writes a new version of the same node.
-- Convention: addon outputs go under a `Tools/Boxes/` folder (created on demand) so they're grouped
-  and don't clutter the root — a normal directory in the tree, nothing special.
-- **§15 holds** where the backend can presign (chunk/s3); on share it streams like any other file.
+- **Any type, any count** — the helper never inspects the bytes; a boxes SVG, a params JSON, a DXF,
+  a drawing PNG, a note's markdown all flow through the same call. This is the "store any file an
+  addon sends to the file system" requirement.
+- **Grouped + tied two ways.** Physically, one save writes into a **per-save folder**
+  (`Tools/<Addon>/<name>/`) so browsing the library shows the whole bundle together (svg + params
+  side by side). Structurally, every written node is linked to the `AddonState` via an `AddonFile`
+  with its role, so the tool can re-open the bundle and know which file is which. The folder is the
+  human tie; the join is the machine tie.
+- **Regenerate = new versions in place.** Re-saving a state re-writes the same-named files in the
+  same folder (new immutable versions on chunk; overwrite on share/s3) and re-uses the existing
+  `AddonFile` links — the bundle stays one thing across edits, not a pile of `-2.svg` duplicates.
+- Each written file **auto-previews** (a box SVG gets its thumbnail from the SVG renderer) and
+  versions, for free. **§15 holds** where the backend can presign (chunk/s3); on share it streams
+  like any other file.
 
 ---
 
@@ -186,9 +208,13 @@ and is **stub-friendly** (a `FakeBoxes` client for tests, mirroring `FakeS3`).
    calls `BoxesClient#generate`, returns the **SVG for live preview** (rendered inline, sanitized —
    or rasterized via resvg to a PNG to avoid inlining untrusted SVG; see §9).
 4. `POST /tools/boxes` (save) — persist `AddonState{generator, params, name}` **and**
-   `LibraryOutput.write` the SVG into `Tools/Boxes/<name>.svg` (auto-previews), linking the node.
-5. `GET /tools/boxes/:id` — reopen a saved box: reload params into the form → tweak → regenerate →
-   updates the `AddonState` and writes a new version of the node.
+   `LibraryOutput.write` the whole **bundle in one go** into `Tools/Boxes/<name>/`: **`box.svg`**
+   (`role: "output"`) and **`box.params.json`** (`role: "parameters"`), both tied to the state as
+   `AddonFile`s. The SVG auto-previews. A future format (DXF/gcode) is just another entry in the
+   files array — no model or flow change.
+5. `GET /tools/boxes/:id` — reopen a saved box: its `AddonState.data` reloads the form → tweak →
+   regenerate → updates the state and re-writes the bundle (new versions of `box.svg` +
+   `box.params.json` in the same folder, same `AddonFile` links).
 
 ---
 
@@ -223,10 +249,13 @@ then). **No sidecar.** This demonstrates the framework spans server-backed (boxe
 
 - **Registry / gallery:** `/tools` lists registered addons; unavailable ones degrade gracefully.
 - **`AddonState`:** CRUD, user-scoping, JSON round-trip.
-- **`LibraryOutput`:** writes a node through `FileLayer` on all three backends (chunk/share/s3) and
-  links the `AddonState`; the node gets a preview enqueued (reuses the eager seam).
+- **`LibraryOutput`:** writes a **multi-file bundle of mixed types** through `FileLayer` on all three
+  backends (chunk/share/s3), ties each file to the `AddonState` via `AddonFile` with its role, groups
+  them under one per-save folder, and enqueues a preview per node (reuses the eager seam). Re-saving
+  re-versions the same files rather than creating duplicates.
 - **`Tools::BoxesController`** with a **stubbed `BoxesClient` (`FakeBoxes`)** — list generators,
-  render the dynamic form, preview (stub SVG → resvg PNG), save (AddonState + library node).
+  render the dynamic form, preview (stub SVG → resvg PNG), save (AddonState + the tied bundle: an SVG
+  output file AND a params file), reopen a saved box and regenerate (same bundle, new versions).
 - **Param validation** rejects out-of-schema params before any sidecar call.
 - **Sidecar (Python)**: its own tests live with the fork (`sidecar/boxes/tests`) — generate a known
   box, assert valid SVG; schema endpoint shape.
@@ -249,7 +278,10 @@ then). **No sidecar.** This demonstrates the framework spans server-backed (boxe
 - `/tools` gallery renders registered addons; Boxes is present (and greys out cleanly if the sidecar
   is unconfigured).
 - A user can: pick a generator → fill a dynamically-generated form → preview → save → find the box's
-  SVG in their library (with a thumbnail) → reopen the saved box, tweak, regenerate (new version).
+  **bundle** in their library (the SVG *and* the params file, grouped in one folder, the SVG with a
+  thumbnail) → reopen the saved box, tweak, regenerate (new versions of the whole bundle).
+- The library-write helper stores an **arbitrary set of files of any type** an addon hands it, tied
+  to one `AddonState` — demonstrably not boxes-specific.
 - `boxes-sidecar` deploys as an internal-only container from the forked `boxes.py`; Rails talks to it
   via `BoxesClient`; GPL stays isolated to that artifact.
 - Server suite green on `bin/rails test`, `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`.
