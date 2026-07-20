@@ -88,20 +88,29 @@
         <tr>
           <td>
             <% if node.file? %>
-              <% info = @info_by_node[node.node_id] %>
-              <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
-              <%= link_to file_path(node.node_id), class: "file-cell",
-                          data: { thumbs_target: "cell", node_id: node.node_id } do %>
-                <span class="thumb" data-thumbs-target="thumb">
-                  <% if thumb&.status == "ready" && thumb.asset.attached? %>
-                    <img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy">
-                  <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
-                    <span class="thumb-spinner" aria-hidden="true"></span>
-                  <% else %>
-                    <span class="thumb-icon" aria-hidden="true"><%= File.extname(node.name).delete(".").upcase.first(4) %></span>
-                  <% end %>
-                </span>
-                <span class="file-name"><%= node.name %></span>
+              <%# Only a file this deployment can actually thumbnail gets a preview cell. A
+                  non-renderable file (pdf, txt, image, ...) renders as a plain name link, exactly
+                  as before — no thumbnail, and crucially no spinner the poll would chase forever. %>
+              <% if Maker::Previews::Registry.for_filename(node.name).present? %>
+                <% info = @info_by_node[node.node_id] %>
+                <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+                <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+                <%= link_to file_path(node.node_id), class: "file-cell",
+                            data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
+                  <span class="thumb" data-thumbs-target="thumb">
+                    <% if thumb&.status == "ready" && thumb.asset.attached? %>
+                      <img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy">
+                    <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
+                      <span class="thumb-spinner" aria-hidden="true"></span>
+                    <% else %>
+                      <%# Terminal unsupported/failed (e.g. STEP with no F3D here): static badge. %>
+                      <span class="thumb-icon" aria-hidden="true"><%= ext_label %></span>
+                    <% end %>
+                  </span>
+                  <span class="file-name"><%= node.name %></span>
+                <% end %>
+              <% else %>
+                <%= link_to node.name, file_path(node.node_id) %>
               <% end %>
             <% else %>
               <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a

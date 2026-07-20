@@ -84,6 +84,26 @@ module Web
       assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
     end
 
+    test "viewing a folder backfills thumbnails for renderable files that lack one, not others" do
+      user = sign_in
+      stl = upload("gear.stl", "solid gear\nendsolid\n".b)  # eager seam creates a pending row
+      pdf = upload("manual.pdf", "%PDF-1.4\n".b)            # not renderable -> no row
+
+      # Simulate a library indexed BEFORE this feature: the renderable file has no preview row.
+      user.maker_previews.where(node_id: stl).delete_all
+      clear_enqueued_jobs
+
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        get files_path
+        assert_response :success
+      end
+
+      assert user.maker_previews.exists?(node_id: stl, kind: "thumbnail"),
+             "the renderable file gets a backfilled thumbnail row on view"
+      assert_not user.maker_previews.exists?(node_id: pdf),
+                 "a non-renderable file is never enqueued and stays row-less (static icon, no spinner)"
+    end
+
     test "the detail page shows a ready thumbnail for a CAD file instead of 'No inline preview'" do
       user = sign_in
       node_id = upload("widget.3mf", "zzz".b)
@@ -140,7 +160,7 @@ module Web
       bytes = "hello tinkerex \x00\x01\x02 binary".b
       node_id = upload("notes.txt", bytes)
 
-      # Appears in the list.
+      # Appears in the list (a non-renderable .txt renders as a plain name link).
       get files_path
       assert_response :success
       assert_select "a", text: "notes.txt"

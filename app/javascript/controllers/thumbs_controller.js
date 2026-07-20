@@ -35,7 +35,12 @@ export default class extends Controller {
         const data = await res.json()
         for (const cell of this.cellTargets) {
           const entry = data[cell.dataset.nodeId]
-          if (entry && entry.status === "ready" && entry.url) this.setImage(cell, entry.url)
+          if (!entry) continue
+          if (entry.status === "ready" && entry.url) this.setImage(cell, entry.url)
+          // A terminal non-ready state (no permissive renderer for this file here, or a render
+          // error) resolves the spinner to a static icon — otherwise it would spin forever and
+          // keep the cell in the poll set.
+          else if (entry.status === "unsupported" || entry.status === "failed") this.setIcon(cell)
         }
       }
     } catch (_e) {
@@ -54,5 +59,16 @@ export default class extends Controller {
     img.alt = ""
     thumb.innerHTML = ""
     thumb.appendChild(img)
+  }
+
+  setIcon(cell) {
+    const thumb = cell.querySelector(".thumb")
+    if (!thumb || thumb.querySelector(".thumb-icon")) return
+    const icon = document.createElement("span")
+    icon.className = "thumb-icon"
+    icon.setAttribute("aria-hidden", "true")
+    icon.textContent = cell.dataset.ext || ""
+    thumb.innerHTML = ""
+    thumb.appendChild(icon)
   }
 }

@@ -150,6 +150,7 @@ class FilesController < ApplicationController
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
+    backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
   end
 
   # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
@@ -373,6 +374,27 @@ class FilesController < ApplicationController
     current_user.maker_previews
                 .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
                 .index_by { |p| [ p.node_id, p.version_id ] }
+  end
+
+  # LAZY BACKFILL. The eager seams (upload/commit/scan) only cover files that arrive AFTER the
+  # feature shipped; a library indexed before it has files but no preview rows. Without this, every
+  # such file shows a spinner the grid polls forever (a job is never coming). So when a folder is
+  # viewed, enqueue a thumbnail for each renderable file that has no row for its current version.
+  # Idempotent (Enqueue no-ops on an existing non-failed row) and renderable-only (non-renderable
+  # names get no row and render as a static icon, never a spinner). `existing` is @thumb_by_node,
+  # already loaded — the new pending rows aren't in it, so the view shows nil -> spinner, which is
+  # now truthful because a job IS coming.
+  def backfill_thumbnails(nodes, info, existing)
+    nodes.each do |node|
+      next unless node.file?
+
+      token = info[node.node_id]&.content_token
+      next if token.nil? || existing.key?([ node.node_id, token ])
+      next if Maker::Previews::Registry.for_filename(node.name).nil?
+
+      ::Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                      name: node.name, version_id: token)
+    end
   end
 
   # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
