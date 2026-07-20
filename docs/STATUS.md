@@ -1,6 +1,35 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-17 (**three backends LIVE on the box + three web-UI features**)
+**Updated:** 2026-07-20 (**server-side thumbnail previews wired into the web UI**)
+
+## Latest (2026-07-20): eager PNG thumbnails for STL/3MF/SVG/DXF/LightBurn, shown in the web UI
+
+Branch `previews-server-side-thumbnails`. The existing `Maker::Previews` render engine (Registry →
+renderer → `GeneratePreviewJob` → `Maker::Preview` asset, served off Rails) is now **completed,
+hardened, and connected to the browser**:
+
+- **All thumbnails are PNG.** New `Maker::Previews::SvgRasterizer` rasterizes SVG→PNG via the
+  **resvg** CLI (Rust, MPL-2.0/Apache — permissive), so SVG/DXF/LightBurn stop emitting
+  `image/svg+xml` (which the web layer refuses to inline as an XSS vector) and match STL/3MF.
+- **Extensibility is mechanical.** A shared **renderer contract test** runs every registered
+  renderer (interface, `EXTENSIONS` resolve back through the Registry, inline-safe raster output) —
+  it caught a stale `Mesh::EXTENSIONS` entry (`stl`, which routes to the euc `Stl` renderer) on the
+  way in. Adding a format = module + one Registry line + fixture. See `docs/adding-a-preview-format.md`.
+- **Eager generation.** `Maker::Previews::Enqueue` (idempotent, supersede-on-new-version) fires from
+  every "bytes landed" seam: web upload (chunk two-phase finalize + share/s3 `create`), v1 commit
+  finalize (desktop/API sync), and the share/s3 scan `Reconciler`. Never fails the write or scan.
+- **Web UI.** The file grid shows the current-version thumbnail (batched `stat_all`-style read, one
+  query), with a spinner + poll-until-ready Stimulus controller (`GET /files/thumbnails`, session-
+  authed) and a format-icon fallback. The detail view shows the PNG for 3D/CAD/vector files instead
+  of "No inline preview."
+- **Deploy.** `resvg` is added to the Dockerfile (build stage verified in `rust:1-slim`) and to CI's
+  three test legs (idempotent, non-fatal). **STEP/OBJ/IGES stay `unsupported` in-deploy** — F3D is
+  still not shipped in the image (deliberate; `Mesh` stays registered so a box with F3D renders them).
+- Suite **978 → 1023** runs, **identical on all three backend legs** (`bin/rails test`,
+  `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`: 1023 / 3329 / 0 / 0 / 5). The preview layer touches
+  no sync internals (§10 tripwire grep clean).
+
+## Latest (2026-07-17 PM): all three FileLayer backends deployed live, web UI usable
 
 ## Latest (2026-07-17 PM): all three FileLayer backends deployed live, web UI usable
 
