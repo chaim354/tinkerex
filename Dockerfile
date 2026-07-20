@@ -64,6 +64,14 @@ COPY client/stl-thumbnailer ./
 RUN cargo build --release && strip target/release/stl-thumbnailer
 
 
+# ---- resvg: SVG→PNG rasterizer (Rust, MPL-2.0/Apache — permissive, CLAUDE.md §9). A single
+# static binary, NO GPU/OpenGL/Mesa. Powers the SVG/DXF/LightBurn thumbnail path
+# (Maker::Previews::SvgRasterizer). Built here, copied to PATH in the final stage. Independent of
+# `base`, so it builds in parallel.
+FROM docker.io/library/rust:1-slim AS resvg
+RUN cargo install resvg --version 0.47.0 --root /out && strip /out/bin/resvg
+
+
 # Final stage for app image
 FROM base
 
@@ -79,6 +87,10 @@ COPY --chown=rails:rails --from=build /rails /rails
 # The STL thumbnailer binary on PATH → Maker::Previews::Stl#available? is true on the server,
 # so STL uploads get a real thumbnail (no F3D/Mesa). root:root 0755 → runnable by the rails user.
 COPY --from=stl-thumbnailer /build/target/release/stl-thumbnailer /usr/local/bin/stl-thumbnailer
+
+# The resvg binary on PATH → Maker::Previews::SvgRasterizer#available? is true on the server,
+# so SVG/DXF/LightBurn uploads get a PNG thumbnail.
+COPY --from=resvg /out/bin/resvg /usr/local/bin/resvg
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]

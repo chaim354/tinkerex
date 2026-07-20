@@ -5,6 +5,7 @@ module Web
   # machinery the desktop client uses, with the memory chunk store backed by the dev blob
   # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
   class FilesFlowTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
     # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
     # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
     # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
@@ -53,6 +54,48 @@ module Web
     test "requires login" do
       get files_path
       assert_redirected_to new_user_session_path
+    end
+
+    test "finalizing a chunk upload of a renderable file eagerly enqueues a thumbnail" do
+      sign_in
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        upload("bracket.stl", "solid bracket\nendsolid\n".b)
+      end
+    end
+
+    test "the thumbnails endpoint reports a ready thumbnail and omits nodes without one" do
+      user = sign_in
+      # A renderable upload — the eager seam creates a pending thumbnail row for it (keyed by the
+      # node's content_token). A non-renderable upload gets no row at all.
+      with_thumb = upload("model.3mf", "zzz".b)
+      without    = upload("notes.sldprt", "yyy".b)
+
+      token = FileLayer.current.stat(user, node_id: with_thumb).content_token
+      preview = user.maker_previews.find_by!(node_id: with_thumb, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get thumbnails_files_path, params: { ids: [ with_thumb, without ].join(",") },
+                                 headers: { "Accept" => "application/json" }
+      assert_response :success
+      data = JSON.parse(response.body)
+      assert_equal "ready", data[with_thumb]["status"]
+      assert data[with_thumb]["url"].present?, "a ready thumbnail must expose a url"
+      assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
+    end
+
+    test "the detail page shows a ready thumbnail for a CAD file instead of 'No inline preview'" do
+      user = sign_in
+      node_id = upload("widget.3mf", "zzz".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select "img.preview-image"
+      assert_no_match(/No inline preview/, response.body)
     end
 
     # ---- Fix 9: sniffable user content is served as a download, never inline ---

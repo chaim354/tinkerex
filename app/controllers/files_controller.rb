@@ -149,6 +149,27 @@ class FilesController < ApplicationController
                          .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
+    @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
+  end
+
+  # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
+  # for the grid's poll-until-ready. Session-authed (this is the web UI, not the device-token v1
+  # API), user-scoped. Shape: { "<node_id>": { status:, url: } }. A node with no thumbnail row is
+  # simply absent from the payload.
+  def thumbnails
+    ids = params[:ids].to_s.split(",").first(200) # bound the batch
+    nodes = current_user.nodes.present.where(node_id: ids).to_a
+    info = FileLayer.current.stat_all(current_user, node_ids: nodes.map(&:node_id))
+    by_node = thumbnails_for(nodes, info)
+
+    out = nodes.each_with_object({}) do |n, h|
+      token = info[n.node_id]&.content_token
+      p = token && by_node[[ n.node_id, token ]]
+      next unless p
+
+      h[n.node_id] = { status: p.status, url: (p.status == "ready" && p.asset.attached? ? url_for(p.asset) : nil) }
+    end
+    render json: out
   end
 
   # GET /files/:node_id — view/preview a single file + metadata.
@@ -165,6 +186,9 @@ class FilesController < ApplicationController
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
+    token = @info&.content_token
+    @thumbnail = token && current_user.maker_previews
+                            .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
@@ -182,6 +206,7 @@ class FilesController < ApplicationController
     upload = params.require(:file)
     info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
                                    name: upload.original_filename, io: upload)
+    enqueue_preview(node_id: info.node_id, name: upload.original_filename)
     redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}."
   end
 
@@ -220,6 +245,8 @@ class FilesController < ApplicationController
       user: current_user, commit_id: params.require(:commit_id), verify: true
     )
     LibraryChannel.broadcast_change(current_user, seq)
+    node = current_user.nodes.find_by(node_id: version.node_id)
+    enqueue_preview(node_id: version.node_id, name: node&.name || version.node_id) if node
     render json: { version_id: version.version_id, seq: }
   rescue Sync::Commit::ChunksMissing => e
     render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity
@@ -336,6 +363,31 @@ class FilesController < ApplicationController
 
   private
 
+  # Current-version thumbnail per node, in ONE query (never N+1). Keyed by [node_id, content_token]
+  # where content_token is what @info_by_node already carries, so we show the thumbnail for the
+  # version on screen, not a stale one. `nodes` is an Array, `info` a Hash (FileInfo per node_id).
+  def thumbnails_for(nodes, info)
+    tokens = nodes.filter_map { |n| info[n.node_id]&.content_token }
+    return {} if tokens.empty?
+
+    current_user.maker_previews
+                .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
+                .index_by { |p| [ p.node_id, p.version_id ] }
+  end
+
+  # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
+  # is the per-backend content id that keys maker_previews.version_id (FileLayer::FileInfo), so a
+  # new content supersedes. Never raises into the request -- a preview is best-effort UX, not part
+  # of the write's success; a vanished/unmounted file just means the scan will catch up later.
+  def enqueue_preview(node_id:, name:)
+    info = FileLayer.current.stat(current_user, node_id:)
+    return unless info&.content_token
+
+    ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
+  rescue FileLayer::NotFound, FileLayer::FetchError
+    nil
+  end
+
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
   # the SAME `capabilities` the views and the v1 gate read (no second path to the answer), but
   # answers the WEB way -- a redirect with an alert, not the concern's JSON 501.
@@ -381,6 +433,9 @@ class FilesController < ApplicationController
     return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
     return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
                         c h cpp html css toml ini cfg conf sh gcode].include?(ext)
+    # A file we can render a server-side thumbnail for (stl, 3mf, dxf, lbrn2, step, obj, ...) but
+    # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
+    return :thumbnail if Maker::Previews::Registry.for(ext)
     :other
   end
 end

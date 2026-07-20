@@ -140,7 +140,19 @@ module Library
 
       apply_moves!(moves)                                      # 2 (apply)
       doomed.each { |node| node.update!(deleted: true) }
-      leftovers.each { |o, hash| create_or_revive!(o, hash) }  # 3 & 4
+      leftovers.each do |o, hash|                                # 3 & 4
+        node = create_or_revive!(o, hash)
+        # Eagerly render a thumbnail for a file the scan just brought into the catalog. Best-effort:
+        # a render enqueue must NEVER fail the scan (which is tombstoning/reviving the whole
+        # library). Enqueue self-guards on renderer presence (nil for non-renderable names), and
+        # `hash` is the content_token for the share/s3 port -- the same value stat returns.
+        begin
+          Maker::Previews::Enqueue.call(user: @user, node_id: node.node_id,
+                                        name: File.basename(o.rel_path), version_id: hash)
+        rescue StandardError
+          nil
+        end
+      end
       tombstone_vanished_dirs(dirs)
       # nil on purpose. Task 9's ScanJob reads #unreadable_dirs off the Scanner instance and
       # wants nothing from this return value, so there is still no caller to design a result for.
@@ -477,7 +489,12 @@ module Library
       attrs = { name: File.basename(o.rel_path), kind: "file", deleted: false,
                 storage_path: o.rel_path, parent_node_id: parent_id_for(o.rel_path),
                 size: o.size, mtime: o.mtime, content_hash: hash }
-      return tomb.update!(**attrs) if tomb
+      # Return the NODE in both branches (update! returns true, so we can't return it directly) —
+      # the caller enqueues an eager thumbnail for the file the scan just brought in.
+      if tomb
+        tomb.update!(**attrs)
+        return tomb
+      end
       @user.nodes.create!(node_id: SecureRandom.uuid, **attrs)
     end
 

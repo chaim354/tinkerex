@@ -22,6 +22,8 @@ module Web
   # an S3 adapter needs an injected stub client, which the ENV-rebuilding pin cannot supply. The
   # FileLayer.reset! in teardown is therefore load-bearing, not decoration.
   class S3WriteTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
+
     PASSWORD = "correct horse battery staple".freeze
     PREFIX = "library".freeze
 
@@ -63,6 +65,12 @@ module Web
       assert_equal "solid bracket", @fake.objects["#{PREFIX}/bracket.stl"].body,
                    "the bytes must reach the user's bucket"
       assert @user.nodes.find_by(storage_path: "bracket.stl"), "and the node must be indexed"
+    end
+
+    test "a renderable s3 upload eagerly enqueues a thumbnail" do
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        upload!("bracket.stl", "solid bracket")
+      end
     end
 
     # The upload must not wait on a scan to become usable -- #create redirects to the file's own

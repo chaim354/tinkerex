@@ -12,8 +12,8 @@ module Maker
         assert_includes [ true, false ], Maker::Previews::Mesh.available?
       end
 
-      test "covers the mesh + CAD extensions" do
-        assert_equal %w[stl obj step stp iges igs], Maker::Previews::Mesh::EXTENSIONS
+      test "covers the mesh + CAD extensions (NOT stl — that routes to the euc Stl renderer)" do
+        assert_equal %w[obj step stp iges igs], Maker::Previews::Mesh::EXTENSIONS
       end
 
       test "renders an STL to a PNG thumbnail via f3d" do

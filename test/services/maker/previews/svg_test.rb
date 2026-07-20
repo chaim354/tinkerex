@@ -5,27 +5,18 @@ module Maker
     class SvgTest < ActiveSupport::TestCase
       setup { @svg = File.binread(Rails.root.join("test/fixtures/files/square.svg")) }
 
-      test "is always available (no native rasterizer needed — SVG is browser-renderable)" do
-        assert Maker::Previews::Svg.available?
+      test "available? mirrors the resvg rasterizer" do
+        assert_equal Maker::Previews::SvgRasterizer.available?, Maker::Previews::Svg.available?
       end
 
-      test "stores the SVG bytes verbatim as an image/svg+xml asset" do
-        result = Maker::Previews::Svg.render(@svg, size: 512)
-        assert_equal "image/svg+xml", result[:content_type]
-        assert_equal @svg.b, result[:bytes].b
-      end
+      test "renders the SVG to a PNG thumbnail" do
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
 
-      test "reports natural dimensions when present in the SVG" do
-        result = Maker::Previews::Svg.render(@svg, size: 512)
-        assert_equal 100, result[:width]
-        assert_equal 100, result[:height]
-      end
-
-      test "dimensions are nil when the SVG has no width/height" do
-        bare = %(<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>)
-        result = Maker::Previews::Svg.render(bare, size: 512)
-        assert_nil result[:width]
-        assert_nil result[:height]
+        result = Maker::Previews::Svg.render(@svg, size: 256)
+        assert_equal "image/png", result[:content_type]
+        assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
+        assert_equal 256, result[:width]
+        assert_equal 256, result[:height]
       end
     end
   end

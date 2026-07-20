@@ -46,6 +46,13 @@
     <pre class="preview-text"
          data-controller="textpreview"
          data-textpreview-url-value="<%= blob_file_path(@node.node_id) %>">Loading…</pre>
+  <% elsif @kind == :thumbnail && @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
+    <%# A server-rendered PNG thumbnail for a 3D/CAD/vector file the browser can't show raw. %>
+    <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
+  <% elsif @kind == :thumbnail && %w[pending processing].include?(@thumbnail&.status) %>
+    <div class="preview-fallback muted">
+      <p>Generating preview…</p>
+    </div>
   <% else %>
     <div class="preview-fallback muted">
       <p>No inline preview for this file type.</p>

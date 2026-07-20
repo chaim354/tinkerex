@@ -9,10 +9,12 @@ module Maker
         assert_equal Maker::Previews::Svg.available?, Maker::Previews::Lbrn2.available?
       end
 
-      test "renders to an SVG asset (delegates to the SVG renderer)" do
-        result = Maker::Previews::Lbrn2.render(@lbrn2, size: 512)
-        assert_equal "image/svg+xml", result[:content_type]
-        assert_includes result[:bytes], "<svg"
+      test "render produces a PNG thumbnail (delegates to the SVG rasterizer)" do
+        skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+
+        result = Maker::Previews::Lbrn2.render(@lbrn2, size: 256)
+        assert_equal "image/png", result[:content_type]
+        assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
       end
 
       test "maps Rect / Ellipse / Line shapes into SVG primitives" do

@@ -9,10 +9,12 @@ module Maker
         assert_equal Maker::Previews::Svg.available?, Maker::Previews::Dxf.available?
       end
 
-      test "renders to an SVG asset (delegates to the SVG renderer)" do
-        result = Maker::Previews::Dxf.render(@dxf, size: 512)
-        assert_equal "image/svg+xml", result[:content_type]
-        assert_includes result[:bytes], "<svg"
+      test "render produces a PNG thumbnail (delegates to the SVG rasterizer)" do
+        skip "resvg not installed on this box" unless Maker::Previews::Dxf.available?
+
+        result = Maker::Previews::Dxf.render(@dxf, size: 256)
+        assert_equal "image/png", result[:content_type]
+        assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
       end
 
       test "maps LINE / CIRCLE / LWPOLYLINE / ARC entities to SVG primitives" do

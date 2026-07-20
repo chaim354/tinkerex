@@ -100,6 +100,17 @@ jobs:
         with:
           bundler-cache: true
 
+      # Idempotent + non-fatal: the runner is self-hosted/persistent, so skip when resvg is already
+      # present. The preview tests branch on Maker::Previews::SvgRasterizer.available?, so a box
+      # without resvg still passes (SVG/DXF/LightBurn just render `unsupported`); installing it here
+      # is what exercises the real PNG path. `|| true` so a runner without cargo never fails CI.
+      - name: Ensure resvg (SVG→PNG for preview tests)
+        run: |
+          if ! command -v resvg >/dev/null 2>&1; then
+            cargo install resvg --version 0.47.0 || true
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Run tests
         env:
           RAILS_ENV: test
@@ -133,6 +144,13 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
+
+      - name: Ensure resvg (SVG→PNG for preview tests)
+        run: |
+          if ! command -v resvg >/dev/null 2>&1; then
+            cargo install resvg --version 0.47.0 || true
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Run tests with LIBRARY_BACKEND=share
         env:
@@ -175,6 +193,13 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           bundler-cache: true
+
+      - name: Ensure resvg (SVG→PNG for preview tests)
+        run: |
+          if ! command -v resvg >/dev/null 2>&1; then
+            cargo install resvg --version 0.47.0 || true
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Run tests with LIBRARY_BACKEND=s3
         env:
