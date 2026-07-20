@@ -74,7 +74,7 @@
   s3 there are none, so every Size cell here rendered an em-dash. See show.html.erb's header for
   why `capabilities` is called rather than dereferenced off an ivar with `&.`.
 %>
-  <table class="files">
+  <table class="files" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <thead>
       <tr>
         <th>Name</th><th>Kind</th><th class="num">Size</th>
@@ -88,7 +88,21 @@
         <tr>
           <td>
             <% if node.file? %>
-              <%= link_to node.name, file_path(node.node_id) %>
+              <% info = @info_by_node[node.node_id] %>
+              <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+              <%= link_to file_path(node.node_id), class: "file-cell",
+                          data: { thumbs_target: "cell", node_id: node.node_id } do %>
+                <span class="thumb" data-thumbs-target="thumb">
+                  <% if thumb&.status == "ready" && thumb.asset.attached? %>
+                    <img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy">
+                  <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
+                    <span class="thumb-spinner" aria-hidden="true"></span>
+                  <% else %>
+                    <span class="thumb-icon" aria-hidden="true"><%= File.extname(node.name).delete(".").upcase.first(4) %></span>
+                  <% end %>
+                </span>
+                <span class="file-name"><%= node.name %></span>
+              <% end %>
             <% else %>
               <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a
                   file preview. Same node_id key #index scopes children on. %>

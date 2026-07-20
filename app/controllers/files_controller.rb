@@ -149,6 +149,27 @@ class FilesController < ApplicationController
                          .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
+    @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
+  end
+
+  # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
+  # for the grid's poll-until-ready. Session-authed (this is the web UI, not the device-token v1
+  # API), user-scoped. Shape: { "<node_id>": { status:, url: } }. A node with no thumbnail row is
+  # simply absent from the payload.
+  def thumbnails
+    ids = params[:ids].to_s.split(",").first(200) # bound the batch
+    nodes = current_user.nodes.present.where(node_id: ids).to_a
+    info = FileLayer.current.stat_all(current_user, node_ids: nodes.map(&:node_id))
+    by_node = thumbnails_for(nodes, info)
+
+    out = nodes.each_with_object({}) do |n, h|
+      token = info[n.node_id]&.content_token
+      p = token && by_node[[ n.node_id, token ]]
+      next unless p
+
+      h[n.node_id] = { status: p.status, url: (p.status == "ready" && p.asset.attached? ? url_for(p.asset) : nil) }
+    end
+    render json: out
   end
 
   # GET /files/:node_id — view/preview a single file + metadata.
@@ -338,6 +359,18 @@ class FilesController < ApplicationController
   end
 
   private
+
+  # Current-version thumbnail per node, in ONE query (never N+1). Keyed by [node_id, content_token]
+  # where content_token is what @info_by_node already carries, so we show the thumbnail for the
+  # version on screen, not a stale one. `nodes` is an Array, `info` a Hash (FileInfo per node_id).
+  def thumbnails_for(nodes, info)
+    tokens = nodes.filter_map { |n| info[n.node_id]&.content_token }
+    return {} if tokens.empty?
+
+    current_user.maker_previews
+                .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
+                .index_by { |p| [ p.node_id, p.version_id ] }
+  end
 
   # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
   # is the per-backend content id that keys maker_previews.version_id (FileLayer::FileInfo), so a

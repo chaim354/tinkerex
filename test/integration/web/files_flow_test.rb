@@ -63,6 +63,27 @@ module Web
       end
     end
 
+    test "the thumbnails endpoint reports a ready thumbnail and omits nodes without one" do
+      user = sign_in
+      # A renderable upload — the eager seam creates a pending thumbnail row for it (keyed by the
+      # node's content_token). A non-renderable upload gets no row at all.
+      with_thumb = upload("model.3mf", "zzz".b)
+      without    = upload("notes.sldprt", "yyy".b)
+
+      token = FileLayer.current.stat(user, node_id: with_thumb).content_token
+      preview = user.maker_previews.find_by!(node_id: with_thumb, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get thumbnails_files_path, params: { ids: [ with_thumb, without ].join(",") },
+                                 headers: { "Accept" => "application/json" }
+      assert_response :success
+      data = JSON.parse(response.body)
+      assert_equal "ready", data[with_thumb]["status"]
+      assert data[with_thumb]["url"].present?, "a ready thumbnail must expose a url"
+      assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
+    end
+
     # ---- Fix 9: sniffable user content is served as a download, never inline ---
 
     test "an SVG blob is served as an attachment (no stored XSS on the app origin)" do

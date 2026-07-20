@@ -33,6 +33,9 @@ Rails.application.routes.draw do
       # the NAS/bucket now, instead of waiting for the 15-minute recurring Library::ScanJob.
       # Gated on the `scannable` capability in FilesController (chunk mode refuses).
       post "rescan"
+      # Current-version thumbnail state for a batch of node ids (JSON), for the grid's
+      # poll-until-ready. Session-authed web endpoint, not the device-token v1 previews API.
+      get "thumbnails"
     end
     member do
       get "blob"
