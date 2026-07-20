@@ -18,7 +18,10 @@ module Maker
 
       RenderError = Class.new(StandardError)
 
-      EXTENSIONS = %w[stl obj step stp iges igs].freeze
+      # NB: `stl` is NOT here — it routes to Maker::Previews::Stl (the euc rasterizer), not F3D.
+      # The renderer contract test pins EXTENSIONS to what the Registry actually resolves, so a
+      # stale `stl` here fails loudly rather than lying about ownership.
+      EXTENSIONS = %w[obj step stp iges igs].freeze
 
       F3D = ENV.fetch("F3D_BIN", "f3d").freeze
 
