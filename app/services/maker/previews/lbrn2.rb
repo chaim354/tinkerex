@@ -25,10 +25,15 @@ module Maker
 
       def available? = Maker::Previews::Svg.available?
 
-      # Returns whatever `Svg.render` returns (SVG bytes verbatim by default).
+      # Embedded thumbnail FIRST — a LightBurn file carries its own full-colour render in a
+      # <Thumbnail Source="base64png"> attribute, which is far better than re-drawing the geometry
+      # as outlines. Fall back to the hand-rolled geometry parser (-> SVG -> PNG) only when a file
+      # has no embedded thumbnail (older LightBurn versions, or a hand-authored file).
       def render(lbrn2_bytes, size: 512)
-        svg = to_svg(lbrn2_bytes, size:)
-        Maker::Previews::Svg.render(svg, size:)
+        emb = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes)
+        return emb if emb
+
+        Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
       end
 
       # lbrn2 XML → an SVG string. Geometry is mapped into a viewBox sized to the shapes'

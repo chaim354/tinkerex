@@ -16,6 +16,7 @@ module Maker
         Maker::Previews::Dxf     => "sample.dxf",
         Maker::Previews::Lbrn2   => "sample.lbrn2",
         Maker::Previews::ThreeMf => "cube.3mf",
+        Maker::Previews::Mage    => "sample.mage",
         Maker::Previews::Stl     => "tetra.stl"
         # Mesh (obj/step/iges) intentionally omitted: F3D is not on this box, so it is checked
         # structurally only. Add a fixture here if/when F3D lands in the test env.

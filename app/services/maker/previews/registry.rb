@@ -18,6 +18,7 @@ module Maker
         "lbrn"  => Maker::Previews::Lbrn2,
         "dxf"   => Maker::Previews::Dxf,     # DXF entities → SVG → reuse Svg    (pure Ruby)
         "3mf"   => Maker::Previews::ThreeMf, # extract embedded thumbnail.png    (rubyzip, BSD-2)
+        "mage"  => Maker::Previews::Mage,     # MillMage XML → embedded <Thumbnail> base64 PNG
         "stl"   => Maker::Previews::Stl,     # pure-CPU euc rasterizer (no GL/Mesa) — stl-thumbnailer
         "obj"   => Maker::Previews::Mesh,    # F3D headless PNG                  (f3d BSD-3 subprocess)
         "step"  => Maker::Previews::Mesh,    # STEP/IGES via F3D's OCCT plugin — OCCT (LGPL) stays

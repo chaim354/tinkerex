@@ -9,12 +9,21 @@ module Maker
         assert_equal Maker::Previews::Svg.available?, Maker::Previews::Lbrn2.available?
       end
 
-      test "render produces a PNG thumbnail (delegates to the SVG rasterizer)" do
+      test "render falls back to the geometry parser (PNG) when there is no embedded thumbnail" do
         skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
 
+        # The fixture has no <Thumbnail>, so this exercises the geometry -> SVG -> PNG fallback.
         result = Maker::Previews::Lbrn2.render(@lbrn2, size: 256)
         assert_equal "image/png", result[:content_type]
         assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
+      end
+
+      test "render uses the embedded thumbnail when the LightBurn file carries one" do
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        with_thumb = %(<LightBurnProject><Thumbnail Source="#{png_b64}"/><Shape Type="Rect" W="1" H="1"/></LightBurnProject>)
+        result = Maker::Previews::Lbrn2.render(with_thumb, size: 512)
+        assert_equal "image/png", result[:content_type]
+        assert_equal 1, result[:width], "the embedded 1x1 PNG is returned verbatim, not a re-render"
       end
 
       test "maps Rect / Ellipse / Line shapes into SVG primitives" do

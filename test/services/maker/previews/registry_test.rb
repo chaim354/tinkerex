@@ -14,6 +14,7 @@ module Maker
         assert_equal Maker::Previews::Lbrn2,   Maker::Previews::Registry.for("lbrn")
         assert_equal Maker::Previews::Dxf,     Maker::Previews::Registry.for("dxf")
         assert_equal Maker::Previews::ThreeMf, Maker::Previews::Registry.for("3mf")
+        assert_equal Maker::Previews::Mage,    Maker::Previews::Registry.for("mage")
       end
 
       test "resolves obj/STEP/IGES to the F3D Mesh renderer, and STL to the euc Stl renderer" do
