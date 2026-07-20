@@ -1,0 +1,16 @@
+<%#
+  Shared thumbnail box for a renderable file, used by both the list and grid views. The poll
+  controller (thumbs_controller.js) finds `.thumb` inside a `.file-cell` and swaps the spinner for
+  the <img> once ready, or a static badge on unsupported/failed. Sizing comes from the ancestor
+  container (table.files .thumb vs .files-grid .thumb), so this markup is size-agnostic.
+  Locals: `thumb` (a Maker::Preview or nil), `ext_label` (String).
+%>
+<span class="thumb" data-thumbs-target="thumb">
+  <% if thumb&.status == "ready" && thumb.asset.attached? %>
+    <img src="<%= url_for(thumb.asset) %>" alt="" loading="lazy">
+  <% elsif thumb.nil? || %w[pending processing].include?(thumb&.status) %>
+    <span class="thumb-spinner" aria-hidden="true"></span>
+  <% else %>
+    <span class="thumb-icon" aria-hidden="true"><%= ext_label %></span>
+  <% end %>
+</span>

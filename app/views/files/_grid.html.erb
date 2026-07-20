@@ -1,0 +1,30 @@
+<%#
+  Grid (gallery) view — thumbnails front and centre. Every item is a card: folders navigate in,
+  renderable files show their preview (with the same poll-until-ready cell the list uses), and
+  everything else shows a format badge. The `thumbs` controller lives on the grid container and
+  drives every `.file-cell` inside it, exactly as it does for the table.
+%>
+<div class="files-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+  <% @nodes.each do |node| %>
+    <% info = @info_by_node[node.node_id] %>
+    <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+    <% if !node.file? %>
+      <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder" do %>
+        <span class="thumb folder-thumb" aria-hidden="true">📁</span>
+        <span class="grid-name"><%= node.name %></span>
+      <% end %>
+    <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
+      <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+      <%= link_to file_path(node.node_id), class: "grid-card file-cell",
+                  data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
+        <%= render "thumb", thumb:, ext_label: %>
+        <span class="grid-name"><%= node.name %></span>
+      <% end %>
+    <% else %>
+      <%= link_to file_path(node.node_id), class: "grid-card" do %>
+        <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
+        <span class="grid-name"><%= node.name %></span>
+      <% end %>
+    <% end %>
+  <% end %>
+</div>

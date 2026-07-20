@@ -1,0 +1,56 @@
+<%#
+  List (table) view. Size/Version come from @info_by_node (FileLayer::FileInfo), not Version rows:
+  on share and s3 there are none. See show.html.erb's header for why `capabilities` is called
+  rather than dereferenced off an ivar with `&.`.
+%>
+<table class="files" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+  <thead>
+    <tr>
+      <th>Name</th><th>Kind</th><th class="num">Size</th>
+      <% if capabilities.versioned? %><th>Version</th><% end %>
+      <th>Modified</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @nodes.each do |node| %>
+      <% info = @info_by_node[node.node_id] %>
+      <tr>
+        <td>
+          <% if node.file? %>
+            <%# Only a file this deployment can actually thumbnail gets a preview cell. A
+                non-renderable file (pdf, txt, image, ...) renders as a plain name link, exactly
+                as before — no thumbnail, and crucially no spinner the poll would chase forever. %>
+            <% if Maker::Previews::Registry.for_filename(node.name).present? %>
+              <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+              <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+              <%= link_to file_path(node.node_id), class: "file-cell",
+                          data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
+                <%= render "thumb", thumb:, ext_label: %>
+                <span class="file-name"><%= node.name %></span>
+              <% end %>
+            <% else %>
+              <%= link_to node.name, file_path(node.node_id) %>
+            <% end %>
+          <% else %>
+            <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a
+                file preview. Same node_id key #index scopes children on. %>
+            <%= link_to "📁 #{node.name}", files_path(folder: node.node_id), class: "dir" %>
+          <% end %>
+        </td>
+        <td class="muted"><%= node.kind %></td>
+        <td class="num muted"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
+        <% if capabilities.versioned? %>
+          <td class="muted mono"><%= info.content_token&.first(8) || "—" %></td>
+        <% end %>
+        <td class="muted"><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
+        <td class="row-actions">
+          <% if node.file? %>
+            <%= link_to "Download", blob_file_path(node.node_id, download: 1) %>
+          <% end %>
+          <%= button_to "Delete", file_path(node.node_id), method: :delete,
+                form: { data: { turbo_confirm: "Delete #{node.name}?" } }, class: "linkbtn danger" %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>

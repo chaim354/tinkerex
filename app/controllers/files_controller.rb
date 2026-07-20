@@ -143,6 +143,7 @@ class FilesController < ApplicationController
   # (test_contract_stat_all_omits_what_stat_raises_not_found_for), and this is what consumes it —
   # so `info` is never nil in the view.
   def index
+    @view = resolve_view
     @folder = current_folder
     @crumbs = folder_crumbs(@folder)
     @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
@@ -418,6 +419,23 @@ class FilesController < ApplicationController
 
     redirect_to files_path,
                 alert: "This library doesn't support manual rescans."
+  end
+
+  # List or grid. An explicit `?view=` wins and is remembered in a cookie (so it persists as the
+  # user navigates folders); otherwise the last remembered choice; otherwise `list`. Only the two
+  # known values are ever honored — a junk `?view=` or a tampered cookie falls back to the default
+  # rather than reaching the view as an arbitrary string.
+  VIEWS = %w[list grid].freeze
+  DEFAULT_VIEW = "list".freeze
+
+  def resolve_view
+    requested = params[:view].presence
+    if VIEWS.include?(requested)
+      cookies[:files_view] = { value: requested, expires: 1.year }
+      return requested
+    end
+    saved = cookies[:files_view]
+    VIEWS.include?(saved) ? saved : DEFAULT_VIEW
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the

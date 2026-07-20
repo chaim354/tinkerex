@@ -104,6 +104,30 @@ module Web
                  "a non-renderable file is never enqueued and stays row-less (static icon, no spinner)"
     end
 
+    test "the grid view renders files as thumbnail cards and remembers the choice" do
+      user = sign_in
+      node_id = upload("widget.3mf", "zzz".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get files_path(view: "grid")
+      assert_response :success
+      assert_select ".files-grid"
+      assert_select ".grid-card .grid-name", text: "widget.3mf"
+      assert_select ".grid-card.file-cell img" # the ready thumbnail
+
+      # The choice is remembered (cookie): a plain visit stays in grid.
+      get files_path
+      assert_select ".files-grid"
+
+      # …and an explicit ?view=list switches back.
+      get files_path(view: "list")
+      assert_select "table.files"
+      assert_select ".files-grid", count: 0
+    end
+
     test "the detail page shows a ready thumbnail for a CAD file instead of 'No inline preview'" do
       user = sign_in
       node_id = upload("widget.3mf", "zzz".b)
