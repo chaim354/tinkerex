@@ -42,6 +42,17 @@ module Tools
       render plain: e.message, status: :unprocessable_entity
     end
 
+    # GET /tools/boxes/thumb/:key -> proxy a generator's sample photo from the internal-only sidecar
+    # (which bundles boxes.py's GPL thumbnails), so the browser never hits an external host. Missing
+    # photo -> 404, and the tile's thumbfallback controller hides the broken <img>.
+    def thumb
+      bytes = client.sample(params[:key].to_s)
+      return head(:not_found) if bytes.blank?
+
+      expires_in 30.days, public: true # samples are immutable (pinned ref) -> let the browser cache hard
+      send_data bytes, type: "image/jpeg", disposition: "inline"
+    end
+
     # POST /tools/boxes -> save the state + write the tied bundle (svg output + params file).
     def create
       generator = params.require(:generator)

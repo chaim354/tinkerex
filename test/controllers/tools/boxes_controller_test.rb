@@ -39,11 +39,22 @@ module Tools
       assert_select "input.box-search"
     end
 
-    test "index tiles show the generator's sample photo, with a JS fallback when it 404s" do
+    test "index tiles show the generator's sample photo via the internal proxy (JS fallback on 404)" do
       get tools_boxes_path
       assert_response :success
       assert_select "a.addon-card img.addon-thumb[data-controller='thumbfallback']"
-      assert_select "img.addon-thumb[src*=?]", "static/samples/ABox-thumb.jpg"
+      assert_select "img.addon-thumb[src=?]", "/tools/boxes/thumb/ABox"
+      assert_select "img.addon-thumb[src*='githubusercontent']", count: 0 # self-hosted, no external host
+    end
+
+    test "thumb proxies a generator's sample photo from the sidecar, 404 when there is none" do
+      get thumb_tools_boxes_path("ABox")
+      assert_response :success
+      assert_equal "image/jpeg", response.media_type
+      assert response.body.bytesize.positive?
+
+      get thumb_tools_boxes_path("TypeTray") # FakeBoxes has no sample for this one -> nil -> 404
+      assert_response :not_found
     end
 
     test "the param form groups fields: open sections for basics, collapsed details for advanced" do

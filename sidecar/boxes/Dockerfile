@@ -4,14 +4,24 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# git: pip installs boxes from a git ref (see requirements.txt). Build-only, removed after.
-# SVG generation is pure-Python (boxes' svgwrite surface) — no cairo/pango needed. pstoedit (for
-# PS/DXF/gcode) is deliberately NOT installed; this API only exposes SVG.
-RUN apt-get update -qq && apt-get install -y --no-install-recommends git && \
+# Build deps: git (pip installs boxes from a git ref) + curl (fetch the sample thumbnails below).
+# Both are build-only and purged after. SVG generation is pure-Python (boxes' svgwrite surface) — no
+# cairo/pango needed. pstoedit (PS/DXF/gcode) is deliberately NOT installed; this API only serves SVG.
+RUN apt-get update -qq && apt-get install -y --no-install-recommends git curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt && apt-get purge -y git && apt-get autoremove -y
+RUN pip install --no-cache-dir -r requirements.txt
+
+# boxes.py's own gallery sample photos (THUMBNAILS only — ~2 MB / 231 files, not the full-size
+# photos) for the generator tiles. Bundled INTO this GPL image (never the permissive Rails app; §9)
+# so the app serves them from our own infra with no external hotlink. Pinned to the SAME commit
+# requirements.txt installs, so a photo matches the deployed generator version.
+ARG BOXES_REF=836f5f72bedb33ac4262ed925545eacb31e926a8
+RUN mkdir -p /app/samples && \
+    curl -sL "https://github.com/florianfesti/boxes/archive/${BOXES_REF}.tar.gz" | \
+      tar xzf - -C /app/samples --strip-components=3 --wildcards '*/static/samples/*-thumb.jpg' && \
+    apt-get purge -y git curl && apt-get autoremove -y
 
 COPY app.py ./
 

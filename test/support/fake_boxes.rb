@@ -23,4 +23,9 @@ class FakeBoxes
   def generate(generator:, params:)
     %(<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50"><rect width="100" height="50" fill="none" stroke="#000"/></svg>)
   end
+
+  # ABox has a bundled sample photo; TypeTray (like most generators) has none -> nil (tile falls back).
+  def sample(key)
+    key == "ABox" ? "\xFF\xD8\xFF\xE0JFIFdata".b : nil
+  end
 end

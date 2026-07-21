@@ -47,6 +47,9 @@ Rails.application.routes.draw do
   namespace :tools do
     resources :boxes, only: %i[index new show create] do
       post :preview, on: :collection
+      # Self-hosted proxy for a generator's sample photo: Rails fetches it from the internal-only
+      # sidecar (which bundles boxes.py's GPL thumbnails) so the browser never hits an external host.
+      get "thumb/:key", to: "boxes#thumb", on: :collection, as: :thumb, constraints: { key: /[A-Za-z0-9]+/ }
     end
   end
 

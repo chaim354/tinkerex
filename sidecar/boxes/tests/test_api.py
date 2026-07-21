@@ -47,3 +47,18 @@ def test_generate_bad_generator_is_404():
 def test_generate_bad_params_is_422():
     r = client().post("/generate", json={"generator": "ABox", "params": {"x": "not-a-number"}})
     assert r.status_code == 422
+
+
+def test_sample_serves_a_thumbnail_and_guards_the_name(tmp_path):
+    import app as appmod
+    (tmp_path / "ABox-thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0JFIFdata")
+    old = appmod.SAMPLES_DIR
+    appmod.SAMPLES_DIR = str(tmp_path)
+    try:
+        c = client()
+        r = c.get("/sample/ABox")
+        assert r.status_code == 200 and r.mimetype == "image/jpeg"
+        assert c.get("/sample/Missing").status_code == 404   # no such sample -> 404 (tile falls back)
+        assert c.get("/sample/bad.name").status_code == 404  # non-alnum name rejected by the guard
+    finally:
+        appmod.SAMPLES_DIR = old

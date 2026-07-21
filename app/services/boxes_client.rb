@@ -33,6 +33,16 @@ class BoxesClient
     post("/generate", { generator:, params: }, accept: "image/svg+xml")
   end
 
+  # A generator's sample thumbnail (JPG bytes), or nil when there's no sample (404) or the sidecar is
+  # unreachable — the picker tile then falls back to its text card. Never raises (it's best-effort UX).
+  def sample(key)
+    uri = URI.join(@base, "/sample/#{key}")
+    res = Net::HTTP.start(uri.host, uri.port, open_timeout: 3, read_timeout: 10) { |h| h.request(Net::HTTP::Get.new(uri)) }
+    res.body if res.is_a?(Net::HTTPSuccess)
+  rescue StandardError
+    nil
+  end
+
   private
 
   def get(path)
