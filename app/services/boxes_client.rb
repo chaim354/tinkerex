@@ -6,7 +6,10 @@ require "json"
 # unavailable, the same graceful degradation the preview renderers use). Tests inject FakeBoxes via
 # `BoxesClient.stub` (test/support/fake_boxes.rb).
 class BoxesClient
-  Generator = Data.define(:key, :title, :group, :params) # params: Array<Hash>
+  # param_groups: Array<Hash{"title","advanced",bool,"params"=>Array<Hash>}> — the generator's
+  # settings grouped as boxes.py groups them (own settings, Default Settings, then advanced
+  # "Settings for <edge/part>" groups).
+  Generator = Data.define(:key, :title, :group, :param_groups)
   class Error < StandardError; end
 
   class << self
@@ -22,7 +25,7 @@ class BoxesClient
   def initialize(base_url) = @base = base_url
 
   def generators
-    get("/generators").map { |g| Generator.new(**g.symbolize_keys.slice(:key, :title, :group, :params)) }
+    get("/generators").map { |g| Generator.new(**g.symbolize_keys.slice(:key, :title, :group, :param_groups)) }
   end
 
   # Returns SVG bytes (String). Raises Error on a 4xx/5xx.

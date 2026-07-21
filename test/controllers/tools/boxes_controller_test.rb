@@ -30,13 +30,24 @@ module Tools
       assert_select "*", text: /Simple box/
     end
 
-    test "index groups generators under their group headings" do
+    test "index groups generators under their real boxes.py ui_group headings" do
       get tools_boxes_path
       assert_response :success
-      assert_select ".box-group-title", text: "Boxes"
-      assert_select ".box-group-title", text: "Trays"
+      assert_select ".box-group-title", text: "Box"
+      assert_select ".box-group-title", text: "Tray"
       assert_select ".addon-card[data-boxfilter-target='card']", minimum: 2
       assert_select "input.box-search"
+    end
+
+    test "the param form groups fields: open sections for basics, collapsed details for advanced" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      # a basic group -> open <fieldset> with a <legend>, fields directly usable
+      assert_select "fieldset.param-group > legend", text: "ABox Settings"
+      assert_select "fieldset.param-group input[name=?]", "params[x]"
+      # an advanced group -> collapsed <details>; its fields are still in the DOM (so still submitted)
+      assert_select "details.param-group-adv > summary", text: "Settings for Finger Joints"
+      assert_select "details.param-group-adv select[name=?]", "params[FingerJoint_style]"
     end
 
     test "new renders a dynamic form from the generator's params" do

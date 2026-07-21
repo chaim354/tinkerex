@@ -1,0 +1,29 @@
+<%#
+  One parameter field. Locals: param (Hash{name,type,default,help,choices}), values (Hash prefill).
+  Every field posts as params[<name>] regardless of which group it lives in.
+%>
+<% pname = param["name"] %>
+<% val = (values && values[pname]) || param["default"] %>
+<% help_text, manual_url = box_help(param["help"]) %>
+<label class="box-field">
+  <span class="box-field-label">
+    <%= pname %>
+    <% if help_text.present? %><span class="muted">— <%= help_text %></span><% end %>
+    <% if manual_url %><%= link_to "?", manual_url, class: "box-help", target: "_blank",
+          rel: "noopener noreferrer", title: "boxes.py manual", aria: { label: "Manual for #{pname}" } %><% end %>
+  </span>
+  <% if param["choices"].present? %>
+    <select name="params[<%= pname %>]">
+      <% param["choices"].each do |c| %>
+        <option value="<%= c %>" <%= "selected" if c.to_s == val.to_s %>><%= c %></option>
+      <% end %>
+    </select>
+  <% elsif param["type"] == "bool" %>
+    <input type="hidden" name="params[<%= pname %>]" value="false">
+    <input type="checkbox" name="params[<%= pname %>]" value="true" <%= "checked" if val.to_s == "true" %>>
+  <% elsif %w[float int].include?(param["type"]) %>
+    <input type="number" step="any" name="params[<%= pname %>]" value="<%= val %>">
+  <% else %>
+    <input type="text" name="params[<%= pname %>]" value="<%= val %>">
+  <% end %>
+</label>

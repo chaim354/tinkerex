@@ -1,32 +1,24 @@
 <%#
-  A dynamic form built from the generator's parameter schema (name/type/default/choices/help).
-  Every field posts as params[<name>]; the sidecar validates against the real schema.
+  Grouped param form, mirroring boxes.py's own web UI. Each group from the sidecar becomes a section:
+  the generator's own settings and "Default Settings" are open <fieldset>s; the advanced
+  "Settings for <edge/part>" groups (Finger Joints, Lid, …) collapse into <details> so the common
+  dimensions stay front and centre. Advanced fields are still in the DOM, so they're always submitted.
   Locals: generator (BoxesClient::Generator), values (Hash, optional prefill).
 %>
-<div class="box-params">
-  <% generator.params.each do |param| %>
-    <% pname = param["name"] %>
-    <% val = (values && values[pname]) || param["default"] %>
-    <% help_text, manual_url = box_help(param["help"]) %>
-    <label class="box-field">
-      <span class="box-field-label">
-        <%= pname %>
-        <% if help_text.present? %><span class="muted">— <%= help_text %></span><% end %>
-        <% if manual_url %><%= link_to "?", manual_url, class: "box-help", target: "_blank",
-              rel: "noopener noreferrer", title: "boxes.py manual", aria: { label: "Manual for #{pname}" } %><% end %>
-      </span>
-      <% if param["choices"].present? %>
-        <select name="params[<%= pname %>]">
-          <% param["choices"].each do |c| %>
-            <option value="<%= c %>" <%= "selected" if c.to_s == val.to_s %>><%= c %></option>
-          <% end %>
-        </select>
-      <% elsif param["type"] == "bool" %>
-        <input type="hidden" name="params[<%= pname %>]" value="false">
-        <input type="checkbox" name="params[<%= pname %>]" value="true" <%= "checked" if val.to_s == "true" %>>
-      <% else %>
-        <input type="number" step="any" name="params[<%= pname %>]" value="<%= val %>">
-      <% end %>
-    </label>
+<% generator.param_groups.each do |grp| %>
+  <% if grp["advanced"] %>
+    <details class="param-group param-group-adv">
+      <summary><%= grp["title"] %></summary>
+      <div class="box-params">
+        <% grp["params"].each do |param| %><%= render "field", param: param, values: values %><% end %>
+      </div>
+    </details>
+  <% else %>
+    <fieldset class="param-group">
+      <legend><%= grp["title"] %></legend>
+      <div class="box-params">
+        <% grp["params"].each do |param| %><%= render "field", param: param, values: values %><% end %>
+      </div>
+    </fieldset>
   <% end %>
-</div>
+<% end %>
