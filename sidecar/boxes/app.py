@@ -12,11 +12,12 @@ from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
-# Transport/internal base args — never design params.
+# Transport/internal base args — never design params. `format` is forced to svg by this sidecar and
+# `output`/`input`/`quiet`/`debug` are plumbing, so they stay hidden from the form.
 SKIP = {"help", "format", "output", "input", "quiet", "debug"}
-# Advanced per-edge/part setting groups (e.g. FingerJoint_style, Mounting_*): dozens of tuning
-# params with sensible defaults. Hidden from the form to keep it focused on the box's dimensions
-# and common options; a later "advanced" toggle can surface them.
+# A setting GROUP is "advanced" when every one of its params is a per-edge/part tuning knob — dest
+# like FingerJoint_style, Lid_handle, Mounting_*. The form still shows these (matching boxes.py's own
+# web UI) but collapses them so the common dimensions stay front and centre.
 ADVANCED = re.compile(r"^[A-Z][A-Za-z0-9]*_")
 
 
@@ -41,20 +42,35 @@ def _param_type(action):
     return "str"
 
 
-def _params_for(cls):
+def _param(a):
+    return {
+        "name": a.dest,
+        "type": _param_type(a),
+        "default": a.default,
+        "help": (a.help or "").strip(),
+        "choices": list(a.choices) if a.choices else None,
+    }
+
+
+def _param_groups_for(cls):
+    # boxes.py organises each generator's argparser into titled groups: the generator's own settings,
+    # "Default Settings", then one "Settings for <edge/part>" group per used edge (Finger Joints, Lid,
+    # …). Preserve that grouping so the UI can render sections like boxes.py's own web form.
     box = cls()  # instantiating builds its argparser
-    out = []
-    for a in box.argparser._actions:
-        if isinstance(a, argparse._HelpAction) or a.dest in SKIP or ADVANCED.match(a.dest):
+    groups = []
+    for g in box.argparser._action_groups:
+        params = [
+            _param(a) for a in g._group_actions
+            if not isinstance(a, argparse._HelpAction) and a.dest not in SKIP
+        ]
+        if not params:
             continue
-        out.append({
-            "name": a.dest,
-            "type": _param_type(a),
-            "default": a.default,
-            "help": (a.help or "").strip(),
-            "choices": list(a.choices) if a.choices else None,
+        groups.append({
+            "title": (g.title or "Settings").strip(),
+            "advanced": all(ADVANCED.match(p["name"]) for p in params),
+            "params": params,
         })
-    return out
+    return groups
 
 
 @app.get("/up")
@@ -98,11 +114,16 @@ def generators():
     out = []
     for key, cls in sorted(_all_generators().items()):
         try:
+            grps = _param_groups_for(cls)
             out.append({
                 "key": key,
                 "title": (cls.__doc__ or key).strip().split("\n")[0],
-                "group": "Boxes",
-                "params": _params_for(cls),
+                "group": getattr(cls, "ui_group", "Misc") or "Misc",
+                "param_groups": grps,
+                # Back-compat: a previously-deployed app read a flat `params` (basic params only).
+                # Emitting it too lets this sidecar deploy before/after the app without a break window.
+                # Safe to drop once every app consumes `param_groups`.
+                "params": [p for g in grps if not g["advanced"] for p in g["params"]],
             })
         except Exception:
             # A generator that can't introspect (rare) is skipped, not a 500 for the whole list.

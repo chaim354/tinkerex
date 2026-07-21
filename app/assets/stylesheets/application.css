@@ -198,3 +198,12 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   font-size: 10px; line-height: 1; color: var(--muted);
 }
 .box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+
+.param-group { border: none; padding: 0; margin: 0 0 18px; min-width: 0; }
+.param-group > legend { padding: 0; margin-bottom: 8px; }
+.param-group > legend, .param-group-adv > summary {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+}
+.param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
+.param-group-adv > summary { cursor: pointer; }
+.param-group-adv[open] > summary { margin-bottom: 10px; }

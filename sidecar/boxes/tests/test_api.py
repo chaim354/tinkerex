@@ -16,14 +16,21 @@ def test_generators_shape():
     data = client().get("/generators").get_json()
     assert isinstance(data, list) and len(data) > 50
     g = next(x for x in data if x["key"] == "ABox")
-    assert g["title"] and isinstance(g["params"], list)
-    names = {p["name"] for p in g["params"]}
-    assert {"x", "y", "h"} <= names
-    xp = next(p for p in g["params"] if p["name"] == "x")
+    assert g["title"] and g["group"] == "Box"  # real boxes.py ui_group, not a hard-coded label
+    groups = g["param_groups"]
+    assert isinstance(groups, list) and groups
+    all_names = {p["name"] for grp in groups for p in grp["params"]}
+    assert {"x", "y", "h"} <= all_names
+    xp = next(p for grp in groups for p in grp["params"] if p["name"] == "x")
     assert xp["type"] in ("float", "int") and xp["default"] is not None
-    # internal + advanced edge-setting params are hidden
-    assert "format" not in names and "output" not in names
-    assert not any("_" in n and n[0].isupper() for n in names)
+    # transport/internal params stay hidden
+    assert "format" not in all_names and "output" not in all_names
+    # the advanced edge/part groups are now SURFACED (previously dropped) and flagged advanced
+    fj = next(grp for grp in groups if grp["title"] == "Settings for Finger Joints")
+    assert fj["advanced"] is True
+    assert any(p["name"] == "FingerJoint_style" for p in fj["params"])
+    # the generator's own settings are a non-advanced group
+    assert any(not grp["advanced"] for grp in groups)
 
 
 def test_generate_returns_svg():
