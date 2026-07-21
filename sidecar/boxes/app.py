@@ -4,13 +4,17 @@
 # to SVG. Runs as an isolated internal-only sidecar; the Tinkerex Rails app calls it over HTTP and
 # never imports this code.
 import argparse
+import os
 import re
 
 import boxes
 import boxes.generators
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 
 app = Flask(__name__)
+
+# boxes.py's gallery sample photos, bundled into this image by the Dockerfile as <Class>-thumb.jpg.
+SAMPLES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "samples")
 
 # Transport/internal base args — never design params. `format` is forced to svg by this sidecar and
 # `output`/`input`/`quiet`/`debug` are plumbing, so they stay hidden from the form.
@@ -76,6 +80,19 @@ def _param_groups_for(cls):
 @app.get("/up")
 def up():
     return "ok", 200
+
+
+@app.get("/sample/<name>")
+def sample(name):
+    # `name` is a generator class name (== the sample filename stem). Reject anything else so a crafted
+    # value can't escape SAMPLES_DIR; a name with a "/" never reaches here (Flask routes one segment).
+    # Missing sample -> 404 (most generators have none; the tile falls back to text).
+    if not re.fullmatch(r"[A-Za-z0-9]+", name or ""):
+        return "", 404
+    path = os.path.join(SAMPLES_DIR, f"{name}-thumb.jpg")
+    if not os.path.isfile(path):
+        return "", 404
+    return send_file(path, mimetype="image/jpeg", max_age=2592000)
 
 
 def _argv(params):

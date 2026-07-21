@@ -40,9 +40,10 @@ module Tools
       assert_includes box_prefill_path("ABox", nil), "generator=ABox"
     end
 
-    test "box_thumb_url points at the pinned boxes.py sample photo for the generator key" do
+    test "box_thumb_url returns the internal proxy path (no external host)" do
       url = box_thumb_url("ABox")
-      assert_match %r{\Ahttps://raw\.githubusercontent\.com/florianfesti/boxes/[0-9a-f]{40}/static/samples/ABox-thumb\.jpg\z}, url
+      assert_equal "/tools/boxes/thumb/ABox", url
+      refute_includes url, "githubusercontent"
     end
   end
 end
