@@ -24,5 +24,16 @@ module Tools
         [ help.strip, nil ]
       end
     end
+
+    # boxes.py's own gallery illustrates each generator with a photo at
+    # static/samples/<GeneratorName>-thumb.jpg. We hotlink those from GitHub raw, pinned to the SAME
+    # commit the sidecar installs (keep in sync with sidecar/boxes/requirements.txt) so the photo
+    # matches the deployed generator version and the URL is immutable. Many generators have no photo
+    # (404) — the tile then falls back to text (see the thumbfallback Stimulus controller). The key IS
+    # the generator's class name, which is exactly the sample filename.
+    BOXES_SAMPLES_REF = "836f5f72bedb33ac4262ed925545eacb31e926a8".freeze
+    def box_thumb_url(key)
+      "https://raw.githubusercontent.com/florianfesti/boxes/#{BOXES_SAMPLES_REF}/static/samples/#{key}-thumb.jpg"
+    end
   end
 end
