@@ -76,5 +76,36 @@ module Tools
       assert_response :success
       assert_select "*", text: /Reopen Me/
     end
+
+    test "new lists prior boxes for this generator only, newest first" do
+      post tools_boxes_path, params: { name: "Older ABox", generator: "ABox", params: { x: 1, y: 2 } }
+      post tools_boxes_path, params: { name: "Newer ABox", generator: "ABox", params: { x: 3, y: 4 } }
+      post tools_boxes_path, params: { name: "A Tray",     generator: "TypeTray", params: { x: 5 } }
+
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior", text: /Newer ABox/
+      assert_select ".box-prior", text: /Older ABox/
+      assert_select ".box-prior", text: /A Tray/, count: 0
+      assert response.body.index("Newer ABox") < response.body.index("Older ABox"),
+             "newer box should render before older"
+    end
+
+    test "new omits the history rail when this generator has no saved boxes" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior", count: 0
+      assert_select ".box-prior-hint", text: /No saved boxes/
+    end
+
+    test "a prior box's Load link imports its saved params into the generator" do
+      post tools_boxes_path, params: { name: "Loadable", generator: "ABox", params: { x: 42, y: 7 } }
+      state = @user.maker_addon_states.for_addon("boxes").order(:id).last
+
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior a[href=?]",
+                    new_tools_box_path(generator: "ABox", params: state.data["params"]), text: "Load"
+    end
   end
 end

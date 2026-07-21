@@ -25,5 +25,32 @@
     <div class="preview box-preview">
       <img data-boxpreview-target="image" alt="Box preview" class="preview-image">
     </div>
+
+    <% if @prior.any? %>
+      <div class="box-prior" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <h3>Made with <%= @generator.title %></h3>
+        <div class="box-prior-hint muted"><%= pluralize(@prior.size, "saved box") %></div>
+        <ul class="box-prior-list">
+          <% @prior.each do |s| %>
+            <% out = s.files.find { |f| f.role == "output" } %>
+            <%= tag.li class: "box-prior-item",
+                       data: (out ? { thumbs_target: "cell", node_id: out.node_id, ext: "SVG" } : {}) do %>
+              <% if out %>
+                <%= render "files/thumb", thumb: nil, ext_label: "SVG" %>
+              <% else %>
+                <span class="thumb"><span class="thumb-icon" aria-hidden="true">SVG</span></span>
+              <% end %>
+              <div class="box-prior-meta">
+                <div class="box-prior-name"><%= s.name %></div>
+                <div class="box-prior-date"><%= s.updated_at.strftime("%b %-d") %></div>
+              </div>
+              <%= link_to "Load", new_tools_box_path(generator: @generator.key, params: s.data["params"]) %>
+            <% end %>
+          <% end %>
+        </ul>
+      </div>
+    <% else %>
+      <p class="box-prior-hint muted">No saved boxes with this generator yet.</p>
+    <% end %>
   </aside>
 </div>
