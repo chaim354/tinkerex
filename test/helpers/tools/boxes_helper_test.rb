@@ -39,5 +39,10 @@ module Tools
     test "box_prefill_path tolerates nil params" do
       assert_includes box_prefill_path("ABox", nil), "generator=ABox"
     end
+
+    test "box_thumb_url points at the pinned boxes.py sample photo for the generator key" do
+      url = box_thumb_url("ABox")
+      assert_match %r{\Ahttps://raw\.githubusercontent\.com/florianfesti/boxes/[0-9a-f]{40}/static/samples/ABox-thumb\.jpg\z}, url
+    end
   end
 end
