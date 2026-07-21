@@ -128,3 +128,17 @@ Solid Cable for the nudge) and survives redeploys.
   `kamal app exec 'bin/rails db:version'` to inspect.
 </content>
 </invoke>
+
+## Box Generator sidecar (addon framework, Plan B)
+
+The Box Generator addon is backed by a **separate, GPL-3.0 Python container** (`sidecar/boxes`,
+the forked `boxes.py`). It is internal-only (never published) and the Rails app talks to it over
+the kamal network via `BOXES_SIDECAR_URL` (declared in `config/deploy*.yml`). Build/push + boot:
+
+```sh
+KAMAL_REGISTRY_PASSWORD="$(op read 'op://Personal/ghcr.io/password')" bin/build-boxes-sidecar
+bin/kamal accessory boot boxes        # first time; later: bin/kamal accessory reboot boxes
+```
+
+Then redeploy the app leg(s) so they pick up `BOXES_SIDECAR_URL`. Verify from an app container:
+`curl -s http://tinkerex-boxes:8000/up` → `ok`. The addon then shows as available at `/tools`.

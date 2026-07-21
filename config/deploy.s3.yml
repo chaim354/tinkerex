@@ -40,3 +40,6 @@ env:
     # Same SeaweedFS identity as CHUNK_ACCESS_KEY_ID (seaweednew). Not a secret — the ID is
     # already in git in deploy.yml; only the secret key is shell/1Password-sourced.
     LIBRARY_S3_ACCESS_KEY_ID: 2ER1TJXNXU15ECJ3YRQK
+    # Box Generator sidecar (the one `boxes` accessory booted by the default config), shared across
+    # all three app deployments on this host via the kamal network.
+    BOXES_SIDECAR_URL: http://tinkerex-boxes:8000
