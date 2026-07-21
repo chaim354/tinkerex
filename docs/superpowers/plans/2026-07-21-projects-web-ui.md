@@ -18,7 +18,7 @@
   `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
 - Run tests with `bin/rails test <path>`; run the whole web suite with `bin/rails test test/integration/web`.
 
-**v1 scope note (read before starting):** Attaching a file means **attach an existing library file** (a file already uploaded via the Files UI), plus the "Attach to project" action from the file browser. **Inline upload-and-attach** (uploading a brand-new file from inside the project page) is deliberately **out of this plan** — it would re-implement the capability-branched uploader (chunk two-phase vs. share/s3 multipart). Build-log photos likewise attach *existing* image files. This keeps the plan free of the sync/upload machinery and is called out in the execution handoff so it can be added as a fast-follow if wanted.
+**Scope note (read before starting):** Attaching a file supports BOTH **attach an existing library file** (picker in Task 6 + "Attach to project" from the file browser in Task 11) AND **inline upload-and-attach** (upload a brand-new file/photo from inside the project or build-log — Tasks 12–13). Inline upload **reuses the existing capability-branched machinery** — the `uploader` Stimulus controller + `/files/begin_upload`/`finalize_upload` in chunk mode; a single multipart `FileLayer.current.write` to the port in share/s3 mode. It does **not** add a second write path or touch the sync engine (spec §10): the chunk path is the same two-phase presigned flow the Files page already drives. Uploaded files land at the library **root** (a per-project `Projects/<slug>/` folder is deferred — it needs a session-auth `mkdir` the web layer does not have yet).
 
 ---
 
@@ -27,23 +27,26 @@
 **Create:**
 - `app/controllers/projects_controller.rb` — list, new, create, show, edit, update, destroy(→archive)
 - `app/controllers/projects/attachments_controller.rb` — attach existing / detach (nested)
-- `app/controllers/projects/build_log_entries_controller.rb` — add / delete log entries + entry photos
-- `app/controllers/projects/tasks_controller.rb` — add / update / reorder / delete tasks
+- `app/controllers/projects/entry_photos_controller.rb` — attach/upload photos on a build-log entry
+- `app/controllers/projects/uploads_controller.rb` — share/s3 multipart upload-and-attach (project files + entry photos)
+- `app/controllers/projects/build_log_entries_controller.rb` — add / delete log entries
+- `app/controllers/projects/tasks_controller.rb` — add / update / delete tasks
 - `app/services/maker/previews/thumbnail_map.rb` — degrade-safe current-thumbnail resolver
-- `app/helpers/projects_helper.rb` — small view helpers (status label, cover tag)
 - `app/views/projects/index.html.erb`, `_card.html.erb`, `new.html.erb`, `edit.html.erb`, `_form.html.erb`, `show.html.erb`
-- `app/views/projects/_attachments.html.erb`, `_attachment_picker.html.erb`, `_build_log.html.erb`, `_log_entry.html.erb`, `_tasks.html.erb`, `_task.html.erb`
+- `app/views/projects/attachments/new.html.erb` (attach picker), `_attachments.html.erb`, `_upload_control.html.erb`, `_build_log.html.erb`, `_log_entry.html.erb`, `_tasks.html.erb`, `_task.html.erb`
 - `test/integration/web/projects_flow_test.rb`
 - `test/integration/web/project_attachments_test.rb`
 - `test/integration/web/project_build_log_test.rb`
 - `test/integration/web/project_tasks_test.rb`
 - `test/integration/web/attach_from_files_test.rb`
+- `test/integration/web/project_upload_attach_test.rb`
 - `test/services/maker/previews/thumbnail_map_test.rb`
 
 **Modify:**
-- `config/routes.rb` — add web `resources :projects` with nested attachments/build_log_entries/tasks
+- `config/routes.rb` — web `resources :projects` (nested attachments/build_log_entries/tasks) + upload + entry-photo routes
 - `app/models/maker/project.rb` — `to_param`, `cover_node_id`
 - `app/models/maker/file_attachment.rb` — `role_for(name)` class method
+- `app/javascript/controllers/uploader_controller.js` — optional `attachUrl` + `redirectUrl` (upload-and-attach, additive/backward-compatible)
 - `app/views/layouts/application.html.erb` — "Projects" nav link
 - `app/controllers/files_controller.rb` — load `@projects` for the attach-to-project control in `#show`
 - `app/views/files/show.html.erb` — the "Attach to project" control
@@ -1731,7 +1734,418 @@ git commit -m "feat(projects): attach-to-project from the file browser"
 
 ---
 
-## Task 12: CSS + full-suite verification
+## Task 12: Inline upload-and-attach — project files (both backends)
+
+Reuses the existing upload machinery: **chunk** = the browser two-phase flow (`uploader` controller + `/files/{begin,finalize}_upload`, which already land the node) followed by a JSON attach; **share/s3** = one multipart `FileLayer.current.write` + attach. No second write path; no sync code.
+
+**Files:**
+- Modify: `config/routes.rb` (project upload route)
+- Create: `app/controllers/projects/uploads_controller.rb`
+- Modify: `app/controllers/projects_controller.rb` (`include LibraryCapabilities`)
+- Modify: `app/controllers/projects/attachments_controller.rb` (JSON response on create)
+- Modify: `app/javascript/controllers/uploader_controller.js` (optional `attachUrl` + `redirectUrl`)
+- Create: `app/views/projects/_upload_control.html.erb`
+- Modify: `app/views/projects/_attachments.html.erb` (render the upload control)
+- Create: `test/integration/web/project_upload_attach_test.rb`
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `test/integration/web/project_upload_attach_test.rb`:
+
+```ruby
+require "test_helper"
+
+module Web
+  class ProjectUploadAttachTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
+    PASSWORD = "correct horse battery staple".freeze
+
+    # chunk: the two-phase browser flow lands the node (existing, tested); the NEW behavior is the
+    # attach step answering JSON so uploader_controller can finish it.
+    class ChunkTest < ProjectUploadAttachTest
+      setup do
+        pin_file_layer_backend("chunk")
+        Storage::ChunkStore.reset!
+        @user = User.create!(email: "upc-#{SecureRandom.hex(4)}@example.com",
+                             password: PASSWORD, confirmed_at: Time.current)
+        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      end
+
+      def upload_to_library(name, bytes)
+        hash = Digest::SHA256.hexdigest(bytes)
+        manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
+        post begin_upload_files_path, params: { name:, size: bytes.bytesize, manifest: }, as: :json
+        begun = JSON.parse(response.body)
+        (begun["put_urls"] || {}).each_value do |url|
+          put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
+        end
+        post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+        begun["node_id"]
+      end
+
+      test "attach answers JSON with the created reference" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        node_id = upload_to_library("bracket.stl", "solid\n".b)
+        assert_difference "project.file_attachments.count", 1 do
+          post project_attachments_path(project), params: { node_id: }, as: :json
+        end
+        assert_response :created
+        body = JSON.parse(response.body)
+        assert_equal node_id, body["node_id"]
+        assert_equal "model", body["role"]
+      end
+    end
+
+    # share: one multipart POST writes the bytes to the port AND attaches.
+    class ShareTest < ProjectUploadAttachTest
+      setup do
+        @root = Pathname.new(Dir.mktmpdir("proj-upload"))
+        @user = User.create!(email: "ups-#{SecureRandom.hex(4)}@example.com",
+                             password: PASSWORD, confirmed_at: Time.current)
+        FileLayer.current = FileLayer::Share.new(root: @root.to_s)
+        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      end
+      teardown do
+        FileLayer.reset!
+        FileUtils.remove_entry(@root) if @root&.exist?
+      end
+
+      test "multipart upload writes the file and attaches it" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
+                                            "application/octet-stream", original_filename: "cube.stl")
+        assert_difference "project.file_attachments.count", 1 do
+          post project_uploads_path(project), params: { file: }
+        end
+        att = project.file_attachments.last
+        assert_equal "model", att.role
+        assert FileLayer.current.stat(@user, node_id: att.node_id).present?, "bytes must land in the share"
+        assert_redirected_to project_path(project)
+      end
+    end
+  end
+end
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `bin/rails test test/integration/web/project_upload_attach_test.rb`
+Expected: FAIL — `project_uploads_path` route + JSON attach missing.
+
+- [ ] **Step 3: Add the routes**
+
+In `config/routes.rb`, inside `resources :projects do … end`, add:
+
+```ruby
+    resources :uploads, only: :create, module: :projects
+```
+
+- [ ] **Step 4: `include LibraryCapabilities` in ProjectsController**
+
+The upload control branches on `capabilities.port_writable?`, so the controller rendering it must expose the helper. In `app/controllers/projects_controller.rb`, after `before_action :set_project …`, add:
+
+```ruby
+  include LibraryCapabilities
+```
+
+- [ ] **Step 5: Create the uploads controller**
+
+Create `app/controllers/projects/uploads_controller.rb`:
+
+```ruby
+module Projects
+  # Inline "upload a new file and attach it", for the WRITABLE backends (share/s3): the bytes come
+  # up in ONE multipart POST and go straight to the port — the same single FileLayer.current.write
+  # FilesController#create makes, plus an attach. No chunk path here: chunk mode's inline upload is
+  # the browser two-phase flow (uploader_controller.js) which lands the node via /files/{begin,
+  # finalize}_upload, then POSTs the node_id to the attach endpoint. So this never reaches into the
+  # sync engine (spec §10) — it is the SAME write door FilesController already uses on these
+  # backends. One controller serves both a project target and a build-log-entry target (Task 13).
+  class UploadsController < ApplicationController
+    before_action :authenticate_user!
+    before_action :require_port_writable!
+
+    def create
+      file = params.require(:file)
+      target = attach_target
+      info = FileLayer.current.write(current_user, parent_node_id: nil,
+                                     name: file.original_filename, io: file)
+      enqueue_preview(node_id: info.node_id, name: file.original_filename)
+      target.file_attachments.create!(user: current_user, node_id: info.node_id,
+                                      role: role_for(file.original_filename, target))
+      redirect_to project_path(project_of(target)), notice: "Uploaded #{file.original_filename}."
+    end
+
+    private
+
+    # Exactly one of the two nested routes supplies the target.
+    def attach_target
+      if params[:build_log_entry_id].present?
+        current_user.maker_build_log_entries.find(params[:build_log_entry_id])
+      else
+        current_user.maker_projects.find_by!(slug: params[:project_id])
+      end
+    end
+
+    def project_of(target) = target.is_a?(Maker::BuildLogEntry) ? target.project : target
+
+    # A build-log photo is always "image"; a project attachment infers from the extension.
+    def role_for(name, target)
+      target.is_a?(Maker::BuildLogEntry) ? "image" : Maker::FileAttachment.role_for(name)
+    end
+
+    # Best-effort; a preview is UX, never part of the write's success (mirrors FilesController).
+    def enqueue_preview(node_id:, name:)
+      info = FileLayer.current.stat(current_user, node_id:)
+      return unless info&.content_token
+      ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
+    rescue FileLayer::NotFound, FileLayer::FetchError
+      nil
+    end
+
+    # The WEB refusal (redirect), not the JSON 501: this is a browser action and the control is only
+    # rendered on writable backends. Chunk mode never posts here (it uses the two-phase flow).
+    def require_port_writable!
+      return if FileLayer.current.capabilities.port_writable?
+      redirect_to root_path, alert: "This deployment uploads through the two-phase flow."
+    end
+  end
+end
+```
+
+- [ ] **Step 6: Make AttachmentsController#create answer JSON**
+
+In `app/controllers/projects/attachments_controller.rb`, replace the `create` action with:
+
+```ruby
+    def create
+      node = current_user.nodes.present.find_by(node_id: params.require(:node_id))
+      unless node
+        return respond_to do |format|
+          format.html { redirect_to new_project_attachment_path(@project), alert: "That file isn't in your library." }
+          format.json { render json: { error: "not_found" }, status: :not_found }
+        end
+      end
+      att = @project.file_attachments.create!(user: current_user, node_id: node.node_id,
+                                              role: Maker::FileAttachment.role_for(node.name))
+      respond_to do |format|
+        format.html { redirect_to project_path(@project), notice: "Attached #{node.name}." }
+        format.json { render json: { node_id: att.node_id, role: att.role }, status: :created }
+      end
+    end
+```
+
+- [ ] **Step 7: Extend the uploader controller (additive)**
+
+In `app/javascript/controllers/uploader_controller.js`, change the `static values` line to:
+
+```javascript
+  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String }
+```
+
+And replace the finalize-through-reload block:
+
+```javascript
+      this.setStatus("Finalizing…")
+      await this.postJSON(this.finalizeUrlValue, { commit_id: begin.commit_id })
+
+      this.setStatus("Done.")
+      window.location.reload()
+```
+
+with:
+
+```javascript
+      this.setStatus("Finalizing…")
+      await this.postJSON(this.finalizeUrlValue, { commit_id: begin.commit_id })
+
+      // Optional: attach the just-uploaded node to a project/entry, then go there. When no
+      // attachUrl is set (the Files page), behavior is unchanged: reload in place.
+      if (this.hasAttachUrlValue && this.attachUrlValue) {
+        this.setStatus("Attaching…")
+        await this.postJSON(this.attachUrlValue, { node_id: begin.node_id })
+      }
+
+      this.setStatus("Done.")
+      if (this.hasRedirectUrlValue && this.redirectUrlValue) {
+        window.location.href = this.redirectUrlValue
+      } else {
+        window.location.reload()
+      }
+```
+
+- [ ] **Step 8: Create the upload-control partial**
+
+Create `app/views/projects/_upload_control.html.erb`:
+
+```erb
+<%#
+  Inline "upload a new file and attach it" — two flows, one per deployment (spec §2), reusing the
+  library upload machinery. Locals: upload_url (share/s3 multipart write-and-attach), attach_url
+  (chunk final JSON attach step), redirect_url.
+%>
+<% if capabilities.port_writable? %>
+  <%= form_with url: upload_url, method: :post, class: "uploader",
+                data: { turbo: false }, html: { multipart: true } do |f| %>
+    <label class="upload-btn">
+      <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+      <span>Upload &amp; attach</span>
+    </label>
+  <% end %>
+<% else %>
+  <span class="uploader" data-controller="uploader"
+        data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+        data-uploader-finalize-url-value="<%= finalize_upload_files_path %>"
+        data-uploader-attach-url-value="<%= attach_url %>"
+        data-uploader-redirect-url-value="<%= redirect_url %>">
+    <label class="upload-btn">
+      <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+      <span>Upload &amp; attach</span>
+    </label>
+    <span class="upload-status" data-uploader-target="status"></span>
+  </span>
+<% end %>
+```
+
+- [ ] **Step 9: Render the upload control in the attachments panel**
+
+In `app/views/projects/_attachments.html.erb`, replace the `.panel-head` block with:
+
+```erb
+  <div class="panel-head">
+    <h2>Files</h2>
+    <div class="panel-actions">
+      <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
+      <%= render "upload_control", upload_url: project_uploads_path(@project),
+                 attach_url: project_attachments_path(@project), redirect_url: project_path(@project) %>
+    </div>
+  </div>
+```
+
+- [ ] **Step 10: Run to verify pass + no Files-page regression**
+
+Run: `bin/rails test test/integration/web/project_upload_attach_test.rb test/integration/web/files_flow_test.rb`
+Expected: PASS (new upload tests, and the Files page still uploads — the uploader change is additive).
+
+- [ ] **Step 11: Commit**
+
+```bash
+git add config/routes.rb app/controllers/projects/uploads_controller.rb app/controllers/projects_controller.rb \
+  app/controllers/projects/attachments_controller.rb app/javascript/controllers/uploader_controller.js \
+  app/views/projects/_upload_control.html.erb app/views/projects/_attachments.html.erb \
+  test/integration/web/project_upload_attach_test.rb
+git commit -m "feat(projects): inline upload-and-attach for project files (both backends)"
+```
+
+---
+
+## Task 13: Inline upload-and-attach — build-log photos
+
+Same mechanism as Task 12, targeting a build-log entry (role always `image`). Reuses `Projects::UploadsController` (entry branch) and the JSON attach on `EntryPhotosController#create`.
+
+**Files:**
+- Modify: `config/routes.rb` (entry upload route)
+- Modify: `app/controllers/projects/entry_photos_controller.rb` (JSON response on create)
+- Modify: `app/views/projects/_log_entry.html.erb` (render the photo upload control)
+- Test: `test/integration/web/project_upload_attach_test.rb` (add cases)
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `ChunkTest` in `test/integration/web/project_upload_attach_test.rb`:
+
+```ruby
+      test "attach a photo to a build-log entry answers JSON" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        entry = project.build_log_entries.create!(user: @user, body: "glued")
+        node_id = upload_to_library("clamp.png", "\x89PNG".b)
+        assert_difference "entry.file_attachments.count", 1 do
+          post entry_photos_path(entry), params: { node_id: }, as: :json
+        end
+        assert_response :created
+        assert_equal "image", entry.file_attachments.last.role
+      end
+```
+
+Add to `ShareTest`:
+
+```ruby
+      test "multipart photo upload writes and attaches to the entry as image" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        entry = project.build_log_entries.create!(user: @user, body: "x")
+        file = Rack::Test::UploadedFile.new(StringIO.new("\x89PNG".b), "image/png", original_filename: "p.png")
+        assert_difference "entry.file_attachments.count", 1 do
+          post build_log_entry_uploads_path(entry), params: { file: }
+        end
+        assert_equal "image", entry.file_attachments.last.role
+      end
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `bin/rails test test/integration/web/project_upload_attach_test.rb -n /photo|entry/`
+Expected: FAIL — `build_log_entry_uploads_path` + JSON entry-photo attach missing.
+
+- [ ] **Step 3: Add the entry upload route**
+
+In `config/routes.rb`, extend the entry-photos route block from Task 9 so entry uploads reach the same `Projects::UploadsController`. Add below the `entry_photos` routes:
+
+```ruby
+  resources :build_log_entries, only: [], module: :projects do
+    resources :uploads, only: :create
+  end
+```
+
+- [ ] **Step 4: Make EntryPhotosController#create answer JSON**
+
+In `app/controllers/projects/entry_photos_controller.rb`, replace `create` with:
+
+```ruby
+    def create
+      entry = current_user.maker_build_log_entries.find(params[:build_log_entry_id])
+      node = current_user.nodes.present.find_by(node_id: params.require(:node_id))
+      if node
+        att = entry.file_attachments.create!(user: current_user, node_id: node.node_id, role: "image")
+        respond_to do |format|
+          format.html { redirect_to project_path(entry.project), notice: "Photo added." }
+          format.json { render json: { node_id: att.node_id, role: att.role }, status: :created }
+        end
+      else
+        respond_to do |format|
+          format.html { redirect_to project_path(entry.project), alert: "That image isn't in your library." }
+          format.json { render json: { error: "not_found" }, status: :not_found }
+        end
+      end
+    end
+```
+
+- [ ] **Step 5: Render the photo upload control in the entry**
+
+In `app/views/projects/_log_entry.html.erb`, replace the `.photo-attach` paragraph with:
+
+```erb
+  <div class="photo-attach">
+    <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id), class: "linkbtn muted" %>
+    <%= render "upload_control", upload_url: build_log_entry_uploads_path(entry),
+               attach_url: entry_photos_path(entry), redirect_url: project_path(@project) %>
+  </div>
+```
+
+- [ ] **Step 6: Run to verify pass**
+
+Run: `bin/rails test test/integration/web/project_upload_attach_test.rb test/integration/web/project_build_log_test.rb`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add config/routes.rb app/controllers/projects/entry_photos_controller.rb \
+  app/views/projects/_log_entry.html.erb test/integration/web/project_upload_attach_test.rb
+git commit -m "feat(projects): inline photo upload on build-log entries"
+```
+
+---
+
+## Task 14: CSS + full-suite verification
 
 **Files:**
 - Modify: `app/assets/stylesheets/application.css`
@@ -1779,6 +2193,8 @@ Append to `app/assets/stylesheets/application.css`:
 .panel { border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
 .panel h2 { margin: 0 0 12px; font-size: 16px; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; }
+.panel-actions { display: flex; gap: 12px; align-items: center; }
+.photo-attach { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
 
 .attachments-grid, .entry-photos { display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; }
@@ -1849,14 +2265,13 @@ git commit -m "feat(projects): styles for the projects hub"
 
 ## Self-review checklist (run before handing off)
 
-- **Spec coverage:** list (Task 1), create (Task 2), detail + lifecycle (Task 3), attachments render (Task 5) + attach/detach (Task 6), cover thumbnails (Task 7), build log (Task 8) + photos (Task 9), tasks (Task 10), attach-from-Files (Task 11), graceful degrade (Tasks 4/5), tenant isolation (tests in Tasks 1/3/6), dual-backend CI (Task 12). BOM, progress/markdown/milestone, and the public page are out of scope per the spec.
-- **Deferred vs spec:** the spec's "upload-and-attach" and inline photo *upload* are narrowed to *attach existing* (see the v1 scope note). Surface this in the handoff.
-- **Type consistency:** `Maker::Previews::ThumbnailMap.for(user, node_ids)` → `#thumb(node_id)` used identically in Tasks 1, 5, 7, 9. `Maker::FileAttachment.role_for(name)` defined in Task 6, used in Tasks 6 and 11. `Project#cover_node_id` stubbed in Task 1, implemented in Task 7. `to_param`/slug lookups (`find_by!(slug:)`) consistent across all controllers.
+- **Spec coverage:** list (Task 1), create (Task 2), detail + lifecycle (Task 3), attachments render (Task 5) + attach/detach (Task 6), cover thumbnails (Task 7), build log (Task 8) + photos (Task 9), tasks (Task 10), attach-from-Files (Task 11), **inline upload-and-attach** for project files (Task 12) and build-log photos (Task 13), graceful degrade (Tasks 4/5), tenant isolation (tests in Tasks 1/3/6), dual-backend coverage (chunk + share upload tests in Task 12/13; full-suite dual-backend run in Task 14). BOM, progress/markdown/milestone, and the public page are out of scope per the spec.
+- **Type consistency:** `Maker::Previews::ThumbnailMap.for(user, node_ids)` → `#thumb(node_id)` used identically in Tasks 1, 5, 7, 9. `Maker::FileAttachment.role_for(name)` defined in Task 6, used in Tasks 6, 11, 12. `Project#cover_node_id` stubbed in Task 1, implemented in Task 7. `to_param`/slug lookups (`find_by!(slug:)`) consistent across all controllers. `Projects::UploadsController` (Task 12) serves both project and entry targets (Task 13). The `uploader` controller's new `attachUrl`/`redirectUrl` values (Task 12) are consumed by `_upload_control` in Tasks 12 and 13.
 
 ---
 
 ## Execution handoff notes (tell the user)
 
-1. **v1 attach = attach-existing.** Uploading a brand-new file (or photo) from inside the project page is deferred to avoid re-implementing the capability-branched uploader; you upload via Files, then attach. Easy fast-follow if wanted.
-2. **Deferred from the spec, on the backlog:** BOM editor, progress bar / markdown / milestone styling, public project page, inline upload-and-attach, `Projects/<slug>/` upload folder, and **task reordering** (tasks keep their insertion `position`; no reorder UI in v1 — drag-kanban later).
+1. **Attach supports both existing files and inline upload.** You can attach a file already in your library (picker + attach-from-Files) or upload a brand-new file/photo from inside the project or build-log (Tasks 12–13, both backends). Uploaded files land at the library **root** — a tidy per-project `Projects/<slug>/` folder is deferred (needs a session-auth `mkdir`).
+2. **Deferred from the spec, on the backlog:** BOM editor, progress bar / markdown / milestone styling, public project page, `Projects/<slug>/` upload folder, and **task reordering** (tasks keep their insertion `position`; no reorder UI in v1 — drag-kanban later).
 3. **Milestone entry_type** is stored (`note`) but not surfaced — the field is ready for the backlogged milestone-styling feature.
