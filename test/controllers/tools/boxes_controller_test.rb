@@ -49,9 +49,8 @@ module Tools
     test "new renders the two-column editor with a params grid and a preview column" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
-      assert_select ".box-editor form .box-params"
-      assert_select ".box-editor .box-side .box-preview img[data-boxpreview-target='image']"
-      assert_select "input[name=?]", "params[x]"
+      assert_select ".box-editor > form .box-params input[name=?]", "params[x]"
+      assert_select ".box-editor > aside.box-side .box-preview img[data-boxpreview-target='image']"
     end
 
     test "preview returns a rasterized PNG of the generated SVG" do

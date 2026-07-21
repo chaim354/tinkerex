@@ -173,7 +173,7 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 }
 .box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
 .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
-.box-preview { padding: 12px; }
+.box-side .box-preview { padding: 12px; }
 .box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }
 
 @media (max-width: 720px) {
