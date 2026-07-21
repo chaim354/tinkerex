@@ -1,0 +1,5 @@
+# Tinkerex sample notes
+second line with more words
+  indented sub-item here
+special <chars> & "quotes" ok
+0123456789 the quick brown fox
