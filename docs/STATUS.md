@@ -24,7 +24,23 @@ The reusable, backend-neutral **addon framework** + the **Box Generator addon UI
 - **v1 scope deviations (deferred):** no auto-created per-save folders (flat write, tied via the
   `AddonFile` join); no in-place regenerate/versioning (each save creates a bundle).
 - Suite **1038 → 1050**, identical on all three legs (chunk / `LIBRARY_BACKEND=share` / `=s3`).
-- **Next: Plan B** — the forked `boxes.py` Python sidecar + real `BoxesClient` wiring + Kamal deploy.
+
+### Plan B — the Boxes Python sidecar — DONE + LIVE (2026-07-20 PM, PR #60, `sidecar/boxes`)
+
+The Box Generator addon is **functional in production**. A forked `boxes.py` runs as a **GPL-isolated
+Python sidecar** (Kamal `boxes` accessory, internal-only container `tinkerex-boxes`), and the Plan A
+`BoxesClient` drives it.
+
+- **`sidecar/boxes`** — a Flask app over the `boxes` library (pinned git ref, forkable): `GET
+  /generators` (185 generators + typed param schemas, internal/advanced params filtered), `POST
+  /generate` (→ SVG, 404/422 on bad input), `GET /up`. Own **GPL-3.0 LICENSE**; slim gunicorn image
+  built/pushed **separately** from the Rails app (`bin/build-boxes-sidecar`). §9: never imported into
+  `app/` — talked to over HTTP only.
+- **Deploy live:** `BOXES_SIDECAR_URL=http://tinkerex-boxes:8000` on all three app legs; verified from
+  the share app container — `configured? true`, 185 generators, a real `ABox` renders (14 KB SVG).
+- A real-sidecar Rails smoke (`test/integration/tools/boxes_live_test.rb`) skips without a sidecar,
+  passes against one. Suite **1050 → 1052**.
+- **Both Plan A + Plan B are on `main` and deployed.** The addon framework is proven end-to-end.
 
 ## Latest (2026-07-20): server-side thumbnail previews wired into the web UI
 
