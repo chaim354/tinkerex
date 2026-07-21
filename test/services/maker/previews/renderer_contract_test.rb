@@ -19,7 +19,8 @@ module Maker
         Maker::Previews::Mage    => "sample.mage",
         Maker::Previews::Stl     => "tetra.stl",
         Maker::Previews::ImageThumb => "sample.png", # libvips downscale
-        Maker::Previews::Pdf     => "sample.pdf"     # pdfium page-1 render (PDFIUM_BIN in dev/CI)
+        Maker::Previews::Pdf     => "sample.pdf",    # pdfium page-1 render (PDFIUM_BIN in dev/CI)
+        Maker::Previews::TextThumb => "sample.txt"   # first-lines "document" PNG via resvg
         # Mesh (obj/step/iges) intentionally omitted: F3D is not on this box, so it is checked
         # structurally only. Add a fixture here if/when F3D lands in the test env.
       }.freeze

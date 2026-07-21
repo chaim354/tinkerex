@@ -128,11 +128,12 @@ module Web
       assert_select ".files-grid", count: 0
     end
 
-    test "png and pdf are renderable, so they get thumbnail cells in the grid (not generic badges)" do
+    test "image, PDF, and text files are renderable, so they get grid thumbnail cells (not badges)" do
       user = sign_in
       png = upload("photo.png", "\x89PNG\r\n\x1a\nfake".b)
       pdf = upload("manual.pdf", "%PDF-1.4\nfake".b)
-      [ png, pdf ].each do |node_id|
+      txt = upload("notes.txt", "hello\nworld".b)
+      [ png, pdf, txt ].each do |node_id|
         token = FileLayer.current.stat(user, node_id:).content_token
         p = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
         p.update!(status: "ready")
@@ -141,8 +142,8 @@ module Web
 
       get files_path(view: "grid")
       assert_response :success
-      # both the image and the PDF are renderable → thumbnail cells with a ready <img>, not badges
-      assert_select ".grid-card.file-cell img", minimum: 2
+      # each is renderable → a thumbnail cell with a ready <img>, not a plain format badge
+      assert_select ".grid-card.file-cell img", minimum: 3
       assert_select ".generic-thumb", count: 0
     end
 

@@ -33,7 +33,12 @@ module Maker
         "gif"   => Maker::Previews::ImageThumb,
         "webp"  => Maker::Previews::ImageThumb,
         "bmp"   => Maker::Previews::ImageThumb,
-        "pdf"   => Maker::Previews::Pdf       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
+        "pdf"   => Maker::Previews::Pdf,       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
+        # Text files → a "first lines" document thumbnail (SVG of the text → resvg PNG; no new binary).
+        "txt"      => Maker::Previews::TextThumb,
+        "md"       => Maker::Previews::TextThumb,
+        "markdown" => Maker::Previews::TextThumb,
+        "json"     => Maker::Previews::TextThumb
       }.freeze
 
       # Resolve by raw extension (case-insensitive, leading dot tolerated). nil if none.
