@@ -1,6 +1,32 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-20 (**server-side thumbnail previews wired into the web UI**)
+**Updated:** 2026-07-20 (**addon framework (Plan A) — Tools + Box Generator UI landed**)
+
+## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
+
+The reusable, backend-neutral **addon framework** + the **Box Generator addon UI** (against a
+**stubbed** `BoxesClient` — the Python sidecar is **Plan B**). Design/plans:
+`docs/superpowers/specs/2026-07-20-addon-framework-boxes-design.md`,
+`docs/superpowers/plans/2026-07-20-addon-framework-plan-a-rails.md`.
+
+- **`Maker::AddonState` + `Maker::AddonFile`** — one saved addon thing = structured `data` (for
+  reload) + a **tied bundle of any number of files of any type**, each a library node with a role.
+- **`Maker::Addons::LibraryOutput`** — the one generic write: hands a SET of files to the library
+  through `FileLayer`, tying each to the state. Works on **all three backends** (share/s3 via
+  `FileLayer#write`; chunk via a single-chunk `Sync::Commit` + new **`Storage::ChunkStore#put`**, a
+  scoped server-side write for generated content — there is no client to presign for). Each written
+  node auto-previews.
+- **`Maker::Addons::Registry` + `/tools` gallery** — ext-registry pattern; adding an addon = a
+  `Tools::` controller + one registry line. Nav link added.
+- **`Tools::BoxesController`** — dynamic form from a generator's param schema, live preview
+  (rasterized to PNG via resvg), save-the-bundle (svg output + params file tied together).
+  `BoxesClient` (HTTP) + `FakeBoxes` stub; Boxes greys out when `BOXES_SIDECAR_URL` is unset.
+- **v1 scope deviations (deferred):** no auto-created per-save folders (flat write, tied via the
+  `AddonFile` join); no in-place regenerate/versioning (each save creates a bundle).
+- Suite **1038 → 1050**, identical on all three legs (chunk / `LIBRARY_BACKEND=share` / `=s3`).
+- **Next: Plan B** — the forked `boxes.py` Python sidecar + real `BoxesClient` wiring + Kamal deploy.
+
+## Latest (2026-07-20): server-side thumbnail previews wired into the web UI
 
 ## Latest (2026-07-20): eager PNG thumbnails for STL/3MF/SVG/DXF/LightBurn, shown in the web UI
 
