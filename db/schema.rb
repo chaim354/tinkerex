@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_16_025826) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -95,6 +95,29 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_16_025826) do
     t.integer "user_id", null: false
     t.index ["user_id", "expires_at"], name: "index_file_locks_on_user_id_and_expires_at"
     t.index ["user_id", "node_id"], name: "index_file_locks_on_user_id_and_node_id", unique: true
+  end
+
+  create_table "maker_addon_files", force: :cascade do |t|
+    t.integer "addon_state_id", null: false
+    t.string "content_type"
+    t.datetime "created_at", null: false
+    t.string "node_id", null: false
+    t.integer "position", default: 0, null: false
+    t.string "role", null: false
+    t.datetime "updated_at", null: false
+    t.index ["addon_state_id", "node_id"], name: "index_maker_addon_files_on_addon_state_id_and_node_id", unique: true
+    t.index ["addon_state_id"], name: "index_maker_addon_files_on_addon_state_id"
+  end
+
+  create_table "maker_addon_states", force: :cascade do |t|
+    t.string "addon_key", null: false
+    t.datetime "created_at", null: false
+    t.json "data", default: {}, null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "addon_key"], name: "index_maker_addon_states_on_user_id_and_addon_key"
+    t.index ["user_id"], name: "index_maker_addon_states_on_user_id"
   end
 
   create_table "maker_bom_lines", force: :cascade do |t|
@@ -434,6 +457,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_16_025826) do
   add_foreign_key "changelog_entries", "users"
   add_foreign_key "chunks", "users"
   add_foreign_key "devices", "users"
+  add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
+  add_foreign_key "maker_addon_states", "users"
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "pending_commits", "users"

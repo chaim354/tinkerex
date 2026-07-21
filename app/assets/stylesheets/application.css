@@ -127,3 +127,13 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .files-grid .thumb { width: 100%; height: 150px; }
 .folder-thumb { font-size: 46px; background: var(--soft); }
 .generic-thumb { font-size: 15px; font-weight: 700; letter-spacing: 0.5px; color: var(--muted); background: var(--soft); }
+
+/* --- Tools (addons) gallery --- */
+.tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px; }
+.addon-card { display: flex; flex-direction: column; gap: 6px; padding: 18px;
+              border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); }
+.addon-card:hover { text-decoration: none; border-color: var(--accent); }
+.addon-card.disabled { opacity: 0.55; }
+.addon-icon { font-size: 32px; }
+.addon-title { font-weight: 700; }
+.addon-desc { font-size: 13px; }
