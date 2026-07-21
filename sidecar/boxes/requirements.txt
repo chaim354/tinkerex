@@ -1,0 +1,5 @@
+flask==3.0.*
+gunicorn==22.0.*
+# The forked boxes.py, pinned. To run your own fork, change the git URL/ref below — no other
+# change is needed. GPL-3.0 (this whole sidecar tree is GPL because it imports boxes).
+boxes @ git+https://github.com/florianfesti/boxes.git@836f5f72bedb33ac4262ed925545eacb31e926a8
