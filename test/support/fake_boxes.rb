@@ -6,7 +6,10 @@ class FakeBoxes
     [ BoxesClient::Generator.new(
         key: "ABox", title: "Simple box", group: "Boxes",
         params: [ { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" },
-                  { "name" => "y", "type" => "float", "default" => 50, "help" => "depth (mm)" } ]) ]
+                  { "name" => "y", "type" => "float", "default" => 50, "help" => "depth (mm)" } ]),
+      BoxesClient::Generator.new(
+        key: "TypeTray", title: "Divider tray", group: "Trays",
+        params: [ { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" } ]) ]
   end
 
   def generate(generator:, params:)

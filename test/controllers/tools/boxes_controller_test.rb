@@ -30,6 +30,15 @@ module Tools
       assert_select "*", text: /Simple box/
     end
 
+    test "index groups generators under their group headings" do
+      get tools_boxes_path
+      assert_response :success
+      assert_select ".box-group-title", text: "Boxes"
+      assert_select ".box-group-title", text: "Trays"
+      assert_select ".addon-card[data-boxfilter-target='card']", minimum: 2
+      assert_select "input.box-search"
+    end
+
     test "new renders a dynamic form from the generator's params" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
