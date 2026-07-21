@@ -42,6 +42,12 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
+  get "tools", to: "tools/home#index", as: :tools
+  namespace :tools do
+    # Addon controllers mount here (e.g. resources :boxes — added by the Box Generator addon).
+  end
+
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
   unless Rails.env.production?

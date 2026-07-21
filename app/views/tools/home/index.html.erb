@@ -1,0 +1,21 @@
+<% content_for :title, "Tools — Tinkerex" %>
+
+<div class="page-head"><h1>Tools</h1></div>
+
+<div class="tools-grid">
+  <% @addons.each do |addon| %>
+    <% if addon.available? %>
+      <%= link_to send("tools_#{addon.key}_path"), class: "addon-card" do %>
+        <span class="addon-icon"><%= addon.icon %></span>
+        <span class="addon-title"><%= addon.title %></span>
+        <span class="addon-desc muted"><%= addon.description %></span>
+      <% end %>
+    <% else %>
+      <div class="addon-card disabled" title="Not configured on this deployment">
+        <span class="addon-icon"><%= addon.icon %></span>
+        <span class="addon-title"><%= addon.title %></span>
+        <span class="addon-desc muted">Unavailable here</span>
+      </div>
+    <% end %>
+  <% end %>
+</div>
