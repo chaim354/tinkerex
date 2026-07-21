@@ -270,7 +270,12 @@ class FilesController < ApplicationController
     # Everything else — notably SVG and HTML, which the browser would execute in the app
     # origin (stored XSS in the user's own session) — is forced to a download. `nosniff`
     # stops the browser second-guessing the declared type. `?download=1` always attaches.
-    inline_ok = !params[:download] && SAFE_INLINE_TYPES.include?(content_type)
+    # PDF is inline-safe too, even though SAFE_INLINE_TYPES is raster-only: the browser hands
+    # application/pdf to its built-in viewer (PDFium/pdf.js), which sandboxes any embedded PDF
+    # JavaScript — a PDF is never executed as page script in the app origin the way SVG/HTML are.
+    # nosniff (set on the send_file/Stream branches) stops the browser re-sniffing it as HTML.
+    inline_ok = !params[:download] &&
+                (SAFE_INLINE_TYPES.include?(content_type) || content_type == "application/pdf")
     disposition = inline_ok ? "inline" : "attachment"
 
     delivery = FileLayer.current.download(current_user, node_id: node.node_id,
@@ -471,6 +476,9 @@ class FilesController < ApplicationController
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
     return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
+    # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
+    # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
+    return :pdf   if ext == "pdf"
     return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
                         c h cpp html css toml ini cfg conf sh gcode].include?(ext)
     # A file we can render a server-side thumbnail for (stl, 3mf, dxf, lbrn2, step, obj, ...) but

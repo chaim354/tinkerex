@@ -55,6 +55,8 @@ gem "image_processing", "~> 2.0"
 # File-preview renderers (Maker::Previews::*, permissive only — CLAUDE.md §9):
 #   rubyzip (BSD-2) — extract the embedded thumbnail from a 3MF (OPC/zip container).
 #   nokogiri (MIT)  — parse LightBurn .lbrn2 XML → SVG. (Both are already transitive deps; pinned direct.)
+# (Image thumbnails shell out to the `vipsthumbnail` binary — NOT the ruby-vips FFI gem — so no
+#  in-process libvips thread pool to deadlock Rails' fork-based parallel test runner. See ImageThumb.)
 gem "rubyzip", "~> 3.4", require: "zip"
 gem "nokogiri", "~> 1.18"
 

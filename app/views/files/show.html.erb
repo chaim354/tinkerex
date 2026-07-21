@@ -41,6 +41,9 @@
     <p class="muted">No content yet.</p>
   <% elsif @kind == :image %>
     <img src="<%= blob_file_path(@node.node_id) %>" alt="<%= @node.name %>" class="preview-image">
+  <% elsif @kind == :pdf %>
+    <%# Full PDF preview via the browser's own viewer (served inline from the blob endpoint). %>
+    <iframe src="<%= blob_file_path(@node.node_id) %>" class="preview-pdf" title="<%= @node.name %> (PDF)"></iframe>
   <% elsif @kind == :text %>
     <%# Inline text preview — fetched from the blob endpoint (however this backend delivers). %>
     <pre class="preview-text"

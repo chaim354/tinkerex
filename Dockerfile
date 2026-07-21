@@ -16,7 +16,7 @@ WORKDIR /rails
 
 # Install base packages
 RUN apt-get update -qq && \
-    apt-get install --no-install-recommends -y curl libjemalloc2 libvips sqlite3 && \
+    apt-get install --no-install-recommends -y curl libjemalloc2 libvips libvips-tools sqlite3 && \
     ln -s /usr/lib/$(uname -m)-linux-gnu/libjemalloc.so.2 /usr/local/lib/libjemalloc.so && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
@@ -72,6 +72,16 @@ FROM docker.io/library/rust:1-slim AS resvg
 RUN cargo install resvg --version 0.47.0 --root /out && strip /out/bin/resvg
 
 
+# ---- pdfium: PDF page-1 → PNG for grid thumbnails (klippa pdfium-cli — MIT wrapper + BSD-3 pdfium,
+# permissive per CLAUDE.md §9). The self-contained WebAssembly build embeds pdfium, so there is NO
+# libpdfium.so to ship alongside and NO GPL/AGPL PDF stack (poppler/mupdf/ghostscript). `base` already
+# has curl. Independent of the app build, so it fetches in parallel.
+FROM base AS pdfium
+ARG PDFIUM_VERSION=v0.11.0
+RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDFIUM_VERSION}/pdfium-webassembly-linux-amd64" \
+      -o /tmp/pdfium && chmod +x /tmp/pdfium
+
+
 # Final stage for app image
 FROM base
 
@@ -91,6 +101,10 @@ COPY --from=stl-thumbnailer /build/target/release/stl-thumbnailer /usr/local/bin
 # The resvg binary on PATH → Maker::Previews::SvgRasterizer#available? is true on the server,
 # so SVG/DXF/LightBurn uploads get a PNG thumbnail.
 COPY --from=resvg /out/bin/resvg /usr/local/bin/resvg
+
+# The pdfium binary on PATH → Maker::Previews::Pdf#available? is true, so PDF uploads get a page-1
+# PNG grid thumbnail. (The detail view embeds the whole PDF via the browser's own viewer — no tool.)
+COPY --from=pdfium /tmp/pdfium /usr/local/bin/pdfium
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
