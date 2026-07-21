@@ -62,6 +62,37 @@ def up():
     return "ok", 200
 
 
+def _argv(params):
+    argv = ["--format", "svg"]
+    for k, v in (params or {}).items():
+        if isinstance(v, bool):
+            v = "true" if v else "false"
+        argv += [f"--{k}", str(v)]
+    return argv
+
+
+@app.post("/generate")
+def generate():
+    body = request.get_json(force=True, silent=True) or {}
+    cls = _all_generators().get(body.get("generator"))
+    if cls is None:
+        return jsonify({"error": "unknown generator"}), 404
+    try:
+        box = cls()
+        # argparse calls sys.exit() on a bad value -> SystemExit; turn that into a 422 instead of
+        # killing the worker. `close()` returns a BytesIO in this boxes version.
+        box.parseArgs(_argv(body.get("params")))
+        box.open()
+        box.render()
+        raw = box.close()
+        svg = raw.getvalue() if hasattr(raw, "getvalue") else raw
+    except SystemExit:
+        return jsonify({"error": "invalid parameters"}), 422
+    except Exception as e:  # generator-internal error (impossible geometry, etc.) -> 422, not 500
+        return jsonify({"error": f"generation failed: {e}"}), 422
+    return Response(svg, mimetype="image/svg+xml")
+
+
 @app.get("/generators")
 def generators():
     out = []
