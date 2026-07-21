@@ -157,3 +157,4 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 }
 .saved-boxes li { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .saved-boxes li > div { font-size: 13px; margin-top: 2px; }
+.box-noresults { margin: 6px 0; }
