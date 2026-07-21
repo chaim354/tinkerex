@@ -86,8 +86,8 @@ module Web
 
     test "viewing a folder backfills thumbnails for renderable files that lack one, not others" do
       user = sign_in
-      stl = upload("gear.stl", "solid gear\nendsolid\n".b)  # eager seam creates a pending row
-      pdf = upload("manual.pdf", "%PDF-1.4\n".b)            # not renderable -> no row
+      stl   = upload("gear.stl", "solid gear\nendsolid\n".b)  # eager seam creates a pending row
+      other = upload("design.sldprt", "xyz".b)               # not renderable -> no row
 
       # Simulate a library indexed BEFORE this feature: the renderable file has no preview row.
       user.maker_previews.where(node_id: stl).delete_all
@@ -100,7 +100,7 @@ module Web
 
       assert user.maker_previews.exists?(node_id: stl, kind: "thumbnail"),
              "the renderable file gets a backfilled thumbnail row on view"
-      assert_not user.maker_previews.exists?(node_id: pdf),
+      assert_not user.maker_previews.exists?(node_id: other),
                  "a non-renderable file is never enqueued and stays row-less (static icon, no spinner)"
     end
 
@@ -126,6 +126,24 @@ module Web
       get files_path(view: "list")
       assert_select "table.files"
       assert_select ".files-grid", count: 0
+    end
+
+    test "png and pdf are renderable, so they get thumbnail cells in the grid (not generic badges)" do
+      user = sign_in
+      png = upload("photo.png", "\x89PNG\r\n\x1a\nfake".b)
+      pdf = upload("manual.pdf", "%PDF-1.4\nfake".b)
+      [ png, pdf ].each do |node_id|
+        token = FileLayer.current.stat(user, node_id:).content_token
+        p = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+        p.update!(status: "ready")
+        p.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+      end
+
+      get files_path(view: "grid")
+      assert_response :success
+      # both the image and the PDF are renderable → thumbnail cells with a ready <img>, not badges
+      assert_select ".grid-card.file-cell img", minimum: 2
+      assert_select ".generic-thumb", count: 0
     end
 
     test "the detail page shows a ready thumbnail for a CAD file instead of 'No inline preview'" do
@@ -170,6 +188,26 @@ module Web
       get blob_file_path(node_id)
       assert_response :success
       assert_match(/inline/, response.headers["Content-Disposition"], "raster images stay inline")
+    end
+
+    test "a PDF blob is served inline so the browser's own viewer renders it" do
+      sign_in
+      node_id = upload("manual.pdf", "%PDF-1.4\nfake".b)
+
+      get blob_file_path(node_id)
+      assert_response :success
+      assert_match(/inline/, response.headers["Content-Disposition"], "PDF renders inline in the viewer")
+      assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+    end
+
+    test "the PDF detail page embeds the PDF viewer instead of 'No inline preview'" do
+      sign_in
+      node_id = upload("manual.pdf", "%PDF-1.4\nfake".b)
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select "iframe.preview-pdf"
+      assert_no_match(/No inline preview/, response.body)
     end
 
     test "placeholder login signs in and lists files" do

@@ -24,7 +24,16 @@ module Maker
         "step"  => Maker::Previews::Mesh,    # STEP/IGES via F3D's OCCT plugin — OCCT (LGPL) stays
         "stp"   => Maker::Previews::Mesh,    # process-isolated in the f3d subprocess.
         "iges"  => Maker::Previews::Mesh,
-        "igs"   => Maker::Previews::Mesh
+        "igs"   => Maker::Previews::Mesh,
+        # Common document/image types → grid thumbnails. (Images already preview inline in the detail
+        # view; this gives the GRID a uniform raster too.)
+        "png"   => Maker::Previews::ImageThumb, # raster images → downscaled PNG (libvips / ruby-vips, MIT)
+        "jpg"   => Maker::Previews::ImageThumb,
+        "jpeg"  => Maker::Previews::ImageThumb,
+        "gif"   => Maker::Previews::ImageThumb,
+        "webp"  => Maker::Previews::ImageThumb,
+        "bmp"   => Maker::Previews::ImageThumb,
+        "pdf"   => Maker::Previews::Pdf       # page 1 → PNG via pdfium (BSD-3 binary; CLAUDE.md §9)
       }.freeze
 
       # Resolve by raw extension (case-insensitive, leading dot tolerated). nil if none.
