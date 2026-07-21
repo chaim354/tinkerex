@@ -101,14 +101,35 @@ module Tools
       assert_select ".box-prior-hint", text: /No saved boxes/
     end
 
-    test "a prior box's Load link imports its saved params into the generator" do
-      post tools_boxes_path, params: { name: "Loadable", generator: "ABox", params: { x: 42, y: 7 } }
-      state = @user.maker_addon_states.for_addon("boxes").order(:id).last
+    test "a prior box's Load link nests params under params[] so the editor actually prefills" do
+      post tools_boxes_path, params: { name: "Loadable", generator: "ABox", params: { x: 999, y: 7 } }
 
       get new_tools_box_path(generator: "ABox")
       assert_response :success
-      assert_select ".box-prior a[href=?]",
-                    new_tools_box_path(generator: "ABox", params: state.data["params"]), text: "Load"
+      href = css_select(".box-prior a").find { |a| a.text.strip == "Load" }&.[]("href")
+      assert href, "expected a Load link in the rail"
+      # WIRE FORMAT, asserted deliberately: params must be NESTED (params[x]=999), not flattened
+      # (x=999). `:params` is a reserved url_for option that appends its hash to the query string, so
+      # the flattened form is silently ignored by `new` (which reads params[:params]) -> no prefill.
+      # Comparing against new_tools_box_path(params:) would reproduce the SAME bug on both sides and
+      # pass vacuously (that was the original test's flaw).
+      assert_includes href, "params%5Bx%5D=999"
+      assert_includes href, "params%5By%5D=7"
+
+      # END-TO-END: following the Load link actually prefills the form (the behavior that broke).
+      get href
+      assert_response :success
+      assert_select "input[name='params[x]'][value=?]", "999"
+    end
+
+    test "the param form renders a boxes.py manual link as a compact link, not raw markdown" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      # y's help carries a `[🛈](…usermanual.html#y)` manual link; it must become a compact
+      # <a class="box-help">, and the raw glyph / URL must NOT appear as inline label text.
+      assert_select "a.box-help[href=?]", "https://florianfesti.github.io/boxes/html/usermanual.html#y"
+      assert_select ".box-field-label", text: /🛈/, count: 0
+      assert_select ".box-field-label", text: /usermanual\.html/, count: 0
     end
   end
 end

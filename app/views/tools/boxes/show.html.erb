@@ -19,5 +19,5 @@
 </ul>
 
 <%= link_to "Duplicate & tweak",
-      new_tools_box_path(generator: @state.data["generator"], params: @state.data["params"]),
+      box_prefill_path(@state.data["generator"], @state.data["params"]),
       class: "btn ghost" %>

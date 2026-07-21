@@ -44,7 +44,7 @@
                 <div class="box-prior-name"><%= s.name %></div>
                 <div class="box-prior-date"><%= s.updated_at.strftime("%Y-%m-%d") %></div>
               </div>
-              <%= link_to "Load", new_tools_box_path(generator: @generator.key, params: s.data["params"]),
+              <%= link_to "Load", box_prefill_path(@generator.key, s.data["params"]),
                           aria: { label: "Load #{s.name}" } %>
             <% end %>
           <% end %>
