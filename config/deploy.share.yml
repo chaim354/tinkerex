@@ -39,3 +39,6 @@ env:
     STORAGE_BACKEND: memory
     LIBRARY_BACKEND: share
     LIBRARY_PATH: /library
+    # Box Generator sidecar (the one `boxes` accessory booted by the default config), shared across
+    # all three app deployments on this host via the kamal network.
+    BOXES_SIDECAR_URL: http://tinkerex-boxes:8000
