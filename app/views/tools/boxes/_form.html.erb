@@ -7,10 +7,13 @@
   <% generator.params.each do |param| %>
     <% pname = param["name"] %>
     <% val = (values && values[pname]) || param["default"] %>
+    <% help_text, manual_url = box_help(param["help"]) %>
     <label class="box-field">
       <span class="box-field-label">
         <%= pname %>
-        <% if param["help"].present? %><span class="muted">— <%= param["help"] %></span><% end %>
+        <% if help_text.present? %><span class="muted">— <%= help_text %></span><% end %>
+        <% if manual_url %><%= link_to "?", manual_url, class: "box-help", target: "_blank",
+              rel: "noopener noreferrer", title: "boxes.py manual", aria: { label: "Manual for #{pname}" } %><% end %>
       </span>
       <% if param["choices"].present? %>
         <select name="params[<%= pname %>]">

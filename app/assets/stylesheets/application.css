@@ -190,3 +190,11 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .box-prior-meta { flex: 1; min-width: 0; }
 .box-prior-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .box-prior-date { font-size: 12px; color: var(--muted); }
+
+.box-help {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; margin-left: 5px; vertical-align: 1px;
+  border: 1px solid var(--line); border-radius: 50%;
+  font-size: 10px; line-height: 1; color: var(--muted);
+}
+.box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }

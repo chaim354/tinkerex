@@ -6,7 +6,8 @@ class FakeBoxes
     [ BoxesClient::Generator.new(
         key: "ABox", title: "Simple box", group: "Boxes",
         params: [ { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" },
-                  { "name" => "y", "type" => "float", "default" => 50, "help" => "depth (mm)" } ]),
+                  { "name" => "y", "type" => "float", "default" => 50,
+                    "help" => "depth (mm) [🛈](https://florianfesti.github.io/boxes/html/usermanual.html#y)" } ]),
       BoxesClient::Generator.new(
         key: "TypeTray", title: "Divider tray", group: "Trays",
         params: [ { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" } ]) ]
