@@ -1,0 +1,24 @@
+<% content_for :title, "Box Generator — Tinkerex" %>
+
+<div class="page-head"><h1>📦 Box Generator</h1></div>
+
+<h2>New box</h2>
+<div class="tools-grid">
+  <% @generators.each do |g| %>
+    <%= link_to new_tools_box_path(generator: g.key), class: "addon-card" do %>
+      <span class="addon-title"><%= g.title %></span>
+      <span class="addon-desc muted"><%= g.group %></span>
+    <% end %>
+  <% end %>
+</div>
+
+<h2>Saved boxes</h2>
+<% if @saved.empty? %>
+  <p class="muted">No saved boxes yet.</p>
+<% else %>
+  <ul class="saved-boxes">
+    <% @saved.each do |s| %>
+      <li><%= link_to s.name, tools_box_path(s) %> <span class="muted">(<%= s.data["generator"] %>)</span></li>
+    <% end %>
+  </ul>
+<% end %>

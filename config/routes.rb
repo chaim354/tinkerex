@@ -45,7 +45,9 @@ Rails.application.routes.draw do
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do
-    # Addon controllers mount here (e.g. resources :boxes — added by the Box Generator addon).
+    resources :boxes, only: %i[index new show create] do
+      post :preview, on: :collection
+    end
   end
 
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
