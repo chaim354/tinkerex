@@ -17,6 +17,15 @@ module Tools
       redirect_to(tools_boxes_path, alert: "Unknown generator.") and return unless @generator
 
       @values = params[:params]&.to_unsafe_h || {} # optional prefill (e.g. "duplicate & tweak")
+
+      # Saved boxes made with THIS generator, newest first. Filtered in Ruby (not SQL): `data` is a
+      # JSON column and a `data->>'generator'` query is Postgres-only, which would break the
+      # SQLite/Postgres adapter-agnostic rule. The set is one user's saved boxes — small. `id: :desc`
+      # is a deterministic tie-break on `updated_at`. `includes(:files)` preloads the rail's output
+      # nodes (no N+1).
+      @prior = current_user.maker_addon_states.for_addon("boxes")
+                           .includes(:files).order(updated_at: :desc, id: :desc)
+                           .select { |s| s.data["generator"] == @generator.key }
     end
 
     # POST /tools/boxes/preview -> PNG (rasterized SVG), inline.

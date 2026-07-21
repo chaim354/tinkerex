@@ -30,11 +30,27 @@ module Tools
       assert_select "*", text: /Simple box/
     end
 
+    test "index groups generators under their group headings" do
+      get tools_boxes_path
+      assert_response :success
+      assert_select ".box-group-title", text: "Boxes"
+      assert_select ".box-group-title", text: "Trays"
+      assert_select ".addon-card[data-boxfilter-target='card']", minimum: 2
+      assert_select "input.box-search"
+    end
+
     test "new renders a dynamic form from the generator's params" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
       assert_select "input[name=?]", "params[x]"
       assert_select "input[name=?]", "params[y]"
+    end
+
+    test "new renders the two-column editor with a params grid and a preview column" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-editor > form .box-params input[name=?]", "params[x]"
+      assert_select ".box-editor > aside.box-side .box-preview img[data-boxpreview-target='image']"
     end
 
     test "preview returns a rasterized PNG of the generated SVG" do
@@ -59,6 +75,40 @@ module Tools
       get tools_box_path(state)
       assert_response :success
       assert_select "*", text: /Reopen Me/
+    end
+
+    test "new lists prior boxes for this generator only, newest first" do
+      post tools_boxes_path, params: { name: "Older ABox", generator: "ABox", params: { x: 1, y: 2 } }
+      post tools_boxes_path, params: { name: "Newer ABox", generator: "ABox", params: { x: 3, y: 4 } }
+      post tools_boxes_path, params: { name: "A Tray",     generator: "TypeTray", params: { x: 5 } }
+
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior", text: /Newer ABox/
+      assert_select ".box-prior", text: /Older ABox/
+      assert_select ".box-prior", text: /A Tray/, count: 0
+      assert response.body.index("Newer ABox") < response.body.index("Older ABox"),
+             "newer box should render before older"
+      # the rail wires each prior box to the shared thumbnails poller (reuse, not a new endpoint)
+      assert_select ".box-prior[data-controller='thumbs']"
+      assert_select ".box-prior-item[data-thumbs-target='cell'][data-node-id]", minimum: 2
+    end
+
+    test "new omits the history rail when this generator has no saved boxes" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior", count: 0
+      assert_select ".box-prior-hint", text: /No saved boxes/
+    end
+
+    test "a prior box's Load link imports its saved params into the generator" do
+      post tools_boxes_path, params: { name: "Loadable", generator: "ABox", params: { x: 42, y: 7 } }
+      state = @user.maker_addon_states.for_addon("boxes").order(:id).last
+
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-prior a[href=?]",
+                    new_tools_box_path(generator: "ABox", params: state.data["params"]), text: "Load"
     end
   end
 end
