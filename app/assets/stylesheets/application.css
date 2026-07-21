@@ -158,3 +158,25 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .saved-boxes li { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .saved-boxes li > div { font-size: 13px; margin-top: 2px; }
 .box-noresults { margin: 6px 0; }
+
+.box-editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+.box-editor > form { min-width: 0; }
+.box-params {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px 16px; margin: 16px 0;
+}
+.box-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.box-field-label { color: var(--muted); }
+.box-field input[type="number"], .box-field input[type="text"], .box-field select {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+  font-size: 14px; background: var(--bg); color: var(--fg);
+}
+.box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+.box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
+.box-preview { padding: 12px; }
+.box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }
+
+@media (max-width: 720px) {
+  .box-editor { grid-template-columns: 1fr; }
+  .box-side { position: static; }
+}
