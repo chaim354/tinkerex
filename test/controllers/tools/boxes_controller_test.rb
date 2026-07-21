@@ -89,6 +89,9 @@ module Tools
       assert_select ".box-prior", text: /A Tray/, count: 0
       assert response.body.index("Newer ABox") < response.body.index("Older ABox"),
              "newer box should render before older"
+      # the rail wires each prior box to the shared thumbnails poller (reuse, not a new endpoint)
+      assert_select ".box-prior[data-controller='thumbs']"
+      assert_select ".box-prior-item[data-thumbs-target='cell'][data-node-id]", minimum: 2
     end
 
     test "new omits the history rail when this generator has no saved boxes" do
