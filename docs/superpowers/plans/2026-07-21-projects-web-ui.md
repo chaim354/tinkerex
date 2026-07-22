@@ -2153,7 +2153,7 @@ git commit -m "feat(projects): inline photo upload on build-log entries"
 
 - [ ] **Step 1: Add styles for the new classes**
 
-Append to `app/assets/stylesheets/application.css`:
+Create a **separate** `app/assets/stylesheets/projects.css` (deliberately NOT `application.css` — it has unrelated uncommitted changes, and a separate file avoids a merge conflict). CSS custom properties (`--line`, etc.) defined on `:root` in `application.css` cascade globally through the DOM, so `var(--…)` works here as long as both stylesheets load. Contents:
 
 ```css
 /* --- Projects ------------------------------------------------------------ */
@@ -2233,31 +2233,39 @@ Append to `app/assets/stylesheets/application.css`:
 .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
 ```
 
-**Note:** confirm the CSS variables used (`--line`, `--soft`, `--accent`, `--fg`, `--muted`, `--danger`) exist at the top of `application.css`. They are used by the existing file/grid styles, so they should — if any is missing, add a sensible value in `:root`.
+**Note:** confirm the CSS variables used (`--line`, `--soft`, `--accent`, `--fg`, `--muted`, `--danger`) exist at the top of `application.css`. They are used by the existing file/grid styles, so they should — if any is missing, add a sensible value in `:root` (in `application.css`).
 
-- [ ] **Step 2: Manually smoke-test in the browser (optional but recommended)**
+- [ ] **Step 2: Link the stylesheet in the layout**
+
+In `app/views/layouts/application.html.erb`, after the existing `stylesheet_link_tag "application", …` line, add:
+
+```erb
+    <%= stylesheet_link_tag "projects", "data-turbo-track": "reload" %>
+```
+
+- [ ] **Step 3: Manually smoke-test in the browser (optional but recommended)**
 
 Use the `run` skill or start the server (`STORAGE_BACKEND=memory bin/rails server -p 3001`), sign in, and click through: create a project → attach a file → add a log entry → add a task → archive.
 
-- [ ] **Step 3: Run the whole web suite on the default (chunk) backend**
+- [ ] **Step 4: Run the whole web suite on the default (chunk) backend**
 
 Run: `bin/rails test test/integration/web`
 Expected: PASS (all web tests, including the pre-existing files/trash suites).
 
-- [ ] **Step 4: Run the whole suite on the share backend**
+- [ ] **Step 5: Run the whole suite on the share backend**
 
 Run: `LIBRARY_BACKEND=share bin/rails test test/integration/web`
 Expected: PASS. The projects tests that touch the port pin `chunk` in setup; the ones that don't (pure maker data) are backend-neutral. If a projects test fails here because it assumed chunk, add `pin_file_layer_backend("chunk")` to its setup (only where it seeds `nodes`/thumbnails).
 
-- [ ] **Step 5: Run the full test suite**
+- [ ] **Step 6: Run the full test suite**
 
 Run: `bin/rails test`
-Expected: PASS (no regressions across the whole server suite).
+Expected: PASS (no regressions). Note: the working tree may carry unrelated uncommitted changes (a `boxes` WIP touching `application.css` + `boxes_controller_test.rb`); if a `tools/boxes` test is red, confirm it fails on a clean checkout too before attributing it to this work.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add app/assets/stylesheets/application.css
+git add app/assets/stylesheets/projects.css app/views/layouts/application.html.erb
 git commit -m "feat(projects): styles for the projects hub"
 ```
 
