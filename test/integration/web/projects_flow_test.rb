@@ -109,5 +109,32 @@ module Web
       assert_equal "archived", project.reload.status
       assert_redirected_to projects_path
     end
+
+    # --- cover thumbnails ------------------------------------------------------
+
+    test "cover_node_id prefers image, then model, then first attachment, else nil" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      assert_nil project.cover_node_id
+
+      project.file_attachments.create!(user:, node_id: "m1", role: "model", position: 0)
+      project.file_attachments.create!(user:, node_id: "i1", role: "image", position: 1)
+      assert_equal "i1", project.reload.cover_node_id, "an image cover wins over a model"
+
+      project.file_attachments.destroy_all
+      project.file_attachments.create!(user:, node_id: "src", role: "source_archive", position: 0)
+      project.file_attachments.create!(user:, node_id: "m2", role: "model", position: 1)
+      assert_equal "m2", project.reload.cover_node_id, "a model wins over a non-image/non-model"
+    end
+
+    test "a project card shows a cover cell when it has an attachment" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp", status: "active")
+      user.nodes.create!(node_id: "c1", name: "cover.png", kind: "file")
+      project.file_attachments.create!(user:, node_id: "c1", role: "image")
+
+      get projects_path
+      assert_select ".project-card .file-cell[data-node-id=?]", "c1"
+    end
   end
 end
