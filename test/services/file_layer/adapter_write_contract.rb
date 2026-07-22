@@ -45,6 +45,19 @@ module FileLayerWritableContract
     assert_equal "payload", adapter.read(@user, node_id: info.node_id)
   end
 
+  # mkdir is a WRITE-path verb, so every writable backend answers it identically: a navigable dir
+  # node, and idempotent (Maker::LibraryFolder walks a path and calls it per segment, repeatedly).
+  # Chunk does NOT include this contract — its mkdir goes through the sync engine — so this pins
+  # only that Share and S3 do not diverge on the port's mkdir.
+  def test_write_contract_mkdir_creates_a_dir_node_and_is_idempotent
+    info = adapter.mkdir(@user, parent_node_id: nil, name: "ContractDir")
+    node = @user.nodes.find_by!(node_id: info.node_id)
+    assert_equal "dir", node.kind
+    assert_equal "ContractDir", node.name
+    assert_equal info.node_id, adapter.mkdir(@user, parent_node_id: nil, name: "ContractDir").node_id,
+                 "mkdir is idempotent — same dir node, not a duplicate"
+  end
+
   # The port's whole promise. A move that mints a new node_id breaks every project
   # attachment, BOM link and tag pointing at that file — on any backend.
   def test_write_contract_move_keeps_the_node_id
