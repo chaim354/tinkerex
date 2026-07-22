@@ -87,5 +87,16 @@ module Maker
       assert_equal %w[articulated dragon], m.reload.tag_list.split(", ").sort
       assert_equal 2, @user.maker_tags.count
     end
+
+    test "ensure_library_folder! creates Models/<slug> and stores its node_id" do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+      m = @user.maker_models.create!(title: "Desk Dragon")
+      folder = m.ensure_library_folder!(@user)
+      assert_equal m.folder_node_id, folder.node_id
+      assert_equal "dir", folder.kind
+      assert_equal "desk-dragon", folder.name
+      assert_equal "Models", @user.nodes.find_by!(node_id: folder.parent_node_id).name
+    end
   end
 end

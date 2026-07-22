@@ -69,6 +69,20 @@ Rails.application.routes.draw do
          to: "projects/entry_photos#create", as: :entry_photos
   delete "entry_photos/:id", to: "projects/entry_photos#destroy", as: :entry_photo
 
+  # --- Maker: Models (3D-print model library; server-rendered web UI, session auth) ---
+  # A curated view over library files at Models/<slug>/. `create` is the JSON import endpoint the
+  # importer Stimulus controller calls; there is no plain-HTML create (import IS the new flow).
+  resources :models do
+    # NOT shallow: a shallow member route here would collapse to DELETE /attachments/:id and
+    # collide with the pre-existing shallow `resources :attachments` under :projects (first
+    # definition wins, leaving this one unreachable). Non-shallow keeps it at
+    # /models/:model_id/attachments/:id (helper model_attachment_path) — distinct and correct.
+    # The collection route model_attachments_path (POST /models/:model_id/attachments) is
+    # identical either way, so the importer's attach step is unaffected.
+    resources :attachments, only: %i[create destroy], module: :models
+    resources :print_runs, only: %i[create destroy], module: :models, shallow: true
+  end
+
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do
