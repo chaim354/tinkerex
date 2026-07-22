@@ -17,6 +17,7 @@ module Tools
       redirect_to(tools_boxes_path, alert: "Unknown generator.") and return unless @generator
 
       @values = params[:params]&.to_unsafe_h || {} # optional prefill (e.g. "duplicate & tweak")
+      @folders = folder_options # where to save the output (existing folders + root)
 
       # Saved boxes made with THIS generator, newest first. Filtered in Ruby (not SQL): `data` is a
       # JSON column and a `data->>'generator'` query is Postgres-only, which would break the
@@ -64,7 +65,7 @@ module Tools
       )
       base = state.name.parameterize.presence || "box"
       Maker::Addons::LibraryOutput.write(
-        user: current_user, state:, parent_node_id: nil,
+        user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
           { name: "#{base}-#{state.id}.svg", bytes: svg,
             content_type: "image/svg+xml", role: "output" },
@@ -97,6 +98,36 @@ module Tools
     # real schema; this is a plain pass-through of the submitted values.
     def box_params
       params[:params]&.to_unsafe_h || {}
+    end
+
+    # The folder the user picked to save into, or nil (= library root). SCOPED to the user's own
+    # live dirs, so a forged/foreign node_id can't write into someone else's tree and a stale or
+    # blank one simply falls back to root.
+    def chosen_parent_node_id
+      id = params[:parent_node_id].presence
+      return nil unless id
+
+      current_user.nodes.present.find_by(node_id: id, kind: "dir")&.node_id
+    end
+
+    # Existing folders to offer in the "save to" picker, as [label, node_id] pairs with the library
+    # root first. Restricted to folders that ALREADY exist: creating folders on save needs a
+    # cross-backend mkdir story we haven't built (the addon-framework plan's deferral), so the
+    # picker only chooses among indexed dirs. Paths are built in Ruby (one pluck of the user's own
+    # dirs — a bounded set) rather than a recursive SQL CTE, to stay SQLite/Postgres-agnostic.
+    def folder_options
+      rows = current_user.nodes.present.where(kind: "dir").pluck(:node_id, :parent_node_id, :name)
+      by_id = rows.index_by(&:first)
+      labels = {}
+      label = lambda do |nid|
+        return labels[nid] if labels.key?(nid)
+
+        _id, parent, name = by_id[nid]
+        prefix = parent && by_id[parent] ? label.call(parent) : ""
+        labels[nid] = "#{prefix}/#{name}"
+      end
+      folders = rows.map { |nid, _p, _n| [ label.call(nid), nid ] }.sort_by(&:first)
+      [ [ "/ (library root)", "" ] ] + folders
     end
   end
 end

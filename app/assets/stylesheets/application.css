@@ -40,6 +40,7 @@ a:hover { text-decoration: underline; }
 
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
 .page-head h1 { margin: 0; font-size: 22px; }
+.page-subtitle { margin: 2px 0 0; font-size: 14px; }
 
 .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 16px; font-size: 14px; }
 .breadcrumb .sep { color: var(--muted); }

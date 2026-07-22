@@ -24,10 +24,11 @@ module Tools
       FileLayer.reset!
     end
 
-    test "index lists generators and saved boxes" do
+    test "index tiles show the generator's short name (key), not its descriptive title" do
       get tools_boxes_path
       assert_response :success
-      assert_select "*", text: /Simple box/
+      assert_select ".addon-card .addon-title", text: "ABox" # short name on the tile
+      assert_select ".addon-card", text: /Simple box/, count: 0 # descriptive title lives on the editor now
     end
 
     test "index groups generators under their real boxes.py ui_group headings" do
@@ -68,6 +69,13 @@ module Tools
       assert_select "details.param-group-adv select[name=?]", "params[FingerJoint_style]"
     end
 
+    test "new headings the generator's short name (key) with its title as a description" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".page-head h1", text: "ABox"          # the short name is the heading
+      assert_select ".page-subtitle", text: "Simple box"    # the descriptive title moved here
+    end
+
     test "new renders a dynamic form from the generator's params" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
@@ -96,6 +104,52 @@ module Tools
       assert_equal %w[output parameters], state.files.map(&:role)
       state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id) }
       assert_redirected_to tools_box_path(state)
+    end
+
+    test "new offers a folder picker: the library root plus existing folders" do
+      @user.nodes.create!(node_id: SecureRandom.uuid, name: "Projects", kind: "dir")
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select "select[name='parent_node_id'] option[value='']" # root, the default
+      assert_select "select[name='parent_node_id'] option", text: %r{/Projects}
+    end
+
+    # Spy on LibraryOutput.write (define_singleton_method — the repo's mocking idiom, e.g.
+    # chunk_test.rb) so these assert the CONTROLLER's parent-selection wiring without depending on
+    # any one backend's write mechanics -> they pass identically on chunk/share/s3.
+    test "create saves the bundle into the chosen folder" do
+      folder = @user.nodes.create!(node_id: SecureRandom.uuid, name: "CNC", kind: "dir")
+      captured = :unset
+      original = Maker::Addons::LibraryOutput.method(:write)
+      Maker::Addons::LibraryOutput.define_singleton_method(:write) do |user:, state:, parent_node_id:, files:|
+        captured = parent_node_id
+        []
+      end
+      begin
+        post tools_boxes_path,
+             params: { name: "Boxed", generator: "ABox", params: { x: 1, y: 2 }, parent_node_id: folder.node_id }
+      ensure
+        Maker::Addons::LibraryOutput.define_singleton_method(:write, original)
+      end
+      assert_equal folder.node_id, captured
+    end
+
+    test "create ignores a parent_node_id that is not the user's own live folder (falls back to root)" do
+      other = User.create!(email: "other-boxes@example.com", password: PASSWORD, confirmed_at: Time.current)
+      foreign = other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs", kind: "dir")
+      captured = :unset
+      original = Maker::Addons::LibraryOutput.method(:write)
+      Maker::Addons::LibraryOutput.define_singleton_method(:write) do |user:, state:, parent_node_id:, files:|
+        captured = parent_node_id
+        []
+      end
+      begin
+        post tools_boxes_path,
+             params: { name: "Boxed", generator: "ABox", params: { x: 1, y: 2 }, parent_node_id: foreign.node_id }
+      ensure
+        Maker::Addons::LibraryOutput.define_singleton_method(:write, original)
+      end
+      assert_nil captured
     end
 
     test "show reopens a saved box with its params" do
