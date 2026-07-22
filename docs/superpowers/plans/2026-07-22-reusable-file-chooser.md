@@ -146,6 +146,7 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      Storage::ChunkStore.reset!
       @user = User.create!(email: "browse-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -293,10 +294,13 @@ git commit -m "feat(library-browse): GET /library/children — session-authed fo
 
 - [ ] **Step 1: Write the failing tests**
 
-Append inside `class LibraryBrowseTest` (before the final `end`s):
+Append inside `class LibraryBrowseTest` (before the final `end`s).
+
+**Why these pin chunk:** `create_folder` goes through `Maker::LibraryFolder`, which on share/s3 calls the real port `mkdir` — under the s3 CI leg that is a real `Aws::S3::Client` against a fake bucket (a network failure), and under the share leg it writes to a shared tmpdir keyed only by `storage_path` (cross-test collisions). The **controller** logic here (validation, duplicate guard, delegation) is backend-agnostic, and the port's genuine cross-backend `mkdir` behavior is already covered by Task 1's `LibraryFolderTest` (chunk + share branches). So each create test pins chunk with `pin_file_layer_backend("chunk")`, mirroring the repo's own idiom for a port-touching test (see the helper's doc in `test/test_helper.rb`). The read tests above stay unpinned — they only read `nodes`, which every backend populates identically (this is why `folder_nav_test` is unpinned too).
 
 ```ruby
     test "create_folder makes a dir under a parent and returns its node" do
+      pin_file_layer_backend("chunk")
       assert_difference -> { @user.nodes.present.where(kind: "dir").count }, 1 do
         post library_folders_path, params: { parent_node_id: @projects, name: "exports" }
       end
@@ -308,12 +312,14 @@ Append inside `class LibraryBrowseTest` (before the final `end`s):
     end
 
     test "create_folder at the root uses a nil parent" do
+      pin_file_layer_backend("chunk")
       post library_folders_path, params: { name: "Top" }
       assert_response :created
       assert @user.nodes.present.exists?(name: "Top", parent_node_id: nil, kind: "dir")
     end
 
     test "create_folder rejects a duplicate name in the same folder" do
+      pin_file_layer_backend("chunk")
       assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
         post library_folders_path, params: { parent_node_id: @projects, name: "v2" } # already exists
       end
@@ -322,12 +328,14 @@ Append inside `class LibraryBrowseTest` (before the final `end`s):
     end
 
     test "create_folder rejects a blank name" do
+      pin_file_layer_backend("chunk")
       post library_folders_path, params: { parent_node_id: @projects, name: "  " }
       assert_response :unprocessable_entity
       assert_match(/blank/i, json["error"])
     end
 
     test "create_folder rejects a name containing a slash" do
+      pin_file_layer_backend("chunk")
       post library_folders_path, params: { name: "a/b" }
       assert_response :unprocessable_entity
     end
@@ -903,12 +911,27 @@ git commit -m "feat(boxes): destination chooser next to Save; drop the flat fold
 Run: `bin/rails test`
 Expected: PASS (0 failures, 0 errors). Note the run count.
 
-- [ ] **Step 2: Run the share + s3 backend legs (the chooser must be backend-neutral)**
+- [ ] **Step 2: Run the share + s3 backend legs (the chooser's read path must be backend-neutral)**
 
-Run: `LIBRARY_BACKEND=share bin/rails test test/integration/web/library_browse_test.rb test/controllers/tools/boxes_controller_test.rb test/services/maker/library_folder_test.rb`
+The env mirrors the `ci.yml` share/s3 legs (a real `LIBRARY_PATH` tmpdir; fake `LIBRARY_S3_*` — no bucket is contacted because the read tests never call the port and the create tests pin chunk).
+
+Run:
+```bash
+LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) \
+  bin/rails test test/integration/web/library_browse_test.rb \
+                 test/controllers/tools/boxes_controller_test.rb \
+                 test/services/maker/library_folder_test.rb
+```
 Expected: PASS.
 
-Run: `LIBRARY_BACKEND=s3 bin/rails test test/integration/web/library_browse_test.rb test/controllers/tools/boxes_controller_test.rb test/services/maker/library_folder_test.rb`
+Run:
+```bash
+LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+  bin/rails test test/integration/web/library_browse_test.rb \
+                 test/controllers/tools/boxes_controller_test.rb \
+                 test/services/maker/library_folder_test.rb
+```
 Expected: PASS.
 
 - [ ] **Step 3: Manual browser smoke (the JS controller's real coverage)**
