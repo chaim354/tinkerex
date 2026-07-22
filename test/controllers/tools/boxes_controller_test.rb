@@ -106,12 +106,14 @@ module Tools
       assert_redirected_to tools_box_path(state)
     end
 
-    test "new offers a folder picker: the library root plus existing folders" do
+    test "new renders the reusable folder-chooser trigger, not a flat select" do
       @user.nodes.create!(node_id: SecureRandom.uuid, name: "Projects", kind: "dir")
       get new_tools_box_path(generator: "ABox")
       assert_response :success
-      assert_select "select[name='parent_node_id'] option[value='']" # root, the default
-      assert_select "select[name='parent_node_id'] option", text: %r{/Projects}
+      assert_select "select[name='parent_node_id']", count: 0 # the flat picker is gone
+      assert_select ".folder-field[data-controller='filechooser'] " \
+                    "input[type=hidden][name='parent_node_id']"
+      assert_select ".folder-field-btn[data-action='filechooser#open']"
     end
 
     # Spy on LibraryOutput.write (define_singleton_method — the repo's mocking idiom, e.g.

@@ -16,15 +16,14 @@
       <input type="text" name="name" required>
     </label>
 
-    <label class="box-field">
-      <span class="box-field-label">Save to folder</span>
-      <%= select_tag :parent_node_id, options_for_select(@folders) %>
-    </label>
-
     <%= render "form", generator: @generator, values: @values %>
 
     <div class="page-actions">
       <button type="button" data-action="boxpreview#preview" class="btn ghost">Preview</button>
+      <span class="box-field-label" style="margin-left:auto">Saving to</span>
+      <%= render "shared/folder_field", name: "parent_node_id", mode: "folder",
+                 value: nil, label: "/ (library root)",
+                 children_url: library_children_path, create_url: library_folders_path %>
       <button type="submit" class="btn">Save to library</button>
     </div>
   <% end %>
