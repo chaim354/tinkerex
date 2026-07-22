@@ -214,7 +214,19 @@ class FilesController < ApplicationController
     info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
                                    name: upload.original_filename, io: upload)
     enqueue_preview(node_id: info.node_id, name: upload.original_filename)
-    redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}."
+    # format.json for the importer (app/javascript/controllers/importer_controller.js via
+    # lib/chunk_upload's uploadPortFile): it needs the new node_id to attach in the SAME request
+    # that uploaded it. A followed redirect can't carry that back -- fetch() resolves to the
+    # redirect TARGET's response, whose Location header is null, so parsing "the redirect" from
+    # the client side was always dead code (caught in review, never landed working). Answering
+    # JSON directly here is also what let this deployment's OWN 406 bug surface: #show has no
+    # JSON responder, so a followed redirect carrying Accept: application/json 406'd on every
+    # single port upload -- this format.json branch is what makes the request succeed WITHOUT
+    # ever reaching #show.
+    respond_to do |format|
+      format.html { redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}." }
+      format.json { render json: { node_id: info.node_id }, status: :created }
+    end
   end
 
   # --- Upload: phase 1 (begin) -------------------------------------------------

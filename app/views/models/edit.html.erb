@@ -1,0 +1,21 @@
+<% content_for :title, "Edit #{@model.title} — Tinkerex" %>
+<div class="page-head"><h1>Edit <%= @model.title %></h1></div>
+
+<%= form_with model: @model, scope: :model, url: model_path(@model), method: :patch, class: "project-form" do |f| %>
+  <% if @model.errors.any? %>
+    <div class="form-errors flash-alert"><%= @model.errors.full_messages.to_sentence %></div>
+  <% end %>
+  <label class="field"><span>Title</span><%= f.text_field :title, required: true %></label>
+  <label class="field"><span>Designer</span><%= f.text_field :designer %></label>
+  <label class="field"><span>License</span><%= f.text_field :license %></label>
+  <label class="field"><span>Source URL</span><%= f.url_field :source_url %></label>
+  <label class="field"><span>Tags (comma-separated)</span><%= f.text_field :tag_list, value: @model.tag_list %></label>
+  <label class="field"><span>Status</span>
+    <%= f.select :print_status, Maker::Model::PRINT_STATUSES.map { |s| [ s.tr("_", " ").capitalize, s ] } %>
+  </label>
+  <label class="field"><span>Notes</span><%= f.text_area :notes, rows: 5, placeholder: "Markdown supported…" %></label>
+  <div class="form-actions">
+    <%= f.submit "Save changes", class: "btn primary" %>
+    <%= link_to "Cancel", model_path(@model), class: "linkbtn" %>
+  </div>
+<% end %>
