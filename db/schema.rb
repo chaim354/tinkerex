@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_22_164259) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_170431) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -296,6 +296,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_164259) do
     t.integer "width"
     t.index ["user_id", "node_id", "version_id", "kind"], name: "idx_maker_previews_unique", unique: true
     t.index ["user_id", "status"], name: "index_maker_previews_on_user_id_and_status"
+  end
+
+  create_table "maker_print_runs", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.decimal "duration_hours", precision: 6, scale: 2
+    t.integer "filament_grams"
+    t.string "material"
+    t.integer "model_id", null: false
+    t.text "notes"
+    t.string "outcome", null: false
+    t.date "printed_on", null: false
+    t.string "printer"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["model_id", "printed_on"], name: "index_maker_print_runs_on_model_id_and_printed_on"
+    t.index ["user_id"], name: "index_maker_print_runs_on_user_id"
   end
 
   create_table "maker_projects", force: :cascade do |t|

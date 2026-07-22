@@ -14,12 +14,8 @@ module Maker
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
     has_many :taggings, as: :taggable, class_name: "Maker::Tagging", dependent: :destroy
     has_many :tags, through: :taggings, class_name: "Maker::Tag"
-    # NOTE: no `dependent: :destroy` yet — Maker::PrintRun doesn't exist until Task 2, and
-    # a has_many's dependent-destroy callback resolves its class_name eagerly (even with zero
-    # rows), so declaring it now would raise NameError on every Maker::Model#destroy. Task 2
-    # should add `dependent: :destroy` back once Maker::PrintRun exists.
     has_many :print_runs, -> { order(:printed_on, :id) },
-             class_name: "Maker::PrintRun"
+             class_name: "Maker::PrintRun", dependent: :destroy
 
     before_validation :ensure_slug
 
@@ -30,6 +26,8 @@ module Maker
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
 
     def to_param = slug
+
+    private
 
     # Friendly URLs + collision-proof: two "Benchy" imports must both succeed, so a taken slug
     # gets -2, -3, ... (Project fails validation on collision; import can't afford that).
