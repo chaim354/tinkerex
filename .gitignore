@@ -43,3 +43,6 @@
 
 # Local agent tooling/plans
 .claude/
+
+# Brainstorming visual companion
+.superpowers/
