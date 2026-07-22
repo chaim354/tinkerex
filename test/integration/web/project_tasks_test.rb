@@ -56,5 +56,20 @@ module Web
         delete task_path(task)
       end
     end
+
+    test "a task not scoped to a project is 404 here, never a 500" do
+      user = sign_in
+      task = user.maker_tasks.create!(title: "loose")   # taskable nil (optional) — not a project task
+      patch task_path(task), params: { task: { status: "done" } }
+      assert_response :not_found
+    end
+
+    test "moving a task out of done clears completed_at" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "A", status: "done", completed_at: Time.current)
+      patch task_path(task), params: { task: { status: "todo" } }
+      assert_nil task.reload.completed_at
+    end
   end
 end

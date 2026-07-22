@@ -98,5 +98,17 @@ module Web
       assert user.nodes.present.exists?(node_id: "f-1"), "the library file must survive a detach"
       assert_redirected_to project_path(project)
     end
+
+    test "the photo picker keeps entry_id through a search so photos attach to the entry" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      entry = project.build_log_entries.create!(user:, body: "x")
+      user.nodes.create!(node_id: "img-1", name: "clamp.png", kind: "file")
+
+      get new_project_attachment_path(project, entry_id: entry.id, q: "clamp")
+      assert_response :success
+      assert_select "form.picker-search input[name=entry_id][value=?]", entry.id.to_s
+      assert_select ".picker-result form[action=?]", entry_photos_path(entry)
+    end
   end
 end

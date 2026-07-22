@@ -88,6 +88,20 @@ module Web
         end
         assert_equal "image", entry.file_attachments.last.role
       end
+
+      test "a duplicate filename is refused with a flash, not a 500" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        make = -> { Rack::Test::UploadedFile.new(StringIO.new(SecureRandom.hex.b),
+                                                 "application/octet-stream", original_filename: "dup.stl") }
+        post project_uploads_path(project), params: { file: make.call }
+        assert_response :redirect
+        assert_equal 1, project.file_attachments.count
+
+        post project_uploads_path(project), params: { file: make.call }  # same name -> clobber refused
+        assert_response :redirect                       # rescued, NOT a 500
+        assert flash[:alert].present?, "the clobber must surface a flash alert"
+        assert_equal 1, project.file_attachments.count, "no second attachment on a refused upload"
+      end
     end
   end
 end

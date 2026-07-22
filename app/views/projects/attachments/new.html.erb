@@ -2,7 +2,11 @@
 
 <div class="page-head"><h1>Attach a file to <%= @project.name %></h1></div>
 
+<%# entry_id must survive a search, or the Attach buttons below fall back to attaching to the
+    PROJECT instead of the build-log entry the picker was opened for. It rides along as a hidden
+    field in this GET form so it lands back in params on the results page. %>
 <%= form_with url: new_project_attachment_path(@project), method: :get, class: "picker-search" do |f| %>
+  <% if params[:entry_id].present? %><%= hidden_field_tag :entry_id, params[:entry_id] %><% end %>
   <%= f.search_field :q, value: params[:q], placeholder: "Search your library by name…", autofocus: true %>
   <%= f.submit "Search", class: "btn" %>
 <% end %>

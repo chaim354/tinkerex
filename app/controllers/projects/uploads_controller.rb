@@ -10,6 +10,19 @@ module Projects
     before_action :authenticate_user!
     before_action :require_port_writable!
 
+    # The port's write can refuse (UnsupportedOperation — e.g. a name already at the library root,
+    # a current-state-only clobber) or be temporarily unreachable (FetchError — unmounted NAS,
+    # bucket blip). FilesController maps these on its write path; this parallel path must too, or an
+    # ordinary duplicate-name upload 500s instead of showing a flash. Browser action -> redirect
+    # back to where the upload button was (the project page), with an alert.
+    rescue_from FileLayer::UnsupportedOperation do
+      redirect_back_or_to projects_path,
+                          alert: "Couldn't upload that file — a file with the same name may already exist."
+    end
+    rescue_from FileLayer::FetchError do
+      redirect_back_or_to projects_path, alert: "Couldn't reach your library. Try again."
+    end
+
     def create
       file = params.require(:file)
       target = attach_target
