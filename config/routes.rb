@@ -42,6 +42,14 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Maker: Projects (server-rendered web UI, session auth) ---
+  # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
+  resources :projects do
+    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
+    resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
+    resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+  end
+
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do
