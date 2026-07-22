@@ -4,6 +4,14 @@ module Web
   class ProjectsFlowTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # Maker data is backend-neutral, but the detail/list views READ file metadata + capabilities
+    # through FileLayer.current. Pin a real backend so a `LIBRARY_BACKEND=share` CI leg (which has
+    # no LIBRARY_PATH) doesn't fail these on backend construction — they aren't share tests.
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+    end
+
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
