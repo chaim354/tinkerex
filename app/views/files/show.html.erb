@@ -36,6 +36,16 @@
   <dt>Modified</dt><dd><%= @info.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
 </dl>
 
+<% if @projects.present? %>
+  <div class="attach-to-project">
+    <span class="muted">Attach to project:</span>
+    <% @projects.each do |project| %>
+      <%= button_to project.name, project_attachments_path(project),
+                    params: { node_id: @node.node_id }, class: "btn small" %>
+    <% end %>
+  </div>
+<% end %>
+
 <div class="preview">
   <% if @info.content_token.nil? %>
     <p class="muted">No content yet.</p>
