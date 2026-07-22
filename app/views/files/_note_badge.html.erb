@@ -1,0 +1,5 @@
+<%# A small indicator that a file has notes. NOT a link — the enclosing card/row already links to
+    the file detail page, whose Notes section is where the notes live. Local: `count` (Integer). %>
+<% if count.to_i.positive? %>
+  <span class="note-badge" title="<%= count %> note<%= "s" unless count == 1 %>">📝 <%= count %></span>
+<% end %>

@@ -19,11 +19,13 @@
                   data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
         <%= render "thumb", thumb:, ext_label: %>
         <span class="grid-name"><%= node.name %></span>
+        <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% else %>
       <%= link_to file_path(node.node_id), class: "grid-card" do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
+        <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% end %>
   <% end %>

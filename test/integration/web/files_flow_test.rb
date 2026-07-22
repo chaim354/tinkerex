@@ -281,6 +281,25 @@ module Web
       assert_select ".note-form textarea"
     end
 
+    test "a file with notes shows a note-count badge in grid and list" do
+      user = sign_in
+      node_id = upload("part.stl", "solid".b)
+      user.maker_notes.create!(node_id:, body: "one")
+      user.maker_notes.create!(node_id:, body: "two")
+
+      get files_path(view: "grid")
+      assert_select ".note-badge", text: /2/
+      get files_path(view: "list")
+      assert_select ".note-badge", text: /2/
+    end
+
+    test "a file with no notes shows no badge" do
+      sign_in
+      upload("plain.stl", "solid".b)
+      get files_path(view: "grid")
+      assert_select ".note-badge", count: 0
+    end
+
     test "unknown type falls back to a download link" do
       sign_in
       node_id = upload("model.stl", "solid cube".b)

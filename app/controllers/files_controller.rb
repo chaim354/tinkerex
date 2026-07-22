@@ -150,6 +150,8 @@ class FilesController < ApplicationController
                          .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
+    # Note counts for the badge — one grouped query, never N+1.
+    @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
     backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
   end

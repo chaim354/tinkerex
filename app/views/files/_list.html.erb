@@ -31,6 +31,7 @@
             <% else %>
               <%= link_to node.name, file_path(node.node_id) %>
             <% end %>
+            <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>
             <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a
                 file preview. Same node_id key #index scopes children on. %>
