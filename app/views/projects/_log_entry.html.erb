@@ -18,7 +18,9 @@
     </div>
   <% end %>
 
-  <p class="photo-attach">
+  <div class="photo-attach">
     <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id), class: "linkbtn muted" %>
-  </p>
+    <%= render "upload_control", upload_url: build_log_entry_uploads_path(entry),
+               attach_url: entry_photos_path(entry), redirect_url: project_path(@project) %>
+  </div>
 </li>

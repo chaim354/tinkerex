@@ -48,6 +48,14 @@ Rails.application.routes.draw do
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
+    # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
+    resources :uploads, only: :create, module: :projects
+  end
+
+  # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
+  resources :build_log_entries, only: [], module: :projects do
+    resources :uploads, only: :create
   end
 
   # A build-log entry's inline photos (attach an existing image node to the entry). Explicit

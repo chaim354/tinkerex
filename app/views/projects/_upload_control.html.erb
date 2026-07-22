@@ -1,0 +1,26 @@
+<%#
+  Inline "upload a new file and attach it" — two flows, one per deployment (spec §2), reusing the
+  library upload machinery. Locals: upload_url (share/s3 multipart write-and-attach), attach_url
+  (chunk final JSON attach step), redirect_url.
+%>
+<% if capabilities.port_writable? %>
+  <%= form_with url: upload_url, method: :post, class: "uploader",
+                data: { turbo: false }, html: { multipart: true } do |f| %>
+    <label class="upload-btn">
+      <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+      <span>Upload &amp; attach</span>
+    </label>
+  <% end %>
+<% else %>
+  <span class="uploader" data-controller="uploader"
+        data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+        data-uploader-finalize-url-value="<%= finalize_upload_files_path %>"
+        data-uploader-attach-url-value="<%= attach_url %>"
+        data-uploader-redirect-url-value="<%= redirect_url %>">
+    <label class="upload-btn">
+      <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+      <span>Upload &amp; attach</span>
+    </label>
+    <span class="upload-status" data-uploader-target="status"></span>
+  </span>
+<% end %>

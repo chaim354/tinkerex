@@ -9,6 +9,10 @@ class ProjectsController < ApplicationController
   before_action :authenticate_user!
   before_action :set_project, only: %i[show edit update destroy]
 
+  # Exposes the `capabilities` helper the attachments panel's upload control branches on
+  # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
+  include LibraryCapabilities
+
   # STATUS order for the grouped list; `archived` is intentionally excluded from the default view.
   LISTED_STATUSES = %w[planning active paused done].freeze
 
