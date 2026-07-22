@@ -42,6 +42,20 @@ module Maker
       update!(status: "archived", archived_at: Time.current)
     end
 
+    # Return the project's library folder node, (re)creating `Projects/<slug>` if folder_node_id is
+    # nil or points at a tombstoned/missing node (the user deleted it in the Files browser). Called
+    # best-effort at create time (the controller rescues) and authoritatively at upload time, so it
+    # must be idempotent — Maker::LibraryFolder.ensure_path! is.
+    def ensure_library_folder!(acting_user)
+      if folder_node_id.present?
+        live = acting_user.nodes.present.find_by(node_id: folder_node_id, kind: "dir")
+        return live if live
+      end
+      folder = Maker::LibraryFolder.ensure_path!(acting_user, [ "Projects", slug ])
+      update_column(:folder_node_id, folder.node_id)
+      folder
+    end
+
     private
 
     def ensure_slug

@@ -1245,5 +1245,35 @@ module FileLayer
       # The reason it must not be listed, asserted rather than assumed.
       assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
     end
+
+    # ---- mkdir (project folders) ---------------------------------------------
+
+    test "mkdir puts a dir-marker object + a dir node, idempotent" do
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      node = @user.nodes.find_by!(node_id: info.node_id)
+      assert_equal "dir", node.kind
+      assert_equal "Projects", node.storage_path
+      # An empty folder needs a dir-marker object to survive the scan.
+      assert_nothing_raised do
+        @fake.client.head_object(bucket: "b", key: "#{PREFIX}/Projects/")
+      end
+
+      again = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      assert_equal info.node_id, again.node_id
+      assert_equal 1, @user.nodes.where(kind: "dir", storage_path: "Projects").count
+    end
+
+    test "mkdir nests under a parent dir node" do
+      root = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      sub  = adapter.mkdir(@user, parent_node_id: root.node_id, name: "desk-lamp")
+      assert_equal "Projects/desk-lamp", @user.nodes.find_by!(node_id: sub.node_id).storage_path
+    end
+
+    test "an empty mkdir'd folder survives an observer/reconciler pass" do
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      scan!(max_delete_pct: 100)
+      node = @user.nodes.find_by(node_id: info.node_id)
+      assert node && !node.deleted, "the dir-marker keeps the empty folder alive"
+    end
   end
 end

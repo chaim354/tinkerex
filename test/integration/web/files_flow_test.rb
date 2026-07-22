@@ -271,6 +271,50 @@ module Web
       assert_select "pre.preview-text"
     end
 
+    test "the file detail page shows a notes section and renders markdown notes" do
+      user = sign_in
+      node_id = upload("part.stl", "solid".b)
+      user.maker_notes.create!(node_id:, body: "**important** note")
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".notes-panel .note .note-body strong", text: "important"
+      assert_select ".note-form textarea"
+    end
+
+    test "a file with notes shows a note-count badge in grid and list" do
+      user = sign_in
+      node_id = upload("part.stl", "solid".b)
+      user.maker_notes.create!(node_id:, body: "one")
+      user.maker_notes.create!(node_id:, body: "two")
+
+      get files_path(view: "grid")
+      assert_select ".note-badge", text: /2/
+      get files_path(view: "list")
+      assert_select ".note-badge", text: /2/
+    end
+
+    test "a file with no notes shows no badge" do
+      sign_in
+      upload("plain.stl", "solid".b)
+      get files_path(view: "grid")
+      assert_select ".note-badge", count: 0
+    end
+
+    # The right-click menu is JS (not exercised by integration tests); this pins the wiring the
+    # filemenu controller reads — the container controller + each file cell's note-url.
+    test "the files browser wires the right-click note menu on file cells" do
+      sign_in
+      node_id = upload("part.stl", "solid".b)
+
+      get files_path(view: "list")
+      assert_select "table.files[data-controller~=?]", "filemenu"
+      assert_select "[data-note-url=?]", file_notes_path(node_id)
+
+      get files_path(view: "grid")
+      assert_select ".files-grid[data-controller~=?]", "filemenu"
+      assert_select "[data-note-url=?]", file_notes_path(node_id)
+    end
+
     test "unknown type falls back to a download link" do
       sign_in
       node_id = upload("model.stl", "solid cube".b)

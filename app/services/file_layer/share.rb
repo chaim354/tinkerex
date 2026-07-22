@@ -225,6 +225,34 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # Create ONE directory `name` under `parent_node_id` (nil = library root). Reuses write's exact
+    # guards — leaf!/observable!/resolve_inside! — because a mkdir that skips them re-opens the
+    # scan-wedge bug class this file documents (a live node at a path no scan can pair). Idempotent:
+    # a live dir already at this rel is returned, not duplicated (Maker::LibraryFolder walks paths
+    # and calls this repeatedly). The real directory is created on disk, so the next scan RECONCILES
+    # the dir node by storage_path — that is what makes an EMPTY project folder survive, unlike a
+    # bare dir-node insert (which the v1 mkdir 501 warns the scan would undo).
+    def mkdir(user, parent_node_id: nil, name: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      observable!(rel)
+      existing = user.nodes.present.find_by(kind: "dir", storage_path: rel)
+      return stat(user, node_id: existing.node_id) if existing
+
+      dest = resolve_inside!(rel)
+      raise UnsupportedOperation, "#{rel.inspect} already exists as a file" if dest.exist? && !dest.directory?
+      begin
+        FileUtils.mkdir_p(dest)
+      rescue SystemCallError => e
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "dir", deleted: false,
+        storage_path: rel, parent_node_id:, mtime: nanos(File.stat(dest))
+      )
+      stat(user, node_id: node.node_id)
+    end
+
     # Move the file out of the indexed tree into `.trash/<node_id>/<name>` and tombstone the
     # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not
     # collide, and Task 4's undelete needs one unambiguous place to look.

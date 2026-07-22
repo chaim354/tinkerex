@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_135734) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -257,6 +257,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
     t.index ["user_id", "parent_id"], name: "index_maker_locations_on_user_id_and_parent_id"
   end
 
+  create_table "maker_notes", force: :cascade do |t|
+    t.text "body", null: false
+    t.datetime "created_at", null: false
+    t.string "node_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "node_id"], name: "index_maker_notes_on_user_id_and_node_id"
+  end
+
   create_table "maker_previews", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.text "error"
@@ -276,6 +285,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
     t.datetime "archived_at"
     t.datetime "created_at", null: false
     t.text "description"
+    t.string "folder_node_id"
     t.string "name", null: false
     t.string "slug", null: false
     t.string "status", default: "planning", null: false

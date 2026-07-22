@@ -150,6 +150,8 @@ class FilesController < ApplicationController
                          .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
+    # Note counts for the badge — one grouped query, never N+1.
+    @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
     backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
   end
@@ -193,6 +195,7 @@ class FilesController < ApplicationController
                             .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
     # For the "Attach to project" control (a design file can be sent to a project from here).
     @projects = current_user.maker_projects.where.not(status: "archived").order(:name).to_a
+    @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.

@@ -33,6 +33,13 @@ class ProjectsController < ApplicationController
     @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
     @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
+    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
+    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
+    @upload_parent_node_id = begin
+      @project.ensure_library_folder!(current_user).node_id
+    rescue StandardError
+      nil
+    end
   end
 
   def new
@@ -42,6 +49,7 @@ class ProjectsController < ApplicationController
   def create
     @project = current_user.maker_projects.new(project_params)
     if @project.save
+      ensure_project_folder(@project)
       redirect_to project_path(@project), notice: "Project created."
     else
       render :new, status: :unprocessable_entity
@@ -69,6 +77,15 @@ class ProjectsController < ApplicationController
 
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
+  end
+
+  # Best-effort: a project MUST save even if the library backend can't make its folder right now
+  # (unmounted NAS, bucket blip). The folder is re-ensured on the next upload. Never fail creation
+  # on a folder hiccup — hence the broad rescue.
+  def ensure_project_folder(project)
+    project.ensure_library_folder!(current_user)
+  rescue StandardError => e
+    Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
   end
 
   def project_params

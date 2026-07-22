@@ -42,6 +42,10 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Per-file notes (markdown; keyed by node_id, session auth) ---
+  post   "files/:node_id/notes", to: "notes#create", as: :file_notes
+  resources :notes, only: %i[destroy]
+
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do

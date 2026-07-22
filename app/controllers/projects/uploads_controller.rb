@@ -26,7 +26,7 @@ module Projects
     def create
       file = params.require(:file)
       target = attach_target
-      info = FileLayer.current.write(current_user, parent_node_id: nil,
+      info = FileLayer.current.write(current_user, parent_node_id: upload_parent(target),
                                      name: file.original_filename, io: file)
       enqueue_preview(node_id: info.node_id, name: file.original_filename)
       target.file_attachments.create!(user: current_user, node_id: info.node_id,
@@ -46,6 +46,13 @@ module Projects
     end
 
     def project_of(target) = target.is_a?(Maker::BuildLogEntry) ? target.project : target
+
+    # Project uploads go into the project's Projects/<slug> folder; build-log entry-photo uploads
+    # stay at the library root (v1 scope — spec Out of scope).
+    def upload_parent(target)
+      return nil if target.is_a?(Maker::BuildLogEntry)
+      project_of(target).ensure_library_folder!(current_user).node_id
+    end
 
     # A build-log photo is always "image"; a project attachment infers from the extension.
     def role_for(name, target)

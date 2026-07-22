@@ -3,7 +3,7 @@
   on share and s3 there are none. See show.html.erb's header for why `capabilities` is called
   rather than dereferenced off an ivar with `&.`.
 %>
-<table class="files" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+<table class="files" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <thead>
     <tr>
       <th>Name</th><th>Kind</th><th class="num">Size</th>
@@ -24,13 +24,16 @@
               <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
               <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
               <%= link_to file_path(node.node_id), class: "file-cell",
-                          data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
+                          data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label,
+                                  action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id) } do %>
                 <%= render "thumb", thumb:, ext_label: %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
             <% else %>
-              <%= link_to node.name, file_path(node.node_id) %>
+              <%= link_to node.name, file_path(node.node_id),
+                          data: { action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id) } %>
             <% end %>
+            <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>
             <%# A folder row navigates INTO the folder (?folder=<node_id>), it does not open a
                 file preview. Same node_id key #index scopes children on. %>

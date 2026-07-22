@@ -1028,5 +1028,37 @@ module FileLayer
       # The reason it must not be listed, asserted rather than assumed.
       assert_raises(FileLayer::NotFound) { adapter.undelete(@user, node_id: id) }
     end
+
+    # ---- mkdir (project folders) ---------------------------------------------
+
+    test "mkdir creates a real directory + a dir node, and is idempotent" do
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      node = @user.nodes.find_by!(node_id: info.node_id)
+      assert_equal "dir", node.kind
+      assert_equal "Projects", node.storage_path
+      assert @root.join("Projects").directory?, "the real directory must exist on the share"
+
+      again = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      assert_equal info.node_id, again.node_id, "mkdir is idempotent — same dir node, no duplicate"
+      assert_equal 1, @user.nodes.where(kind: "dir", storage_path: "Projects").count
+    end
+
+    test "mkdir nests under a parent dir node" do
+      root = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      sub  = adapter.mkdir(@user, parent_node_id: root.node_id, name: "desk-lamp")
+      assert_equal "Projects/desk-lamp", @user.nodes.find_by!(node_id: sub.node_id).storage_path
+      assert @root.join("Projects", "desk-lamp").directory?
+    end
+
+    test "mkdir refuses a reserved/unobservable name (would wedge the scan)" do
+      assert_raises(FileLayer::NotFound) { adapter.mkdir(@user, parent_node_id: nil, name: ".trash") }
+    end
+
+    test "an empty mkdir'd folder survives a scan (path-reconcile keeps the dir node)" do
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "Projects")
+      Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+      node = @user.nodes.find_by(node_id: info.node_id)
+      assert node && !node.deleted, "the dir node must survive the scan (the real dir is on disk)"
+    end
   end
 end

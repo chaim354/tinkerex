@@ -324,6 +324,32 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # Create ONE directory under `parent_node_id`. On S3 a "directory" is a zero-byte dir-MARKER
+    # object `<key>/` (the shape the console mints and S3Observer reads as a dir, not a phantom
+    # file) plus a dir node. The marker is what makes an EMPTY folder survive a scan: with no object
+    # under the prefix the reconciler has nothing to pair the dir node to and tombstones it. Reuses
+    # write's guards (leaf!/observable!). Idempotent — a live dir already at this rel is returned.
+    def mkdir(user, parent_node_id: nil, name: nil)
+      leaf!(name)
+      rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
+      observable!(rel)
+      existing = user.nodes.present.find_by(kind: "dir", storage_path: rel)
+      return stat(user, node_id: existing.node_id) if existing
+
+      marker = "#{key_for_rel(rel)}/"
+      begin
+        @client.put_object(bucket: @bucket, key: marker, body: "")
+        head = @client.head_object(bucket: @bucket, key: marker)
+      rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
+        raise FetchError, "#{rel.inspect}: #{e.class} (#{e.message})"
+      end
+      node = user.nodes.create!(
+        node_id: SecureRandom.uuid, name:, kind: "dir", deleted: false,
+        storage_path: rel, parent_node_id:, mtime: nanos(head.last_modified)
+      )
+      stat(user, node_id: node.node_id)
+    end
+
     # Copy the object out of the indexed keyspace into `.trash/<node_id>/<name>` and tombstone the
     # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not collide,
     # and `undelete` needs one unambiguous place to look. On S3 that is a KEY PREFIX rather than a

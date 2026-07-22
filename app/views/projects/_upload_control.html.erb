@@ -16,7 +16,8 @@
         data-uploader-begin-url-value="<%= begin_upload_files_path %>"
         data-uploader-finalize-url-value="<%= finalize_upload_files_path %>"
         data-uploader-attach-url-value="<%= attach_url %>"
-        data-uploader-redirect-url-value="<%= redirect_url %>">
+        data-uploader-redirect-url-value="<%= redirect_url %>"
+        data-uploader-parent-node-id-value="<%= local_assigns[:parent_node_id] %>">
     <label class="upload-btn">
       <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
       <span>Upload &amp; attach</span>
