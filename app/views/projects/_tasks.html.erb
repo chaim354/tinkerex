@@ -1,4 +1,20 @@
 <section class="panel tasks-panel">
   <h2>Tasks</h2>
-  <p class="muted">No tasks yet.</p>
+
+  <%= form_with url: project_tasks_path(@project), method: :post, class: "task-form" do |f| %>
+    <%= f.fields_for :task do |t| %>
+      <%= t.text_field :title, placeholder: "Add a task…", required: true %>
+      <%= f.submit "Add", class: "btn small" %>
+    <% end %>
+  <% end %>
+
+  <% Maker::Task::STATUSES.each do |status| %>
+    <% group = @tasks.select { |t| t.status == status } %>
+    <div class="tasks-group status-<%= status %>">
+      <h3><%= status.capitalize %> <span class="muted">(<%= group.size %>)</span></h3>
+      <% group.each do |task| %>
+        <%= render "task", task: %>
+      <% end %>
+    </div>
+  <% end %>
 </section>
