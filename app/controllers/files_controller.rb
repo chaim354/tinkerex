@@ -193,6 +193,7 @@ class FilesController < ApplicationController
                             .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
     # For the "Attach to project" control (a design file can be sent to a project from here).
     @projects = current_user.maker_projects.where.not(status: "archived").order(:name).to_a
+    @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.

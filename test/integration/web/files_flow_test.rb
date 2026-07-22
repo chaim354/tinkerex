@@ -271,6 +271,16 @@ module Web
       assert_select "pre.preview-text"
     end
 
+    test "the file detail page shows a notes section and renders markdown notes" do
+      user = sign_in
+      node_id = upload("part.stl", "solid".b)
+      user.maker_notes.create!(node_id:, body: "**important** note")
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".notes-panel .note .note-body strong", text: "important"
+      assert_select ".note-form textarea"
+    end
+
     test "unknown type falls back to a download link" do
       sign_in
       node_id = upload("model.stl", "solid cube".b)
