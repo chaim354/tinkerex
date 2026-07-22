@@ -1,17 +1,8 @@
 import { Controller } from "@hotwired/stimulus"
+import { uploadChunkFile } from "lib/chunk_upload"
 
-// Browser-side upload that honors the "bytes never through Rails" invariant.
-//
-// Flow (matches the desktop client's Sync::Commit two-phase commit):
-//   1. Hash the file in the browser with SubtleCrypto (SHA-256). For MVP we treat the
-//      whole file as a SINGLE content-addressed chunk (hash = sha256(bytes)).
-//   2. POST /files/begin_upload with the manifest -> server records a pending commit and
-//      returns presigned PUT URLs for ONLY the missing chunks (dedup: an already-stored
-//      hash gets no URL, so we skip re-uploading it).
-//   3. PUT the chunk bytes straight to the presigned URL (object storage / dev blob) —
-//      never through the Rails control plane.
-//   4. POST /files/finalize_upload -> server verifies the bytes landed, then creates the
-//      immutable version + changelog entry. Reload to show the new file.
+// Browser-side single-file upload (chunk two-phase). Thin wrapper over lib/chunk_upload so the
+// importer and this control share one implementation.
 export default class extends Controller {
   static targets = ["input", "status"]
   static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String, parentNodeId: String }
@@ -19,82 +10,45 @@ export default class extends Controller {
   async upload() {
     const file = this.inputTarget.files[0]
     if (!file) return
-
     try {
-      this.setStatus(`Hashing ${file.name}…`)
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      const hash  = await this.sha256(bytes)
-
-      // MVP: one chunk for the whole file.
-      const manifest = [{ hash, offset: 0, length: bytes.length }]
-
-      this.setStatus("Requesting upload URL…")
-      const begin = await this.postJSON(this.beginUrlValue, {
-        name: file.name, size: bytes.length, manifest,
-        // Optional: upload into a specific folder (the project's Projects/<slug>). Absent/empty
-        // (the Files page) → null → the library root, unchanged.
-        parent_node_id: this.parentNodeIdValue || null
+      this.setStatus(`Uploading ${file.name}…`)
+      const nodeId = await uploadChunkFile(file, {
+        beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: this.parentNodeIdValue
       })
-
-      // Upload only the chunks the server says are missing (dedup).
-      const putUrls = begin.put_urls || {}
-      for (const [h, url] of Object.entries(putUrls)) {
-        this.setStatus("Uploading bytes…")
-        const res = await fetch(url, { method: "PUT", body: bytes })
-        if (!res.ok) throw new Error(`chunk PUT failed (${res.status})`)
-      }
-
-      this.setStatus("Finalizing…")
-      await this.postJSON(this.finalizeUrlValue, { commit_id: begin.commit_id })
-
-      // Optional: attach the just-uploaded node to a project/entry, then go there. When no
-      // attachUrl is set (the Files page), behavior is unchanged: reload in place.
       if (this.hasAttachUrlValue && this.attachUrlValue) {
         this.setStatus("Attaching…")
-        await this.postJSON(this.attachUrlValue, { node_id: begin.node_id })
+        await this.postAttach(nodeId)
       }
-
       this.setStatus("Done.")
-      if (this.hasRedirectUrlValue && this.redirectUrlValue) {
-        window.location.href = this.redirectUrlValue
-      } else {
-        window.location.reload()
-      }
+      if (this.hasRedirectUrlValue && this.redirectUrlValue) window.location.href = this.redirectUrlValue
+      else window.location.reload()
     } catch (e) {
-      this.setStatus(`Upload failed: ${e.message}`)
-      console.error(e)
+      this.setStatus(`Upload failed: ${e.message}`); console.error(e)
     } finally {
       this.inputTarget.value = ""
     }
   }
 
-  async sha256(bytes) {
-    const digest = await crypto.subtle.digest("SHA-256", bytes)
-    return Array.from(new Uint8Array(digest))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")
-  }
-
-  async postJSON(url, body) {
-    const res = await fetch(url, {
+  async postAttach(nodeId) {
+    // "Accept": "application/json" is load-bearing, not decoration: Projects::AttachmentsController
+    // and Projects::EntryPhotosController both `respond_to { |f| f.html {...}; f.json {...} }` with
+    // html registered FIRST, so a request with no Accept header (fetch's default) gets a 302 HTML
+    // redirect instead of JSON. fetch() follows that redirect by default, silently GETting the
+    // target page — which reads (and thereby discards) the flash notice the redirect just set, so
+    // the real navigation below shows no "Attached ..." message. The res.ok check matches the
+    // pre-refactor postJSON behavior: a failed attach (e.g. 404 not_found) must throw here, or this
+    // method would swallow it and the caller would report "Done." for an attach that never happened.
+    const res = await fetch(this.attachUrlValue, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "X-CSRF-Token": this.csrfToken()
+        "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || ""
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify({ node_id: nodeId })
     })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `request failed (${res.status})`)
-    return data
+    if (!res.ok) throw new Error(`attach failed (${res.status})`)
   }
 
-  csrfToken() {
-    return document.querySelector('meta[name="csrf-token"]')?.content || ""
-  }
-
-  setStatus(text) {
-    if (this.hasStatusTarget) this.statusTarget.textContent = text
-  }
+  setStatus(text) { if (this.hasStatusTarget) this.statusTarget.textContent = text }
 }

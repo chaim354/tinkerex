@@ -1,3 +1,30 @@
 <% content_for :title, "Import model — Tinkerex" %>
 <div class="page-head"><h1>Import model</h1></div>
-<p class="muted">Import wiring is added in Task 6.</p>
+
+<section class="import-form project-form"
+         data-controller="importer"
+         data-importer-create-url-value="<%= models_path(format: :json) %>"
+         data-importer-begin-url-value="<%= begin_upload_files_path %>"
+         data-importer-finalize-url-value="<%= finalize_upload_files_path %>"
+         data-importer-port-create-url-value="<%= files_path %>"
+         data-importer-port-writable-value="<%= capabilities.port_writable? %>">
+  <label class="field">
+    <span>Select the Printables .zip (drop extra image / PDF too if they weren't bundled)</span>
+    <input type="file" multiple data-importer-target="input" data-action="importer#choose">
+  </label>
+  <p class="muted" data-importer-target="summary">No files selected.</p>
+
+  <label class="field"><span>Title</span>
+    <input type="text" data-importer-target="title" placeholder="Auto-filled from the zip name">
+  </label>
+  <label class="field"><span>Source URL (optional)</span>
+    <input type="url" data-importer-target="sourceUrl" placeholder="https://printables.com/model/…">
+  </label>
+
+  <div class="form-actions">
+    <button class="btn primary" data-importer-target="submit" data-action="importer#submit" disabled>Create model</button>
+    <%= link_to "Cancel", models_path, class: "linkbtn" %>
+    <span class="muted" data-importer-target="status"></span>
+  </div>
+  <p class="muted">Designer, license &amp; tags are edited on the model page after import.</p>
+</section>

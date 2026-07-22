@@ -67,6 +67,25 @@ module Web
       assert @user.nodes.find_by(storage_path: "bracket.stl"), "and the node must be indexed"
     end
 
+    # THE CRITICAL BUG THIS PINS: the importer (app/javascript/controllers/importer_controller.js,
+    # via lib/chunk_upload's uploadPortFile) asks for JSON so it can read the new node_id back and
+    # attach it to the model in the SAME flow. #create used to `redirect_to` unconditionally,
+    # ignoring Accept -- fetch() follows that redirect to #show, which has no JSON responder, so a
+    # request carrying Accept: application/json 406'd there on EVERY port upload. This asserts the
+    # fix: the response the client actually needs comes back directly, with no redirect to follow.
+    test "the direct upload answers JSON when asked, so the importer can read the node_id back" do
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("solid bracket"), "application/octet-stream",
+                                           original_filename: "bracket.stl")
+      }, headers: { "Accept" => "application/json" }
+
+      assert_response :created
+      body = JSON.parse(response.body)
+      assert body["node_id"].present?, "the JSON body must carry the new node_id"
+      assert_equal "bracket.stl", @user.nodes.find_by!(node_id: body["node_id"]).name
+      assert_equal "solid bracket", @fake.objects["#{PREFIX}/bracket.stl"].body
+    end
+
     test "a renderable s3 upload eagerly enqueues a thumbnail" do
       assert_enqueued_with(job: Maker::GeneratePreviewJob) do
         upload!("bracket.stl", "solid bracket")
