@@ -1,0 +1,41 @@
+<%#
+  Reusable folder/file chooser trigger. Renders a button (opens the modal built by the
+  `filechooser` Stimulus controller) plus a hidden input carrying the chosen node_id for form
+  submit. The controller also fires a `filechooser:choose` DOM event for JS consumers.
+
+  Locals:
+    name:         hidden input name (e.g. "parent_node_id")   [required]
+    children_url: GET endpoint for a folder's children        [required]
+    create_url:   POST endpoint to create a folder            [required]
+    mode:         "folder" (default) or "file"
+    value:        initial node_id (default nil)
+    label:        initial button text (default root_label)
+    root_label:   text for the library root (default "/ (library root)")
+%>
+<%
+  name         = local_assigns.fetch(:name)
+  children_url = local_assigns.fetch(:children_url)
+  create_url   = local_assigns.fetch(:create_url)
+  mode         = local_assigns.fetch(:mode, "folder")
+  value        = local_assigns.fetch(:value, nil)
+  root_label   = local_assigns.fetch(:root_label, "/ (library root)")
+  label        = local_assigns.fetch(:label, root_label)
+%>
+<%= tag.span class: "folder-field",
+      data: {
+        controller: "filechooser",
+        filechooser_mode_value: mode,
+        filechooser_children_url_value: children_url,
+        filechooser_create_url_value: create_url,
+        filechooser_root_label_value: root_label,
+        filechooser_value_value: value,
+        filechooser_label_value: label
+      } do %>
+  <button type="button" class="folder-field-btn" data-action="filechooser#open"
+          data-filechooser-target="button">
+    <span aria-hidden="true">📁</span>
+    <span class="ff-path"><%= label %></span>
+    <span aria-hidden="true">▾</span>
+  </button>
+  <%= hidden_field_tag name, value, data: { filechooser_target: "input" } %>
+<% end %>
