@@ -1,0 +1,12 @@
+<%= link_to model_path(model), class: "project-card model-card" do %>
+  <% if model.cover_node_id %>
+    <span class="thumb file-cell" data-thumbs-target="cell"
+          data-node-id="<%= model.cover_node_id %>" data-ext="">
+      <%= render "files/thumb", thumb:, ext_label: "" %>
+    </span>
+  <% else %>
+    <span class="thumb project-thumb-empty" aria-hidden="true">🧊</span>
+  <% end %>
+  <span class="project-name model-name"><%= model.title %></span>
+  <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status.tr("_", " ") %></span>
+<% end %>

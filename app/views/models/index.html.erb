@@ -1,0 +1,35 @@
+<% content_for :title, "Models — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Models</h1>
+  <%= link_to "Import model", new_model_path, class: "btn primary" %>
+</div>
+
+<form class="models-toolbar" method="get" action="<%= models_path %>">
+  <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…">
+  <% [["", "All"], %w[want_to_print Wanted], %w[printed Printed], %w[failed Failed]].each do |val, label| %>
+    <%= link_to label, models_path(status: val.presence, q: params[:q]),
+                class: "filter#{' active' if @status.to_s == val}" %>
+  <% end %>
+  <% if @all_tags.any? %>
+    <select name="tag" onchange="this.form.requestSubmit()">
+      <option value="">All tags</option>
+      <% @all_tags.each do |t| %><option value="<%= t %>" <%= "selected" if params[:tag] == t %>><%= t %></option><% end %>
+    </select>
+  <% end %>
+  <select name="sort" onchange="this.form.requestSubmit()">
+    <% [%w[recent Recent], %w[title Title], %w[status Status]].each do |val, label| %>
+      <option value="<%= val %>" <%= "selected" if params[:sort] == val %>><%= label %></option>
+    <% end %>
+  </select>
+</form>
+
+<% if @models.empty? %>
+  <p class="models-empty muted">No models yet. Import your first one.</p>
+<% else %>
+  <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% @models.each do |model| %>
+      <%= render "card", model:, thumb: @covers.thumb(model.cover_node_id) %>
+    <% end %>
+  </div>
+<% end %>
