@@ -22,6 +22,22 @@ module Maker
     scope :by_status, ->(s) { where(status: s) if s.present? }
     scope :active, -> { where(status: "active") }
 
+    # Friendly, user-scoped URLs (/projects/desk-lamp). Slugs are unique per user, so a
+    # current_user-scoped find_by(slug:) is unambiguous. Does NOT change JSON `id` (the v1 API
+    # serializes explicit fields / #id), only URL generation.
+    def to_param = slug
+
+    # The node_id whose thumbnail represents this project on the list: first image, else first
+    # model, else the first attachment by position, else nil. Reads the loaded/queried
+    # file_attachments; callers that render many cards should include(:file_attachments).
+    def cover_node_id
+      atts = file_attachments.sort_by { |a| [ a.position, a.id ] }
+      pick = atts.find { |a| a.role == "image" } ||
+             atts.find { |a| a.role == "model" } ||
+             atts.first
+      pick&.node_id
+    end
+
     def archive!
       update!(status: "archived", archived_at: Time.current)
     end

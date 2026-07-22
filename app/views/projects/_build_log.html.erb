@@ -1,0 +1,20 @@
+<section class="panel build-log-panel">
+  <h2>Build log</h2>
+
+  <%= form_with url: project_build_log_entries_path(@project), method: :post, class: "log-form" do |f| %>
+    <%= f.fields_for :build_log_entry do |e| %>
+      <%= e.text_area :body, rows: 2, placeholder: "What did you do?", required: true %>
+      <%= f.submit "Add entry", class: "btn small" %>
+    <% end %>
+  <% end %>
+
+  <% if @entries.empty? %>
+    <p class="muted">No entries yet.</p>
+  <% else %>
+    <ol class="log-timeline">
+      <% @entries.each do |entry| %>
+        <%= render "log_entry", entry: %>
+      <% end %>
+    </ol>
+  <% end %>
+</section>

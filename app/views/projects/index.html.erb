@@ -1,0 +1,27 @@
+<% content_for :title, "Projects — Tinkerex" %>
+
+<div class="page-head">
+  <h1>Projects</h1>
+  <%= link_to "New project", new_project_path, class: "btn primary" %>
+</div>
+
+<% if @by_status.values.flatten.empty? && @archived_count.zero? %>
+  <p class="projects-empty muted">No projects yet. Create your first build.</p>
+<% else %>
+  <% ProjectsController::LISTED_STATUSES.each do |status| %>
+    <% projects = @by_status[status] %>
+    <% next if projects.blank? %>
+    <section class="project-group">
+      <h2 class="group-head"><%= status.capitalize %> <span class="muted">(<%= projects.size %>)</span></h2>
+      <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <% projects.each do |project| %>
+          <%= render "card", project:, thumb: @covers.thumb(project.cover_node_id) %>
+        <% end %>
+      </div>
+    </section>
+  <% end %>
+
+  <% if @archived_count.positive? %>
+    <p class="muted archived-note"><%= @archived_count %> archived project<%= "s" unless @archived_count == 1 %>.</p>
+  <% end %>
+<% end %>

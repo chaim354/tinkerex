@@ -1,0 +1,26 @@
+<li class="log-entry">
+  <div class="entry-head">
+    <time class="entry-time muted"><%= entry.logged_at.strftime("%Y-%m-%d %H:%M") %></time>
+    <%= button_to "Delete", build_log_entry_path(entry), method: :delete, class: "linkbtn danger",
+                  form: { data: { turbo_confirm: "Delete this entry?" } } %>
+  </div>
+  <p class="entry-body"><%= entry.body %></p>
+
+  <% photos = entry.file_attachments.select { |a| @entry_nodes.key?(a.node_id) } %>
+  <% if photos.any? %>
+    <div class="entry-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% photos.each do |att| %>
+        <span class="entry-photo file-cell" data-thumbs-target="cell"
+              data-node-id="<%= att.node_id %>" data-ext="IMG">
+          <%= render "files/thumb", thumb: @entry_thumbs.thumb(att.node_id), ext_label: "IMG" %>
+        </span>
+      <% end %>
+    </div>
+  <% end %>
+
+  <div class="photo-attach">
+    <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id), class: "linkbtn muted" %>
+    <%= render "upload_control", upload_url: build_log_entry_uploads_path(entry),
+               attach_url: entry_photos_path(entry), redirect_url: project_path(@project) %>
+  </div>
+</li>

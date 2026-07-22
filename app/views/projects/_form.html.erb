@@ -1,0 +1,28 @@
+<%= form_with model: project, url: (project.persisted? ? project_path(project) : projects_path),
+              method: (project.persisted? ? :patch : :post), class: "project-form" do |f| %>
+  <% if project.errors.any? %>
+    <div class="form-errors flash-alert">
+      <%= project.errors.full_messages.to_sentence %>
+    </div>
+  <% end %>
+
+  <label class="field">
+    <span>Name</span>
+    <%= f.text_field :name, required: true, autofocus: true %>
+  </label>
+
+  <label class="field">
+    <span>Status</span>
+    <%= f.select :status, Maker::Project::STATUSES.map { |s| [ s.capitalize, s ] } %>
+  </label>
+
+  <label class="field">
+    <span>Description</span>
+    <%= f.text_area :description, rows: 5, placeholder: "What are you building?" %>
+  </label>
+
+  <div class="form-actions">
+    <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>
+    <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path), class: "linkbtn" %>
+  </div>
+<% end %>

@@ -14,7 +14,7 @@ import { Controller } from "@hotwired/stimulus"
 //      immutable version + changelog entry. Reload to show the new file.
 export default class extends Controller {
   static targets = ["input", "status"]
-  static values  = { beginUrl: String, finalizeUrl: String }
+  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String }
 
   async upload() {
     const file = this.inputTarget.files[0]
@@ -44,8 +44,19 @@ export default class extends Controller {
       this.setStatus("Finalizing…")
       await this.postJSON(this.finalizeUrlValue, { commit_id: begin.commit_id })
 
+      // Optional: attach the just-uploaded node to a project/entry, then go there. When no
+      // attachUrl is set (the Files page), behavior is unchanged: reload in place.
+      if (this.hasAttachUrlValue && this.attachUrlValue) {
+        this.setStatus("Attaching…")
+        await this.postJSON(this.attachUrlValue, { node_id: begin.node_id })
+      }
+
       this.setStatus("Done.")
-      window.location.reload()
+      if (this.hasRedirectUrlValue && this.redirectUrlValue) {
+        window.location.href = this.redirectUrlValue
+      } else {
+        window.location.reload()
+      }
     } catch (e) {
       this.setStatus(`Upload failed: ${e.message}`)
       console.error(e)

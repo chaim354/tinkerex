@@ -42,6 +42,29 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Maker: Projects (server-rendered web UI, session auth) ---
+  # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
+  resources :projects do
+    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
+    resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
+    resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
+    # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
+    resources :uploads, only: :create, module: :projects
+  end
+
+  # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
+  resources :build_log_entries, only: [], module: :projects do
+    resources :uploads, only: :create
+  end
+
+  # A build-log entry's inline photos (attach an existing image node to the entry). Explicit
+  # routes so the helpers read entry_photos_path / entry_photo_path (a nested `resources :photos`
+  # would generate build_log_entry_photos_path, which the controller/views/tests do NOT use).
+  post   "build_log_entries/:build_log_entry_id/photos",
+         to: "projects/entry_photos#create", as: :entry_photos
+  delete "entry_photos/:id", to: "projects/entry_photos#destroy", as: :entry_photo
+
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do
