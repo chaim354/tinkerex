@@ -57,17 +57,21 @@ module Web
       assert_select ".model-name", text: "Printed Dragon", count: 0
     end
 
-    test "show renders title, status pill, metadata, and grouped files" do
+    test "show renders title, status pill, metadata, and the file tree (folders preserved)" do
       user = sign_in
       m = user.maker_models.create!(title: "Dragon", designer: "cults", license: "CC BY",
                                     source_url: "https://printables.com/model/1", print_status: "printed")
-      user.nodes.create!(node_id: "mdl1", name: "body.stl", kind: "file")
+      # A realistic imported structure: Models/dragon/parts/body.stl.
+      folder = m.ensure_library_folder!(user)
+      sub = user.nodes.create!(node_id: "sub1", name: "parts", kind: "dir", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "mdl1", name: "body.stl", kind: "file", parent_node_id: sub.node_id)
       m.file_attachments.create!(user:, node_id: "mdl1", role: "model")
       get model_path(m)
       assert_response :success
       assert_select "h1", text: /Dragon/
       assert_select ".badge.mstatus-printed"
-      assert_select ".file-role-group", text: /body\.stl/
+      assert_select ".file-tree-box .tree-folder", text: "parts"          # folder structure shown
+      assert_select ".file-tree-box .tree-fname", text: "body.stl"        # file under it
       assert_select "a[href=?]", "https://printables.com/model/1"
     end
 

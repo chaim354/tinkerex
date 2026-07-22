@@ -21,18 +21,52 @@
   </div>
 </div>
 
-<div class="model-detail">
-  <div class="cover-col">
-    <div class="model-cover">
-      <% if @model.cover_node_id %>
-        <span class="thumb file-cell" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
+<div class="model-layout">
+  <%# MAIN column: the cover image, then a gallery, then the instructions PDF UNDER the image
+      (Printables-style), then notes. %>
+  <div class="model-main">
+    <div class="model-hero">
+      <% if @cover_att&.role == "image" %>
+        <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
+      <% elsif @model.cover_node_id %>
+        <span class="thumb file-cell model-hero-thumb"
+              data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
               data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
           <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "" %>
         </span>
       <% else %>
-        <span class="thumb project-thumb-empty" aria-hidden="true">🧊</span>
+        <span class="model-hero-empty" aria-hidden="true">🧊</span>
       <% end %>
     </div>
+
+    <% images = Array(@by_role["image"]) %>
+    <% if images.size > 1 %>
+      <div class="image-gallery">
+        <% images.each do |a| %>
+          <%= link_to file_path(a.node_id) do %>
+            <%= image_tag blob_file_path(a.node_id), alt: @nodes[a.node_id]&.name, loading: "lazy" %>
+          <% end %>
+        <% end %>
+      </div>
+    <% end %>
+
+    <% instructions = Array(@by_role["instructions"]) %>
+    <% if instructions.present? %>
+      <section class="model-instructions">
+        <h2>Instructions</h2>
+        <% instructions.each do |a| %>
+          <iframe class="preview-pdf" src="<%= blob_file_path(a.node_id) %>" title="<%= @nodes[a.node_id]&.name %>"></iframe>
+        <% end %>
+      </section>
+    <% end %>
+
+    <% if @model.notes.present? %>
+      <section class="model-notes"><h2>Notes</h2><%= render_note(@model.notes) %></section>
+    <% end %>
+  </div>
+
+  <%# SIDE column: metadata, the files as a scrollable folder tree, then the print log. %>
+  <aside class="model-side">
     <dl class="meta">
       <% if @model.designer.present? %><dt>Designer</dt><dd><%= @model.designer %></dd><% end %>
       <% if @model.license.present? %><dt>License</dt><dd><%= @model.license %></dd><% end %>
@@ -49,33 +83,16 @@
       <% if @model.tags.any? %><dt>Tags</dt><dd><%= @model.tag_list %></dd><% end %>
       <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
     </dl>
-    <% if @model.notes.present? %><div class="model-notes"><%= render_note(@model.notes) %></div><% end %>
-  </div>
 
-  <div class="files-col">
-    <% { "model" => "Model files", "instructions" => "Instructions", "image" => "Images" }.each do |role, heading| %>
-      <% atts = @by_role[role] %>
-      <% next if atts.blank? %>
-      <section class="file-role-group">
-        <h2><%= heading %> <span class="muted">(<%= atts.size %>)</span></h2>
-        <% if role == "instructions" %>
-          <% atts.each do |a| %>
-            <iframe class="preview-pdf" src="<%= blob_file_path(a.node_id) %>" title="<%= @nodes[a.node_id]&.name %>"></iframe>
-          <% end %>
-        <% elsif role == "image" %>
-          <div class="image-gallery">
-            <% atts.each do |a| %><%= image_tag blob_file_path(a.node_id), alt: @nodes[a.node_id]&.name %><% end %>
-          </div>
-        <% else %>
-          <ul class="file-list">
-            <% atts.each do |a| %>
-              <li><%= link_to (@nodes[a.node_id]&.name || a.node_id), file_path(a.node_id) %></li>
-            <% end %>
-          </ul>
-        <% end %>
-      </section>
-    <% end %>
+    <section class="model-files">
+      <h2>Files <span class="muted">(<%= @file_count %>)</span></h2>
+      <% if @file_tree.present? %>
+        <div class="file-tree-box"><%= render "file_tree", nodes: @file_tree %></div>
+      <% else %>
+        <p class="muted">No files yet.</p>
+      <% end %>
+    </section>
 
     <%= render "print_log" %>
-  </div>
+  </aside>
 </div>

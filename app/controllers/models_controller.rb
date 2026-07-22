@@ -31,7 +31,12 @@ class ModelsController < ApplicationController
     att_ids = @attachments.map(&:node_id)
     @nodes = current_user.nodes.present.where(node_id: att_ids).index_by(&:node_id)
     @by_role = @attachments.group_by(&:role)
+    @cover_att = @attachments.find { |a| a.node_id == @model.cover_node_id }
     @covers = Maker::Previews::ThumbnailMap.for(current_user, [ @model.cover_node_id ].compact)
+    # The model's files as a folder TREE (preserves the imported zip's structure) for the detail
+    # page, instead of a flat role-grouped list. Empty until a folder exists.
+    @file_tree  = @model.folder_node_id ? build_file_tree(@model.folder_node_id) : []
+    @file_count = count_files(@file_tree)
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @printers = current_user.maker_print_runs.where.not(printer: [ nil, "" ]).distinct.pluck(:printer)
     @materials = current_user.maker_print_runs.where.not(material: [ nil, "" ]).distinct.pluck(:material)
@@ -127,5 +132,29 @@ class ModelsController < ApplicationController
       map[rel] = Maker::LibraryFolder.ensure_path!(current_user, [ "Models", model.slug, *segs ]).node_id
     end
     map
+  end
+
+  # Fetch the whole present subtree under a folder node (BFS — one query per depth level, not per
+  # node), then nest into [{dir:, children:[...]}, {file:}] with dirs first, alphabetical. Scoped
+  # to current_user's nodes, so it can never reach another user's tree.
+  def build_file_tree(root_node_id)
+    collected = []
+    frontier  = [ root_node_id ]
+    until frontier.empty?
+      kids = current_user.nodes.present.where(parent_node_id: frontier).to_a
+      collected.concat(kids)
+      frontier = kids.reject(&:file?).map(&:node_id)
+    end
+    nest_tree(root_node_id, collected.group_by(&:parent_node_id))
+  end
+
+  def nest_tree(parent_node_id, by_parent)
+    (by_parent[parent_node_id] || [])
+      .sort_by { |n| [ n.file? ? 1 : 0, n.name.to_s.downcase ] }
+      .map { |n| n.file? ? { file: n } : { dir: n, children: nest_tree(n.node_id, by_parent) } }
+  end
+
+  def count_files(tree)
+    tree.sum { |item| item[:file] ? 1 : count_files(item[:children]) }
   end
 end
