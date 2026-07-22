@@ -65,6 +65,8 @@ class ModelsController < ApplicationController
     }, status: :created
   rescue ActiveRecord::RecordInvalid => e
     render json: { error: e.record.errors.full_messages.to_sentence }, status: :unprocessable_entity
+  rescue ActiveRecord::RecordNotUnique
+    render json: { error: "That name was just taken — try again." }, status: :unprocessable_entity
   end
 
   def edit; end

@@ -30,32 +30,41 @@ export default class extends Controller {
   created = null
 
   async choose() {
-    this.files = []
-    for (const f of this.inputTarget.files) {
-      if (f.name.toLowerCase().endsWith(".zip")) {
-        const zip = await JSZip.loadAsync(f)
-        for (const entry of Object.values(zip.files)) {
-          if (entry.dir) continue
-          const blob = await entry.async("blob")
-          const parts = entry.name.split("/")
-          const name = parts.pop()
-          if (!name || name.startsWith(".")) continue
-          this.files.push({ name, dir: parts.join("/"), blob: new File([blob], name), role: roleFor(name) })
+    try {
+      this.files = []
+      for (const f of this.inputTarget.files) {
+        if (f.name.toLowerCase().endsWith(".zip")) {
+          const zip = await JSZip.loadAsync(f)
+          for (const entry of Object.values(zip.files)) {
+            if (entry.dir) continue
+            const blob = await entry.async("blob")
+            const parts = entry.name.split("/")
+            const name = parts.pop()
+            if (!name || name.startsWith(".")) continue
+            this.files.push({ name, dir: parts.join("/"), blob: new File([blob], name), role: roleFor(name) })
+          }
+        } else {
+          this.files.push({ name: f.name, dir: "", blob: f, role: roleFor(f.name) })
         }
-      } else {
-        this.files.push({ name: f.name, dir: "", blob: f, role: roleFor(f.name) })
       }
+      if (!this.titleTarget.value && this.inputTarget.files[0]) {
+        this.titleTarget.value = this.inputTarget.files[0].name.replace(/\.zip$/i, "").replace(/[_-]+/g, " ").trim()
+      }
+      this.renderSummary()
+    } catch (e) {
+      console.error(e)
+      this.files = []
+      this.renderSummary()
+      this.setStatus(`Couldn't read that file: ${e.message}`)
     }
-    if (!this.titleTarget.value && this.inputTarget.files[0]) {
-      this.titleTarget.value = this.inputTarget.files[0].name.replace(/\.zip$/i, "").replace(/[_-]+/g, " ").trim()
-    }
-    this.renderSummary()
   }
 
   renderSummary() {
     const n = (r) => this.files.filter((f) => f.role === r).length
+    const other = this.files.length - n("model") - n("image") - n("instructions")
     this.summaryTarget.textContent =
-      `${n("model")} model files · ${n("image")} images · ${n("instructions")} PDF`
+      `${n("model")} model files · ${n("image")} images · ${n("instructions")} PDF` +
+      (other > 0 ? ` · ${other} other` : "")
     this.submitTarget.disabled = this.files.length === 0
   }
 

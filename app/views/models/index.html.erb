@@ -8,7 +8,7 @@
 <form class="models-toolbar" method="get" action="<%= models_path %>">
   <input type="search" name="q" value="<%= params[:q] %>" placeholder="Search models…">
   <% [["", "All"], %w[want_to_print Wanted], %w[printed Printed], %w[failed Failed]].each do |val, label| %>
-    <%= link_to label, models_path(status: val.presence, q: params[:q]),
+    <%= link_to label, models_path(status: val.presence, q: params[:q], tag: params[:tag], sort: params[:sort]),
                 class: "filter#{' active' if @status.to_s == val}" %>
   <% end %>
   <% if @all_tags.any? %>

@@ -68,7 +68,7 @@ module Maker
     def ensure_slug
       base = (slug.presence || title).to_s.strip.downcase
                .gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
-      return if base.blank?
+      base = "model" if base.blank?
       candidate = base
       n = 2
       while user && user.maker_models.where.not(id: id).exists?(slug: candidate)

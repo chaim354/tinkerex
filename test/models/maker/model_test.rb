@@ -37,6 +37,13 @@ module Maker
       assert_equal "my-custom-slug", m.slug
     end
 
+    test "a symbol-only title still gets a usable slug" do
+      m = @user.maker_models.create!(title: "★★★")
+      assert_equal "model", m.slug
+      m2 = @user.maker_models.create!(title: "©®™")
+      assert_equal "model-2", m2.slug
+    end
+
     test "print_status defaults to want_to_print and is validated" do
       m = @user.maker_models.create!(title: "x")
       assert_equal "want_to_print", m.print_status
