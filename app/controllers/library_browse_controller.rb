@@ -19,6 +19,25 @@ class LibraryBrowseController < ApplicationController
     render json: { parent: parent&.node_id, crumbs: crumbs(parent), entries: entries }
   end
 
+  # POST /library/folders {parent_node_id, name} -> create ONE child dir, return its node JSON.
+  # Powers the chooser's "New Folder". Goes through Maker::LibraryFolder so the cross-backend mkdir
+  # branch stays in its one sanctioned place (§10). Duplicate/blank/reserved names -> 422 the modal
+  # shows inline. `create_child!` is find-or-create, so the duplicate guard runs BEFORE it.
+  def create_folder
+    name   = params[:name].to_s.strip
+    parent = resolve_dir(params[:parent_node_id])
+    return folder_error("Folder name can't be blank.")  if name.blank?
+    return folder_error("A folder name can't contain “/”.") if name.include?("/")
+    if current_user.nodes.present.exists?(parent_node_id: parent&.node_id, name:, kind: "dir")
+      return folder_error("A folder named “#{name}” already exists here.")
+    end
+
+    node = Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent&.node_id, name:)
+    render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created
+  rescue FileLayer::NotFound
+    folder_error("That folder name isn't allowed.") # a share/s3 backend rejected a reserved name
+  end
+
   private
 
   def resolve_dir(id)
@@ -38,5 +57,9 @@ class LibraryBrowseController < ApplicationController
              current_user.nodes.present.find_by(node_id: node.parent_node_id, kind: "dir")
     end
     out
+  end
+
+  def folder_error(message)
+    render json: { error: message }, status: :unprocessable_entity
   end
 end

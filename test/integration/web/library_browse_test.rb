@@ -81,5 +81,50 @@ module Web
       get library_children_path
       assert_redirected_to new_user_session_path
     end
+
+    # create_folder goes through Maker::LibraryFolder, which on share/s3 calls the real port mkdir
+    # (a real Aws::S3::Client against a fake bucket on the s3 CI leg; a shared tmpdir on share). The
+    # controller logic here is backend-agnostic and the port's cross-backend mkdir is covered by
+    # Maker::LibraryFolderTest, so these pin chunk — the repo's idiom for a port-touching test.
+    test "create_folder makes a dir under a parent and returns its node" do
+      pin_file_layer_backend("chunk")
+      assert_difference -> { @user.nodes.present.where(kind: "dir").count }, 1 do
+        post library_folders_path, params: { parent_node_id: @projects, name: "exports" }
+      end
+      assert_response :created
+      created = @user.nodes.present.find_by(name: "exports", parent_node_id: @projects, kind: "dir")
+      assert_equal created.node_id, json["node_id"]
+      assert_equal "exports", json["name"]
+      assert_equal "dir", json["kind"]
+    end
+
+    test "create_folder at the root uses a nil parent" do
+      pin_file_layer_backend("chunk")
+      post library_folders_path, params: { name: "Top" }
+      assert_response :created
+      assert @user.nodes.present.exists?(name: "Top", parent_node_id: nil, kind: "dir")
+    end
+
+    test "create_folder rejects a duplicate name in the same folder" do
+      pin_file_layer_backend("chunk")
+      assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
+        post library_folders_path, params: { parent_node_id: @projects, name: "v2" } # already exists
+      end
+      assert_response :unprocessable_entity
+      assert_match(/already exists/i, json["error"])
+    end
+
+    test "create_folder rejects a blank name" do
+      pin_file_layer_backend("chunk")
+      post library_folders_path, params: { parent_node_id: @projects, name: "  " }
+      assert_response :unprocessable_entity
+      assert_match(/blank/i, json["error"])
+    end
+
+    test "create_folder rejects a name containing a slash" do
+      pin_file_layer_backend("chunk")
+      post library_folders_path, params: { name: "a/b" }
+      assert_response :unprocessable_entity
+    end
   end
 end
