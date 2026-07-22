@@ -14,8 +14,13 @@
     <% @results.each do |node| %>
       <div class="picker-result">
         <span class="picker-name"><%= node.name %></span>
-        <%= button_to "Attach", project_attachments_path(@project), params: { node_id: node.node_id },
-                      class: "btn small" %>
+        <% if params[:entry_id].present? %>
+          <%= button_to "Attach", entry_photos_path(params[:entry_id]),
+                        params: { node_id: node.node_id }, class: "btn small" %>
+        <% else %>
+          <%= button_to "Attach", project_attachments_path(@project),
+                        params: { node_id: node.node_id }, class: "btn small" %>
+        <% end %>
       </div>
     <% end %>
   </div>

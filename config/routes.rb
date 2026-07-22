@@ -50,6 +50,13 @@ Rails.application.routes.draw do
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
   end
 
+  # A build-log entry's inline photos (attach an existing image node to the entry). Explicit
+  # routes so the helpers read entry_photos_path / entry_photo_path (a nested `resources :photos`
+  # would generate build_log_entry_photos_path, which the controller/views/tests do NOT use).
+  post   "build_log_entries/:build_log_entry_id/photos",
+         to: "projects/entry_photos#create", as: :entry_photos
+  delete "entry_photos/:id", to: "projects/entry_photos#destroy", as: :entry_photo
+
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do

@@ -5,4 +5,20 @@
                   form: { data: { turbo_confirm: "Delete this entry?" } } %>
   </div>
   <p class="entry-body"><%= entry.body %></p>
+
+  <% photos = entry.file_attachments.select { |a| @entry_nodes.key?(a.node_id) } %>
+  <% if photos.any? %>
+    <div class="entry-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% photos.each do |att| %>
+        <span class="entry-photo file-cell" data-thumbs-target="cell"
+              data-node-id="<%= att.node_id %>" data-ext="IMG">
+          <%= render "files/thumb", thumb: @entry_thumbs.thumb(att.node_id), ext_label: "IMG" %>
+        </span>
+      <% end %>
+    </div>
+  <% end %>
+
+  <p class="photo-attach">
+    <%= link_to "Add existing photo", new_project_attachment_path(@project, entry_id: entry.id), class: "linkbtn muted" %>
+  </p>
 </li>

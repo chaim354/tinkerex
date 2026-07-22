@@ -24,7 +24,10 @@ class ProjectsController < ApplicationController
     att_ids = @attachments.map(&:node_id)
     @att_nodes = current_user.nodes.present.where(node_id: att_ids).index_by(&:node_id)
     @thumbs = Maker::Previews::ThumbnailMap.for(current_user, att_ids)
-    @entries = @project.build_log_entries.reorder(logged_at: :desc).to_a
+    @entries = @project.build_log_entries.includes(:file_attachments).reorder(logged_at: :desc).to_a
+    entry_photo_ids = @entries.flat_map { |e| e.file_attachments.map(&:node_id) }
+    @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
+    @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
   end
 

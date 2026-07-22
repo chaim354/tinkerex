@@ -49,5 +49,33 @@ module Web
       bodies = css_select(".log-entry .entry-body").map(&:text).map(&:strip)
       assert_equal [ "second", "first" ], bodies
     end
+
+    # --- inline photos (attach existing) ---------------------------------------
+
+    test "attach an existing image to a log entry renders it inline" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      entry = project.build_log_entries.create!(user:, body: "glued it")
+      user.nodes.create!(node_id: "img-1", name: "clamp.png", kind: "file")
+
+      assert_difference "entry.file_attachments.count", 1 do
+        post entry_photos_path(entry), params: { node_id: "img-1" }
+      end
+      assert_equal "image", entry.file_attachments.last.role
+
+      get project_path(project)
+      assert_select ".log-entry .entry-photo[data-node-id=?]", "img-1"
+    end
+
+    test "attaching a photo refuses a node the user does not own" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      entry = project.build_log_entries.create!(user:, body: "x")
+      other = User.create!(email: "z2@example.com", password: PASSWORD, confirmed_at: Time.current)
+      other.nodes.create!(node_id: "theirs", name: "p.png", kind: "file")
+      assert_no_difference "Maker::FileAttachment.count" do
+        post entry_photos_path(entry), params: { node_id: "theirs" }
+      end
+    end
   end
 end
