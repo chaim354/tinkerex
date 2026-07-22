@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_22_135734) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_164259) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -255,6 +255,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_135734) do
     t.integer "user_id", null: false
     t.index ["user_id", "name"], name: "index_maker_locations_on_user_id_and_name"
     t.index ["user_id", "parent_id"], name: "index_maker_locations_on_user_id_and_parent_id"
+  end
+
+  create_table "maker_models", force: :cascade do |t|
+    t.string "cover_node_id"
+    t.datetime "created_at", null: false
+    t.string "designer"
+    t.string "folder_node_id"
+    t.string "license"
+    t.text "notes"
+    t.string "print_status", default: "want_to_print", null: false
+    t.string "slug", null: false
+    t.string "source_url"
+    t.string "title", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "print_status"], name: "index_maker_models_on_user_id_and_print_status"
+    t.index ["user_id", "slug"], name: "index_maker_models_on_user_id_and_slug", unique: true
   end
 
   create_table "maker_notes", force: :cascade do |t|

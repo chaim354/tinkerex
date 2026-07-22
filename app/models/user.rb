@@ -25,6 +25,8 @@ class User < ApplicationRecord
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy
   has_many :maker_notes, class_name: "Maker::Note", dependent: :destroy
+  has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
+  has_many :maker_print_runs, through: :maker_models, source: :print_runs
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
   # Human-identity auth via Devise (CLAUDE.md §8; replaces the hand-rolled password +
