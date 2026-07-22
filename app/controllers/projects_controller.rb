@@ -42,6 +42,7 @@ class ProjectsController < ApplicationController
   def create
     @project = current_user.maker_projects.new(project_params)
     if @project.save
+      ensure_project_folder(@project)
       redirect_to project_path(@project), notice: "Project created."
     else
       render :new, status: :unprocessable_entity
@@ -69,6 +70,15 @@ class ProjectsController < ApplicationController
 
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
+  end
+
+  # Best-effort: a project MUST save even if the library backend can't make its folder right now
+  # (unmounted NAS, bucket blip). The folder is re-ensured on the next upload. Never fail creation
+  # on a folder hiccup — hence the broad rescue.
+  def ensure_project_folder(project)
+    project.ensure_library_folder!(current_user)
+  rescue StandardError => e
+    Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
   end
 
   def project_params

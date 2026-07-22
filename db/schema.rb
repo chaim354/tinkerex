@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_22_134531) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -276,6 +276,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_20_235428) do
     t.datetime "archived_at"
     t.datetime "created_at", null: false
     t.text "description"
+    t.string "folder_node_id"
     t.string "name", null: false
     t.string "slug", null: false
     t.string "status", default: "planning", null: false

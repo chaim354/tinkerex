@@ -87,6 +87,31 @@ module Web
       end
     end
 
+    test "creating a project ensures a Projects/<slug> library folder and stores its node_id" do
+      user = sign_in
+      post projects_path, params: { project: { name: "Desk Lamp", status: "planning" } }
+      project = user.maker_projects.order(:created_at).last
+      assert project.folder_node_id.present?, "the project's folder node_id must be stored"
+      folder = user.nodes.present.find_by!(node_id: project.folder_node_id)
+      assert_equal "dir", folder.kind
+      assert_equal "desk-lamp", folder.name
+      assert_equal "Projects", user.nodes.find_by!(node_id: folder.parent_node_id).name
+    end
+
+    test "project create still succeeds if the library backend can't make the folder" do
+      user = sign_in
+      broken = Object.new
+      def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      def broken.mkdir(*) = raise(FileLayer::FetchError, "down")
+      FileLayer.current = broken
+      assert_difference "Maker::Project.count", 1 do
+        post projects_path, params: { project: { name: "Lamp", status: "planning" } }
+      end
+      assert_nil user.maker_projects.order(:created_at).last.folder_node_id
+    ensure
+      FileLayer.reset!
+    end
+
     test "create with a blank name re-renders the form with an error" do
       sign_in
       assert_no_difference "Maker::Project.count" do
