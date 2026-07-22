@@ -66,6 +66,27 @@ module Web
       assert_select "h1", text: /Smart Lamp/
     end
 
+    test "the new-project form submits params under the key the controller requires" do
+      # Regression: form_with model: @project on a NAMESPACED model (Maker::Project) scopes fields
+      # to `maker_project[...]`, but ProjectsController#create does params.require(:project). The
+      # rendered form and the controller must agree, or every create/edit through the UI fails.
+      # (The other create test POSTs `project:` directly, so it never exercised the real form.)
+      sign_in
+      get new_project_path
+      assert_response :success
+      assert_select "form input[name=?]", "project[name]"
+      assert_select "form select[name=?]", "project[status]"
+      assert_select "form input[name=?]", "maker_project[name]", count: 0
+    end
+
+    test "creating through the actual rendered form params succeeds" do
+      sign_in
+      # Mirror what the browser sends: exactly the fields the form renders, by name.
+      assert_difference "Maker::Project.count", 1 do
+        post projects_path, params: { "project" => { "name" => "Via Form", "status" => "planning", "description" => "" } }
+      end
+    end
+
     test "create with a blank name re-renders the form with an error" do
       sign_in
       assert_no_difference "Maker::Project.count" do

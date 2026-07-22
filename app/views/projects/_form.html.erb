@@ -1,4 +1,8 @@
-<%= form_with model: project, url: (project.persisted? ? project_path(project) : projects_path),
+<%# scope: :project — WITHOUT it, form_with derives the param key from the model class, and a
+    NAMESPACED model (Maker::Project) yields `maker_project[...]`, which ProjectsController's
+    params.require(:project) rejects → every create/edit through the form silently fails. %>
+<%= form_with model: project, scope: :project,
+              url: (project.persisted? ? project_path(project) : projects_path),
               method: (project.persisted? ? :patch : :post), class: "project-form" do |f| %>
   <% if project.errors.any? %>
     <div class="form-errors flash-alert">
