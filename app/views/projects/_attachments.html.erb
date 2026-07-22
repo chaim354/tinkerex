@@ -1,4 +1,45 @@
+<%#
+  Attached design files as thumbnail tiles. `@att_nodes` (node_id => Node) is the source of truth
+  for name + availability — a DB fact, independent of the file backend. `@thumbs` (ThumbnailMap) is
+  best-effort. A node not in @att_nodes (deleted/missing) renders as an unavailable placeholder,
+  never a broken image or a 500. The `thumbs` controller polls pending cells via /files/thumbnails.
+%>
 <section class="panel attachments-panel">
-  <h2>Files</h2>
-  <p class="muted">No files attached yet.</p>
+  <div class="panel-head">
+    <h2>Files</h2>
+    <%= link_to "Attach a file", new_project_attachment_path(@project), class: "linkbtn" %>
+  </div>
+
+  <% if @attachments.empty? %>
+    <p class="muted">No files attached yet.</p>
+  <% else %>
+    <div class="attachments-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% @attachments.each do |att| %>
+        <% node = @att_nodes[att.node_id] %>
+        <% if node %>
+          <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+          <div class="attachment-tile">
+            <%= link_to file_path(att.node_id), class: "grid-card file-cell",
+                        data: { thumbs_target: "cell", node_id: att.node_id, ext: ext } do %>
+              <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
+              <span class="grid-name"><%= node.name %></span>
+            <% end %>
+            <div class="tile-meta">
+              <span class="badge role-<%= att.role %>"><%= att.role %></span>
+              <%= button_to "Detach", attachment_path(att), method: :delete, class: "linkbtn danger",
+                            form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
+            </div>
+          </div>
+        <% else %>
+          <div class="attachment-tile unavailable">
+            <span class="thumb">⚠️</span>
+            <span class="grid-name"><%= att.label.presence || "(file unavailable)" %></span>
+            <div class="tile-meta">
+              <%= button_to "Remove", attachment_path(att), method: :delete, class: "linkbtn danger" %>
+            </div>
+          </div>
+        <% end %>
+      <% end %>
+    </div>
+  <% end %>
 </section>
