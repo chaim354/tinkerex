@@ -300,6 +300,21 @@ module Web
       assert_select ".note-badge", count: 0
     end
 
+    # The right-click menu is JS (not exercised by integration tests); this pins the wiring the
+    # filemenu controller reads — the container controller + each file cell's note-url.
+    test "the files browser wires the right-click note menu on file cells" do
+      sign_in
+      node_id = upload("part.stl", "solid".b)
+
+      get files_path(view: "list")
+      assert_select "table.files[data-controller~=?]", "filemenu"
+      assert_select "[data-note-url=?]", file_notes_path(node_id)
+
+      get files_path(view: "grid")
+      assert_select ".files-grid[data-controller~=?]", "filemenu"
+      assert_select "[data-note-url=?]", file_notes_path(node_id)
+    end
+
     test "unknown type falls back to a download link" do
       sign_in
       node_id = upload("model.stl", "solid cube".b)

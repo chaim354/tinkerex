@@ -4,7 +4,7 @@
   everything else shows a format badge. The `thumbs` controller lives on the grid container and
   drives every `.file-cell` inside it, exactly as it does for the table.
 %>
-<div class="files-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+<div class="files-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <% @nodes.each do |node| %>
     <% info = @info_by_node[node.node_id] %>
     <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
@@ -16,13 +16,15 @@
     <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
       <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
       <%= link_to file_path(node.node_id), class: "grid-card file-cell",
-                  data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label } do %>
+                  data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label,
+                          action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id) } do %>
         <%= render "thumb", thumb:, ext_label: %>
         <span class="grid-name"><%= node.name %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% else %>
-      <%= link_to file_path(node.node_id), class: "grid-card" do %>
+      <%= link_to file_path(node.node_id), class: "grid-card",
+                  data: { action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id) } do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
