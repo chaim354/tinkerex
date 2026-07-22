@@ -24,6 +24,18 @@ module Maker
         assert_equal leaf.node_id, again.node_id, "idempotent — same leaf, no duplicate"
         assert_equal 1, @user.nodes.where(name: "Projects", parent_node_id: nil, kind: "dir").count
       end
+
+      test "create_child! makes one dir under a parent, idempotently (chunk)" do
+        parent = Maker::LibraryFolder.ensure_path!(@user, [ "Projects" ])
+        child  = Maker::LibraryFolder.create_child!(@user, parent_node_id: parent.node_id, name: "desk-lamp")
+        assert_equal "dir", child.kind
+        assert_equal "desk-lamp", child.name
+        assert_equal parent.node_id, child.parent_node_id
+        assert @user.changelog_entries.exists?(op: "mkdir", node_id: child.node_id),
+               "chunk mkdir must go through the sync engine"
+        again = Maker::LibraryFolder.create_child!(@user, parent_node_id: parent.node_id, name: "desk-lamp")
+        assert_equal child.node_id, again.node_id, "idempotent — find-or-create, no duplicate"
+      end
     end
 
     # Share branch: port_writable → FileLayer.current.mkdir (also exercises the s3 code path).
@@ -46,6 +58,13 @@ module Maker
 
         again = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
         assert_equal leaf.node_id, again.node_id
+      end
+
+      test "create_child! makes one dir under a parent via the port (share)" do
+        parent = Maker::LibraryFolder.ensure_path!(@user, [ "Projects" ])
+        child  = Maker::LibraryFolder.create_child!(@user, parent_node_id: parent.node_id, name: "desk-lamp")
+        assert_equal parent.node_id, child.parent_node_id
+        assert Dir.exist?(File.join(@root, "Projects", "desk-lamp"))
       end
     end
   end
