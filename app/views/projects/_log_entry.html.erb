@@ -1,0 +1,8 @@
+<li class="log-entry">
+  <div class="entry-head">
+    <time class="entry-time muted"><%= entry.logged_at.strftime("%Y-%m-%d %H:%M") %></time>
+    <%= button_to "Delete", build_log_entry_path(entry), method: :delete, class: "linkbtn danger",
+                  form: { data: { turbo_confirm: "Delete this entry?" } } %>
+  </div>
+  <p class="entry-body"><%= entry.body %></p>
+</li>
