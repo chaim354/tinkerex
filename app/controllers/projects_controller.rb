@@ -33,6 +33,13 @@ class ProjectsController < ApplicationController
     @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
     @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
+    # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
+    # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
+    @upload_parent_node_id = begin
+      @project.ensure_library_folder!(current_user).node_id
+    rescue StandardError
+      nil
+    end
   end
 
   def new

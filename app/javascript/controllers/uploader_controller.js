@@ -14,7 +14,7 @@ import { Controller } from "@hotwired/stimulus"
 //      immutable version + changelog entry. Reload to show the new file.
 export default class extends Controller {
   static targets = ["input", "status"]
-  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String }
+  static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String, parentNodeId: String }
 
   async upload() {
     const file = this.inputTarget.files[0]
@@ -30,7 +30,10 @@ export default class extends Controller {
 
       this.setStatus("Requesting upload URL…")
       const begin = await this.postJSON(this.beginUrlValue, {
-        name: file.name, size: bytes.length, manifest
+        name: file.name, size: bytes.length, manifest,
+        // Optional: upload into a specific folder (the project's Projects/<slug>). Absent/empty
+        // (the Files page) → null → the library root, unchanged.
+        parent_node_id: this.parentNodeIdValue || null
       })
 
       // Upload only the chunks the server says are missing (dedup).

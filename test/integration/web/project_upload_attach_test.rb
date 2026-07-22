@@ -50,6 +50,27 @@ module Web
         assert_response :created
         assert_equal "image", entry.file_attachments.last.role
       end
+
+      test "a project-view chunk upload lands in the project's folder" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        folder = project.ensure_library_folder!(@user)
+        bytes = "solid\n".b
+        hash = Digest::SHA256.hexdigest(bytes)
+        post begin_upload_files_path, params: { name: "p.stl", size: bytes.bytesize,
+                                                parent_node_id: folder.node_id,
+                                                manifest: [ { hash:, offset: 0, length: bytes.bytesize } ] }, as: :json
+        begun = JSON.parse(response.body)
+        (begun["put_urls"] || {}).each_value { |u| put u, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" } }
+        post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+        assert_equal folder.node_id, @user.nodes.find_by(node_id: begun["node_id"]).parent_node_id
+      end
+
+      test "the project page wires the chunk uploader to upload into the project folder" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        folder = project.ensure_library_folder!(@user)
+        get project_path(project)
+        assert_select "[data-uploader-parent-node-id-value=?]", folder.node_id
+      end
     end
 
     # share: one multipart POST writes the bytes to the port AND attaches.
@@ -101,6 +122,14 @@ module Web
         assert_response :redirect                       # rescued, NOT a 500
         assert flash[:alert].present?, "the clobber must surface a flash alert"
         assert_equal 1, project.file_attachments.count, "no second attachment on a refused upload"
+      end
+
+      test "a project-view share upload lands under Projects/<slug>" do
+        project = @user.maker_projects.create!(name: "Lamp")
+        file = Rack::Test::UploadedFile.new(StringIO.new("cube".b), "application/octet-stream", original_filename: "cube.stl")
+        post project_uploads_path(project), params: { file: }
+        node = @user.nodes.find_by!(node_id: project.file_attachments.last.node_id)
+        assert_equal "Projects/lamp/cube.stl", node.storage_path
       end
     end
   end

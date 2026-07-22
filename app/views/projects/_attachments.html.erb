@@ -10,7 +10,8 @@
     <div class="panel-actions">
       <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
       <%= render "upload_control", upload_url: project_uploads_path(@project),
-                 attach_url: project_attachments_path(@project), redirect_url: project_path(@project) %>
+                 attach_url: project_attachments_path(@project), redirect_url: project_path(@project),
+                 parent_node_id: @upload_parent_node_id %>
     </div>
   </div>
 
