@@ -1,0 +1,29 @@
+<% content_for :title, "#{@project.name} — Tinkerex" %>
+
+<nav class="breadcrumb" aria-label="Project path">
+  <%= link_to "Projects", projects_path %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page"><%= @project.name %></span>
+</nav>
+
+<div class="page-head project-head">
+  <div>
+    <h1><%= @project.name %></h1>
+    <span class="project-status badge status-<%= @project.status %>"><%= @project.status %></span>
+  </div>
+  <div class="head-actions">
+    <%= link_to "Edit", edit_project_path(@project), class: "linkbtn" %>
+    <%= button_to "Archive", project_path(@project), method: :delete, class: "linkbtn danger",
+                  form: { data: { turbo_confirm: "Archive #{@project.name}?" } } %>
+  </div>
+</div>
+
+<% if @project.description.present? %>
+  <p class="project-description"><%= @project.description %></p>
+<% end %>
+
+<div class="project-panels">
+  <%= render "attachments" %>
+  <%= render "build_log" %>
+  <%= render "tasks" %>
+</div>

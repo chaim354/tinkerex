@@ -39,5 +39,75 @@ module Web
       assert_select ".project-name", text: "Mine"
       assert_select ".project-name", text: "Theirs", count: 0
     end
+
+    # --- create ----------------------------------------------------------------
+
+    test "create a project with valid params" do
+      sign_in
+      get new_project_path
+      assert_response :success
+      assert_select "form"
+
+      assert_difference "Maker::Project.count", 1 do
+        post projects_path, params: { project: { name: "Smart Lamp", status: "active", description: "RGB" } }
+      end
+      project = Maker::Project.order(:created_at).last
+      assert_redirected_to project_path(project)
+      assert_equal "smart-lamp", project.slug
+      follow_redirect!
+      assert_select "h1", text: /Smart Lamp/
+    end
+
+    test "create with a blank name re-renders the form with an error" do
+      sign_in
+      assert_no_difference "Maker::Project.count" do
+        post projects_path, params: { project: { name: "" } }
+      end
+      assert_response :unprocessable_entity
+      assert_select "form"
+    end
+
+    # --- detail + lifecycle ----------------------------------------------------
+
+    test "show renders the project header, status, and description" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "active",
+                                            description: "A nice lamp")
+      get project_path(project)
+      assert_response :success
+      assert_select "h1", text: /Desk Lamp/
+      assert_select ".project-status", text: /active/i
+      assert_select ".project-description", text: /A nice lamp/
+    end
+
+    test "show 404s for another user's project" do
+      sign_in("a@example.com")
+      other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
+      p = other.maker_projects.create!(name: "Theirs")
+      get project_path(p)   # slug-based path; a's scope has no such slug
+      assert_response :not_found
+    end
+
+    test "edit + update changes fields" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old", status: "planning")
+      get edit_project_path(project)
+      assert_response :success
+      patch project_path(project), params: { project: { name: "New", status: "paused" } }
+      project.reload
+      assert_equal "New", project.name
+      assert_equal "paused", project.status
+      assert_redirected_to project_path(project)
+    end
+
+    test "destroy archives (soft) rather than deleting" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Done Build", status: "active")
+      assert_no_difference "Maker::Project.count" do
+        delete project_path(project)
+      end
+      assert_equal "archived", project.reload.status
+      assert_redirected_to projects_path
+    end
   end
 end
