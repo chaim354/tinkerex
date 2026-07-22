@@ -18,6 +18,7 @@ module Maker
              class_name: "Maker::PrintRun", dependent: :destroy
 
     before_validation :ensure_slug
+    after_save :apply_pending_tag_list
 
     validates :title, presence: true
     validates :slug, presence: true, uniqueness: { scope: :user_id }
@@ -26,6 +27,25 @@ module Maker
     scope :by_status, ->(s) { where(print_status: s) if s.present? }
 
     def to_param = slug
+
+    # The node representing this model: explicit override, else first image, else first model file
+    # (its rendered 3D thumbnail via Maker::Previews), else the first attachment by position, else
+    # nil. Reads loaded file_attachments; callers rendering many cards should include(:file_attachments).
+    def cover_node_id
+      self[:cover_node_id].presence || derived_cover_node_id
+    end
+
+    # Comma-separated tag names, for the edit form. Writing find-or-creates the user's tags and
+    # replaces the set (Maker::Tag normalizes name to stripped-downcase and is unique per user).
+    def tag_list
+      tags.map(&:name).sort.join(", ")
+    end
+
+    # Comma-separated tag names, for the edit form. Writing find-or-creates the user's tags and
+    # REPLACES the set on the next save (deferred so it's safe on a new, unsaved record too).
+    def tag_list=(str)
+      @tag_list_pending = str
+    end
 
     private
 
@@ -42,6 +62,25 @@ module Maker
         n += 1
       end
       self.slug = candidate
+    end
+
+    def derived_cover_node_id
+      atts = file_attachments.sort_by { |a| [ a.position, a.id ] }
+      pick = atts.find { |a| a.role == "image" } ||
+             atts.find { |a| a.role == "model" } ||
+             atts.first
+      pick&.node_id
+    end
+
+    def apply_pending_tag_list
+      return unless defined?(@tag_list_pending)
+      names = @tag_list_pending.to_s.split(",").map { |n| n.strip.downcase }.reject(&:blank?).uniq
+      wanted = names.map { |n| user.maker_tags.find_or_create_by!(name: n) }
+      transaction do
+        taggings.where.not(tag_id: wanted.map(&:id)).destroy_all
+        wanted.each { |t| taggings.find_or_create_by!(user: user, tag: t) }
+      end
+      remove_instance_variable(:@tag_list_pending)
     end
   end
 end

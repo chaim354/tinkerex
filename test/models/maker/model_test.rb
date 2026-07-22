@@ -54,5 +54,38 @@ module Maker
         @user.destroy!
       end
     end
+
+    test "cover_node_id prefers an explicit override, then image, then model, else nil" do
+      m = @user.maker_models.create!(title: "Lamp")
+      assert_nil m.cover_node_id
+
+      m.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 0)
+      m.file_attachments.create!(user: @user, node_id: "img", role: "image", position: 1)
+      assert_equal "img", m.reload.cover_node_id, "image wins over model"
+
+      m.update!(cover_node_id: "mdl")
+      assert_equal "mdl", m.reload.cover_node_id, "explicit override wins over image"
+    end
+
+    test "cover falls back to the first model file when there is no image" do
+      m = @user.maker_models.create!(title: "Gear")
+      m.file_attachments.create!(user: @user, node_id: "src", role: "source_archive", position: 0)
+      m.file_attachments.create!(user: @user, node_id: "g1", role: "model", position: 1)
+      assert_equal "g1", m.reload.cover_node_id
+    end
+
+    test "cover falls back to the first attachment of any role when no image or model" do
+      m = @user.maker_models.create!(title: "Docs")
+      m.file_attachments.create!(user: @user, node_id: "pdf1", role: "instructions", position: 0)
+      assert_equal "pdf1", m.reload.cover_node_id
+    end
+
+    test "tag_list reads and writes tags, normalized and de-duped" do
+      m = @user.maker_models.create!(title: "Dragon")
+      m.tag_list = "Dragon, articulated ,, dragon"
+      m.save!
+      assert_equal %w[articulated dragon], m.reload.tag_list.split(", ").sort
+      assert_equal 2, @user.maker_tags.count
+    end
   end
 end
