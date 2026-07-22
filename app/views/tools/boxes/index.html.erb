@@ -18,8 +18,7 @@
                               terms: "#{g.title} #{g.key} #{g.group}".downcase } do %>
             <img class="addon-thumb" src="<%= box_thumb_url(g.key) %>" alt="" loading="lazy"
                  data-controller="thumbfallback" data-action="error->thumbfallback#hide">
-            <span class="addon-title"><%= g.title %></span>
-            <span class="addon-desc muted"><%= g.key %></span>
+            <span class="addon-title"><%= g.key %></span>
           <% end %>
         <% end %>
       </div>
