@@ -1,1 +1,44 @@
-<%# print log — Task 7 %>
+<section class="print-log">
+  <h2>Print log <span class="muted">(<%= @print_runs.size %>)</span></h2>
+
+  <%# scope: :print_run (no model object) -> fields serialize under print_run[...], which the
+      controller's params.require(:print_run) expects. Same reason projects' _form uses scope. %>
+  <%= form_with scope: :print_run, url: model_print_runs_path(@model), class: "print-form" do |f| %>
+    <div class="row">
+      <label class="field"><span>Date</span><%= f.date_field :printed_on, value: Date.today, required: true %></label>
+      <label class="field"><span>Outcome</span>
+        <%= f.select :outcome, Maker::PrintRun::OUTCOMES.map { |o| [ o.capitalize, o ] } %>
+      </label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Printer</span>
+        <%= f.text_field :printer, list: "printer-options" %>
+        <datalist id="printer-options"><% @printers.each do |p| %><option value="<%= p %>"><% end %></datalist>
+      </label>
+      <label class="field"><span>Material</span>
+        <%= f.text_field :material, list: "material-options" %>
+        <datalist id="material-options"><% @materials.each do |mm| %><option value="<%= mm %>"><% end %></datalist>
+      </label>
+    </div>
+    <div class="row">
+      <label class="field"><span>Duration (h)</span><%= f.number_field :duration_hours, step: "0.1" %></label>
+      <label class="field"><span>Filament (g)</span><%= f.number_field :filament_grams %></label>
+    </div>
+    <label class="field"><span>Notes</span><%= f.text_field :notes %></label>
+    <%= f.submit "Log a print", class: "btn small" %>
+  <% end %>
+
+  <% @print_runs.each do |run| %>
+    <div class="print-run">
+      <strong><%= run.outcome == "success" ? "✓" : "✕" %> <%= run.printed_on.strftime("%Y-%m-%d") %></strong>
+      <%= " · #{run.printer}" if run.printer.present? %>
+      <div class="muted">
+        <%= [ run.material, ("#{run.duration_hours}h" if run.duration_hours),
+              ("#{run.filament_grams}g" if run.filament_grams) ].compact.join(" · ") %>
+      </div>
+      <% if run.notes.present? %><div class="muted"><%= run.notes %></div><% end %>
+      <%= button_to "Delete", print_run_path(run), method: :delete, class: "linkbtn danger small",
+                    form: { data: { turbo_confirm: "Delete this print?" } } %>
+    </div>
+  <% end %>
+</section>
