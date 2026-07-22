@@ -24,9 +24,7 @@ export default class extends Controller {
   // Files collected from the selection: { name, dir, blob, role }.
   files = []
   // The create-model response ({ slug, model_url, attach_url, port_writable, folder_map }), kept
-  // on the instance (not a local) so a mid-loop failure can still point at the model it made —
-  // the record + folders exist server-side the moment postJSON below resolves, so a failed
-  // upload/attach a few files in must not read to the user as "nothing happened".
+  // on the instance (not a local) so a mid-loop failure can still point at the model it made.
   created = null
 
   async choose() {
@@ -47,8 +45,22 @@ export default class extends Controller {
           this.files.push({ name: f.name, dir: "", blob: f, role: roleFor(f.name) })
         }
       }
-      if (!this.titleTarget.value && this.inputTarget.files[0]) {
-        this.titleTarget.value = this.inputTarget.files[0].name.replace(/\.zip$/i, "").replace(/[_-]+/g, " ").trim()
+
+      // De-dupe by target path (dir/name). The same file arriving twice — a zip that also contains
+      // the PDF/image you dropped alongside it, or a duplicated zip entry — would otherwise upload
+      // to the same path twice and CLOBBER itself: current-state backends (share/s3) refuse an
+      // overwrite with 422, which used to fail the whole import. Keep the first occurrence.
+      const seen = new Set()
+      this.files = this.files.filter((f) => {
+        const key = `${f.dir}/${f.name}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      if (!this.titleTarget.value) {
+        const t = this.deriveTitle()
+        if (t) this.titleTarget.value = t
       }
       this.renderSummary()
     } catch (e) {
@@ -57,6 +69,16 @@ export default class extends Controller {
       this.renderSummary()
       this.setStatus(`Couldn't read that file: ${e.message}`)
     }
+  }
+
+  // Title from the .zip's name if one was selected, else the first MODEL file's name — never an
+  // image or PDF (that's how a dropped "resize-img-5848.webp" used to become the title).
+  deriveTitle() {
+    const zip = [...this.inputTarget.files].find((f) => f.name.toLowerCase().endsWith(".zip"))
+    const model = this.files.find((f) => f.role === "model")
+    const src = (zip && zip.name) || (model && model.name) ||
+                (this.inputTarget.files[0] && this.inputTarget.files[0].name) || ""
+    return src.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim()
   }
 
   renderSummary() {
@@ -85,16 +107,28 @@ export default class extends Controller {
         title: this.titleTarget.value, source_url: this.sourceUrlTarget.value, dirs
       })
       const cover = this.coverIndex()
+      // Per-file resilience: a single file that can't be added (e.g. a name already taken on a
+      // current-state backend) is SKIPPED and reported — it must not fail the whole import when
+      // every other file landed. Only if NOTHING lands do we treat the import as failed.
+      const failed = []
       for (let i = 0; i < this.files.length; i++) {
         const f = this.files[i]
         const parent = this.created.folder_map[f.dir] ?? this.created.folder_map[""]
         this.setStatus(`Uploading ${f.name} (${i + 1}/${this.files.length})…`)
-        const nodeId = this.portWritableValue
-          ? await uploadPortFile(f.blob, { createUrl: this.portCreateUrlValue, parentNodeId: parent })
-          : await uploadChunkFile(f.blob, { beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: parent })
-        await this.postJSON(this.created.attach_url, { node_id: nodeId, cover: i === cover })
+        try {
+          const nodeId = this.portWritableValue
+            ? await uploadPortFile(f.blob, { createUrl: this.portCreateUrlValue, parentNodeId: parent })
+            : await uploadChunkFile(f.blob, { beginUrl: this.beginUrlValue, finalizeUrl: this.finalizeUrlValue, parentNodeId: parent })
+          await this.postJSON(this.created.attach_url, { node_id: nodeId, cover: i === cover })
+        } catch (e) {
+          console.warn(`skipped ${f.name}:`, e)
+          failed.push(f.name)
+        }
       }
-      this.setStatus("Done.")
+      if (failed.length === this.files.length) {
+        throw new Error(`no files could be added (${failed.length} failed — they may already exist)`)
+      }
+      this.setStatus(failed.length ? `Done — imported ${this.files.length - failed.length}, skipped ${failed.length} (already present).` : "Done.")
       window.location.href = this.created.model_url
     } catch (e) {
       const partial = this.created?.model_url ? ` — partial import saved at ${this.created.model_url}` : ""
