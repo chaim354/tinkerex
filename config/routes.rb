@@ -57,6 +57,12 @@ Rails.application.routes.draw do
     resources :uploads, only: :create, module: :projects
   end
 
+  # Session-scoped "current project" (the top-bar default destination). Singular resource: no id in
+  # the URL — the id rides in params[:project_id] so a blank one can clear it. `controller:` is
+  # required here: Rails' singular `resource` DSL still infers a PLURALIZED controller name by
+  # default (-> CurrentProjectsController), which would not match CurrentProjectController below.
+  resource :current_project, only: %i[update destroy], controller: "current_project"
+
   # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
   resources :build_log_entries, only: [], module: :projects do
     resources :uploads, only: :create
