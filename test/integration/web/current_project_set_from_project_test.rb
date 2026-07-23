@@ -29,5 +29,14 @@ module Web
       assert_select "form[action=?] button", current_project_path, text: /clear/i
       assert_select "button", text: /set as current/i, count: 0
     end
+
+    test "a different project's page shows 'Set as current', not the current badge" do
+      other = @user.maker_projects.create!(name: "Bench PSU")
+      patch current_project_path, params: { project_id: @project.id } # @project is current
+      get project_path(other)                                          # viewing the OTHER project
+      assert_select ".current-project-badge", count: 0
+      assert_select "form[action=?] button", current_project_path, text: /set as current/i
+      assert_select "button", text: /clear/i, count: 0
+    end
   end
 end
