@@ -154,6 +154,13 @@ class FilesController < ApplicationController
     @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
     backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
+    # The current project's folder, for the upload button's default-into-project wiring (spec
+    # 2026-07-23). `current_project_folder_node_id` (CurrentProject concern) is deliberately NOT a
+    # helper_method — like ProjectsController#show's @upload_parent_node_id, a view must not create
+    # a project folder as a side effect of merely being rendered; the owning action opts in
+    # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
+    # covers an ensure failure, same as ProjectsController#show's).
+    @current_project_folder_node_id = current_project_folder_node_id
   end
 
   # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
