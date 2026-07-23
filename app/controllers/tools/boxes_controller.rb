@@ -18,6 +18,7 @@ module Tools
       redirect_to(tools_boxes_path, alert: "Unknown generator.") and return unless @generator
 
       @values = params[:params]&.to_unsafe_h || {} # optional prefill (e.g. "duplicate & tweak")
+      # BEFORE folder_options: ensures the project folder so it's a selectable option
       @default_parent_node_id = current_project_folder_node_id
       @folders = folder_options # where to save the output (existing folders + root)
 

@@ -43,17 +43,24 @@ module CurrentProject
   end
 
   # Attach every addon output file to the current project (if one is set), so a tool save appears on
-  # the project page. No-op when no project is current. `addon_files` is what LibraryOutput.write
-  # returns; roles map from the node name via FileAttachment.role_for.
+  # the project page. No-op when no project is current. Best-effort: the file is already saved, so a
+  # failed attach must never turn a successful save into an error (mirrors enqueue_preview). Atomic,
+  # so a mid-loop failure leaves no partial set. `addon_files` is what LibraryOutput.write returns;
+  # roles map from the node name via FileAttachment.role_for.
   def attach_addon_files_to_current_project(addon_files)
     project = current_project
     return unless project && addon_files.present?
     names = current_user.nodes.present.where(node_id: addon_files.map(&:node_id)).pluck(:node_id, :name).to_h
-    addon_files.each do |af|
-      name = names[af.node_id]
-      next unless name
-      project.file_attachments.create!(user: current_user, node_id: af.node_id,
-                                       role: Maker::FileAttachment.role_for(name))
+    ActiveRecord::Base.transaction do
+      addon_files.each do |af|
+        name = names[af.node_id]
+        next unless name
+        project.file_attachments.create!(user: current_user, node_id: af.node_id,
+                                         role: Maker::FileAttachment.role_for(name))
+      end
     end
+  rescue StandardError => e
+    Rails.logger.warn("attach_addon_files_to_current_project failed: #{e.class}: #{e.message}")
+    nil
   end
 end

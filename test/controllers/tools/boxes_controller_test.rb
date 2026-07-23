@@ -217,10 +217,10 @@ module Tools
 
     test "new pre-selects the current project's folder in the save picker" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
-      folder = project.ensure_library_folder!(@user)
       patch current_project_path, params: { project_id: project.id }
-      get new_tools_box_path(generator: "ABox")
+      get new_tools_box_path(generator: "ABox") # #new must lazily ensure the folder for it to be an option
       assert_response :success
+      folder = project.ensure_library_folder!(@user) # idempotent — returns the folder #new just created
       assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
     end
 
@@ -236,6 +236,9 @@ module Tools
       project.file_attachments.each do |att|
         assert_equal folder.node_id, @user.nodes.find_by(node_id: att.node_id).parent_node_id
       end
+      state = @user.maker_addon_states.for_addon("boxes").order(:id).last
+      assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
+                   "both output files (svg + params.json) must be the attached nodes"
     end
 
     test "create attaches nothing when no project is current" do
