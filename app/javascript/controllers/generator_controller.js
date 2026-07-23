@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import * as registry from "generators/index"
+import * as registry from "generators"
 
 // The generator harness. Builds the picker + param form from the JS registry, previews the active
 // module's SVG live (data-URL <img> — SVG in <img> can't run scripts, so user text in labels is

@@ -185,6 +185,30 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   .box-side { position: static; }
 }
 
+/* Generators addon (Tools::GeneratorsController) — controls left, live preview right. */
+.generator-editor { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
+.generator-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.generator-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; margin: 6px 0; }
+.generator-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.generator-picker-label, .generator-name-label, .generator-folder-label {
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted);
+}
+.generator-field input, .generator-picker-label select, .generator-name-label input, .generator-folder-label select {
+  width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
+  font-size: 14px; background: var(--bg); color: var(--fg);
+}
+.generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+.generator-save { margin-top: 4px; align-self: flex-start; }
+.generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #fff; }
+.generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
+.generator-saved-list { margin-top: 28px; }
+.generator-saved { margin: 4px 0; }
+
+@media (max-width: 720px) {
+  .generator-editor { grid-template-columns: 1fr; }
+  .generator-preview { position: static; }
+}
+
 .box-prior { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .box-prior h3 { margin: 0; font-size: 14px; }
 .box-prior-hint { font-size: 13px; margin-top: 2px; }
