@@ -120,6 +120,21 @@ Solid Cable for the nudge) and survives redeploys.
   servers; `sudo` is only for the one-time Docker install.
 - **Bytes never flow through Rails.** The server only signs presigned URLs (local HMAC); each
   client PUT/GETs `CHUNK_ENDPOINT` directly, so that host must be reachable from every client.
+- **3D viewer & bucket CORS (s3 / chunk-over-S3 backends).** The in-browser 3D viewer
+  (`modelviewer_controller.js`) `fetch`es a model's raw bytes from `/files/:id/blob`. On the
+  **s3** library backend — and for small single-chunk files on a **chunk** backend whose store is
+  S3/SeaweedFS — that endpoint 302-redirects to a cross-origin presigned URL, which the browser
+  only reads if the bucket returns CORS headers for the app origin. Rails can't set these (bytes
+  bypass Rails by design — §15). Add a bucket CORS rule allowing `GET` from the app origin, e.g.:
+
+  ```json
+  [{ "AllowedOrigins": ["https://<app-host>"], "AllowedMethods": ["GET"],
+     "AllowedHeaders": ["*"], "MaxAgeSeconds": 3600 }]
+  ```
+
+  (SeaweedFS: the bucket CORS API / `s3.configure`; R2/S3: the bucket's CORS config.) Without it,
+  affected files **degrade to the static thumbnail** — nothing breaks. The **share** backend and
+  multi-chunk files on the **chunk** backend are same-origin and need no CORS.
 - **HTTP, no TLS** on these LAN/test boxes (`assume_ssl`/`force_ssl` off). The ActionCable nudge
   works because request-forgery protection is disabled (token-authed cable, not cookies).
 - **Control-plane-only smoke test:** set `STORAGE_BACKEND: memory` (drop the `CHUNK_*`) to test

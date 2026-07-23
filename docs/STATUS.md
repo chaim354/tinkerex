@@ -1,6 +1,32 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-20 (**addon framework (Plan A) — Tools + Box Generator UI landed**)
+**Updated:** 2026-07-22 (**interactive 3D viewer for STL/3MF/OBJ on the file detail page**)
+
+## Latest (2026-07-22): interactive 3D viewer (branch `claude/3d-viewer-models-18a424`)
+
+Client-side WebGL viewer (rotate/zoom/pan) for the mesh formats a print library is made of —
+`.stl`, `.3mf`, `.obj` — on the file detail page (`/files/:id`, the link target from every model's
+file tree). STEP/IGES/DXF keep their static thumbnails. Design/plan:
+`docs/superpowers/specs/2026-07-22-3d-model-viewer-design.md`,
+`docs/superpowers/plans/2026-07-22-3d-model-viewer.md`.
+
+- **New `:model3d` preview kind** (`FilesController#preview_kind`) routes stl/3mf/obj to a viewer
+  container in `files/show.html.erb`; the server-rendered thumbnail stays as the fallback poster.
+- **`modelviewer` Stimulus controller** — DYNAMIC-imports Three.js (so the payload ships only on
+  3D-file pages), `fetch`es the raw bytes from `/files/:id/blob`, parses with the format's Three.js
+  loader, renders an OrbitControls scene with a **dimensions readout** (X×Y×Z mm) + **reset** +
+  **fullscreen**. Any failure (no WebGL, cross-origin fetch w/o bucket CORS, corrupt file) keeps the
+  thumbnail poster — verified in-browser incl. the degradation path.
+- **Three.js 0.185.1 + STL/3MF/OBJ loaders + fflate vendored** into `vendor/javascript/` (MIT,
+  committed, offline-CI safe) from the official unpkg ES build (not jspm — it splits/chunks the
+  core). Two relative imports repointed to bare pinned specifiers; no dangling import remains.
+- **Byte delivery:** same-origin on the share backend + multi-chunk chunk files (works out of the
+  box); cross-origin presigned on s3 / small chunk-over-S3 files needs a one-time **bucket CORS**
+  rule (`docs/DEPLOY.md`), else those files degrade to the thumbnail.
+- Suite **+3 tests**, identical on all three legs (chunk / `LIBRARY_BACKEND=share` / `=s3`), 0
+  failures; production `assets:precompile` clean.
+
+## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
 
 ## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
 

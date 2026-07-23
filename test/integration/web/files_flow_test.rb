@@ -211,6 +211,46 @@ module Web
       assert_no_match(/No inline preview/, response.body)
     end
 
+    # ---- Interactive 3D viewer (STL/3MF/OBJ) — client-side, supersedes the static thumbnail ----
+
+    test "an STL detail page renders the interactive 3D viewer container" do
+      sign_in
+      node_id = upload("bracket.stl", "solid bracket\nendsolid\n".b)
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".model-viewer[data-controller=?]", "modelviewer"
+      assert_select ".model-viewer[data-modelviewer-url-value=?]", blob_file_path(node_id)
+      assert_select ".model-viewer[data-modelviewer-format-value=?]", "stl"
+      # The reset/fullscreen controls the user asked for are wired.
+      assert_select "[data-action~=?]", "modelviewer#reset"
+      assert_select "[data-action~=?]", "modelviewer#fullscreen"
+    end
+
+    test "3MF and OBJ also render the 3D viewer, with the right format value" do
+      sign_in
+      { "part.3mf" => "3mf", "widget.obj" => "obj" }.each do |name, fmt|
+        node_id = upload(name, "data".b)
+        get file_path(node_id)
+        assert_response :success
+        assert_select ".model-viewer[data-modelviewer-format-value=?]", fmt
+      end
+    end
+
+    test "a STEP file keeps the static thumbnail preview (not the 3D viewer)" do
+      user = sign_in
+      node_id = upload("cad.step", "ISO-10303-21;".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = user.maker_previews.find_by!(node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select "img.preview-image"
+      assert_select ".model-viewer", count: 0
+    end
+
     test "placeholder login signs in and lists files" do
       sign_in
       get files_path
@@ -317,7 +357,9 @@ module Web
 
     test "unknown type falls back to a download link" do
       sign_in
-      node_id = upload("model.stl", "solid cube".b)
+      # A genuinely non-renderable type (no Registry renderer, not image/pdf/text) -> :other ->
+      # the download fallback. (Was .stl, which is now the interactive :model3d viewer.)
+      node_id = upload("model.sldprt", "binary cad".b)
       get file_path(node_id)
       assert_response :success
       assert_select ".preview-fallback"
