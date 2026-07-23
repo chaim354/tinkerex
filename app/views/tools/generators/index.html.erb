@@ -1,2 +1,49 @@
 <% content_for :title, "Generators — Tinkerex" %>
-<div class="page-head"><h1>Generators</h1></div>
+
+<div class="page-head"><h1>Generators</h1>
+  <p class="page-subtitle muted">Parametric 2D drawings → SVG, generated in your browser.</p>
+</div>
+
+<div class="generator-editor" data-controller="generator">
+  <aside class="generator-side">
+    <label class="generator-picker-label">Generator
+      <select data-generator-target="picker" data-action="change->generator#selectGenerator"></select>
+    </label>
+
+    <%= form_with url: tools_generators_path, method: :post, data: { generator_target: "form" } do |f| %>
+      <input type="hidden" name="generator" data-generator-target="generatorField">
+      <input type="hidden" name="svg" data-generator-target="svgField">
+
+      <div class="generator-params" data-generator-target="fields"
+           data-action="input->generator#render"></div>
+
+      <label class="generator-name-label">Name
+        <%= text_field_tag "name", "", required: true, placeholder: "e.g. 3mm birch test" %>
+      </label>
+      <label class="generator-folder-label">Save into
+        <%= select_tag "parent_node_id", options_for_select(@folders) %>
+      </label>
+      <%= submit_tag "Save to library", class: "generator-save", data: { generator_target: "save" } %>
+    <% end %>
+  </aside>
+
+  <div class="generator-preview">
+    <img data-generator-target="preview" alt="live preview">
+  </div>
+</div>
+
+<section class="generator-saved-list">
+  <h2>Saved grids</h2>
+  <% if @saved.any? %>
+    <ul>
+      <% @saved.each do |state| %>
+        <li class="generator-saved">
+          <%= link_to state.name, tools_generator_path(state) %>
+          <span class="muted"><%= state.data["generator"] %></span>
+        </li>
+      <% end %>
+    </ul>
+  <% else %>
+    <p class="muted generator-saved-hint">No saved grids yet — build one above and Save.</p>
+  <% end %>
+</section>
