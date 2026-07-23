@@ -25,7 +25,7 @@ module Tools
         addon_key: ADDON_KEY, name: params.require(:name),
         data: { generator:, params: addon_params }
       )
-      base = state.name.parameterize.presence || "grid"
+      base = state.name.parameterize.presence || "drawing"
       Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
