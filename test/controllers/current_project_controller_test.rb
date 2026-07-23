@@ -13,7 +13,7 @@ class CurrentProjectControllerTest < ActionDispatch::IntegrationTest
     project = @user.maker_projects.create!(name: "Lamp")
     patch current_project_path, params: { project_id: project.id }
     assert_equal project.id, session[:current_project_id]
-    assert_response :redirect
+    assert_redirected_to files_path
   end
 
   test "update with a blank project_id clears the selection" do

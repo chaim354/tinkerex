@@ -48,7 +48,7 @@ module CurrentProject
   def attach_addon_files_to_current_project(addon_files)
     project = current_project
     return unless project && addon_files.present?
-    names = current_user.nodes.where(node_id: addon_files.map(&:node_id)).pluck(:node_id, :name).to_h
+    names = current_user.nodes.present.where(node_id: addon_files.map(&:node_id)).pluck(:node_id, :name).to_h
     addon_files.each do |af|
       name = names[af.node_id]
       next unless name
