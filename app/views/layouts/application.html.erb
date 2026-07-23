@@ -36,6 +36,17 @@
           <%= link_to "Projects", projects_path, class: "linkbtn" %>
           <%= link_to "Tools", tools_path, class: "linkbtn" %>
           <%= link_to "Trash", trash_index_path, class: "linkbtn" %>
+          <% if current_project_choices.any? %>
+            <%= form_with url: current_project_path, method: :patch, data: { turbo: false },
+                          class: "current-project-form" do %>
+              <label class="current-project">
+                <span class="muted">Project:</span>
+                <%= select_tag :project_id,
+                      options_for_select([ [ "— none —", "" ] ] + current_project_choices, current_project&.id),
+                      onchange: "this.form.requestSubmit()" %>
+              </label>
+            <% end %>
+          <% end %>
           <span class="muted"><%= current_user.email %></span>
           <%= button_to "Sign out", destroy_user_session_path, method: :delete, class: "linkbtn" %>
         </div>
