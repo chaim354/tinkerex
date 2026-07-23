@@ -27,3 +27,19 @@ pin "process" # @2.1.0
 pin "jszip-buffer-chunk" # jspm.io internal chunk for @jspm/core@2.1.0's browser buffer shim
 
 pin "lib/chunk_upload", to: "lib/chunk_upload.js"
+
+# Maker.js 0.19.2 — Apache-2.0 — https://maker.js.org — the client-side geometry engine for the
+# Generators addon (Tools::GeneratorsController; app/javascript/generators/*). Vendored as the jspm
+# ESM build (`bin/importmap pin makerjs`), NOT the `dist/browser.maker.js` standalone build: that one
+# is a non-standalone Browserify bundle that exposes only Browserify's `require` (no importable global
+# or default export — verified), so `import makerjs from "makerjs"` can't resolve it. The jspm build
+# has a real `export default` and pulls makerjs's four deps below.
+# CAUTION: `clone` imports "buffer", which reuses the SAME hand-patched vendor/javascript/buffer.js as
+# jszip (repointed at "jszip-buffer-chunk"). Re-running `bin/importmap pin makerjs` (or jszip)
+# RE-DOWNLOADS buffer.js and reverts that patch (a dangling `../../_/…` import) — breaking BOTH. If you
+# re-pin, `git checkout vendor/javascript/buffer.js` afterward.
+pin "makerjs" # @0.19.2
+pin "bezier-js" # @2.6.1
+pin "clone" # @1.0.4
+pin "graham_scan" # @1.0.5
+pin "kdbush" # @2.0.1
