@@ -183,14 +183,79 @@ in. Best paths: (1) lean on **generators** (fits the architecture, users keep Li
 
 ---
 
-## Suggested build order
+## Additions — 2026-07-22 brainstorm
 
-1. **Maker.js client harness** — turns a whole laser-generator family into one component, many configs.
-   First win: the **material test grid**.
-2. **Feeds & speeds calculator + bit library** (Engine ⑦) — MillMage literally assumes this; it's the
-   CNC gap you felt. Pairs with the **CNC test coupon** generator.
-3. **OpenSCAD sidecar** (Engine ①) — one build unlocks Gridfinity/gears/nameplates/calibration/etc.
-4. **STEP→STL converter** (Engine ③) — closes a preview gap that exists right now.
-5. **Inventory QR/barcode label sheets** (Engine ⑤) + **"Can I build this?"** (Engine ⑦) — the moat.
+Genuinely additive to the menu above. The backlog's thesis is "one **engine** → many addons"; these add
+a second leverage axis: **shared _data_ → many addons** (the inventory moat is the original example).
+⭐ = standout / high-leverage.
 
-Engines ①, ⑤, ⑦ unlock ~18 addons between them; Engine ④ rides infrastructure already shipped.
+**Shared-data addons (make many generators smarter):**
+- **Machine library ⭐** `[server → new data model]` — each machine's specs (bed/work area, laser wattage,
+  spindle power, travel, Z). Like the tool library, but *feeds* bounds-checker, feeds & speeds, surfacing,
+  and test-coupon generators so they stop re-asking machine facts.
+- **Material settings library ⭐** `[server → new data model]` — power/speed/passes per material × thickness
+  (LightBurn's material library, web + shareable). The backlog only has the *CNC* recipe book; the **laser**
+  equivalent is arguably the #1 wanted laser feature. Extends to 3D print profile presets.
+
+**3D-print depth** (underrepresented vs. laser/CNC):
+- **Spool / filament manager** `[server → ⑦]` — weight, cost/g, auto-decrement from the print log (a full
+  manager, vs. the backlog's bare "filament auto-decrement").
+- **G-code / 3MF print-settings inspector** `[server → ⑥]` — layer height, infill, temps, est. time/filament
+  as a card (rides the G-code parser engine).
+- **Print tuning journal** `[server → ⑦]` — structured notes tying a model + the settings that worked.
+
+**Electronics depth** (backlog has only Gerber preview + part-lookup):
+- **Resistor color-code decoder** (bidirectional) `[client]`, **EE calculator pack** (voltage divider, RC
+  filter, 555 timer, LED array) `[client]` — fold into the Calculators gallery.
+- **Pinout reference cards** `[client, reference]`; **PCB-BOM → inventory** matching `[server → ⑦ + ⑧]`.
+
+**Woodworking / joinery** (underrepresented):
+- **Finger / dovetail / box-joint generators** → DXF `[client → Maker.js]`; **1D lumber cut optimizer**
+  `[client/server]` (distinct from the 2D sheet nester); **shelf-pin / hinge boring templates** → DXF.
+
+**AI-assisted ⭐ (Claude-native — differentiates this stack):**
+- **Natural-language → parametric params** `[server → ① / ②]` — describe a part → OpenSCAD/CadQuery inputs.
+- **Auto-tag / describe uploaded models** from their thumbnails `[server → vision]`.
+- **"What can I make from my inventory?"** `[server → ⑦]` — the AI cousin of the deterministic "Can I
+  build this?".
+
+**Model report / spec-sheet:**
+- **STL/3MF dims + volume + material cost → PDF spec sheet** `[server → ③]` — derived from the *actual*
+  uploaded geometry, vs. the backlog's manual-input print-cost calculator.
+
+**Machine maintenance scheduler** `[server → ⑦/projects]` — machine-hours + consumables + service intervals
+("replace laser tube at N hours", "lube CNC rails"). Pairs with the Machine library.
+
+---
+
+## Roadmap (sequenced)
+
+Ordered by leverage × cost × dependency (client-only < permissive lib < GPL sidecar < external API; data
+addons precede or pair with their consumers).
+
+**Phase 1 — Client generators** *(no new infra; proves the client-only side, unproven until now)*
+- **Maker.js harness → Material Test Grid ⭐** ← **specced:** `docs/superpowers/specs/2026-07-22-makerjs-generator-harness-design.md`
+- then (same harness, each a JS module): kerf/focus cards, bolt-circle→DXF, living-hinge, inlay, badge/tag maker
+- in parallel: **Calculators gallery ⭐** (~15 tools) folding in the new resistor decoder + EE pack
+
+**Phase 2 — Shared-data addons + first consumers** *(the moat + the new data-leverage axis)*
+- **Machine library ⭐**, **Material settings library ⭐** (new) → then **Feeds & speeds + bit/tool library**
+  (consumes both), **Inventory QR/barcode label sheets ⭐** (Engine ⑤), **"Can I build this?" ⭐** (Engine ⑦)
+
+**Phase 3 — Server sidecars** *(heavier; reuses the proven boxes.py deploy pattern)*
+- **OpenSCAD sidecar ⭐** (Engine ①) → Gridfinity/gears/nameplate/calibration/generic customizer
+- **STEP→STL ⭐** (Engine ③, closes a live preview gap), mesh convert/repair + the new **STL dims/volume/cost report**
+
+**Phase 4 — G-code / CAM / post-processing**
+- G-code + Gerber thumbnail previews (Engine ④, ride Previews — cheap), cost/time estimator,
+  **manual-tool-change splitter ⭐**, bounds checker (consume Machine library), CNC test coupons,
+  spoilboard surfacing, later Kiri:Moto
+
+**Phase 5 — External APIs + AI + 3D-print depth**
+- Part lookup→inventory, send-to-printer (OctoPrint/Moonraker/Bambu), the new **spool/filament manager +
+  print-settings inspector + tuning journal**, the new **AI cluster** (NL→parametric, auto-tag, "what can I
+  make"), **maintenance scheduler**, image (vtracer/lithophane/dither)
+
+Engines ①, ⑤, ⑦ unlock ~18 addons between them; Engine ④ rides infrastructure already shipped. The two new
+**data** addons (Machine + Material libraries) are the Phase-2 force multipliers — like inventory, they make
+a dozen generator addons smarter.

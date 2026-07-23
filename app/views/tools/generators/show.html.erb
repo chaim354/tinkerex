@@ -1,0 +1,35 @@
+<% content_for :title, "#{@state.name} — Generators" %>
+
+<div class="page-head"><h1><%= @state.name %></h1>
+  <p class="page-subtitle muted"><%= @state.data["generator"] %></p>
+</div>
+
+<%# Reopen in the harness: same editor as index, prefilled from this state's data (duplicate & tweak
+    → Save creates a NEW state, matching the shipped boxes flow). %>
+<div class="generator-editor" data-controller="generator"
+     data-generator-reopen-value="<%= @state.data.to_json %>">
+  <aside class="generator-side">
+    <label class="generator-picker-label">Generator
+      <select data-generator-target="picker" data-action="change->generator#selectGenerator"></select>
+    </label>
+    <%= form_with url: tools_generators_path, method: :post, data: { generator_target: "form" } do %>
+      <input type="hidden" name="generator" data-generator-target="generatorField">
+      <input type="hidden" name="svg" data-generator-target="svgField">
+      <div class="generator-params" data-generator-target="fields" data-action="input->generator#render"></div>
+      <label class="generator-name-label">Name
+        <%= text_field_tag "name", @state.name, required: true %>
+      </label>
+      <%= submit_tag "Save a copy", class: "generator-save", data: { generator_target: "save" } %>
+    <% end %>
+  </aside>
+  <div class="generator-preview"><img data-generator-target="preview" alt="live preview"></div>
+</div>
+
+<section class="generator-bundle">
+  <h2>Saved files</h2>
+  <ul>
+    <% @state.files.each do |af| %>
+      <li><span class="muted"><%= af.role %></span> — <code><%= af.node_id %></code></li>
+    <% end %>
+  </ul>
+</section>

@@ -1,6 +1,40 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-22 (**interactive 3D viewer for STL/3MF/OBJ on the file detail page**)
+**Updated:** 2026-07-23 (**first client-only addon — Maker.js generator harness + Material Test Grid**)
+
+## Latest (2026-07-23): Generators addon — Maker.js harness + Material Test Grid (branch `claude/addons-brainstorm-plan-04adb7`)
+
+The **first client-only `/tools` addon** — a browser-side **generator harness** (Maker.js, Apache-2.0)
+whose Rails side is **generator-agnostic**, shipping with the **Material Test Grid** as its first
+generator. Proves the client half of the addon framework (only the boxes.py *sidecar* addon had shipped).
+Design/plan: `docs/superpowers/specs/2026-07-22-makerjs-generator-harness-design.md`,
+`docs/superpowers/plans/2026-07-22-makerjs-generator-harness.md`.
+
+- **`Tools::GeneratorsController`** (`index`/`create`/`show`) — persists a `Maker::AddonState` and writes
+  the `[svg, params.json]` bundle via the existing `Maker::Addons::LibraryOutput`. **No new server
+  infrastructure, no sidecar, no GPL.** Contains **zero** generator-specific code — verified by grep;
+  all generator schema + geometry live in JS.
+- **The harness** (`app/javascript/controllers/generator_controller.js` + `app/javascript/generators/`)
+  — a Stimulus form-builder that renders the form from a JS module's param schema, previews the module's
+  SVG live (data-URL `<img>`, XSS-safe), and POSTs the bundle. **Adding a generator = one JS module +
+  one registry line — no Ruby change.** First module: `material_test_grid.js` (speed × power sweep →
+  labelled SVG grid; speed across the top, power down the left).
+- **Maker.js vendored** via the **jspm ESM build** (`bin/importmap pin`, not the `dist/browser.maker.js`
+  standalone build, which only exposes Browserify's `require` — no importable default). `clone`→`buffer`
+  reuses the existing hand-patched `buffer.js` (shared with jszip); `config/importmap.rb` documents the
+  re-pin hazard.
+- **`Tools::LibraryFolders`** — the folder-picker helpers extracted from `BoxesController` into a shared
+  concern (DRY; both addons include it).
+- **Browser-verified end-to-end** (live dev server): gallery tile → form built from schema → **live
+  preview updates on edit** → Save → `[svg, params.json]` bundle in the library, versioned → reopen
+  **rehydrates** the saved grid. The browser smoke caught a real importmap specifier bug (`generators`,
+  not `generators/index`).
+- Suite **1224 runs**, **identical on all three legs** (chunk / `LIBRARY_BACKEND=share` / `=s3`: 0
+  failures, 0 errors, 8 skips). *(Running the s3 leg locally needs `LIBRARY_S3_*` dummy env, as CI sets;
+  the share leg needs `LIBRARY_PATH=$(mktemp -d)`.)*
+- **v1 scope (deferred):** simple labelled grid only (no color-coded laser layers); each Save creates a
+  new state (no in-place re-versioning); SVG output only (DXF is a near-free future add via
+  `makerjs.exporter.toDXF`); no second generator (the harness exists to make them trivial).
 
 ## Latest (2026-07-22): interactive 3D viewer (branch `claude/3d-viewer-models-18a424`)
 
@@ -25,8 +59,6 @@ file tree). STEP/IGES/DXF keep their static thumbnails. Design/plan:
   rule (`docs/DEPLOY.md`), else those files degrade to the thumbnail.
 - Suite **+3 tests**, identical on all three legs (chunk / `LIBRARY_BACKEND=share` / `=s3`), 0
   failures; production `assets:precompile` clean.
-
-## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
 
 ## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
 
