@@ -214,5 +214,35 @@ module Tools
       assert_select ".box-field-label", text: /🛈/, count: 0
       assert_select ".box-field-label", text: /usermanual\.html/, count: 0
     end
+
+    test "new pre-selects the current project's folder in the save picker" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = project.ensure_library_folder!(@user)
+      patch current_project_path, params: { project_id: project.id }
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
+    end
+
+    test "create attaches both output files to the current project" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = project.ensure_library_folder!(@user)
+      patch current_project_path, params: { project_id: project.id }
+      assert_difference "project.file_attachments.count", 2 do
+        post tools_boxes_path, params: { name: "Cur Box", generator: "ABox", params: { x: 1, y: 2 },
+                                         parent_node_id: folder.node_id }
+      end
+      # both attached nodes live under the project folder
+      project.file_attachments.each do |att|
+        assert_equal folder.node_id, @user.nodes.find_by(node_id: att.node_id).parent_node_id
+      end
+    end
+
+    test "create attaches nothing when no project is current" do
+      @user.maker_projects.create!(name: "Desk Lamp") # exists but not current
+      assert_no_difference "Maker::FileAttachment.count" do
+        post tools_boxes_path, params: { name: "Loose Box", generator: "ABox", params: { x: 1, y: 2 } }
+      end
+    end
   end
 end

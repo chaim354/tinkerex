@@ -18,6 +18,7 @@ module Tools
       redirect_to(tools_boxes_path, alert: "Unknown generator.") and return unless @generator
 
       @values = params[:params]&.to_unsafe_h || {} # optional prefill (e.g. "duplicate & tweak")
+      @default_parent_node_id = current_project_folder_node_id
       @folders = folder_options # where to save the output (existing folders + root)
 
       # Saved boxes made with THIS generator, newest first. Filtered in Ruby (not SQL): `data` is a
@@ -65,7 +66,7 @@ module Tools
         addon_key: "boxes", name: params.require(:name), data: { generator:, params: p }
       )
       base = state.name.parameterize.presence || "box"
-      Maker::Addons::LibraryOutput.write(
+      addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
           { name: "#{base}-#{state.id}.svg", bytes: svg,
@@ -75,6 +76,7 @@ module Tools
             content_type: "application/json", role: "parameters" }
         ]
       )
+      attach_addon_files_to_current_project(addon_files)
       redirect_to tools_box_path(state), notice: "Saved “#{state.name}”."
     rescue BoxesClient::Error => e
       redirect_to tools_boxes_path, alert: "Generation failed: #{e.message}"

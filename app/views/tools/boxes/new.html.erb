@@ -18,7 +18,7 @@
 
     <label class="box-field">
       <span class="box-field-label">Save to folder</span>
-      <%= select_tag :parent_node_id, options_for_select(@folders) %>
+      <%= select_tag :parent_node_id, options_for_select(@folders, @default_parent_node_id) %>
     </label>
 
     <%= render "form", generator: @generator, values: @values %>
