@@ -1,0 +1,202 @@
+
+3.88 hrs 
+
+1 pcs 
+f
+0.28 mm
+k
+0.40 mm
+h
+PET
+
+58 g 
+d
+Prusa MINI /
+MINI+
+Summary
+Wall for attaching hooks and holders for your tools. You will create the wall
+according to your own idea.
+Household > Other House Equipment
+Tags: organizer wall hooks storrage
+News
+March 20, 2022 added bigger hook
+March 21, 2022 added USB flash drive holder
+March 21, 2022 added hooks (12mm and 25mm, screwed with M3
+screw)
+March 21, 2022 added box (screwed with M4x10 screw)
+March 21, 2022 added 2 wall parts (224x190 and 293x271)
+March 22, 2022 added SD card holder(screwed with M4x10 screw)
+March 22, 2022 added USB flash drive holder (screw in no need)
+March 22, 2022 added box (screw in no need)
+RostaP
+Honeycomb
+storage wall
+VIEW IN BROWSER
+updated 12. 8. 2023 | published 12. 8. 2023 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+
+March 24, 2022 added micro SD card holder (for 5 or 20 pieces)
+March 24, 2022 added micro SD card holder (for 5 or 20 pieces)
+April 4, 2022 added shelves (4 dimensions)
+April 6, 2022 Added drawers (found as a remix)
+April 12, 2022 Added wrench hooks (2x)
+May 6, 2023 Added more step files
+July 18, 2023 Fixed some stl and step wall files. Added image-diagram
+how to install your honeycomb
+Don't forget to look at other remixes - there are a lot of
+interesting modifications and accessories
+https://www.reddit.com/r/honeycombwall/
+Honeycomb wall
+The basic part of the wall is printable on the Prusa Mini printer. It is
+necessary to turn off the skirt or set the distance to 1mm in order for the
+part to fit it on the pad. 
+You can connect the basic parts of the wall together. You can connect it
+also with printable parts which can be used in various ways (you can use it
+for screwing to the wall, you can use it as a holder for hanger or as a
+holder for hook). 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+
+Choose the correct part size for your printer, or use https://
+www.printables.com/cs/model/530149-customizable-honeycomb-storagewall-openscad-v21-b for a custom size.
+
+Diagram to show how to install your honeycomb.
+
+Printing settings
+layer height: 0.25 - 0.3
+perimeters: 3 (or more - without infill for faster printing) 
+Parts for attaching honeycombs to the wall
+Some of the parts (which are orange on the picture) you can use for
+hanging to the wall or for connecting the basic parts together. 
+• 
+• 
+
+Fasteners and parts for attaching hooks and objects
+There is added one part with the nut (size M3, M4, M5) inside which can be
+used for screwing whatever holders you want. 
+
+Hooks and holders
+This is space for new holders and hooks which will be added as needed. 
+Hook bottom and side is prepared to insert to the empty insert part. 
+
+
+
+Other parts
+This is cover for the connecting part which is used for hiding the screwer.
+
+Model files
+And also you can use the second part (as shown in the picture) which can
+be used for additional attaching the honey comb to the wall. 
+My printing settings for all inserts 
+layer height: 0.2
+perimeters: 4
+infil: 20%
+ shelves 4 files
+• 
+• 
+• 
+shelf-3.stl 
+
+ Base STEP files 15 files
+shelf-4.stl 
+shelf-1.stl 
+shelf-2.stl 
+insert-empty.step 
+insert-hollow-for.step 
+caliper-and-screw-holder.step 
+wranch-hoks.step 
+hooks.step 
+inserts-hexagon-countersunk-hole.step 
+shelf.step 
+
+ Hooks and holders 23 files
+usb-sd-box-m3.step 
+insert-m4.step 
+usb-sd-box.step 
+inserts-combined.step 
+inserts-hollow-and-cover.step 
+wall.f3d 
+wall2.step 
+wall-211x248.step 
+hook-keyboard-side.stl 
+hook-keyboard-bottom.stl 
+
+hook-bottom.stl 
+screw-holder.stl 
+insert-cable-holder.stl 
+hook-side.stl 
+caliper-mount.stl 
+hook-to-empty.stl 
+hook-to-empty-long.stl 
+hook-12mm-for-m3.stl 
+hook-25mm-for-m3.stl 
+usb-holder.stl 
+
+box-and-usb-holder-cover.stl 
+box.stl 
+sd-card-holder.stl 
+sd-card-holder-cover.stl 
+box-without-screw.stl 
+sd-card-holder-without-screw.stl 
+usb-holder-without-screw.stl 
+5-micro-sd-card-holder.stl 
+20-micro-sd-card-holder.stl 
+wranch-hoks-2.stl 
+
+Fasteners and parts for attaching hooks and objects 10 files
+ base part - insert a hook into it
+wranch-hoks-1.stl 
+insert-hollow-dual.stl 
+double-m4.stl 
+insert-empty.stl 
+double-m5.stl 
+insert-with-m3.stl 
+insert-m4.stl 
+insert-hollow-tre.stl 
+
+Parts for attaching honeycombs to the wall 5 files
+insert-with-m3-dual.stl 
+insert-m5.stl 
+insert-hollow-for.stl 
+insert-countersunk.stl 
+hexagon-countersung-and-hole.stl 
+insert-countersung-m3.stl 
+insert-for-countersunk-hole-3.stl 
+insert-countersunk-with-m3x3.stl 
+
+ Other parts 2 files
+cover-contersunk.stl 
+countersunk-to-holee.stl 
+wall-honeycomb-part.stl 
+wall-honeycomb-224x190sizemk3s.stl 
+wall-honeycomb-293x271-big-printer.stl 
+wall-honeycomb-bambu-211x248-fixed.stl 
+wall-honeycomb-106x89-fixed.stl 
+wall-honeycomb-k1-211x201.stl 
+
+Print files
+ 375x389
+h PET k 0.40 mm f 0.28 mm  3.88 hrs  58 g d Prusa MINI / MINI+
+License 
+This work is licensed under a 
+Creative Commons (4.0 International License)
+Attribution-NonCommercial 
+✖ | Sharing without ATTRIBUTION 
+✔ | Remix Culture allowed 
+✖ | Commercial Use 
+✖ | Free Cultural Works 
+✖ | Meets Open Definition 
+375x389-fixed.stl 
+wall-honeycomb-part_028mm_petg_mini_3h53m.gcode 
