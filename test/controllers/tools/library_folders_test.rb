@@ -20,7 +20,7 @@ module Tools
     test "folder_options lists the library root first, then the user's folders by path" do
       @user.nodes.create!(node_id: SecureRandom.uuid, name: "Projects", kind: "dir")
       opts = Host.new(@user, {}).send(:folder_options)
-      assert_equal ["/ (library root)", ""], opts.first
+      assert_equal [ "/ (library root)", "" ], opts.first
       assert opts.any? { |label, _| label == "/Projects" }
     end
 
