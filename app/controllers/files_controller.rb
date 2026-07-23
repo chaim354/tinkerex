@@ -498,7 +498,11 @@ class FilesController < ApplicationController
     return :pdf   if ext == "pdf"
     return :text  if %w[txt md markdown csv json xml yml yaml log rb js ts py rs go
                         c h cpp html css toml ini cfg conf sh gcode].include?(ext)
-    # A file we can render a server-side thumbnail for (stl, 3mf, dxf, lbrn2, step, obj, ...) but
+    # Mesh formats the browser can parse itself -> the interactive client-side 3D viewer
+    # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
+    # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
+    return :model3d if %w[stl 3mf obj].include?(ext)
+    # A file we can render a server-side thumbnail for (dxf, lbrn2, step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

@@ -44,3 +44,19 @@ pin "bezier-js" # @2.6.1
 pin "clone" # @1.0.4
 pin "graham_scan" # @1.0.5
 pin "kdbush" # @2.0.1
+
+# Three.js r0.185.1 (MIT) — the interactive 3D viewer (modelviewer_controller.js), DYNAMIC-imported
+# so the payload ships only on pages with a 3D file. Vendored from unpkg (the official ES build),
+# NOT `bin/importmap pin three` (jspm): jspm splits the core into an internal `../_/…` chunk and
+# minifies, the same dangling-relative-import class as JSZip above. The official build is cleaner:
+# `three.module.js` re-exports `./three.core.js` (repointed to the bare "three-core" specifier), and
+# `3MFLoader.js` imports fflate via a relative path (repointed to the bare "fflate"). OrbitControls/
+# STL/OBJ import only the bare "three". The addon specifiers use three's own "three/addons/…" alias
+# so the code reads idiomatically. Verified: no dangling relative/URL import remains in any file.
+pin "three", to: "three.module.js" # @0.185.1
+pin "three-core", to: "three.core.js" # @0.185.1 — three.module.js's core (the only thing that imports it)
+pin "fflate", to: "fflate.js" # MIT — 3MFLoader's unzip dependency (examples/jsm/libs/fflate.module.js)
+pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1
+pin "three/addons/loaders/STLLoader.js", to: "STLLoader.js" # @0.185.1
+pin "three/addons/loaders/OBJLoader.js", to: "OBJLoader.js" # @0.185.1
+pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
