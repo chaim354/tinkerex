@@ -5,6 +5,7 @@ pin "@hotwired/turbo-rails", to: "turbo.min.js"
 pin "@hotwired/stimulus", to: "stimulus.min.js"
 pin "@hotwired/stimulus-loading", to: "stimulus-loading.js"
 pin_all_from "app/javascript/controllers", under: "controllers"
+pin_all_from "app/javascript/generators", under: "generators"
 
 # JSZip 3.10.1 — MIT/GPLv3 dual-licensed (we use it under MIT) — https://github.com/Stuk/jszip
 # JSZip (browser standalone build) — used by importer_controller to unzip a downloaded model
