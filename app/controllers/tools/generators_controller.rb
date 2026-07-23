@@ -37,6 +37,10 @@ module Tools
       redirect_to tools_generator_path(state), notice: "Saved “#{state.name}”."
     end
 
+    def show
+      @state = current_user.maker_addon_states.for_addon(ADDON_KEY).includes(:files).find(params[:id])
+    end
+
     private
 
     def addon_params = params[:params]&.to_unsafe_h || {}

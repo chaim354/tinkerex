@@ -153,5 +153,27 @@ module Tools
       }
       assert_response :unprocessable_entity
     end
+
+    test "show reopens a saved grid: its name and a rehydration payload for the harness" do
+      post tools_generators_path, params: {
+        name: "Reopen Me", generator: "material-test-grid",
+        params: { cols: 4, rows: 2 }, svg: SVG_FIXTURE
+      }
+      state = @user.maker_addon_states.for_addon("generators").order(:id).last
+      get tools_generator_path(state)
+      assert_response :success
+      assert_select "*", text: /Reopen Me/
+      # the harness reads data-generator-reopen-value to prefill generator + params
+      assert_select "[data-controller='generator'][data-generator-reopen-value*='material-test-grid']"
+      assert_select "[data-generator-reopen-value*='cols']"
+    end
+
+    test "show does not expose another user's grid (scoped find → 404)" do
+      other = User.create!(email: "gen-show-other@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: "generators", name: "Theirs",
+                                                data: { "generator" => "material-test-grid", "params" => {} })
+      get tools_generator_path(theirs)
+      assert_response :not_found
+    end
   end
 end
