@@ -8,6 +8,12 @@ module Maker
   class ExtractPdfMetadataJob < ApplicationJob
     queue_as :default
 
+    # A FetchError from reading the PDF is TRANSIENT (unmounted NAS, S3 5xx, creds blip) — retry
+    # rather than silently forfeit the one-shot auto-fill, the same lesson GeneratePreviewJob
+    # already encodes. NotFound (terminal) and everything else fall through as a no-op / loud
+    # failure, deliberately.
+    retry_on FileLayer::FetchError, wait: :polynomially_longer, attempts: 3
+
     def perform(model_id:, node_id:)
       model = Maker::Model.find_by(id: model_id)
       node  = model&.user&.nodes&.present&.find_by(node_id:)
@@ -23,7 +29,8 @@ module Maker
     private
 
     def read_pdf_text(user, node)
-      bytes = Maker::FileBytes.read(user, node_id: node.node_id) # the port, via the preview shim
+      return nil unless Maker::PdfText.available? # no pdfium -> skip the byte-read entirely
+      bytes = Maker::FileBytes.read(user, node_id: node.node_id) # FetchError propagates to retry_on
       return nil if bytes.blank?
       Tempfile.create([ "pdfmeta", ".pdf" ]) do |tmp|
         tmp.binmode
@@ -31,7 +38,7 @@ module Maker
         tmp.flush
         Maker::PdfText.extract(tmp.path)
       end
-    rescue FileLayer::FetchError, FileLayer::NotFound
+    rescue FileLayer::NotFound # terminal (deleted file) -> quiet no-op
       nil
     end
 

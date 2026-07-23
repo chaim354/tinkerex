@@ -17,12 +17,15 @@ module Maker
     def run_job(pdf_text: @text)
       orig_read = Maker::FileBytes.method(:read)
       orig_extract = Maker::PdfText.method(:extract)
+      orig_avail = Maker::PdfText.method(:available?)
       Maker::FileBytes.define_singleton_method(:read) { |*, **| "%PDF-fake" }
       Maker::PdfText.define_singleton_method(:extract) { |*| pdf_text }
+      Maker::PdfText.define_singleton_method(:available?) { true } # don't depend on a local pdfium
       Maker::ExtractPdfMetadataJob.new.perform(model_id: @model.id, node_id: "pdf1")
     ensure
       Maker::FileBytes.define_singleton_method(:read, orig_read)
       Maker::PdfText.define_singleton_method(:extract, orig_extract)
+      Maker::PdfText.define_singleton_method(:available?, orig_avail)
     end
 
     test "fills empty fields from the parsed PDF" do
@@ -37,13 +40,17 @@ module Maker
       assert_includes @model.tags.map(&:name), "organizer"
     end
 
-    test "never overwrites fields the user already set" do
-      @model.update!(designer: "MINE", license: "My License")
+    test "never overwrites fields the user already set (incl. notes and print_settings)" do
+      @model.update!(designer: "MINE", license: "My License", notes: "my own notes",
+                     print_settings: { "material" => "MYPLA" })
       run_job
       @model.reload
       assert_equal "MINE", @model.designer
       assert_equal "My License", @model.license
-      assert_equal "PET", @model.print_settings["material"] # still filled the blank
+      assert_equal "my own notes", @model.notes                    # not clobbered
+      assert_equal({ "material" => "MYPLA" }, @model.print_settings) # not clobbered
+      # source_url WAS blank -> it still gets filled
+      assert_equal "https://www.printables.com/model/152592", @model.source_url
     end
 
     test "tags are additive (union), not replaced" do

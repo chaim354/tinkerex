@@ -27,6 +27,13 @@ module Maker
       assert_equal({}, Maker::PrintablesPdf.extract(text: nil, filename: nil, title: nil))
     end
 
+    test "designer is nil (not a wrapped last line) when the whole preamble is title words" do
+      # Repro of the negative-index wraparound: every line above VIEW IN BROWSER is a title word,
+      # so j runs off the top; it must omit designer, not return lines[-1].
+      d = Maker::PrintablesPdf.extract(text: "Foo\nBar\nVIEW IN BROWSER\n", filename: "1-x.pdf", title: "Foo Bar")
+      assert_nil d[:designer]
+    end
+
     test "designer is skipped when the title does not anchor above VIEW IN BROWSER" do
       # No title -> can't peel title lines -> no (possibly wrong) designer guessed.
       d = Maker::PrintablesPdf.extract(text: TEXT, filename: "1-x.pdf", title: nil)

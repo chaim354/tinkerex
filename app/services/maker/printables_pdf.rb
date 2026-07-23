@@ -32,7 +32,10 @@ module Maker
       return nil if title_words.empty?
       j = i - 1
       j -= 1 while j >= 0 && (w = lines[j].downcase.scan(/[a-z0-9]+/)).any? && w.all? { |x| title_words.include?(x) }
-      return nil if j == i - 1 # nothing above matched the title -> anchor unreliable
+      # nothing above matched the title (j unchanged), or the whole preamble was title words (j
+      # ran off the top). Either way there's no reliable author anchor — omit it, don't let a
+      # negative index wrap to lines[-1] (the last line of the PDF) and fabricate a designer.
+      return nil if j == i - 1 || j.negative?
       author = lines[j].to_s.strip
       return nil if author.blank? || author.length > 40 || author.include?(">")
       author
