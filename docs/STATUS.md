@@ -1,6 +1,16 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-23 (**first client-only addon — Maker.js generator harness + Material Test Grid**)
+**Updated:** 2026-07-23 (**Current Project — session-scoped default for saves, attaches, and uploads**)
+
+## Latest (2026-07-23): Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
+
+- **Current Project (2026-07-23):** a session-scoped "current project" shown in the top-bar
+  selector (set/clear there or from a project page). Tool saves (Box Generator, Generators) default
+  their save-folder to the project's `Projects/<slug>` folder and attach both output files; the
+  Files-page upload defaults into the project (folder + attach) reusing the existing project
+  upload/attach control, with a "library root instead" override. Session-only, zero-regression when
+  unset; no models/migrations/JS; reads metadata + creates FileAttachment references only (§10
+  untouched). Green on all three backends.
 
 ## Latest (2026-07-23): Generators addon — Maker.js harness + Material Test Grid (branch `claude/addons-brainstorm-plan-04adb7`)
 
