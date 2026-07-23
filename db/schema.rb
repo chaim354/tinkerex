@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_22_170431) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_23_001744) do
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -264,6 +264,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_22_170431) do
     t.string "folder_node_id"
     t.string "license"
     t.text "notes"
+    t.json "print_settings"
     t.string "print_status", default: "want_to_print", null: false
     t.string "slug", null: false
     t.string "source_url"

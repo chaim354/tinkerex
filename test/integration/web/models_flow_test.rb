@@ -75,6 +75,17 @@ module Web
       assert_select "a[href=?]", "https://printables.com/model/1"
     end
 
+    test "show renders a print-settings panel when present, hides it otherwise" do
+      user = sign_in
+      m = user.maker_models.create!(title: "P", print_settings: { "material" => "PET", "layer_height" => "0.2 mm" })
+      get model_path(m)
+      assert_select ".model-print-settings dt", text: "Material"
+      assert_select ".model-print-settings dd", text: "PET"
+      assert_select ".model-print-settings dt", text: "Layer height"
+      get model_path(user.maker_models.create!(title: "NoSettings"))
+      assert_select ".model-print-settings", count: 0
+    end
+
     test "show 404s for another user's model" do
       sign_in("a@example.com")
       other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)

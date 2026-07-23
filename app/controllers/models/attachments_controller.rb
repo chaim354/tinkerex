@@ -14,6 +14,11 @@ module Models
       att = @model.file_attachments.create!(user: current_user, node_id: node.node_id,
                                             role: Maker::FileAttachment.role_for(node.name))
       @model.update!(cover_node_id: node.node_id) if ActiveModel::Type::Boolean.new.cast(params[:cover])
+      # An instructions PDF just landed — parse it in the background to auto-fill the model's empty
+      # fields (designer/license/source/tags/notes + print_settings). Idempotent, fills blanks only.
+      if att.role == "instructions"
+        Maker::ExtractPdfMetadataJob.perform_later(model_id: @model.id, node_id: node.node_id)
+      end
       render json: { id: att.id, node_id: att.node_id, role: att.role }, status: :created
     end
 

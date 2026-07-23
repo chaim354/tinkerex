@@ -82,5 +82,23 @@ module Web
       assert_nil body.dig("folder_map", ".maker-tmp-x"), "reserved dot-dir skipped"
       refute user.nodes.present.exists?(name: ".."), "no .. folder node created"
     end
+
+    test "attaching an instructions PDF enqueues extraction; other files do not" do
+      user = sign_in
+      post models_path(format: :json), params: { title: "Doc", dirs: [] }.to_json,
+           headers: { "CONTENT_TYPE" => "application/json" }
+      model = user.maker_models.find_by!(slug: JSON.parse(response.body)["slug"])
+      user.nodes.create!(node_id: "pdfx", name: "guide.pdf", kind: "file")
+      user.nodes.create!(node_id: "stlx", name: "part.stl", kind: "file")
+
+      assert_enqueued_with(job: Maker::ExtractPdfMetadataJob) do
+        post model_attachments_path(model, format: :json), params: { node_id: "pdfx" }.to_json,
+             headers: { "CONTENT_TYPE" => "application/json" }
+      end
+      assert_no_enqueued_jobs only: Maker::ExtractPdfMetadataJob do
+        post model_attachments_path(model, format: :json), params: { node_id: "stlx" }.to_json,
+             headers: { "CONTENT_TYPE" => "application/json" }
+      end
+    end
   end
 end
