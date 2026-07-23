@@ -13,6 +13,7 @@ module Tools
     def index
       @saved = current_user.maker_addon_states.for_addon(ADDON_KEY)
                            .includes(:files).order(updated_at: :desc, id: :desc)
+      @default_parent_node_id = current_project_folder_node_id # BEFORE folder_options: ensures the project folder so it's a selectable option
       @folders = folder_options
     end
 
@@ -26,7 +27,7 @@ module Tools
         data: { generator:, params: addon_params }
       )
       base = state.name.parameterize.presence || "drawing"
-      Maker::Addons::LibraryOutput.write(
+      addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
           { name: "#{base}-#{state.id}.svg", bytes:, content_type: "image/svg+xml", role: "output" },
@@ -34,6 +35,7 @@ module Tools
             bytes: JSON.pretty_generate(state.data), content_type: "application/json", role: "parameters" }
         ]
       )
+      attach_addon_files_to_current_project(addon_files)
       redirect_to tools_generator_path(state), notice: "Saved “#{state.name}”."
     end
 
