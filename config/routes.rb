@@ -92,6 +92,7 @@ Rails.application.routes.draw do
       # sidecar (which bundles boxes.py's GPL thumbnails) so the browser never hits an external host.
       get "thumb/:key", to: "boxes#thumb", on: :collection, as: :thumb, constraints: { key: /[A-Za-z0-9]+/ }
     end
+    resources :generators, only: %i[index create show]
   end
 
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.

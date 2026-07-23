@@ -15,6 +15,11 @@ module Maker
           key: "boxes", title: "Box Generator", icon: "📦",
           description: "Parametric laser-cut / CNC boxes",
           available: -> { BoxesClient.configured? }
+        ),
+        "generators" => Addon.new(
+          key: "generators", title: "Generators", icon: "✏️",
+          description: "Parametric 2D drawings → SVG (laser & CNC)",
+          available: -> { true } # client-only (Maker.js in the browser); always available
         )
       }.freeze
 
