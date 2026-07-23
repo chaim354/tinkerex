@@ -24,7 +24,17 @@ module Web
         assert_response :success
         assert_select "[data-uploader-parent-node-id-value=?]", @folder.node_id
         assert_select "[data-uploader-attach-url-value=?]", project_attachments_path(@project)
+        assert_select "[data-uploader-redirect-url-value=?]", files_path(folder: @folder.node_id)
         assert_select "a", text: /library root instead/i
+      end
+
+      test "the override link preserves the browsed folder, not the project folder" do
+        other = @user.nodes.create!(node_id: SecureRandom.uuid, name: "Loose", kind: "dir")
+        patch current_project_path, params: { project_id: @project.id }
+        get files_path(folder: other.node_id)
+        assert_response :success
+        assert_select "a[href=?]", files_path(folder: other.node_id, upload: "library"),
+                      text: /library root instead/i
       end
 
       test "the ?upload=library override renders the plain (root) uploader" do
@@ -66,6 +76,13 @@ module Web
       test "with no current project the multipart form posts to the plain files path" do
         get files_path
         assert_select "form.uploader[action=?]", files_path
+      end
+
+      test "the ?upload=library override renders the plain multipart form" do
+        patch current_project_path, params: { project_id: @project.id }
+        get files_path(upload: "library")
+        assert_select "form.uploader[action=?]", files_path
+        assert_select "form.uploader[action=?]", project_uploads_path(@project), count: 0
       end
     end
   end
