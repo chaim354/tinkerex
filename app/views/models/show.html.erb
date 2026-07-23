@@ -84,6 +84,17 @@
       <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
     </dl>
 
+    <% if @model.print_settings.present? %>
+      <section class="model-print-settings">
+        <h2>Print settings</h2>
+        <dl class="ps-grid">
+          <% @model.print_settings.each do |k, v| %>
+            <dt><%= k.tr("_", " ").capitalize %></dt><dd><%= v %></dd>
+          <% end %>
+        </dl>
+      </section>
+    <% end %>
+
     <section class="model-files">
       <h2>Files <span class="muted">(<%= @file_count %>)</span></h2>
       <% if @file_tree.present? %>

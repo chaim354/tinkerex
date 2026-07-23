@@ -44,6 +44,12 @@
 .tree-file .tree-fname::before { content: "🧊"; margin-left: -18px; margin-right: 4px; }
 .tree-file .tree-fname:hover { background: #f8fafc; }
 
+.model-print-settings { margin-bottom: 22px; }
+.ps-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13px; margin: 0;
+           border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+.ps-grid dt { color: #64748b; white-space: nowrap; }
+.ps-grid dd { margin: 0; }
+
 .print-log .print-run { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
 .print-form { display: grid; gap: 8px; max-width: 480px; }
 .print-form .row { display: flex; gap: 10px; }

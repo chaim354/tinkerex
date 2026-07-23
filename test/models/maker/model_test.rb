@@ -105,5 +105,11 @@ module Maker
       assert_equal "desk-dragon", folder.name
       assert_equal "Models", @user.nodes.find_by!(node_id: folder.parent_node_id).name
     end
+
+    test "print_settings stores and returns a Hash, nil by default" do
+      m = @user.maker_models.create!(title: "x", print_settings: { "material" => "PET" })
+      assert_equal({ "material" => "PET" }, m.reload.print_settings)
+      assert_nil @user.maker_models.create!(title: "y").print_settings
+    end
   end
 end
