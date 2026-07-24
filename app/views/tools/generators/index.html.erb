@@ -21,7 +21,7 @@
         <%= text_field_tag "name", "", required: true, placeholder: "e.g. 3mm birch test" %>
       </label>
       <label class="generator-folder-label">Save into
-        <%= select_tag "parent_node_id", options_for_select(@folders) %>
+        <%= select_tag "parent_node_id", options_for_select(@folders, @default_parent_node_id) %>
       </label>
       <%= submit_tag "Save to library", class: "generator-save", data: { generator_target: "save" } %>
     <% end %>

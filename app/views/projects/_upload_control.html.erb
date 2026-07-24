@@ -6,6 +6,15 @@
 <% if capabilities.port_writable? %>
   <%= form_with url: upload_url, method: :post, class: "uploader",
                 data: { turbo: false }, html: { multipart: true } do |f| %>
+    <%# Where to send the browser after the upload+attach. OPTIONAL: the project page and a
+        build-log entry omit it and the controller defaults to the project page; the Files-page
+        (current-project) uploader passes files_path so the user stays in Files. This mirrors the
+        chunk branch's data-uploader-redirect-url-value below — the two flows now land in the same
+        place. Projects::UploadsController re-validates it with url_from (a relative path only), so
+        this field can never become an open redirect. %>
+    <% if local_assigns[:redirect_url].present? %>
+      <%= hidden_field_tag :redirect_url, redirect_url %>
+    <% end %>
     <label class="upload-btn">
       <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
       <span>Upload &amp; attach</span>

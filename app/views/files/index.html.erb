@@ -31,33 +31,56 @@
 </nav>
 
 <%#
+  UPLOAD — when a project is CURRENT, the single upload button defaults into it (its Projects/<slug>
+  folder + attach), reusing the EXISTING project upload/attach control (spec 2026-07-23) — no new
+  controller, no new JS. A small link overrides to a plain library-root upload (?upload=library)
+  without clearing the current project. When no project is current, or the override is active, the
+  plain two-flow upload renders exactly as before:
+
   ONE BUTTON, TWO FLOWS -- and this branch is why `port_writable` exists. It does NOT ask "can
   this deployment accept uploads": both of these upload. It asks WHICH DOOR the bytes go in, and
   the answer is the deployment's, not the user's. Rendering the wrong form is not a cosmetic bug:
   the JS uploader would drive begin_upload, which FilesController answers 501 on a share/s3
   library, so the button would simply fail.
 %>
-<% if capabilities.port_writable? %>
-  <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
-  <%= form_with url: files_path, method: :post, class: "uploader",
-                data: { turbo: false }, html: { multipart: true } do |f| %>
-    <label class="upload-btn">
-      <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
-      <span>Upload a file</span>
-    </label>
-  <% end %>
+<% if current_project && params[:upload] != "library" %>
+  <div class="upload-to-project">
+    <span class="muted">Uploading to project: <strong><%= current_project.name %></strong></span>
+    <%= render "projects/upload_control",
+               upload_url: project_uploads_path(current_project),
+               attach_url: project_attachments_path(current_project),
+               redirect_url: files_path(folder: @current_project_folder_node_id),
+               parent_node_id: @current_project_folder_node_id %>
+    <%= link_to "Upload to library root instead",
+                files_path(folder: @folder&.node_id, upload: "library"), class: "muted upload-alt" %>
+  </div>
 <% else %>
-  <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
-  <section class="uploader"
-           data-controller="uploader"
-           data-uploader-begin-url-value="<%= begin_upload_files_path %>"
-           data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
-    <label class="upload-btn">
-      <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
-      <span>Upload a file</span>
-    </label>
-    <span class="upload-status" data-uploader-target="status"></span>
-  </section>
+  <% if capabilities.port_writable? %>
+    <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
+    <%= form_with url: files_path, method: :post, class: "uploader",
+                  data: { turbo: false }, html: { multipart: true } do |f| %>
+      <label class="upload-btn">
+        <%= f.file_field :file, onchange: "this.form.requestSubmit()", hidden: true %>
+        <span>Upload a file</span>
+      </label>
+    <% end %>
+  <% else %>
+    <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). %>
+    <section class="uploader"
+             data-controller="uploader"
+             data-uploader-begin-url-value="<%= begin_upload_files_path %>"
+             data-uploader-finalize-url-value="<%= finalize_upload_files_path %>">
+      <label class="upload-btn">
+        <input type="file" data-uploader-target="input" data-action="uploader#upload" hidden>
+        <span>Upload a file</span>
+      </label>
+      <span class="upload-status" data-uploader-target="status"></span>
+    </section>
+  <% end %>
+  <% if current_project %>
+    <%= link_to "Upload to project “#{current_project.name}” instead",
+                files_path(folder: @folder&.node_id), class: "muted upload-alt" %>
+  <% end %>
 <% end %>
 
 <%#

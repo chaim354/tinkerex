@@ -12,6 +12,13 @@
     <span class="project-status badge status-<%= @project.status %>"><%= @project.status %></span>
   </div>
   <div class="head-actions">
+    <% if current_project == @project %>
+      <span class="badge current-project-badge">★ Current project</span>
+      <%= button_to "Clear", current_project_path, method: :delete, class: "linkbtn" %>
+    <% else %>
+      <%= button_to "Set as current", current_project_path, method: :patch,
+                    params: { project_id: @project.id }, class: "linkbtn" %>
+    <% end %>
     <%= link_to "Edit", edit_project_path(@project), class: "linkbtn" %>
     <%= button_to "Archive", project_path(@project), method: :delete, class: "linkbtn danger",
                   form: { data: { turbo_confirm: "Archive #{@project.name}?" } } %>

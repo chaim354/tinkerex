@@ -179,5 +179,41 @@ module Tools
       get tools_generator_path(theirs)
       assert_response :not_found
     end
+
+    test "index pre-selects the current project's folder in the save picker" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      patch current_project_path, params: { project_id: project.id }
+      get tools_generators_path # #index must lazily ensure the folder for it to be an option
+      assert_response :success
+      folder = project.ensure_library_folder!(@user) # idempotent — returns the folder #index just created
+      assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
+    end
+
+    test "create attaches both output files to the current project" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = project.ensure_library_folder!(@user)
+      patch current_project_path, params: { project_id: project.id }
+      assert_difference "project.file_attachments.count", 2 do
+        post tools_generators_path, params: {
+          name: "Cur Grid", generator: "material-test-grid", params: { cols: 2 },
+          svg: SVG_FIXTURE, parent_node_id: folder.node_id
+        }
+      end
+      project.file_attachments.each do |att|
+        assert_equal folder.node_id, @user.nodes.find_by(node_id: att.node_id).parent_node_id
+      end
+      state = @user.maker_addon_states.for_addon("generators").order(:id).last
+      assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
+                   "both output files (svg + params.json) must be the attached nodes"
+    end
+
+    test "create attaches nothing when no project is current" do
+      @user.maker_projects.create!(name: "Desk Lamp") # exists but not current
+      assert_no_difference "Maker::FileAttachment.count" do
+        post tools_generators_path, params: {
+          name: "Loose Grid", generator: "material-test-grid", params: { cols: 2 }, svg: SVG_FIXTURE
+        }
+      end
+    end
   end
 end
