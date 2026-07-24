@@ -6,15 +6,18 @@ import { Controller } from "@hotwired/stimulus"
 // ships only on pages that actually contain a 3D file, not site-wide (Stimulus eager-imports
 // controller MODULES at startup, so a top-level `import` would load Three everywhere).
 //
-// Graceful degradation is the contract: any failure (no WebGL, import error, fetch/CORS failure,
-// corrupt file) leaves the server-rendered thumbnail poster visible. The `--ready` class, added
-// only on a successful first render, is what reveals the canvas and hides that poster.
+// `lazy` defers the whole boot (and therefore the Three.js download + the byte fetch) until the
+// user clicks "View in 3D" (load()). A `source` <select> lets one viewer switch between several
+// model files. Graceful degradation is the contract: any failure (no WebGL, import error,
+// fetch/CORS failure, corrupt file) leaves the server-rendered thumbnail poster visible. The
+// `--ready` class, added only on a successful render, reveals the canvas and hides that poster.
 export default class extends Controller {
-  static values = { url: String, format: String }
-  static targets = ["canvas", "dims", "fallback"]
+  static values = { url: String, format: String, lazy: Boolean }
+  static targets = ["canvas", "dims", "fallback", "source"]
 
   async connect() {
     this.disposed = false
+    if (this.lazyValue) return // wait for load()
     try {
       await this.boot()
     } catch (e) {
@@ -24,9 +27,16 @@ export default class extends Controller {
 
   disconnect() {
     this.disposed = true
+    this.teardown()
+  }
+
+  // Free every GPU/DOM resource the current scene holds, WITHOUT marking the controller disposed —
+  // so a later boot() (a file switch, or re-opening after showPoster) can start clean. Reused by
+  // disconnect(), showPoster(), and the switch path in load().
+  teardown() {
     if (this.frame) cancelAnimationFrame(this.frame)
-    if (this.resizeObserver) this.resizeObserver.disconnect()
-    if (this.controls) this.controls.dispose()
+    this.resizeObserver?.disconnect()
+    this.controls?.dispose()
     this.scene?.traverse((o) => {
       o.geometry?.dispose?.()
       if (o.material) [].concat(o.material).forEach((m) => m.dispose?.())
@@ -35,6 +45,37 @@ export default class extends Controller {
       this.renderer.dispose()
       this.renderer.domElement?.remove()
     }
+    this.frame = this.resizeObserver = this.controls = null
+    this.scene = this.camera = this.renderer = this.home = null
+  }
+
+  // "View in 3D" (and the file-switch path): resolve the active source, tear down any current
+  // scene, then boot. On failure fall back to the poster.
+  async load() {
+    if (this.hasSourceTarget && this.sourceTarget.selectedOptions.length) {
+      const opt = this.sourceTarget.selectedOptions[0]
+      this.urlValue = opt.dataset.url
+      this.formatValue = opt.dataset.format
+    }
+    if (this.renderer) this.teardown() // switching files
+    try {
+      await this.boot()
+    } catch (e) {
+      console.warn("[modelviewer] keeping thumbnail fallback:", e)
+      this.element.classList.remove("model-viewer--ready")
+    }
+  }
+
+  // Dropdown change: live-switch only while the viewer is already showing; otherwise the choice is
+  // simply read the next time the user clicks "View in 3D".
+  selectSource() {
+    if (this.element.classList.contains("model-viewer--ready")) this.load()
+  }
+
+  // "✕ Image": drop the scene (frees GPU memory, stops the render loop) and reveal the poster.
+  showPoster() {
+    this.teardown()
+    this.element.classList.remove("model-viewer--ready")
   }
 
   async boot() {
@@ -136,7 +177,7 @@ export default class extends Controller {
   }
 
   animate() {
-    if (this.disposed) return
+    if (this.disposed || !this.renderer) return
     this.frame = requestAnimationFrame(() => this.animate())
     this.controls.update()
     this.renderer.render(this.scene, this.camera)
