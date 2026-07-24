@@ -11,6 +11,11 @@ class ModelsController < ApplicationController
   SORTS = { "recent" => { updated_at: :desc }, "title" => { title: :asc },
             "status" => { print_status: :asc, title: :asc } }.freeze
 
+  # Formats modelviewer_controller.js can parse client-side (STL/3MF/OBJ). STEP/IGES are role
+  # "model" too but can't be rendered in-browser, so they're excluded from the 3D switcher.
+  VIEWABLE_3D_EXTS = %w[stl 3mf obj].freeze
+  private_constant :VIEWABLE_3D_EXTS
+
   def index
     models = current_user.maker_models.includes(:file_attachments)
     models = models.by_status(params[:status])
@@ -33,6 +38,17 @@ class ModelsController < ApplicationController
     @by_role = @attachments.group_by(&:role)
     @cover_att = @attachments.find { |a| a.node_id == @model.cover_node_id }
     @covers = Maker::Previews::ThumbnailMap.for(current_user, [ @model.cover_node_id ].compact)
+    # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
+    # switcher. Filter by extension (role "model" also covers STEP/IGES, which the viewer can't
+    # render). Default selection = the cover file if it's viewable, else the first one.
+    @viewable_3d = @attachments.filter_map do |a|
+      node = @nodes[a.node_id]
+      next unless node
+      ext = File.extname(node.name).downcase.delete(".")
+      next unless VIEWABLE_3D_EXTS.include?(ext)
+      { node_id: a.node_id, name: node.name, format: ext }
+    end
+    @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail
     # page, instead of a flat role-grouped list. Empty until a folder exists.
     @file_tree  = @model.folder_node_id ? build_file_tree(@model.folder_node_id) : []

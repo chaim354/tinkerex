@@ -25,19 +25,50 @@
   <%# MAIN column: the cover image, then a gallery, then the instructions PDF UNDER the image
       (Printables-style), then notes. %>
   <div class="model-main">
-    <div class="model-hero">
-      <% if @cover_att&.role == "image" %>
-        <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
-      <% elsif @model.cover_node_id %>
-        <span class="thumb file-cell model-hero-thumb"
-              data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
-              data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
-          <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "" %>
-        </span>
-      <% else %>
-        <span class="model-hero-empty" aria-hidden="true">🧊</span>
-      <% end %>
-    </div>
+    <% if @viewable_3d.any? %>
+      <%# The hero doubles as the 3D viewer: click "View in 3D" to swap the poster for the live
+          canvas in place; a dropdown switches between the model's 3D files. `lazy` means nothing
+          is fetched until the click. When there's a single file, no dropdown — the url/format
+          are set on the element so load() uses them directly. %>
+      <div class="model-hero model-viewer"
+           data-controller="modelviewer"
+           data-modelviewer-lazy-value="true"
+           <% if @viewable_3d.one? %>
+           data-modelviewer-url-value="<%= blob_file_path(@viewable_3d.first[:node_id]) %>"
+           data-modelviewer-format-value="<%= @viewable_3d.first[:format] %>"
+           <% end %>>
+        <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
+        <div class="model-viewer-bar">
+          <% if @viewable_3d.many? %>
+            <select class="model-viewer-source" data-modelviewer-target="source"
+                    data-action="change->modelviewer#selectSource" aria-label="Choose a 3D file">
+              <% @viewable_3d.each do |f| %>
+                <option value="<%= f[:node_id] %>"
+                        data-url="<%= blob_file_path(f[:node_id]) %>"
+                        data-format="<%= f[:format] %>"
+                        <%= "selected" if f[:node_id] == @viewable_3d_default[:node_id] %>><%= f[:name] %></option>
+              <% end %>
+            </select>
+          <% end %>
+          <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
+          <span class="mv-launch">
+            <button type="button" class="btn small" data-action="modelviewer#load">View in 3D</button>
+          </span>
+          <span class="mv-actions">
+            <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
+            <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
+            <button type="button" class="btn small ghost" data-action="modelviewer#showPoster">✕ Image</button>
+          </span>
+        </div>
+        <div class="model-viewer-fallback" data-modelviewer-target="fallback">
+          <%= render "hero_poster" %>
+        </div>
+      </div>
+    <% else %>
+      <div class="model-hero">
+        <%= render "hero_poster" %>
+      </div>
+    <% end %>
 
     <% images = Array(@by_role["image"]) %>
     <% if images.size > 1 %>
