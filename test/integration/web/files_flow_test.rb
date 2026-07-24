@@ -213,7 +213,7 @@ module Web
 
     # ---- Interactive 3D viewer (STL/3MF/OBJ) — client-side, supersedes the static thumbnail ----
 
-    test "an STL detail page renders the interactive 3D viewer container" do
+    test "an STL detail page renders the 3D viewer button-gated (lazy), not auto-loading" do
       sign_in
       node_id = upload("bracket.stl", "solid bracket\nendsolid\n".b)
 
@@ -222,9 +222,13 @@ module Web
       assert_select ".model-viewer[data-controller=?]", "modelviewer"
       assert_select ".model-viewer[data-modelviewer-url-value=?]", blob_file_path(node_id)
       assert_select ".model-viewer[data-modelviewer-format-value=?]", "stl"
-      # The reset/fullscreen controls the user asked for are wired.
+      # Button-gated: the viewer waits for a click instead of fetching bytes on load.
+      assert_select ".model-viewer[data-modelviewer-lazy-value=?]", "true"
+      assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
+      # The reset/fullscreen/show-image controls are wired.
       assert_select "[data-action~=?]", "modelviewer#reset"
       assert_select "[data-action~=?]", "modelviewer#fullscreen"
+      assert_select "[data-action~=?]", "modelviewer#showPoster"
     end
 
     test "3MF and OBJ also render the 3D viewer, with the right format value" do

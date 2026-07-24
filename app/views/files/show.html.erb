@@ -60,26 +60,32 @@
          data-controller="textpreview"
          data-textpreview-url-value="<%= blob_file_path(@node.node_id) %>">Loading…</pre>
   <% elsif @kind == :model3d %>
-    <%# Interactive client-side 3D viewer (Three.js), see modelviewer_controller.js. The nested
-        fallback (static thumbnail poster + download link) shows until the viewer boots, and stays
-        if it can't (no WebGL, a cross-origin fetch without bucket CORS, or a corrupt file). %>
+    <%# Interactive client-side 3D viewer (Three.js), see modelviewer_controller.js. `lazy` gates
+        the byte fetch + Three.js download behind the "View in 3D" button, so nothing heavy loads
+        unless the user asks. The fallback (thumbnail poster + download) is the resting state and
+        also the graceful-degradation target if the viewer can't boot. %>
     <div class="model-viewer"
          data-controller="modelviewer"
+         data-modelviewer-lazy-value="true"
          data-modelviewer-url-value="<%= blob_file_path(@node.node_id) %>"
          data-modelviewer-format-value="<%= File.extname(@node.name).downcase.delete('.') %>">
       <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
       <div class="model-viewer-bar">
         <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
-        <span class="model-viewer-actions">
+        <span class="mv-launch">
+          <button type="button" class="btn small" data-action="modelviewer#load">View in 3D</button>
+        </span>
+        <span class="mv-actions">
           <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
           <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
+          <button type="button" class="btn small ghost" aria-label="Return to image" data-action="modelviewer#showPoster">✕ Image</button>
         </span>
       </div>
       <div class="model-viewer-fallback" data-modelviewer-target="fallback">
         <% if @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
           <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
         <% end %>
-        <p class="muted">Download the file to view it in 3D.</p>
+        <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
         <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
       </div>
     </div>

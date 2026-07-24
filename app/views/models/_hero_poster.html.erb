@@ -1,0 +1,14 @@
+<%# The static hero content: an image cover, else a server-rendered thumbnail of the cover file,
+    else the empty placeholder. Reused as the resting poster behind the 3D viewer. Reads the
+    @cover_att / @model / @covers ivars set by ModelsController#show. %>
+<% if @cover_att&.role == "image" %>
+  <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
+<% elsif @model.cover_node_id %>
+  <span class="thumb file-cell model-hero-thumb"
+        data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
+        data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
+    <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "" %>
+  </span>
+<% else %>
+  <span class="model-hero-empty" aria-hidden="true">🧊</span>
+<% end %>

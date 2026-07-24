@@ -75,6 +75,72 @@ module Web
       assert_select "a[href=?]", "https://printables.com/model/1"
     end
 
+    test "show renders a 3D switcher over STL/3MF/OBJ only, excluding STEP" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Multi")
+      folder = m.ensure_library_folder!(user)
+      { "body.stl" => "b1", "lid.3mf" => "l1", "clip.obj" => "c1", "cad.step" => "s1" }.each_with_index do |(name, nid), i|
+        user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
+        m.file_attachments.create!(user:, node_id: nid, role: Maker::FileAttachment.role_for(name), position: i)
+      end
+
+      get model_path(m)
+      assert_response :success
+      assert_select ".model-hero.model-viewer[data-modelviewer-lazy-value=?]", "true"
+      assert_select "select.model-viewer-source option", count: 3        # stl + 3mf + obj, NOT step
+      assert_select "select.model-viewer-source option[data-url=?][data-format=?]", blob_file_path("b1"), "stl"
+      assert_select "select.model-viewer-source option[data-format=?]", "3mf"
+      assert_select "select.model-viewer-source option[data-format=?]", "obj"
+      assert_select "select.model-viewer-source option", text: "cad.step", count: 0
+      assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
+    end
+
+    test "show marks the cover file as the default selected option in the switcher" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Cover")
+      folder = m.ensure_library_folder!(user)
+      { "body.stl" => "cv1", "lid.3mf" => "cv2", "clip.obj" => "cv3" }.each_with_index do |(name, nid), i|
+        user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
+        m.file_attachments.create!(user:, node_id: nid, role: "model", position: i)
+      end
+      m.update!(cover_node_id: "cv2") # not the first by position
+
+      get model_path(m)
+      assert_response :success
+      # Exactly one option is selected, and it is the cover file (cv2 = lid.3mf), not the first (cv1).
+      assert_select "select.model-viewer-source option[selected]", count: 1
+      assert_select "select.model-viewer-source option[selected][value=?]", "cv2"
+    end
+
+    test "show renders the 3D button without a switcher for a single 3D file" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Solo")
+      folder = m.ensure_library_folder!(user)
+      user.nodes.create!(node_id: "solo1", name: "body.stl", kind: "file", parent_node_id: folder.node_id)
+      m.file_attachments.create!(user:, node_id: "solo1", role: "model")
+
+      get model_path(m)
+      assert_response :success
+      assert_select ".model-hero.model-viewer[data-modelviewer-url-value=?]", blob_file_path("solo1")
+      assert_select ".model-hero.model-viewer[data-modelviewer-format-value=?]", "stl"
+      assert_select "select.model-viewer-source", count: 0
+      assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
+    end
+
+    test "show renders the plain hero with no 3D controls when no viewable 3D files" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Flat")
+      folder = m.ensure_library_folder!(user)
+      user.nodes.create!(node_id: "img1", name: "cover.png", kind: "file", parent_node_id: folder.node_id)
+      m.file_attachments.create!(user:, node_id: "img1", role: "image")
+
+      get model_path(m)
+      assert_response :success
+      assert_select ".model-hero"
+      assert_select ".model-hero.model-viewer", count: 0
+      assert_select "[data-action~=?]", "modelviewer#load", count: 0
+    end
+
     test "show renders a print-settings panel when present, hides it otherwise" do
       user = sign_in
       m = user.maker_models.create!(title: "P", print_settings: { "material" => "PET", "layer_height" => "0.2 mm" })
