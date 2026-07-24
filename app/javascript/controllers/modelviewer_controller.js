@@ -63,6 +63,7 @@ export default class extends Controller {
     if (this.renderer) this.teardown() // switching files
     try {
       await this.boot(gen)
+      if (gen === this.generation && this.renderer) this.focusViewer()
     } catch (e) {
       if (this.disposed || gen !== this.generation) return // superseded — leave newer state alone
       console.warn("[modelviewer] keeping thumbnail fallback:", e)
@@ -82,6 +83,14 @@ export default class extends Controller {
     this.generation++ // cancel any in-flight boot so it can't reopen the viewer after dismissal
     this.teardown()
     this.element.classList.remove("model-viewer--ready")
+    // The ✕ button that had focus is now hidden; return focus to the "View in 3D" launch button.
+    this.element.querySelector(".mv-launch button")?.focus()
+  }
+
+  // After a successful load the "View in 3D" button that had focus is display:none; move focus to
+  // a persistent, now-visible control so keyboard/AT users aren't dropped to <body>.
+  focusViewer() {
+    this.element.querySelector(".mv-actions button")?.focus()
   }
 
   async boot(gen = this.generation) {

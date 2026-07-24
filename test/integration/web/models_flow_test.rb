@@ -95,6 +95,23 @@ module Web
       assert_select ".mv-launch [data-action~=?]", "modelviewer#load"
     end
 
+    test "show marks the cover file as the default selected option in the switcher" do
+      user = sign_in
+      m = user.maker_models.create!(title: "Cover")
+      folder = m.ensure_library_folder!(user)
+      { "body.stl" => "cv1", "lid.3mf" => "cv2", "clip.obj" => "cv3" }.each_with_index do |(name, nid), i|
+        user.nodes.create!(node_id: nid, name:, kind: "file", parent_node_id: folder.node_id)
+        m.file_attachments.create!(user:, node_id: nid, role: "model", position: i)
+      end
+      m.update!(cover_node_id: "cv2") # not the first by position
+
+      get model_path(m)
+      assert_response :success
+      # Exactly one option is selected, and it is the cover file (cv2 = lid.3mf), not the first (cv1).
+      assert_select "select.model-viewer-source option[selected]", count: 1
+      assert_select "select.model-viewer-source option[selected][value=?]", "cv2"
+    end
+
     test "show renders the 3D button without a switcher for a single 3D file" do
       user = sign_in
       m = user.maker_models.create!(title: "Solo")
