@@ -94,13 +94,17 @@ dl.meta dd { margin: 0; }
   background: var(--soft); display: none; touch-action: none;
 }
 .model-viewer-stage canvas { display: block; border-radius: 6px; }
-.model-viewer-bar { display: none; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
+.model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
+.mv-launch { display: inline-flex; gap: 8px; }
+.mv-actions { display: none; gap: 8px; }
 .model-viewer-dims { color: var(--muted); font-variant-numeric: tabular-nums; }
 .model-viewer-fallback { text-align: center; padding: 24px; }
 /* The controller adds --ready on a successful render: reveal the canvas + bar, hide the poster. */
 .model-viewer--ready .model-viewer-stage { display: block; }
-.model-viewer--ready .model-viewer-bar { display: flex; }
 .model-viewer--ready .model-viewer-fallback { display: none; }
+.model-viewer--ready .mv-launch { display: none; }
+.model-viewer--ready .mv-actions { display: inline-flex; }
 .model-viewer:fullscreen { background: var(--soft); padding: 12px; }
 .model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
 
