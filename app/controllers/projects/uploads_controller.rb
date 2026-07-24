@@ -31,10 +31,25 @@ module Projects
       enqueue_preview(node_id: info.node_id, name: file.original_filename)
       target.file_attachments.create!(user: current_user, node_id: info.node_id,
                                       role: role_for(file.original_filename, target))
-      redirect_to project_path(project_of(target)), notice: "Uploaded #{file.original_filename}."
+      redirect_to after_upload_url(target), notice: "Uploaded #{file.original_filename}."
     end
 
     private
+
+    # WHERE THE BROWSER LANDS AFTER THE UPLOAD. The default is the project page, so every caller
+    # that omits `redirect_url` — the project page's own uploader, a build-log entry — is unchanged.
+    # The Files-page current-project uploader passes `redirect_url: files_path(...)` so the user
+    # stays in Files instead of being bounced to the project (parity with the chunk branch, which
+    # already honors it via uploader_controller.js).
+    #
+    # `url_from` is Rails' own open-redirect guard (its docs show exactly `url_from(params[...])`):
+    # it returns the location ONLY for a same-host or leading-single-slash RELATIVE path, and nil
+    # for a foreign host, a scheme, or a protocol-relative `//` — so a tampered field can never send
+    # the user off this app; it just falls back to the project page. Without it a bad value would
+    # raise OpenRedirectError (a 500), not merely leak a redirect.
+    def after_upload_url(target)
+      url_from(params[:redirect_url]) || project_path(project_of(target))
+    end
 
     # Exactly one of the two nested routes supplies the target.
     def attach_target

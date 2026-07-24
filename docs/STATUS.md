@@ -11,6 +11,13 @@
   upload/attach control, with a "library root instead" override. Session-only, zero-regression when
   unset; no models/migrations/JS; reads metadata + creates FileAttachment references only (§10
   untouched). Green on all three backends.
+  - **Follow-up (share/s3 redirect parity):** the Files-page upload-to-project now returns the user
+    to Files (the current-project folder), not the project page, on **all** backends. Chunk already
+    did this via `uploader_controller.js`; the share/s3 multipart branch now carries an optional
+    hidden `redirect_url` on `projects/_upload_control`, and `Projects::UploadsController#create`
+    honors it — `url_from`-guarded so a tampered value can only ever be a same-app relative path
+    (otherwise it falls back to the project page). The project-page and build-log uploaders omit it
+    and are unchanged. Still green on all three backends (1257 runs).
 
 ## Latest (2026-07-23): Generators addon — Maker.js harness + Material Test Grid (branch `claude/addons-brainstorm-plan-04adb7`)
 
