@@ -17,6 +17,7 @@ export default class extends Controller {
 
   async connect() {
     this.disposed = false
+    this.generation = 0
     if (this.lazyValue) return // wait for load()
     try {
       await this.boot()
@@ -47,6 +48,7 @@ export default class extends Controller {
     }
     this.frame = this.resizeObserver = this.controls = null
     this.scene = this.camera = this.renderer = this.home = null
+    if (this.hasDimsTarget) this.dimsTarget.textContent = ""
   }
 
   // "View in 3D" (and the file-switch path): resolve the active source, tear down any current
@@ -57,11 +59,14 @@ export default class extends Controller {
       this.urlValue = opt.dataset.url
       this.formatValue = opt.dataset.format
     }
+    const gen = ++this.generation // invalidate any in-flight boot (rapid switches / keyboard nav)
     if (this.renderer) this.teardown() // switching files
     try {
-      await this.boot()
+      await this.boot(gen)
     } catch (e) {
+      if (this.disposed || gen !== this.generation) return // superseded — leave newer state alone
       console.warn("[modelviewer] keeping thumbnail fallback:", e)
+      this.teardown()
       this.element.classList.remove("model-viewer--ready")
     }
   }
@@ -74,11 +79,12 @@ export default class extends Controller {
 
   // "✕ Image": drop the scene (frees GPU memory, stops the render loop) and reveal the poster.
   showPoster() {
+    this.generation++ // cancel any in-flight boot so it can't reopen the viewer after dismissal
     this.teardown()
     this.element.classList.remove("model-viewer--ready")
   }
 
-  async boot() {
+  async boot(gen = this.generation) {
     const THREE = await import("three")
     const { OrbitControls } = await import("three/addons/controls/OrbitControls.js")
 
@@ -89,6 +95,10 @@ export default class extends Controller {
     const buf = await res.arrayBuffer()
 
     const object = await this.parse(THREE, buf)
+
+    // A newer load()/showPoster() started (or the element was disconnected) while we awaited the
+    // bytes/parse — abort before building a second WebGL context + canvas, which would leak.
+    if (this.disposed || gen !== this.generation) return
 
     const stage = this.canvasTarget
     const width = stage.clientWidth || 640
