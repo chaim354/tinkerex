@@ -26,6 +26,23 @@ ssh:
 # checkout, and no source transfer to either server. (Reverting to an on-box build is just
 # `builder: { remote: ssh://ubuntu@15.204.216.249, arch: amd64 }` here.)
 
+# Public domain + TLS. This box sits BEHIND CLOUDFLARE (orange cloud) for tinkerex.com, so it
+# terminates TLS with a Cloudflare ORIGIN certificate rather than Let's Encrypt — LE's HTTP-01
+# challenge is intercepted by the Cloudflare edge and can't complete behind the proxy. kamal-proxy
+# serves the Origin cert on :443; set Cloudflare SSL/TLS mode to "Full (strict)".
+#   - `host` overrides the base's `chunk.tinkerex.local`, so this box routes tinkerex.com.
+#   - `ssl.{certificate_pem,private_key_pem}` are SECRET NAMES resolved from .kamal/secrets.ovh
+#     (which pulls the Origin cert PEM + key from 1Password). A custom cert makes kamal-proxy skip
+#     Let's Encrypt; BOTH must be present or the deploy fails.
+#   - `forward_headers: true` — behind trusted Cloudflare, forward X-Forwarded-For/Proto so Rails
+#     logs the real client IP (kamal-proxy drops them once `ssl` is set unless this is on).
+proxy:
+  host: tinkerex.com
+  ssl:
+    certificate_pem: TINKEREX_ORIGIN_CERT_PEM
+    private_key_pem: TINKEREX_ORIGIN_KEY_PEM
+  forward_headers: true
+
 env:
   # No env.secret block here on purpose: a destination overlay REPLACES (not unions) the
   # base env.secret list, so re-declaring it risks dropping RAILS_MASTER_KEY /
@@ -39,3 +56,18 @@ env:
     CHUNK_BUCKET: maker-chunks-prod
     CHUNK_REGION: auto
     CHUNK_ACCESS_KEY_ID: <%= ENV["CHUNK_ACCESS_KEY_ID"] %>
+
+    # Public-domain + HTTPS gating, read in config/environments/production.rb. Set ONLY here so the
+    # HTTP-only LAN boxes are unaffected. APP_DOMAIN -> Host authorization + mailer host; FORCE_SSL
+    # -> assume_ssl + force_ssl (TLS is terminated upstream by kamal-proxy / Cloudflare).
+    APP_DOMAIN: tinkerex.com
+    FORCE_SSL: "true"
+
+# Fix the inherited boxes accessory. The base (deploy.yml) pins `host: 192.168.1.95` (the Unraid
+# box); for -d ovh that must be the OVH box, or `kamal accessory boot boxes -d ovh` / `kamal setup
+# -d ovh` try to reach ubuntu@192.168.1.95 (wrong host AND wrong ssh user). This deep-merges over
+# the base accessory, so the image + network name (tinkerex-boxes, used by BOXES_SIDECAR_URL) are
+# inherited; only the host changes. Boot it with `kamal accessory boot boxes -d ovh`.
+accessories:
+  boxes:
+    host: 15.204.216.249

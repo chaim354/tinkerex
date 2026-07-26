@@ -24,14 +24,17 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
-
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
-
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # TLS is terminated by an upstream reverse proxy (kamal-proxy serving the Cloudflare Origin
+  # cert) ONLY on the public OVH deployment, which sets FORCE_SSL=true. The LAN test boxes
+  # (chunk/s3/share on the Unraid box) run plain HTTP and set neither var, so this is a no-op
+  # there. Do NOT hardcode these on — an unconditional force_ssl breaks the HTTP-only boxes.
+  if ENV["FORCE_SSL"] == "true"
+    config.assume_ssl = true
+    config.force_ssl  = true
+    # kamal-proxy health-checks /up over plain HTTP against the container by IP; an unexcluded
+    # force_ssl 301 would fail that check and roll the deploy back.
+    config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  end
 
   # Hand share-backed downloads off to a front proxy instead of streaming them through Puma.
   # COMMENTED BECAUSE THIS DEPLOYMENT IS kamal-proxy, NOT nginx OR Apache — and that is the
@@ -92,8 +95,12 @@ Rails.application.configure do
   # Set this to true and configure the email server for immediate delivery to raise delivery errors.
   # config.action_mailer.raise_delivery_errors = false
 
-  # Set host to be used by links generated in mailer templates.
-  config.action_mailer.default_url_options = { host: "example.com" }
+  # Set host to be used by links generated in mailer templates (confirmation/reset). The public
+  # OVH deploy sets APP_DOMAIN; the LAN boxes keep the harmless default.
+  config.action_mailer.default_url_options = {
+    host: ENV["APP_DOMAIN"] || "example.com",
+    protocol: ENV["FORCE_SSL"] == "true" ? "https" : "http"
+  }
 
   # Specify outgoing SMTP server. Remember to add smtp/* credentials via bin/rails credentials:edit.
   # config.action_mailer.smtp_settings = {
@@ -114,12 +121,14 @@ Rails.application.configure do
   # Only use :id for inspections in production.
   config.active_record.attributes_for_inspect = [ :id ]
 
-  # Enable DNS rebinding protection and other `Host` header attacks.
-  # config.hosts = [
-  #   "example.com",     # Allow requests from example.com
-  #   /.*\.example\.com/ # Allow requests from subdomains like `www.example.com`
-  # ]
-  #
-  # Skip DNS rebinding protection for the default health check endpoint.
-  # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  # DNS-rebinding / Host-header protection. Enabled ONLY where APP_DOMAIN is set (the public OVH
+  # deploy). The LAN boxes leave config.hosts empty (all hosts allowed) so IP + *.local access
+  # keeps working — matching the current HTTP/no-TLS posture.
+  if ENV["APP_DOMAIN"].present?
+    config.hosts << ENV["APP_DOMAIN"]           # exact apex, e.g. tinkerex.com
+    config.hosts << ".#{ENV['APP_DOMAIN']}"     # leading dot: apex + all subdomains (www, …)
+    # The proxy healthcheck's Host is the container IP, which won't match APP_DOMAIN and would
+    # 403 without this exclusion.
+    config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+  end
 end
