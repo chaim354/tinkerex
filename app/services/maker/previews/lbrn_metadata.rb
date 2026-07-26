@@ -65,7 +65,7 @@ module Maker
       # A value stored either as an attribute (cs["speed"]) or a child (<speed Value="..">/<speed>text).
       # Mirrors Lbrn2#cut_colors so both real-export forms parse.
       def val(node, key)
-        node[key] || node.at_xpath(key)&.[]("Value") || node.at_xpath(key)&.text.presence
+        node[key].presence || node.at_xpath(key)&.[]("Value").presence || node.at_xpath(key)&.text.presence
       end
 
       def device_name(root)
@@ -106,7 +106,10 @@ module Maker
           rx = Lbrn2.num(shape["Rx"]); ry = Lbrn2.num(shape["Ry"])
           return [] if rx.nil? || ry.nil?
 
-          [ [ -rx, -ry ], [ rx, ry ] ]
+          # Sample the perimeter (not just two axis corners) so the bbox is correct even when the
+          # XForm rotates the ellipse. 32 is divisible by 4, so an unrotated ellipse's axis extents
+          # are still hit exactly (the fixture's circle stays 40x20).
+          (0...32).map { |i| t = i * (Math::PI / 16); [ rx * Math.cos(t), ry * Math.sin(t) ] }
         when "Line", "Path"
           Lbrn2.vertices(shape)
         else

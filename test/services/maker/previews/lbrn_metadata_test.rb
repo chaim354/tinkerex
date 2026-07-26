@@ -37,6 +37,16 @@ module Maker
         assert_equal 20.0, job["height"]
       end
 
+      test "ellipse job size stays sensible under rotation (samples the perimeter)" do
+        # A 45-degrees-rotated circle (Rx=Ry=10) at the origin: true bbox is ~20x20mm. The old
+        # two-corner approach gave a degenerate 0x28.3; sampling the perimeter fixes it.
+        xml = %(<LightBurnProject><CutSetting><index Value="0"/></CutSetting>) +
+              %(<Shape Type="Ellipse" CutIndex="0" Rx="10" Ry="10" XForm="0.7071 0.7071 -0.7071 0.7071 0 0"/></LightBurnProject>)
+        job = Maker::Previews::LbrnMetadata.parse(xml)["job"]
+        assert_in_delta 20.0, job["width"], 1.0
+        assert_in_delta 20.0, job["height"], 1.0
+      end
+
       test "returns nil for a non-LightBurn document" do
         assert_nil Maker::Previews::LbrnMetadata.parse("<svg><rect/></svg>")
       end
