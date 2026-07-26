@@ -12,7 +12,7 @@ module Maker
         assert_equal "Ortur LM2", m["machine"]
         assert_equal 3.0, m["material_height"]
         assert_equal 3, m["shape_count"]
-        assert_equal ["MAKER"], m["text"]
+        assert_equal [ "MAKER" ], m["text"]
       end
 
       test "keeps only layers referenced by a shape, in index order" do

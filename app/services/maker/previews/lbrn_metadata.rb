@@ -28,7 +28,7 @@ module Maker
           "job"             => job_size(doc),
           "shape_count"     => doc.xpath("//Shape").length,
           "text"            => text_strings(doc).presence,
-          "layers"          => layers(doc, used).presence,
+          "layers"          => layers(doc, used).presence
         }.compact.presence
       rescue StandardError
         nil
@@ -47,7 +47,7 @@ module Maker
             "speed"     => Lbrn2.num(val(cs, "speed")),
             "power_max" => Lbrn2.num(val(cs, "maxPower")),
             "power_min" => Lbrn2.num(val(cs, "minPower")),
-            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) && p.to_i,
+            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) && p.to_i
           }.compact
         end.sort_by { |l| l["index"].to_i }
       end
