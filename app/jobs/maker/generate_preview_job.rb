@@ -57,7 +57,8 @@ module Maker
           filename: "#{preview.kind}-#{preview.id}#{asset_ext(result[:content_type])}",
           content_type: result[:content_type]
         )
-        preview.update!(status: "ready", width: result[:width], height: result[:height], error: nil)
+        preview.update!(status: "ready", width: result[:width], height: result[:height],
+                        metadata: result[:metadata], error: nil)
       rescue Unsupported => e
         # Not an error — a deliberate terminal state. Don't re-raise (no retries).
         preview.update!(status: "unsupported", error: e.message)
