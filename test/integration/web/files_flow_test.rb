@@ -290,6 +290,22 @@ module Web
       assert_select ".has-settings", count: 0
     end
 
+    test "a malicious layer colour is not injected into the swatch style" do
+      user = sign_in
+      node_id = upload("evil.lbrn2", "x".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      evil = { "layers" => [ { "index" => "0", "name" => "C00",
+                               "color" => "#fff; background-image:url(https://evil.example/x.png)" } ],
+               "shape_count" => 1 }
+      Maker::Preview.find_or_create_by!(user:, node_id:, version_id: token, kind: "thumbnail")
+                    .update!(status: "ready", metadata: evil)
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".lbrn-swatch", { count: 0 }, "an unsafe colour string renders no swatch"
+      assert_no_match(/evil\.example/, response.body)
+    end
+
     test "placeholder login signs in and lists files" do
       sign_in
       get files_path

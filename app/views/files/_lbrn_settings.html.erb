@@ -16,7 +16,7 @@
         <% meta["layers"].each do |layer| %>
           <tr>
             <td>
-              <% if layer["color"].present? %><span class="lbrn-swatch" style="background: <%= layer["color"] %>"></span><% end %>
+              <% if layer["color"].to_s.match?(/\A#[0-9a-fA-F]{3,8}\z/) %><span class="lbrn-swatch" style="background: <%= layer["color"] %>"></span><% end %>
               <%= layer["name"].presence || "C#{layer["index"]}" %>
             </td>
             <td><%= layer["mode"] %></td>
