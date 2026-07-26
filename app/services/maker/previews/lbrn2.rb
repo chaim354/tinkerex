@@ -227,6 +227,13 @@ module Maker
 
         def empty? = @min_x == Float::INFINITY
 
+        # [width, height] of the accumulated box, or nil when empty. Used by LbrnMetadata for job size.
+        def dimensions
+          return nil if empty?
+
+          [ @max_x - @min_x, @max_y - @min_y ]
+        end
+
         def viewbox(fallback:)
           return "0 0 #{fallback} #{fallback}" if empty?
 
