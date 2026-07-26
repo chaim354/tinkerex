@@ -46,7 +46,8 @@
   </div>
 <% end %>
 
-<div class="preview">
+<div class="preview-row<%= " has-settings" if @thumbnail&.metadata.present? %>">
+  <div class="preview">
   <% if @info.content_token.nil? %>
     <p class="muted">No content yet.</p>
   <% elsif @kind == :image %>
@@ -101,6 +102,10 @@
       <p>No inline preview for this file type.</p>
       <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
     </div>
+  <% end %>
+  </div>
+  <% if @thumbnail&.metadata.present? %>
+    <%= render "files/lbrn_settings", meta: @thumbnail.metadata %>
   <% end %>
 </div>
 
