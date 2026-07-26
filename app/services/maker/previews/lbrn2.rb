@@ -30,10 +30,10 @@ module Maker
       # as outlines. Fall back to the hand-rolled geometry parser (-> SVG -> PNG) only when a file
       # has no embedded thumbnail (older LightBurn versions, or a hand-authored file).
       def render(lbrn2_bytes, size: 512)
-        emb = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes)
-        return emb if emb
-
-        Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
+        meta = Maker::Previews::LbrnMetadata.parse(lbrn2_bytes)
+        img = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes) ||
+              Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
+        img.merge(metadata: meta)
       end
 
       # lbrn2 XML → an SVG string. Geometry is mapped into a viewBox sized to the shapes'
