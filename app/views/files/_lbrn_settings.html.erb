@@ -1,0 +1,46 @@
+<%# LightBurn laser "recipe" panel, shown beside the preview on a .lbrn/.lbrn2 file page.
+    `meta` is the parsed Hash from Maker::Previews::LbrnMetadata (string keys). Every field is
+    optional — render only what's present. %>
+<section class="lbrn-settings">
+  <div class="lbrn-head">
+    <h2>Laser settings</h2>
+    <% if meta["app_version"].present? %><span class="muted">LightBurn <%= meta["app_version"] %></span><% end %>
+  </div>
+
+  <% if meta["layers"].present? %>
+    <table class="lbrn-layers">
+      <thead>
+        <tr><th>Layer</th><th>Mode</th><th class="num">Speed</th><th class="num">Power</th><th class="num">Passes</th></tr>
+      </thead>
+      <tbody>
+        <% meta["layers"].each do |layer| %>
+          <tr>
+            <td>
+              <% if layer["color"].to_s.match?(/\A#[0-9a-fA-F]{3,8}\z/) %><span class="lbrn-swatch" style="background: <%= layer["color"] %>"></span><% end %>
+              <%= layer["name"].presence || "C#{layer["index"]}" %>
+            </td>
+            <td><%= layer["mode"] %></td>
+            <td class="num"><%= "#{layer["speed"].to_i} mm/s" if layer["speed"] %></td>
+            <td class="num">
+              <% if layer["power_max"] %>
+                <%= layer["power_max"].to_i %>%<% if layer["power_min"] && layer["power_min"] != layer["power_max"] %> <span class="muted">/ <%= layer["power_min"].to_i %>%</span><% end %>
+              <% end %>
+            </td>
+            <td class="num"><%= layer["passes"] %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+
+  <dl class="lbrn-summary">
+    <% if meta.dig("job", "width") %><dt>Job size</dt><dd><%= meta["job"]["width"] %> × <%= meta["job"]["height"] %> mm</dd><% end %>
+    <% if meta["material_height"] %><dt>Material</dt><dd><%= meta["material_height"] %> mm</dd><% end %>
+    <% if meta["machine"].present? %><dt>Machine</dt><dd><%= meta["machine"] %></dd><% end %>
+    <% if meta["shape_count"] %><dt>Layers / shapes</dt><dd><%= Array(meta["layers"]).size %> / <%= meta["shape_count"] %></dd><% end %>
+  </dl>
+
+  <% if meta["text"].present? %>
+    <p class="lbrn-text muted">Text: <%= meta["text"].map { |t| "“#{t}”" }.join(", ") %></p>
+  <% end %>
+</section>

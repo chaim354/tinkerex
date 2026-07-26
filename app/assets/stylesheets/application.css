@@ -256,3 +256,20 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
 .param-group-adv > summary { cursor: pointer; }
 .param-group-adv[open] > summary { margin-bottom: 10px; }
+
+/* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
+.preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.preview-row.has-settings > .preview { flex: 1 1 46%; min-width: 240px; }
+.preview-row.has-settings > .lbrn-settings { flex: 1 1 46%; min-width: 260px; }
+.lbrn-settings { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.lbrn-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.lbrn-head h2 { margin: 0; font-size: 16px; }
+.lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lbrn-layers th { text-align: left; color: var(--muted); font-weight: 600; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.lbrn-layers td { padding: 5px 6px; border-bottom: 1px solid var(--soft); }
+.lbrn-layers .num { text-align: right; font-variant-numeric: tabular-nums; }
+.lbrn-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
+.lbrn-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
+.lbrn-summary dt { color: var(--muted); }
+.lbrn-summary dd { margin: 0; font-weight: 600; }
+.lbrn-text { font-size: 12px; margin: 10px 0 0; }

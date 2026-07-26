@@ -255,6 +255,57 @@ module Web
       assert_select ".model-viewer", count: 0
     end
 
+    test "a LightBurn file's detail page shows the laser-settings panel beside the preview" do
+      user = sign_in
+      bytes = File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
+      node_id = upload("cut.lbrn2", bytes)
+      # Give the thumbnail preview parsed metadata directly (this test targets the VIEW, not the job).
+      # find_or_create_by!: the upload's finalize may already have created the pending thumbnail
+      # preview row (Previews::Enqueue), so a bare create! would hit the (user,node,version,kind)
+      # uniqueness index.
+      token = FileLayer.current.stat(user, node_id:).content_token
+      preview = Maker::Preview.find_or_create_by!(user:, node_id:, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready", metadata: Maker::Previews::LbrnMetadata.parse(bytes))
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".preview-row.has-settings"
+      assert_select ".lbrn-settings"
+      assert_select ".lbrn-settings table tbody tr", 2          # two used layers
+      assert_select ".lbrn-settings", text: /C00/
+      assert_select ".lbrn-settings", text: /Fill/               # Scan -> Fill
+      assert_select ".lbrn-settings", text: /Ortur LM2/
+    end
+
+    test "a non-LightBurn thumbnail file shows no laser-settings panel" do
+      user = sign_in
+      node_id = upload("cad.step", "ISO-10303-21;".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      Maker::Preview.find_or_create_by!(user:, node_id:, version_id: token, kind: "thumbnail")
+                    .update!(status: "ready")   # no metadata -> no panel
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".lbrn-settings", count: 0
+      assert_select ".has-settings", count: 0
+    end
+
+    test "a malicious layer colour is not injected into the swatch style" do
+      user = sign_in
+      node_id = upload("evil.lbrn2", "x".b)
+      token = FileLayer.current.stat(user, node_id:).content_token
+      evil = { "layers" => [ { "index" => "0", "name" => "C00",
+                               "color" => "#fff; background-image:url(https://evil.example/x.png)" } ],
+               "shape_count" => 1 }
+      Maker::Preview.find_or_create_by!(user:, node_id:, version_id: token, kind: "thumbnail")
+                    .update!(status: "ready", metadata: evil)
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select ".lbrn-swatch", { count: 0 }, "an unsafe colour string renders no swatch"
+      assert_no_match(/evil\.example/, response.body)
+    end
+
     test "placeholder login signs in and lists files" do
       sign_in
       get files_path

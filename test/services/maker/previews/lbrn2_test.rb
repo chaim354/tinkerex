@@ -64,6 +64,24 @@ module Maker
           Maker::Previews::Lbrn2.to_svg("\x00\x01\x02 not xml".b)
         end
       end
+
+      test "render attaches parsed metadata alongside the image (geometry path)" do
+        skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+        result = Maker::Previews::Lbrn2.render(@lbrn2, size: 256)
+        assert_equal "image/png", result[:content_type]
+        assert_kind_of Hash, result[:metadata]
+        assert result[:metadata]["layers"].present?, "layers parsed from the fixture"
+      end
+
+      test "render attaches metadata even when the embedded thumbnail is used" do
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        xml = %(<LightBurnProject AppVersion="1.7.00"><Thumbnail Source="#{png_b64}"/>) +
+              %(<CutSetting type="Cut"><index Value="0"/><speed Value="12"/><color Value="255"/></CutSetting>) +
+              %(<Shape Type="Rect" CutIndex="0" W="5" H="5" XForm="1 0 0 1 0 0"/></LightBurnProject>)
+        result = Maker::Previews::Lbrn2.render(xml, size: 512)
+        assert_equal 1, result[:width], "embedded 1x1 PNG returned verbatim"
+        assert_equal "1.7.00", result[:metadata]["app_version"], "metadata parsed from XML regardless of image path"
+      end
     end
   end
 end

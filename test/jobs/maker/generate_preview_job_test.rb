@@ -200,6 +200,32 @@ module Maker
       end
     end
 
+    test "persists parsed metadata for a LightBurn file" do
+      skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+      lbrn2 = File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
+      stage_version(node_id: "design.lbrn2", version_id: "vmeta", bytes: lbrn2)
+      preview = @user.maker_previews.create!(node_id: "design.lbrn2", version_id: "vmeta", kind: "thumbnail")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "design.lbrn2")
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert preview.metadata.present?, "metadata stored"
+      assert_equal "Fill", preview.metadata["layers"].last["mode"]
+    end
+
+    test "leaves metadata null for a non-LightBurn file" do
+      # Reuses @svg (setup) under a different node_id/filename — same bytes as the
+      # file's other plain-SVG tests, just staged as "logo.svg" for this assertion.
+      stage_version(node_id: "logo.svg", version_id: "vlogo", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "logo.svg", version_id: "vlogo")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "logo.svg")
+
+      preview.reload
+      assert_nil preview.metadata
+    end
+
     test "renders a DXF to PNG when resvg is present; unsupported when absent" do
       dxf = File.binread(Rails.root.join("test/fixtures/files/sample.dxf"))
       stage_version(node_id: "plate.dxf", version_id: "vdxf", bytes: dxf)
