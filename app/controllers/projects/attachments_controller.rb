@@ -20,6 +20,12 @@ module Projects
 
     RECENT_LIMIT = 40
 
+    # What #create needs from a bundle attach to answer both doors: the rows the project now holds
+    # for that model, and whether THIS request created any of them (a re-attach must not claim
+    # 201). `created` is a flag rather than the rows, because the write is a bulk insert_all and
+    # there are no instantiated new records to ask.
+    Bundle = Data.define(:attachments, :created)
+
     # GET /projects/:project_id/attachments/new?q= — the picker: search by name + recent files.
     def new
       scope = current_user.nodes.present.where(kind: "file")
@@ -38,12 +44,15 @@ module Projects
     # a `parent_node_id` of the project folder, so it arrives in place and #relocate_into_project
     # short-circuits on :already_there rather than moving anything.
     #
-    # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. Two attach paths
-    # never reach this action: CurrentProject#attach_addon_files_to_current_project creates the row
-    # directly (a tool save DEFAULTS to the project folder, but @default_parent_node_id is a
-    # default the user can override in the file chooser), and the model importer posts to
-    # Models::AttachmentsController, which attaches to a Maker::Model and does not move. This
-    # action enforces the rule for what passes through it; nothing enforces it library-wide.
+    # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. It now has an
+    # exception INSIDE this action, which is the first place to look: a file that belongs to a
+    # Maker::Model attaches that model's whole bundle and moves NOTHING (the branch below, and
+    # #attach_model_bundle). Two attach paths never reach the action at all:
+    # CurrentProject#attach_addon_files_to_current_project creates the row directly (a tool save
+    # DEFAULTS to the project folder, but @default_parent_node_id is a default the user can
+    # override in the file chooser), and the model importer posts to Models::AttachmentsController,
+    # which attaches to a Maker::Model and does not move. So this action enforces the rule for the
+    # PLAIN files that pass through it; nothing enforces it library-wide.
     #
     # THE ATTACH IS THE DURABLE HALF AND THE MOVE IS BEST-EFFORT. A collision or an unmounted NAS
     # must never lose the attachment: it is a reference the user asked for, and it is exactly as
@@ -75,22 +84,25 @@ module Projects
       # relocates no bytes cannot diverge between deployments.
       model = model_owning(node)
       if model
-        atts = attach_model_bundle(model)
+        bundle = attach_model_bundle(model)
+        count = bundle.attachments.size
         return respond_to do |format|
           format.html do
             redirect_to attach_redirect_path(node, nil),
-                        notice: "Attached #{atts.size} #{'file'.pluralize(atts.size)} from #{model.title}."
+                        notice: "Attached #{count} #{'file'.pluralize(count)} from #{model.title}."
           end
-          # The single-file door's shape and the single-file door's argument for the status code:
-          # a second attach of the same bundle creates nothing, so Created would be a lie to the
-          # only caller that reads it. `relocation` is what tells that caller the file it named
-          # did not move and brought its siblings — the status cannot carry either fact.
+          # ASPIRATIONAL SHAPE-PARITY, NOT A SERVED CALLER: this branch is unreachable in
+          # production. The only JSON caller (uploader_controller.js#postAttach) posts a node_id it
+          # has just uploaded through the chunk two-phase flow, and a brand-new node has no model
+          # attachment by construction. It answers the same keys as the single-file door below and
+          # obeys the same 200-vs-201 rule (a re-attach creates nothing, so Created would be a
+          # lie), so the two doors cannot drift apart while nobody is looking at this one.
           format.json do
             # Never nil: model_owning found a row for THIS node, #create resolved it from
             # nodes.present, and the bundle is that model's live files — so it is in there.
-            att = atts.find { |a| a.node_id == node.node_id }
+            att = bundle.attachments.find { |a| a.node_id == node.node_id }
             render json: { node_id: att.node_id, role: att.role, relocation: "model_bundle" },
-                   status: atts.any?(&:previously_new_record?) ? :created : :ok
+                   status: bundle.created ? :created : :ok
           end
         end
       end
@@ -134,13 +146,20 @@ module Projects
       respond_to do |format|
         format.html { redirect_to attach_redirect_path(node, conflict), notice: }
         # 200, not 201, when find_or_create_by found: the whole point of the dedupe is that the
-        # second attach creates nothing, so claiming Created would be a lie to the only caller
-        # that reads the status (the inline-upload JS).
+        # second attach creates nothing, so claiming Created would be a lie.
         #
-        # `relocation` is here so the JSON door tells the SAME truth as the HTML one. Without it a
-        # colliding or NAS-down attach answers a bare 201 and uploader_controller.js reports
-        # "Done." for a file that never moved — and the status code cannot carry this, because the
-        # attach really did succeed and that is what the code is about.
+        # `relocation` is here so the JSON door tells the SAME truth as the HTML one: the status
+        # code cannot carry it, because the attach really did succeed and that is what the code is
+        # about.
+        #
+        # NO CALLER READS EITHER OF THEM TODAY, and an earlier version of this comment claimed
+        # otherwise ("the only caller that reads the status", "without it uploader_controller.js
+        # reports 'Done.' for a file that never moved"). Both were false: the one JSON caller is
+        # uploader_controller.js#postAttach, which checks `res.ok` and nothing else — it reports
+        # "Done." either way, so `relocation` did not fix that and the 200/201 split is read by
+        # nobody. They are kept because the honest answer is cheap and a caller that wants to say
+        # "attached, but it stayed where it was" then needs no redesign; not because anything
+        # downstream breaks without them.
         format.json do
           render json: { node_id: att.node_id, role: att.role, relocation: },
                  status: att.previously_new_record? ? :created : :ok
@@ -167,44 +186,77 @@ module Projects
     # lookup would happily find another user's row pointing at the same id and attach that
     # stranger's whole bundle into this project.
     #
-    # find_by, not a set: a file attached to two models is storable (Models::AttachmentsController
+    # One row, not a set: a file attached to two models is storable (Models::AttachmentsController
     # can do it) and there is no sensible way to attach "both bundles" to one project without
-    # surprising the user, so the first row wins. The single-file rule is what the second model
+    # surprising the user, so the oldest row wins. The single-file rule is what the second model
     # loses, not its files.
+    #
+    # `order(:id)` IS THE RULE, NOT DECORATION. A bare find_by is LIMIT 1 over an UNORDERED set: on
+    # SQLite it happens to come back lowest-id-first, but on the managed Postgres deployment the
+    # row depends on the plan, so an unrelated UPDATE to either row could silently switch which
+    # model a file belongs to between two requests. A sentence saying "the first row wins" has to
+    # be enforced by the query, or it is a guess about a query plan.
     def model_owning(node)
       current_user.maker_file_attachments
-                  .find_by(node_id: node.node_id, attachable_type: "Maker::Model")&.attachable
+                  .where(node_id: node.node_id, attachable_type: "Maker::Model")
+                  .order(:id).first&.attachable
     end
 
-    # Attach every one of the model's LIVE files to this project, and return the rows. Idempotent
-    # per file (the same find_or_create_by as the single-file path), so re-attaching a bundle — or
-    # attaching one whose cover the user already attached by hand — adds no duplicate row.
+    # Attach every one of the model's LIVE FILES to this project. Idempotent per file, so
+    # re-attaching a bundle — or attaching one whose cover the user already attached by hand —
+    # adds no duplicate row.
     #
     # The role is derived PER FILE from its own name: a bundle is a PDF and a PNG and an STL, so
     # copying the triggering file's role would label the instructions "model".
-    #
-    # `nodes.present` is a filter, not a lookup convenience: a member the user deleted from the
-    # library is a tombstone, and an attachment pointing at one renders as a broken row on the
-    # project page. Iterating `node_ids` (position order) rather than the query's rows keeps the
-    # bundle in the order the model shows it in.
-    #
-    # Atomic: a half-attached bundle is worse than none — it is the gutted-folder failure again,
-    # wearing the attachment table instead of the library.
     def attach_model_bundle(model)
-      # uniq: two rows for one node is storable (no uniqueness index there either), and without
-      # this the notice would say "4 files" for a three-file model.
-      node_ids = model.file_attachments.pluck(:node_id).uniq
-      names = current_user.nodes.present.where(node_id: node_ids).pluck(:node_id, :name).to_h
-      ActiveRecord::Base.transaction do
-        node_ids.filter_map do |node_id|
-          name = names[node_id]
-          next unless name
+      node_ids = model.file_attachments.pluck(:node_id)
 
-          @project.file_attachments.find_or_create_by!(user: current_user, node_id:) do |a|
-            a.role = Maker::FileAttachment.role_for(name)
-          end
-        end
+      # LIVE FILES ONLY, and `kind` is as load-bearing as `deleted`. A member the user deleted is a
+      # tombstone; a member that is a directory is not a file — and projects/_attachments.html.erb
+      # renders EVERY row as a file tile linking to file_path(node_id), so either one is a broken
+      # row on the project page. The single-file path above refuses directories for a different
+      # reason (S3 cannot move them); this one refuses them because the project page cannot show
+      # them. Two reasons, one answer — the file must not give the directory question two.
+      names = current_user.nodes.present.where(node_id: node_ids, kind: "file")
+                          .pluck(:node_id, :name).to_h
+      # `&` keeps the MODEL's order, so the project lists the bundle the way the model does.
+      #
+      # IT ALSO DEDUPES, AND THAT IS THE ONLY THING THAT DOES. Two attachment rows for one node is
+      # storable here too (no uniqueness index — see #create), and a duplicate member would
+      # otherwise make the notice say "4 files" for a three-file model AND insert that row twice.
+      # Nothing downstream saves it: Array#- (below) removes matching elements but does NOT dedupe
+      # its receiver — measured, after a comment here claimed it did. So `#select` is not a
+      # refactor of this line, and the duplicate-member test is what says so. The blast radius of
+      # that missing index is now N rather than 1 — the price of N attaches in one request.
+      members = node_ids & names.keys
+
+      # FIVE QUERIES, CONSTANT IN N — deliberately not one SELECT + one INSERT per member. That
+      # loop cost 2 queries per file (a 200-file model measured 407 queries / 113 ms) and it ran
+      # inside a write transaction, so on the SQLite self-host deployment the write lock was taken
+      # at the first INSERT and held to COMMIT: one bundle attach stalled every other writer in the
+      # app. This is the shape stat_all and the Reconciler already had to fix, for the same reason.
+      existing = @project.file_attachments.where(node_id: members).pluck(:node_id)
+      rows = (members - existing).map do |node_id|
+        { user_id: current_user.id, attachable_type: "Maker::Project", attachable_id: @project.id,
+          node_id:, role: Maker::FileAttachment.role_for(names[node_id]) }
       end
+
+      # insert_all SKIPS VALIDATIONS, so what they were protecting has to hold by construction, and
+      # it does: role_for answers a member of ROLES for ANY input (it fetches with an "other"
+      # default), node_id comes from a nodes row so it is present, and user/attachable are set
+      # right here. There are no callbacks on Maker::FileAttachment to lose, `position` has a DB
+      # default, and insert_all DOES stamp created_at/updated_at (record_timestamps) — both are
+      # NOT NULL, so a Rails that stopped doing it would fail loudly rather than quietly.
+      #
+      # IT ALSO MAKES THE WRITE ONE STATEMENT, WHICH IS NOW THE WHOLE ATOMICITY STORY. A
+      # half-attached bundle is worse than none — it is the gutted-folder failure again, wearing
+      # the attachment table instead of the library — and a single INSERT cannot half-apply, so the
+      # transaction that used to say this is gone rather than merely unnecessary. (A bundle is tens
+      # of files; nothing here is sized for a bind-parameter limit.)
+      Maker::FileAttachment.insert_all(rows) if rows.any?
+
+      Bundle.new(attachments: @project.file_attachments.where(node_id: members).to_a,
+                 created: rows.any?)
     end
 
     # Move `node` into this project's library folder. Returns a SYMBOL rather than raising,

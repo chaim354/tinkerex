@@ -112,6 +112,48 @@ module Web
       assert_match(/2 files/i, flash[:notice])
     end
 
+    # projects/_attachments.html.erb renders EVERY attachment as a file tile linking to
+    # file_path(node_id), so a directory in the bundle is the same broken row a tombstone would be.
+    # The single-file path refuses directories too (for its own reason: S3 cannot move them) —
+    # one controller must not answer the directory question two ways.
+    test "a directory member is left out of the bundle" do
+      dir = @user.nodes.create!(node_id: "m-sources", name: "sources", kind: "dir",
+                                parent_node_id: @folder.node_id)
+      @model.file_attachments.create!(user: @user, node_id: dir.node_id, role: "other")
+
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+
+      assert_equal %w[cover.png hull.stl instructions.pdf], project_names
+    end
+
+    # --- cost: a bundle is N attaches in ONE request ------------------------------
+
+    # THE WHOLE BUNDLE IS WRITTEN IN ONE STATEMENT, and that single statement IS the atomicity
+    # story: a half-attached bundle is the gutted-folder failure again, wearing the attachment
+    # table, and one INSERT cannot half-apply. The find_or_create_by loop this replaced needed a
+    # transaction to make the same claim — and held the SQLite write lock for the whole of it.
+    test "the bundle is written in a single INSERT, however many files it has" do
+      many_file_model(30)
+
+      inserts = captured_sql { post attachments_path, params: { project_id: @project.slug, node_id: "k-0" } }
+                .grep(/\AINSERT INTO ["`]maker_file_attachments/i)
+
+      assert_equal 1, inserts.size, "one statement, so a partial bundle is impossible"
+      assert_equal 30, @project.file_attachments.count, "…and all 30 rows are there"
+    end
+
+    # Asserted as CONSTANT IN N, not against a literal — the same way the port's stat_all contract
+    # does it. A literal would pin today's query plan; what must never come back is the per-member
+    # SELECT+INSERT (2 per file, measured at 407 queries for a 200-file model).
+    test "the query count does not grow with the size of the model" do
+      three = count_queries { post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id } }
+      many_file_model(30)
+      thirty = count_queries { post attachments_path, params: { project_id: @project.slug, node_id: "k-0" } }
+
+      assert_equal three, thirty,
+                   "a 30-file bundle must cost what a 3-file bundle costs"
+    end
+
     test "attaching from the file page still returns to the file page" do
       post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id,
                                        return_to: "file" }
@@ -169,6 +211,38 @@ module Web
 
       assert_equal %w[a.stl], project_names, "only the file the user named"
     end
+
+    # --- helpers ------------------------------------------------------------------
+
+    # A second model with `n` files of its own, in its own folder: k-0 … k-<n-1>.
+    def many_file_model(n)
+      model = @user.maker_models.create!(title: "Kraken")
+      folder = model.ensure_library_folder!(@user)
+      n.times do |i|
+        @user.nodes.create!(node_id: "k-#{i}", name: "part-#{i}.stl", kind: "file",
+                            parent_node_id: folder.node_id)
+        model.file_attachments.create!(user: @user, node_id: "k-#{i}", role: "model")
+      end
+      model
+    end
+
+    # The SQL a block really issues. SCHEMA/TRANSACTION and PRAGMA are excluded the same way
+    # test/services/file_layer/adapter_contract.rb excludes them: they are cost by accident of
+    # being first, not cost of the code under test.
+    def captured_sql
+      seen = []
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          seen << payload[:sql]
+        end
+      end
+      yield
+      seen
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    def count_queries(&) = captured_sql(&).size
 
     test "the JSON door reports the bundle" do
       post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id },
