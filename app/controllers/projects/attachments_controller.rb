@@ -202,10 +202,10 @@ module Projects
       node = current_user.nodes.present.find_by(node_id: params.require(:node_id), kind: "file")
       return redirect_to(project_path(@project), alert: "That file isn't in your library.") unless node
 
-      # EVERY SYMBOL #relocate_into_project CAN ANSWER HAS A SENTENCE, including :already_there —
-      # unreachable from the prompt's own button (it always sends a new_name, and a rename in place
-      # is a real move) but reachable from a resubmitted or hand-made POST without one, where
-      # "Couldn't move it" would be a lie about a library that is already the way the user asked.
+      # EVERY SYMBOL #relocate_into_project CAN ANSWER HAS A SENTENCE, including :already_there,
+      # which is what a RESUBMIT of the prompt's own button answers: the first POST applied the
+      # suggested name, so the second one asks for a move to where the file already is. "Couldn't
+      # move it" would be a lie about a library that is already the way the user asked for.
       case relocate_into_project(node, new_name: params[:new_name].presence)
       when :moved
         redirect_to project_path(@project), notice: "Moved #{node.name} into #{@project.name}."
@@ -317,13 +317,20 @@ module Projects
     #
     # `new_name:` is unused by #create, which always moves under the node's own name; it is what
     # the collision prompt's retry passes ("move it in as bracket (2).stl") through #relocate. It
-    # is a KEYWORD rather than a second positional so the `new_name.nil?` short-circuit reads as
-    # what it is: renaming in place is a real move, so only a same-folder move under the SAME name
-    # is a no-op — which is why :already_there is unreachable from the prompt's own button and
-    # reachable only from a POST that omits the name.
+    # is a KEYWORD rather than a second positional so the short-circuit below reads as what it is.
+    #
+    # THE NO-OP RULE IS "SAME FOLDER, SAME NAME", and both spellings of "same name" have to be in
+    # it. `new_name.nil?` is #create's (move under the node's own name); `new_name == node.name` is
+    # #relocate's, and it is not decoration — the prompt's button is a POST, so a resubmit sends
+    # the name the FIRST one already applied. Without that half the second submit is a real move to
+    # where the file already is, which on chunk appends a redundant changelog `move` and broadcasts
+    # it to every device. "Nothing to move — the sync engine must not be told otherwise" is an
+    # invariant this suite already pins for #create; a new caller must not be the one that breaks
+    # it. Renaming in place, by contrast, IS a real move and must not be short-circuited.
     def relocate_into_project(node, new_name: nil)
       folder = @project.ensure_library_folder!(current_user)
-      return :already_there if new_name.nil? && node.parent_node_id == folder.node_id
+      same_name = new_name.nil? || new_name == node.name
+      return :already_there if same_name && node.parent_node_id == folder.node_id
 
       Maker::MoveNode.call(current_user, node:, new_parent_node_id: folder.node_id, new_name:)
       :moved

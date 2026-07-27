@@ -438,10 +438,29 @@ module Web
       assert_match(/isn't in your library/i, flash[:alert])
     end
 
-    # :already_there is reachable here and nowhere else in this flow: the prompt's button always
-    # sends a new_name, but a resubmitted or hand-made POST without one, for a file that IS in the
-    # folder, is a no-op — and "Couldn't move it" would be a lie about a library that is already
-    # the way the user asked for.
+    # A RESUBMIT OF THE PROMPT'S OWN BUTTON, which is the ordinary way to reach :already_there: the
+    # first POST applied "bracket (2).stl", so the second asks to move the file to where it already
+    # is. The changelog assertion is the point — a move to the same parent under the same name is a
+    # no-op, and broadcasting it tells every device to apply nothing. The suite already pins that
+    # for #create ("no redundant move"); the new endpoint must not be the one that breaks it.
+    test "resubmitting the prompt's button is a no-op, not a second move" do
+      seed_collision
+
+      2.times do
+        post relocate_project_attachments_path(@lamp),
+             params: { node_id: "f-1", new_name: "bracket (2).stl" }
+      end
+
+      assert_equal "bracket (2).stl", @node.reload.name
+      # FIRST, so a regression's failure message names the sync consequence rather than the wording.
+      assert_equal 1, @user.changelog_entries.where(op: "move").count,
+                   "the second submit had nothing to move — the sync engine must not be told twice"
+      assert_match(/already in/i, flash[:notice])
+    end
+
+    # The same short-circuit reached the other way: no new_name at all, for a file already in the
+    # folder. "Couldn't move it" would be a lie about a library that is already the way the user
+    # asked for.
     test "relocating a file that is already in place says so rather than claiming a move" do
       folder = @lamp.ensure_library_folder!(@user)
       @node.update!(parent_node_id: folder.node_id)
