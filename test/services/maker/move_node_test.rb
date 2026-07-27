@@ -9,7 +9,6 @@ module Maker
     class ChunkBranch < MoveNodeTest
       setup do
         pin_file_layer_backend("chunk")
-        Storage::ChunkStore.reset!
         @user = User.create!(email: "mn-#{SecureRandom.hex(4)}@example.com",
                              confirmed_at: Time.current, omniauth_signup: true)
         @dest = @user.nodes.create!(node_id: "dir-dest", name: "desk-lamp", kind: "dir")
@@ -63,6 +62,54 @@ module Maker
         end
       end
 
+      # The next four pin the guards on the door that has none of its own. Share gets these free
+      # from FileLayer::Share (live_node! / parent_dir_rel!); chunk assigns the columns and would
+      # succeed at every one of them — and then BROADCAST it, which is the actual damage: a
+      # changelog `move` tells every synced device to reparent the file under a node it has never
+      # heard of. So each asserts the changelog stayed empty, not merely that it raised.
+      test "refuses a destination parent that does not exist" do
+        assert_raises(FileLayer::NotFound) do
+          Maker::MoveNode.call(@user, node: @node, new_parent_node_id: "no-such-dir")
+        end
+        assert_nil @node.reload.parent_node_id
+        assert_empty @user.changelog_entries.where(op: "move"),
+                     "a refused move must not tell every device to reparent under a missing node"
+      end
+
+      test "refuses a destination parent that is a file" do
+        @user.nodes.create!(node_id: "f-not-a-dir", name: "notes.txt", kind: "file")
+
+        assert_raises(FileLayer::NotFound) do
+          Maker::MoveNode.call(@user, node: @node, new_parent_node_id: "f-not-a-dir")
+        end
+        assert_nil @node.reload.parent_node_id
+        assert_empty @user.changelog_entries.where(op: "move")
+      end
+
+      test "refuses to move a tombstoned node" do
+        @node.update!(deleted: true)
+
+        assert_raises(FileLayer::NotFound) do
+          Maker::MoveNode.call(@user, node: @node, new_parent_node_id: "dir-dest")
+        end
+        assert_nil @node.reload.parent_node_id
+        assert_empty @user.changelog_entries.where(op: "move")
+      end
+
+      test "refuses a node belonging to another user" do
+        other = User.create!(email: "mno-#{SecureRandom.hex(4)}@example.com",
+                             confirmed_at: Time.current, omniauth_signup: true)
+        theirs = other.nodes.create!(node_id: "f-theirs", name: "secret.stl", kind: "file")
+
+        assert_raises(FileLayer::NotFound) do
+          Maker::MoveNode.call(@user, node: theirs, new_parent_node_id: "dir-dest")
+        end
+        assert_nil theirs.reload.parent_node_id, "another user's node must not be mutated"
+        assert_empty @user.changelog_entries.where(op: "move"),
+                     "and the caller's changelog must not describe it"
+        assert_empty other.changelog_entries, "the owner's devices would never hear of it anyway"
+      end
+
       test "available_name suggests the first free (n) variant" do
         @user.nodes.create!(node_id: "f-2", name: "bracket.stl", kind: "file",
                             parent_node_id: "dir-dest")
@@ -77,15 +124,26 @@ module Maker
                                                     name: "bracket.stl")
       end
 
-      test "available_name returns nil when every variant is taken" do
-        (2..10).each do |i|
+      # BOTH SIDES OF THE BOUNDARY, in one test, with nothing created past it. The earlier fixture
+      # filled 2..10 — one variant further than the loop can reach — so widening the range by one
+      # left every test green and the real limit unpinned.
+      test "available_name runs out at HIGHEST_SUFFIX" do
+        @user.nodes.create!(node_id: "t-1", name: "bracket.stl", kind: "file",
+                            parent_node_id: "dir-dest")
+        (2..Maker::MoveNode::HIGHEST_SUFFIX - 1).each do |i|
           @user.nodes.create!(node_id: "t-#{i}", name: "bracket (#{i}).stl", kind: "file",
                               parent_node_id: "dir-dest")
         end
-        @user.nodes.create!(node_id: "t-1", name: "bracket.stl", kind: "file",
+        assert_equal "bracket (9).stl",
+                     Maker::MoveNode.available_name(@user, parent_node_id: "dir-dest",
+                                                    name: "bracket.stl"),
+                     "the highest suffix must actually be offered"
+
+        @user.nodes.create!(node_id: "t-9", name: "bracket (9).stl", kind: "file",
                             parent_node_id: "dir-dest")
         assert_nil Maker::MoveNode.available_name(@user, parent_node_id: "dir-dest",
-                                                  name: "bracket.stl")
+                                                  name: "bracket.stl"),
+                   "and nothing past it may be offered"
       end
     end
 
@@ -121,6 +179,20 @@ module Maker
         assert_equal "f-1", @node.node_id
         assert_empty @user.changelog_entries.where(op: "move"),
                      "a share library has no changelog — the port is the whole move"
+      end
+
+      # THE RETURNED OBJECT, deliberately not a reloaded one — reloading here would test the DB,
+      # which the test above already does, and would stay green with port_move's reload deleted.
+      # The port updates its OWN instance of the node, so without that reload `call` hands back
+      # the caller's stale object and a caller rendering `node.name` after a rename shows the old
+      # name on share/s3 while chunk shows the new one.
+      test "returns a node carrying the port's new name, not the caller's stale copy" do
+        moved = Maker::MoveNode.call(@user, node: @node, new_parent_node_id: "dir-dest",
+                                     new_name: "bracket (2).stl")
+
+        assert_equal "bracket (2).stl", moved.name
+        assert_equal "desk-lamp/bracket (2).stl", moved.storage_path
+        assert_equal "dir-dest", moved.parent_node_id
       end
 
       test "raises Collision before touching the disk when the name is taken" do

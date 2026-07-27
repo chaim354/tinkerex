@@ -21,6 +21,16 @@ module Maker
   # would happily create two live siblings with one name. Checking `nodes` is the only check that
   # is true on all three backends, and it is the catalog every backend actually reads.
   #
+  # THE INPUT GUARDS BELOW EXIST BECAUSE ONLY ONE DOOR HAS ANY. The port resolves its own
+  # arguments — Share#move takes a node_id through `live_node!` and a parent through
+  # `parent_dir_rel!`, so a tombstoned source, a missing parent, a parent that is a FILE, and
+  # another user's node all raise FileLayer::NotFound there. The chunk door is handed the object
+  # and assigns the columns, so every one of those SUCCEEDS: it reparents under an id that may
+  # exist on no device, and then broadcasts a changelog `move` telling every device to do the
+  # same. A class whose whole job is to hide the difference between the doors cannot let them
+  # disagree about what is valid, so the checks are here, before the branch, in the same class the
+  # port already uses.
+  #
   # WHAT THIS DOES NOT CHECK, stated so it is not mistaken for covered: a CYCLE — moving a
   # directory under one of its own descendants. Every caller today moves a FILE (a file has no
   # descendants, so it cannot be its own ancestor), which is why the guard is absent rather than
@@ -33,20 +43,24 @@ module Maker
     # the attach flow turns it into the "rename or leave it" prompt.
     Collision = Class.new(StandardError)
 
-    MAX_SUGGESTIONS = 9
+    # The HIGHEST SUFFIX tried, not a count — `(2..HIGHEST_SUFFIX)` offers eight names, "(2)"
+    # through "(9)". Named for the boundary rather than the quantity because the quantity is the
+    # thing nobody can read off the loop, and the earlier name (MAX_SUGGESTIONS) claimed the one
+    # that is wrong by one.
+    HIGHEST_SUFFIX = 9
 
     def self.call(user, node:, new_parent_node_id:, new_name: nil)
       new(user).call(node:, new_parent_node_id:, new_name:)
     end
 
-    # The first free "<base> (n)<ext>" under `parent_node_id`, or nil if every variant up to
-    # MAX_SUGGESTIONS is taken. Lives here because collision naming is this class's knowledge; the
+    # The first free "<base> (n)<ext>" under `parent_node_id`, or nil if every suffix up to
+    # HIGHEST_SUFFIX is taken. Lives here because collision naming is this class's knowledge; the
     # conflict prompt reads it to label its button.
     def self.available_name(user, parent_node_id:, name:)
       ext  = File.extname(name)
       base = File.basename(name, ext)
       taken = user.nodes.present.where(parent_node_id:).pluck(:name).to_set
-      (2..MAX_SUGGESTIONS).each do |i|
+      (2..HIGHEST_SUFFIX).each do |i|
         candidate = "#{base} (#{i})#{ext}"
         return candidate unless taken.include?(candidate)
       end
@@ -60,6 +74,8 @@ module Maker
 
     def call(node:, new_parent_node_id:, new_name: nil)
       name = new_name.presence || node.name
+      own_live_node!(node)
+      live_dir!(new_parent_node_id)
       leaf!(name)
       collision!(node, new_parent_node_id, name)
 
@@ -68,6 +84,39 @@ module Maker
     end
 
     private
+
+    # The source must be THIS user's, and live.
+    #
+    # `call` takes a node OBJECT while the port takes a node_id, and that difference is the whole
+    # hole: the port's lookup is user-scoped, so another tenant's id is simply not there, whereas
+    # an object arrives already loaded and no scope is consulted. Handed one, the chunk door
+    # mutates the victim's row AND appends the changelog entry to the CALLER's log — so the
+    # victim's devices are never told, and their trees diverge from the server's permanently.
+    # (Maker::LibraryFolder, the model for this class, cannot be misused this way: it takes a user
+    # and path segments, and looks everything else up itself.)
+    #
+    # NotFound rather than ArgumentError, though a foreign node IS a caller error: it is the class
+    # the port already answers for this input, and FilesController maps it to a 404 — which is the
+    # right thing to tell someone holding another tenant's id. The tombstone case is NotFound for
+    # the plainer reason that a deleted node is gone on every backend.
+    def own_live_node!(node)
+      unless node.user_id == @user.id
+        raise FileLayer::NotFound, "node #{node.node_id.inspect} does not belong to this user"
+      end
+      return unless node.deleted?
+      raise FileLayer::NotFound, "node #{node.node_id.inspect} is deleted"
+    end
+
+    # nil means THE LIBRARY ROOT — a real destination on every backend, with nothing to look up.
+    # Anything else must be a live DIRECTORY of this user's, which is exactly what the share door's
+    # `parent_dir_rel!` enforces and the chunk door does not: without this, a typo'd or stale
+    # parent id reparents the node under something no device has, and the broadcast tells every
+    # device to do the same. A parent naming a FILE is the same failure wearing a valid id.
+    def live_dir!(parent_node_id)
+      return if parent_node_id.blank?
+      return if @user.nodes.present.exists?(node_id: parent_node_id, kind: "dir")
+      raise FileLayer::NotFound, "parent #{parent_node_id.inspect} is not a live directory"
+    end
 
     # A name is a single path segment. The port adapters check this themselves (leaf!), but the
     # chunk door does not, and a name with a slash there would put a separator inside a node's
@@ -89,6 +138,12 @@ module Maker
     end
 
     # share/s3: the port owns the store, so it renames the bytes and writes the row.
+    #
+    # THE RELOAD IS THE RETURN VALUE, not tidiness. The port resolves the node_id into its OWN
+    # instance and updates that, so the caller's object still holds the pre-move name, parent and
+    # storage_path — while the chunk door assigns the caller's object in place. Without this the
+    # two doors return different things for the same call, and a caller who renders `node.name`
+    # after a rename (a flash, a turbo frame) prints the OLD name on share/s3 only.
     def port_move(node, new_parent_node_id, name)
       FileLayer.current.move(@user, node_id: node.node_id,
                              new_parent_node_id:, new_name: name)
@@ -104,7 +159,6 @@ module Maker
         n.name = name
       end
       LibraryChannel.broadcast_change(@user, seq)
-      node
     end
   end
 end
