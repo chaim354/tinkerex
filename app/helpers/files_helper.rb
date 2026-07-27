@@ -27,8 +27,14 @@ module FilesHelper
   # A directory says "Folder" rather than "dir": it is the one row with no extension to show, and
   # the sort groups directories together regardless of key. An extension-less file gets the same
   # em-dash every other empty cell in this table uses.
+  #
+  # A SYMLINK SAYS SO, rather than showing the extension of whatever it is named after. `symlink`
+  # is a first-class Node::KIND that git-on-mount depends on, and the column this replaced said
+  # "symlink" plainly; falling through to the file branch would have quietly reclassified them.
+  # (They still group WITH files in the sort -- see FilesController#sort_nodes for why.)
   def file_type_label(node)
     return "Folder" if node.dir?
+    return "Symlink" if node.symlink?
 
     File.extname(node.name).delete(".").upcase.presence || "—"
   end
@@ -41,7 +47,10 @@ module FilesHelper
   #
   # HAND-PICKED, NOT DERIVED from those three, and that is the point rather than laziness: their
   # union includes `rb`, `cpp`, `yaml` and `markdown`, which is a programmer's file list, not the
-  # shelf a maker wants to click. Only `csv` here comes from just one of them (#preview_kind).
+  # shelf a maker wants to click. Membership and grouping are editorial; the only claim made here
+  # is that at least one of the three already recognises every entry. How MANY recognise it varies
+  # and means nothing — `zip` is in ROLE_BY_EXT alone, `csv` in #preview_kind alone, `dxf` and
+  # `lbrn2` in the Registry alone — so do not read the list as a union of any two of them.
   #
   # A CURATED LIST, NOT REAL FACET COUNTS, and the reason is cost: counting "you have 214 .stl
   # files" means plucking every filename in the library on EVERY Files page load, including plain
@@ -60,11 +69,20 @@ module FilesHelper
     "Machine"    => %w[gcode zip]
   }.freeze
 
-  # The URL for toggling `ext` into or out of the active set, preserving the sort. `folder` is
-  # deliberately NOT preserved: activating a filter LEAVES the folder (see #index), so carrying it
-  # would put a param in the URL that the request then ignores.
-  def ext_toggle_path(ext, active_exts, sort, dir)
+  # The URL for toggling `ext` into or out of the active set.
+  #
+  # NEITHER `folder` NOR `sort`/`dir` RIDES ALONG, and both omissions are the same argument
+  # files_query_base makes about `view`. `folder` because activating a filter LEAVES the folder
+  # (see #index), so carrying it would put a param in the URL that the request then ignores.
+  # `sort`/`dir` because they are cookie-persisted: pinning them would freeze into a copied or
+  # bookmarked chip URL a choice the user can still change from the headers.
+  def ext_toggle_path(ext, active_exts)
     toggled = active_exts.include?(ext) ? active_exts - [ ext ] : active_exts + [ ext ]
-    files_path({ ext: toggled.presence&.join(","), sort:, dir: }.compact)
+    files_path({ ext: toggled.presence&.join(",") }.compact)
   end
+
+  # Can another extension still be turned on? `resolve_exts` keeps only the FIRST MAX_EXTS, so
+  # once the set is full an inactive chip's URL would append a value the controller silently drops
+  # — a control that renders, links, and does nothing. The row renders those inert instead.
+  def ext_slots_left?(active_exts) = active_exts.size < FilesController::MAX_EXTS
 end

@@ -303,3 +303,4 @@ table.files th a:hover { text-decoration: underline; }
 .ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
 .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
   background: var(--soft); color: var(--muted); font-size: 13px; }
+.ext-filter .chip.disabled { opacity: .45; cursor: not-allowed; }

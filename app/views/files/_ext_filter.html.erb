@@ -8,14 +8,23 @@
     <span class="ext-family" aria-label="<%= family %>">
       <span class="muted family-label"><%= family %></span>
       <% exts.each do |ext| %>
-        <%# aria-current, NOT aria-pressed. These chips are LINKS (a GET, a shareable URL), and
-            aria-pressed is only supported on role=button — on a link it is invalid ARIA that a
-            screen reader is free to ignore, which would leave the active state announced by
-            nothing but a colour. aria-current is valid here and is what the breadcrumb above
-            already uses. %>
-        <%= link_to ".#{ext}", ext_toggle_path(ext, @exts, @sort, @dir),
-                    class: "chip#{' active' if @exts.include?(ext)}",
-                    "aria-current": (@exts.include?(ext) ? "true" : nil) %>
+        <% active = @exts.include?(ext) %>
+        <% if active || ext_slots_left?(@exts) %>
+          <%# aria-current, NOT aria-pressed. These chips are LINKS (a GET, a shareable URL), and
+              aria-pressed is only supported on role=button — on a link it is invalid ARIA that a
+              screen reader is free to ignore, which would leave the active state announced by
+              nothing but a colour. aria-current is valid here and is what the breadcrumb above
+              already uses. %>
+          <%= link_to ".#{ext}", ext_toggle_path(ext, @exts),
+                      class: "chip#{' active' if active}",
+                      "aria-current": (active ? "true" : nil) %>
+        <% else %>
+          <%# THE SET IS FULL. Linking this would produce a URL that appends a 9th extension the
+              controller then drops (resolve_exts keeps the first MAX_EXTS) — the chip would look
+              live, navigate, and change nothing. A span with aria-disabled says why instead. %>
+          <span class="chip disabled" aria-disabled="true"
+                title="Turn one off first — at most <%= FilesController::MAX_EXTS %> types at a time.">.<%= ext %></span>
+        <% end %>
       <% end %>
     </span>
   <% end %>
@@ -32,6 +41,8 @@
   </form>
 
   <% if @exts.any? %>
-    <%= link_to "Clear filter", files_path(sort: @sort, dir: @dir), class: "muted clear-filter" %>
+    <%# No sort params, for the reason ext_toggle_path gives: the sort is in a cookie, so pinning
+        it here only bakes a stale choice into a URL someone copies. %>
+    <%= link_to "Clear filter", files_path, class: "muted clear-filter" %>
   <% end %>
 </div>

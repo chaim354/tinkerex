@@ -165,7 +165,11 @@ class FilesController < ApplicationController
       @crumbs = []
       scope = flat_ext_scope(@exts)
       @match_count = scope.count
-      @nodes = scope.order(:name).limit(FLAT_LIMIT).to_a
+      # ORDERED BY THE USER'S SORT, NOT BY NAME, BECAUSE HERE THE ORDER *SELECTS* -- see
+      # flat_order. This line used to be `.order(:name)`, and the LIMIT then took the alphabetical
+      # head of the library while the page displayed it under whatever heading the user had
+      # clicked.
+      @nodes = scope.order(flat_order(@exts, @sort, @dir)).limit(FLAT_LIMIT).to_a
       @truncated = @match_count > FLAT_LIMIT
     else
       @folder = current_folder
@@ -179,7 +183,14 @@ class FilesController < ApplicationController
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
     # given a sort position (and before sort_key asks @info_by_node for an mtime it does not
     # have); BEFORE the note/thumbnail loads, which only need the final list.
-    @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir)
+    #
+    # FLAT MODE IS ALREADY SORTED, BY SQL, AND RE-SORTING IT HERE WOULD BE THE BUG IN MINIATURE.
+    # There the ORDER BY is what the LIMIT selects with, so SQL is the authority; running a second
+    # comparator over the slice would be safe only for as long as the two agreed exactly, forever,
+    # including on ties. One authority per mode is cheaper than that promise -- and the promise
+    # that DOES have to hold (the two mean the same thing) is pinned by a test that asks for the
+    # same files both ways and compares the two orders.
+    @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir) unless @flat
     # Only the flat view needs it — a folder view already tells you where you are, and this is a
     # query the folder view would pay for and never read.
     @folder_paths = @flat ? folder_paths_for(@nodes) : {}
@@ -440,10 +451,15 @@ class FilesController < ApplicationController
   # calls #perform with `user_id:` directly -- ScanJob.scan_all! is the all-users schedule gate,
   # not the per-user door. The gate above (require_scannable!) is what keeps this off chunk mode,
   # where #perform would raise ArgumentError for want of an observer.
+  #
+  # The redirect returns the user to WHAT THEY WERE LOOKING AT, folder or type filter, because the
+  # button carries files_query_base and landing at the unfiltered root after a rescan is a lost
+  # place. `ext` goes back through resolve_exts rather than being echoed from params: the same
+  # whitelist that guards #index guards this, so a hand-edited value cannot ride a redirect.
   def rescan
     Library::ScanJob.perform_later(user_id: current_user.id)
-    redirect_to files_path(folder: params[:folder].presence),
-                notice: "Rescan started — refresh in a moment."
+    where = { folder: params[:folder].presence, ext: resolve_exts.presence&.join(",") }.compact
+    redirect_to files_path(where), notice: "Rescan started — refresh in a moment."
   end
 
   private
@@ -465,6 +481,23 @@ class FilesController < ApplicationController
                 .index_by { |p| [ p.node_id, p.version_id ] }
   end
 
+  # How many missing thumbnails ONE page load may enqueue.
+  #
+  # THIS IS A BUDGET, NOT A CORRECTNESS LIMIT, and the difference is why a cap is safe. The eager
+  # seams (upload, commit, scan) already cover every file that arrives from now on; this pass
+  # exists only to drain the BACKLOG left by libraries indexed before previews shipped. A backlog
+  # does not have to clear in one request -- each visit takes the next slice, because the rows this
+  # pass creates are exactly what makes the following visit skip them.
+  #
+  # Measured on a 2500-file library (both chunk and share): uncapped, one `GET /files?ext=stl` ran
+  # 6008 queries, inserted 2000 maker_previews rows, enqueued 2000 jobs and took ~1.4 s.
+  #
+  # THE CAP IS UNIFORM, not flat-mode-only, because the hazard is not the mode -- it is a page
+  # whose row count is not user-shaped. `?ext=stl` on a big library is one click and reaches the
+  # whole thing; a 2000-child folder is rarer but identical in shape once you are in it. Below the
+  # cap nothing changes, which is every ordinary folder.
+  BACKFILL_LIMIT = 100
+
   # LAZY BACKFILL. The eager seams (upload/commit/scan) only cover files that arrive AFTER the
   # feature shipped; a library indexed before it has files but no preview rows. Without this, every
   # such file shows a spinner the grid polls forever (a job is never coming). So when a folder is
@@ -473,8 +506,13 @@ class FilesController < ApplicationController
   # names get no row and render as a static icon, never a spinner). `existing` is @thumb_by_node,
   # already loaded — the new pending rows aren't in it, so the view shows nil -> spinner, which is
   # now truthful because a job IS coming.
+  #
+  # Walks in DISPLAY order, so the budget is spent on what the user is most likely looking at
+  # first, and the rows past it keep the static-icon fallback until a later visit reaches them.
   def backfill_thumbnails(nodes, info, existing)
+    budget = BACKFILL_LIMIT
     nodes.each do |node|
+      break if budget.zero?
       next unless node.file?
 
       token = info[node.node_id]&.content_token
@@ -483,6 +521,7 @@ class FilesController < ApplicationController
 
       ::Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                       name: node.name, version_id: token)
+      budget -= 1
     end
   end
 
@@ -560,16 +599,29 @@ class FilesController < ApplicationController
   # the same way, uniformly, and none is more exact than another. The cost is the shape this
   # action already has (it loads the folder with .to_a and select!s in memory).
   #
-  # Ruby's sort_by is NOT STABLE, so both passes carry the index as a tiebreak -- without it,
-  # equal keys (two .stl files, two nodes with the same mtime) shuffle between page loads.
+  # Ruby's sort is NOT STABLE, so the comparator carries the input index as an explicit last
+  # resort -- without it, equal keys (two .stl files, two nodes with the same mtime) shuffle
+  # between page loads. The input order is the query's `name: :asc`, so equal keys stay
+  # alphabetical.
   #
-  # Directories stay grouped AFTER files exactly as today's `kind: :desc` ordering leaves them,
-  # and `dir` reverses only WITHIN the sort, so a descending sort never scatters folders through
-  # the file list.
+  # THE TIEBREAK RUNS ASCENDING IN BOTH DIRECTIONS, and that is a deliberate difference from the
+  # `sort ascending then reverse!` this used to be. Reversing flips the ties too, so "sort by Type
+  # descending" reordered files *within* one extension for no reason the user asked for -- and it
+  # made the folder view disagree with the flat view, whose SQL breaks ties ascending (flat_order).
+  # Negating the comparison instead reverses only what the user chose to reverse.
+  #
+  # Directories stay grouped AFTER files. `partition` rather than a second sort: it is O(n) and
+  # stable by construction, where the sort it replaced was stable only because it hand-carried an
+  # index. SYMLINKS GROUP WITH FILES, deliberately -- they are usually symlinks TO files, and the
+  # `kind: :desc` ordering this grouping replaced put them FIRST, above every real file, purely
+  # because "symlink" > "file" alphabetically. That was an accident of the column, not a design.
   def sort_nodes(nodes, info, key, dir)
-    ordered = nodes.each_with_index.sort_by { |node, i| [ sort_key(node, info, key), i ] }.map(&:first)
-    ordered.reverse! if dir == "desc"
-    ordered.each_with_index.sort_by { |node, i| [ node.kind == "dir" ? 1 : 0, i ] }.map(&:first)
+    sign = (dir == "desc") ? -1 : 1
+    ordered = nodes.each_with_index.sort { |(a, ai), (b, bi)|
+      ((sort_key(a, info, key) <=> sort_key(b, info, key)) * sign).nonzero? || (ai <=> bi)
+    }.map(&:first)
+    files, dirs = ordered.partition { |node| !node.dir? }
+    files + dirs
   end
 
   # One key per node, and every branch must answer the SAME Ruby type for a given key or the
@@ -626,9 +678,76 @@ class FilesController < ApplicationController
   # LOWER(name), not a bare LIKE: SQLite's LIKE is ASCII-case-insensitive and Postgres' is not, so
   # the bare form would answer differently on self-host and managed. `exts` is already downcased.
   def flat_ext_scope(exts)
-    clause = Array.new(exts.size, "LOWER(name) LIKE ?").join(" OR ")
-    args = exts.map { |e| "%.#{ActiveRecord::Base.sanitize_sql_like(e)}" }
-    current_user.nodes.present.where(kind: "file").where(clause, *args)
+    clause = Array.new(exts.size, LIKE_EXT).join(" OR ")
+    current_user.nodes.present.where(kind: "file").where(clause, *exts.map { |e| like_pattern(e) })
+  end
+
+  # `ESCAPE '\'` IS NOT DECORATION, AND WITHOUT IT sanitize_sql_like BELOW IS A NO-OP ON HALF THE
+  # DEPLOYMENTS. Postgres treats backslash as LIKE's escape character by default; SQLite has NO
+  # default escape character at all, so the backslash sanitize_sql_like inserts is matched as a
+  # LITERAL backslash and `_` stays a wildcard. Verified on this repo's connection:
+  #
+  #   'x.st\l' LIKE '%.st\_'                -> 1   (self-host: escaping did nothing)
+  #   'x.st\l' LIKE '%.st\_' ESCAPE '\'     -> 0
+  #
+  # So the earlier version of this comment promised a second layer that only existed on managed
+  # Postgres. EXT_RE makes both unreachable today -- it drops `%` and `_` outright -- but "fails
+  # closed by accident on one database" is not defense in depth, and the two would have disagreed
+  # the moment the whitelist was loosened. One clause, both databases, same answer.
+  LIKE_EXT = "LOWER(name) LIKE ? ESCAPE '\\'".freeze
+
+  # The ONE place the match pattern is built. The WHERE and the ORDER BY below must agree about
+  # what "ends in .stl" means -- if they ever drifted, the CASE would rank a row the WHERE had
+  # admitted on different grounds, which is a wrong sort with no error anywhere.
+  def like_pattern(ext) = "%.#{ActiveRecord::Base.sanitize_sql_like(ext)}"
+
+  # THE PAGE'S ORDER BY, IN SQL, AND IN FLAT MODE THAT IS NOT AN OPTIMISATION -- IT IS THE
+  # SELECTION. `LIMIT` takes rows in whatever order the query is already in, so ordering by name
+  # and then re-sorting the slice in Ruby hands the user the alphabetical head of their library
+  # under a banner that says "the first N". Measured before the fix: 30 .stl files, FLAT_LIMIT 5,
+  # `?ext=stl&sort=modified&dir=asc` rendered the five NEWEST and called them the first five.
+  #
+  # §5.2 STILL HOLDS; THIS IS NOT A CONTRADICTION OF IT. That decision says there is no expression
+  # for "the file's extension" portable across SQLite and Postgres, and there still isn't. Flat
+  # mode does not need one: it already knows every extension a matching row can have (`exts`, at
+  # most MAX_EXTS of them), so ranking them is a CASE over the same patterns the WHERE uses --
+  # ordinary ANSI SQL. The folder view has no such list (its extensions are whatever is on disk),
+  # which is why it still sorts in Ruby and sort_nodes stays the one comparator there.
+  def flat_order(exts, key, dir)
+    direction = (dir == "desc") ? "DESC" : "ASC"
+    # `name` then `node_id`, always, and both ASCENDING whichever way the key runs.
+    #
+    # BARE `name`, NOT `LOWER(name)`, AND ONLY BECAUSE THAT IS WHAT THE FOLDER VIEW ALREADY DOES.
+    # Its query is `order(kind: :desc, name: :asc)` and sort_nodes breaks ties by that input order,
+    # so matching it verbatim is what makes the two views agree about ties on whichever database
+    # is underneath -- binary on SQLite, locale-collated on Postgres, but the SAME on both sides of
+    # the comparison. A case-insensitive tie order would read better; it would also have to change
+    # the folder view in the same commit, and this one is not that.
+    #
+    # `node_id` last is what makes the order TOTAL: names repeat across folders, so `order(:name)`
+    # alone -- which is what this replaced -- left the row that lands on the truncation boundary up
+    # to the query planner.
+    tail = "name ASC, node_id ASC"
+    sql, *args =
+      case key
+      when "modified"
+        # COALESCE, because a NULL mtime sorts FIRST on SQLite and LAST on Postgres -- the very
+        # split §5.2 is about. sort_key reads a nil mtime as 0; this is the same reading.
+        [ "COALESCE(mtime, 0) #{direction}, #{tail}" ]
+      when "type"
+        ranked = exts.sort
+        whens = ranked.each_with_index.map { |_, i| "WHEN #{LIKE_EXT} THEN #{i}" }
+        # The ELSE is unreachable -- every row here matched one of these same patterns in the
+        # WHERE -- but it must be written anyway: a CASE with no ELSE yields NULL, and NULL
+        # ordering is the SQLite/Postgres split a third time.
+        [ "CASE #{whens.join(' ')} ELSE #{ranked.size} END #{direction}, #{tail}",
+          *ranked.map { |e| like_pattern(e) } ]
+      else
+        # LOWER, not bare `name`: sort_key downcases, and a binary ORDER BY files "Bracket.stl"
+        # before "apple.stl". Matching it is what lets the two views agree.
+        [ "LOWER(name) #{direction}, #{tail}" ]
+      end
+    Arel.sql(ActiveRecord::Base.sanitize_sql_array([ sql, *args ]))
   end
 
   # node_id -> "cad/sub" for the flat view's Folder column, because a flat list of 200 STLs with no

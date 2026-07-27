@@ -113,6 +113,23 @@ module Web
       assert_equal names.sort_by { |n| [ File.extname(n), n ] } + %w[nested], listed_names
     end
 
+    # A symlink is a first-class Node::KIND (git-on-mount depends on it), and the column this
+    # replaced said "symlink" plainly. Falling through to the file branch would show the extension
+    # of whatever it is named after and quietly reclassify it.
+    #
+    # It groups WITH FILES, and that is a deliberate change: the `kind: :desc` ordering the
+    # grouping pass replaced put symlinks FIRST, above every real file, purely because "symlink"
+    # sorts after "file" alphabetically. That was the column's accident, not a design.
+    test "a symlink says so in the Type column and groups with files, not with folders" do
+      @user.nodes.create!(node_id: "n-link", name: "link-to.stl", kind: "symlink",
+                          mtime: 5_000_000_000, size: 1)
+      get files_path
+
+      assert_equal %w[alpha.stl beta.3mf gamma.pdf link-to.stl zeta-folder], listed_names
+      types = css_select("table.files tbody tr").map { |row| row.css("td")[1].text.strip }
+      assert_equal %w[STL 3MF PDF Symlink Folder], types
+    end
+
     test "the choice persists in a cookie across a request with no params" do
       get files_path(sort: "type", dir: "asc")
       get files_path

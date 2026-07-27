@@ -64,7 +64,7 @@
                redirect_url: files_path(folder: @current_project_folder_node_id),
                parent_node_id: @current_project_folder_node_id %>
     <%= link_to "Upload to library root instead",
-                files_path(folder: @folder&.node_id, upload: "library"), class: "muted upload-alt" %>
+                files_path(files_query_base.merge(upload: "library")), class: "muted upload-alt" %>
   </div>
 <% else %>
   <% if capabilities.port_writable? %>
@@ -91,7 +91,7 @@
   <% end %>
   <% if current_project %>
     <%= link_to "Upload to project “#{current_project.name}” instead",
-                files_path(folder: @folder&.node_id), class: "muted upload-alt" %>
+                files_path(files_query_base), class: "muted upload-alt" %>
   <% end %>
 <% end %>
 
@@ -105,7 +105,7 @@
   rather than silently vanishing. `folder:` rides along so the redirect lands back in this folder.
 %>
 <% if capabilities.scannable? %>
-  <%= button_to "Rescan library", rescan_files_path(folder: @folder&.node_id),
+  <%= button_to "Rescan library", rescan_files_path(files_query_base),
                 class: "linkbtn", data: { turbo: false } %>
 <% end %>
 
