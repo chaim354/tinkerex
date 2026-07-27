@@ -209,13 +209,19 @@ class FilesController < ApplicationController
                               .includes(:attachable).to_a
     @attached_projects = attachments.filter_map { |a|
       [ a.attachable, a ] if a.attachable && a.attachable.status != "archived"
-    }.sort_by { |project, _| project.name }
+    }.sort_by { |project, _| name_key(project) }
     scope = current_user.maker_projects.where.not(status: "archived")
     # Guarded: `where.not(id: [])` is a no-op clause in Rails, but writing it unconditionally
     # invites the reader to assume it filters. Say what happens.
     attached_ids = attachments.map(&:attachable_id)
     scope = scope.where.not(id: attached_ids) if attached_ids.any?
-    @projects = scope.order(:name).to_a
+    # BOTH LISTS SORT IN RUBY, and NO TEST LEG CAN CATCH A REGRESSION HERE. The chips must sort
+    # in Ruby (they come from attachments, not a query), so an SQL `order(:name)` on the dropdown
+    # beside them would mean two collations on one line: SQLite is binary and agrees, but
+    # production is managed Postgres, where ORDER BY under a non-C locale is effectively
+    # case-insensitive — chips reading "Alpha, Bravo, beta" next to a dropdown reading "Alpha,
+    # beta, Bravo". One comparator, applied to both.
+    @projects = scope.to_a.sort_by { |p| name_key(p) }
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
   end
 
@@ -407,6 +413,11 @@ class FilesController < ApplicationController
   end
 
   private
+
+  # The ONE comparator behind both halves of the attach control (see #show). Case-insensitive so
+  # the Ruby sort matches what a reader expects from Postgres' default collation, with the raw
+  # name as the tie-break so "beta"/"Beta" still order deterministically.
+  def name_key(project) = [ project.name.downcase, project.name ]
 
   # Current-version thumbnail per node, in ONE query (never N+1). Keyed by [node_id, content_token]
   # where content_token is what @info_by_node already carries, so we show the thumbnail for the

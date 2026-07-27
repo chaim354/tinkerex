@@ -59,6 +59,24 @@ module Web
       assert_select ".attach-to-project select option[value=desk-lamp]"
     end
 
+    # THE LABEL MUST POINT AT OUR OWN SELECT. The layout's top-bar current-project switcher is
+    # also named project_id, so a default-id f.select puts a SECOND id="project_id" on the page
+    # and `for` resolves to the top bar's — whose onchange requestSubmit()s, silently changing the
+    # app's default save destination when the user clicks these words. Pinned as "the for matches
+    # the id of the select INSIDE .attach-to-project", so a future duplicate cannot slip back in.
+    test "the attach label points at the attach select, not the top bar's project_id" do
+      user = sign_in
+      user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
+      user.maker_projects.create!(name: "Lamp")
+
+      get file_path("f-1")
+      select_id = css_select(".attach-to-project select").first["id"]
+      assert select_id.present?, "the attach select needs an explicit id"
+      assert_select ".attach-to-project label[for=?]", select_id
+      # And that id must be unique in the whole document, which is the condition that broke.
+      assert_select "##{select_id}", 1
+    end
+
     test "posting the non-nested attach route attaches, resolving the project from the body" do
       user = sign_in
       user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
@@ -78,6 +96,19 @@ module Web
       assert_difference "project.file_attachments.count", 0 do
         post attachments_path, params: { project_id: project.slug, node_id: "f-1" }
       end
+    end
+
+    # The JSON caller (the inline-upload JS) is the only one that reads the status, and 201 for a
+    # row find_or_create_by FOUND would claim a creation that did not happen.
+    test "a second JSON attach answers 200, not 201" do
+      user = sign_in
+      user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post attachments_path, params: { project_id: project.slug, node_id: "f-1" }, as: :json
+      assert_response :created
+      post attachments_path, params: { project_id: project.slug, node_id: "f-1" }, as: :json
+      assert_response :ok
     end
 
     test "projects the file is already in show as chips and drop out of the dropdown" do

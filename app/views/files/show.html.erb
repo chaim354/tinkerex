@@ -54,15 +54,26 @@
       <%#
         Posts to the NON-NESTED attachments_path so the project can travel as a body param — see
         the route comment. The option value is the SLUG, because set_project resolves
-        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` brings the user
-        back to this file page instead of the project (the nested picker keeps the old target).
+        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` is inert for
+        now: nothing reads it, and a LATER TASK adds the redirect branch that sends the user back
+        to this file page instead of to the project. Do not believe it is wired yet.
+
+        The explicit id is load-bearing, and the param name is why: the layout's top-bar
+        current-project switcher is ALSO named project_id, so `select_tag :project_id` there and a
+        default-id `f.select :project_id` here put TWO id="project_id" elements on this page —
+        every page where the user has a project, i.e. exactly when this control renders. The
+        label then resolves to the FIRST one in document order, the top bar's, whose onchange
+        fires requestSubmit() — so clicking these words focused the switcher and one arrow key
+        silently changed the whole app's default save destination. The name stays project_id (the
+        controller reads it); only the DOM id is disambiguated.
       %>
       <%= form_with url: attachments_path, method: :post, class: "attach-form",
                     data: { turbo: false } do |f| %>
         <%= f.hidden_field :node_id, value: @node.node_id %>
         <%= f.hidden_field :return_to, value: "file" %>
-        <%= f.label :project_id, "Attach to project:", class: "muted" %>
-        <%= f.select :project_id, @projects.map { |p| [ p.name, p.slug ] } %>
+        <%= f.label :project_id, "Attach to project:", class: "muted", for: "attach_project_id" %>
+        <%= f.select :project_id, @projects.map { |p| [ p.name, p.slug ] }, {},
+                     id: "attach_project_id" %>
         <%= f.submit "Attach", class: "btn small" %>
       <% end %>
     <% end %>

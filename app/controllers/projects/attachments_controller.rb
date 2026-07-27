@@ -37,7 +37,13 @@ module Projects
       end
       respond_to do |format|
         format.html { redirect_to project_path(@project), notice: "Attached #{node.name}." }
-        format.json { render json: { node_id: att.node_id, role: att.role }, status: :created }
+        # 200, not 201, when find_or_create_by found: the whole point of the dedupe is that the
+        # second attach creates nothing, so claiming Created would be a lie to the only caller
+        # that reads the status (the inline-upload JS).
+        format.json do
+          render json: { node_id: att.node_id, role: att.role },
+                 status: att.previously_new_record? ? :created : :ok
+        end
       end
     end
 
