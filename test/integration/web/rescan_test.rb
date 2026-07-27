@@ -71,6 +71,27 @@ module Web
       assert_redirected_to files_path(folder: "dir-1")
     end
 
+    # The type filter is the other thing a user can be "inside", and the same argument applies:
+    # rescanning from a filtered view and landing at the unfiltered root is a lost place. The
+    # button carries files_query_base, so the value arrives here; the redirect puts it back
+    # through resolve_exts rather than echoing it, which is why the junk case below is a plain
+    # root redirect and not a reflected parameter.
+    test "the rescan redirect preserves the type filter, and revalidates it" do
+      use_scannable_backend
+      post rescan_files_path(ext: "stl,3mf")
+      assert_redirected_to files_path(ext: "stl,3mf")
+
+      post rescan_files_path(ext: "../etc")
+      assert_redirected_to files_path
+    end
+
+    test "the rescan button carries the filter it was clicked from" do
+      use_scannable_backend
+      @user.nodes.create!(node_id: "n-1", name: "a.stl", kind: "file", mtime: 1, size: 1)
+      get files_path(ext: "stl")
+      assert_select "form[action=?]", rescan_files_path(ext: "stl")
+    end
+
     # --- Chunk mode: the button is absent AND the POST is gated (does not enqueue) ---
 
     test "chunk mode does not show the Rescan button" do
