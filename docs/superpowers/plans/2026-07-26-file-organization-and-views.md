@@ -867,6 +867,250 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
+## Task 3b: A file that belongs to a model brings the whole model, and moves nothing
+
+**Added 2026-07-27, after Task 3's review surfaced the question and the product owner ruled on it.**
+
+**Files:**
+- Modify: `app/controllers/projects/attachments_controller.rb`
+- Test: `test/integration/web/attach_model_bundle_test.rb` (create)
+
+### Why this exists
+
+Task 3's rule blocks the auto-move only when a file is already attached to another **project**. But
+`Maker::Model` owns a library folder too (`Models/<slug>/`, `app/models/maker/model.rb:54`), and the
+Printables importer curates it — an imported model is a *bundle*: the STL, the instructions PDF, the
+cover image, the source archive. Under Task 3's rule, attaching one of those files to a project
+moved it out of `Models/benchy/` and reported success, quietly gutting the model's folder. Verified
+by the reviewer against a real import.
+
+The product owner's first instinct was to move the **whole model folder** into the project. **That is
+not buildable uniformly**: `FileLayer::S3#move` refuses directories outright
+(`app/services/file_layer/s3.rb:710-722`), and its refusal message is the argument — S3 has no
+directory and no rename, so a folder move there means "a non-atomic cascade over every key under the
+prefix, with no undo for a half-finished one." This deployment runs all three backends live, and a
+per-backend behavioral split is the one thing the maker/file-layer split exists to prevent.
+
+**The ruling: attaching any file of a model attaches ALL of that model's files to the project, and
+moves nothing.** The model shows up on the project page as a unit, the bytes stay in
+`Models/<slug>/`, and the behavior is identical on chunk, share and s3 because no byte moves at all.
+Files that do NOT belong to a model keep Task 3's behavior exactly.
+
+### Step 1: Write the failing test
+
+Create `test/integration/web/attach_model_bundle_test.rb`:
+
+```ruby
+require "test_helper"
+
+module Web
+  # A file that belongs to a Maker::Model is part of a BUNDLE — an imported model is its STL plus
+  # instructions plus cover plus source archive. Attaching one of them to a project attaches the
+  # whole model and moves nothing, rather than pulling one file out of Models/<slug>/ and leaving
+  # the rest behind.
+  #
+  # MOVES NOTHING IS THE POINT, AND IT IS WHY THIS IS BACKEND-NEUTRAL WHERE TASK 3 IS NOT: the
+  # rejected alternative (move the model's whole folder into the project) is refused outright by
+  # FileLayer::S3#move, which has no directory to move and no rename. A rule that relocates no
+  # bytes behaves identically on all three backends by construction.
+  class AttachModelBundleTest < ActionDispatch::IntegrationTest
+    PASSWORD = "correct horse battery staple".freeze
+
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+      @user = User.create!(email: "amb-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      @project = @user.maker_projects.create!(name: "Desk Lamp")
+
+      # A model as the importer leaves it: a folder, three files in it, all three attached.
+      @model = @user.maker_models.create!(name: "Benchy")
+      @folder = @model.ensure_library_folder!(@user)
+      @hull  = model_file("hull.stl")
+      @docs  = model_file("instructions.pdf")
+      @cover = model_file("cover.png")
+    end
+
+    def model_file(name)
+      node = @user.nodes.create!(node_id: "m-#{name}", name:, kind: "file",
+                                 parent_node_id: @folder.node_id)
+      @model.file_attachments.create!(user: @user, node_id: node.node_id,
+                                      role: Maker::FileAttachment.role_for(name))
+      node
+    end
+
+    test "attaching one of a model's files attaches the whole model" do
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+
+      assert_equal %w[cover.png hull.stl instructions.pdf],
+                   @project.file_attachments.map { |a|
+                     @user.nodes.find_by(node_id: a.node_id).name
+                   }.sort
+    end
+
+    test "and moves nothing — the model's folder is left intact" do
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+
+      [ @hull, @docs, @cover ].each do |node|
+        assert_equal @folder.node_id, node.reload.parent_node_id,
+                     "#{node.name} must stay in the model folder"
+      end
+      assert_empty @user.changelog_entries.where(op: "move"),
+                   "a model bundle relocates NO bytes — that is what makes it backend-neutral"
+    end
+
+    test "the notice says the whole model came along" do
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+      assert_match(/Benchy/, flash[:notice])
+      assert_match(/3 files/i, flash[:notice])
+    end
+
+    test "roles are derived per file, not copied from the file that was attached" do
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+
+      roles = @project.file_attachments.to_h { |a|
+        [ @user.nodes.find_by(node_id: a.node_id).name, a.role ]
+      }
+      assert_equal({ "hull.stl" => "model", "instructions.pdf" => "instructions",
+                     "cover.png" => "image" }, roles)
+    end
+
+    test "re-attaching the same model twice does not duplicate the bundle" do
+      2.times { post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id } }
+      assert_equal 3, @project.file_attachments.count
+    end
+
+    test "a model file already attached to the project individually is not duplicated" do
+      @project.file_attachments.create!(user: @user, node_id: @cover.node_id, role: "image")
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+      assert_equal 3, @project.file_attachments.count
+    end
+
+    test "a plain library file still MOVES — Task 3's rule is untouched" do
+      loose = @user.nodes.create!(node_id: "f-loose", name: "bracket.stl", kind: "file")
+      post attachments_path, params: { project_id: @project.slug, node_id: "f-loose" }
+
+      folder = @user.nodes.present.find_by!(name: @project.slug, kind: "dir")
+      assert_equal folder.node_id, loose.reload.parent_node_id
+    end
+
+    test "a model file whose model attachment was removed is a plain file again" do
+      @model.file_attachments.find_by(node_id: @hull.node_id).destroy!
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
+
+      folder = @user.nodes.present.find_by!(name: @project.slug, kind: "dir")
+      assert_equal folder.node_id, @hull.reload.parent_node_id,
+                   "membership is the ATTACHMENT, not the folder it happens to sit in"
+      assert_equal 1, @project.file_attachments.count
+    end
+
+    test "the JSON door reports the bundle" do
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id },
+           as: :json
+      assert_equal "model_bundle", response.parsed_body["relocation"]
+    end
+  end
+end
+```
+
+### Step 2: Run and watch it fail
+
+```bash
+bin/rails test test/integration/web/attach_model_bundle_test.rb
+```
+
+Expected: FAIL — the first test finds one attachment where it wants three.
+
+### Step 3: Implement
+
+In `app/controllers/projects/attachments_controller.rb#create`, insert the model branch between
+resolving `node` and the `attached_elsewhere` read. The shape:
+
+```ruby
+      # A FILE THAT BELONGS TO A MODEL IS PART OF A BUNDLE, AND A BUNDLE IS INDIVISIBLE HERE.
+      # An imported model is its STL plus instructions plus cover plus source archive, curated into
+      # Models/<slug>/ by the importer. Task 3's move would pull ONE of those out and report
+      # success, gutting the model's folder — verified against a real import.
+      #
+      # MEMBERSHIP IS THE ATTACHMENT, NOT THE FOLDER. A file can be moved out of Models/<slug>/ and
+      # still belong to the model; a stray file can be dropped INTO that folder and not belong. The
+      # maker_file_attachments row is what the data model means by "belongs to", so it is what this
+      # asks.
+      #
+      # AND IT MOVES NOTHING, WHICH IS WHY IT IS THE SAME ON ALL THREE BACKENDS. The alternative the
+      # product owner reached for first — move the model's whole FOLDER into the project — is
+      # refused outright by FileLayer::S3#move (s3.rb:710), because S3 has no directory and no
+      # rename: it would be a non-atomic cascade over every key with no undo for a half-finished
+      # one. A rule that relocates no bytes cannot diverge between deployments.
+      model = model_owning(node)
+      if model
+        names = attach_model_bundle(model)
+        return respond_to do |format|
+          format.html {
+            redirect_to attach_redirect_path(node, nil),
+                        notice: "Attached #{names.size} files from #{model.name}."
+          }
+          format.json { render json: { node_id: node.node_id, relocation: "model_bundle" },
+                               status: :created }
+        end
+      end
+```
+
+and add the two private methods:
+
+```ruby
+    # The Maker::Model this node belongs to, or nil. Scoped to current_user through the
+    # attachments table, so another user's model can never claim one of this user's files.
+    def model_owning(node)
+      att = current_user.maker_file_attachments
+                        .find_by(node_id: node.node_id, attachable_type: "Maker::Model")
+      att&.attachable
+    end
+
+    # Attach every one of the model's files to this project. Idempotent per file (same
+    # find_or_create_by as the single-file path), and the role is derived PER FILE from its own
+    # name — a bundle is a PDF and a PNG and an STL, so copying the triggering file's role would
+    # label the instructions "model". Atomic: a half-attached bundle is worse than none.
+    def attach_model_bundle(model)
+      node_ids = model.file_attachments.pluck(:node_id)
+      names = current_user.nodes.present.where(node_id: node_ids).pluck(:node_id, :name).to_h
+      ActiveRecord::Base.transaction do
+        names.each do |node_id, name|
+          @project.file_attachments.find_or_create_by!(user: current_user, node_id:) do |a|
+            a.role = Maker::FileAttachment.role_for(name)
+          end
+        end
+      end
+      names.values
+    end
+```
+
+### Step 4: Green, then the full sweep
+
+```bash
+bin/rails test test/integration/web/attach_model_bundle_test.rb
+bin/rails test test/integration/web test/integration/tools
+```
+
+### Step 5: Commit
+
+```bash
+git add app/controllers/projects/attachments_controller.rb \
+  test/integration/web/attach_model_bundle_test.rb
+git commit -m "feat(projects): attaching a model's file brings the whole model, moves nothing
+
+An imported model is a bundle (stl + pdf + cover + archive). Task 3's move
+pulled one file out of Models/<slug>/ and called it success. Attaching any
+of them now attaches all of them and relocates nothing -- which is also
+what makes it identical on all three backends: FileLayer::S3#move refuses
+directories, so the folder-move alternative could not have been uniform.
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
 ## Task 4: The collision prompt + `#relocate`
 
 **Files:**
