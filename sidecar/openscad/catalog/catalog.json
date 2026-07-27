@@ -1,0 +1,12 @@
+[
+  {
+    "key": "probe_plate",
+    "file": "probe_plate.scad",
+    "title": "Perforated plate",
+    "description": "A parametric plate with a grid of holes — columns, rows, pitch, thickness and hole diameter.",
+    "license": "MIT",
+    "attribution": "Perforated plate by Tinkerex — MIT",
+    "source_url": "https://github.com/chaim354/tinkerex",
+    "source_ref": "first-party"
+  }
+]
