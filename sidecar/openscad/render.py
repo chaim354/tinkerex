@@ -10,6 +10,7 @@ import os
 import resource
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass
 
 # THE DEFAULT IS THE WRAPPER, NOT THE RAW BINARY, and that is deliberate (see the Dockerfile).
@@ -122,7 +123,11 @@ def render(scad, params, fmt="3mf", cache_dir=None, vector_names=frozenset()):
 
     os.makedirs(cache_dir, exist_ok=True)
     # Write-then-rename: two concurrent identical renders must never let a reader see a half file.
-    tmp = path + f".{os.getpid()}.tmp"
+    # PID alone is not a unique writer: gunicorn runs sync workers today (-w 2, one render per
+    # process), but adding --threads would put two threads of ONE process on the same tmp path,
+    # interleaving their writes into a file that then gets renamed over the cache entry. uuid4
+    # costs nothing and makes the name unique per WRITE rather than per process.
+    tmp = path + f".{os.getpid()}.{uuid.uuid4().hex}.tmp"
     with open(tmp, "wb") as f:
         f.write(data)
     os.replace(tmp, path)

@@ -811,7 +811,7 @@ def _group(params):
 cd sidecar/openscad && .venv/bin/python -m pytest tests/test_schema.py -q
 ```
 
-Expected: `13 passed`.
+Expected: `12 passed`.
 
 - [ ] **Step 5: Commit**
 
@@ -1114,7 +1114,7 @@ docker run --rm -v "$PWD/sidecar/openscad/tests:/app/tests" openscad-sidecar \
   sh -c "pip install -q pytest && python -m pytest tests/ -q"
 ```
 
-Expected: `20 passed` (13 schema + 7 render), **0 skipped**. If any render test skips here, `OPENSCAD_BIN` is not set in the image and the skipif is silently hiding the tests that matter.
+Expected: `19 passed` (12 schema + 7 render), **0 skipped**. If any render test skips here, `OPENSCAD_BIN` is not set in the image and the skipif is silently hiding the tests that matter.
 
 - [ ] **Step 6: Commit**
 
