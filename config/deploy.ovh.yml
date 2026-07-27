@@ -39,3 +39,12 @@ env:
     CHUNK_BUCKET: maker-chunks-prod
     CHUNK_REGION: auto
     CHUNK_ACCESS_KEY_ID: <%= ENV["CHUNK_ACCESS_KEY_ID"] %>
+
+    # Sidecar accessories run on the UNRAID host (see `accessories:` in deploy.yml, whose `host:` is
+    # 192.168.1.95), so `tinkerex-boxes` / `tinkerex-openscad` do not resolve on this box. Kamal
+    # DEEP-MERGES env.clear, so without these explicit blanks the overlay inherits the Unraid
+    # hostnames, each addon reports configured? == true, and every call fails — strictly worse than
+    # the addon greying out. Blank -> `configured?` is false -> "Unavailable here". Set these to a
+    # real URL if a sidecar is ever booted on OVH.
+    BOXES_SIDECAR_URL: ""
+    OPENSCAD_SIDECAR_URL: ""
