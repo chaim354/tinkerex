@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-27 (**OpenSCAD addon — `.scad` + params → 3MF, via a GPL-isolated sidecar. BUILT, NOT DEPLOYED**)
+**Updated:** 2026-07-27 (**OpenSCAD addon — `.scad` + params → 3MF, via a GPL-isolated sidecar. MERGED (PR #87) + DEPLOYED live on all three Unraid backends**)
 
 ## Latest (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **built + tested, NOT deployed**
 
@@ -105,9 +105,24 @@ was §6's claim, now tested rather than asserted.
 
 **Open — read this before assuming the addon is finished:**
 
-- **NOTHING IS DEPLOYED.** No ghcr push, no `kamal accessory boot openscad`, no app deploy, no
-  live verification on the three Unraid backends. **DoD #2 is open.** `bin/build-openscad-sidecar`
-  and the `openscad` accessory in `deploy.yml` are written and ready; the user runs them.
+- ~~**NOTHING IS DEPLOYED.**~~ **DEPLOYED 2026-07-27 (DoD #2 CLOSED).** Merged as PR #87
+  (`33bd2d4`), `ghcr.io/chaim354/openscad-sidecar:latest` pushed, `kamal accessory boot openscad`
+  run, and all **three** Unraid legs deployed (`bin/kamal deploy`, `-d s3`, `-d share`). **NOT
+  deployed to OVH** — and note `deploy.ovh.yml` deliberately blanks `OPENSCAD_SIDECAR_URL`, so if
+  OVH is ever deployed the addon greys out there rather than failing every call.
+  **Verified on the live stack, not assumed:** all three containers run image `33bd2d40c`;
+  `OpenscadClient.configured?` is true on each; each reaches the accessory and lists the real
+  catalog (`hex_cell_holder,washer,probe_plate`); and an end-to-end render of `washer` through the
+  deployed app returned a real 3MF (`PK`, 32,899 bytes), a **cache hit returning identical bytes in
+  53 ms** (DoD #6), and a thumbnail mesh that parsed to 128,084 STL bytes (DoD #4's preview path).
+- **CI DID NOT RUN, AND CANNOT AS CONFIGURED.** Every job in `.github/workflows/ci.yml` is
+  `runs-on: [self-hosted, linux]`, but the repo now has exactly **one** registered runner —
+  `charless-MacBook-Pro-maker-mac`. The `flasher-maker-linux` runner CLAUDE.md §15 lists is gone, so
+  all seven jobs queue forever. **This affects every PR, not just this one.** Each job's actual
+  command was therefore run locally before merge: the three `LIBRARY_BACKEND` legs (1478 runs / 0
+  failures / identical), `bin/rubocop`, `bin/brakeman`, `bin/bundler-audit`, `bin/importmap audit`.
+  Three have findings and **all three are pre-existing on `main`** — this branch touches neither
+  `Gemfile.lock` nor `image_thumb.rb`, and brakeman reports 1 warning on both sides.
 - **DoD #5 — a real Multiboard `.scad` driven end-to-end in a browser — is OPEN**, and stays open
   here by design: spec §2 forbids us obtaining or redistributing MultiBuild files. The BYO code
   path itself is covered by the controller suite on all three backends and was driven against a
