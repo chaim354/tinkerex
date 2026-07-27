@@ -33,6 +33,15 @@
   <% end %>
 </nav>
 
+<%= render "ext_filter" %>
+
+<% if @truncated %>
+  <p class="truncated">
+    Showing the first <%= number_with_delimiter(@nodes.size) %> of
+    <%= number_with_delimiter(@match_count) %> matching files — narrow the filter to see the rest.
+  </p>
+<% end %>
+
 <%#
   UPLOAD — when a project is CURRENT, the single upload button defaults into it (its Projects/<slug>
   folder + attach), reusing the EXISTING project upload/attach control (spec 2026-07-23) — no new
@@ -101,7 +110,13 @@
 <% end %>
 
 <% if @nodes.empty? %>
-  <p class="empty muted">No files yet. Upload one to get started.</p>
+  <%# Two different emptinesses. "No files yet" is advice for a new library; said to someone who
+      just filtered for .dxf and has none, it reads as "your library is empty" and is a lie. %>
+  <% if @flat %>
+    <p class="empty muted">No files match <%= @exts.map { |e| ".#{e}" }.to_sentence %>.</p>
+  <% else %>
+    <p class="empty muted">No files yet. Upload one to get started.</p>
+  <% end %>
 <% elsif @view == "grid" %>
   <%#
     The grid has no column headers to click, so it gets the same sort as a pair of selects. GET,

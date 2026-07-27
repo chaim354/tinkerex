@@ -121,9 +121,14 @@ class FilesController < ApplicationController
     end
   end
 
-  # GET /files — ONE folder's children (not the whole library), so the tree the backends all
-  # build in `nodes.parent_node_id` is actually navigable instead of dumped flat. `params[:folder]`
-  # is a parent node_id; absent/blank/invalid = the library root.
+  # GET /files — by default ONE folder's children (not the whole library), so the tree the backends
+  # all build in `nodes.parent_node_id` is actually navigable instead of dumped flat.
+  # `params[:folder]` is a parent node_id; absent/blank/invalid = the library root.
+  #
+  # `?ext=stl,3mf` IS THE ONE EXCEPTION, AND IT IS DELIBERATELY THE WHOLE LIBRARY, FLAT. "Show me
+  # every .stl" is a question about the library, not about a folder, so that mode ignores
+  # ?folder= outright rather than intersecting with it — and it is the only listing here with a
+  # bound (FLAT_LIMIT), because a folder is self-limiting and a whole-library view is not.
   #
   # SCOPED BY parent_node_id, WHICH IS A node_id STRING, NOT the DB integer `id` — the same key
   # Node#children walks, and the same tree all three backends populate, so this filter is
@@ -150,16 +155,34 @@ class FilesController < ApplicationController
   def index
     @view = resolve_view
     @sort, @dir = resolve_sort
-    @folder = current_folder
-    @crumbs = folder_crumbs(@folder)
-    @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
-                         .order(kind: :desc, name: :asc).to_a
+    # FLAT MODE. An extension filter is a question about the LIBRARY, not about a folder, so
+    # ?folder= is ignored outright rather than intersected -- "show me every .stl" that quietly
+    # meant "in this folder" would be the wrong answer to the only question the chips can ask.
+    @exts = resolve_exts
+    @flat = @exts.any?
+    if @flat
+      @folder = nil
+      @crumbs = []
+      scope = flat_ext_scope(@exts)
+      @match_count = scope.count
+      @nodes = scope.order(:name).limit(FLAT_LIMIT).to_a
+      @truncated = @match_count > FLAT_LIMIT
+    else
+      @folder = current_folder
+      @crumbs = folder_crumbs(@folder)
+      @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
+                           .order(kind: :desc, name: :asc).to_a
+      @truncated = false
+    end
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
     # given a sort position (and before sort_key asks @info_by_node for an mtime it does not
     # have); BEFORE the note/thumbnail loads, which only need the final list.
     @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir)
+    # Only the flat view needs it — a folder view already tells you where you are, and this is a
+    # query the folder view would pay for and never read.
+    @folder_paths = @flat ? folder_paths_for(@nodes) : {}
     # Note counts for the badge — one grouped query, never N+1.
     @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
@@ -562,13 +585,74 @@ class FilesController < ApplicationController
     end
   end
 
-  # Query params every in-page link must carry so sorting never drops the user's folder.
+  # Query params every in-page link must carry so sorting never drops the user's folder or filter.
   # `view` is deliberately absent: it is cookie-persisted, so a link that pinned it would freeze a
   # choice the user can still change from the toggle -- and `sort`/`dir` are absent for the same
   # reason, except on the header links and the grid form, which are the controls that SET them.
+  #
+  # `folder` and `ext` are never both present: flat mode NILs @folder (see #index), so this is one
+  # key or the other, never an intersection the rest of the page would have to make sense of.
   helper_method :files_query_base
   def files_query_base
-    { folder: @folder&.node_id }.compact
+    { folder: @folder&.node_id, ext: @exts.presence&.join(",") }.compact
+  end
+
+  # A file extension is 1-8 lowercase alphanumerics. ANYTHING ELSE IS DROPPED, not escaped and not
+  # rejected with an error: this arrives in a URL a user can hand-edit or a crawler can mangle, and
+  # falling back to the ordinary folder view is the honest answer to "that isn't an extension".
+  # The whitelist is also what bounds the LIKE below -- sanitize_sql_like alone would still let a
+  # 4KB `ext` build a query with hundreds of OR clauses, and it would still let LIKE's own
+  # wildcards (`%`, `_`) through as characters the escape then has to neutralise one by one.
+  EXT_RE = /\A[a-z0-9]{1,8}\z/
+  MAX_EXTS = 8
+  # The one bound this page has ever had. The folder view is still unbounded (a folder is
+  # self-limiting; a whole-library type view is not), and the truncation is ANNOUNCED -- a silent
+  # cut reads as "that's all your STLs", which is the same class of lie as a paginated listing
+  # mistaken for a snapshot. Pagination is the follow-up if a real library hits this.
+  FLAT_LIMIT = 2000
+
+  # `add_ext` is the free-text field beside the chips; it simply joins the list, so there is one
+  # filter param and one code path rather than two ways to say the same thing. `.to_s` on each,
+  # because `?ext[]=a` and `?ext[x]=y` hand us an Array and a Parameters -- both stringify into
+  # something the whitelist below then drops, which is the point.
+  def resolve_exts
+    [ params[:ext], params[:add_ext] ].compact_blank.map(&:to_s).join(",")
+      .downcase.split(",").map(&:strip).select { |e| e.match?(EXT_RE) }.uniq.first(MAX_EXTS)
+  end
+
+  # Every file in the library whose name ends in one of `exts`. One OR-ed LIKE per extension, all
+  # bound -- the interpolation is the CLAUSE (a fixed string repeated), never a value.
+  #
+  # LOWER(name), not a bare LIKE: SQLite's LIKE is ASCII-case-insensitive and Postgres' is not, so
+  # the bare form would answer differently on self-host and managed. `exts` is already downcased.
+  def flat_ext_scope(exts)
+    clause = Array.new(exts.size, "LOWER(name) LIKE ?").join(" OR ")
+    args = exts.map { |e| "%.#{ActiveRecord::Base.sanitize_sql_like(e)}" }
+    current_user.nodes.present.where(kind: "file").where(clause, *args)
+  end
+
+  # node_id -> "cad/sub" for the flat view's Folder column, because a flat list of 200 STLs with no
+  # location is unnavigable. ONE query for the user's dirs (a library has few, even with a great
+  # many files), assembled in Ruby -- never a parent walk per row, which is the shape this page
+  # can least afford: its row count is the size of the library, not the size of a folder.
+  #
+  # The "…" written into `cache` before recursing is a CYCLE GUARD, and it is here for the same
+  # reason folder_crumbs carries its `visited` Set: a corrupt parent chain (a dir whose ancestry
+  # loops back to it) must stop rather than recurse until the stack gives out. Re-entering an id
+  # already in progress returns the marker instead of descending again.
+  def folder_paths_for(nodes)
+    dirs = current_user.nodes.present.where(kind: "dir").pluck(:node_id, :parent_node_id, :name)
+    by_id = dirs.to_h { |id, parent, name| [ id, [ parent, name ] ] }
+    cache = {}
+    resolve = lambda do |id|
+      return "" if id.nil? || !by_id.key?(id)
+      return cache[id] if cache.key?(id)
+
+      cache[id] = "…" # cycle marker: re-entering this id returns it instead of recursing
+      parent, name = by_id[id]
+      cache[id] = [ resolve.call(parent), name ].reject(&:blank?).join("/")
+    end
+    nodes.to_h { |n| [ n.node_id, resolve.call(n.parent_node_id) ] }
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the

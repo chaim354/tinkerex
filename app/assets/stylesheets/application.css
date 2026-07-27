@@ -290,3 +290,16 @@ table.files th a { color: inherit; }
 table.files th a:hover { text-decoration: underline; }
 .sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+
+/* --- The flat by-extension filter: a chip row + a free-text escape hatch + the bound notice --- */
+.ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
+.ext-family { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ext-family .family-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 13px; color: var(--muted); }
+.ext-filter .chip:hover { text-decoration: none; background: var(--soft); color: var(--fg); }
+.ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ext-other { display: inline-flex; gap: 4px; align-items: center; }
+.ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
+  background: var(--soft); color: var(--muted); font-size: 13px; }

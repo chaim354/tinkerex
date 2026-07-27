@@ -8,6 +8,7 @@
     <tr>
       <%= sort_header "Name", "name", @sort, @dir, files_query_base %>
       <%= sort_header "Type", "type", @sort, @dir, files_query_base %>
+      <% if @flat %><th>Folder</th><% end %>
       <%# Size is NOT sortable, and that is deliberate: it is the one column whose value does not
           come from `nodes` on every backend (Chunk#stat_all reads it from the versions row), so a
           size sort would be the only inexact one — worse than none in a column of exact-looking
@@ -50,6 +51,15 @@
         <%# The EXTENSION, not node.kind — see FilesHelper#file_type_label for why the cell under
             a "Type" header cannot go on saying "file". %>
         <td class="muted"><%= file_type_label(node) %></td>
+        <%# Where this file actually lives — a flat list without it is unnavigable. The link goes
+            to that folder, so the flat view doubles as a way to FIND things. A file at the
+            library root has no path, so it names the root the breadcrumb already calls "Files". %>
+        <% if @flat %>
+          <td class="muted">
+            <%= link_to(@folder_paths[node.node_id].presence || "Files",
+                        files_path(folder: node.parent_node_id)) %>
+          </td>
+        <% end %>
         <td class="num muted"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
         <% if capabilities.versioned? %>
           <td class="muted mono"><%= info.content_token&.first(8) || "—" %></td>
