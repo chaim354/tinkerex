@@ -98,9 +98,9 @@ def render(scad, params, fmt="3mf", cache_dir=None, vector_names=frozenset()):
         scad_path = os.path.join(work, "model.scad")
         set_path = os.path.join(work, "params.json")
         out_path = os.path.join(work, f"out.{fmt}")
-        with open(scad_path, "w") as f:
+        with open(scad_path, "w", encoding="utf-8") as f:
             f.write(scad)
-        with open(set_path, "w") as f:
+        with open(set_path, "w", encoding="utf-8") as f:
             f.write(param_set_json(params, vector_names))
 
         cmd = [OPENSCAD_BIN, "--backend=manifold", "-p", set_path, "-P", SET_NAME,
@@ -147,7 +147,7 @@ def params_for(scad):
     with tempfile.TemporaryDirectory(prefix="oscad-p-") as work:
         scad_path = os.path.join(work, "model.scad")
         out_path = os.path.join(work, "p.json")
-        with open(scad_path, "w") as f:
+        with open(scad_path, "w", encoding="utf-8") as f:
             f.write(scad)
         try:
             proc = subprocess.run([OPENSCAD_BIN, "--export-format=param", "-o", out_path, scad_path],
@@ -157,5 +157,5 @@ def params_for(scad):
             raise RenderError("parameter extraction timed out")
         if proc.returncode != 0 or not os.path.exists(out_path):
             raise RenderError(_message(proc) or "could not read parameters")
-        with open(out_path) as f:
+        with open(out_path, encoding="utf-8") as f:
             return json.load(f)

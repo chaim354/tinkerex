@@ -2242,6 +2242,8 @@ include/use."
 
 ## Task 10: `Tools::OpenscadController`
 
+> **Found while driving Task 5's sidecar: a garbage parameter value renders SUCCESSFULLY.** `{"cols": "))("}` returns 200 with the *default* geometry — OpenSCAD's parameterSet silently ignores a value it cannot parse. So a user's typo yields a default-sized model with no feedback at all. `scad_params` is currently a plain pass-through; it must coerce each submitted value against the param's declared `type` from `param_groups` (int/float/bool/vector) and reject what will not coerce, rather than handing OpenSCAD text to ignore. Do not skip this: silent wrong output is the failure mode this codebase treats as worst.
+
 **Files:**
 - Create: `app/controllers/tools/openscad_controller.rb`, `app/helpers/tools/openscad_helper.rb`
 
