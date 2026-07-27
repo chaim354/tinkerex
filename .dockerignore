@@ -67,6 +67,12 @@
 /ci/
 /scripts/
 
+# GPL sidecar images (sidecar/boxes = GPL-3.0, sidecar/openscad = GPL-2.0) are built + pushed
+# SEPARATELY, each from its own directory as build context. The Rails Dockerfile does `COPY . .`,
+# so without this line the copyleft trees are baked into the PERMISSIVE app image — never imported
+# or executed, but shipped, which is exactly what CLAUDE.md §9 exists to prevent.
+/sidecar/
+
 # Claude Code session state + agent git worktrees (full repo checkouts, ~700 MB).
 /.claude/
 

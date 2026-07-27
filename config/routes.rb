@@ -118,6 +118,26 @@ Rails.application.routes.draw do
     resources :generators, only: %i[index create show]
   end
 
+  # OpenSCAD addon. TWO naming traps here, both about the inflector, and the routes are written out
+  # by hand to dodge both.
+  #
+  # 1. NOT `resources :openscad`. Rails derives the collection helper from name.pluralize
+  #    ("openscads") and the member helper from name.singularize ("openscad"), so `resources` would
+  #    leave tools_openscad_path meaning SHOW — which requires an id. The /tools gallery calls
+  #    send("tools_#{addon.key}_path") with NO arguments, so /tools would raise UrlGenerationError
+  #    for every user the moment this addon is registered. (Guarded by a test.)
+  # 2. NOT inside `namespace :tools`. A namespace prefixes `as:`, so `as: :new_openscad` in there
+  #    yields tools_new_openscad_path — while `resources` inside the same namespace yields
+  #    new_tools_box_path for the sibling addon. Declared at top level, `as:` is the whole helper
+  #    name, so these read the same way the other addons' do.
+  #
+  # `new` and `preview` precede `:id` so neither is swallowed as an id.
+  get  "tools/openscad",         to: "tools/openscad#index",   as: :tools_openscad
+  get  "tools/openscad/new",     to: "tools/openscad#new",     as: :new_tools_openscad
+  post "tools/openscad/preview", to: "tools/openscad#preview", as: :preview_tools_openscad
+  post "tools/openscad",         to: "tools/openscad#create"
+  get  "tools/openscad/:id",     to: "tools/openscad#show",    as: :tools_openscad_design
+
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
   unless Rails.env.production?

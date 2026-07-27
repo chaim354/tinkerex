@@ -58,7 +58,20 @@ simple enough to compute in JS (no sidecar):
 
 ## Server add-ons (grouped by engine)
 
-### Engine ① — OpenSCAD sidecar (GPL-isolated) · `.scad` + params → STL ⭐ one engine, whole catalog
+### Engine ① — OpenSCAD sidecar (GPL-isolated) · `.scad` + params → 3MF ✅ **BUILT** (2026-07-27)
+Shipped as the `/tools/openscad` addon: `sidecar/openscad` + `OpenscadClient`, bundled permissive
+catalog **and** bring-your-own `.scad` from the library, content-addressed render cache, 3MF output
+with a grid thumbnail. Spec: `docs/superpowers/specs/2026-07-27-openscad-sidecar-addon-design.md`.
+**Multiboard is NOT and will not be in the bundled catalog** — its generated models are CC
+BY-NC-SA 4.0 (NonCommercial + ShareAlike, on the *output*). It is served by the bring-your-own path.
+Remaining ideas below are now "add a `.scad` to the catalog", not new engine work. Each one still
+has to clear spec §2's rule (**permissive source only; nothing whose OUTPUT carries a NonCommercial
+or ShareAlike term**) — and **`sidecar/openscad/catalog/NOTICE` is the thing to read first**: it
+records every candidate already rejected *with the reason*, so the same audit isn't run twice. Its
+sharpest lesson: **read the `.scad`'s own header, not just the repo LICENSE.** GitHub's licence
+detector reads LICENSE, so an audit that stops there repeats the more permissive claim — two of the
+four generators the plan listed carried a *more restrictive* licence in their own header (one of
+them NonCommercial) and were dropped. That is 50% of the audited set.
 - Gridfinity bins/baseplates
 - Gears / pulleys / threaded parts (3D)
 - Nameplate / extruded-text → STL

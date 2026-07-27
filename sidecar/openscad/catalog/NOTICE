@@ -1,0 +1,126 @@
+Third-party OpenSCAD generators bundled in this image.
+
+Each file below is redistributed under its own licence, at the pinned upstream commit. Any
+modification we made is recorded under MODIFICATIONS below; everything not listed there is
+byte-for-byte upstream.
+
+Spec §2 governs what may be added here: PERMISSIVE SOURCE ONLY (MIT / Apache-2.0 / BSD / CC0 /
+CC-BY), and a generator whose OUTPUT carries a NonCommercial or ShareAlike term does NOT go in this
+catalog no matter how good it is — it is a bring-your-own file. That rule exists because Tinkerex is
+a commercial product AND this image is redistributed to self-hosters, so both "commercial use" and
+"redistribution" have to be permitted.
+
+--------------------------------------------------------------------------------
+READ THE FILE, NOT THE REPO. THE AUDIT'S LICENCE COLUMN WAS WRONG TWICE.
+
+The plan for this task listed four generators to bundle, with a licence for each. Those licences
+came from the repository LICENSE file (and agree with GitHub's licence detector). On downloading
+the actual .scad files, TWO of the four carried a DIFFERENT licence in their own header — and in
+both cases the header was the more restrictive one. One of them was NonCommercial.
+
+A repo-level LICENSE file is not the licence of every file under it. The author's notice inside the
+work is a specific statement about that work, and where the two disagree the specific one cannot be
+waved away. This is the licensing spelling of the same lesson the render test encodes: a check that
+looks clean at one level ("the repo is MIT") is not the check you needed ("what does the thing we
+actually ship say?"). Open the file.
+
+  DROPPED — universal_stand (IOIO72/scad-universal-stand @ 78446ad)
+    Plan said: MIT, and the repo's LICENSE file IS a stock MIT (Copyright (c) 2022 Tamio Honma).
+    The .scad file itself says, in its header:
+        "This work is licensed under the Creative Commons
+         Attribution-NonCommercial-ShareAlike 4.0 International License"
+    NonCommercial AND ShareAlike — the exact pair spec §2 was written about, behind an
+    MIT-looking repo. The README has NO licence section, so nothing corroborates the MIT file.
+    The header is still there at HEAD; the .scad has exactly one commit ever ("Add files via
+    upload", 2022-04-19), so it was never a stale notice the author later corrected.
+    NC cannot be absorbed under any reading — Tinkerex is sold and this image is redistributed —
+    and the conflict is not ours to resolve. Not bundled. Precedent: the Screw Cap rejection
+    below. Unverified provenance is not a licence, and CONTRADICTED provenance is worse.
+    It remains available as a bring-your-own file, which carries no redistribution exposure.
+
+
+--------------------------------------------------------------------------------
+MODIFICATIONS
+
+  None. Every bundled file is byte-for-byte its upstream at the pinned commit.
+
+  hex_cell_holder was expected to need its 4x8 default lowered to 3x3: it takes 54 s under
+  OpenSCAD 2021.01/CGAL, which the sidecar's 60 s cap would not survive once a user raised
+  anything. Measured in THIS image, which builds against Manifold, it renders its UPSTREAM
+  4x8 default in 329 ms — about 160x faster, and 45x inside the 15 s budget. Left unmodified
+  because the measurement said so rather than because the estimate did. Re-measure before
+  assuming this still holds if the image's OpenSCAD or its geometry backend changes.
+
+  Cold render at defaults, measured in this image (amd64 under emulation on an arm64 host, so
+  production native amd64 will be at least this fast):
+
+    hex_cell_holder    329 ms   256,785 bytes   9,937 verts / 20,162 tris
+    washer             257 ms    32,732 bytes   1,280 verts /  2,560 tris
+    probe_plate        248 ms    21,126 bytes     776 verts /  1,596 tris
+
+
+--------------------------------------------------------------------------------
+hex_cell_holder.scad
+  Hex Cell Holder by Addy771 (contributor: Albert Phan)
+  The Unlicense (public domain dedication) — https://unlicense.org/
+  https://github.com/Addy771/Hex-Cell-Holder
+  commit a0078b346166e806f6ade21366ed0d5ff7ab157b
+
+washer.scad
+  Parametric Washer Generator by Theo Ghanem
+  MIT — Copyright (c) 2026 Theo Ghanem
+  https://github.com/Theo-Ghanem/Parametric-3D-Print-Washer-Generator
+  commit 983fb045d07be07204ef5b712f45bff85d56d647
+
+probe_plate.scad
+  Perforated plate by Tinkerex
+  MIT — Copyright (c) 2026 Tinkerex
+  provenance: first-party — written for this repo, not vendored from anywhere, so it carries
+  no third-party licensing question at all. (Its catalog entry records `source_ref` as
+  "first-party" for the same reason: there is no upstream commit to pin, and leaving the
+  field blank would trip the test that every entry names its provenance.)
+  https://github.com/chaim354/tinkerex
+  It is kept deliberately: it is the only entry guaranteed to render in milliseconds, and it
+  keeps the catalog endpoint tests from depending on any third-party file staying available
+  or staying licensed the way it is today.
+--------------------------------------------------------------------------------
+
+READ THE FILE HEADER, NOT JUST THE REPO LICENSE. This bit 50% of the audited set: universal_stand
+ships a stock MIT LICENSE while its .scad header declares CC BY-NC-SA 4.0, and vase_box's header
+and LICENSE.md disagree too. GitHub's licence detector reads the LICENSE file, so it repeats the
+more permissive claim. The header is part of the file we redistribute; when the two conflict,
+the conflict itself is disqualifying.
+
+Considered and REJECTED, so the reasoning is not lost:
+
+  Multiboard / MultiBuild  — generated models are CC BY-NC-SA 4.0. NonCommercial AND ShareAlike, on
+                             the OUTPUT. This is the exact trap spec §2 was written about. Never.
+  universal_stand          — CC BY-NC-SA 4.0 in the .scad header, despite an MIT repo LICENSE.
+                             See the section above; this one was on the accept list until the
+                             file was opened.
+  Ultimate Box Maker       — CC BY-NC.
+  gridfinity (kennetek,    — licences acceptable, but multi-file with cross-includes; OpenSCAD's
+   vector76)                 Customizer only reads top-level assignments in the MAIN file.
+  DrLex Screw Cap          — licence and output terms are ideal, but it incorporates code from a
+                             Thingiverse original whose licence could not be verified. Unverified
+                             upstream provenance is not a licence.
+  DrLex Vase Mode Box      — repo LICENSE.md is the full CC BY 4.0 text and the README says
+                             "Attribution", but the .scad's OWN HEADER (line 3) reads
+                             "Creative Commons - Attribution - Share Alike". We would be
+                             redistributing, in a sold product, a file whose own text contradicts
+                             the licence we claim for it. The stale-Thingiverse-notice reading is
+                             plausible but it is not a licence. Dropped 2026-07-27.
+  LEGO.scad                — MIT, but "LEGO" is an active trademark; a trademark exposure is not a
+                             copyright question and the permissive licence does not answer it.
+  JennyList project box    — CC-BY-SA.
+  opengrid-scad            — needs BOSL2.
+  openscad_tray_generator, — GPL-2.0 / GPL-3.0.
+   gridfinity_extended,
+   OpenSCADutil
+  wromijn gridfinity-block,— 3 and 0 Customizer params respectively; module-shaped, nothing to put
+   scadqr                    on a form.
+  assembled-wrench         — passed an include/use grep cleanly and STILL pulled three external
+                             STLs via import(). OpenSCAD treats a missing import() as a WARNING,
+                             so it exited 0 and wrote a 1,788-facet stub with the lettering and no
+                             wrench. Why the catalog test asserts a BYTE COUNT rather than success,
+                             and why the guard list bans import()/surface() next to include/use.
