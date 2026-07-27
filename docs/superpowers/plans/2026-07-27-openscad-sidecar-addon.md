@@ -1959,7 +1959,15 @@ are the useful half:
 > lib3mf trap in Task 2. Hence Step 4 below renders every catalog entry and asserts the geometry is
 > non-trivial, rather than trusting a grep or an exit code.
 
-### The four that ship
+> **A SIXTH BAR, learned the hard way: READ THE `.scad`'s OWN HEADER, not just the repo `LICENSE`.**
+> This bit 50% of the audited set. `universal_stand` ships a stock MIT `LICENSE` while its file
+> header declares **CC BY-NC-SA 4.0** — NC *and* SA, §2's trap wearing an MIT hat. `vase_box`'s
+> header and `LICENSE.md` disagreed too. GitHub's licence detector reads the `LICENSE` file, so it
+> repeats the more permissive claim and an audit that stops there repeats it as well. The header is
+> part of the file we redistribute; **when the two conflict, the conflict itself is disqualifying**
+> — a plausible story about a stale notice is not a licence. Both were dropped.
+
+### The three that ship
 
 | key | What | Licence | Params | Source (pinned) |
 |---|---|---|---|---|

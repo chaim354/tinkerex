@@ -81,13 +81,6 @@ MODIFICATIONS
   red on vase_box, check the geometry before assuming the file broke.
 
 --------------------------------------------------------------------------------
-vase_box.scad
-  Vase Mode Box by DrLex (Alexander Thomas)
-  CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
-  (see the recorded header conflict above)
-  https://github.com/DrLex0/print3d-customizable-vase-mode-box
-  commit 5dbc4c92446ab0088dcc5ed080a2b079de8fb012
-
 hex_cell_holder.scad
   Hex Cell Holder by Addy771 (contributor: Albert Phan)
   The Unlicense (public domain dedication) — https://unlicense.org/
@@ -113,6 +106,12 @@ probe_plate.scad
   or staying licensed the way it is today.
 --------------------------------------------------------------------------------
 
+READ THE FILE HEADER, NOT JUST THE REPO LICENSE. This bit 50% of the audited set: universal_stand
+ships a stock MIT LICENSE while its .scad header declares CC BY-NC-SA 4.0, and vase_box's header
+and LICENSE.md disagree too. GitHub's licence detector reads the LICENSE file, so it repeats the
+more permissive claim. The header is part of the file we redistribute; when the two conflict,
+the conflict itself is disqualifying.
+
 Considered and REJECTED, so the reasoning is not lost:
 
   Multiboard / MultiBuild  — generated models are CC BY-NC-SA 4.0. NonCommercial AND ShareAlike, on
@@ -126,6 +125,12 @@ Considered and REJECTED, so the reasoning is not lost:
   DrLex Screw Cap          — licence and output terms are ideal, but it incorporates code from a
                              Thingiverse original whose licence could not be verified. Unverified
                              upstream provenance is not a licence.
+  DrLex Vase Mode Box      — repo LICENSE.md is the full CC BY 4.0 text and the README says
+                             "Attribution", but the .scad's OWN HEADER (line 3) reads
+                             "Creative Commons - Attribution - Share Alike". We would be
+                             redistributing, in a sold product, a file whose own text contradicts
+                             the licence we claim for it. The stale-Thingiverse-notice reading is
+                             plausible but it is not a licence. Dropped 2026-07-27.
   LEGO.scad                — MIT, but "LEGO" is an active trademark; a trademark exposure is not a
                              copyright question and the permissive licence does not answer it.
   JennyList project box    — CC-BY-SA.

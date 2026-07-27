@@ -1,21 +1,11 @@
 [
   {
-    "key": "vase_box",
-    "file": "vase_box.scad",
-    "title": "Vase-mode box",
-    "description": "Spiral/vase-mode box with a matching friction-fit lid; rectangular or cylindrical, optional rounded corners.",
-    "license": "CC-BY-4.0",
-    "attribution": "Vase Mode Box by DrLex (Alexander Thomas) — CC BY 4.0",
-    "source_url": "https://github.com/DrLex0/print3d-customizable-vase-mode-box",
-    "source_ref": "5dbc4c92446ab0088dcc5ed080a2b079de8fb012"
-  },
-  {
     "key": "hex_cell_holder",
     "file": "hex_cell_holder.scad",
     "title": "Hex cell holder",
     "description": "Honeycomb holders, caps and insulators for cylindrical cells (18650 and friends).",
     "license": "Unlicense",
-    "attribution": "Hex Cell Holder by Addy771 — Unlicense (public domain)",
+    "attribution": "Hex Cell Holder by Addy771 \u2014 Unlicense (public domain)",
     "source_url": "https://github.com/Addy771/Hex-Cell-Holder",
     "source_ref": "a0078b346166e806f6ade21366ed0d5ff7ab157b"
   },
@@ -25,7 +15,7 @@
     "title": "Washer / spacer",
     "description": "Round, hex or square washers and spacers with screw-size presets, chamfer and countersink.",
     "license": "MIT",
-    "attribution": "Parametric Washer Generator by Theo Ghanem — MIT",
+    "attribution": "Parametric Washer Generator by Theo Ghanem \u2014 MIT",
     "source_url": "https://github.com/Theo-Ghanem/Parametric-3D-Print-Washer-Generator",
     "source_ref": "983fb045d07be07204ef5b712f45bff85d56d647"
   },
@@ -33,9 +23,9 @@
     "key": "probe_plate",
     "file": "probe_plate.scad",
     "title": "Perforated plate",
-    "description": "A parametric plate with a grid of holes — columns, rows, pitch, thickness and hole diameter.",
+    "description": "A parametric plate with a grid of holes \u2014 columns, rows, pitch, thickness and hole diameter.",
     "license": "MIT",
-    "attribution": "Perforated plate by Tinkerex — MIT",
+    "attribution": "Perforated plate by Tinkerex \u2014 MIT",
     "source_url": "https://github.com/chaim354/tinkerex",
     "source_ref": "first-party"
   }
