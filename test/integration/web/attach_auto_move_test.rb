@@ -139,7 +139,8 @@ module Web
     end
 
     # A collision must not be swallowed and must not lose the attach: it rides back as
-    # ?move_conflict=<attachment id>, which Task 4's prompt renders from.
+    # ?move_conflict=<attachment id>, which the MoveConflicts concern renders the prompt from (the
+    # prompt's own tests are further down).
     test "a name collision in the project folder attaches anyway and flags the conflict" do
       seed_collision
 
@@ -150,8 +151,8 @@ module Web
       assert_redirected_to project_path(@lamp, move_conflict: att.id)
     end
 
-    # ?move_conflict= is read by nothing until the rename prompt lands, so the notice is the only
-    # thing standing between the user and a silent no-op.
+    # The prompt is not a substitute for the flash: it renders in the page body, and a user who
+    # reads the flash and moves on would otherwise never learn the move did not happen.
     test "a collision says so in the flash, not just in the query string" do
       seed_collision
       post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1" }
@@ -231,6 +232,226 @@ module Web
     test "a not-found attach from the project picker still returns to the picker" do
       post attachments_path, params: { project_id: @lamp.slug, node_id: "gone" }
       assert_redirected_to new_project_attachment_path(@lamp)
+    end
+
+    # --- the collision prompt (?move_conflict=<attachment id>) ---------------------
+    #
+    # The redirect param above is only half the flow: something has to RENDER it, on both pages an
+    # attach can come from. These tests are the other half.
+
+    test "a name collision attaches anyway and prompts instead of clobbering" do
+      seed_collision
+
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
+
+      att = @lamp.file_attachments.sole
+      assert_redirected_to file_path("f-1", move_conflict: att.id)
+      assert_nil @node.reload.parent_node_id, "the file must not have moved…"
+      assert_equal "bracket.stl", @user.nodes.find_by(node_id: "f-2").name,
+                   "…and the file already there must be untouched"
+    end
+
+    test "the prompt offers the suggested name and a way out" do
+      seed_collision
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
+      follow_redirect!
+
+      assert_select "dialog.move-conflict"
+      assert_select "dialog.move-conflict", text: /bracket \(2\)\.stl/
+      assert_select "dialog.move-conflict a", text: /Leave it where it is/
+    end
+
+    # THE DISMISSAL IS THE URL WITHOUT THE PARAM, and it has to be built from request.path rather
+    # than url_for(params:) — a trap this codebase has been bitten by before (a stray param rides
+    # along and the "dismissal" re-renders the prompt). An href assertion is the only thing that
+    # can tell the two implementations apart.
+    test "the way out drops the query string entirely" do
+      seed_collision
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
+      follow_redirect!
+
+      assert_select "dialog.move-conflict a[href=?]", file_path("f-1"), text: /Leave it where it is/
+    end
+
+    test "the prompt also renders on the project page" do
+      seed_collision
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1" }
+      follow_redirect!
+
+      assert_select "dialog.move-conflict"
+    end
+
+    test "no prompt without the param, and a bogus id is silently ignored" do
+      get file_path("f-1")
+      assert_select "dialog.move-conflict", count: 0
+      get file_path("f-1", move_conflict: 999_999)
+      assert_select "dialog.move-conflict", count: 0
+    end
+
+    # THE FOREIGN ROW POINTS AT MY node_id ON PURPOSE, and the whole guard hangs on that. node_id
+    # is a bare string in maker_file_attachments with no FK (model_owning's comment says the same
+    # thing about the same table), so another tenant's row naming "f-1" is perfectly storable —
+    # and an unscoped lookup here would render THEIR project's name and a link to it on MY page.
+    # A foreign row pointing at a foreign node proves nothing: the node lookup below catches that
+    # one, so the test would stay green with the attachment scope removed. Verified by mutation.
+    test "another user's attachment id never renders a prompt" do
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_projects.create!(name: "Theirs")
+      theirs.ensure_library_folder!(other)
+      foreign = theirs.file_attachments.create!(user: other, node_id: "f-1", role: "model")
+
+      get file_path("f-1", move_conflict: foreign.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+      assert_no_match(/Theirs/, response.body)
+    end
+
+    # attachable_type IS A GUARD, not a redundant filter next to the id lookup. The same table
+    # holds a file's attachments to Maker::Models and to build-log entries, and the partial reads
+    # its `project` as one — `.name`, project_path, the project-scoped relocate route. Deleting the
+    # filter 500s this page on `undefined method 'name' for an instance of Maker::Model` (a model
+    # has a `title`), which is the cheap end of the same mistake: a Maker::BuildLogEntry has
+    # neither, and any attachable that happened to answer both would render a prompt offering to
+    # move the file somewhere it has nothing to do with.
+    #
+    # THE MODEL NEEDS ITS FOLDER for this test to mean anything: maker_models has a folder_node_id
+    # column of its own, so an unfoldered model trips the folder guard and the test passes with the
+    # type filter deleted. Verified by mutation.
+    test "a model attachment's id never renders a project prompt" do
+      model = @user.maker_models.create!(title: "Widget")
+      model.ensure_library_folder!(@user)
+      att = model.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
+
+      get file_path("f-1", move_conflict: att.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+    end
+
+    # THE CONCERN'S CONTRACT IS "nil FOR EVERY can't-build CASE", and these are the two that are
+    # not about ownership. Neither is hypothetical: the node one 500s the page it renders on
+    # (@move_conflict.node.name on nil), and the folder one renders a prompt CLAIMING a collision
+    # that never happened — a project with no folder has had no move attempted against it — while
+    # computing its suggested name against the library ROOT.
+    test "a prompt is not built for a deleted file, or for a project with no folder yet" do
+      @lamp.ensure_library_folder!(@user)
+      @user.nodes.create!(node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
+      for_a_tombstone = @lamp.file_attachments.create!(user: @user, node_id: "f-gone", role: "model")
+
+      get file_path("f-1", move_conflict: for_a_tombstone.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+
+      # @bench is untouched by the setup, so it has never had a library folder ensured.
+      folderless = @bench.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
+      assert_nil @bench.reload.folder_node_id
+
+      get file_path("f-1", move_conflict: folderless.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+    end
+
+    # available_name answers nil when "(2)" through "(9)" are all taken. The prompt still has
+    # something to say — the file was attached and did not move — so it renders WITHOUT the button
+    # rather than not at all, and certainly rather than offering a nil name.
+    test "with every suggestion taken the prompt still explains itself, minus the button" do
+      folder = seed_collision
+      (2..Maker::MoveNode::HIGHEST_SUFFIX).each do |i|
+        @user.nodes.create!(node_id: "f-taken-#{i}", name: "bracket (#{i}).stl", kind: "file",
+                            parent_node_id: folder.node_id)
+      end
+
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
+      follow_redirect!
+
+      assert_select "dialog.move-conflict"
+      assert_select "dialog.move-conflict form", count: 0, message: "no name left to offer"
+      assert_select "dialog.move-conflict a", text: /Leave it where it is/
+    end
+
+    # --- #relocate: finish the move the collision stopped -------------------------
+
+    test "relocate moves the file under the suggested name" do
+      folder = seed_collision
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "bracket (2).stl" }
+
+      @node.reload
+      assert_equal folder.node_id, @node.parent_node_id
+      assert_equal "bracket (2).stl", @node.name
+      assert_equal "f-1", @node.node_id
+      # THE NOTICE NAMES THE NEW NAME, which is the only thing telling the user what to look for —
+      # the file they clicked "bracket.stl" on is now called something else. It reads off the
+      # object MoveNode hands back, so it is a consumer of that class's reload contract (pinned
+      # per-backend in test/services/maker/move_node_test.rb; this leg is chunk).
+      assert_match(/Moved bracket \(2\)\.stl into Desk Lamp/, flash[:notice])
+    end
+
+    test "relocate onto a name that is ALSO taken says so instead of clobbering" do
+      folder = @lamp.ensure_library_folder!(@user)
+      @user.nodes.create!(node_id: "f-other", name: "bracket (2).stl", kind: "file",
+                          parent_node_id: folder.node_id)
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "bracket (2).stl" }
+
+      assert_nil @node.reload.parent_node_id
+      assert_match(/taken/i, flash[:alert])
+    end
+
+    test "relocate refuses a name that escapes the folder" do
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "../escape.stl" }
+
+      @node.reload
+      assert_nil @node.parent_node_id
+      assert_equal "bracket.stl", @node.name
+      assert_match(/couldn't move/i, flash[:alert])
+    end
+
+    # THE kind: "file" FILTER IS A GUARD. Both ids come from the request here, and Maker::MoveNode
+    # deliberately has no cycle check — a crafted node_id naming a DIRECTORY would move a dir under
+    # its own descendant on share and chunk, and a cycle in `nodes` makes Sync::Search's WITH
+    # RECURSIVE walk spin unboundedly (fatal on SQLite, which has no statement timeout).
+    test "relocate refuses a directory outright" do
+      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "d-1" }
+
+      assert_nil dir.reload.parent_node_id
+      assert_match(/isn't in your library/i, flash[:alert])
+    end
+
+    test "relocate never touches another user's file, or a tombstoned one" do
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.nodes.create!(node_id: "of-1", name: "x.stl", kind: "file")
+      mine_gone = @user.nodes.create!(node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "of-1" }
+      assert_nil theirs.reload.parent_node_id
+      assert_match(/isn't in your library/i, flash[:alert])
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "f-gone" }
+      assert_nil mine_gone.reload.parent_node_id
+      assert_match(/isn't in your library/i, flash[:alert])
+    end
+
+    # :already_there is reachable here and nowhere else in this flow: the prompt's button always
+    # sends a new_name, but a resubmitted or hand-made POST without one, for a file that IS in the
+    # folder, is a no-op — and "Couldn't move it" would be a lie about a library that is already
+    # the way the user asked for.
+    test "relocating a file that is already in place says so rather than claiming a move" do
+      folder = @lamp.ensure_library_folder!(@user)
+      @node.update!(parent_node_id: folder.node_id)
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "f-1" }
+
+      assert_match(/already in/i, flash[:notice])
+      assert_equal folder.node_id, @node.reload.parent_node_id
+      assert_empty @user.changelog_entries.where(op: "move"),
+                   "nothing to move — the sync engine must not be told otherwise"
     end
 
     # :unavailable persists no marker anywhere, so after a NAS outage this one line is the only

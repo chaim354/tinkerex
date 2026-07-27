@@ -29,6 +29,11 @@ class FilesController < ApplicationController
   # reach them.
   include LibraryCapabilities
 
+  # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into the project
+  # folder hit a name collision. Rendered here and on the project page; an attach can come from
+  # either, so the resolution lives in one concern rather than in two actions.
+  include MoveConflicts
+
   # THE UPLOAD BRANCH. Two flows, one per deployment, and BOTH refusals are honest: neither
   # deployment can do the other's flow.
   #
@@ -223,6 +228,7 @@ class FilesController < ApplicationController
     # beta, Bravo". One comparator, applied to both.
     @projects = scope.to_a.sort_by { |p| name_key(p) }
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
+    @move_conflict = move_conflict_prompt
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.

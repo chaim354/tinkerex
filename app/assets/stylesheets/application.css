@@ -273,3 +273,13 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .lbrn-summary dt { color: var(--muted); }
 .lbrn-summary dd { margin: 0; font-weight: 600; }
 .lbrn-text { font-size: 12px; margin: 10px 0 0; }
+
+/* --- The attach collision prompt (?move_conflict=): a <dialog open> rendered in the flow --- */
+/* `position: static` + `display: block` keep it OUT of the top layer, so it reads as an inline
+   banner on the file/project page with no JS and no backdrop to dismiss. */
+dialog.move-conflict { display: block; position: static; width: 100%; max-width: none;
+  margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 8px; background: var(--soft); color: var(--fg); }
+dialog.move-conflict p { margin: 0 0 10px; }
+dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+dialog.move-conflict form { display: inline; }

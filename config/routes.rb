@@ -49,7 +49,14 @@ Rails.application.routes.draw do
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do
-    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
+    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
+      # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
+      # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
+      # conflict flow needs a move endpoint either way, and this one can only ever move a file
+      # into the named project's own folder. A general move is a larger web surface than any
+      # feature here wants. `on: :collection` keeps it nested despite `shallow: true`.
+      post :relocate, on: :collection
+    end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via

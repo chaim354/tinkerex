@@ -7,6 +7,11 @@ module Projects
   # Ownership is a DB fact (current_user.nodes) — deliberately NOT a FileLayer.stat check, so an
   # unmounted backend cannot block attaching a file the user demonstrably owns.
   #
+  # #relocate (the ACTION — distinct from #relocate_into_project, the private mechanics both it and
+  # #create drive) is the retry for the one attach outcome that needs a decision: a name collision
+  # keeps the attachment and leaves the bytes put, and the prompt MoveConflicts renders offers to
+  # finish the move under a free name.
+  #
   # NO CAPABILITY GATE, even though it now moves bytes: Maker::MoveNode picks the door this
   # deployment has (port move on share/s3, Sync::Mutation on chunk) and every backend has one, so
   # there is nothing to 501. The §10 boundary holds the same way Maker::LibraryFolder's does —
@@ -16,7 +21,7 @@ module Projects
   # uploads via /files/{begin,finalize}_upload, then POSTs the node_id here to finish the attach.
   class AttachmentsController < ApplicationController
     before_action :authenticate_user!
-    before_action :set_project, only: %i[new create]
+    before_action :set_project, only: %i[new create relocate]
 
     RECENT_LIMIT = 40
 
@@ -133,9 +138,11 @@ module Projects
         when :moved
           notice = "Attached #{node.name} and moved it into #{@project.name}."
         when :conflict
-          # The prompt that offers a rename is a later task; until it lands, ?move_conflict= is
-          # read by nothing, so WITHOUT this sentence a collision is invisible — the user is told
-          # the file was attached and left to discover on their own that it never moved.
+          # TWO CHANNELS, NEITHER REDUNDANT. `conflict` rides back as ?move_conflict=<id>, which
+          # the MoveConflicts concern resolves into the rename prompt on whichever page this attach
+          # came from; the notice says the same thing in words, because the flash is what a user
+          # reads first and the prompt alone would let a collision look like an ordinary attach
+          # until they noticed a panel further down the page.
           conflict = att.id
           notice = "Attached #{node.name} — #{@project.name} already has a file with that name, so it stayed put."
         when :unavailable
@@ -164,6 +171,50 @@ module Projects
           render json: { node_id: att.node_id, role: att.role, relocation: },
                  status: att.previously_new_record? ? :created : :ok
         end
+      end
+    end
+
+    # POST /projects/:project_id/attachments/relocate  { node_id, new_name? }
+    #
+    # The "Move it in as …" button on the collision prompt — the retry for the one #create outcome
+    # that leaves something for the user to decide. `new_name` is SERVER-SUGGESTED
+    # (Maker::MoveNode.available_name labels the button), but it comes back as a request param, so
+    # MoveNode validates it is a leaf and #relocate_into_project maps the refusal to :unavailable:
+    # a crafted name gets a flash, never a traversal and never a 500.
+    #
+    # NO ATTACHMENT IS CREATED OR TOUCHED HERE, which is why the action takes a node_id rather than
+    # the attachment id the prompt was built from. #create already committed the attach — that is
+    # the durable half — and all that is left is the move it could not do. Taking the node_id also
+    # means a stale prompt (the user detached in another tab) still finishes the move it offered
+    # rather than 404-ing on a row nobody needs.
+    def relocate
+      # kind: "file" IS A GUARD, NOT A FILTER. #create reaches MoveNode only behind `node.file?`,
+      # but here BOTH ids come from the request — and Maker::MoveNode deliberately has no cycle
+      # check (see its header). A crafted node_id naming a DIRECTORY would move a dir under its
+      # own descendant on share and chunk (s3 alone refuses it, via movable_file!), and a cycle in
+      # `nodes` makes the WITH RECURSIVE walk in Sync::Search spin unboundedly — fatal on SQLite,
+      # which has no statement timeout. Same hazard V1::NodesController#move spends
+      # would_create_cycle? on; a project folder only ever holds files, so refusing is cheaper
+      # than detecting.
+      #
+      # `current_user.nodes.present` is the rest of it: another tenant's node and a tombstone both
+      # resolve to nil here, so neither reaches MoveNode at all.
+      node = current_user.nodes.present.find_by(node_id: params.require(:node_id), kind: "file")
+      return redirect_to(project_path(@project), alert: "That file isn't in your library.") unless node
+
+      # EVERY SYMBOL #relocate_into_project CAN ANSWER HAS A SENTENCE, including :already_there —
+      # unreachable from the prompt's own button (it always sends a new_name, and a rename in place
+      # is a real move) but reachable from a resubmitted or hand-made POST without one, where
+      # "Couldn't move it" would be a lie about a library that is already the way the user asked.
+      case relocate_into_project(node, new_name: params[:new_name].presence)
+      when :moved
+        redirect_to project_path(@project), notice: "Moved #{node.name} into #{@project.name}."
+      when :already_there
+        redirect_to project_path(@project), notice: "#{node.name} is already in #{@project.name}."
+      when :conflict
+        redirect_to project_path(@project), alert: "That name is taken too — left the file where it is."
+      else # :unavailable — the backend is unreachable, or the name is not a leaf.
+        redirect_to project_path(@project), alert: "Couldn't move #{node.name} right now."
       end
     end
 
@@ -264,10 +315,12 @@ module Projects
     # renders a different sentence for each — an exception would make the happy path the only one
     # written down.
     #
-    # `new_name:` is unused by #create, which always moves under the node's own name; it is the
-    # seam the collision prompt's retry needs ("move it in as bracket (2).stl"). It is a KEYWORD
-    # rather than a second positional so the `new_name.nil?` short-circuit reads as what it is:
-    # renaming in place is a real move, so only a same-folder move under the SAME name is a no-op.
+    # `new_name:` is unused by #create, which always moves under the node's own name; it is what
+    # the collision prompt's retry passes ("move it in as bracket (2).stl") through #relocate. It
+    # is a KEYWORD rather than a second positional so the `new_name.nil?` short-circuit reads as
+    # what it is: renaming in place is a real move, so only a same-folder move under the SAME name
+    # is a no-op — which is why :already_there is unreachable from the prompt's own button and
+    # reachable only from a POST that omits the name.
     def relocate_into_project(node, new_name: nil)
       folder = @project.ensure_library_folder!(current_user)
       return :already_there if new_name.nil? && node.parent_node_id == folder.node_id
@@ -302,13 +355,19 @@ module Projects
       # guess — and an unjustified class here is exactly the bug-hiding shape above. If a real
       # producer turns up, add it back WITH its name.
       #
-      # NotFound IS IN THIS LIST DELIBERATELY, though the sibling #relocate endpoint (which the
-      # user asks for explicitly) should branch on it separately and answer 404. Here it cannot be
-      # a caller error: #create has already resolved the node from `current_user.nodes.present`,
-      # so it is live and ours, and ensure_library_folder! has just proved the destination exists.
-      # What is left is a race (tombstoned between those two statements) or an out-of-band change
-      # under a share/s3 store — and either way the attachment row is ALREADY COMMITTED, so
-      # letting it escape would 500 a request whose durable half succeeded.
+      # NotFound IS IN THIS LIST DELIBERATELY. Here it cannot be a caller error: #create has
+      # already resolved the node from `current_user.nodes.present`, so it is live and ours, and
+      # ensure_library_folder! has just proved the destination exists. What is left is a race
+      # (tombstoned between those two statements) or an out-of-band change under a share/s3 store
+      # — and either way the attachment row is ALREADY COMMITTED, so letting it escape would 500 a
+      # request whose durable half succeeded.
+      #
+      # AN EARLIER DRAFT OF THIS PARAGRAPH PREDICTED that the then-unwritten #relocate action,
+      # "which the user asks for explicitly", would branch on NotFound separately and answer 404.
+      # It does not, and should not: #relocate resolves its node from `current_user.nodes.present`
+      # with `kind: "file"` BEFORE reaching here, so every caller-error shape (unknown id, another
+      # tenant's node, a tombstone, a directory) already has its own flash and never gets this far.
+      # What survives that guard is the same race this paragraph describes, and the same answer.
       #
       # The node_id and slug are not decoration: :unavailable persists no marker anywhere, so this
       # line is the entire audit trail for "which files failed to move during the outage".
@@ -327,8 +386,9 @@ module Projects
 
     # Where to land after an attach. `return_to` is an ALLOWLISTED FLAG, not a URL — a
     # caller-supplied redirect target is an open redirect, and there are exactly two places this
-    # action is reached from. A collision rides back as ?move_conflict=<attachment id>, which is
-    # what the later conflict prompt renders from.
+    # action is reached from. A collision rides back as ?move_conflict=<attachment id>, which the
+    # MoveConflicts concern renders the rename prompt from — on either page, which is why the
+    # param travels rather than the prompt living on one of them.
     def attach_redirect_path(node, conflict_id)
       if params[:return_to] == "file"
         file_path(node.node_id, move_conflict: conflict_id)

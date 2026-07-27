@@ -24,6 +24,8 @@
   </div>
 </div>
 
+<%= render "shared/move_conflict" %>
+
 <dl class="meta">
   <dt>Name</dt><dd><%= @info.name %></dd>
   <dt>Size</dt><dd><%= @info.content_token ? number_to_human_size(@info.size) : "—" %></dd>
