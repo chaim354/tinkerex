@@ -20,6 +20,11 @@ module Maker
           key: "generators", title: "Generators", icon: "✏️",
           description: "Parametric 2D drawings → SVG (laser & CNC)",
           available: -> { true } # client-only (Maker.js in the browser); always available
+        ),
+        "openscad" => Addon.new(
+          key: "openscad", title: "OpenSCAD", icon: "🧊",
+          description: "Parametric .scad + params → 3MF",
+          available: -> { OpenscadClient.configured? }
         )
       }.freeze
 
