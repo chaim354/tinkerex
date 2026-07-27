@@ -162,15 +162,34 @@ module Maker
       # one answer — the file must not give the directory question two.
       names = @user.nodes.present.where(node_id: node_ids, kind: "file")
                    .pluck(:node_id, :name).to_h
-      # `&` keeps the MODEL's order, so the project lists the bundle the way the model does.
+      # `&` DEDUPES. It also keeps the receiver's order, and this line used to CLAIM that "the
+      # project lists the bundle the way the model does" — which is not something either end can
+      # currently promise, so the claim is gone rather than enforced:
       #
-      # IT ALSO DEDUPES, AND THAT IS THE ONLY THING THAT DOES. Two attachment rows for one node is
-      # storable here too (no uniqueness index — see #call), and a duplicate member would otherwise
-      # make the notice say "4 files" for a three-file model AND insert that row twice. Nothing
-      # downstream saves it: Array#- (below) removes matching elements but does NOT dedupe its
-      # receiver — measured, after a comment here claimed it did. So `#select` is not a refactor of
-      # this line, and the duplicate-member test is what says so. The blast radius of that missing
-      # index is now N rather than 1 — the price of N attaches in one request.
+      #   - THE DESTINATION cannot promise it. `insert_all` below omits `position`, so every row it
+      #     writes takes the column default 0 — as does every other row this table has ever held
+      #     (no writer anywhere in the app sets it; only the v1 API even permits it). So
+      #     `has_many -> { order(:position) }`, which is how ProjectsController#show reads them,
+      #     degenerates to ORDER BY over a total tie. The order survives on SQLite because a tie
+      #     comes back in rowid order; on the managed Postgres deployment it is the plan's to
+      #     choose — the exact reliance #model_owning three methods above says must not be trusted.
+      #   - THE SOURCE cannot promise it either, and that is why setting `position` here was
+      #     REJECTED rather than merely skipped. `node_ids` is read from
+      #     `model.file_attachments.pluck(:node_id)`, which is the SAME all-zero
+      #     `ORDER BY position ASC` (verified). Stamping positions on the project's rows would
+      #     faithfully preserve an order that was already a guess, while making this the one writer
+      #     in the app with a position convention — a later ordinary attach lands at 0 and
+      #     leapfrogs the bundle. Enforcing bundle order is a change to the COLUMN's meaning across
+      #     all six writers of this table, not a change to this line.
+      #
+      # THE DEDUPE IS THE LOAD-BEARING HALF, AND IT IS THE ONLY THING THAT DOES IT. Two attachment
+      # rows for one node is storable here too (no uniqueness index — see #call), and a duplicate
+      # member would otherwise make the notice say "4 files" for a three-file model AND insert that
+      # row twice. Nothing downstream saves it: Array#- (below) removes matching elements but does
+      # NOT dedupe its receiver — measured, after a comment here claimed it did. So `#select` is
+      # not a refactor of this line, and the duplicate-member test is what says so. The blast
+      # radius of that missing index is now N rather than 1 — the price of N attaches in one
+      # request.
       members = node_ids & names.keys
 
       # FIVE QUERIES, CONSTANT IN N — deliberately not one SELECT + one INSERT per member. That

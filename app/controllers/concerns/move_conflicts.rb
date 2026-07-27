@@ -40,9 +40,27 @@ module MoveConflicts
     #
     # It is also what makes `attachment.attachable` safe to read unscoped below: the attachment is
     # current_user's, and every writer of this table attaches to a parent it resolved from
-    # current_user (audited across all of them — the two here, Projects::UploadsController,
-    # Models::AttachmentsController, Projects::EntryPhotosController, CurrentProject, and
-    # V1::Maker::FileAttachmentsController#resolve_parent).
+    # current_user. Re-audited against the code (an earlier version of this list named
+    # Projects::AttachmentsController, which has not written a row since the attach policy was
+    # extracted, and omitted the service that took those writes over):
+    #
+    #   Maker::AttachToProject                — BOTH of its writes. #call's find_or_create_by! goes
+    #     through @project.file_attachments, and #attach_bundle's insert_all is the only BULK write
+    #     of this table anywhere: it sets user_id and attachable_type/attachable_id as COLUMNS
+    #     rather than through the association, which is the one place the scoping is spelled by
+    #     hand and so the one worth naming here. Both are safe by the same fact — @project comes
+    #     from Projects::AttachmentsController#set_project (current_user.maker_projects).
+    #   Projects::UploadsController           — #attach_target (current_user.maker_projects /
+    #                                           .maker_build_log_entries).
+    #   Models::AttachmentsController         — #set_model (current_user.maker_models).
+    #   Projects::EntryPhotosController       — current_user.maker_build_log_entries.find.
+    #   CurrentProject                        — #attach_addon_files_to_current_project, whose
+    #                                           #current_project is current_user-scoped.
+    #   V1::Maker::FileAttachmentsController  — #resolve_parent (current_user.public_send(...)).
+    #
+    # Projects::AttachmentsController only READS the table now (#destroy finds by id through
+    # current_user). The safety claim above held throughout; the enumeration a future auditor
+    # would have re-walked did not.
     attachment = current_user.maker_file_attachments
                              .find_by(id: id, attachable_type: "Maker::Project")
     return nil unless attachment

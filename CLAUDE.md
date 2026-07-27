@@ -473,10 +473,20 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
      belong in this file. The one added 2026-07-27: **`Maker::MoveNode`** — the maker layer's named
      home for the cross-backend **move** (`port_writable?` → `FileLayer.current.move`, else
      `Sync::Mutation.apply(op: "move")` + broadcast), the sibling of `Maker::LibraryFolder`'s
-     `mkdir` and the **third** appearance of that branch, plus **`Maker::AttachToProject`**, which
-     owns the attach-and-relocate policy now that it has two doors. **Controllers call these and
-     never reach into `Sync::` or the port themselves** — that seam is what keeps step 10's §10
-     tripwire honest, and a fourth hand-rolled copy of the branch is the thing to refuse.
+     `mkdir`, plus **`Maker::AttachToProject`**, which owns the attach-and-relocate policy now that
+     it has two doors. **Controllers call these and never reach into `Sync::` or the port
+     themselves** — that seam is what keeps step 10's §10 tripwire honest.
+     **THE `port_writable?` TWO-DOOR BRANCH IS WRITTEN OUT FIVE TIMES, NOT THREE** (both this file
+     and `docs/STATUS.md` said "the third appearance" until a review counted them):
+     `Maker::LibraryFolder#mkdir`, `FilesController#destroy` (port `delete` vs
+     `Sync::SubtreeDelete`), `TrashController#restore` (port `undelete` vs `Sync::Trash.restore`),
+     `Maker::Addons::LibraryOutput.write` (port `write` vs a server-driven `Sync::Commit`), and
+     `MoveNode`. Only two of the five have a name of their own; the other three are inline in the
+     action that needs them, each for a stated reason. **So the rule is not "refuse a fourth copy"
+     — it is that a NEW one needs an argument for being inline rather than a service**, and a
+     verb that more than one caller performs does not have one. (Excluded from the count on
+     purpose: the `require_capability!` gates and the views that pick an upload FORM. Those select
+     a UI, which is `port_writable`'s stated one job — they do not open a door to the bytes.)
 10. **Split the maker layer from the file layer** (2026-07-14) so a **web-only deployment can be
     backed by a plain network share or the user's own S3** instead of the FastCDC chunk store —
     the Immich/Photoprism "point it at my existing NAS" on-ramp. **✅ COMPLETE (2026-07-17,

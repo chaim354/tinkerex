@@ -8,19 +8,33 @@ Six pieces on the web UI plus one new pair of maker services. Design/plan:
 `docs/superpowers/specs/2026-07-26-file-organization-and-views-design.md`,
 `docs/superpowers/plans/2026-07-26-file-organization-and-views.md`.
 
-**Suite 1277 → 1441**, identical on all three legs (`bin/rails test`, `LIBRARY_BACKEND=share`,
-`LIBRARY_BACKEND=s3`: each **1441 runs / 4917 assertions / 0 failures / 0 errors / 8 skips**).
+**Suite 1277 → 1444**, identical on all three legs (`bin/rails test`, `LIBRARY_BACKEND=share`,
+`LIBRARY_BACKEND=s3`: each **1444 runs / 4939 assertions / 0 failures / 0 errors / 8 skips**). The
+last three came from the final review below: one pinning the free-text filter field, two pinning the
+symlink decision (its Type-sort grouping, and the flat filter's deliberate exclusion of it).
 **§10 held throughout** — nothing here touches sync, the changelog, conflicts, locks or the mounts.
 The controllers never reach into `Sync::` or the port; they call `Maker::MoveNode`, which owns the
 branch, exactly as `Maker::LibraryFolder` already does for `mkdir`.
 
-### `Maker::MoveNode` — the third appearance of the `port_writable` branch, so it got a name
+### `Maker::MoveNode` — the `port_writable` branch, written out once more, so it got a name
 
-After `Maker::LibraryFolder#mkdir` and `FilesController#destroy`, a third copy was the wrong answer:
 `port_writable?` → `FileLayer.current.move`; else `Sync::Mutation.apply(op: "move")` +
 `LibraryChannel.broadcast_change`. **The node_id never changes**, which is the whole reason a move
 is safe to perform on a user's behalf — every attachment, BOM link and tag keeps pointing at the
 same file.
+
+**IT IS THE FIFTH APPEARANCE OF THAT BRANCH, NOT THE THIRD.** This heading and CLAUDE.md §12 step 9
+both said "the third" (after `Maker::LibraryFolder#mkdir` and `FilesController#destroy`) until a
+final whole-branch review counted them. The five: `Maker::LibraryFolder#mkdir`,
+`FilesController#destroy` (port `delete` vs `Sync::SubtreeDelete`), `TrashController#restore` (port
+`undelete` vs `Sync::Trash.restore`), `Maker::Addons::LibraryOutput.write` (port `write` vs a
+server-driven `Sync::Commit`), and this one. The undercount mattered because of what it was used to
+say — *"a fourth hand-rolled copy of the branch is the thing to refuse"* — which would have sent the
+next reader looking for a threshold that had already been passed twice. **Only two of the five are
+services; the other three are inline in the action that needs them**, so the real rule is that a new
+one needs an argument for being inline rather than named, and a verb more than one caller performs
+does not have one. Not counted: the `require_capability!` gates and the views that pick an upload
+*form* — those select a UI, which is `port_writable`'s stated one job.
 
 - **Collision is detected in the `nodes` catalog, BEFORE either door**, and that is not
   belt-and-braces. `Share#move` refuses a taken name, but **chunk mode has no clobber guard of its
@@ -254,6 +268,71 @@ which `setup` is.
 *(The 12-assertion figure is carried forward from the earlier sighting's report, not re-measured
 here.)*
 
+### The final whole-branch review — no blocking issues, five cleanups applied
+
+The review found the branch mergeable. Five cheap corrections landed on top of it, and the shape of
+the set is worth reading before the items: **three of the five were comments alone** — the code was
+right and the specification beside it was not, which in this repo is the same class of defect — **a
+fourth was an invariant a comment STATED and the code two lines below it broke**, and **only one is
+something a user would actually have hit.**
+
+- 🟡 **THE ONLY ONE A USER WOULD HAVE HIT: the "or an extension…" field silently did nothing once
+  eight types were active.** `resolve_exts` keeps `.first(MAX_EXTS)`, so
+  `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2` came back with the same eight chips and no
+  `.lbrn2` — **two inches from a `.lbrn2` CHIP correctly rendered inert** with "Turn one off first".
+  That is verbatim the condition `ext_slots_left?` exists to prevent ("a control that renders, links,
+  and silently does nothing"): **fixed for the chips, missed for the escape hatch beside them.** The
+  field and its button now go `disabled` on the same predicate, carrying the same sentence from the
+  same string (`ext_limit_title` — two controls answering one condition is exactly how they drifted).
+  **Disabled before the submit rather than explained after it**: the only thing a user can do is turn
+  one off, and saying so up front costs no round-trip. A hand-edited URL is still dropped silently,
+  deliberately — that is `EXT_RE`'s standing rule for anything arriving in a URL, and this finding is
+  about a control, not about input.
+- 🟡 **SYMLINKS: three features disagreed, and the disagreement was silent.** `file_type_label`
+  states an invariant — the Type column "MUST AGREE WITH WHAT THE 'Type' HEADER SORTS BY" — and then
+  **contradicted it two lines below itself**, rendering `Symlink` while `sort_key` keyed the row on
+  its extension. Reproduced with `aaa.stl`, `bbb.stl`, `ccc.3mf` and a symlink `mid.stl` under
+  `?sort=type&dir=asc`: cells read `["3MF", "Symlink", "STL", "STL"]` — a row labelled Symlink
+  sitting inside the STL block. Meanwhile the flat filter's `.where(kind: "file")` **excluded** a
+  symlink named `alias.stl` that the folder view happily lists; the sorting task had reasoned
+  symlinks "are usually symlinks TO files" and grouped them with files, and the filter task
+  disagreed with no note. **The decision, now written down in all three places: a symlink is its own
+  type, consistently.** `sort_key` answers the literal `"symlink"` — the column's own label,
+  downcased, so the group lands where the word "Symlink" falls among the other labels rather than at
+  an end somebody has to justify. The flat filter keeps excluding them, and now says why: a type
+  filter asks "show me my STLs" and a symlink named `alias.stl` is not one — its content is a path.
+  **The divergence from the folder view is deliberate and recorded as such** (a folder view shows
+  what is really there; a type view shows what you asked for). Spec §6.3 argued only the *directory*
+  case, which is why the symlink half had no sentence to inherit. **`sort_nodes`' partition is a
+  separate question, still answered the same way** — a symlink is not a folder, so it stays in the
+  file block; its type key decides where inside it. Pinned by a test using **two symlinks with
+  different extensions** (one alone is trivially "grouped", two sharing an extension pass with the
+  old key), asserted in both directions; mutation-checked by reverting the branch.
+  **`files_sort_test.rb`'s existing symlink test structurally could not see this** — it asserts under
+  the default *name* sort, where the type branch is never called.
+- **The `MoveConflicts` writer audit named the wrong writers.** It enumerated every writer of
+  `maker_file_attachments` and was last touched *before* the attach policy was extracted:
+  `Projects::AttachmentsController` has written no row since (it only reads), and the list omitted
+  **`Maker::AttachToProject`**, which is the writer for both doors and holds the only `insert_all` —
+  the one place `user_id`/`attachable_*` are set as **columns** rather than through the association,
+  which is precisely what an audit about scoping should name. The safety *claim* held throughout; the
+  enumeration a future auditor would have trusted did not.
+- **`attach_bundle`'s ordering claim was not enforced by the query, and could not be.** The line
+  claimed `&` "keeps the MODEL's order, so the project lists the bundle the way the model does".
+  `insert_all` omits `position`, so every row takes the default 0 — as does **every row this table
+  has ever held**, since no writer anywhere sets it — and `has_many -> { order(:position) }`
+  degenerates to a total tie that survives only as SQLite rowid order, the exact reliance
+  `#model_owning` three methods above says must not be trusted on managed Postgres. **Setting
+  `position` was rejected rather than skipped, and the reason is the source, not the destination:**
+  `node_ids` is read from `model.file_attachments.pluck(:node_id)`, which is *the same* all-zero
+  `ORDER BY position ASC` (verified), so stamping positions would faithfully preserve an order that
+  was already a guess — while making this the one writer in the app with a position convention, so a
+  later ordinary attach lands at 0 and leapfrogs the bundle. Enforcing bundle order is a change to
+  the **column's meaning across all six writers**, not to this line. The claim is gone; the dedupe
+  half, which is sound and load-bearing, stays.
+- **The `port_writable` branch count was wrong in both documents** — see the `Maker::MoveNode`
+  section above. Five, not three.
+
 ### Deferred deliberately — so none of these reads as an oversight
 
 - **`folder_paths_for` recurses, and depth is unguarded.** Its `"…"` marker is a correct **cycle**
@@ -268,6 +347,53 @@ here.)*
   `find_or_create_by` and the bundle path's `members = node_ids & names.keys` are the only guards. A
   unique index would need a backfill dedupe, and this service is the sole writer. **What bundle
   attach changed is the blast radius: N rows rather than 1.**
+
+**Found by the final review, each one DEMONSTRATED, none fixed here.** They are follow-up material
+rather than blockers, and the branch should not pretend they do not exist. Four of them are one
+shape — **a rule the code enforces correctly and the UI never mentions** — and the remaining two are
+navigational (a missing affordance, a redirect that drops the user's place).
+
+- 🟠 **AN ARCHIVED PROJECT'S CLAIM BLOCKS THE AUTO-MOVE INVISIBLY, and this is the one worth doing
+  first.** `AttachToProject#attached_elsewhere?` does not exclude archived projects, while **both**
+  halves of the file page's attach control do (`FilesController#show` filters the chips on
+  `status != "archived"` and the dropdown on `where.not(status: "archived")`). Driven end to end:
+  attach `c.stl` to "Old Rig" → archive Old Rig → **the file page shows no mention of Old Rig
+  anywhere** → attaching to "Desk Lamp" flashes "Attached c.stl." and the file stays in
+  `Projects/old-rig/`. `#relocate` on the same file then says *"belongs to another project"*, naming
+  a project the page refuses to show. Either the policy should skip archived claims or the page
+  should keep showing them; it must not be both.
+- **`#create` is silent where `#relocate` has a sentence** — one policy, two doors, two answers.
+  `#relocate` words `:attached_elsewhere`, `:not_a_file` and `:model_bundle` individually; `#create`
+  collapses the two it can reach to the bare "Attached bracket.stl." (measured: "Attached
+  elsewhere.stl." and "Attached adir."). *One correction to the review's wording:* **`:model_bundle`
+  never reaches `#create`'s refusal at all** — `#call` intercepts it before `#refusal_for` and takes
+  the bundle path, which says "Attached 2 files from Widget." So it is two of the three, and the
+  bundle case is the next item rather than this one.
+- **A model-bundle file's attach control gives no warning.** The branch's most surprising rule — one
+  file brings the whole bundle, and moves nothing — is invisible on the file page until the flash
+  reads "Attached 3 files from Widget." (verified: nothing in `files/show.html.erb`'s attach control
+  mentions models).
+- **Detach is not the inverse of attach.** Attach moves the bytes into `Projects/<slug>/`; detach
+  removes only the row and flashes "Detached.", leaving the file in the folder of a project it no
+  longer belongs to (driven: parent unchanged after the DELETE). Deliberate as far as it goes — a
+  move back has nowhere obvious to go — but it is unwritten and it surprises.
+- **The flat GRID has no location affordance.** The flat *list* gained a Folder column because "a
+  flat list of 200 STLs with no location is unnavigable"; `_grid.html.erb` renders the same flat set
+  as bare tiles, so two `bracket.stl` in different folders are visually identical.
+- **`FilesController#destroy` redirects to bare `files_path`**, so deleting a row from `?ext=stl`
+  drops the user at the unfiltered root (driven: `302 → /files`). **The one in-page path
+  `files_query_base` did not reach** — `#rescan` right below it already carries the filter through
+  its redirect, which is the shape to copy.
+- **Pre-existing, not this branch, but now known: CLAUDE.md §12 step 10's proof-grep no longer
+  returns nothing.** That step calls
+  `grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/ | grep -v ':[0-9]*: *#'`
+  "the proof, not the test suite" that the maker layer no longer references chunks. Run today it
+  returns one hit: `app/services/maker/addons/library_output.rb:47`
+  (`Storage::ChunkStore.current.put`), from the addon framework's server-driven chunk write. The
+  *code* is defensible — it is one of the five `port_writable` two-door branches, and the chunk door
+  has to put the bytes somewhere — but **the CLAIM is now false**, and step 10's own argument is that
+  a proof which cries wolf gets ignored. Recorded as a discrepancy in the claim; this branch neither
+  introduced it nor is the place to resolve it.
 
 ### Housekeeping
 
