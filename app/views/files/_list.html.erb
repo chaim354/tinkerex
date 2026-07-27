@@ -6,9 +6,16 @@
 <table class="files" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <thead>
     <tr>
-      <th>Name</th><th>Kind</th><th class="num">Size</th>
+      <%= sort_header "Name", "name", @sort, @dir, files_query_base %>
+      <%= sort_header "Type", "type", @sort, @dir, files_query_base %>
+      <%# Size is NOT sortable, and that is deliberate: it is the one column whose value does not
+          come from `nodes` on every backend (Chunk#stat_all reads it from the versions row), so a
+          size sort would be the only inexact one — worse than none in a column of exact-looking
+          numbers. See the spec, §5.3. %>
+      <th class="num">Size</th>
       <% if capabilities.versioned? %><th>Version</th><% end %>
-      <th>Modified</th><th></th>
+      <%= sort_header "Modified", "modified", @sort, @dir, files_query_base %>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -40,7 +47,9 @@
             <%= link_to "📁 #{node.name}", files_path(folder: node.node_id), class: "dir" %>
           <% end %>
         </td>
-        <td class="muted"><%= node.kind %></td>
+        <%# The EXTENSION, not node.kind — see FilesHelper#file_type_label for why the cell under
+            a "Type" header cannot go on saying "file". %>
+        <td class="muted"><%= file_type_label(node) %></td>
         <td class="num muted"><%= info.content_token ? number_to_human_size(info.size) : "—" %></td>
         <% if capabilities.versioned? %>
           <td class="muted mono"><%= info.content_token&.first(8) || "—" %></td>

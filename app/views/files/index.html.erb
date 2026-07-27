@@ -2,12 +2,15 @@
 
 <div class="page-head">
   <h1>Files</h1>
-  <%# List/grid toggle. `folder:` rides along so the choice keeps the current folder; the choice is
-      also remembered in a cookie (FilesController#resolve_view), so it sticks across navigation. %>
+  <%# List/grid toggle. files_query_base rides along so the choice keeps whatever the user is
+      looking at (the folder, and from Task 6 the type filter) instead of dumping them at the
+      root; the choice itself is remembered in a cookie (FilesController#resolve_view), so it
+      sticks across navigation, and the sort is remembered the same way rather than being pinned
+      into these two links. %>
   <div class="view-toggle" role="group" aria-label="View">
-    <%= link_to "Grid", files_path(folder: @folder&.node_id, view: "grid"),
+    <%= link_to "Grid", files_path(files_query_base.merge(view: "grid")),
                 class: "toggle#{' active' if @view == 'grid'}" %>
-    <%= link_to "List", files_path(folder: @folder&.node_id, view: "list"),
+    <%= link_to "List", files_path(files_query_base.merge(view: "list")),
                 class: "toggle#{' active' if @view == 'list'}" %>
   </div>
 </div>
@@ -100,6 +103,27 @@
 <% if @nodes.empty? %>
   <p class="empty muted">No files yet. Upload one to get started.</p>
 <% elsif @view == "grid" %>
+  <%#
+    The grid has no column headers to click, so it gets the same sort as a pair of selects. GET,
+    so the result is a plain shareable URL exactly like the header links produce. `onchange`
+    submits without JS of our own (an inline handler on a native form, not a controller) — the
+    same shape models/index.html.erb's toolbar already uses.
+  %>
+  <form method="get" action="<%= files_path %>" class="sort-form">
+    <% files_query_base.each do |k, v| %>
+      <input type="hidden" name="<%= k %>" value="<%= v %>">
+    <% end %>
+    <label class="muted" for="sort-key">Sort</label>
+    <select name="sort" id="sort-key" onchange="this.form.requestSubmit()">
+      <% { "name" => "Name", "type" => "Type", "modified" => "Modified" }.each do |value, label| %>
+        <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
+      <% end %>
+    </select>
+    <select name="dir" aria-label="Sort direction" onchange="this.form.requestSubmit()">
+      <option value="asc"  <%= "selected" if @dir == "asc" %>>Ascending</option>
+      <option value="desc" <%= "selected" if @dir == "desc" %>>Descending</option>
+    </select>
+  </form>
   <%= render "grid" %>
 <% else %>
   <%= render "list" %>

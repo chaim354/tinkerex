@@ -283,3 +283,10 @@ dialog.move-conflict { display: block; position: static; width: 100%; max-width:
 dialog.move-conflict p { margin: 0 0 10px; }
 dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 dialog.move-conflict form { display: inline; }
+
+/* --- Sortable column headers + the grid's equivalent select pair --- */
+table.files th.sorted a { color: var(--fg); font-weight: 700; }
+table.files th a { color: inherit; }
+table.files th a:hover { text-decoration: underline; }
+.sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }

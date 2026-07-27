@@ -149,12 +149,17 @@ class FilesController < ApplicationController
   # so `info` is never nil in the view.
   def index
     @view = resolve_view
+    @sort, @dir = resolve_sort
     @folder = current_folder
     @crumbs = folder_crumbs(@folder)
     @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
                          .order(kind: :desc, name: :asc).to_a
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
+    # AFTER select!, so a node that vanished between the two queries is gone before it can be
+    # given a sort position (and before sort_key asks @info_by_node for an mtime it does not
+    # have); BEFORE the note/thumbnail loads, which only need the final list.
+    @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir)
     # Note counts for the badge — one grouped query, never N+1.
     @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
@@ -496,6 +501,74 @@ class FilesController < ApplicationController
     end
     saved = cookies[:files_view]
     VIEWS.include?(saved) ? saved : DEFAULT_VIEW
+  end
+
+  # Sort key + direction. THE SAME WHITELIST IDIOM AS resolve_view, and for the same reason: an
+  # unknown `?sort=` or a tampered cookie must fall back to the default rather than reach the
+  # sorter as an arbitrary string. Stored as one "key:dir" cookie value, so the choice survives
+  # navigation exactly as the list/grid choice does.
+  #
+  # `?dir=` alone (no `?sort=`) is ignored, matching resolve_view: a direction with nothing to
+  # direct is not a choice. Both selects in the grid's sort form submit together, and every header
+  # link carries both, so nothing in the UI can produce that shape.
+  SORTS = %w[name type modified].freeze
+  DEFAULT_SORT = "name".freeze
+  DIRS = %w[asc desc].freeze
+  DEFAULT_DIR = "asc".freeze
+
+  def resolve_sort
+    requested = params[:sort].presence
+    if SORTS.include?(requested)
+      dir = DIRS.include?(params[:dir]) ? params[:dir] : DEFAULT_DIR
+      cookies[:files_sort] = { value: "#{requested}:#{dir}", expires: 1.year }
+      return [ requested, dir ]
+    end
+    key, dir = cookies[:files_sort].to_s.split(":")
+    return [ key, dir ] if SORTS.include?(key) && DIRS.include?(dir)
+
+    [ DEFAULT_SORT, DEFAULT_DIR ]
+  end
+
+  # IN RUBY, NOT IN SQL, AND THAT IS A DECISION (spec §5.2). "type" means the file's EXTENSION,
+  # and there is no expression for it portable across SQLite (self-host) and Postgres (managed) --
+  # substr/instr vs substring/position. The alternative, a denormalized `ext` column on `nodes`,
+  # would have to be populated by Sync::Commit and Sync::Mutation: writing to the sync layer to
+  # serve a web view, which is the maker/file-layer split's §10 tripwire. So all three keys sort
+  # the same way, uniformly, and none is more exact than another. The cost is the shape this
+  # action already has (it loads the folder with .to_a and select!s in memory).
+  #
+  # Ruby's sort_by is NOT STABLE, so both passes carry the index as a tiebreak -- without it,
+  # equal keys (two .stl files, two nodes with the same mtime) shuffle between page loads.
+  #
+  # Directories stay grouped AFTER files exactly as today's `kind: :desc` ordering leaves them,
+  # and `dir` reverses only WITHIN the sort, so a descending sort never scatters folders through
+  # the file list.
+  def sort_nodes(nodes, info, key, dir)
+    ordered = nodes.each_with_index.sort_by { |node, i| [ sort_key(node, info, key), i ] }.map(&:first)
+    ordered.reverse! if dir == "desc"
+    ordered.each_with_index.sort_by { |node, i| [ node.kind == "dir" ? 1 : 0, i ] }.map(&:first)
+  end
+
+  # One key per node, and every branch must answer the SAME Ruby type for a given key or the
+  # comparison raises: a nil mtime (a directory, an un-stat'd row) becomes 0, not nil.
+  #
+  # "type" is the extension, downcased -- the same string FilesHelper#file_type_label upcases for
+  # the column, so the header and the cells under it agree.
+  def sort_key(node, info, key)
+    case key
+    when "type"     then File.extname(node.name).downcase.delete(".")
+    when "modified" then info[node.node_id]&.mtime || 0
+    else                 node.name.downcase
+    end
+  end
+
+  # Query params every in-page link must carry so sorting never drops the user's folder.
+  # `view` is deliberately absent: it is cookie-persisted, so a link that pinned it would freeze a
+  # choice the user can still change from the toggle -- and `sort`/`dir` are absent for the same
+  # reason, except on the header links and the grid form, which are the controls that SET them.
+  helper_method :files_query_base
+  def files_query_base
+    { folder: @folder&.node_id }.compact
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the
