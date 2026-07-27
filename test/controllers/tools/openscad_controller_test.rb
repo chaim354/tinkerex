@@ -90,5 +90,71 @@ module Tools
       assert_match(/colz/, response.body)
       assert_nil OpenscadClient.current.rendered
     end
+
+    test "a rejected value hands the EDITOR back with the user's own form still in it" do
+      post tools_openscad_path, params: { generator: "hex_plate", name: "My plate",
+                                          parent_node_id: "", params: { cols: "))(" } }
+      assert_response :unprocessable_entity
+      assert_select ".flash-alert", text: /cols/
+      assert_select "input[name=?][value=?]", "name", "My plate"       # their name survived
+      assert_select "input[name=?][value=?]", "params[cols]", "))("    # and the value to fix
+      assert_equal 0, @user.maker_addon_states.for_addon("openscad").count, "nothing may be saved"
+    end
+
+    # --- both sources render the editor (Task 11) ---------------------------------------------
+
+    test "the editor renders every field branch for a catalog generator" do
+      get new_tools_openscad_path(generator: "hex_plate")
+      assert_response :success
+      assert_select "input[name=?][value=?]", "generator", "hex_plate"
+      assert_select "input[type=number][name=?][value=?]", "params[cols]", "4"      # int
+      assert_select "input[type=checkbox][name=?]", "params[rounded]"               # bool
+      assert_select "input[type=text][name=?][value=?]", "params[span]", "10,20,30" # vector
+      # An enum keeps VALUES and LABELS apart — the option's value is 1, its text is "solid".
+      assert_select "select[name=?] option[value=?]", "params[mode]", "1", text: /solid/
+      # The sidecar's "advanced" flag collapses that group instead of hiding it.
+      assert_select "details.param-group-adv summary", text: "Advanced"
+    end
+
+    test "the editor renders for a bring-your-own library .scad" do
+      node_id = seed_scad(@user, "part.scad")
+      get new_tools_openscad_path(node_id:)
+      assert_response :success
+      assert_select "h1", text: "part.scad"
+      assert_select "input[name=?][value=?]", "node_id", node_id
+      assert_select "input[name=?]", "params[cols]" # schema derived from the file's own source
+      assert_select "input[name=?]", "generator", count: 0
+    end
+
+    test "a node_id belonging to someone else is REFUSED by OUR guard, before the file layer" do
+      other = User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+      stranger_node = seed_scad(other, "secret.scad")
+
+      get new_tools_openscad_path(node_id: stranger_node)
+      assert_redirected_to tools_openscad_path
+
+      post preview_tools_openscad_path, params: { node_id: stranger_node, params: { cols: "4" } }
+      assert_response :unprocessable_entity
+      assert_nil OpenscadClient.current.rendered, "a foreign node must never reach the render path"
+      # ASSERT THE MECHANISM, NOT JUST THE OUTCOME. FileLayer#read is user-scoped too, so it refuses
+      # a foreign node on its own — dropping `current_user` from own_scad_node_id! leaves every
+      # assertion above GREEN (verified by mutation), and the test that was meant to pin the guard
+      # would instead be pinning the layer underneath it. The message is what tells them apart: ours
+      # names the library, the file layer's echoes the raw node id back.
+      assert_equal "no such .scad in your library", response.body
+    end
+
+    private
+
+    # A real .scad in a user's library, written through the SAME backend-neutral path the addon
+    # itself uses — so this seeds correctly on chunk, share and s3 alike.
+    def seed_scad(user, name)
+      state = user.maker_addon_states.create!(addon_key: "fixture", name: "seed-#{SecureRandom.hex(3)}")
+      Maker::Addons::LibraryOutput.write(
+        user:, state:, parent_node_id: nil,
+        files: [ { name:, bytes: "cols = 4;\ncube([cols, 1, 1]);\n".b,
+                   content_type: "text/plain", role: "output" } ]
+      ).first.node_id
+    end
   end
 end
