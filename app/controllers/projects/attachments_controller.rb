@@ -1,7 +1,9 @@
 module Projects
   # Attach an EXISTING library file to a project (or detach it). "Attach" creates a reference
   # (node_id + role) AND, on a file's first project, relocates it into that project's library
-  # folder — see #create for the rule and #relocate_into_project for the mechanics.
+  # folder — see #create for the rule and #relocate_into_project for the mechanics. A file that
+  # belongs to a Maker::Model is the exception: it brings the model's whole bundle and moves
+  # nothing (#attach_model_bundle).
   # Ownership is a DB fact (current_user.nodes) — deliberately NOT a FileLayer.stat check, so an
   # unmounted backend cannot block attaching a file the user demonstrably owns.
   #
@@ -53,6 +55,43 @@ module Projects
         return respond_to do |format|
           format.html { redirect_to not_found_return_path, alert: "That file isn't in your library." }
           format.json { render json: { error: "not_found" }, status: :not_found }
+        end
+      end
+
+      # A FILE THAT BELONGS TO A MODEL IS PART OF A BUNDLE, AND A BUNDLE IS INDIVISIBLE HERE.
+      # An imported model is its STL plus instructions plus cover plus source archive, curated into
+      # Models/<slug>/ by the importer. The relocate below would pull ONE of those out and report
+      # success, gutting the model's folder — verified against a real import.
+      #
+      # MEMBERSHIP IS THE ATTACHMENT, NOT THE FOLDER. A file can be moved out of Models/<slug>/ and
+      # still belong to the model; a stray file can be dropped INTO that folder and not belong. The
+      # maker_file_attachments row is what the data model means by "belongs to", so it is what this
+      # asks.
+      #
+      # AND IT MOVES NOTHING, WHICH IS WHY IT IS THE SAME ON ALL THREE BACKENDS. The alternative
+      # reached for first — move the model's whole FOLDER into the project — is refused outright by
+      # FileLayer::S3#move (s3.rb:710), because S3 has no directory and no rename: it would be a
+      # non-atomic cascade over every key with no undo for a half-finished one. A rule that
+      # relocates no bytes cannot diverge between deployments.
+      model = model_owning(node)
+      if model
+        atts = attach_model_bundle(model)
+        return respond_to do |format|
+          format.html do
+            redirect_to attach_redirect_path(node, nil),
+                        notice: "Attached #{atts.size} #{'file'.pluralize(atts.size)} from #{model.title}."
+          end
+          # The single-file door's shape and the single-file door's argument for the status code:
+          # a second attach of the same bundle creates nothing, so Created would be a lie to the
+          # only caller that reads it. `relocation` is what tells that caller the file it named
+          # did not move and brought its siblings — the status cannot carry either fact.
+          format.json do
+            # Never nil: model_owning found a row for THIS node, #create resolved it from
+            # nodes.present, and the bundle is that model's live files — so it is in there.
+            att = atts.find { |a| a.node_id == node.node_id }
+            render json: { node_id: att.node_id, role: att.role, relocation: "model_bundle" },
+                   status: atts.any?(&:previously_new_record?) ? :created : :ok
+          end
         end
       end
 
@@ -121,6 +160,51 @@ module Projects
 
     def set_project
       @project = current_user.maker_projects.find_by!(slug: params[:project_id])
+    end
+
+    # The Maker::Model this node belongs to, or nil. SCOPED TO current_user through the attachments
+    # table: maker_file_attachments keys files by a bare node_id string with no FK, so an unscoped
+    # lookup would happily find another user's row pointing at the same id and attach that
+    # stranger's whole bundle into this project.
+    #
+    # find_by, not a set: a file attached to two models is storable (Models::AttachmentsController
+    # can do it) and there is no sensible way to attach "both bundles" to one project without
+    # surprising the user, so the first row wins. The single-file rule is what the second model
+    # loses, not its files.
+    def model_owning(node)
+      current_user.maker_file_attachments
+                  .find_by(node_id: node.node_id, attachable_type: "Maker::Model")&.attachable
+    end
+
+    # Attach every one of the model's LIVE files to this project, and return the rows. Idempotent
+    # per file (the same find_or_create_by as the single-file path), so re-attaching a bundle — or
+    # attaching one whose cover the user already attached by hand — adds no duplicate row.
+    #
+    # The role is derived PER FILE from its own name: a bundle is a PDF and a PNG and an STL, so
+    # copying the triggering file's role would label the instructions "model".
+    #
+    # `nodes.present` is a filter, not a lookup convenience: a member the user deleted from the
+    # library is a tombstone, and an attachment pointing at one renders as a broken row on the
+    # project page. Iterating `node_ids` (position order) rather than the query's rows keeps the
+    # bundle in the order the model shows it in.
+    #
+    # Atomic: a half-attached bundle is worse than none — it is the gutted-folder failure again,
+    # wearing the attachment table instead of the library.
+    def attach_model_bundle(model)
+      # uniq: two rows for one node is storable (no uniqueness index there either), and without
+      # this the notice would say "4 files" for a three-file model.
+      node_ids = model.file_attachments.pluck(:node_id).uniq
+      names = current_user.nodes.present.where(node_id: node_ids).pluck(:node_id, :name).to_h
+      ActiveRecord::Base.transaction do
+        node_ids.filter_map do |node_id|
+          name = names[node_id]
+          next unless name
+
+          @project.file_attachments.find_or_create_by!(user: current_user, node_id:) do |a|
+            a.role = Maker::FileAttachment.role_for(name)
+          end
+        end
+      end
     end
 
     # Move `node` into this project's library folder. Returns a SYMBOL rather than raising,
