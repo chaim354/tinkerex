@@ -1,6 +1,125 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-23 (**Current Project — session-scoped default for saves, attaches, and uploads**)
+**Updated:** 2026-07-27 (**OpenSCAD addon — `.scad` + params → 3MF, via a GPL-isolated sidecar. BUILT, NOT DEPLOYED**)
+
+## Latest (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **built + tested, NOT deployed**
+
+`/tools/openscad` — the **second server-sidecar addon** (after `sidecar/boxes`) and the **first that
+renders 3D**. A user picks a bundled generator or points the tool at their own `.scad` in the
+library, fills in a form derived from that file's **own** Customizer parameters, and gets a
+`3mf` + `params.json` bundle written through `Maker::Addons::LibraryOutput` with a grid thumbnail.
+Design/plan: `docs/superpowers/specs/2026-07-27-openscad-sidecar-addon-design.md`,
+`docs/superpowers/plans/2026-07-27-openscad-sidecar-addon.md`.
+
+**Spec §10 held**: nothing here touches `Sync::*`, the changelog, conflicts, locks or the mounts,
+and `LibraryOutput` / `AddonState` / `AddonFile` absorbed a brand-new addon **untouched** — which
+was §6's claim, now tested rather than asserted.
+
+- **Sidecar:** `sidecar/openscad` (GPL-2.0, internal-only, `tinkerex-openscad:8000`). Extracts the
+  official OpenSCAD **2026.07.26** AppImage, sha256-pinned. Content-addressed render cache on the
+  `openscad-cache` volume. Runs **non-root** (uid 10001) and carries its own `LICENSE`, `README.md`
+  and `catalog/NOTICE` **inside the image** — a GPL image we redistribute has to ship the licence
+  text and the third-party notices with the binary, not only in the repo.
+- **Env:** `OPENSCAD_SIDECAR_URL`. Unset or blank → `OpenscadClient.configured?` is false → the
+  `/tools` tile greys out. Set on the **three Unraid deployments only** (`deploy.yml`);
+  `deploy.ovh.yml` blanks it deliberately, because Kamal deep-merges `env.clear` and the overlay
+  would otherwise inherit a hostname that does not resolve on that box — an addon that reports
+  itself available and then fails every call, strictly worse than greying out.
+- **Catalog: THREE generators, not the four the plan listed** — `hex_cell_holder` (Unlicense),
+  `washer` (MIT), `probe_plate` (MIT, first-party). Vendored at pinned commits with
+  `catalog/NOTICE`. See the licence finding below for where the other two went.
+- **ONE render path, TWO sources** (spec §3.1): Rails resolves a catalog key to source text via the
+  sidecar's `GET /source/<key>` and then posts it to `/render` exactly as it posts a
+  bring-your-own file's bytes, so nothing downstream can tell them apart. Do **not** add a
+  `generator_key` fast path — that is two caches, two error surfaces, and a catalog free to drift
+  from BYO behaviour.
+
+**Things that will bite a future editor** (all observed, not reasoned):
+
+- **A GARBAGE PARAMETER VALUE RENDERS SUCCESSFULLY.** Observed against the real sidecar:
+  `{"cols": "))("}` comes back **200 with the DEFAULT geometry**, because OpenSCAD's parameterSet
+  silently ignores a value it cannot parse. So a user's typo would yield a default-sized model,
+  saved into their library, with no feedback anywhere. That is why **`app/services/openscad_params.rb`
+  exists** — a coercion layer the plan's file table does not have. It checks every submitted value
+  against its declared type and **raises rather than forwarding**, including for the cases that look
+  like over-engineering: a blank number field (falling back to the default is the failure mode, not
+  the fix), `1e400` (reaches OpenSCAD as the text "Infinity" and is ignored), a forged
+  `params[cols][]=1` array, and a one-element vector (which `render.py` only re-brackets when it
+  sees a comma, so `10` would arrive as a scalar and be type-mismatched away). Do not "simplify" it
+  back to a pass-through.
+- **`--appimage-extract` FAILS on the build Mac** (`Exec format error`, exit 126) — the AppImage
+  runtime is a static ELF and Docker Desktop's amd64 emulation refuses it. Since CLAUDE.md §13
+  cross-builds every image on the Mac, the Dockerfile computes the squashfs offset
+  (`e_shoff + e_shentsize*e_shnum`) and runs `unsquashfs`, **executing nothing**.
+- **Both required OpenSCAD capabilities are compile-time optional and fail INVISIBLY.** 3MF export
+  without lib3mf writes nothing and **exits 0**; a missing Manifold backend silently falls back to
+  CGAL (~20× slower on exactly the grid-shaped models this addon renders). `assert-capabilities.sh`
+  asserts **six** things at build time — and asserts them on *evidence*, not exit codes: non-empty
+  output starting with the `PK` zip magic, the literal string `(manifold)` in stdout, and separately
+  that a **bogus** `--backend` value is rejected (otherwise `--backend=manifold` proves nothing).
+  **Verified both ways**: they pass on a good build, and a shadowed script simulating a CGAL
+  fallback fails the build with a named error.
+- **`--export-format=param` has FIVE sharp edges, each of which silently produces a wrong form** —
+  they are numbered TRAP 1–5 in `sidecar/openscad/schema.py`, next to the code that handles them:
+  (1) a file with no parameters **omits the `parameters` key entirely** (`{"title":"empty"}`, not
+  `[]`), so `for p in data["parameters"]` raises; (2) every number is a **float** (`4.0`, never `4`),
+  so an int must be recognised by *value* or every count renders as "4.0"; (3) an enum is
+  `type: number/string` **plus** `options` — **branch on `options` before `type`**, and keep the
+  values apart from the labels, since `// [10:S,20:M]` gives a *numeric* value a human label;
+  (4) a vector reports `type: "number"` with a **list** `initial` — there is **no** `"vector"` type,
+  so branch on `isinstance(initial, list)`, never on `type`; (5) `caption` is present only when a
+  `//` comment precedes the assignment, so fall back to the name.
+- **OpenSCAD's 3MF output is NOT byte-reproducible** (F16) — three renders of the same file with the
+  same params gave 3096 / 3098 / 3099 bytes. **Never assert byte-equality across two fresh
+  renders.** A cache *hit* is fine: it replays stored bytes, which is exactly what the cache-hit
+  test asserts.
+- **`resources :openscad` is wrong TWICE over**, which is why the routes are top-level and explicit.
+  Rails derives the collection helper from `name.pluralize` and the member helper from
+  `name.singularize`, so `resources` leaves **`tools_openscad_path` meaning SHOW** — needing an id
+  the `/tools` gallery does not have. And `namespace :tools` **prefixes `as:`**, so `as: :new_openscad`
+  inside it yields `tools_new_openscad_path`, not `new_tools_openscad_path`.
+- **READ THE FILE HEADER, NOT JUST THE REPO LICENSE — this disqualified 50% of the audited set.**
+  The plan listed four generators to bundle, each with a licence taken from the repo's `LICENSE`
+  file (agreeing with GitHub's licence detector, which reads exactly that). On opening the actual
+  `.scad` files, **two of the four declared a *more restrictive* licence in their own header**:
+  `universal_stand` ships a stock MIT `LICENSE` while its header says **CC BY-NC-SA 4.0**
+  (NonCommercial *and* ShareAlike — the precise pair spec §2 was written about), and `vase_box`'s
+  `LICENSE.md` is the full CC BY 4.0 text while its header line 3 says **Attribution-ShareAlike**.
+  Both dropped. A repo-level LICENSE is not the licence of every file under it, and where the two
+  disagree the conflict is itself disqualifying for something we redistribute in a sold product.
+  Every rejection is recorded **with its reason** in `sidecar/openscad/catalog/NOTICE` so the audit
+  is not run twice.
+
+**Verification (this branch, measured — not "green"):**
+
+- Server suite **1311 runs / 4536 assertions / 0 failures / 0 errors / 14 skips**, **identical on
+  all three legs** (`bin/rails test`, `LIBRARY_BACKEND=share` with `LIBRARY_PATH` set,
+  `LIBRARY_BACKEND=s3` with the `LIBRARY_S3_*` knobs CI uses). The 14 skips are the usual
+  environment-gated ones (live sidecars, Postgres-only, uninstalled preview binaries).
+- In-image Python suite: **40 passed, 0 skipped** — 0 skipped is the point, since these run *inside*
+  the built image where the real OpenSCAD binary is present.
+- Live integration against a **real container**: **6 runs / 33 assertions / 0 failures**
+  (`test/integration/tools/openscad_live_test.rb`, skips cleanly with no sidecar).
+- `bin/rubocop`: 401 files, **1 offence — pre-existing on `main`** (`config/routes.rb:46`,
+  `Layout/SpaceBeforeFirstArg`, on a `notes#create` line this branch never touched). Left alone.
+
+**Open — read this before assuming the addon is finished:**
+
+- **NOTHING IS DEPLOYED.** No ghcr push, no `kamal accessory boot openscad`, no app deploy, no
+  live verification on the three Unraid backends. **DoD #2 is open.** `bin/build-openscad-sidecar`
+  and the `openscad` accessory in `deploy.yml` are written and ready; the user runs them.
+- **DoD #5 — a real Multiboard `.scad` driven end-to-end in a browser — is OPEN**, and stays open
+  here by design: spec §2 forbids us obtaining or redistributing MultiBuild files. The BYO code
+  path itself is covered by the controller suite on all three backends and was driven against a
+  live sidecar with an equivalent `.scad`.
+- **The browser walkthrough (DoD #3, #4, #6 seen with human eyes) was NOT done.** Each of those
+  three is covered by an automated test — the tile greying out, the save-and-thumbnail on all three
+  backends, and a *measured* cache hit — but nobody has looked at the page.
+- **This branch is 26 commits behind `main`** (merge-base `efde37e`; the "file organization and
+  views" arc, PR #86, landed on `main` afterwards). `git diff main` therefore reads as if this
+  branch deletes that work — it does not; it simply predates it. Merge `main` in before the PR.
+  Expect a small conflict at the top of this file and in `CLAUDE.md` §12 step 9, where both sides
+  added text.
 
 ## Latest (2026-07-23): Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
 
