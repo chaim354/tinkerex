@@ -23,7 +23,23 @@ class FakeOpenscad
             "min" => nil, "max" => nil, "step" => 1 },
           { "name" => "wall", "type" => "float", "default" => 1.6, "help" => "",
             "group" => "Grid", "choices" => nil, "choice_labels" => nil,
-            "min" => nil, "max" => nil, "step" => 1 } ] },
+            "min" => nil, "max" => nil, "step" => 1 },
+          # bool / str / vector are here so the field partial's branches for them are actually
+          # REACHED by fake-backed tests. The real catalog exercises all three (10 bools and 5 strs
+          # across the bundled generators), so a fake covering only int/float/enum would leave three
+          # rendering branches with no test touching them — green, and untested, which is the shape
+          # of bug this fake exists to avoid.
+          { "name" => "rounded", "type" => "bool", "default" => true, "help" => "round the corners",
+            "group" => "Grid", "choices" => nil, "choice_labels" => nil,
+            "min" => nil, "max" => nil, "step" => nil },
+          { "name" => "label", "type" => "str", "default" => "demo", "help" => "engraved text",
+            "group" => "Grid", "choices" => nil, "choice_labels" => nil,
+            "min" => nil, "max" => nil, "step" => nil },
+          # schema.py renders a vector default as comma-separated text for a plain input; the
+          # sidecar re-brackets it into [a,b,c] on the way back.
+          { "name" => "span", "type" => "vector", "default" => "10,20,30", "help" => "",
+            "group" => "Grid", "choices" => nil, "choice_labels" => nil,
+            "min" => nil, "max" => nil, "step" => nil } ] },
       # "advanced" is schema.py's own convention: title.strip().downcase in advanced/tuning/expert.
       { "title" => "Advanced", "advanced" => true, "params" => [
           # An enum keeps values and labels apart — OpenSCAD's `// [1:solid,2:hollow]` gives a
