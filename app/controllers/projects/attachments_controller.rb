@@ -28,8 +28,13 @@ module Projects
           format.json { render json: { error: "not_found" }, status: :not_found }
         end
       end
-      att = @project.file_attachments.create!(user: current_user, node_id: node.node_id,
-                                              role: Maker::FileAttachment.role_for(node.name))
+      # find_or_create_by, not create!: maker_file_attachments has no uniqueness index (a unique
+      # one would need a backfill dedupe, and this controller is the only writer), so a
+      # double-submit or a second attach from the dropdown would otherwise make a duplicate row —
+      # and the file page would then render the same project chip twice.
+      att = @project.file_attachments.find_or_create_by!(user: current_user, node_id: node.node_id) do |a|
+        a.role = Maker::FileAttachment.role_for(node.name)
+      end
       respond_to do |format|
         format.html { redirect_to project_path(@project), notice: "Attached #{node.name}." }
         format.json { render json: { node_id: att.node_id, role: att.role }, status: :created }

@@ -200,8 +200,22 @@ class FilesController < ApplicationController
     token = @info&.content_token
     @thumbnail = token && current_user.maker_previews
                             .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
-    # For the "Attach to project" control (a design file can be sent to a project from here).
-    @projects = current_user.maker_projects.where.not(status: "archived").order(:name).to_a
+    # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
+    # file can be in several projects, and until now the page gave no sign it was in any. The
+    # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
+    # listing it would be an option that does nothing.
+    attachments = current_user.maker_file_attachments
+                              .where(node_id: @node.node_id, attachable_type: "Maker::Project")
+                              .includes(:attachable).to_a
+    @attached_projects = attachments.filter_map { |a|
+      [ a.attachable, a ] if a.attachable && a.attachable.status != "archived"
+    }.sort_by { |project, _| project.name }
+    scope = current_user.maker_projects.where.not(status: "archived")
+    # Guarded: `where.not(id: [])` is a no-op clause in Rails, but writing it unconditionally
+    # invites the reader to assume it filters. Say what happens.
+    attached_ids = attachments.map(&:attachable_id)
+    scope = scope.where.not(id: attached_ids) if attached_ids.any?
+    @projects = scope.order(:name).to_a
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
   end
 

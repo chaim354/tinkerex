@@ -36,12 +36,35 @@
   <dt>Modified</dt><dd><%= @info.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S") : "—" %></dd>
 </dl>
 
-<% if @projects.present? %>
+<% if @projects.present? || @attached_projects.present? %>
   <div class="attach-to-project">
-    <span class="muted">Attach to project:</span>
-    <% @projects.each do |project| %>
-      <%= button_to project.name, project_attachments_path(project),
-                    params: { node_id: @node.node_id }, class: "btn small" %>
+    <% if @attached_projects.present? %>
+      <span class="muted">In projects:</span>
+      <% @attached_projects.each do |project, attachment| %>
+        <span class="project-chip">
+          <%= link_to project.name, project_path(project) %>
+          <%= button_to "×", attachment_path(attachment), method: :delete,
+                form: { data: { turbo_confirm: "Detach #{@node.name} from #{project.name}?" } },
+                class: "chip-x", "aria-label": "Detach from #{project.name}" %>
+        </span>
+      <% end %>
+    <% end %>
+
+    <% if @projects.present? %>
+      <%#
+        Posts to the NON-NESTED attachments_path so the project can travel as a body param — see
+        the route comment. The option value is the SLUG, because set_project resolves
+        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` brings the user
+        back to this file page instead of the project (the nested picker keeps the old target).
+      %>
+      <%= form_with url: attachments_path, method: :post, class: "attach-form",
+                    data: { turbo: false } do |f| %>
+        <%= f.hidden_field :node_id, value: @node.node_id %>
+        <%= f.hidden_field :return_to, value: "file" %>
+        <%= f.label :project_id, "Attach to project:", class: "muted" %>
+        <%= f.select :project_id, @projects.map { |p| [ p.name, p.slug ] } %>
+        <%= f.submit "Attach", class: "btn small" %>
+      <% end %>
     <% end %>
   </div>
 <% end %>

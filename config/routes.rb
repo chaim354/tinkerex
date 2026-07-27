@@ -57,6 +57,16 @@ Rails.application.routes.draw do
     resources :uploads, only: :create, module: :projects
   end
 
+  # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot
+  # set its form's action — the nested route needs the project in the PATH. Rather than add JS to
+  # rewrite `action` on change, the project rides as a body param here.
+  # Projects::AttachmentsController#set_project reads params[:project_id], which resolves a body
+  # param and a path segment identically, so this reaches the SAME action with no controller
+  # change and no second create path. (`attachments_path` is free: the shallow `resources
+  # :attachments` under :projects claims only project_attachments_path and the singular
+  # attachment_path.)
+  post "attachments", to: "projects/attachments#create", as: :attachments
+
   # Session-scoped "current project" (the top-bar default destination). Singular resource: no id in
   # the URL — the id rides in params[:project_id] so a blank one can clear it. `controller:` is
   # required here: Rails' singular `resource` DSL still infers a PLURALIZED controller name by
