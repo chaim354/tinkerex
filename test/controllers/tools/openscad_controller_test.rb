@@ -43,5 +43,52 @@ module Tools
       assert_response :success
       assert_select ".addon-card .addon-title", text: "hex_plate"
     end
+
+    # --- parameter coercion (Task 10) ---------------------------------------------------------
+    # The full controller suite is Task 12; these three exist because the coercion is a DESIGN
+    # DECISION made here, and an undefended one would quietly rot back into a pass-through.
+
+    test "preview coerces every submitted value to its declared type before rendering" do
+      post preview_tools_openscad_path, params: {
+        generator: "hex_plate",
+        params: { cols: "6", wall: "2.5", rounded: "true", label: "hi", span: "10, 20,30", mode: "2" }
+      }
+      # The PNG step shells out to the stl-thumbnailer binary, so a box without it answers 422 by
+      # design (PreviewUnavailable, not a coercion refusal). What this test is about is what reached
+      # the SIDECAR, which is identical either way.
+      assert_response(Maker::Previews::Stl.available? ? :success : :unprocessable_entity)
+      assert_equal({ "cols" => 6, "wall" => 2.5, "rounded" => true, "label" => "hi",
+                     "span" => "[10,20,30]", "mode" => 2 },
+                   OpenscadClient.current.rendered[:params])
+    end
+
+    test "a value that will not coerce is REFUSED, not handed to OpenSCAD to ignore" do
+      # THE WHOLE POINT (observed against the real sidecar): OpenSCAD's parameterSet silently
+      # ignores a value it cannot parse and renders the DEFAULT geometry — so a pass-through gives a
+      # typo a 200 and a wrong model, saved to the library, with no feedback anywhere.
+      # An ARRAY of pairs, not a Hash: two of these probe the same field, and a Hash literal would
+      # keep only the last one — dropping a case while staying green.
+      [
+        [ "cols",    "))(" ],   # the observed real case
+        [ "cols",    "4.5" ],   # an int field, non-integral
+        [ "wall",    "" ],      # a cleared number field: the default is NOT what they asked for
+        [ "rounded", "maybe" ], # not a boolean, and must not become `true` by falling through
+        [ "span",    "10,,30" ], # a hole in the vector
+        [ "mode",    "3" ]      # not one of the declared choices
+      ].each do |name, bad|
+        OpenscadClient.stub = FakeOpenscad.new # a fresh recorder per case
+        post preview_tools_openscad_path, params: { generator: "hex_plate", params: { name => bad } }
+        assert_response :unprocessable_entity, "#{name}=#{bad.inspect} should be refused"
+        assert_match(/#{name}/, response.body, "the message should name the parameter")
+        assert_nil OpenscadClient.current.rendered, "#{name}=#{bad.inspect} must never reach the sidecar"
+      end
+    end
+
+    test "a parameter the design doesn't declare is refused, not silently dropped" do
+      post preview_tools_openscad_path, params: { generator: "hex_plate", params: { colz: "9" } }
+      assert_response :unprocessable_entity
+      assert_match(/colz/, response.body)
+      assert_nil OpenscadClient.current.rendered
+    end
   end
 end
