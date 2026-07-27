@@ -328,6 +328,24 @@ module Web
       assert_select "dialog.move-conflict", count: 0
     end
 
+    # THE PARAM OUTLIVES THE CONFLICT. #relocate lands on the project page, so a browser Back
+    # re-GETs the file page with the id still in the URL — and the prompt would state something now
+    # false ("it was left where it is") while offering "bracket (2) (2).stl".
+    test "the prompt stops rendering once the move it offered has happened" do
+      seed_collision
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
+      att = @lamp.file_attachments.sole
+      follow_redirect!
+      assert_select "dialog.move-conflict", 1, "precondition: the prompt is showing"
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "bracket (2).stl" }
+
+      get file_path("f-1", move_conflict: att.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+    end
+
     # THE CONCERN'S CONTRACT IS "nil FOR EVERY can't-build CASE", and these are the two that are
     # not about ownership. Neither is hypothetical: the node one 500s the page it renders on
     # (@move_conflict.node.name on nil), and the folder one renders a prompt CLAIMING a collision

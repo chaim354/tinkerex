@@ -48,6 +48,14 @@ module MoveConflicts
     node = current_user.nodes.present.find_by(node_id: attachment.node_id)
     return nil unless project && node && project.folder_node_id.present?
 
+    # THE CONFLICT IS OVER ONCE THE FILE IS IN THE FOLDER, and the param OUTLIVES it: #relocate
+    # redirects to the project page, so a browser Back lands here with the id still in the URL.
+    # Re-rendering would state something now false ("so it was left where it is") and offer to move
+    # the file in as "bracket (2) (2).stl". A live collision cannot coexist with the node already
+    # being there — #create answers :already_there before it can reach :conflict — so this is a
+    # pure staleness check, not a second opinion about whether the names clash.
+    return nil if node.parent_node_id == project.folder_node_id
+
     ConflictPrompt.new(
       project:, node:,
       # nil when "(2)" through "(9)" are all taken — the partial then renders the explanation
