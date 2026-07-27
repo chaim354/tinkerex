@@ -612,9 +612,13 @@ class FilesController < ApplicationController
   #
   # Directories stay grouped AFTER files. `partition` rather than a second sort: it is O(n) and
   # stable by construction, where the sort it replaced was stable only because it hand-carried an
-  # index. SYMLINKS GROUP WITH FILES, deliberately -- they are usually symlinks TO files, and the
-  # `kind: :desc` ordering this grouping replaced put them FIRST, above every real file, purely
-  # because "symlink" > "file" alphabetically. That was an accident of the column, not a design.
+  # index. SYMLINKS GROUP WITH FILES here, deliberately -- this pass asks only "is it a directory",
+  # and a symlink is not one, so it belongs in the file block rather than above every real file
+  # (which is where the `kind: :desc` ordering this replaced put it, purely because "symlink" >
+  # "file" alphabetically -- an accident of a column, not a design). WHERE IT SITS INSIDE THAT
+  # BLOCK IS sort_key's ANSWER, AND IT IS "WITH THE OTHER SYMLINKS", NOT "WITH THE EXTENSION IT IS
+  # NAMED AFTER" -- see the type branch there. The two are separate questions and an earlier
+  # reading of this paragraph ("they are usually symlinks TO files") was used to answer both.
   def sort_nodes(nodes, info, key, dir)
     sign = (dir == "desc") ? -1 : 1
     ordered = nodes.each_with_index.sort { |(a, ai), (b, bi)|
@@ -627,11 +631,37 @@ class FilesController < ApplicationController
   # One key per node, and every branch must answer the SAME Ruby type for a given key or the
   # comparison raises: a nil mtime (a directory, an un-stat'd row) becomes 0, not nil.
   #
-  # "type" is the extension, downcased -- the same string FilesHelper#file_type_label upcases for
-  # the column, so the header and the cells under it agree.
+  # "type" IS THE Type COLUMN'S OWN LABEL, DOWNCASED -- the extension for a file, and the literal
+  # "symlink" for a symlink, which is what FilesHelper#file_type_label renders in the cell. That
+  # helper states the agreement as an invariant ("MUST AGREE WITH WHAT THE 'Type' HEADER SORTS BY")
+  # and this is the half that holds it up.
+  #
+  # A SYMLINK IS ITS OWN TYPE, NOT THE EXTENSION IT HAPPENS TO END IN, and keying it on the
+  # extension CONTRADICTED the column two lines below the invariant. Reproduced with aaa.stl,
+  # bbb.stl, ccc.3mf and a symlink mid.stl: `?sort=type&dir=asc` rendered Type cells reading
+  # ["3MF", "Symlink", "STL", "STL"] -- a row labelled Symlink sitting inside the STL block, under
+  # a header claiming to sort by exactly what the cells show. `symlink` is a first-class
+  # Node::KIND that git-on-mount depends on, so this is a real row, not a curiosity.
+  #
+  # THE LITERAL "symlink", NOT A SENTINEL THAT SORTS FIRST OR LAST: the group then lands where the
+  # word "Symlink" falls among the other labels, which is what someone reading the column expects,
+  # and it needs no rule about which end symlinks belong at. (The `kind: :desc` ordering the
+  # grouping pass replaced put them first, above every real file, purely because "symlink" sorts
+  # after "file" -- an accident of a different column, which is why an explicit end would be one
+  # too.)
+  #
+  # GROUPING WITH FILES RATHER THAN FOLDERS IS A DIFFERENT QUESTION, still answered the same way in
+  # sort_nodes' partition: a symlink is not a directory. Its own type key decides where it sits
+  # INSIDE the file block.
+  #
+  # Two cases where the key and the label part company, both left alone deliberately: an
+  # extension-less file keeps the EMPTY key while its cell shows an em-dash (so it sorts with the
+  # other no-type files at whichever end "" falls, rather than at whichever end "—" falls -- both
+  # group, and "" is the one already shipped), and a DIRECTORY is keyed on its extname, which is
+  # read only for dir-against-dir order since sort_nodes partitions them out afterwards.
   def sort_key(node, info, key)
     case key
-    when "type"     then File.extname(node.name).downcase.delete(".")
+    when "type"     then node.symlink? ? "symlink" : File.extname(node.name).downcase.delete(".")
     when "modified" then info[node.node_id]&.mtime || 0
     else                 node.name.downcase
     end
@@ -674,6 +704,22 @@ class FilesController < ApplicationController
 
   # Every file in the library whose name ends in one of `exts`. One OR-ed LIKE per extension, all
   # bound -- the interpolation is the CLAUSE (a fixed string repeated), never a value.
+  #
+  # `kind: "file"` EXCLUDES SYMLINKS AS WELL AS DIRECTORIES, AND THE SYMLINK HALF IS A DECISION,
+  # not a spillover from the directory one. Spec §6.3 argues only the directory ("a directory has
+  # no extension and never appears in a type view"); this is the missing sentence. A type filter
+  # asks "show me my STLs", and a symlink named alias.stl is NOT an STL -- its content is a path to
+  # one. That is the same answer the Type column and sort_key give it (both say "Symlink", not
+  # "STL"), so admitting it here would put a row in the results whose own Type cell contradicts the
+  # filter that selected it.
+  #
+  # A DELIBERATE DIVERGENCE FROM THE FOLDER VIEW, WHICH DOES LIST THEM -- do not "fix" it back. The
+  # two views answer different questions: a folder view shows what is IN a folder, so omitting a
+  # symlink would hide something that is really there, while a type view shows what you asked for
+  # and this is not that type. Where the link points inside the library the real file is already in
+  # the results on its own row; where it points outside, there is no file of that type to list.
+  # It is also why flat_order needs no symlink branch to match sort_key's: its CASE only ever ranks
+  # rows this scope admitted, and no symlink is one.
   #
   # LOWER(name), not a bare LIKE: SQLite's LIKE is ASCII-case-insensitive and Postgres' is not, so
   # the bare form would answer differently on self-host and managed. `exts` is already downcased.

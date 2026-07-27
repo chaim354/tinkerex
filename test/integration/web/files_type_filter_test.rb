@@ -486,6 +486,53 @@ module Web
       assert_select ".ext-filter a.chip.active[href=?]", files_path(ext: (full - [ "pdf", "stl" ]).join(","))
     end
 
+    # THE ESCAPE HATCH OBEYS THE SAME BOUND AS THE CHIPS — the test above covers only the chips,
+    # and while it passed the field two inches away still accepted a ninth extension and dropped
+    # it. Reproduced: with the eight below active, `add_ext=lbrn2` came back with the same eight
+    # chips, no .lbrn2 row, and nothing on the page saying why — beside a `.lbrn2` CHIP correctly
+    # rendered inert for that exact reason.
+    #
+    # BOTH HALVES MATTER. Asserting only "disabled when full" passes for a field that is ALWAYS
+    # disabled, so the not-full case is asserted too; and the sentence is asserted to be the chips'
+    # own (ext_limit_title), because two controls answering one condition differently is the defect
+    # being fixed, not the wording.
+    test "the free-text field goes inert with the chips instead of accepting a ninth type" do
+      full = %w[stl 3mf obj step stp svg dxf pdf]
+      assert_equal FilesController::MAX_EXTS, full.size
+      # Read from the helper, not retyped: a literal here would let the two controls drift apart
+      # again while this test stayed green on the copy it happened to hold.
+      title = Object.new.extend(FilesHelper).ext_limit_title
+
+      get files_path(ext: full.join(","))
+      assert_select ".ext-other input[name=add_ext][disabled]"
+      assert_select ".ext-other button[type=submit][disabled]"
+      assert_select ".ext-other input[name=add_ext][title=?]", title
+      # And the chip beside it says the SAME sentence, from the same string.
+      assert_select ".ext-filter span.chip.disabled[title=?]", title
+
+      # One slot free: the field is a working control again.
+      get files_path(ext: full.take(7).join(","))
+      assert_select ".ext-other input[name=add_ext]"
+      assert_select ".ext-other input[name=add_ext][disabled]", count: 0
+      assert_select ".ext-other button[type=submit][disabled]", count: 0
+    end
+
+    # A SYMLINK IS NOT A FILE TYPE, and the flat filter's `kind: "file"` says so deliberately —
+    # spec §6.3 argues only the DIRECTORY case, so this is the sentence that was missing. The
+    # divergence from the folder view is the point of the test: the folder view lists the symlink
+    # (it is really there), the type view does not (it is not an STL — its content is a path).
+    test "the type filter excludes symlinks, which the folder view still lists" do
+      @user.nodes.create!(node_id: "n-alias", name: "alias.stl", kind: "symlink",
+                          mtime: 1_000_000_000, size: 1)
+
+      get files_path
+      assert_includes listed_names, "alias.stl"
+
+      get files_path(ext: "stl")
+      assert_equal %w[deep.stl root.stl tiny.stl], listed_names.sort
+      assert_not_includes listed_names, "alias.stl"
+    end
+
     private
 
     # The SQL a block really issues. SCHEMA/TRANSACTION and PRAGMA are excluded exactly as

@@ -42,6 +42,11 @@ module Web
       end
     end
 
+    # The Type cell of each row, in document order — what FilesHelper#file_type_label rendered.
+    def listed_types
+      css_select("table.files tbody tr").map { |row| row.css("td")[1].text.strip }
+    end
+
     test "defaults to name ascending" do
       get files_path
       assert_equal %w[alpha.stl beta.3mf gamma.pdf zeta-folder], listed_names
@@ -126,8 +131,31 @@ module Web
       get files_path
 
       assert_equal %w[alpha.stl beta.3mf gamma.pdf link-to.stl zeta-folder], listed_names
-      types = css_select("table.files tbody tr").map { |row| row.css("td")[1].text.strip }
-      assert_equal %w[STL 3MF PDF Symlink Folder], types
+      assert_equal %w[STL 3MF PDF Symlink Folder], listed_types
+    end
+
+    # THE TEST ABOVE STRUCTURALLY CANNOT SEE THIS, which is why the disagreement it covers survived
+    # the task that introduced it: it asserts under the DEFAULT (name) sort, where sort_key's type
+    # branch is never called. Under a Type sort the Symlink row sorted on the extension it happens
+    # to end in — cells reading ["3MF", "Symlink", "STL", "STL"] with `mid.stl` inside the STL
+    # block, contradicting the invariant file_type_label states two lines above the branch that
+    # broke it.
+    #
+    # TWO SYMLINKS WITH DIFFERENT EXTENSIONS IS THE WHOLE POINT: one alone is trivially "grouped",
+    # and two that share an extension would still pass with the old key. These must sit ADJACENT
+    # whichever way the sort runs, and land where the word "Symlink" falls among the other labels.
+    test "a Type sort groups symlinks together instead of scattering them through an extension" do
+      @user.nodes.create!(node_id: "n-mid", name: "mid.stl", kind: "symlink", mtime: 1, size: 1)
+      @user.nodes.create!(node_id: "n-oth", name: "other.3mf", kind: "symlink", mtime: 1, size: 1)
+
+      get files_path(sort: "type", dir: "asc")
+      assert_equal %w[beta.3mf gamma.pdf alpha.stl mid.stl other.3mf zeta-folder], listed_names
+      assert_equal %w[3MF PDF STL Symlink Symlink Folder], listed_types
+
+      # Descending reverses the groups, never splits one — the tie-break runs ascending both ways.
+      get files_path(sort: "type", dir: "desc")
+      assert_equal %w[mid.stl other.3mf alpha.stl gamma.pdf beta.3mf zeta-folder], listed_names
+      assert_equal %w[Symlink Symlink STL PDF 3MF Folder], listed_types
     end
 
     test "the choice persists in a cookie across a request with no params" do

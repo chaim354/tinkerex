@@ -23,7 +23,7 @@
               controller then drops (resolve_exts keeps the first MAX_EXTS) — the chip would look
               live, navigate, and change nothing. A span with aria-disabled says why instead. %>
           <span class="chip disabled" aria-disabled="true"
-                title="Turn one off first — at most <%= FilesController::MAX_EXTS %> types at a time.">.<%= ext %></span>
+                title="<%= ext_limit_title %>">.<%= ext %></span>
         <% end %>
       <% end %>
     </span>
@@ -32,12 +32,31 @@
   <%# Anything the curated list has never heard of (.f3d, .scad). One GET field; the controller
       joins add_ext onto ext, so there is still exactly one filter param. `pattern` is a hint to
       the browser, never the guard — FilesController::EXT_RE is, because a GET URL reaches the
-      action without ever passing through this form. %>
+      action without ever passing through this form.
+
+      IT GOES INERT WITH THE CHIPS, and for their reason rather than for symmetry: resolve_exts
+      keeps only the first MAX_EXTS, so with the set full this field appends a value the controller
+      then drops. Reproduced before the fix — `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2`
+      returned the same eight chips and no .lbrn2, while the `.lbrn2` CHIP two inches away was
+      already correctly rendered as an inert span saying why. A control that renders, accepts input
+      and silently does nothing is the exact condition ext_slots_left? was written to prevent; it
+      was fixed for the chips and missed for the escape hatch beside them.
+
+      DISABLED BEFORE THE SUBMIT, NOT EXPLAINED AFTER IT. The only thing a user can do about this is
+      turn one off, which is the sentence the chips already carry (ext_limit_title, one string for
+      both) — and saying it up front costs no round-trip to tell them what the row could have said
+      before they typed. `disabled` also keeps the value out of the query string entirely, so there
+      is no dropped param to explain. A HAND-EDITED URL IS STILL DROPPED SILENTLY, deliberately:
+      that is EXT_RE's standing rule for everything arriving in a URL ("anything else is dropped,
+      not rejected"), and this finding is about a control, not about input. %>
+  <% slots_left = ext_slots_left?(@exts) %>
   <form method="get" action="<%= files_path %>" class="ext-other">
     <% if @exts.any? %><input type="hidden" name="ext" value="<%= @exts.join(',') %>"><% end %>
-    <input type="text" name="add_ext" placeholder="or an extension…" size="12"
-           aria-label="Filter by another extension" pattern="[A-Za-z0-9]{1,8}">
-    <button type="submit" class="linkbtn">Filter</button>
+    <%= tag.input type: "text", name: "add_ext", placeholder: "or an extension…", size: 12,
+                  "aria-label": "Filter by another extension", pattern: "[A-Za-z0-9]{1,8}",
+                  disabled: !slots_left, title: (ext_limit_title unless slots_left) %>
+    <%= tag.button "Filter", type: "submit", class: "linkbtn", disabled: !slots_left,
+                             title: (ext_limit_title unless slots_left) %>
   </form>
 
   <% if @exts.any? %>

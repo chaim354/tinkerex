@@ -18,11 +18,11 @@ module FilesHelper
   end
 
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY
-  # (FilesController#sort_key's "type" branch): the file's extension. This column used to be
-  # headed "Kind" and render `node.kind`, which is the word "file" on every file row -- made
-  # sortable without this change, it would be a column whose every value is identical while the
-  # rows around it reorder, so the sort would read as broken and the header would be naming
-  # something it does not show.
+  # (FilesController#sort_key's "type" branch): the file's extension, or "Symlink" for a symlink.
+  # This column used to be headed "Kind" and render `node.kind`, which is the word "file" on every
+  # file row -- made sortable without this change, it would be a column whose every value is
+  # identical while the rows around it reorder, so the sort would read as broken and the header
+  # would be naming something it does not show.
   #
   # A directory says "Folder" rather than "dir": it is the one row with no extension to show, and
   # the sort groups directories together regardless of key. An extension-less file gets the same
@@ -31,7 +31,12 @@ module FilesHelper
   # A SYMLINK SAYS SO, rather than showing the extension of whatever it is named after. `symlink`
   # is a first-class Node::KIND that git-on-mount depends on, and the column this replaced said
   # "symlink" plainly; falling through to the file branch would have quietly reclassified them.
-  # (They still group WITH files in the sort -- see FilesController#sort_nodes for why.)
+  # THE SORT AGREES: sort_key answers the literal "symlink" for one, so a Type sort groups them
+  # rather than scattering them through the extension they end in. It did not until a review drove
+  # it, and the invariant above was contradicted two lines below itself -- the cell said "Symlink"
+  # while the key said "stl", so the row sorted into the middle of the STL block. (They still sit
+  # in the FILE block rather than with the folders; that is sort_nodes' partition, a separate
+  # question.)
   def file_type_label(node)
     return "Folder" if node.dir?
     return "Symlink" if node.symlink?
@@ -84,5 +89,17 @@ module FilesHelper
   # Can another extension still be turned on? `resolve_exts` keeps only the FIRST MAX_EXTS, so
   # once the set is full an inactive chip's URL would append a value the controller silently drops
   # — a control that renders, links, and does nothing. The row renders those inert instead.
+  #
+  # THE FREE-TEXT FIELD BESIDE THE CHIPS ASKS THIS TOO, and it did not until a review drove it:
+  # submitting `add_ext=lbrn2` with eight already active returned the same eight chips and no
+  # `.lbrn2`, two inches from a `.lbrn2` chip correctly rendered inert for that exact reason. One
+  # predicate, both controls.
   def ext_slots_left?(active_exts) = active_exts.size < FilesController::MAX_EXTS
+
+  # The one sentence both full-set controls say. DEFINED ONCE because they are two controls
+  # answering one condition, and the failure being fixed here is precisely the two of them
+  # answering it differently — a second copy of this string is how they would drift again.
+  def ext_limit_title
+    "Turn one off first — at most #{FilesController::MAX_EXTS} types at a time."
+  end
 end

@@ -301,6 +301,8 @@ table.files th a:hover { text-decoration: underline; }
 .ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .ext-other { display: inline-flex; gap: 4px; align-items: center; }
 .ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+/* The full-set state, matching .chip.disabled below — the two controls answer one condition. */
+.ext-other input:disabled, .ext-other button:disabled { opacity: .45; cursor: not-allowed; }
 .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
   background: var(--soft); color: var(--muted); font-size: 13px; }
 .ext-filter .chip.disabled { opacity: .45; cursor: not-allowed; }
