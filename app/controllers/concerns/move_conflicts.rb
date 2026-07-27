@@ -13,8 +13,9 @@
 #
 # Everything is scoped to current_user, so a guessed or foreign attachment id resolves to nil and
 # the prompt simply does not render. nil is the answer for every "can't build a prompt" case
-# (missing param, stale id, tombstoned file, a project whose folder was never created) — this is a
-# transient UI affordance, and a 404 for a dismissed prompt would be worse than silence.
+# (missing param, stale id, tombstoned file, a project whose folder was never created, a conflict
+# already resolved) — this is a transient UI affordance, and a 404 for a dismissed prompt would be
+# worse than silence.
 module MoveConflicts
   extend ActiveSupport::Concern
 
@@ -38,8 +39,10 @@ module MoveConflicts
     # prompt offering to move the file somewhere it has nothing to do with.
     #
     # It is also what makes `attachment.attachable` safe to read unscoped below: the attachment is
-    # current_user's, and every writer of this table (six of them, all in app/controllers) attaches
-    # to a parent it resolved from current_user.
+    # current_user's, and every writer of this table attaches to a parent it resolved from
+    # current_user (audited across all of them — the two here, Projects::UploadsController,
+    # Models::AttachmentsController, Projects::EntryPhotosController, CurrentProject, and
+    # V1::Maker::FileAttachmentsController#resolve_parent).
     attachment = current_user.maker_file_attachments
                              .find_by(id: id, attachable_type: "Maker::Project")
     return nil unless attachment
