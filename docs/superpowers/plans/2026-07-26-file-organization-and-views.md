@@ -2239,10 +2239,23 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
-## Task 7: Documentation
+## Task 7: Documentation — ✅ DONE 2026-07-27
 
 **Files:**
 - Modify: `docs/STATUS.md`
+
+**Done, and three things went beyond what this task listed:**
+- **`CLAUDE.md` too**, per §15's "update this file **and** `docs/STATUS.md` when the architecture
+  moves". Two edits, both brief and both pointing at STATUS.md for detail: `Maker::MoveNode` /
+  `Maker::AttachToProject` as the maker layer's named home for the cross-backend move and the
+  attach policy (§12 step 9), and a correction to the "unexplained intermittent" sentence in
+  §12 step 10, which claimed nobody had captured the message.
+- **`test/test_helper.rb:27`'s comment was FALSE** and was cited as the explanation for the
+  intermittent: it said "each parallel worker shares one DB" where `ls storage/` shows
+  `test.sqlite3_0` … `test.sqlite3_9`. Corrected in place — comment only, no behavior change.
+- **Step 1's open-list check found two stale entries**, amended rather than appended to: the
+  intermittent is no longer "never captured", and `FilesController#index` is no longer unbounded
+  in every mode (flat mode has `FLAT_LIMIT`; the folder view is unchanged).
 
 - [ ] **Step 1: Read the open-items list**
 

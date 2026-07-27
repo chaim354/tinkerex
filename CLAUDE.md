@@ -466,6 +466,17 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
    bandwidth controls all landed** (2026-06-15, engine-side; selective sync still needs an app
    surface). *Remaining optional file-layer item (non-correctness):* **at-rest chunk encryption**
    (deliberately last; `docs/parity-roadmap.md`, `docs/research-sync-competitors.md`).
+   - **The maker WEB layer is where this step has actually been moving** (projects, model library,
+     previews, the `/tools` addon framework, current-project, the 3D viewer, file organization) —
+     server-rendered Hotwire on `Maker::*` models, session-authed, **never** the device-token v1
+     API. Each arc is recorded in `docs/STATUS.md` rather than here; only the structural pieces
+     belong in this file. The one added 2026-07-27: **`Maker::MoveNode`** — the maker layer's named
+     home for the cross-backend **move** (`port_writable?` → `FileLayer.current.move`, else
+     `Sync::Mutation.apply(op: "move")` + broadcast), the sibling of `Maker::LibraryFolder`'s
+     `mkdir` and the **third** appearance of that branch, plus **`Maker::AttachToProject`**, which
+     owns the attach-and-relocate policy now that it has two doors. **Controllers call these and
+     never reach into `Sync::` or the port themselves** — that seam is what keeps step 10's §10
+     tripwire honest, and a fourth hand-rolled copy of the branch is the thing to refuse.
 10. **Split the maker layer from the file layer** (2026-07-14) so a **web-only deployment can be
     backed by a plain network share or the user's own S3** instead of the FastCDC chunk store —
     the Immich/Photoprism "point it at my existing NAS" on-ramp. **✅ COMPLETE (2026-07-17,
@@ -801,11 +812,14 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
           happen.** All three writing paths now ask.
       - ~~**Shipped knowingly, do not let these fall off:** a measured N+1 in
         `FilesController#index`; `Share#write`/`S3#write` raise `NotFound` for a clobber.~~
-        **BOTH CLOSED by the phase 4 follow-up — see the bullet below.** The **unexplained
+        **BOTH CLOSED by the phase 4 follow-up — see the bullet below.** ~~The **unexplained
         intermittent** stays open: two agents each saw one `1 errors` run that never reproduced
-        (~73 and ~15+ subsequent full runs), neither captured the message. **Recorded as
-        unexplained: not fixed, and not established as pre-existing.** Not seen again across the
-        follow-up's runs either, which is not evidence it is gone.
+        (~73 and ~15+ subsequent full runs), **neither captured the message**.~~ **CAPTURED
+        2026-07-27** (`SQLite3::BusyException` in `Tools::GeneratorsControllerTest`'s `setup`) —
+        **still unexplained, but no longer unobserved**, and the cross-worker cause offered with
+        the capture is **disproved**: each parallel worker has its own SQLite file
+        (`storage/test.sqlite3_0…_9`), so the lock holder is inside the failing worker. Full
+        record + the corrected `test/test_helper.rb` comment: `docs/STATUS.md`, "The intermittent".
     - **Phase 4 follow-up DONE** (2026-07-17, branch `worktree-file-layer-followup`, 4 commits) —
       the three items phase 4 left open. Suite **954 → 978**, **identical on all three legs**
       (each **978 runs / 3029 assertions / 0 failures / 0 errors / 5 skips**). The decisions a
