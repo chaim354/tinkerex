@@ -1018,7 +1018,15 @@ and add this action after `#create`:
     # leaf and relocate_into_project maps the refusal to :unavailable — a crafted name gets a
     # flash, never a traversal and never a 500.
     def relocate
-      node = current_user.nodes.present.find_by(node_id: params.require(:node_id))
+      # kind: "file" IS A GUARD, NOT A FILTER. #create reaches MoveNode only behind `node.file?`,
+      # but here BOTH ids come from the request — and Maker::MoveNode deliberately has no cycle
+      # check (see its header). A crafted node_id naming a DIRECTORY would move a dir under its
+      # own descendant on share and chunk (s3 alone refuses it, via movable_file!), and a cycle in
+      # `nodes` makes the WITH RECURSIVE walk in Sync::Search spin unboundedly — fatal on SQLite,
+      # which has no statement timeout. Same hazard V1::NodesController#move spends
+      # would_create_cycle? on; a project folder only ever holds files, so refusing is cheaper
+      # than detecting.
+      node = current_user.nodes.present.find_by(node_id: params.require(:node_id), kind: "file")
       return redirect_to(project_path(@project), alert: "That file isn't in your library.") unless node
 
       case relocate_into_project(node, new_name: params[:new_name].presence)
