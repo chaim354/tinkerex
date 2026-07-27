@@ -34,6 +34,7 @@ probe that produced them is reproduced as Task 2's build-time assertion.
 | F12 | `--export-format=param` works and emits `{"title":…,"parameters":[…]}` — exact shape in §A below | probe v4 F |
 | F13 | **A zero-parameter file omits the `parameters` key entirely** — `{"title":"empty"}`, not `[]` | probe v4 G |
 | F14 | `-p <sets.json> -P <name>` injects params (verified by output geometry changing: 9×2=18 cells → 3881 bytes vs 4×3=12 → 3091). Values are **strings**, incl. `"[1,2,3]"` for a vector and `"false"` for a bool | probe v4 H |
+| F16 | **OpenSCAD's 3MF output is NOT byte-reproducible.** Three renders of the same file with the same params gave 3096 / 3098 / 3099 bytes, and the inner `3D/3dmodel.model` differs too. The stable, parameter-determined signal is the **vertex count** (one cube = 8 vertices, so 4x3 -> 96 and 9x2 -> 144). **Never assert byte-equality across two fresh renders** — a cache HIT is fine, it replays stored bytes | measured in the built image |
 | F15 | `include <../../etc/hostname>` resolves and reads outside the temp dir (fails only because it isn't valid SCAD). Spec §10's "accepted, documented" note is real, not theoretical | probe v4 L |
 
 ### §A — the exact `--export-format=param` JSON
@@ -840,6 +841,8 @@ BoxesClient::Generator uses, so the two addons' field partials stay aligned."
 *(Tasks 4–14 continue below.)*
 
 ## Task 4: The render path (`render.py`) — subprocess, limits, cache
+
+> **Do not assert byte-equality across two FRESH renders anywhere in this task or Task 5** (F16): OpenSCAD's 3MF output is not byte-reproducible. The cache tests are safe because a HIT replays stored bytes — that is a different claim from "rendering twice gives the same bytes", which is false.
 
 **Files:**
 - Create: `sidecar/openscad/render.py`

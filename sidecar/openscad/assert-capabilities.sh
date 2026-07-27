@@ -63,15 +63,34 @@ PY
 echo "assert: --export-format=param dumped the Customizer schema"
 
 # --- 6. parameter INJECTION works ----------------------------------------------------------------
-# Rendering with the defaults is useless for a parametric generator. Prove -p/-P actually changes the
-# geometry: 9x2=18 cells must not produce the same bytes as the default 4x3=12.
+# Rendering with the defaults is useless for a parametric generator, so prove -p/-P really reaches
+# the geometry.
+#
+# DO NOT compare BYTES here, and do not "simplify" this back to a cmp. OpenSCAD's 3MF output is NOT
+# byte-reproducible: two renders of the SAME file with the SAME parameters differ (measured 3096 /
+# 3098 / 3099 bytes across three runs, and the inner 3D/3dmodel.model differs too). A byte compare
+# therefore ALWAYS reports "different" and the assertion can never fail — it would pass just as
+# happily if -p/-P were ignored completely. That is the exact failure this whole script exists to
+# prevent, so it must not appear inside it.
+#
+# The VERTEX COUNT is stable and parameter-determined: the probe emits one cube (8 vertices) per
+# cell, so the default 4x3 gives 96 and an injected 9x2 gives 144. Assert on that.
+verts() { # verts <3mf> -> number of <vertex elements in the OPC model part
+  python3 -c "
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as z:
+    name = next(n for n in z.namelist() if n.endswith('.model'))
+    print(z.read(name).decode('utf-8', 'replace').count('<vertex '))
+" "$1"
+}
 printf '{"parameterSets":{"s":{"cols":"9","rows":"2"}},"fileFormatVersion":"1"}' > /tmp/set.json
 "$BIN" -p /tmp/set.json -P s -o /tmp/inj.3mf /probe.scad >/dev/null 2>&1 || fail "-p/-P injection failed"
 [ -s /tmp/inj.3mf ] || fail "-p/-P injection produced no bytes"
-if cmp -s /tmp/t.3mf /tmp/inj.3mf; then
-  fail "-p/-P produced byte-identical output — parameters are being IGNORED"
-fi
-echo "assert: -p/-P parameter injection changes the geometry"
+BASE_V="$(verts /tmp/t.3mf)"
+INJ_V="$(verts /tmp/inj.3mf)"
+[ "$BASE_V" = "96" ]  || fail "default render has $BASE_V vertices, expected 96 (4x3 cells x 8)"
+[ "$INJ_V"  = "144" ] || fail "injected 9x2 render has $INJ_V vertices, expected 144 — -p/-P is being IGNORED"
+echo "assert: -p/-P parameter injection reaches the geometry ($BASE_V -> $INJ_V vertices)"
 
 rm -f /tmp/t.3mf /tmp/inj.3mf /tmp/p.json /tmp/set.json /tmp/bogus.3mf
 echo "ALL CAPABILITY ASSERTIONS PASSED"
