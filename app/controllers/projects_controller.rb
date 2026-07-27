@@ -13,6 +13,11 @@ class ProjectsController < ApplicationController
   # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
   include LibraryCapabilities
 
+  # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into this
+  # project's folder hit a name collision. The same prompt renders on the file page; an attach can
+  # come from either.
+  include MoveConflicts
+
   # STATUS order for the grouped list; `archived` is intentionally excluded from the default view.
   LISTED_STATUSES = %w[planning active paused done].freeze
 
@@ -40,6 +45,7 @@ class ProjectsController < ApplicationController
     rescue StandardError
       nil
     end
+    @move_conflict = move_conflict_prompt
   end
 
   def new

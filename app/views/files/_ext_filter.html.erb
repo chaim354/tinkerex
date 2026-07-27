@@ -1,0 +1,67 @@
+<%#
+  Filter the library by file type. Clicking a chip switches to a FLAT, whole-library list of that
+  type; chips compose, so "all my STLs and 3MFs" is two clicks. Rendered in both modes, so a
+  filter can be started from inside a folder (and immediately leaves it — see #index).
+%>
+<div class="ext-filter">
+  <% FilesHelper::EXT_FAMILIES.each do |family, exts| %>
+    <span class="ext-family" aria-label="<%= family %>">
+      <span class="muted family-label"><%= family %></span>
+      <% exts.each do |ext| %>
+        <% active = @exts.include?(ext) %>
+        <% if active || ext_slots_left?(@exts) %>
+          <%# aria-current, NOT aria-pressed. These chips are LINKS (a GET, a shareable URL), and
+              aria-pressed is only supported on role=button — on a link it is invalid ARIA that a
+              screen reader is free to ignore, which would leave the active state announced by
+              nothing but a colour. aria-current is valid here and is what the breadcrumb above
+              already uses. %>
+          <%= link_to ".#{ext}", ext_toggle_path(ext, @exts),
+                      class: "chip#{' active' if active}",
+                      "aria-current": (active ? "true" : nil) %>
+        <% else %>
+          <%# THE SET IS FULL. Linking this would produce a URL that appends a 9th extension the
+              controller then drops (resolve_exts keeps the first MAX_EXTS) — the chip would look
+              live, navigate, and change nothing. A span with aria-disabled says why instead. %>
+          <span class="chip disabled" aria-disabled="true"
+                title="<%= ext_limit_title %>">.<%= ext %></span>
+        <% end %>
+      <% end %>
+    </span>
+  <% end %>
+
+  <%# Anything the curated list has never heard of (.f3d, .scad). One GET field; the controller
+      joins add_ext onto ext, so there is still exactly one filter param. `pattern` is a hint to
+      the browser, never the guard — FilesController::EXT_RE is, because a GET URL reaches the
+      action without ever passing through this form.
+
+      IT GOES INERT WITH THE CHIPS, and for their reason rather than for symmetry: resolve_exts
+      keeps only the first MAX_EXTS, so with the set full this field appends a value the controller
+      then drops. Reproduced before the fix — `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2`
+      returned the same eight chips and no .lbrn2, while the `.lbrn2` CHIP two inches away was
+      already correctly rendered as an inert span saying why. A control that renders, accepts input
+      and silently does nothing is the exact condition ext_slots_left? was written to prevent; it
+      was fixed for the chips and missed for the escape hatch beside them.
+
+      DISABLED BEFORE THE SUBMIT, NOT EXPLAINED AFTER IT. The only thing a user can do about this is
+      turn one off, which is the sentence the chips already carry (ext_limit_title, one string for
+      both) — and saying it up front costs no round-trip to tell them what the row could have said
+      before they typed. `disabled` also keeps the value out of the query string entirely, so there
+      is no dropped param to explain. A HAND-EDITED URL IS STILL DROPPED SILENTLY, deliberately:
+      that is EXT_RE's standing rule for everything arriving in a URL ("anything else is dropped,
+      not rejected"), and this finding is about a control, not about input. %>
+  <% slots_left = ext_slots_left?(@exts) %>
+  <form method="get" action="<%= files_path %>" class="ext-other">
+    <% if @exts.any? %><input type="hidden" name="ext" value="<%= @exts.join(',') %>"><% end %>
+    <%= tag.input type: "text", name: "add_ext", placeholder: "or an extension…", size: 12,
+                  "aria-label": "Filter by another extension", pattern: "[A-Za-z0-9]{1,8}",
+                  disabled: !slots_left, title: (ext_limit_title unless slots_left) %>
+    <%= tag.button "Filter", type: "submit", class: "linkbtn", disabled: !slots_left,
+                             title: (ext_limit_title unless slots_left) %>
+  </form>
+
+  <% if @exts.any? %>
+    <%# No sort params, for the reason ext_toggle_path gives: the sort is in a cookie, so pinning
+        it here only bakes a stale choice into a URL someone copies. %>
+    <%= link_to "Clear filter", files_path, class: "muted clear-filter" %>
+  <% end %>
+</div>

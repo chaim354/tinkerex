@@ -49,13 +49,30 @@ Rails.application.routes.draw do
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do
-    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
+    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
+      # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
+      # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
+      # conflict flow needs a move endpoint either way, and this one can only ever move a file
+      # into the named project's own folder. A general move is a larger web surface than any
+      # feature here wants. `on: :collection` keeps it nested despite `shallow: true`.
+      post :relocate, on: :collection
+    end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
     # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
     resources :uploads, only: :create, module: :projects
   end
+
+  # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot
+  # set its form's action — the nested route needs the project in the PATH. Rather than add JS to
+  # rewrite `action` on change, the project rides as a body param here.
+  # Projects::AttachmentsController#set_project reads params[:project_id], which resolves a body
+  # param and a path segment identically, so this reaches the SAME action with no controller
+  # change and no second create path. (`attachments_path` is free: the shallow `resources
+  # :attachments` under :projects claims only project_attachments_path and the singular
+  # attachment_path.)
+  post "attachments", to: "projects/attachments#create", as: :attachments
 
   # Session-scoped "current project" (the top-bar default destination). Singular resource: no id in
   # the URL — the id rides in params[:project_id] so a blank one can clear it. `controller:` is

@@ -121,6 +121,405 @@ was §6's claim, now tested rather than asserted.
   Expect a small conflict at the top of this file and in `CLAUDE.md` §12 step 9, where both sides
   added text.
 
+## (2026-07-27): file organization and views (branch `claude/file-organization-views-3d06f4`)
+
+Six pieces on the web UI plus one new pair of maker services. Design/plan:
+`docs/superpowers/specs/2026-07-26-file-organization-and-views-design.md`,
+`docs/superpowers/plans/2026-07-26-file-organization-and-views.md`.
+
+**Suite 1277 → 1444**, identical on all three legs (`bin/rails test`, `LIBRARY_BACKEND=share`,
+`LIBRARY_BACKEND=s3`: each **1444 runs / 4939 assertions / 0 failures / 0 errors / 8 skips**). The
+last three came from the final review below: one pinning the free-text filter field, two pinning the
+symlink decision (its Type-sort grouping, and the flat filter's deliberate exclusion of it).
+**§10 held throughout** — nothing here touches sync, the changelog, conflicts, locks or the mounts.
+The controllers never reach into `Sync::` or the port; they call `Maker::MoveNode`, which owns the
+branch, exactly as `Maker::LibraryFolder` already does for `mkdir`.
+
+### `Maker::MoveNode` — the `port_writable` branch, written out once more, so it got a name
+
+`port_writable?` → `FileLayer.current.move`; else `Sync::Mutation.apply(op: "move")` +
+`LibraryChannel.broadcast_change`. **The node_id never changes**, which is the whole reason a move
+is safe to perform on a user's behalf — every attachment, BOM link and tag keeps pointing at the
+same file.
+
+**IT IS THE FIFTH APPEARANCE OF THAT BRANCH, NOT THE THIRD.** This heading and CLAUDE.md §12 step 9
+both said "the third" (after `Maker::LibraryFolder#mkdir` and `FilesController#destroy`) until a
+final whole-branch review counted them. The five: `Maker::LibraryFolder#mkdir`,
+`FilesController#destroy` (port `delete` vs `Sync::SubtreeDelete`), `TrashController#restore` (port
+`undelete` vs `Sync::Trash.restore`), `Maker::Addons::LibraryOutput.write` (port `write` vs a
+server-driven `Sync::Commit`), and this one. The undercount mattered because of what it was used to
+say — *"a fourth hand-rolled copy of the branch is the thing to refuse"* — which would have sent the
+next reader looking for a threshold that had already been passed twice. **Only two of the five are
+services; the other three are inline in the action that needs them**, so the real rule is that a new
+one needs an argument for being inline rather than named, and a verb more than one caller performs
+does not have one. Not counted: the `require_capability!` gates and the views that pick an upload
+*form* — those select a UI, which is `port_writable`'s stated one job.
+
+- **Collision is detected in the `nodes` catalog, BEFORE either door**, and that is not
+  belt-and-braces. `Share#move` refuses a taken name, but **chunk mode has no clobber guard of its
+  own** — `Sync::Mutation` would happily create two live siblings with one name. Checking the
+  catalog is the only check that is true on all three backends.
+- **The input guards are there because only ONE door has any.** The port resolves its own arguments
+  (`live_node!`, `parent_dir_rel!`), so share and s3 already refused a tombstoned source, a missing
+  parent, a parent naming a *file*, and another user's node. The chunk door is handed the object and
+  **succeeded at all four** — then broadcast a changelog `move` telling every device to reparent
+  under a node it does not have. A class whose whole job is to hide the difference between the doors
+  cannot let them disagree about what is valid.
+- **`#leaf!` is three separate lessons, each a real bad write.** A **non-String bypassed the check
+  entirely on chunk**: `new_name[]=a/b.stl` arrives as an Array, and `["a/b.stl"].include?("/")`
+  asks whether some *element* equals `"/"` — false, so the chunk door committed and broadcast a node
+  named `["a/b.stl"]`. `FileLayer::Share#leaf!` escaped only by calling `.to_s` first, so share and
+  s3 were safe and **chunk — the main deployment — was not**. **Refusing beats copying that `.to_s`,
+  and it was measured by mutating the line back**: the doors store the value they were *handed*, so
+  coercing here validates a String and then writes an Array. A ~4 KB name renamed the file and
+  appended the changelog entry **before** `CookieOverflow` 500'd the response → **`MAX_NAME_BYTES =
+  255`, bytes not characters** (ext4/APFS/NTFS all cap a component there). And **backslash joins
+  slash**, because the default Windows backend is CfAPI, where a name carrying `\` is a path.
+
+### Attach: a dropdown, chips, and the file moves in
+
+- **Attach dropdown + already-attached chips.** One `<select>` instead of a button per project, and
+  the projects a file is already in are finally visible, with a detach `×`. A **non-nested `POST
+  /attachments`** carries the project as a *body* param, because a `<select>` cannot set its form's
+  `action` and the nested route needs the project in the path; `#set_project` reads
+  `params[:project_id]`, which resolves a body param and a path segment identically, so this is the
+  **same action** with no second create path and no JS rewriting `action` on change.
+  **The explicit DOM id is load-bearing:** the layout's top-bar current-project switcher is *also*
+  named `project_id`, so a default-id `f.select` put a second `id="project_id"` on the page whenever
+  this control renders — i.e. whenever the user has a project. The label's `for` resolved to the
+  FIRST match, the top bar's, whose `onchange` fires `requestSubmit()`: clicking the words "Attach
+  to project:" focused the switcher, and one arrow key **silently changed the app's default save
+  destination**. Pinned by a test that also asserts the id is unique in the document.
+- **Attaching a file moves it into the project folder — on its FIRST project only.** A file another
+  project already claims stays put; a file should not be yanked out of the folder that project put
+  it in. **The attach is durable and the move is best-effort**: a collision or an unmounted NAS must
+  never lose a reference the user asked for, and the reference is exactly as true with the bytes in
+  the old folder. Every move outcome is a **symbol, not a raise**, because each one is an ordinary
+  thing that happens to a library and the caller words a different sentence for each — an exception
+  would make the happy path the only one written down.
+  **`FileLayer::NotFound` is in the best-effort bucket on the attach path** (unlike the explicit
+  relocate endpoint, where a caller error should 404): `#create` has already proved the node live and
+  ours and ensured the folder, so a `NotFound` from the move is a race or an out-of-band store
+  change — and **the attachment row is already committed**, so letting it escape would 500 a request
+  whose durable half succeeded.
+
+### A model's file brings the whole bundle — and moves NOTHING
+
+An imported model is a bundle: STL plus instructions plus cover plus source archive, curated into
+`Models/<slug>/` by the importer. Attaching any one of them attaches all of them and relocates
+nothing.
+
+- **The first instinct was to move the model's whole FOLDER into the project, and it is precluded.**
+  `FileLayer::S3#move` refuses directories outright (`movable_file!`) — S3 has no directory and no
+  rename, so a folder move is a **non-atomic cascade over every key with no undo for a half-finished
+  one**. **A rule that relocates ZERO bytes is identical on chunk, share and s3 by construction**,
+  rather than by three adapters happening to agree. That is why "moves nothing" is the rule and not
+  a limitation.
+- **Membership is the ATTACHMENT, not the folder.** A file can be moved out of `Models/<slug>/` and
+  still belong to the model, and a stray file can be dropped in and not belong, so the
+  `maker_file_attachments` row is what the rule asks. The lookup is **scoped to the user through
+  that table** — it keys files by a bare `node_id` string with no FK, so an unscoped lookup would
+  find another user's row pointing at the same id and attach that stranger's whole bundle.
+  `order(:id)` is the rule, not decoration: a bare `find_by` is `LIMIT 1` over an unordered set,
+  stable on SQLite by luck and plan-dependent on the managed Postgres.
+- **The bundle write is two queries, constant in N** (one `pluck` for what exists, one `insert_all`
+  for the rest). The loop it replaced cost 2 queries per file — **a 200-file model measured 407
+  queries / 113 ms** — inside a write transaction, so on the SQLite self-host the write lock was
+  taken at the first INSERT and held to COMMIT: **one bundle attach stalled every other writer in
+  the app**. It is the shape `stat_all` and the Reconciler already had to adopt. One statement is
+  also the whole atomicity story now, and a half-attached bundle is worse than none — it is the
+  gutted-folder failure wearing the attachment table.
+
+### `Maker::AttachToProject` — because the policy grew a second door
+
+🔴 **`#create` enforced three rules; `#relocate` called the move directly, below all of them, and
+inherited none.** Reproduced against a three-file model: `Models/widget/` was left holding two files
+while the flash said "Moved widget.stl into Desk Lamp." The same door also yanked files out of other
+projects' folders, and moved a file into a project it was **not attached to**, minting
+`Projects/<slug>` as a side effect of the POST. **Copy-pasting the guards into the second door would
+have left the trap set for the third**, so every rule is now a decision a door passes or opts out of
+**in writing**: `:not_a_file`, `:model_bundle`, `:attached_elsewhere`, the `find_or_create_by`, and
+the move all live in one object that both actions call.
+
+**`#refusal_for` is PUBLIC** for the same reason: the collision prompt has to ask the same question
+before *offering* a button. It was rendering a dialog wired to a move that gutted a folder.
+
+### The collision prompt — and the three ways a prompt can lie
+
+A name collision keeps the attachment and **asks**, instead of clobbering or silently doing nothing.
+The attachment id rides back as `?move_conflict=<id>` to whichever page the attach came from, which
+is why the resolution is a **concern** (`MoveConflicts`) and not two copies of an action.
+
+- **Ask the predicate the code raises on, not a proxy for it.** The prompt asked
+  `node.parent_node_id == project.folder_node_id` — *"did the move happen?"* — where its own sentence
+  claims *"a file with that name is already in the folder"*. It now calls
+  `Maker::MoveNode.collision?`, the exact predicate `#collision!` raises on, which **subsumes the old
+  check and stops three false renders** (an empty project folder, a colliding sibling deleted out of
+  band, a tombstoned project folder), **one of them reachable with no URL editing**.
+- **The param outlives the conflict.** `#relocate` lands on the project page, so a browser Back
+  re-GETs the file page with the id still in the URL — the prompt would then state something false
+  ("it was left where it is") and offer to move the file in as `bracket (2) (2).stl`.
+- **A resubmitted relocate is a no-op, not a second move.** The button is a POST, so a resubmit sends
+  the name the first one already applied, and the short-circuit only knew the `new_name.nil?`
+  spelling of "same name". The second submit was a **real move to where the file already was**,
+  appending a redundant changelog `move` on chunk and broadcasting it to every device. *"Nothing to
+  move — the sync engine must not be told otherwise"* is an invariant the suite already pinned for
+  `#create`.
+- **`#relocate` filters to `kind: "file"`, and that is a GUARD, not a filter.** Both ids come from
+  the request there and `Maker::MoveNode` deliberately has **no cycle check**, so a crafted `node_id`
+  naming a directory would move a dir under its own descendant — and a cycle in `nodes` makes
+  `Sync::Search`'s `WITH RECURSIVE` walk spin unboundedly, **fatal on SQLite, which has no statement
+  timeout**. A project folder only ever holds files, so refusing is cheaper than detecting.
+- 🟠 **The rescue was wide enough to hide bugs, with a green suite.** `rescue ArgumentError` wrapped
+  the whole method body, so arity drift in a port adapter's `#move`, a kwarg rename in `MoveNode`, or
+  a nil reaching `File.extname` all became a 302 and a "couldn't move it" flash. Now
+  `MoveNode::InvalidName` — an `ArgumentError` **subclass**, so existing rescues keep working — and
+  bare `ArgumentError` is a programming error again and stays a 500. `ActiveRecord::RecordInvalid`
+  was **dropped** from the list: no producer was found on the path, and an unjustified class there is
+  the same bug-hiding shape. This matters most in the rename prompt, the first caller that routes a
+  **user-typed name** through the mapping.
+
+### Sortable Name / Type / Modified — two ordering authorities, one per mode
+
+- **The folder view sorts in Ruby, and that is a decision (spec §5.2).** "Type" means the file's
+  **extension**, and there is no expression for it portable across SQLite (self-host) and Postgres
+  (managed) — `substr`/`instr` vs `substring`/`position`. The denormalized `ext` column that would
+  fix it has to be **written by `Sync::Commit` and `Sync::Mutation`**: writing to the sync layer to
+  serve a web view, **which is the §10 tripwire**. So all three keys sort the same way, uniformly,
+  and none is more exact than another.
+- **In FLAT mode the ORDER BY did move into SQL, and that is not a contradiction of §5.2.** There the
+  ORDER BY is what the **LIMIT selects with**, so SQL has to be the authority. It is sound precisely
+  because flat mode **already knows every extension a matching row can have** (at most `MAX_EXTS`),
+  so ranking them is a `CASE` over the same LIKE patterns the WHERE already uses — ordinary ANSI SQL,
+  no portable "extension" expression required. The folder view has no such list (its extensions are
+  whatever is on disk), which is why it keeps `sort_nodes`. **A test asks for the same files both
+  ways and compares the two orders**, which is the promise that actually has to hold. The tail is
+  `name, node_id`: `name` so the two views break ties alike, `node_id` so the truncation boundary is
+  total instead of the planner's choice.
+- **There is no Size sort, and the reason is the port** (spec §5.3): size is the one column whose
+  value is **not read from `nodes` on every backend** — `Chunk#stat_all` reads it from the `versions`
+  row, `Share#stat_all` straight off the node. It would be the only inexact key, and an inexact sort
+  in a column of exact-looking numbers is worse than no sort.
+- **"Kind" became "Type" and now renders the extension.** Making the old column sortable without that
+  would have left a header naming something it does not show: every value the word "file", while the
+  rows around it reorder. A **symlink says "Symlink"** rather than borrowing the extension of
+  whatever it is named after — and symlinks now group **with** files, where the `kind: :desc`
+  ordering this replaced put them above every real file purely because "symlink" > "file"
+  alphabetically.
+- **The comparator negates instead of reversing.** `sort ascending then reverse!` flips the **ties**
+  too, so "Type descending" reordered files *within* one extension for no reason the user asked for
+  — and it made the folder view disagree with the flat view, whose SQL breaks ties ascending.
+
+### A flat by-extension filter across the whole library
+
+`?ext=stl,3mf` lists every matching file at any depth, with a **Folder column** so the result is
+navigable and doubles as a way to find things. `?folder=` is **ignored outright** rather than
+intersected: "show me every .stl" that quietly meant "in this folder" would be the wrong answer to
+the only question the chips can ask. Extensions are whitelisted to `[a-z0-9]{1,8}`, which is what
+bounds the OR-ed LIKE, and the chip row is a **curated shelf, not real facet counts** — counting
+"you have 214 .stl files" means plucking every filename in the library on every Files page load,
+including plain folder browsing that never looks at the chips.
+
+- **`LOWER(name) LIKE`, not a bare LIKE:** SQLite's LIKE is ASCII-case-insensitive and Postgres' is
+  **not**, so the bare form answers differently on self-host and managed. **No test leg can see that**
+  — all three run SQLite — so it is pinned by reading the SQL. Same shape for **`ESCAPE '\'`**:
+  Postgres treats backslash as LIKE's escape character by default and **SQLite has none at all**, so
+  without it `sanitize_sql_like` is a **no-op on half the deployments** (verified on this repo's
+  connection: `'x.st\l' LIKE '%.st\_'` → 1, with `ESCAPE '\'` → 0). `EXT_RE` makes both unreachable
+  today, but "fails closed by accident on one database" is not defense in depth.
+- **`FLAT_LIMIT = 2000` is the first bound this page has ever had.** The folder view is still
+  **unbounded** — a folder is self-limiting, a whole-library type view is not — and the cut is
+  **announced** ("Showing the first N of M matching files"), because a silent one reads as "that's
+  all your STLs", the same class of lie as a paginated listing mistaken for a snapshot.
+- 🔴 **And the first implementation of that bound showed the WRONG ROWS.** The page query was
+  `.order(:name).limit(FLAT_LIMIT)` and `sort_nodes` then reordered the slice, so **selection was
+  always alphabetical while display followed the user**. Measured: 30 `.stl` files, `FLAT_LIMIT` 5,
+  `?ext=stl&sort=modified&dir=asc` rendered the five **newest** under a banner reading "the first 5".
+  **That is the exact class of lie the announcement exists to prevent** — phase 3's partial-listing
+  landmine wearing a web page. Found by measurement, not by reading.
+- 🔴 **The flat view also turned the per-row thumbnail backfill into a library-sized burst.** The
+  lazy backfill was written for a *folder*; in flat mode it walks the whole library. Measured on a
+  2500-file library, chunk and share alike: one `GET /files?ext=stl` ran **6008 queries, inserted
+  2000 `maker_previews` rows, enqueued 2000 jobs, ~1.4 s in one request**. Now `BACKFILL_LIMIT = 100`
+  per request: **308 queries, ~0.4 s**. **A budget, not a correctness limit** — it walks in display
+  order, so the budget is spent on what the user is most likely looking at, and the backlog still
+  drains because each visit takes the next slice. **The cap is uniform, not flat-mode-only**: the
+  hazard is not the mode, it is a page whose row count is not user-shaped, and a 2000-child folder is
+  rarer but identical in shape once you are in it.
+- 🟠 **The test that should have caught that burst could not see it.** "Does not add a query per row"
+  had fixtures with **no content token**, so the backfill skipped every row and the assertion was
+  measuring nothing. With production-shaped rows the same assertion read few=17, many=44.
+
+### The intermittent — captured for the first time, and the explanation offered with it is WRONG
+
+The undiagnosed `1 errors` recorded in the "Open, and shipped knowingly" section below (and in
+`CLAUDE.md` §12 step 10) — seen once each by several sessions across hundreds of runs, **never
+captured by anyone** — was **captured this session**:
+
+```
+Tools::GeneratorsControllerTest#test_create_rejects_an_over-cap_svg_with_422:
+ActiveRecord::StatementTimeout: SQLite3::BusyException: database is locked
+    test/controllers/tools/generators_controller_test.rb:9:in 'block in <class:GeneratorsControllerTest>'
+```
+
+Line 9 is the `User.create!` in `setup`, with a **hard-coded** `gen@example.com`.
+
+**The cause offered alongside the capture was: "parallel workers share one SQLite file, so every
+worker running this class contends on the same row." That is disproved, and recording the
+disproof is the point.** It rested on the comment at `test/test_helper.rb:27` — *"Each parallel
+worker shares one DB"* — **which is itself false**, and has now been corrected in place. `ls
+storage/` shows `test.sqlite3_0` … `test.sqlite3_9`: Rails'
+`parallelize(workers: :number_of_processors)` really does give each worker **its own SQLite file**,
+exactly as the *other* comment in the same file (lines 16–20) already said. Two workers therefore
+cannot contend on that row, the hard-coded email carries no cross-worker weight, and **the whole
+cross-worker story cannot be the cause**.
+
+**So: symptom captured for the first time; the offered cause disproved; the real cause OPEN but far
+better scoped.** It is a `BusyException` on a **per-worker** database, which means whatever held the
+write lock was **inside that worker** — a second connection out of that worker's own pool
+(`max_connections` defaults to 5 in `config/database.yml`) or a background thread — not another
+worker. The scale is worth stating: `timeout: 5000` in the same file, so the blocked statement
+waited a **full five seconds** for a lock, in a suite whose entire run finishes in ~4.2 s.
+The earlier data point fits the same shape: one sighting had exactly **12 fewer assertions** than a
+steady run, i.e. the aborted test contributes 12 assertions and died at or very near its start —
+which `setup` is.
+
+*(The 12-assertion figure is carried forward from the earlier sighting's report, not re-measured
+here.)*
+
+### The final whole-branch review — no blocking issues, five cleanups applied
+
+The review found the branch mergeable. Five cheap corrections landed on top of it, and the shape of
+the set is worth reading before the items: **three of the five were comments alone** — the code was
+right and the specification beside it was not, which in this repo is the same class of defect — **a
+fourth was an invariant a comment STATED and the code two lines below it broke**, and **only one is
+something a user would actually have hit.**
+
+- 🟡 **THE ONLY ONE A USER WOULD HAVE HIT: the "or an extension…" field silently did nothing once
+  eight types were active.** `resolve_exts` keeps `.first(MAX_EXTS)`, so
+  `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2` came back with the same eight chips and no
+  `.lbrn2` — **two inches from a `.lbrn2` CHIP correctly rendered inert** with "Turn one off first".
+  That is verbatim the condition `ext_slots_left?` exists to prevent ("a control that renders, links,
+  and silently does nothing"): **fixed for the chips, missed for the escape hatch beside them.** The
+  field and its button now go `disabled` on the same predicate, carrying the same sentence from the
+  same string (`ext_limit_title` — two controls answering one condition is exactly how they drifted).
+  **Disabled before the submit rather than explained after it**: the only thing a user can do is turn
+  one off, and saying so up front costs no round-trip. A hand-edited URL is still dropped silently,
+  deliberately — that is `EXT_RE`'s standing rule for anything arriving in a URL, and this finding is
+  about a control, not about input.
+- 🟡 **SYMLINKS: three features disagreed, and the disagreement was silent.** `file_type_label`
+  states an invariant — the Type column "MUST AGREE WITH WHAT THE 'Type' HEADER SORTS BY" — and then
+  **contradicted it two lines below itself**, rendering `Symlink` while `sort_key` keyed the row on
+  its extension. Reproduced with `aaa.stl`, `bbb.stl`, `ccc.3mf` and a symlink `mid.stl` under
+  `?sort=type&dir=asc`: cells read `["3MF", "Symlink", "STL", "STL"]` — a row labelled Symlink
+  sitting inside the STL block. Meanwhile the flat filter's `.where(kind: "file")` **excluded** a
+  symlink named `alias.stl` that the folder view happily lists; the sorting task had reasoned
+  symlinks "are usually symlinks TO files" and grouped them with files, and the filter task
+  disagreed with no note. **The decision, now written down in all three places: a symlink is its own
+  type, consistently.** `sort_key` answers the literal `"symlink"` — the column's own label,
+  downcased, so the group lands where the word "Symlink" falls among the other labels rather than at
+  an end somebody has to justify. The flat filter keeps excluding them, and now says why: a type
+  filter asks "show me my STLs" and a symlink named `alias.stl` is not one — its content is a path.
+  **The divergence from the folder view is deliberate and recorded as such** (a folder view shows
+  what is really there; a type view shows what you asked for). Spec §6.3 argued only the *directory*
+  case, which is why the symlink half had no sentence to inherit. **`sort_nodes`' partition is a
+  separate question, still answered the same way** — a symlink is not a folder, so it stays in the
+  file block; its type key decides where inside it. Pinned by a test using **two symlinks with
+  different extensions** (one alone is trivially "grouped", two sharing an extension pass with the
+  old key), asserted in both directions; mutation-checked by reverting the branch.
+  **`files_sort_test.rb`'s existing symlink test structurally could not see this** — it asserts under
+  the default *name* sort, where the type branch is never called.
+- **The `MoveConflicts` writer audit named the wrong writers.** It enumerated every writer of
+  `maker_file_attachments` and was last touched *before* the attach policy was extracted:
+  `Projects::AttachmentsController` has written no row since (it only reads), and the list omitted
+  **`Maker::AttachToProject`**, which is the writer for both doors and holds the only `insert_all` —
+  the one place `user_id`/`attachable_*` are set as **columns** rather than through the association,
+  which is precisely what an audit about scoping should name. The safety *claim* held throughout; the
+  enumeration a future auditor would have trusted did not.
+- **`attach_bundle`'s ordering claim was not enforced by the query, and could not be.** The line
+  claimed `&` "keeps the MODEL's order, so the project lists the bundle the way the model does".
+  `insert_all` omits `position`, so every row takes the default 0 — as does **every row this table
+  has ever held**, since no writer anywhere sets it — and `has_many -> { order(:position) }`
+  degenerates to a total tie that survives only as SQLite rowid order, the exact reliance
+  `#model_owning` three methods above says must not be trusted on managed Postgres. **Setting
+  `position` was rejected rather than skipped, and the reason is the source, not the destination:**
+  `node_ids` is read from `model.file_attachments.pluck(:node_id)`, which is *the same* all-zero
+  `ORDER BY position ASC` (verified), so stamping positions would faithfully preserve an order that
+  was already a guess — while making this the one writer in the app with a position convention, so a
+  later ordinary attach lands at 0 and leapfrogs the bundle. Enforcing bundle order is a change to
+  the **column's meaning across all six writers**, not to this line. The claim is gone; the dedupe
+  half, which is sound and load-bearing, stays.
+- **The `port_writable` branch count was wrong in both documents** — see the `Maker::MoveNode`
+  section above. Five, not three.
+
+### Deferred deliberately — so none of these reads as an oversight
+
+- **`folder_paths_for` recurses, and depth is unguarded.** Its `"…"` marker is a correct **cycle**
+  guard (a corrupt parent chain returns the marker instead of descending again), but nothing bounds
+  a legitimately deep chain: a probe of the same lambda shape overflowed between **8,187 and 8,218**
+  nested directories in a bare Ruby process, so a library with ~8k levels of nesting would raise
+  `SystemStackError`. Stack-size dependent, so treat it as an order of magnitude rather than a
+  threshold — and it is only reachable in flat mode, which is the only view that builds paths.
+- **The Folder column does not truncate.** A very deep path renders in full and will stretch the
+  cell.
+- **`maker_file_attachments` still has no uniqueness index** on `(user_id, node_id, attachable)` —
+  `find_or_create_by` and the bundle path's `members = node_ids & names.keys` are the only guards. A
+  unique index would need a backfill dedupe, and this service is the sole writer. **What bundle
+  attach changed is the blast radius: N rows rather than 1.**
+
+**Found by the final review, each one DEMONSTRATED, none fixed here.** They are follow-up material
+rather than blockers, and the branch should not pretend they do not exist. Four of them are one
+shape — **a rule the code enforces correctly and the UI never mentions** — and the remaining two are
+navigational (a missing affordance, a redirect that drops the user's place).
+
+- 🟠 **AN ARCHIVED PROJECT'S CLAIM BLOCKS THE AUTO-MOVE INVISIBLY, and this is the one worth doing
+  first.** `AttachToProject#attached_elsewhere?` does not exclude archived projects, while **both**
+  halves of the file page's attach control do (`FilesController#show` filters the chips on
+  `status != "archived"` and the dropdown on `where.not(status: "archived")`). Driven end to end:
+  attach `c.stl` to "Old Rig" → archive Old Rig → **the file page shows no mention of Old Rig
+  anywhere** → attaching to "Desk Lamp" flashes "Attached c.stl." and the file stays in
+  `Projects/old-rig/`. `#relocate` on the same file then says *"belongs to another project"*, naming
+  a project the page refuses to show. Either the policy should skip archived claims or the page
+  should keep showing them; it must not be both.
+- **`#create` is silent where `#relocate` has a sentence** — one policy, two doors, two answers.
+  `#relocate` words `:attached_elsewhere`, `:not_a_file` and `:model_bundle` individually; `#create`
+  collapses the two it can reach to the bare "Attached bracket.stl." (measured: "Attached
+  elsewhere.stl." and "Attached adir."). *One correction to the review's wording:* **`:model_bundle`
+  never reaches `#create`'s refusal at all** — `#call` intercepts it before `#refusal_for` and takes
+  the bundle path, which says "Attached 2 files from Widget." So it is two of the three, and the
+  bundle case is the next item rather than this one.
+- **A model-bundle file's attach control gives no warning.** The branch's most surprising rule — one
+  file brings the whole bundle, and moves nothing — is invisible on the file page until the flash
+  reads "Attached 3 files from Widget." (verified: nothing in `files/show.html.erb`'s attach control
+  mentions models).
+- **Detach is not the inverse of attach.** Attach moves the bytes into `Projects/<slug>/`; detach
+  removes only the row and flashes "Detached.", leaving the file in the folder of a project it no
+  longer belongs to (driven: parent unchanged after the DELETE). Deliberate as far as it goes — a
+  move back has nowhere obvious to go — but it is unwritten and it surprises.
+- **The flat GRID has no location affordance.** The flat *list* gained a Folder column because "a
+  flat list of 200 STLs with no location is unnavigable"; `_grid.html.erb` renders the same flat set
+  as bare tiles, so two `bracket.stl` in different folders are visually identical.
+- **`FilesController#destroy` redirects to bare `files_path`**, so deleting a row from `?ext=stl`
+  drops the user at the unfiltered root (driven: `302 → /files`). **The one in-page path
+  `files_query_base` did not reach** — `#rescan` right below it already carries the filter through
+  its redirect, which is the shape to copy.
+- **Pre-existing, not this branch, but now known: CLAUDE.md §12 step 10's proof-grep no longer
+  returns nothing.** That step calls
+  `grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/ | grep -v ':[0-9]*: *#'`
+  "the proof, not the test suite" that the maker layer no longer references chunks. Run today it
+  returns one hit: `app/services/maker/addons/library_output.rb:47`
+  (`Storage::ChunkStore.current.put`), from the addon framework's server-driven chunk write. The
+  *code* is defensible — it is one of the five `port_writable` two-door branches, and the chunk door
+  has to put the bytes somewhere — but **the CLAIM is now false**, and step 10's own argument is that
+  a proof which cries wolf gets ignored. Recorded as a discrepancy in the claim; this branch neither
+  introduced it nor is the place to resolve it.
+
+### Housekeeping
+
+Two entries in "Open, and shipped knowingly" (below) were amended rather than appended to, per the
+phase 4 follow-up's own finding that **a stale open-list is worse than none**: the intermittent is no
+longer "never captured", and `FilesController#index` is no longer unbounded in *every* mode.
+
 ## Latest (2026-07-23): Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
 
 - **Current Project (2026-07-23):** a session-scoped "current project" shown in the top-bar
@@ -531,16 +930,21 @@ open-list is worse than no open-list** — it spends the next reader's attention
 already done, and it is exactly the failure mode of asserting a fact in prose that the code
 answers.
 
-- **An unexplained intermittent.** Two different agents each saw a single `1 errors` run that
+- ~~**An unexplained intermittent.** Two different agents each saw a single `1 errors` run that
   **never reproduced** (~73 and ~15+ subsequent full runs respectively, including cold-bootsnap
-  and targeted-seed loops). Neither captured the message. **Recorded as unexplained** — not fixed,
-  not established as pre-existing. **Not seen again** across the follow-up's full-suite runs
-  (3 × 978 sequential legs + many targeted runs), which is not evidence it is gone.
-- **`FilesController#index` is still unpaginated / O(n) rows**, and that is a decision rather than
-  a leftover: it has never paginated, and the N+1 fix below did not change it. What remains at
-  2000 nodes is **~160 ms of render**, now **identical on all three backends** — which is the
-  evidence that the port's cost is gone and the residual is HTML. Pagination is a file-browser
-  decision on its own merits; it is not this regression's fix and never was.
+  and targeted-seed loops). Neither captured the message.~~ **CAPTURED 2026-07-27** — see "The
+  intermittent" at the top of this file. It is a `SQLite3::BusyException` in
+  `Tools::GeneratorsControllerTest`'s `setup`. **Still unexplained, but no longer unobserved**, and
+  the cross-worker explanation offered with the capture is **disproved**: each parallel worker has
+  its own SQLite file, so the lock holder is inside the failing worker.
+- **`FilesController#index`'s FOLDER view is still unpaginated / O(n) rows**, and that is a decision
+  rather than a leftover: it has never paginated, and the N+1 fix below did not change it. What
+  remains at 2000 nodes is **~160 ms of render**, now **identical on all three backends** — which is
+  the evidence that the port's cost is gone and the residual is HTML. Pagination is a file-browser
+  decision on its own merits; it is not this regression's fix and never was. *(Amended 2026-07-27:
+  the **flat** `?ext=` mode added in the file-organization branch **is** bounded, at `FLAT_LIMIT =
+  2000` with an announced truncation — the first bound this page has ever had. The folder view is
+  unchanged.)*
 
 ## Previous (2026-07-17): phase 3 — point it at your own S3 bucket
 

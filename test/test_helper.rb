@@ -24,12 +24,17 @@ module ActiveSupport
       parallelize(workers: :number_of_processors)
     end
 
-    # Each parallel worker shares one DB (transactional fixtures isolate rows), but the
-    # MemoryChunkStore writes real files to tmp/dev-chunks that survive a transaction
-    # rollback. A keyspace-enumerating operation (Sync::ChunkReaper) in one worker would
-    # then see objects another worker (or an earlier, rolled-back test reusing an
-    # autoincrement user id) left behind. Give each worker its own chunk dir so the
-    # storage keyspace is as isolated as the DB rows. (Single-process runs leave it unset
+    # Each parallel worker gets its OWN database — `ls storage/` shows `test.sqlite3_0` …
+    # `test.sqlite3_9`, one per worker, exactly as the comment above says Rails does. (This
+    # comment used to claim the opposite, "each worker shares one DB", and it was cited as the
+    # explanation for an intermittent `SQLite3::BusyException` that a shared file would explain
+    # and per-worker files cannot — see docs/STATUS.md, "The intermittent".) The chunk dir below
+    # is still needed, and for the reason it gives rather than that one: the MemoryChunkStore
+    # writes real files to tmp/dev-chunks that SURVIVE a transaction rollback, so DB isolation
+    # buys nothing there. A keyspace-enumerating operation (Sync::ChunkReaper) in one worker would
+    # otherwise see objects another worker — or an earlier, rolled-back test reusing an
+    # autoincrement user id — left behind. Give each worker its own chunk dir so the storage
+    # keyspace is as isolated as the DB already is. (Single-process runs leave it unset
     # → base dir, which is fine.)
     parallelize_setup do |worker|
       ENV["CHUNK_STORE_WORKER"] = worker.to_s

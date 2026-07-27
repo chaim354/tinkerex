@@ -45,6 +45,29 @@
         77
       ],
       "note": "False positive. `Open3.capture3(*args)` is invoked with an ARGV ARRAY, so Ruby execs the binary directly with NO shell \u2014 there is no shell-injection vector. `F3D` is an operator-controlled constant (ENV['F3D_BIN'] default 'f3d'); the input/output paths are Tempfile-generated, not user-supplied; and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make f3d error out, which is handled). No user input reaches a shell."
+    },
+    {
+      "warning_type": "SQL Injection",
+      "warning_code": 0,
+      "fingerprint": "d4c8c4fadffc854fc3c0a1032120053eff5ff0a382d6f0ff962109e6a97ad790",
+      "check_name": "SQL",
+      "message": "Possible SQL injection",
+      "file": "app/controllers/files_controller.rb",
+      "line": 728,
+      "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+      "code": "current_user.nodes.present.where(:kind => \"file\").where(\"#{exts.size} OR LOWER(name) LIKE ? ESCAPE '\\\\'\", *exts.map do\n like_pattern(e)\n end)",
+      "render_path": null,
+      "location": {
+        "type": "method",
+        "class": "FilesController",
+        "method": "flat_ext_scope"
+      },
+      "user_input": "exts.size",
+      "confidence": "Weak",
+      "cwe_id": [
+        89
+      ],
+      "note": "False positive, and Brakeman's own `user_input` field says so: the flagged interpolation is `exts.size`, an INTEGER COUNT, not a value. The clause is `Array.new(exts.size, LIKE_EXT).join(\" OR \")` where LIKE_EXT is a frozen constant, so what varies with user input is only HOW MANY TIMES a fixed string is repeated -- Brakeman renders that join as `#{exts.size}` and flags the interpolation. Every extension travels as a BOUND parameter (`*exts.map { like_pattern(e) }`), never into the SQL text. Two independent layers stand behind that anyway: `resolve_exts` drops anything not matching /\\A[a-z0-9]{1,8}\\z/ and caps the list at MAX_EXTS (so `exts.size` is 1..8 and every element is alphanumeric), and `like_pattern` runs `sanitize_sql_like` with an explicit ESCAPE clause. Driven directly with `%`, `_`, `../`, over-length and array-shaped params -- all dropped before the query is built."
     }
   ],
   "brakeman_version": "8.0.5"

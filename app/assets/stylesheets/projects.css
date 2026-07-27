@@ -76,3 +76,11 @@
 .picker-search input { flex: 1; max-width: 480px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 
 .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+.attach-form { display: inline-flex; align-items: center; gap: 8px; }
+.attach-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
+  border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+.project-chip form { display: inline; }
+.chip-x { background: none; border: 0; cursor: pointer; color: var(--muted);
+  font-size: 15px; line-height: 1; padding: 0 4px; }
+.chip-x:hover { color: var(--fg); }
