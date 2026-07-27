@@ -61,9 +61,9 @@ recorded **with its reason** in `sidecar/openscad/catalog/NOTICE` so the audit i
 
 | Check | Result |
 |---|---|
-| `bin/rails test` | **1311 runs / 4536 assertions / 0 failures / 0 errors / 14 skips** |
-| `LIBRARY_BACKEND=share bin/rails test` (with `LIBRARY_PATH`) | **identical: 1311 / 4536 / 0 / 0 / 14** |
-| `LIBRARY_BACKEND=s3 bin/rails test` (with CI's `LIBRARY_S3_*`) | **identical: 1311 / 4536 / 0 / 0 / 14** |
+| `bin/rails test` | **1478 runs / 5120 assertions / 0 failures / 0 errors / 14 skips** |
+| `LIBRARY_BACKEND=share bin/rails test` (with `LIBRARY_PATH`) | **identical: 1478 / 5120 / 0 / 0 / 14** |
+| `LIBRARY_BACKEND=s3 bin/rails test` (with CI's `LIBRARY_S3_*`) | **identical: 1478 / 5120 / 0 / 0 / 14** |
 | In-image Python suite | **40 passed, 0 skipped** |
 | Live integration vs a real container | **6 runs / 33 assertions / 0 failures** |
 | `bin/rubocop` | 401 files, **1 offence — pre-existing on `main`** (see below) |
@@ -116,3 +116,25 @@ than reporting itself available and failing every call.
 `LICENSE` into the image** — only the newer `sidecar/openscad` does that. Not a regression from this
 branch and not touched here; noted in `CLAUDE.md` §3's new Addons row and worth closing when boxes
 is next touched.
+
+
+---
+
+## Merged with `main` (2026-07-27)
+
+This branch was 26 commits behind when the work finished, so `origin/main` (through PR #86, the
+file-organization arc) has been merged in. One conflict, in `docs/STATUS.md`, where both sides added
+a "Latest" section at the top — resolved by keeping **both**, OpenSCAD first, with a single
+`**Updated:**` line. No code conflicts.
+
+**Post-merge verification, all three legs identical:**
+
+```
+bin/rails test                        1478 runs, 5120 assertions, 0 failures, 0 errors, 14 skips
+LIBRARY_BACKEND=share bin/rails test  1478 runs, 5120 assertions, 0 failures, 0 errors, 14 skips
+LIBRARY_BACKEND=s3    bin/rails test  1478 runs, 5120 assertions, 0 failures, 0 errors, 14 skips
+bin/rubocop                           411 files, 1 offense (pre-existing on main: config/routes.rb:46)
+```
+
+The share leg needs `export LIBRARY_PATH=$(mktemp -d)` and the s3 leg needs CI's `LIBRARY_S3_*`
+values, exactly as `.github/workflows/ci.yml` sets them.
