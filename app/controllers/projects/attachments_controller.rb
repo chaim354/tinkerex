@@ -30,10 +30,18 @@ module Projects
     #
     # ATTACHING ALSO RELOCATES — the rule is the user's: a file joining its first project should
     # live in that project's folder, and a file already claimed by another project should not be
-    # yanked out of it. Put here, at the ONE action every attach path reaches (the file page's
-    # dropdown, the project page's picker, the importer's JSON attach), so the verb means the same
-    # thing everywhere. Tool and importer UPLOADS already write straight into the project folder,
-    # so they arrive in place and the "already there" check short-circuits.
+    # yanked out of it. Put here, at the action all THREE of its own attach paths reach — the file
+    # page's dropdown and the project page's picker (HTML), and the project page's inline upload
+    # (JSON, uploader_controller.js) — so the verb means the same thing in each. That upload posts
+    # a `parent_node_id` of the project folder, so it arrives in place and #relocate_into_project
+    # short-circuits on :already_there rather than moving anything.
+    #
+    # "ATTACHED ⇒ IN THE FOLDER" IS NOT AN INVARIANT, and must not be read as one. Two attach paths
+    # never reach this action: CurrentProject#attach_addon_files_to_current_project creates the row
+    # directly (a tool save DEFAULTS to the project folder, but @default_parent_node_id is a
+    # default the user can override in the file chooser), and the model importer posts to
+    # Models::AttachmentsController, which attaches to a Maker::Model and does not move. This
+    # action enforces the rule for what passes through it; nothing enforces it library-wide.
     #
     # THE ATTACH IS THE DURABLE HALF AND THE MOVE IS BEST-EFFORT. A collision or an unmounted NAS
     # must never lose the attachment: it is a reference the user asked for, and it is exactly as
@@ -43,7 +51,7 @@ module Projects
       node = current_user.nodes.present.find_by(node_id: params.require(:node_id))
       unless node
         return respond_to do |format|
-          format.html { redirect_to new_project_attachment_path(@project), alert: "That file isn't in your library." }
+          format.html { redirect_to not_found_return_path, alert: "That file isn't in your library." }
           format.json { render json: { error: "not_found" }, status: :not_found }
         end
       end
@@ -65,12 +73,22 @@ module Projects
       conflict = nil
       # Files only: a directory has no place in a project folder, and FileLayer::S3#move refuses
       # one outright (movable_file!) — so this would be a policy that silently works on one
-      # backend and 422s on another.
+      # backend and 422s on another. `relocation` stays nil when no move was attempted, which is a
+      # third answer both doors report: "not moved" and "never tried" are different facts.
+      relocation = nil
       if node.file? && !attached_elsewhere
-        case relocate_into_project(node)
-        when :moved       then notice = "Attached #{node.name} and moved it into #{@project.name}."
-        when :conflict    then conflict = att.id
-        when :unavailable then notice = "Attached #{node.name} — couldn't move it into the project folder right now."
+        relocation = relocate_into_project(node)
+        case relocation
+        when :moved
+          notice = "Attached #{node.name} and moved it into #{@project.name}."
+        when :conflict
+          # The prompt that offers a rename is a later task; until it lands, ?move_conflict= is
+          # read by nothing, so WITHOUT this sentence a collision is invisible — the user is told
+          # the file was attached and left to discover on their own that it never moved.
+          conflict = att.id
+          notice = "Attached #{node.name} — #{@project.name} already has a file with that name, so it stayed put."
+        when :unavailable
+          notice = "Attached #{node.name} — couldn't move it into the project folder right now."
         end
       end
 
@@ -79,8 +97,13 @@ module Projects
         # 200, not 201, when find_or_create_by found: the whole point of the dedupe is that the
         # second attach creates nothing, so claiming Created would be a lie to the only caller
         # that reads the status (the inline-upload JS).
+        #
+        # `relocation` is here so the JSON door tells the SAME truth as the HTML one. Without it a
+        # colliding or NAS-down attach answers a bare 201 and uploader_controller.js reports
+        # "Done." for a file that never moved — and the status code cannot carry this, because the
+        # attach really did succeed and that is what the code is about.
         format.json do
-          render json: { node_id: att.node_id, role: att.role },
+          render json: { node_id: att.node_id, role: att.role, relocation: },
                  status: att.previously_new_record? ? :created : :ok
         end
       end
@@ -118,11 +141,30 @@ module Projects
     rescue Maker::MoveNode::Collision
       :conflict
     rescue FileLayer::FetchError, FileLayer::NotFound, FileLayer::UnsupportedOperation,
-           ArgumentError, ActiveRecord::RecordInvalid => e
-      # ArgumentError = the name is not a single path segment (MoveNode#leaf!) — a crafted
-      # new_name, or a node row whose own name is blank or carries a separator. FetchError = the
-      # share is unmounted or the bucket is unreachable. Neither is the user's fault and neither
-      # is worth a 500 over a move we already called best-effort.
+           Maker::MoveNode::InvalidName => e
+      # EVERY CLASS HERE IS NAMED, AND THE LIST IS DELIBERATELY NARROW. This rescue wraps the whole
+      # method body, so anything it catches is reported to the user as "the library is having a bad
+      # day" — which makes a too-wide list a machine for turning bugs into outage messages that no
+      # test can see. It caught bare ArgumentError until a review drove the consequence: arity
+      # drift in a port adapter's #move, a kwarg rename in MoveNode, or a nil reaching
+      # File.extname anywhere below all became a 302 and a warn line, with a green suite. So:
+      #
+      #   InvalidName          — the name is not a single path segment (MoveNode#leaf!). A SUBCLASS
+      #                          of ArgumentError precisely so bare ArgumentError can stay a 500,
+      #                          the same argument LibraryCapabilities makes for leaving
+      #                          NotImplementedError un-rescued. This matters more once the rename
+      #                          prompt routes a USER-TYPED name through here: someone typing
+      #                          "../evil" must be told the name is bad, not that the NAS is down.
+      #   FetchError           — the share is unmounted or the bucket is unreachable. Retryable.
+      #   UnsupportedOperation — this backend refuses this move (S3 and directories; a destination
+      #                          name taken in the store that the catalog did not know about).
+      #   NotFound             — see below.
+      #
+      # ActiveRecord::RecordInvalid was in this list and is GONE: no producer was found on this
+      # path (the move assigns a parent_node_id already checked live and a name #leaf! has already
+      # vetted, and Node validates only node_id/name presence and kind inclusion), so it was a
+      # guess — and an unjustified class here is exactly the bug-hiding shape above. If a real
+      # producer turns up, add it back WITH its name.
       #
       # NotFound IS IN THIS LIST DELIBERATELY, though the sibling #relocate endpoint (which the
       # user asks for explicitly) should branch on it separately and answer 404. Here it cannot be
@@ -131,8 +173,20 @@ module Projects
       # What is left is a race (tombstoned between those two statements) or an out-of-band change
       # under a share/s3 store — and either way the attachment row is ALREADY COMMITTED, so
       # letting it escape would 500 a request whose durable half succeeded.
-      Rails.logger.warn("attach relocate failed: #{e.class}: #{e.message}")
+      #
+      # The node_id and slug are not decoration: :unavailable persists no marker anywhere, so this
+      # line is the entire audit trail for "which files failed to move during the outage".
+      Rails.logger.warn("attach relocate failed for node=#{node.node_id} project=#{@project.slug}: " \
+                        "#{e.class}: #{e.message}")
       :unavailable
+    end
+
+    # Where to send a user whose node is gone. NOT file_path: the node just failed to resolve, so
+    # FilesController#show (find_by! on nodes.present) would 404 on exactly the condition that got
+    # us here, and take the alert down with it. The library browser is the nearest page that
+    # renders — and it is a great deal closer to where the user was than another project's picker.
+    def not_found_return_path
+      params[:return_to] == "file" ? files_path : new_project_attachment_path(@project)
     end
 
     # Where to land after an attach. `return_to` is an ALLOWLISTED FLAG, not a URL — a

@@ -55,8 +55,12 @@ module Maker
         assert_equal "dir-dest", @node.reload.parent_node_id
       end
 
+      # InvalidName, not bare ArgumentError, and the narrowing is the assertion's whole job: a
+      # caller that maps "bad name" to a user-facing message must be able to do it without also
+      # mapping arity drift and nil-argument bugs to the same message
+      # (Projects::AttachmentsController#relocate_into_project).
       test "rejects a name that is not a leaf" do
-        assert_raises(ArgumentError) do
+        assert_raises(Maker::MoveNode::InvalidName) do
           Maker::MoveNode.call(@user, node: @node, new_parent_node_id: "dir-dest",
                                new_name: "../escape.stl")
         end

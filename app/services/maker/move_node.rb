@@ -43,6 +43,14 @@ module Maker
     # the attach flow turns it into the "rename or leave it" prompt.
     Collision = Class.new(StandardError)
 
+    # The requested name is not a single path segment (see #leaf!). An ArgumentError SUBCLASS, so
+    # every existing `rescue ArgumentError` keeps catching it — but a caller that wants to answer
+    # "that name is not allowed" can now do so WITHOUT also swallowing arity drift in a port
+    # adapter, a kwarg rename in this class, or a nil reaching File.extname somewhere below.
+    # Projects::AttachmentsController rescues this one and lets bare ArgumentError 500, which is
+    # what a programming error should do; that distinction is only available because of this line.
+    InvalidName = Class.new(ArgumentError)
+
     # The HIGHEST SUFFIX tried, not a count — `(2..HIGHEST_SUFFIX)` offers eight names, "(2)"
     # through "(9)". Named for the boundary rather than the quantity because the quantity is the
     # thing nobody can read off the loop, and the earlier name (MAX_SUGGESTIONS) claimed the one
@@ -125,7 +133,7 @@ module Maker
       return if name.present? && !name.include?("/") && !name.include?("\0") &&
                 name != "." && name != ".."
 
-      raise ArgumentError, "#{name.inspect} is not a valid file name"
+      raise InvalidName, "#{name.inspect} is not a valid file name"
     end
 
     # `where.not(node_id:)` is what makes a no-op move (already in the folder, same name) legal
