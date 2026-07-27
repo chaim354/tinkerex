@@ -54,9 +54,10 @@
       <%#
         Posts to the NON-NESTED attachments_path so the project can travel as a body param — see
         the route comment. The option value is the SLUG, because set_project resolves
-        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` is inert for
-        now: nothing reads it, and a LATER TASK adds the redirect branch that sends the user back
-        to this file page instead of to the project. Do not believe it is wired yet.
+        find_by!(slug: params[:project_id]); an integer id here 404s. `return_to` is now LIVE —
+        AttachmentsController#attach_redirect_path reads it and sends the user back to this file
+        page instead of to the project. It is an allowlisted FLAG, not a URL: "file" is the only
+        value that means anything, so it cannot become an open redirect.
 
         The explicit id is load-bearing, and the param name is why: the layout's top-bar
         current-project switcher is ALSO named project_id, so `select_tag :project_id` there and a
