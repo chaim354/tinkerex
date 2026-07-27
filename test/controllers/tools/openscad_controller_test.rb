@@ -1,9 +1,13 @@
 require "test_helper"
+require "zip"
 require_relative "../../support/fake_openscad"
 
 module Tools
   class OpenscadControllerTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
+    # The exact bytes `seed_scad` puts in the library, so the bring-your-own tests can assert that
+    # what reached the sidecar is the user's OWN file and not a catalog fallback.
+    SCAD_FIXTURE = "cols = 4;\ncube([cols, 1, 1]);\n".freeze
 
     setup do
       @user = User.create!(email: "oscad@example.com", password: PASSWORD, confirmed_at: Time.current)
@@ -132,6 +136,7 @@ module Tools
 
       get new_tools_openscad_path(node_id: stranger_node)
       assert_redirected_to tools_openscad_path
+      assert_equal "Couldn't read that generator: no such .scad in your library", flash[:alert]
 
       post preview_tools_openscad_path, params: { node_id: stranger_node, params: { cols: "4" } }
       assert_response :unprocessable_entity
@@ -144,17 +149,282 @@ module Tools
       assert_equal "no such .scad in your library", response.body
     end
 
+    test "create refuses a foreign node_id rather than rendering it" do
+      stranger_node = seed_scad(another_user, "os-stranger.scad")
+      assert_no_difference [ "Maker::AddonState.count", "Maker::AddonFile.count" ] do
+        post tools_openscad_path, params: { name: "OS Nope", node_id: stranger_node }
+      end
+      assert_redirected_to tools_openscad_path
+      assert_nil OpenscadClient.current.rendered, "a foreign node must never reach the render path"
+      # OUR guard's message again, for the same reason as the test above: the redirect alone stays
+      # green with `current_user` dropped from own_scad_node_id!, because FileLayer#read refuses a
+      # foreign node downstream anyway.
+      assert_equal "Generation failed: no such .scad in your library", flash[:alert]
+    end
+
+    # --- what the index offers (Task 12) -------------------------------------------------------
+
+    test "index lists the user's own .scad — only .scad, and only the user's own" do
+      mine     = seed_scad(@user, "os-bracket.scad")
+      not_scad = seed_scad(@user, "os-notes.txt")
+      theirs   = seed_scad(another_user, "os-theirs.scad")
+
+      get tools_openscad_path
+      assert_response :success
+      assert_select "a[href=?]", new_tools_openscad_path(node_id: mine)
+      # BOTH negatives are the point. `library_scad_files` filters on the extension AND the owner,
+      # and with a single-file fixture a missing filter of either kind is invisible.
+      assert_select "a[href=?]", new_tools_openscad_path(node_id: not_scad), count: 0
+      assert_select "a[href=?]", new_tools_openscad_path(node_id: theirs), count: 0
+    end
+
+    test "index shows each bundled generator's licence on its OWN tile" do
+      # These are third-party designs; the attribution terms travel with whatever the user makes.
+      # Matched per-tile rather than "MIT appears somewhere", so swapping two licences is caught.
+      get tools_openscad_path
+      assert_response :success
+      assert_select ".addon-card", text: /hex_plate.*\bMIT\b/m
+      assert_select ".addon-card", text: /divider_tray.*BSD-3-Clause/m
+    end
+
+    test "an unknown generator redirects instead of 500ing" do
+      get new_tools_openscad_path(generator: "no-such-generator")
+      assert_redirected_to tools_openscad_path
+      assert_equal "Unknown generator.", flash[:alert]
+    end
+
+    # --- the editor's form (Task 11) -----------------------------------------------------------
+
+    test "the editor groups fields: open fieldsets for basics, collapsed details for advanced" do
+      get new_tools_openscad_path(generator: "hex_plate")
+      assert_response :success
+      assert_select "fieldset.param-group > legend", text: "Grid"
+      assert_select "fieldset.param-group input[name=?]", "params[cols]"
+      assert_select "details.param-group-adv > summary", text: "Advanced"
+      # An advanced field stays IN THE DOM (collapsed, not omitted) or it would never be submitted,
+      # and OpenSCAD would silently render the default for it.
+      assert_select "details.param-group-adv select[name=?]", "params[mode]"
+    end
+
+    test "an enum renders its LABELS while submitting its VALUES" do
+      # OpenSCAD's `// [1:solid, 2:hollow]` gives a NUMERIC value a human label. Posting the label
+      # back is a type error, which parameterSet ignores -> default geometry, silently.
+      get new_tools_openscad_path(generator: "hex_plate")
+      assert_response :success
+      assert_select "select[name='params[mode]'] option[value='1']", text: /solid/
+      # The converse is the half that catches conflating the two: a LABEL must never be submittable.
+      assert_select "select[name='params[mode]'] option[value='solid']", count: 0
+    end
+
+    # --- render / preview ----------------------------------------------------------------------
+
+    test "preview rasterizes the rendered 3MF server-side, and says so when it cannot" do
+      post preview_tools_openscad_path, params: { generator: "hex_plate", params: { cols: "6" } }
+      if Maker::Previews::Stl.available?
+        assert_response :success
+        assert_includes %w[image/png image/jpeg], response.media_type
+        assert response.body.bytesize.positive?
+      else
+        # A sidecar 3MF carries no embedded slicer thumbnail, so ThreeMf ALWAYS falls through to its
+        # mesh path, which shells out to `stl-thumbnailer` — absent on this box. That is a DEPLOYMENT
+        # condition and the user is owed a sentence, not the Errno::ENOENT 500 it would otherwise be.
+        assert_response :unprocessable_entity
+        assert_match(/no preview image could be made/, response.body)
+      end
+      # True on either branch, and the half that is about THIS addon: the model itself rendered,
+      # from the catalog source, as a 3MF, with the coerced value.
+      assert_equal "3mf", OpenscadClient.current.rendered[:format]
+      assert_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
+      assert_equal 6, OpenscadClient.current.rendered[:params]["cols"]
+    end
+
+    test "preview of a library file renders the user's OWN bytes, not the catalog's" do
+      node_id = seed_scad(@user, "os-mine.scad")
+      post preview_tools_openscad_path, params: { node_id:, params: { cols: "4" } }
+      assert_response(Maker::Previews::Stl.available? ? :success : :unprocessable_entity)
+      # ONE RENDER PATH (spec §3.1): both sources resolve to TEXT, and this pins that the BYO branch
+      # resolves to the bytes actually in the library — read back through whichever FileLayer
+      # backend this leg runs, which is what makes it mean something on share and s3 too.
+      assert_equal SCAD_FIXTURE, OpenscadClient.current.rendered[:scad]
+      refute_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
+    end
+
+    test "a sidecar error is a 422 on preview and an alert on create — never a 500, never a half-save" do
+      OpenscadClient.stub = Class.new(FakeOpenscad) do
+        def render(**) = raise(OpenscadClient::Error, "Parser error: syntax error in line 3")
+      end.new
+
+      post preview_tools_openscad_path, params: { generator: "hex_plate", params: { cols: "4" } }
+      assert_response :unprocessable_entity
+      assert_match "Parser error", response.body # the sidecar's own words: the only actionable part
+
+      # On create the state is built AFTER the render, and this is why: a failed render must not
+      # leave a saved design sitting in the library with an empty bundle behind it.
+      assert_no_difference [ "Maker::AddonState.count", "Maker::AddonFile.count" ] do
+        post tools_openscad_path, params: { name: "OS Broken", generator: "hex_plate",
+                                            params: { cols: "4" } }
+      end
+      assert_redirected_to tools_openscad_path
+      assert_match "Parser error", flash[:alert]
+    end
+
+    # --- create: the bundle actually lands ------------------------------------------------------
+
+    # THE TEST SPEC §11 SINGLES OUT, and the one CLAUDE.md's Phase 4 lesson says is easiest to fake:
+    # it asserts two AddonFiles with the right roles, REAL nodes in the library, and the BYTES read
+    # back through FileLayer and confirmed to be a zip/OPC container — not merely that the
+    # controller redirected. Reading through FileLayer is also what makes it meaningful on share and
+    # s3 rather than only on chunk.
+    test "create writes a real 3mf + params.json bundle into the library" do
+      assert_difference("Maker::AddonState.count", 1) do
+        post tools_openscad_path, params: { name: "OS Bundle", generator: "hex_plate",
+                                            params: { cols: "6", wall: "2.5" } }
+      end
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+
+      assert_equal %w[output parameters], state.files.map(&:role)
+      assert_equal [ "model/3mf", "application/json" ], state.files.map(&:content_type)
+
+      # Real library nodes, not just join rows.
+      state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id), "no node for #{af.role}" }
+
+      out = state.files.find { |f| f.role == "output" }
+      assert @user.nodes.find_by(node_id: out.node_id).name.end_with?(".3mf")
+
+      bytes = FileLayer.current.read(@user, node_id: out.node_id)
+      assert_equal "PK", bytes[0, 2], "output is not a zip/OPC container"
+      assert_equal FakeOpenscad.minimal_3mf.bytesize, bytes.bytesize,
+                   "the bytes that landed are not the ones the sidecar rendered"
+      entries = nil
+      Zip::File.open_buffer(bytes.b) { |z| entries = z.map(&:name) }
+      assert_includes entries, "3D/3dmodel.model", "not a 3MF: no OPC model part inside the zip"
+
+      # The params file records what was rendered — COERCED, so the design reproduces exactly.
+      params_node = state.files.find { |f| f.role == "parameters" }
+      assert @user.nodes.find_by(node_id: params_node.node_id).name.end_with?(".params.json")
+      saved = JSON.parse(FileLayer.current.read(@user, node_id: params_node.node_id))
+      assert_equal "hex_plate", saved["generator"]
+      assert_equal 6, saved["params"]["cols"], "cols should be the coerced Integer, not the string"
+      assert_equal 2.5, saved["params"]["wall"]
+
+      assert_redirected_to tools_openscad_design_path(state)
+    end
+
+    test "create does NOT copy the .scad source into the library" do
+      # Spec §6.1: for a bring-your-own file, copying the source would spread a possibly
+      # restrictively-licensed design around the user's library and into any future share/export
+      # path. It is REFERENCED by node_id instead, which is all `show` and the prefill need.
+      node_id = seed_scad(@user, "os-private.scad")
+      scad_count = -> { @user.nodes.present.where("LOWER(name) LIKE ?", "%.scad").count }
+      before = scad_count.call
+
+      post tools_openscad_path, params: { name: "OS From Mine", node_id:, params: { cols: "4" } }
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+
+      names = @user.nodes.where(node_id: state.files.map(&:node_id)).pluck(:name)
+      assert_empty names.grep(/\.scad\z/i), "the .scad source must not be in the bundle"
+      # …and not loose in the library either — the bundle check alone still passes if create writes
+      # the source as an untied node.
+      assert_equal before, scad_count.call, "no new .scad may appear in the library"
+      assert_equal node_id, state.data["node_id"], "the source should be referenced, not copied"
+    end
+
+    # Spy on LibraryOutput.write (define_singleton_method — the repo's mocking idiom) so this
+    # asserts the CONTROLLER's parent-selection wiring without depending on any one backend's write
+    # mechanics: it passes identically on chunk/share/s3.
+    test "create saves the bundle into the chosen folder" do
+      folder = @user.nodes.create!(node_id: SecureRandom.uuid, name: "CNC", kind: "dir")
+      captured = :unset
+      original = Maker::Addons::LibraryOutput.method(:write)
+      Maker::Addons::LibraryOutput.define_singleton_method(:write) do |user:, state:, parent_node_id:, files:|
+        captured = parent_node_id
+        []
+      end
+      begin
+        post tools_openscad_path, params: { name: "OS Placed", generator: "hex_plate",
+                                            params: { cols: "4" }, parent_node_id: folder.node_id }
+      ensure
+        Maker::Addons::LibraryOutput.define_singleton_method(:write, original)
+      end
+      assert_equal folder.node_id, captured
+    end
+
+    test "create attaches BOTH bundle files to the current project" do
+      project = @user.maker_projects.create!(name: "OpenSCAD Lamp")
+      folder = project.ensure_library_folder!(@user)
+      patch current_project_path, params: { project_id: project.id }
+      assert_difference "project.file_attachments.count", 2 do
+        post tools_openscad_path, params: { name: "OS Attached", generator: "hex_plate",
+                                            params: { cols: "4" }, parent_node_id: folder.node_id }
+      end
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+      assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
+                   "both bundle files (3mf + params.json) must be the attached nodes"
+    end
+
+    # --- show + the prefill link ----------------------------------------------------------------
+
+    test "show reopens a saved design and its duplicate link actually prefills the editor" do
+      post tools_openscad_path, params: { name: "OS Reopen", generator: "hex_plate",
+                                          params: { cols: "9" } }
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+      get tools_openscad_design_path(state)
+      assert_response :success
+      assert_select "*", text: /OS Reopen/
+      assert_select ".bundle-files li", 2 # the tied bundle is what `show` is for
+
+      # WIRE FORMAT, asserted deliberately: params must be NESTED (params[cols]=9), not flattened.
+      # `:params` is a reserved url_for option that appends its hash to the query string, so the
+      # flat form is silently ignored by #new and nothing prefills. This exact bug shipped in the
+      # Boxes addon once; comparing against the helper on both sides reproduces it and passes.
+      href = css_select("a").filter_map { |a| a["href"] }.find { |h| h.include?("params%5B") }
+      assert href, "expected a prefill link with nested params"
+      assert_includes href, "params%5Bcols%5D=9"
+
+      # END TO END: following it prefills the field, which is the behaviour that actually broke.
+      get href
+      assert_response :success
+      assert_select "input[name='params[cols]'][value=?]", "9"
+    end
+
+    # --- graceful degradation --------------------------------------------------------------------
+
+    test "the addon greys out on a deployment with no sidecar" do
+      OpenscadClient.reset!                  # no stub…
+      ENV.delete("OPENSCAD_SIDECAR_URL")     # …and no URL: teardown restores both
+
+      get tools_path
+      assert_response :success
+      assert_select ".addon-card.disabled .addon-title", text: "OpenSCAD"
+      assert_select "a.addon-card[href=?]", "/tools/openscad", count: 0
+
+      get tools_openscad_path
+      assert_redirected_to tools_path
+      assert_equal "OpenSCAD isn't configured on this deployment.", flash[:alert]
+    end
+
     private
 
     # A real .scad in a user's library, written through the SAME backend-neutral path the addon
     # itself uses — so this seeds correctly on chunk, share and s3 alike.
+    #
+    # EVERY `name` PASSED HERE MUST BE UNIQUE ACROSS THE FILE, and so must every design `name`
+    # posted to #create (which derives its filenames from it). The DB rolls back between tests but
+    # the SHARE ROOT does not, and both Share#write and S3#write REFUSE a clobber — so a name reused
+    # by a second test is a 500 on the share/s3 legs only.
     def seed_scad(user, name)
       state = user.maker_addon_states.create!(addon_key: "fixture", name: "seed-#{SecureRandom.hex(3)}")
       Maker::Addons::LibraryOutput.write(
         user:, state:, parent_node_id: nil,
-        files: [ { name:, bytes: "cols = 4;\ncube([cols, 1, 1]);\n".b,
-                   content_type: "text/plain", role: "output" } ]
+        files: [ { name:, bytes: SCAD_FIXTURE.b, content_type: "text/plain", role: "output" } ]
       ).first.node_id
+    end
+
+    # A second, confirmed account — for the scoping tests. Random email: a fixed one would collide
+    # inside a test that needs two.
+    def another_user
+      User.create!(email: "other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                   confirmed_at: Time.current)
     end
   end
 end
