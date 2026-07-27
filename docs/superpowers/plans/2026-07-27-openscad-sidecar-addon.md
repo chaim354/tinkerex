@@ -2760,6 +2760,28 @@ editor — these are third-party designs and the terms travel with the output."
 
 ## Task 12: Controller tests — including the one that must not be vacuous
 
+> **CORRECTIONS from Tasks 9-11 as built — the plan's draft tests below are stale in four places.
+> Write against the CODE, not against the draft:**
+> 1. **`OpenscadParams` exists** (`app/services/openscad_params.rb`) — the plan's pass-through
+>    `scad_params` was replaced by real type coercion, because a garbage value otherwise renders
+>    SUCCESSFULLY with default geometry. Read it before asserting anything about params.
+> 2. **A vector reaches the sidecar ALREADY BRACKETED**, `"[10,20,30]"`, not the bare `"10,20,30"`
+>    the draft implies. `render.py` only re-brackets a bare string CONTAINING A COMMA, so a
+>    one-element vector would otherwise arrive as a scalar and silently render the default.
+> 3. **`create` with an uncoercible value re-renders `:new` at 422** with the form still populated —
+>    it does NOT redirect to index. A guard that costs someone their whole form is one they learn
+>    to route around.
+> 4. **Do NOT assert `:success` unconditionally on the preview happy path.** A sidecar 3MF has no
+>    embedded thumbnail, so `Maker::Previews::ThreeMf` always falls through to its mesh path, which
+>    shells out to `stl-thumbnailer` — absent on some boxes, including this one. Gate on
+>    `Maker::Previews::Stl.available?` and assert on what reached the sidecar.
+>
+> **And the lesson from Task 9-11's own review, which applies directly to the foreign-`node_id`
+> tests below:** the first version of that test PASSED with `current_user` removed from the guard,
+> because `FileLayer#read` is user-scoped too and refuses downstream — so it pinned the layer
+> UNDERNEATH the thing it claimed to test. Assert the guard's own message
+> (`"no such .scad in your library"`), not merely that the request was refused.
+
 **Files:**
 - Modify: `test/controllers/tools/openscad_controller_test.rb` (created in Task 9)
 
