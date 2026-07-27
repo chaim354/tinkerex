@@ -14,13 +14,21 @@
 
 ## Background an engineer needs before starting
 
-**Three backends, one suite, run three times.** `LIBRARY_BACKEND` selects the file layer: `chunk` (the sync engine's content-addressed store — the default in production), `share` (a mounted NAS directory), `s3` (the user's own bucket). Every test must pass on all three legs:
+**Three backends, one suite, run three times.** `LIBRARY_BACKEND` selects the file layer: `chunk` (the sync engine's content-addressed store — the default in production), `share` (a mounted NAS directory), `s3` (the user's own bucket). Every test must pass on all three legs.
+
+**The share and s3 legs need env, or `LibraryBackendCheck` refuses to build the adapter and every request test errors** (`LIBRARY_BACKEND=share requires LIBRARY_PATH`). These are the exact values `.github/workflows/ci.yml` uses; the s3 ones point at nothing real on purpose — the boot check is config-*presence* only and never touches the network, so any test that made a real S3 call would fail here, which is a feature:
 
 ```bash
 bin/rails test
-LIBRARY_BACKEND=share bin/rails test
-LIBRARY_BACKEND=s3 bin/rails test
+
+LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test
+
+LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+  LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+  bin/rails test
 ```
+
+**Baseline, measured 2026-07-26 before any change on this branch:** all three legs report an identical **1277 runs, 4355 assertions, 0 failures, 0 errors, 8 skips**.
 
 Tests either seed bare `nodes` rows and stay backend-neutral (see `test/integration/web/folder_nav_test.rb`'s header comment), or pin a backend with `pin_file_layer_backend("chunk")` (defined in `test/test_helper.rb:52`). Prefer backend-neutral.
 
@@ -56,19 +64,15 @@ Tests: `test/services/maker/move_node_test.rb`, `test/integration/web/files_sort
 
 ---
 
-## Task 0: Capture the baseline
+## Task 0: Capture the baseline — ✅ DONE 2026-07-26
 
-**Files:** none.
+Measured before any change on this branch, using the three commands in the Background section
+above: all three legs identical at **1277 runs, 4355 assertions, 0 failures, 0 errors, 8 skips**.
 
-- [ ] **Step 1: Record the current test counts on all three legs**
-
-```bash
-bin/rails test 2>&1 | tail -3
-LIBRARY_BACKEND=share bin/rails test 2>&1 | tail -3
-LIBRARY_BACKEND=s3 bin/rails test 2>&1 | tail -3
-```
-
-Expected: three identical `N runs, M assertions, 0 failures, 0 errors, S skips` lines. **Write the number N down** — Task 8 compares against it. If the three legs disagree or anything is red before you have changed a line, STOP and report it; do not start building on a red baseline.
+Task 8 compares against that number. The first attempt ran the share and s3 legs *without* their
+env and got 131 and 116 errors — that is `LibraryBackendCheck` refusing to build an adapter, not a
+code failure. If you see a wall of `LIBRARY_BACKEND=… requires …` errors, you are missing env, not
+looking at a bug.
 
 ---
 
@@ -2033,12 +2037,17 @@ Expected: no offenses. Autocorrect with `bin/rubocop -a` if it flags formatting,
 
 ```bash
 bin/rails test
-LIBRARY_BACKEND=share bin/rails test
-LIBRARY_BACKEND=s3 bin/rails test
+
+LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test
+
+LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+  LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+  bin/rails test
 ```
 
-Expected: **identical** `N runs / M assertions / 0 failures / 0 errors` on all three, with N equal
-to the Task 0 baseline plus the tests this branch added (10 + 5 + 8 + 8 + 10 + 14 = 55). A leg that
+Expected: **identical** `N runs / M assertions / 0 failures / 0 errors / 8 skips` on all three, with
+N equal to the Task 0 baseline of **1277** plus the tests this branch added (10 + 5 + 8 + 8 + 10 +
+14 = 55), so **1332**. A leg that
 differs from the others is the signal this whole three-leg discipline exists for — do not paper over
 it by pinning a backend in the failing test until you understand which adapter behaves differently
 and why.
