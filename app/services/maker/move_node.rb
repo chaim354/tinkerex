@@ -57,6 +57,13 @@ module Maker
     # that is wrong by one.
     HIGHEST_SUFFIX = 9
 
+    # BYTES, NOT CHARACTERS, and 255 because that is what the filesystems on the other end of the
+    # sync actually enforce (ext4, APFS and NTFS all cap a single component there; NTFS counts
+    # UTF-16 units, so 255 bytes is the conservative floor). A name this row accepts propagates to
+    # every device, so a length no client can create is a name that syncs and then cannot be
+    # written down. Node validates presence only — nothing else in the stack bounds this.
+    MAX_NAME_BYTES = 255
+
     def self.call(user, node:, new_parent_node_id:, new_name: nil)
       new(user).call(node:, new_parent_node_id:, new_name:)
     end
@@ -64,15 +71,29 @@ module Maker
     # The first free "<base> (n)<ext>" under `parent_node_id`, or nil if every suffix up to
     # HIGHEST_SUFFIX is taken. Lives here because collision naming is this class's knowledge; the
     # conflict prompt reads it to label its button.
+    #
+    # A CANDIDATE OVER THE LENGTH BOUND IS NOT FREE, it is unusable — #leaf! would refuse it. A
+    # base already near MAX_NAME_BYTES pushes every suffix past it, so the honest answer there is
+    # nil (no name to offer) rather than a button that cannot work.
     def self.available_name(user, parent_node_id:, name:)
       ext  = File.extname(name)
       base = File.basename(name, ext)
       taken = user.nodes.present.where(parent_node_id:).pluck(:name).to_set
       (2..HIGHEST_SUFFIX).each do |i|
         candidate = "#{base} (#{i})#{ext}"
+        next if candidate.bytesize > MAX_NAME_BYTES
         return candidate unless taken.include?(candidate)
       end
       nil
+    end
+
+    # Is `name` already held under `parent_node_id` by a LIVE node that is not `except_node_id`?
+    # The exact predicate #call raises Collision on, exposed because the conflict prompt has to ask
+    # the SAME question before claiming a collision exists. A second, privately-spelled copy there
+    # is how the prompt came to render for a folder with nothing in it.
+    def self.collision?(user, parent_node_id:, name:, except_node_id:)
+      user.nodes.present.where(parent_node_id:, name:)
+          .where.not(node_id: except_node_id).exists?
     end
 
     def initialize(user)
@@ -126,23 +147,42 @@ module Maker
       raise FileLayer::NotFound, "parent #{parent_node_id.inspect} is not a live directory"
     end
 
-    # A name is a single path segment. The port adapters check this themselves (leaf!), but the
-    # chunk door does not, and a name with a slash there would put a separator inside a node's
-    # `name` column — a path that exists in no tree and that no mount can reproduce.
+    # A name is a single path segment, of a length a real filesystem can hold. The port adapters
+    # check the shape themselves (leaf!), but the chunk door does not, and a name with a separator
+    # there would put one inside a node's `name` column — a path that exists in no tree and that no
+    # mount can reproduce.
+    #
+    # A NON-STRING IS NOT A NAME, and the check has to be first. `params[:new_name]` is
+    # caller-shaped: `new_name[]=a/b.stl` arrives as an ARRAY, and `["a/b.stl"].include?("/")` asks
+    # whether some ELEMENT equals "/" — it is false, so every shape check below passed and the
+    # chunk door committed a node named `["a/b.stl"]` and broadcast it. (FileLayer::Share#leaf!
+    # escaped by calling .to_s first, so share and s3 were safe and chunk — the main deployment —
+    # was not.)
+    #
+    # REFUSING BEATS COPYING SHARE'S .to_s, and the difference is not taste — it was measured by
+    # mutating this line back. #call validates `name` but the doors below store the value they were
+    # HANDED, so coercing here validates a string and then writes an Array: `["plain.stl"]` passes
+    # every check and reaches AR as `TypeError: can't cast`. A Hash-shaped param is the same shape
+    # of bug, and stopping both here is what keeps a garbage param a flash instead of a 500.
+    #
+    # BACKSLASH IS A SEPARATOR TOO. Harmless on POSIX, but the default Windows backend is CfAPI,
+    # where a name carrying `\` is a path — and this is now reachable from a browser form.
     def leaf!(name)
-      return if name.present? && !name.include?("/") && !name.include?("\0") &&
-                name != "." && name != ".."
+      return if name.is_a?(String) && name.present? &&
+                !name.include?("/") && !name.include?("\\") && !name.include?("\0") &&
+                name != "." && name != ".." && name.bytesize <= MAX_NAME_BYTES
 
       raise InvalidName, "#{name.inspect} is not a valid file name"
     end
 
     # `where.not(node_id:)` is what makes a no-op move (already in the folder, same name) legal
     # rather than a collision with itself. Tombstones are excluded by `.present` — a deleted
-    # sibling holds no name.
+    # sibling holds no name. Delegates to the class-level predicate so the prompt that asks the
+    # same question before offering a rename cannot answer it differently.
     def collision!(node, parent_node_id, name)
-      taken = @user.nodes.present.where(parent_node_id:, name:)
-                   .where.not(node_id: node.node_id).exists?
-      raise Collision, name if taken
+      return unless self.class.collision?(@user, parent_node_id:, name:, except_node_id: node.node_id)
+
+      raise Collision, name
     end
 
     # share/s3: the port owns the store, so it renames the bytes and writes the row.

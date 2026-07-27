@@ -1,4 +1,4 @@
-# Resolve `?move_conflict=<attachment id>` into everything shared/_move_conflict.html.erb needs.
+# Resolve `?move_conflict=<attachment id>` into everything projects/_move_conflict.html.erb needs.
 #
 # The param is minted by Projects::AttachmentsController#attach_redirect_path when an attach
 # succeeded but the auto-move into the project folder hit a name collision. It rides back to
@@ -51,13 +51,26 @@ module MoveConflicts
     node = current_user.nodes.present.find_by(node_id: attachment.node_id)
     return nil unless project && node && project.folder_node_id.present?
 
-    # THE CONFLICT IS OVER ONCE THE FILE IS IN THE FOLDER, and the param OUTLIVES it: #relocate
-    # redirects to the project page, so a browser Back lands here with the id still in the URL.
-    # Re-rendering would state something now false ("so it was left where it is") and offer to move
-    # the file in as "bracket (2) (2).stl". A live collision cannot coexist with the node already
-    # being there — #create answers :already_there before it can reach :conflict — so this is a
-    # pure staleness check, not a second opinion about whether the names clash.
-    return nil if node.parent_node_id == project.folder_node_id
+    # ASK THE QUESTION THE PROMPT'S OWN SENTENCE ANSWERS: "a file with that name is already in the
+    # project's folder". The param OUTLIVES the collision — #relocate lands back on the page the
+    # button was on, browsers have a Back key, and an attachment id is a sequential integer next to
+    # a URL that is on screen after any collision — so the prompt has to re-establish its premise
+    # rather than assume it.
+    #
+    # AN EARLIER VERSION ASKED `node.parent_node_id == project.folder_node_id` — "did the move
+    # happen?" — which is a DIFFERENT question, and it rendered a prompt (offering "bracket
+    # (2).stl") for a project folder that was empty, for a colliding sibling deleted out of band,
+    # and for a project folder that had itself been tombstoned. This subsumes it: a node already in
+    # the folder cannot collide with itself, which is exactly what `except_node_id` says. It also
+    # fixes the suggestion — available_name is now only ever asked about a name that IS taken.
+    return nil unless Maker::MoveNode.collision?(current_user, parent_node_id: project.folder_node_id,
+                                                 name: node.name, except_node_id: node.node_id)
+
+    # AND DON'T OFFER A BUTTON THE SERVICE WILL REFUSE. A model's file, a file another project
+    # claims, and a directory all keep their bytes where they are by policy — the prompt for one
+    # would be a dialog whose every word is false, wired to a move that (now) answers a refusal.
+    # The app never mints ?move_conflict= for any of them; typing the id does.
+    return nil if Maker::AttachToProject.new(user: current_user, project:).refusal_for(node)
 
     ConflictPrompt.new(
       project:, node:,

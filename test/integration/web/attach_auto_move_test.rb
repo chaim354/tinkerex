@@ -179,6 +179,24 @@ module Web
       assert_nil @node.reload.parent_node_id
     end
 
+    # A dir CAN belong to a model (Models::AttachmentsController does not filter by kind), and the
+    # bundle path keeps live FILES only — so the triggering node was missing from its own result
+    # and this door raised `undefined method 'node_id' for nil`. Reproduced before the fix; the
+    # HTML door's version of it said "Attached 0 files from Widget."
+    test "a JSON attach of a dir that belongs to a model answers instead of 500-ing" do
+      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      model = @user.maker_models.create!(title: "Widget")
+      model.file_attachments.create!(user: @user, node_id: "d-1", role: "other")
+
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "d-1" }, as: :json
+
+      assert_response :created
+      body = JSON.parse(response.body)
+      assert_equal "d-1", body["node_id"]
+      assert_nil body["relocation"]
+      assert_nil dir.reload.parent_node_id
+    end
+
     test "a JSON attach of a dir reports no relocation attempt at all" do
       @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
       post attachments_path, params: { project_id: @lamp.slug, node_id: "d-1" }, as: :json
@@ -192,7 +210,7 @@ module Web
 
     # --- what must NOT be swallowed ----------------------------------------------
 
-    # THE NARROWING IS THE POINT. #relocate_into_project's rescue wraps the whole method, so a
+    # THE NARROWING IS THE POINT. Maker::AttachToProject#move's rescue wraps the whole method, so a
     # too-wide list turns bugs into "the library is having a bad day" with a green suite. A bare
     # ArgumentError — arity drift in a port adapter's #move, a kwarg rename, a nil reaching
     # File.extname — must reach the error handler, not the flash.
@@ -328,9 +346,59 @@ module Web
       assert_select "dialog.move-conflict", count: 0
     end
 
-    # THE PARAM OUTLIVES THE CONFLICT. #relocate lands on the project page, so a browser Back
-    # re-GETs the file page with the id still in the URL — and the prompt would state something now
-    # false ("it was left where it is") while offering "bracket (2) (2).stl".
+    # THE PROMPT MUST RE-ESTABLISH ITS OWN SENTENCE, not a proxy for it. The premise is "a file
+    # with that name is already in the project's folder"; an earlier version asked "is the node in
+    # the folder?", which is a different question and rendered a prompt in all three of these — the
+    # first reachable with NO URL editing at all, from any attachment the inline-upload or tool-save
+    # paths made. The suggestion was wrong too: it offered "bracket (2).stl" while "bracket.stl"
+    # was free.
+    test "no collision, no prompt — an empty folder or a sibling deleted out of band" do
+      folder = @lamp.ensure_library_folder!(@user)
+      empty_folder_attachment = attach!
+
+      get file_path("f-1", move_conflict: empty_folder_attachment.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0, message: "nothing in the folder to collide with"
+
+      sibling = @user.nodes.create!(node_id: "f-2", name: "bracket.stl", kind: "file",
+                                    parent_node_id: folder.node_id)
+      get file_path("f-1", move_conflict: empty_folder_attachment.id)
+      assert_select "dialog.move-conflict", 1, "precondition: a real collision does render"
+
+      sibling.update!(deleted: true)
+      get file_path("f-1", move_conflict: empty_folder_attachment.id)
+      assert_select "dialog.move-conflict", count: 0, message: "the collision is gone"
+    end
+
+    # DON'T OFFER A BUTTON THE SERVICE WILL REFUSE. The app never mints ?move_conflict= for a
+    # bundle member or a file another project claims — but attachment ids are sequential integers
+    # and the URL is on screen right after any collision, so typing one used to yield a dialog
+    # whose every word was false, wired to a move that gutted a model's folder.
+    test "no prompt for a file the policy will not move" do
+      model = @user.maker_models.create!(title: "Widget")
+      model.ensure_library_folder!(@user)
+      model.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
+      seed_collision
+      bundle_member = attach!
+
+      get file_path("f-1", move_conflict: bundle_member.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0, message: "a model's files stay together"
+    end
+
+    test "no prompt for a file another project already claims" do
+      seed_collision
+      claimed = attach!
+      attach!(@bench)
+
+      get file_path("f-1", move_conflict: claimed.id)
+      assert_response :success
+      assert_select "dialog.move-conflict", count: 0
+    end
+
+    # THE PARAM OUTLIVES THE CONFLICT. #relocate lands back on the page the button was on, and
+    # browsers have a Back key — so the id survives the move it asked for. The prompt would then
+    # state something now false ("it was left where it is") while offering "bracket (2) (2).stl".
     test "the prompt stops rendering once the move it offered has happened" do
       seed_collision
       post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1", return_to: "file" }
@@ -391,6 +459,7 @@ module Web
 
     test "relocate moves the file under the suggested name" do
       folder = seed_collision
+      attach!
 
       post relocate_project_attachments_path(@lamp),
            params: { node_id: "f-1", new_name: "bracket (2).stl" }
@@ -407,6 +476,7 @@ module Web
     end
 
     test "relocate onto a name that is ALSO taken says so instead of clobbering" do
+      attach!
       folder = @lamp.ensure_library_folder!(@user)
       @user.nodes.create!(node_id: "f-other", name: "bracket (2).stl", kind: "file",
                           parent_node_id: folder.node_id)
@@ -419,13 +489,18 @@ module Web
     end
 
     test "relocate refuses a name that escapes the folder" do
+      attach!
+
       post relocate_project_attachments_path(@lamp),
            params: { node_id: "f-1", new_name: "../escape.stl" }
 
       @node.reload
       assert_nil @node.parent_node_id
       assert_equal "bracket.stl", @node.name
-      assert_match(/couldn't move/i, flash[:alert])
+      # ITS OWN SENTENCE, not the :unavailable one. "Couldn't move it right now" means try again
+      # later, and a name that is not a leaf never succeeds on retry — move_node.rb asked for the
+      # split by name, and this endpoint is the caller it anticipated.
+      assert_match(/name isn't allowed/i, flash[:alert])
     end
 
     # THE kind: "file" FILTER IS A GUARD. Both ids come from the request here, and Maker::MoveNode
@@ -463,6 +538,7 @@ module Web
     # for #create ("no redundant move"); the new endpoint must not be the one that breaks it.
     test "resubmitting the prompt's button is a no-op, not a second move" do
       seed_collision
+      attach!
 
       2.times do
         post relocate_project_attachments_path(@lamp),
@@ -480,6 +556,7 @@ module Web
     # folder. "Couldn't move it" would be a lie about a library that is already the way the user
     # asked for.
     test "relocating a file that is already in place says so rather than claiming a move" do
+      attach!
       folder = @lamp.ensure_library_folder!(@user)
       @node.update!(parent_node_id: folder.node_id)
 
@@ -489,6 +566,141 @@ module Web
       assert_equal folder.node_id, @node.reload.parent_node_id
       assert_empty @user.changelog_entries.where(op: "move"),
                    "nothing to move — the sync engine must not be told otherwise"
+    end
+
+    # --- #relocate obeys the SAME policy #create does -----------------------------
+    #
+    # THE BUG THESE EXIST FOR: the rules used to live inline in #create, and #relocate called the
+    # move directly, below all of them. Three did not come along. They are one object now
+    # (Maker::AttachToProject), unit-tested per rule in test/services/maker/attach_to_project_test.rb;
+    # these drive the same rules through the endpoint a browser can reach.
+
+    # THE CRITICAL ONE. #create refuses to pull one file out of a model's bundle — "would pull ONE
+    # of those out and report success, gutting the model's folder". #relocate did exactly that,
+    # reproduced against a three-file model: the folder was left holding two files and the flash
+    # said "Moved widget.stl into Desk Lamp."
+    test "relocate never pulls a file out of its model's bundle" do
+      model = @user.maker_models.create!(title: "Widget")
+      folder = model.ensure_library_folder!(@user)
+      %w[widget.stl instructions.pdf cover.png].each_with_index do |name, i|
+        @user.nodes.create!(node_id: "m-#{i}", name:, kind: "file", parent_node_id: folder.node_id)
+        model.file_attachments.create!(user: @user, node_id: "m-#{i}", role: "other")
+      end
+      # The attach itself is allowed and brings the whole bundle (Task 3b) — so the attachment
+      # #relocate requires EXISTS, and only the bundle rule stands between it and the folder.
+      post attachments_path, params: { project_id: @lamp.slug, node_id: "m-0" }
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "m-0" }
+
+      assert_equal folder.node_id, @user.nodes.find_by(node_id: "m-0").parent_node_id
+      assert_equal %w[widget.stl instructions.pdf cover.png].sort,
+                   @user.nodes.present.where(parent_node_id: folder.node_id).pluck(:name).sort,
+                   "the model's folder must still hold every one of its files"
+      assert_match(/part of Widget/, flash[:alert])
+    end
+
+    test "relocate does not yank a file out of another project's folder" do
+      bench_folder = @bench.ensure_library_folder!(@user)
+      @node.update!(parent_node_id: bench_folder.node_id)
+      attach!(@bench)
+      attach!(@lamp)
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "f-1" }
+
+      assert_equal bench_folder.node_id, @node.reload.parent_node_id
+      assert_match(/belongs to another project/i, flash[:alert])
+    end
+
+    # AN ACTION ON THE ATTACHMENTS CONTROLLER MUST TOUCH AN ATTACHMENT. Without this rule, POSTing
+    # a node_id to a project the user never attached anything to moved the file in AND minted
+    # Projects/<slug> as a side effect. "Attached ⇒ in the folder" is the rule the move enforces; a
+    # file that has not joined the project has nothing to finish.
+    test "relocate refuses when the file is not attached to this project, and mints no folder" do
+      post relocate_project_attachments_path(@bench), params: { node_id: "f-1" }
+
+      assert_nil @node.reload.parent_node_id
+      assert_nil @bench.reload.folder_node_id, "the endpoint must not create a folder to refuse into"
+      assert_equal 0, @bench.file_attachments.count
+      assert_match(/isn't attached to Bench/i, flash[:alert])
+    end
+
+    # --- what a request-shaped `new_name` must not become -------------------------
+
+    # A NON-STRING BYPASSED leaf! ON CHUNK, THE MAIN DEPLOYMENT. `["a/b.stl"].include?("/")` asks
+    # whether an ELEMENT equals "/", so every shape check passed and the chunk door committed a
+    # node literally named `["a/b.stl"]` — a separator inside `nodes.name`, broadcast to every
+    # device. FileLayer::Share#leaf! escaped only by calling .to_s first, so share and s3 were safe.
+    test "an array-shaped new_name is refused, not stringified into a name" do
+      attach!
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: [ "a/b.stl" ] }
+
+      @node.reload
+      assert_equal "bracket.stl", @node.name
+      assert_nil @node.parent_node_id
+      assert_empty @user.changelog_entries.where(op: "move")
+      assert_match(/name isn't allowed/i, flash[:alert])
+    end
+
+    # THE WRITE COMMITTED BEFORE THE 500. A ~4 KB name renamed the file and appended the changelog
+    # entry, then blew the session cookie — the user's file permanently renamed to 4000 characters,
+    # on every device, and an error page to look at. No client filesystem can create it (255 bytes
+    # on ext4/APFS/NTFS), so it syncs and then cannot be written down.
+    test "an absurdly long new_name is refused before anything is written" do
+      attach!
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "#{'x' * 4000}.stl" }
+
+      assert_response :redirect
+      assert_equal "bracket.stl", @node.reload.name
+      assert_empty @user.changelog_entries.where(op: "move")
+    end
+
+    # Harmless on POSIX; on a Windows CfAPI client — the DEFAULT Windows backend — a backslash is a
+    # separator, so this is the same "a path that exists in no tree" bug wearing another OS.
+    test "a backslash in new_name is refused like a slash" do
+      attach!
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: 'sub\\evil.stl' }
+
+      assert_equal "bracket.stl", @node.reload.name
+      assert_match(/name isn't allowed/i, flash[:alert])
+    end
+
+    # BOTH raised an uncaught `TypeError: can't cast ActionController::Parameters` — a 500 from a
+    # garbage param, and #relocate's own comment promised "never a 500". The node_id half is
+    # #create's too, and predates this endpoint.
+    test "hash-shaped params answer honestly instead of 500-ing" do
+      attach!
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: "f-1", new_name: { a: "b" } }
+      assert_response :redirect
+      assert_equal "bracket.stl", @node.reload.name
+
+      post relocate_project_attachments_path(@lamp), params: { node_id: { a: "b" } }
+      assert_response :redirect
+      assert_match(/isn't in your library/i, flash[:alert])
+
+      post attachments_path, params: { project_id: @lamp.slug, node_id: { a: "b" } }
+      assert_response :redirect
+      assert_match(/isn't in your library/i, flash[:alert])
+    end
+
+    # The button is on two pages, so it has to come back to whichever one it was pressed on.
+    # `redirect_back_or_to` reads the Referer (same-host only — allow_other_host resolves to false
+    # under this app's config), which is why #relocate needs none of #create's return_to plumbing.
+    test "relocate returns to the page the button was on" do
+      seed_collision
+      attach!
+
+      post relocate_project_attachments_path(@lamp),
+           params: { node_id: "f-1", new_name: "bracket (2).stl" },
+           headers: { "HTTP_REFERER" => file_path("f-1") }
+
+      assert_redirected_to file_path("f-1")
     end
 
     # :unavailable persists no marker anywhere, so after a NAS outage this one line is the only
@@ -527,6 +739,13 @@ module Web
       @user.nodes.create!(node_id: "f-2", name: "bracket.stl", kind: "file",
                           parent_node_id: folder.node_id)
       folder
+    end
+
+    # The attachment #relocate requires. The real flow gets it from #create (which is what the
+    # tests above drive); a test that starts at #relocate has to stand it up, because the endpoint
+    # finishes an attach and refuses when there is none to finish.
+    def attach!(project = @lamp, node_id = "f-1")
+      project.file_attachments.create!(user: @user, node_id:, role: "model")
     end
   end
 end
