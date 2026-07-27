@@ -19,13 +19,20 @@ class DeployHygieneTest < ActiveSupport::TestCase
     # `configured?` true and every call fail — worse than the addon showing as unavailable.
     base    = YAML.load_file(ROOT.join("config/deploy.yml"),     aliases: true)
     overlay = YAML.load_file(ROOT.join("config/deploy.ovh.yml"), aliases: true)
-    base_urls = base.dig("env", "clear").to_h.keys.grep(/_SIDECAR_URL\z/)
-    assert base_urls.any?, "expected deploy.yml to define at least one *_SIDECAR_URL"
+    sidecar_url_keys = base.dig("env", "clear").to_h.keys.grep(/_SIDECAR_URL\z/)
+    assert sidecar_url_keys.any?, "expected deploy.yml to define at least one *_SIDECAR_URL"
 
     cleared = overlay.dig("env", "clear").to_h
-    base_urls.each do |key|
+    sidecar_url_keys.each do |key|
       assert cleared.key?(key), "deploy.ovh.yml must explicitly clear #{key} (it deep-merges otherwise)"
-      assert cleared[key].blank?, "#{key} must be blank in the OVH overlay, got #{cleared[key].inspect}"
+      # `.to_s.blank?`, NOT `.blank?`: ActiveSupport says `false.blank? == true`, but Kamal's
+      # `Utils.argumentize` special-cases a YAML `false` into the literal docker arg `KEY=false` —
+      # a non-blank STRING at runtime, so `configured?` reads TRUE and the bug this test exists to
+      # catch comes straight back. Not hypothetical: deploy.yml's own env.clear already uses YAML
+      # booleans (SOLID_QUEUE_IN_PUMA: true), so reaching for `false` to "disable" a URL is the
+      # obvious next edit.
+      assert cleared[key].to_s.blank?,
+             "#{key} must be blank in the OVH overlay, got #{cleared[key].inspect}"
     end
   end
 end
