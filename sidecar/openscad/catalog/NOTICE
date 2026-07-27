@@ -38,19 +38,6 @@ actually ship say?"). Open the file.
     below. Unverified provenance is not a licence, and CONTRADICTED provenance is worse.
     It remains available as a bring-your-own file, which carries no redistribution exposure.
 
-  KEPT WITH A RECORDED CONFLICT — vase_box (DrLex0 @ 5dbc4c9)
-    The .scad header says "Released under Creative Commons - Attribution - Share Alike license".
-    Everything else in the repo says CC BY 4.0, specifically and deliberately:
-      - LICENSE.md is the COMPLETE CC BY 4.0 International legal text.
-      - README.md: "### License [Creative Commons - Attribution](https://creativecommons.org/licenses/by/4.0/)"
-      - GitHub's licence detector reads the repo as CC-BY-4.0.
-    The README also records that this began life on Thingiverse in 2019 and was migrated to
-    GitHub in 2023-05, and the CC BY 4.0 text arrived in that migration commit. A stale
-    Thingiverse-era "-SA" in a header comment is the ordinary explanation, and the operative
-    grant is the licence text the author committed.
-    Bundled as CC-BY-4.0 on that evidence. Flagged here rather than quietly normalised, because
-    the artifact we redistribute does contain a line contradicting the licence we claim for it,
-    and whoever reviews this should get to see that and overrule if they disagree.
 
 --------------------------------------------------------------------------------
 MODIFICATIONS
@@ -67,18 +54,10 @@ MODIFICATIONS
   Cold render at defaults, measured in this image (amd64 under emulation on an arm64 host, so
   production native amd64 will be at least this fast):
 
-    vase_box           223 ms     2,109 bytes      24 verts /     40 tris
     hex_cell_holder    329 ms   256,785 bytes   9,937 verts / 20,162 tris
     washer             257 ms    32,732 bytes   1,280 verts /  2,560 tris
     probe_plate        248 ms    21,126 bytes     776 verts /  1,596 tris
 
-  vase_box's 2,109 bytes sits only ~109 bytes above the 2,000-byte floor that
-  test_every_entry_renders_a_substantial_model_at_its_defaults asserts. That is NOT a stub: a
-  vase-mode box is a single-wall open shell, so 40 triangles is the right answer, and the
-  rendered bounding box (53.4 x 66.2 x 70.6 mm) matches its declared 50 x 25 x 70 defaults
-  with the lid laid out beside the box. Verified by reading the mesh out of the 3MF, not by
-  trusting the byte count. Recorded because the margin is thin: if that assertion ever goes
-  red on vase_box, check the geometry before assuming the file broke.
 
 --------------------------------------------------------------------------------
 hex_cell_holder.scad

@@ -97,9 +97,26 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY catalog/ ./catalog/
 COPY *.py ./
 
+# THE LICENCE AND THE SOURCE OFFER MUST BE *IN* THE IMAGE, not just in the repo. This image ships
+# GPL-2.0 binaries (OpenSCAD), and someone who runs `docker pull` never sees sidecar/openscad/ —
+# so without this line they receive GPL software with no licence text and no written offer beside
+# it. CLAUDE.md §9 is about what we SHIP, and the image is what ships.
+COPY LICENSE README.md ./
+COPY catalog/NOTICE ./catalog/NOTICE
+
 # The render cache (spec §5.1) lives on a mounted volume; create it so an unmounted run still works.
-RUN mkdir -p /cache
+# Owned by the run-as user below, because a mounted volume inherits the image's ownership for its
+# initial contents and gunicorn must be able to write cache entries.
+RUN mkdir -p /cache && \
+    useradd --create-home --uid 10001 openscad && \
+    chown -R openscad:openscad /cache /app
 ENV OPENSCAD_CACHE_DIR=/cache
+
+# NON-ROOT (spec §10). This container execs user-supplied .scad, which is arbitrary code execution
+# BY DESIGN — that is what a generator is. The bound is resource-shaped (timeout + RLIMIT_AS) and
+# blast-radius-shaped, and running as root would have thrown away the second half for nothing:
+# nothing here needs privilege after the build steps are done.
+USER openscad
 
 EXPOSE 8000
 # --timeout 120 must stay ABOVE the 60 s per-render timeout in render.py. Gunicorn's timeout kills

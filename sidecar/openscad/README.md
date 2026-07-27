@@ -42,13 +42,12 @@ by `OPENSCAD_VERSION` + `OPENSCAD_SHA256` in the Dockerfile; upstream is
 > `X-AppImage-Version` agrees), so a URL-shaped offer here would be one nobody could actually
 > redeem. GPL-2.0 §3(b) wants an offer that can be honoured, so this one names a human.
 
-> **Open, and flagged rather than quietly fixed:** neither this file nor `LICENSE` is currently
-> **inside** the image — the Dockerfile copies `catalog/` and `*.py` and nothing else, and the
-> AppImage brings no `COPYING` of its own (searched: only Liberation-fonts, CC0-examples and
-> bundled-Python licences are in there). So someone who pulls `ghcr.io/chaim354/openscad-sidecar`
-> alone gets GPL binaries with no licence text and no source offer beside them. The fix is one line
-> — `COPY LICENSE README.md ./` — but it changes the image, so it wants a rebuild + a re-run of the
-> capability assertions rather than a drive-by edit. The boxes sidecar has the same gap.
+**The licence text and this README are INSIDE the image** (`COPY LICENSE README.md ./`,
+plus `catalog/NOTICE`), because someone who runs `docker pull` never sees
+`sidecar/openscad/` — without them they would receive GPL binaries with no licence and no
+written offer beside them. The AppImage brings no `COPYING` of its own (searched: only
+Liberation-fonts, CC0-examples and bundled-Python licences are in there), so this is the
+only copy. **Note the boxes sidecar still has this gap** — worth closing there too.
 
 Bundled third-party `.scad` generators are **permissive-licensed only** and credited individually in
 `catalog/NOTICE`. See spec §2 before adding one: a generator whose *output* carries a NonCommercial
@@ -99,10 +98,11 @@ render, used as the CWD, removed after.
 the render still succeeds, while `include </etc/hostname>` **and** the relative
 `include <../../../etc/hostname>` both resolve and are parsed — their contents come back as a
 parser error attributed to the model. So the fresh temp CWD bounds the blast radius; it does not
-seal it. Nothing sensitive lives here, so this is noted rather than mitigated. In the same spirit:
-the container runs as **root** (there is no `USER` directive) — the bounds above are
-resource-shaped, not privilege-shaped, and the reason that is tolerable is the empty blast radius,
-not a sandbox.
+seal it. Nothing sensitive lives here, so this is noted rather than mitigated. The container runs as the
+non-root user `openscad` (uid 10001) — nothing here needs privilege once the build steps are
+done, and since this service execs user-supplied code by design, keeping the privilege bound
+as well as the resource bound costs nothing. Note the build itself runs as root (the AppImage
+extraction and the capability assertions need to write to `/opt`); `USER` is the last step.
 
 The one thing that *is* sanitization-shaped is `GET /source/<key>`: the key indexes a file on our
 disk, so it is matched against `\A[A-Za-z0-9_-]+\Z` and **rejected** rather than normalized, then
