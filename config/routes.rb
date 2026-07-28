@@ -49,6 +49,9 @@ Rails.application.routes.draw do
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do
+    # Return an archived project to the live list. A member PATCH rather than an update to a
+    # `status` field: the web form no longer exposes status at all (spec decision #1).
+    patch :unarchive, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the

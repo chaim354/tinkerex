@@ -17,11 +17,12 @@
   </div>
 <% end %>
 
-<p class="archived-note muted">
-  <% if @archived_view %>
-    <%= link_to "← Back to projects", projects_path %>
-  <% elsif @archived_count.positive? %>
-    <%= link_to "#{@archived_count} archived project#{"s" unless @archived_count == 1}",
-                projects_path(archived: 1) %>
-  <% end %>
-</p>
+<% if @archived_view || @archived_count.positive? %>
+  <p class="archived-note muted">
+    <% if @archived_view %>
+      <%= link_to "← Back to projects", projects_path %>
+    <% else %>
+      <%= link_to pluralize(@archived_count, "archived project"), projects_path(archived: 1) %>
+    <% end %>
+  </p>
+<% end %>

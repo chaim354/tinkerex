@@ -14,3 +14,6 @@
   <% end %>
   <span class="project-name"><%= project.name %></span>
 <% end %>
+<% if project.status == "archived" %>
+  <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
+<% end %>

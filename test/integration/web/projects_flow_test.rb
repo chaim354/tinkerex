@@ -198,5 +198,79 @@ module Web
       get projects_path
       assert_select ".project-card .file-cell[data-node-id=?]", "c1"
     end
+
+    # --- archived view + unarchive ----------------------------------------------
+
+    test "the archived view lists archived projects and links back" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get projects_path(archived: 1)
+      assert_response :success
+      assert_select "h1", "Archived projects"
+      assert_select ".project-card .project-name", text: "Old Rig"
+      assert_select ".project-card .project-name", text: "Desk Lamp", count: 0
+    end
+
+    test "the default index links to the archived view when there are archived projects" do
+      user = sign_in
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+      get projects_path
+      assert_select ".archived-note a", text: "1 archived project"
+
+      user.maker_projects.create!(name: "Older Rig", status: "archived")
+      get projects_path
+      assert_select ".archived-note a", text: "2 archived projects"
+    end
+
+    # Step 0(b): with nothing archived there is nothing to say, so the note must not render at all.
+    test "the archived note is absent when nothing is archived" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      get projects_path
+      assert_select ".archived-note", count: 0
+    end
+
+    # Step 0(a): `.present?` would have made "0" truthy and served the ARCHIVED view here.
+    test "archived=0 shows the live list, not the archive" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get projects_path(archived: 0)
+      assert_select "h1", "Projects"
+      assert_select ".project-card .project-name", text: "Desk Lamp"
+      assert_select ".project-card .project-name", text: "Old Rig", count: 0
+    end
+
+    test "unarchive returns a project to the live list" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived",
+                                            archived_at: Time.current)
+
+      patch unarchive_project_path(project)
+      assert_redirected_to projects_path
+
+      project.reload
+      assert_equal "active", project.status
+      assert_nil project.archived_at
+
+      get projects_path
+      assert_select ".project-card .project-name", text: "Old Rig"
+    end
+
+    # `config.action_dispatch.show_exceptions = :rescuable` in the test env, so a RecordNotFound
+    # from the current_user scoping arrives as a 404 RESPONSE rather than a raised exception —
+    # which is why every cross-user test in this suite asserts the status, not an exception.
+    test "unarchive cannot reach another user's project" do
+      sign_in("a@example.com")
+      other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_projects.create!(name: "Theirs", status: "archived")
+
+      patch unarchive_project_path(theirs)
+      assert_response :not_found
+      assert_equal "archived", theirs.reload.status
+    end
   end
 end

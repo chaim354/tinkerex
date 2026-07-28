@@ -7,7 +7,7 @@
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
   before_action :authenticate_user!
-  before_action :set_project, only: %i[show edit update destroy]
+  before_action :set_project, only: %i[show edit update destroy unarchive]
 
   # Exposes the `capabilities` helper the attachments panel's upload control branches on
   # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
@@ -22,7 +22,9 @@ class ProjectsController < ApplicationController
   # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
   # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
   def index
-    @archived_view = params[:archived].present?
+    # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
+    # "show me the archive" — the opposite page.
+    @archived_view = params[:archived] == "1"
     all = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
     archived, live = all.partition { |p| p.status == "archived" }
     @projects = @archived_view ? archived : live
@@ -79,6 +81,13 @@ class ProjectsController < ApplicationController
   def destroy
     @project.archive!
     redirect_to projects_path, notice: "Archived #{@project.name}."
+  end
+
+  # The inverse of #destroy (which archives). Redirects to the live list, where the project has
+  # just reappeared — landing back on the archived view it left would read as a no-op.
+  def unarchive
+    @project.unarchive!
+    redirect_to projects_path, notice: "Restored #{@project.name}."
   end
 
   private
