@@ -42,7 +42,7 @@ Rails.application.routes.draw do
     end
   end
 
-  # --- Per-file notes (markdown; keyed by node_id, session auth) ---
+  # --- Per-file notes (keyed by node_id, session auth) ---
   post   "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]
 

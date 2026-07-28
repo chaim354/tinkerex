@@ -366,14 +366,20 @@ module Web
       assert_select "pre.preview-text"
     end
 
-    test "the file detail page shows a notes section and renders markdown notes" do
+    test "the file detail page shows a notes section and renders note bodies" do
       user = sign_in
       node_id = upload("part.stl", "solid".b)
-      user.maker_notes.create!(node_id:, body: "**important** note")
+      # Real HTML, not markdown syntax: notes are Action Text now, which renders whatever markup
+      # a body actually contains rather than interpreting markdown -- a Lexxy-authored note gets
+      # its <strong> from the user clicking Bold, not from typing asterisks. (Verified: assigning
+      # "**important** note" directly renders as the literal six-character string, no <strong>.)
+      user.maker_notes.create!(node_id:, body: "<p><strong>important</strong> note</p>")
       get file_path(node_id)
       assert_response :success
       assert_select ".notes-panel .note .note-body strong", text: "important"
-      assert_select ".note-form textarea"
+      # Was `textarea` — Lexxy's rich_text_area renders one <lexxy-editor> custom element
+      # carrying the form field's name; there is no separate <textarea> anywhere in the form.
+      assert_select ".note-form lexxy-editor"
     end
 
     test "a file with notes shows a note-count badge in grid and list" do
