@@ -173,6 +173,14 @@ bin/rails generate migration RederiveVectorAndCadSourceRoles
 This creates `db/migrate/<timestamp>_rederive_vector_and_cad_source_roles.rb`. The exact timestamp
 does not matter — the test below finds the file by glob.
 
+> **Expect the whole suite to refuse to run from this moment until you migrate.** `rails/test_help`
+> calls `maintain_test_schema!`, which raises a pending-migration error for *every* test as soon as
+> an unapplied migration file exists on disk — before any test code runs. So run
+> `bin/rails db:migrate` once now, against the still-empty generated migration, to clear the gate.
+> That run bumps only `db/schema.rb`'s version line. Step 3's "watch it fail" then fails on real
+> assertions rather than on the schema check, which is the point — a pending-migration error is not
+> the red you are looking for.
+
 - [ ] **Step 2: Write the failing test**
 
 Create `test/models/maker/rederive_roles_migration_test.rb`:
@@ -316,7 +324,7 @@ end
 bin/rails test test/models/maker/rederive_roles_migration_test.rb
 ```
 
-Expected: PASS, 6 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 6: Apply the migration and check the schema is unchanged**
 
