@@ -141,8 +141,16 @@
     </div>
   <% end %>
   </div>
+  <%# Which recipe panel: MillMage writes "operations" (an endmill, feeds, depths), LightBurn
+      writes "layers" (speed/power/passes). Branch on the key rather than on the file extension —
+      the metadata is what the panel actually renders, and a .mage that parsed no operations has
+      nothing for the CNC panel to show either way. %>
   <% if @thumbnail&.metadata.present? %>
-    <%= render "files/lbrn_settings", meta: @thumbnail.metadata %>
+    <% if @thumbnail.metadata["operations"].present? %>
+      <%= render "files/mage_settings", meta: @thumbnail.metadata %>
+    <% else %>
+      <%= render "files/lbrn_settings", meta: @thumbnail.metadata %>
+    <% end %>
   <% end %>
 </div>
 

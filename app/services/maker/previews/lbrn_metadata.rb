@@ -80,18 +80,12 @@ module Maker
         end
       end
 
-      # Job size = the shapes' bounding box in mm.
-      #
-      # Runs THE SAME traversal the thumbnail does (`Lbrn2.each_geometry`) rather than a private
-      # second copy. The copy this replaced is exactly why the two could disagree: it re-derived
-      # per-shape points and so inherited every dialect bug independently — a file could render
-      # one way and report a size computed from different geometry, with nothing to catch it.
-      def job_size(doc)
-        bbox = Lbrn2::BBox.new
-        Lbrn2.each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
-        w, h = bbox.dimensions
-        w && { "width" => w.round(1), "height" => h.round(1) }
-      end
+      # Job size = the shapes' bounding box in mm, measured by the SAME walk that draws the
+      # thumbnail (`Lbrn2.job_size`) rather than a private second copy. The copy this replaced is
+      # exactly why the two could disagree: it re-derived per-shape points and so inherited every
+      # dialect bug independently — a file could render one way and report a size computed from
+      # different geometry, with nothing to catch it.
+      def job_size(doc) = Lbrn2.job_size(doc)
     end
   end
 end

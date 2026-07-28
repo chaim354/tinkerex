@@ -107,6 +107,18 @@ module Maker
         walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), &block)
       end
 
+      # The drawn extent in mm, or nil when there is no geometry. Lives HERE, beside the walk it
+      # measures, so the thumbnail and the reported size can never be computed from different
+      # geometry — `LbrnMetadata` used to keep a private second copy of the traversal, and that
+      # copy independently inherited every dialect bug the parse had. Both metadata modules call
+      # this one.
+      def job_size(doc)
+        bbox = BBox.new
+        each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
+        w, h = bbox.dimensions
+        w && { "width" => w.round(1), "height" => h.round(1) }
+      end
+
       # Layers LightBurn itself does not draw. Two things here are easy to get wrong, and each
       # was caught by comparing every file's computed job size against the aspect ratio of the
       # thumbnail LightBurn itself embedded.
