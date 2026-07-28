@@ -1,0 +1,527 @@
+# Project Files By Type Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Split a project's Files panel into headed sub-sections grouped by file type, and teach the role vocabulary about laser and CAD-source files so they stop landing in "Other".
+
+**Architecture:** Grouping is `group_by(&:role)` over attachments the controller already loads — no new query and no new column. The role vocabulary gains two values (`vector`, `cad_source`), which needs one self-contained data migration to re-derive rows currently marked `other`. Display labels live on the model as an ordered constant that `ROLES` is derived *from*, so a heading can never name a role that doesn't exist.
+
+**Tech Stack:** Rails 8.1, ERB views, Minitest.
+
+**Spec:** `docs/superpowers/specs/2026-07-27-project-page-overhaul-design.md` §4.
+
+---
+
+## File Structure
+
+| File | Change | Responsibility after this plan |
+|---|---|---|
+| `app/models/maker/file_attachment.rb` | Modify | Owns the role vocabulary: `ROLE_LABELS` (ordered, display order) is the source of truth; `ROLES` derives from its keys. `ROLE_BY_EXT` gains six extensions. |
+| `db/migrate/*_rederive_vector_and_cad_source_roles.rb` | Create | One-shot, self-contained: moves `other` rows whose filename now maps to `vector`/`cad_source`. |
+| `app/views/projects/_attachments.html.erb` | Modify | Renders one section per non-empty role, in `ROLE_LABELS` order. Per-tile role badge removed. |
+| `app/assets/stylesheets/projects.css` | Modify | Adds `.attachment-group` / `.attachment-group-head`. |
+| `test/models/maker/file_attachment_test.rb` | Modify | Covers the two new roles and the `ROLES`/`ROLE_LABELS` invariant. |
+| `test/models/maker/rederive_roles_migration_test.rb` | Create | Drives the migration class directly. |
+| `test/integration/web/project_attachments_test.rb` | Modify | Covers the grouped rendering. |
+
+---
+
+## Task 1: Two new roles in the vocabulary
+
+**Files:**
+- Modify: `app/models/maker/file_attachment.rb:8-19`
+- Test: `test/models/maker/file_attachment_test.rb`
+
+- [ ] **Step 1: Write the failing tests**
+
+Append inside `module Maker` / `class FileAttachmentTest` in
+`test/models/maker/file_attachment_test.rb`:
+
+```ruby
+    test "laser and vector extensions derive the vector role" do
+      assert_equal "vector", Maker::FileAttachment.role_for("panel.svg")
+      assert_equal "vector", Maker::FileAttachment.role_for("Panel.DXF")
+      assert_equal "vector", Maker::FileAttachment.role_for("cut file.lbrn2")
+    end
+
+    test "CAD source extensions derive the cad_source role" do
+      assert_equal "cad_source", Maker::FileAttachment.role_for("box.scad")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("Bracket.f3d")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("frame.FCStd")
+    end
+
+    test "the existing derivations are unchanged" do
+      assert_equal "model", Maker::FileAttachment.role_for("bracket.stl")
+      assert_equal "image", Maker::FileAttachment.role_for("photo.jpg")
+      assert_equal "instructions", Maker::FileAttachment.role_for("manual.pdf")
+      assert_equal "gcode", Maker::FileAttachment.role_for("print.gcode")
+      assert_equal "source_archive", Maker::FileAttachment.role_for("bundle.zip")
+      assert_equal "other", Maker::FileAttachment.role_for("readme.txt")
+      assert_equal "other", Maker::FileAttachment.role_for("no-extension")
+    end
+
+    # The invariant that keeps a display heading from ever naming a role that isn't valid.
+    test "every role has a label and every label is a role" do
+      assert_equal Maker::FileAttachment::ROLES.sort,
+                   Maker::FileAttachment::ROLE_LABELS.keys.sort
+    end
+
+    test "the two new roles are accepted by the validation" do
+      %w[vector cad_source].each do |role|
+        att = @item.file_attachments.build(user: @user, node_id: "n", role:)
+        assert att.valid?, "expected #{role} to be a valid role"
+      end
+    end
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+```bash
+bin/rails test test/models/maker/file_attachment_test.rb
+```
+
+Expected: FAIL — `role_for("panel.svg")` returns `"other"`, and
+`Maker::FileAttachment::ROLE_LABELS` raises `NameError`.
+
+- [ ] **Step 3: Rewrite the vocabulary**
+
+In `app/models/maker/file_attachment.rb`, replace lines 8-19 (the `ROLES`, `ROLE_BY_EXT` and
+`role_for` block) with:
+
+```ruby
+    # Display order AND the source of truth for the vocabulary — the Files panel renders one
+    # section per key, in this order, using these labels. ROLES derives from the keys so a
+    # heading can never name a role the validation would reject.
+    ROLE_LABELS = {
+      "model"          => "Models",
+      "image"          => "Images",
+      "instructions"   => "Instructions",
+      "vector"         => "Vector",
+      "cad_source"     => "CAD source",
+      "gcode"          => "G-code",
+      "source_archive" => "Archives",
+      "other"          => "Other"
+    }.freeze
+
+    ROLES = ROLE_LABELS.keys.freeze
+
+    ROLE_BY_EXT = {
+      "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
+      "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
+      "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive",
+      # Laser / 2D vector work. Without these a laser-heavy project is mostly "Other".
+      "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
+      # Editable CAD sources, as opposed to the exported meshes above.
+      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
+    }.freeze
+
+    # Best-effort role from a filename's extension; unknown -> "other".
+    def self.role_for(name)
+      ROLE_BY_EXT.fetch(File.extname(name.to_s).downcase.delete("."), "other")
+    end
+```
+
+Note `step`/`stp` deliberately stay `model` — they are the interchange export a slicer reads, and
+moving them would recategorize existing attachments this migration is not supposed to touch.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+bin/rails test test/models/maker/file_attachment_test.rb
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Confirm nothing depended on the old ROLES ordering**
+
+```bash
+grep -rn "ROLES" app/ test/ --include="*.rb" --include="*.erb" | grep -i "attachment"
+```
+
+Expected: only the model definition, the validation, and a comment in
+`app/services/maker/attach_to_project.rb`. Nothing iterates `ROLES` to build a select or a
+serializer, so reordering it is safe.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/models/maker/file_attachment.rb test/models/maker/file_attachment_test.rb
+git commit -m "feat(attachments): add vector and cad_source roles"
+```
+
+---
+
+## Task 2: Re-derive existing `other` attachments
+
+**Files:**
+- Create: `db/migrate/<timestamp>_rederive_vector_and_cad_source_roles.rb`
+- Create: `test/models/maker/rederive_roles_migration_test.rb`
+
+- [ ] **Step 1: Generate the migration**
+
+```bash
+bin/rails generate migration RederiveVectorAndCadSourceRoles
+```
+
+This creates `db/migrate/<timestamp>_rederive_vector_and_cad_source_roles.rb`. The exact timestamp
+does not matter — the test below finds the file by glob.
+
+- [ ] **Step 2: Write the failing test**
+
+Create `test/models/maker/rederive_roles_migration_test.rb`:
+
+```ruby
+require "test_helper"
+require Dir[Rails.root.join("db/migrate/*_rederive_vector_and_cad_source_roles.rb")].first
+
+class RederiveRolesMigrationTest < ActiveSupport::TestCase
+  setup do
+    @user = User.create!(email: "rederive@example.com")
+    @project = @user.maker_projects.create!(name: "Lamp")
+  end
+
+  # node_id has no FK — the filename lives on the node, so the migration has to join to find it.
+  def attach(name, role)
+    @user.nodes.create!(node_id: "n-#{name}", name:, kind: "file")
+    @project.file_attachments.create!(user: @user, node_id: "n-#{name}", role:)
+  end
+
+  def run_migration
+    ActiveRecord::Migration.suppress_messages do
+      RederiveVectorAndCadSourceRoles.new.up
+    end
+  end
+
+  test "an 'other' dxf becomes vector and an 'other' scad becomes cad_source" do
+    dxf  = attach("panel.dxf", "other")
+    scad = attach("box.scad", "other")
+
+    run_migration
+
+    assert_equal "vector", dxf.reload.role
+    assert_equal "cad_source", scad.reload.role
+  end
+
+  test "a role set deliberately by the importer is never re-derived" do
+    # A PDF the model-library importer marked `instructions`; also a .dxf someone filed as
+    # `instructions` on purpose. Neither is "other", so neither is touched.
+    pdf = attach("manual.pdf", "instructions")
+    odd = attach("diagram.dxf", "instructions")
+
+    run_migration
+
+    assert_equal "instructions", pdf.reload.role
+    assert_equal "instructions", odd.reload.role
+  end
+
+  test "an 'other' row with no new mapping stays other" do
+    txt = attach("readme.txt", "other")
+    run_migration
+    assert_equal "other", txt.reload.role
+  end
+
+  test "an attachment whose node is missing is left alone rather than raising" do
+    orphan = @project.file_attachments.create!(user: @user, node_id: "gone", role: "other")
+    assert_nothing_raised { run_migration }
+    assert_equal "other", orphan.reload.role
+  end
+
+  test "down returns the new roles to other" do
+    dxf = attach("panel.dxf", "other")
+    run_migration
+    assert_equal "vector", dxf.reload.role
+
+    ActiveRecord::Migration.suppress_messages { RederiveVectorAndCadSourceRoles.new.down }
+    assert_equal "other", dxf.reload.role
+  end
+end
+```
+
+- [ ] **Step 3: Run it to verify it fails**
+
+```bash
+bin/rails test test/models/maker/rederive_roles_migration_test.rb
+```
+
+Expected: FAIL — the generated migration is an empty `change` method, so nothing is re-derived
+(`assert_equal "vector"` gets `"other"`).
+
+- [ ] **Step 4: Write the migration**
+
+Replace the generated file's contents with:
+
+```ruby
+# Moves attachments that were "other" only because ROLE_BY_EXT had no entry for their extension
+# into the two roles added alongside this migration.
+#
+# SELF-CONTAINED ON PURPOSE. It does not call Maker::FileAttachment.role_for and does not use the
+# app's models: a data migration runs against whatever the schema and the code look like months
+# from now, and app code keeps moving. The six extensions below are exactly the ones ROLE_BY_EXT
+# gains in this change, which is also what makes `down` exact — before this, no row could hold
+# either role, so every row holding one now was put there by `up`.
+class RederiveVectorAndCadSourceRoles < ActiveRecord::Migration[8.1]
+  NEW_ROLE_BY_EXT = {
+    "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
+    "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
+  }.freeze
+
+  class MigrationAttachment < ActiveRecord::Base
+    self.table_name = "maker_file_attachments"
+  end
+
+  class MigrationNode < ActiveRecord::Base
+    self.table_name = "nodes"
+  end
+
+  def up
+    moved = 0
+    MigrationAttachment.where(role: "other").find_each do |att|
+      node = MigrationNode.find_by(user_id: att.user_id, node_id: att.node_id)
+      next if node.nil? # attachment to a deleted/missing node — nothing to derive from
+      ext = File.extname(node.name.to_s).downcase.delete(".")
+      new_role = NEW_ROLE_BY_EXT[ext]
+      next if new_role.nil?
+      att.update_columns(role: new_role)
+      moved += 1
+    end
+    say "re-derived #{moved} attachment role#{"s" unless moved == 1}"
+  end
+
+  def down
+    MigrationAttachment.where(role: NEW_ROLE_BY_EXT.values.uniq).update_all(role: "other")
+  end
+end
+```
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+```bash
+bin/rails test test/models/maker/rederive_roles_migration_test.rb
+```
+
+Expected: PASS, 6 tests.
+
+- [ ] **Step 6: Apply the migration and check the schema is unchanged**
+
+```bash
+bin/rails db:migrate && git diff --stat db/schema.rb
+```
+
+Expected: `db/schema.rb` shows only the version bump — this migration touches data, not structure.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add db/migrate db/schema.rb test/models/maker/rederive_roles_migration_test.rb
+git commit -m "feat(attachments): re-derive 'other' roles into vector and cad_source"
+```
+
+---
+
+## Task 3: Group the Files panel
+
+**Files:**
+- Modify: `app/views/projects/_attachments.html.erb:18-49`
+- Modify: `app/assets/stylesheets/projects.css:44-49`
+- Test: `test/integration/web/project_attachments_test.rb`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `test/integration/web/project_attachments_test.rb`, inside `module Web` /
+`class ProjectAttachmentsTest`. That file already defines the `sign_in` helper, the
+`pin_file_layer_backend("chunk")` setup, and an `attach_node(user, project, name:, node_id:,
+role:)` helper — use them rather than adding new ones.
+
+```ruby
+    test "the files panel groups attachments by type and omits empty categories" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      attach_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
+      attach_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
+      attach_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
+      attach_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
+
+      get project_path(project)
+      assert_response :success
+
+      # One section per non-empty role, in ROLE_LABELS order.
+      assert_select ".attachment-group", count: 3
+      assert_select ".attachment-group-head", text: /Models/
+      assert_select ".attachment-group-head", text: /Images/
+      assert_select ".attachment-group-head", text: /Vector/
+      # Empty categories are not rendered at all.
+      assert_select ".attachment-group-head", text: /G-code/, count: 0
+      assert_select ".attachment-group-head", text: /Archives/, count: 0
+
+      # Headings carry the count, and the per-tile role badge is gone.
+      assert_select ".attachment-group-head", text: /Models \(2\)/
+      assert_select ".attachment-tile .badge", count: 0
+    end
+
+    test "an attachment whose node is gone still renders in its category" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project.file_attachments.create!(user:, node_id: "vanished", role: "model",
+                                       label: "bracket.stl")
+
+      get project_path(project)
+      assert_select ".attachment-group-head", text: /Models \(1\)/
+      assert_select ".attachment-tile.unavailable .grid-name", text: "bracket.stl"
+    end
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+```bash
+bin/rails test test/integration/web/project_attachments_test.rb -n "/groups attachments|node is gone/"
+```
+
+Expected: FAIL — `.attachment-group` does not exist; the panel is one flat `.attachments-grid`.
+
+- [ ] **Step 3: Rewrite the panel**
+
+Replace `app/views/projects/_attachments.html.erb` in full:
+
+```erb
+<%#
+  Attached design files, grouped by role into headed sections in ROLE_LABELS order. `@att_nodes`
+  (node_id => Node) is the source of truth for name + availability — a DB fact, independent of the
+  file backend. `@thumbs` (ThumbnailMap) is best-effort. A node not in @att_nodes (deleted/missing)
+  renders as an unavailable placeholder, never a broken image or a 500.
+
+  ONE `thumbs` controller wraps every group rather than one per grid: Stimulus finds targets
+  anywhere in the controller element's subtree, so a single instance polls all pending cells on the
+  page instead of N instances polling their own slice.
+%>
+<section class="panel attachments-panel">
+  <div class="panel-head">
+    <h2>Files</h2>
+    <div class="panel-actions">
+      <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
+      <%= render "upload_control", upload_url: project_uploads_path(@project),
+                 attach_url: project_attachments_path(@project), redirect_url: project_path(@project),
+                 parent_node_id: @upload_parent_node_id %>
+    </div>
+  </div>
+
+  <% if @attachments.empty? %>
+    <p class="muted">No files attached yet.</p>
+  <% else %>
+    <% grouped = @attachments.group_by(&:role) %>
+    <div data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
+        <% group = grouped[role] %>
+        <% next if group.blank? %>
+        <section class="attachment-group">
+          <h3 class="attachment-group-head"><%= label %> <span class="muted">(<%= group.size %>)</span></h3>
+          <div class="attachments-grid">
+            <% group.each do |att| %>
+              <% node = @att_nodes[att.node_id] %>
+              <% if node %>
+                <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+                <div class="attachment-tile">
+                  <%= link_to file_path(att.node_id), class: "grid-card file-cell",
+                              data: { thumbs_target: "cell", node_id: att.node_id, ext: ext } do %>
+                    <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
+                    <span class="grid-name"><%= node.name %></span>
+                  <% end %>
+                  <div class="tile-meta">
+                    <%= button_to "Detach", attachment_path(att), method: :delete, class: "linkbtn danger",
+                                  form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
+                  </div>
+                </div>
+              <% else %>
+                <div class="attachment-tile unavailable">
+                  <span class="thumb">⚠️</span>
+                  <span class="grid-name"><%= att.label.presence || "(file unavailable)" %></span>
+                  <div class="tile-meta">
+                    <%= button_to "Remove", attachment_path(att), method: :delete, class: "linkbtn danger" %>
+                  </div>
+                </div>
+              <% end %>
+            <% end %>
+          </div>
+        </section>
+      <% end %>
+    </div>
+  <% end %>
+</section>
+```
+
+The role badge (`<span class="badge role-…">`) is gone from `.tile-meta` — the section heading says
+what it said, and no stylesheet ever targeted `.badge.role-*`, so nothing is orphaned.
+
+- [ ] **Step 4: Add the group styles**
+
+In `app/assets/stylesheets/projects.css`, after the `.tile-meta` rule (line 49), add:
+
+```css
+.attachment-group { margin-bottom: 20px; }
+.attachment-group:last-child { margin-bottom: 0; }
+.attachment-group-head { font-size: 12px; font-weight: 700; color: var(--muted);
+                         text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px; }
+```
+
+And change `.tile-meta` (line 49) — with the badge gone it holds a single button, so
+`space-between` would pin it hard left:
+
+```css
+.tile-meta { display: flex; align-items: center; justify-content: center; }
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+```bash
+bin/rails test test/integration/web/project_attachments_test.rb
+```
+
+Expected: PASS, whole file.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add app/views/projects/_attachments.html.erb app/assets/stylesheets/projects.css \
+        test/integration/web/project_attachments_test.rb
+git commit -m "feat(projects): group the files panel into typed sections"
+```
+
+---
+
+## Task 4: Full-suite verification on all three backend legs
+
+**Files:** none — verification only.
+
+- [ ] **Step 1: Default (chunk) leg**
+
+```bash
+bin/rails test
+```
+
+Expected: 0 failures, 0 errors. `attach_model_bundle_test.rb` and `models_import_test.rb` both
+assert on roles set by the importer and must stay green — a failure there means Task 1 changed a
+derivation it shouldn't have.
+
+- [ ] **Step 2: Share leg**
+
+```bash
+LIBRARY_BACKEND=share bin/rails test
+```
+
+Expected: identical counts to step 1.
+
+- [ ] **Step 3: S3 leg**
+
+```bash
+LIBRARY_BACKEND=s3 bin/rails test
+```
+
+Expected: identical counts to step 1.
+
+- [ ] **Step 4: Commit any incidental fixes**
+
+Only if steps 1-3 required changes:
+
+```bash
+git add -A && git commit -m "test: fix fallout from typed attachment groups"
+```
