@@ -264,19 +264,24 @@ class MoveBuildLogBodyToActionText < ActiveRecord::Migration[8.1]
     remove_column :maker_build_log_entries, :body
   end
 
+  # Deliberately irreversible. Two independent reasons, both verified rather than reasoned:
+  #
+  # 1. `has_rich_text :body` reads `rich_text_body || build_rich_text_body`, so once the rich texts
+  #    are deleted the model returns a freshly built BLANK RichText — shadowing the plain column a
+  #    reconstruction would have just repopulated. A bare `db:rollback`, not paired with reverting
+  #    the model in lockstep, would leave every entry reading empty, silently, app-wide. A rollback
+  #    that erases visible content without erroring is worse than one that refuses.
+  # 2. Reconstruction is not merely lossy but garbling: once Lexxy is wired up, <ul>/<li>/<h1> match
+  #    neither the </p><p> nor the <br> pattern, so strip_tags fuses adjacent blocks with no
+  #    separator — "<h1>Day 1</h1><p>Started.</p>" comes back as "Day 1Started."
+  #
+  # The real undo for a dropped populated column is a pre-migration snapshot, which an operator
+  # should be taking regardless. A regex reconstruction does not replace that; it only makes it feel
+  # unnecessary. (An earlier draft of this plan had that reconstruction — and it did not even parse.)
   def down
-    add_column :maker_build_log_entries, :body, :text
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").find_each do |rt|
-      # Best-effort inverse: paragraphs and breaks back to newlines, tags stripped.
-      # %r{} on BOTH gsubs, not just the first: `/<br\s*/?>/` is a SyntaxError, because the `/`
-      # before `?>` closes the regex literal early. Nothing tests `down`, so this parses-or-not
-      # question surfaces on someone's first rollback and nowhere earlier. `ruby -c` catches it.
-      text = rt.body.to_s.gsub(%r{</p>\s*<p>}, "\n\n").gsub(%r{<br\s*/?>}, "\n")
-      text = ActionController::Base.helpers.strip_tags(text).to_s
-      MigrationEntry.where(id: rt.record_id).update_all(body: CGI.unescapeHTML(text))
-    end
-    change_column_null :maker_build_log_entries, :body, false
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").delete_all
+    raise ActiveRecord::IrreversibleMigration,
+      "Action Text -> plain text is lossy and garbling, and the restored column is shadowed by " \
+      "has_rich_text :body (every entry would read blank). Restore from a pre-migration backup."
   end
 end
 ```
@@ -472,15 +477,15 @@ class MoveNoteBodyToActionText < ActiveRecord::Migration[8.1]
     remove_column :maker_notes, :body
   end
 
+  # Irreversible, for the same two reasons as MoveBuildLogBodyToActionText — plus a third that makes
+  # it strictly worse here: the source was MARKDOWN, and markdown syntax (`**`, `- `, `[t](url)`)
+  # cannot be recovered from rendered HTML at all. Do not copy the reconstruction shape an earlier
+  # draft of this plan had; it silently blanks every note (has_rich_text's reader shadows the
+  # restored column) while returning text that has lost the very syntax that made it a note body.
   def down
-    add_column :maker_notes, :body, :text
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").find_each do |rt|
-      # Lossy by nature — markdown source cannot be recovered from rendered HTML. Keeps the words.
-      text = ActionController::Base.helpers.strip_tags(rt.body.to_s).to_s
-      MigrationNote.where(id: rt.record_id).update_all(body: CGI.unescapeHTML(text).strip)
-    end
-    change_column_null :maker_notes, :body, false
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").delete_all
+    raise ActiveRecord::IrreversibleMigration,
+      "Notes were markdown; rendered HTML cannot be converted back, and the restored column is " \
+      "shadowed by has_rich_text :body. Restore from a pre-migration backup."
   end
 end
 ```
@@ -522,6 +527,35 @@ bin/rails db:migrate && grep -n "maker_notes" -A 8 db/schema.rb
 ```
 
 Expected: no `t.text "body"` under `maker_notes`.
+
+- [ ] **Step 7b: Add the post-migration behavioural test**
+
+Task 2 shipped without this and had to add it in-flight; do not repeat that here. Re-running
+`notes_helper_test.rb` (Step 8) checks the *helper*, not that `Maker::Note#body` still works once
+the column is gone. Append to `test/models/maker/note_body_migration_test.rb`:
+
+```ruby
+  # After the column drops, `body` is an Action Text association rather than an attribute. This is
+  # the test that would fail if `has_rich_text :body` were missing, misnamed, or shadowed.
+  test "a note round-trips a rich body through the model" do
+    user = User.create!(email: "richnote@example.com")
+    note = user.maker_notes.create!(node_id: "n-1", body: "<p>Print at <strong>0.2mm</strong></p>")
+
+    assert_equal "<p>Print at <strong>0.2mm</strong></p>", note.reload.body.body.to_html
+    assert_includes note.body.to_plain_text, "Print at 0.2mm"
+  end
+
+  # A plain string is still a valid body — the notes popover posts one — and the presence validation
+  # has to keep meaning what it meant.
+  test "a plain string body is accepted and a blank one is rejected" do
+    user = User.create!(email: "plainnote@example.com")
+
+    assert user.maker_notes.create!(node_id: "n-2", body: "print at 0.2mm").persisted?
+    assert_not user.maker_notes.new(node_id: "n-3", body: "").valid?
+  end
+```
+
+Run it before Step 7's model change to watch it fail, then again after.
 
 - [ ] **Step 8: Confirm the markdown helper survived**
 
