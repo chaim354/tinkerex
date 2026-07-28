@@ -309,7 +309,7 @@ module Web
       get project_path(project)
       assert_response :success
       assert_select "h1", "Desk Lamp"
-      assert_select ".project-status", count: 0
+      assert_select ".badge.status-archived", count: 0
     end
 
     test "the detail page badges an archived project" do
