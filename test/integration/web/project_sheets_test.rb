@@ -198,5 +198,31 @@ module Web
       get project_path(project)
       assert_select ".sheets-panel a", text: "Secret", count: 0
     end
+
+    # The controller permits `data: {}` wide open, so a malformed blob can be stored. The page must
+    # still render — the model's defensive readers are the guard, and this is the page they exist for.
+    test "a malformed data blob renders an empty grid rather than breaking the page" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      sheet = project.sheets.create!(user:, name: "Odd", data: Maker::Sheet.blank_data)
+
+      # Bypasses validation the same way a hostile or buggy client PATCH would.
+      sheet.update_column(:data, { "columns" => [ nil, { "title" => "Z" } ], "cells" => "nope" })
+
+      get sheet_path(sheet)
+      assert_response :success
+      assert_select "[data-controller=sheet]"
+      # `cells` guards its OUTER shape (is data["cells"] an Array at all?) — "nope" is a String, so
+      # it flattens to []. `columns` passes the SAME outer check (data["columns"] IS an Array), so
+      # its malformed inner `nil` entry rides through unchanged: the model's readers are not an
+      # element-by-element sanitizer, only an outer-shape guard. (Verified directly — bin/rails
+      # runner against this exact hash returns `columns: [nil, {"title"=>"Z"}]`, `cells: []` — an
+      # earlier draft of this assertion wrongly expected both to flatten to [].) The inner-element
+      # case is what sheet_controller.js's own `.filter((c) => c && typeof c === "object")` guards;
+      # a plain request-spec test can't drive that JS, so the real proof that a null column entry
+      # can no longer crash the page is that this request still returns 200 at all.
+      assert_select "[data-sheet-data-value=?]",
+        { "columns" => [ nil, { "title" => "Z" } ], "cells" => [] }.to_json
+    end
   end
 end

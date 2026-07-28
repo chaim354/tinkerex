@@ -57,7 +57,13 @@ export default class extends Controller {
     jss(this.gridTarget, {
       worksheets: [ {
         data: cells,
-        columns: columns.map((c) => ({ title: c.title, width: c.width || 120 })),
+        // The model's `columns` reader guards the OUTER shape only (is `data["columns"]` an Array
+        // at all) — it does not, and cannot, validate every element inside an otherwise-valid array.
+        // A blob written by a hostile or buggy client can still smuggle a null/non-object entry
+        // through, and `c.title` on that entry throws, breaking the whole page. Filter here too.
+        columns: columns
+          .filter((c) => c && typeof c === "object")
+          .map((c) => ({ title: c.title, width: c.width || 120 })),
         allowInsertRow: true,
         allowInsertColumn: true,
         allowDeleteRow: true,

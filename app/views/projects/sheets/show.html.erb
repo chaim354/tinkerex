@@ -43,10 +43,16 @@
 <%# The controller element wraps the HEAD AS WELL AS the grid: Stimulus resolves targets only
     within its own element's subtree, so a status span left up in the page head outside this div
     would never be found and the indicator would sit on "Saved" forever while saves failed. %>
+<%# `cells`/`columns`, NOT the raw `data` attribute. Those readers exist precisely so a malformed or
+    half-written blob renders an empty grid instead of something worse — and this page is the place
+    they were written for. Passing raw `data` through meant a null entry in `columns` reached the
+    Stimulus controller's `columns.map(c => c.title)` and threw, leaving a blank page with the status
+    still reading "Saved". The controller permits `data: {}` wide open on purpose; the model is the
+    guard, so the view has to actually ask it. %>
 <div class="sheet-page"
      data-controller="sheet"
      data-sheet-url-value="<%= sheet_path(@sheet) %>"
-     data-sheet-data-value="<%= @sheet.data.to_json %>">
+     data-sheet-data-value="<%= { "columns" => @sheet.columns, "cells" => @sheet.cells }.to_json %>">
 
   <div class="page-head sheet-head">
     <div>
