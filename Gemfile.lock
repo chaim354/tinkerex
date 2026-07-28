@@ -499,7 +499,7 @@ DEPENDENCIES
   jbuilder
   kamal
   kramdown (~> 2.5)
-  lexxy (~> 0.9.21)
+  lexxy (= 0.9.27)
   nokogiri (~> 1.18)
   omniauth (~> 2.1)
   omniauth-rails_csrf_protection (~> 2.0)

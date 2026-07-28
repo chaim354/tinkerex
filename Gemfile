@@ -93,4 +93,9 @@ gem "kramdown", "~> 2.5"
 # Lexxy — Basecamp's Action Text editor (MIT; CLAUDE.md §9 permissive-only). Used TEXT-ONLY:
 # attachments are disabled because Lexxy's attachment path runs through Active Storage, a store
 # separate from the file library, which §15 and the FileLayer port exist to avoid.
-gem "lexxy", "~> 0.9.21"
+#
+# PINNED EXACTLY, not `~>`. This gem shed its beta suffix in June 2026 and shipped six releases in
+# the 24 days before this install — patch-level looseness is not safe to assume on a pre-1.0 line
+# this fast-moving. Bump it deliberately: edit this line, run the suite, and re-do the manual
+# editor check (Task 7), rather than letting a version ride in on someone's `bundle update`.
+gem "lexxy", "0.9.27"

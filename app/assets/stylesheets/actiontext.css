@@ -1,3 +1,10 @@
+/* UNUSED. Stock output of `bin/rails action_text:install` — 440 lines of Trix styling for an app
+   that does not ship Trix (Lexxy replaced it; see config/importmap.rb). Propshaft has no manifest
+   or require_tree, so nothing serves this file unless something calls stylesheet_link_tag on it,
+   and nothing does. Kept rather than deleted only so a future re-run of the installer does not
+   look like it is adding something new. Lexxy's real styles come from the gem, via
+   stylesheet_link_tag "lexxy" in the layout. */
+
 /*
  * Default Trix editor styles. See Action Text overwrites below.
 */
