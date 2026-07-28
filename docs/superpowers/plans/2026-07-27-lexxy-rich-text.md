@@ -268,7 +268,10 @@ class MoveBuildLogBodyToActionText < ActiveRecord::Migration[8.1]
     add_column :maker_build_log_entries, :body, :text
     MigrationRichText.where(record_type: RECORD_TYPE, name: "body").find_each do |rt|
       # Best-effort inverse: paragraphs and breaks back to newlines, tags stripped.
-      text = rt.body.to_s.gsub(%r{</p>\s*<p>}, "\n\n").gsub(/<br\s*/?>/, "\n")
+      # %r{} on BOTH gsubs, not just the first: `/<br\s*/?>/` is a SyntaxError, because the `/`
+      # before `?>` closes the regex literal early. Nothing tests `down`, so this parses-or-not
+      # question surfaces on someone's first rollback and nowhere earlier. `ruby -c` catches it.
+      text = rt.body.to_s.gsub(%r{</p>\s*<p>}, "\n\n").gsub(%r{<br\s*/?>}, "\n")
       text = ActionController::Base.helpers.strip_tags(text).to_s
       MigrationEntry.where(id: rt.record_id).update_all(body: CGI.unescapeHTML(text))
     end
@@ -800,6 +803,14 @@ git commit -m "feat(notes): Lexxy editor on file notes, text-only"
 - Modify: `app/controllers/v1/maker/build_log_entries_controller.rb:27-31`
 - Modify: `app/controllers/v1/maker/projects_controller.rb:50-52`
 - Test: `test/integration/v1/maker/build_log_plain_text_test.rb` (new)
+
+> **Two tests are already RED when you arrive here, and they are the reason this task exists.**
+> Task 2 dropped the `body` column, so `body: entry.body` in both serializers now emits the whole
+> rich-text record instead of a string, breaking
+> `test/integration/v1/maker/build_log_entries_test.rb`'s `"add a build log entry to a project"` and
+> `"index lists a project's build log in logged_at order"`. **Do not edit that file** — its
+> assertions (`body["body"]` equals a plain string) are correct as written and go green on their own
+> once the serializers below serve `to_plain_text`. If they do not, the fix is wrong.
 
 - [ ] **Step 1: Write the failing test**
 
