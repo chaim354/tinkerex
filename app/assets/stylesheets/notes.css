@@ -23,8 +23,6 @@
 /* Detail-page notes section */
 .notes-panel { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 16px; }
 .notes-panel h2 { font-size: 16px; margin: 0 0 12px; }
-.note-form textarea { width: 100%; max-width: 640px; box-sizing: border-box; padding: 8px;
-             border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }
 .note { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; max-width: 640px; }
 .note-body :first-child { margin-top: 0; }
 .note-body :last-child { margin-bottom: 0; }

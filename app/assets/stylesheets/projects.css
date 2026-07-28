@@ -65,12 +65,16 @@
 .form-actions { display: flex; gap: 12px; align-items: center; }
 .form-errors { border-radius: 6px; margin-bottom: 14px; }
 
-.log-form textarea, .task-form input { width: 100%; max-width: 480px; padding: 8px;
+.task-form input { width: 100%; max-width: 480px; padding: 8px;
   border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }
 .log-timeline { list-style: none; padding: 0; margin: 12px 0 0; }
 .log-entry { border-left: 2px solid var(--line); padding: 0 0 16px 14px; position: relative; }
 .entry-head { display: flex; justify-content: space-between; align-items: center; }
-.entry-body { white-space: pre-wrap; margin: 4px 0; }
+/* No `white-space: pre-wrap` here any more. It was right when .entry-body held a raw plain-text
+   body — it is what made manual newlines visible. Since the Action Text move the element wraps real
+   HTML with its own <br>s, and because white-space INHERITS, pre-wrap stopped collapsing the
+   whitespace node the content partial emits and put a ~45px blank gap above every entry. */
+.entry-body { margin: 4px 0; }
 
 .tasks-group { margin-top: 12px; }
 .tasks-group h3 { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
