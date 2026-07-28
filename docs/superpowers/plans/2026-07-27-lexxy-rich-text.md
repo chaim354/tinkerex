@@ -133,11 +133,25 @@ Expected: 0 failures, 0 errors — no behavior has changed yet.
 
 - [ ] **Step 7: Commit**
 
+The installer also creates `app/assets/stylesheets/actiontext.css` and
+`test/fixtures/action_text/rich_texts.yml`. Both are stock, unmodified output of the command this
+step ran — track them rather than leaving orphaned untracked files behind:
+
 ```bash
 git add Gemfile Gemfile.lock config/importmap.rb app/javascript/application.js \
-        app/views/layouts/application.html.erb app/views db/migrate db/schema.rb
+        app/views/layouts/application.html.erb app/views app/assets/stylesheets/actiontext.css \
+        test/fixtures/action_text db/migrate db/schema.rb
 git commit -m "feat: install Lexxy and Action Text, drop Trix"
 ```
+
+> **Carry this into Tasks 4-5 — found during Task 1, not yet acted on.** Lexxy's content styles
+> target **`.lexxy-content`**; Action Text's installer-generated
+> `app/views/layouts/action_text/contents/_content.html.erb` wraps rendered content in
+> **`<div class="trix-content">`** (verified: zero `trix-content` hits across all four Lexxy
+> stylesheets). Nothing renders rich text yet, so this is inert today — but the moment Task 4 or 5
+> renders a body, that content is unstyled unless the wrapper's class is updated or Lexxy is
+> confirmed to handle it another way. **Check this by looking at a rendered body in a browser, not
+> by reading the ERB** — an `assert_select` test will happily pass on unstyled markup.
 
 ---
 
