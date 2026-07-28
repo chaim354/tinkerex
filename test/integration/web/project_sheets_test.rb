@@ -167,5 +167,36 @@ module Web
       get project_path(project)
       assert_select "script[src*=?]", "jspreadsheet", count: 0
     end
+
+    test "the project page lists its sheets and offers a new-sheet form" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project.sheets.create!(user:, name: "Cut list", data: Maker::Sheet.blank_data)
+      project.sheets.create!(user:, name: "Costs", data: Maker::Sheet.blank_data)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".sheets-panel .sheet-row", count: 2
+      assert_select ".sheets-panel a", text: "Cut list"
+      assert_select ".sheets-panel form[action=?]", project_sheets_path(project)
+    end
+
+    test "the project page shows an empty state with no sheets" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      get project_path(project)
+      assert_select ".sheets-panel .sheet-row", count: 0
+      assert_select ".sheets-panel .muted", text: /No sheets yet/
+    end
+
+    test "another user's sheets never appear on a project page" do
+      user = sign_in("a@example.com")
+      project = user.maker_projects.create!(name: "Mine")
+      other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
+      other.maker_projects.create!(name: "Theirs").sheets.create!(user: other, name: "Secret")
+
+      get project_path(project)
+      assert_select ".sheets-panel a", text: "Secret", count: 0
+    end
   end
 end

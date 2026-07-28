@@ -42,6 +42,7 @@ class ProjectsController < ApplicationController
     @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
     @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
+    @sheets = @project.sheets.to_a
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.
