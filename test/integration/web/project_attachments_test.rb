@@ -31,7 +31,6 @@ module Web
       assert_response :success
       assert_select ".attachments-panel .attachment-tile", 1
       assert_select ".attachment-tile a[href=?]", file_path("n-1")
-      assert_select ".attachment-tile .badge", text: /model/
     end
 
     test "a missing/deleted attached node degrades to an unavailable placeholder, never a 500" do
@@ -109,6 +108,43 @@ module Web
       assert_response :success
       assert_select "form.picker-search input[name=entry_id][value=?]", entry.id.to_s
       assert_select ".picker-result form[action=?]", entry_photos_path(entry)
+    end
+
+    test "the files panel groups attachments by type and omits empty categories" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      attach_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
+      attach_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
+      attach_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
+      attach_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
+
+      get project_path(project)
+      assert_response :success
+
+      # One section per non-empty role, in ROLE_LABELS order.
+      assert_select ".attachment-group", count: 3
+      assert_select ".attachment-group-head", text: /Models/
+      assert_select ".attachment-group-head", text: /Images/
+      assert_select ".attachment-group-head", text: /Vector/
+      # Empty categories are not rendered at all.
+      assert_select ".attachment-group-head", text: /G-code/, count: 0
+      assert_select ".attachment-group-head", text: /Archives/, count: 0
+
+      # Headings carry the count, and the per-tile role badge is gone.
+      assert_select ".attachment-group-head", text: /Models \(2\)/
+      assert_select ".attachment-tile .badge", count: 0
+    end
+
+    test "an attachment whose node is gone still renders in its category" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project.file_attachments.create!(user:, node_id: "vanished", role: "model",
+                                       label: "bracket.stl")
+
+      get project_path(project)
+      assert_select ".attachment-group-head", text: /Models \(1\)/
+      assert_select ".attachment-tile.unavailable .grid-name", text: "bracket.stl"
     end
   end
 end
