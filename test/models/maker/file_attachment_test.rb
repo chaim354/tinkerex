@@ -42,6 +42,8 @@ module Maker
       assert_equal "cad_source", Maker::FileAttachment.role_for("box.scad")
       assert_equal "cad_source", Maker::FileAttachment.role_for("Bracket.f3d")
       assert_equal "cad_source", Maker::FileAttachment.role_for("frame.FCStd")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("mount.sldprt")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("Rig.SLDASM")
     end
 
     test "the existing derivations are unchanged" do
@@ -54,10 +56,12 @@ module Maker
       assert_equal "other", Maker::FileAttachment.role_for("no-extension")
     end
 
-    # The invariant that keeps a display heading from ever naming a role that isn't valid.
-    test "every role has a label and every label is a role" do
-      assert_equal Maker::FileAttachment::ROLES.sort,
-                   Maker::FileAttachment::ROLE_LABELS.keys.sort
+    # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
+    # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
+    # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
+    test "the role vocabulary is exactly these eight values" do
+      assert_equal %w[cad_source gcode image instructions model other source_archive vector],
+                   Maker::FileAttachment::ROLES.sort
     end
 
     test "the two new roles are accepted by the validation" do

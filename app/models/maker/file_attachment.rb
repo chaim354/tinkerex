@@ -27,8 +27,11 @@ module Maker
       "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive",
       # Laser / 2D vector work. Without these a laser-heavy project is mostly "Other".
       "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
-      # Editable CAD sources, as opposed to the exported meshes above.
-      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
+      # Editable CAD sources, as opposed to the exported meshes above. SolidWorks sits with Fusion
+      # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
+      # — proprietary, no FOSS parser, you open them in the tool that made them.
+      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
+      "sldprt" => "cad_source", "sldasm" => "cad_source"
     }.freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
