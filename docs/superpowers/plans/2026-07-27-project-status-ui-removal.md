@@ -445,7 +445,13 @@ Append to `test/integration/web/projects_flow_test.rb`:
       get project_path(project)
       assert_response :success
       assert_select "h1", "Desk Lamp"
-      assert_select ".project-status", count: 0
+      # `.badge.status-archived`, NOT `.project-status`: Step 3 removes the `project-status` class
+      # from the markup entirely, so asserting its absence would pass because the class no longer
+      # exists anywhere — vacuously, and it would keep passing if a stray badge appeared. Do not
+      # broaden this to `.page-head .badge` either: show.html.erb also renders a
+      # `badge current-project-badge` in .head-actions, so that selector would fail for a reason
+      # unrelated to status.
+      assert_select ".badge.status-archived", count: 0
     end
 
     test "the detail page badges an archived project" do
@@ -527,6 +533,26 @@ Then in `app/assets/stylesheets/projects.css` delete these six lines:
 ```
 
 Keep `.badge.status-archived` — the show page and the archived card still use it.
+
+- [ ] **Step 5b: Amend the two pre-existing tests that assert the removed behaviour**
+
+Two tests already in `test/integration/web/projects_flow_test.rb` assert exactly what Steps 3-4
+delete. Both need a one-assertion edit — and both must be edited *narrowly*, because one of them
+guards a real past production bug.
+
+- **`"the new-project form submits params under the key the controller requires"`** asserts
+  `form select[name="project[status]"]`. Delete **only that assertion line**. This test exists to
+  guard the `scope: :project` regression documented at the top of `_form.html.erb` — `form_with` on
+  the namespaced `Maker::Project` derives `maker_project[...]`, which `params.require(:project)`
+  rejects, silently breaking every create and edit through the form. Its remaining
+  `project[name]`-present / `maker_project[name]`-absent assertions still fail without
+  `scope: :project` (Rails applies `scope:` uniformly to every field, so the status select was
+  redundant to this guard). **Verify that claim rather than assuming it:** delete `scope: :project`
+  from `_form.html.erb`, run this one test, confirm it FAILS, restore.
+- **`"show renders the project header, status, and description"`** asserts `.project-status` text.
+  Delete that assertion and rename the test to `"show renders the project header and description"`.
+  The coverage is not lost — the new "shows no status badge for a live project" test above covers
+  the replacement behaviour more precisely.
 
 - [ ] **Step 6: Run the full web suite to verify**
 
