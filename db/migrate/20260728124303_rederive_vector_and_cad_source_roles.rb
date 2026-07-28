@@ -8,8 +8,14 @@ class RederiveVectorAndCadSourceRoles < ActiveRecord::Migration[8.1]
   # Must stay in step with the extensions ROLE_BY_EXT gained in Task 1. This list is deliberately a
   # COPY rather than a reference, and the cost of that choice is exactly this: an extension added to
   # the model *after* this migration runs will never re-derive the rows already sitting in `other`,
-  # and closing that needs a SECOND migration. It is also what makes `down` exact — before this, no
-  # row could hold either role, so every row holding one now was put there by `up`.
+  # and closing that needs a SECOND migration.
+  #
+  # `down` returns EVERY vector/cad_source row to "other", not only the rows `up` moved — it has no
+  # record of which those were. That is exact only until the first attachment is created directly
+  # with one of these roles, which `role_for` does at upload/attach time in four controllers; that
+  # code is already live, so the window can close before `up` ever runs, not "once the UI ships".
+  # Acceptable because the pair is self-healing: re-running `up` re-derives migrated and organic
+  # rows identically, since the mapping is a pure function of the current filename.
   NEW_ROLE_BY_EXT = {
     "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
     "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",

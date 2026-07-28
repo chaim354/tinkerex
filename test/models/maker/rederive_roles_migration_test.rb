@@ -65,4 +65,24 @@ class RederiveRolesMigrationTest < ActiveSupport::TestCase
     ActiveRecord::Migration.suppress_messages { RederiveVectorAndCadSourceRoles.new.down }
     assert_equal "other", dxf.reload.role
   end
+
+  test "running up twice is a no-op the second time" do
+    dxf = attach("panel.dxf", "other")
+    txt = attach("readme.txt", "other")
+
+    run_migration
+    run_migration
+
+    assert_equal "vector", dxf.reload.role
+    assert_equal "other", txt.reload.role
+  end
+
+  # The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the
+  # two can silently drift. This is the only thing that would notice.
+  test "the migration's extension list still agrees with the model's" do
+    RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT.each do |ext, role|
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "migration maps #{ext} to #{role}, model disagrees"
+    end
+  end
 end
