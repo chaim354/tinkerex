@@ -197,6 +197,16 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   font-size: 14px; background: var(--bg); color: var(--fg);
 }
 .box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+/* A layout is column-aligned ASCII art (walls line up over the size markers), so it is only
+   editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
+   190px auto-fill column. */
+.box-field-multiline { grid-column: 1 / -1; }
+.box-field textarea {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
+}
 .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
 .box-side .box-preview { padding: 12px; }
 .box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }

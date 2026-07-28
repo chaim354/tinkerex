@@ -9,7 +9,8 @@
 </div>
 
 <div class="box-editor" data-controller="boxpreview" data-boxpreview-url-value="<%= preview_tools_boxes_path %>">
-  <%= form_with url: tools_boxes_path, method: :post, data: { boxpreview_target: "form" } do %>
+  <%= form_with url: tools_boxes_path, method: :post,
+                data: { boxpreview_target: "form", controller: "traylayout" } do %>
     <input type="hidden" name="generator" value="<%= @generator.key %>">
     <label class="box-field">
       <span class="box-field-label">Name</span>
