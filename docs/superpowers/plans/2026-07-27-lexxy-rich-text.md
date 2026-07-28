@@ -286,38 +286,48 @@ bin/rails test test/models/maker/build_log_body_migration_test.rb
 
 Expected: PASS, 5 tests.
 
-- [ ] **Step 6: Write a round-trip test over real records, and watch it fail**
+- [ ] **Step 6: Add a post-migration behavioural test**
+
+> **Do NOT write a test that creates a row with `body:` on the raw `MigrationEntry` class.** An
+> earlier draft of this plan did exactly that, and it cannot work: the test database is loaded from
+> `db/schema.rb`, so once `up` drops `maker_build_log_entries.body` the column is gone from the test
+> schema too, and `create!(body: …)` raises `ActiveModel::UnknownAttributeError`. It was also
+> redundant — it re-tested `to_html` through a longer path. The conversion logic is already covered
+> by Step 2's unit tests; what is NOT yet covered is that the model works after the column is gone.
 
 Append to the same test file:
 
 ```ruby
-  test "existing entries keep their content and their line breaks through the migration" do
-    user = User.create!(email: "backfill@example.com")
+  # After the column drops, `body` is an Action Text association rather than an attribute. This is
+  # the test that would fail if `has_rich_text :body` were missing, misnamed, or shadowed.
+  test "an entry round-trips a rich body through the model" do
+    user = User.create!(email: "richbody@example.com")
     project = user.maker_projects.create!(name: "Lamp")
-    entry = MoveBuildLogBodyToActionText::MigrationEntry.create!(
-      user_id: user.id, project_id: project.id, entry_type: "note",
-      logged_at: Time.current, body: "Cut the panels\nSanded the edges",
-      created_at: Time.current, updated_at: Time.current
-    )
 
-    rich = MoveBuildLogBodyToActionText::MigrationRichText.create!(
-      name: "body", record_type: "Maker::BuildLogEntry", record_id: entry.id,
-      body: MoveBuildLogBodyToActionText.to_html(entry.body),
-      created_at: Time.current, updated_at: Time.current
-    )
+    entry = project.build_log_entries.create!(user:, body: "<p>Cut the <strong>panels</strong></p>")
 
-    assert_includes rich.body, "Cut the panels<br>Sanded the edges"
+    assert_equal "<p>Cut the <strong>panels</strong></p>", entry.reload.body.body.to_html
+    assert_includes entry.body.to_plain_text, "Cut the panels"
+  end
+
+  # A plain string is still a valid body — the v1 API sends one, and the presence validation has to
+  # keep meaning what it meant.
+  test "a plain string body is accepted and a blank one is rejected" do
+    user = User.create!(email: "plainbody@example.com")
+    project = user.maker_projects.create!(name: "Lamp")
+
+    assert project.build_log_entries.create!(user:, body: "Cut the panels").persisted?
+    assert_not project.build_log_entries.new(user:, body: "").valid?
   end
 ```
-
-This asserts the backfill's output shape against a real row without re-running `up` (which drops a
-column and cannot run twice inside a transactional test).
 
 ```bash
 bin/rails test test/models/maker/build_log_body_migration_test.rb
 ```
 
-Expected: PASS.
+Expected: PASS — but only after Step 7 adds `has_rich_text :body` and Step 8 migrates. Run it now to
+watch it fail first (the model still has a `body` column and no rich text), then again after Steps
+7-8.
 
 - [ ] **Step 7: Switch the model to rich text**
 
