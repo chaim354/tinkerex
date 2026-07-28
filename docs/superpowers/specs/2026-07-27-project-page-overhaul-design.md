@@ -130,8 +130,12 @@ model**, each: backfill `action_text_rich_texts` from the current text, then dro
   paragraphs wrapped) or every existing entry collapses into one line.
 - **`Maker::Note`** — the body is **markdown**, rendered today by `NotesHelper#render_note`
   (kramdown → `sanitize`). The backfill runs that same renderer, so existing notes keep their
-  formatting instead of displaying literal `**bold**`. After this, `render_note` has no caller;
-  remove it, and drop the `kramdown` gem if nothing else uses it.
+  formatting instead of displaying literal `**bold**`.
+
+**`render_note` and kramdown both stay.** `app/views/models/show.html.erb:95` renders
+`Maker::Model#notes` — a separate plain `text` column on a different model — through the same
+helper, so it keeps a caller and `test/helpers/notes_helper_test.rb` keeps passing. Removing
+either would break the model detail page.
 
 `validates :body, presence: true` stays on both — Action Text's `RichText` answers `blank?` from
 its content, so the validation keeps meaning what it meant.
