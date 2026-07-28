@@ -83,7 +83,6 @@ module Web
       get new_project_path
       assert_response :success
       assert_select "form input[name=?]", "project[name]"
-      assert_select "form select[name=?]", "project[status]"
       assert_select "form input[name=?]", "maker_project[name]", count: 0
     end
 
@@ -131,14 +130,13 @@ module Web
 
     # --- detail + lifecycle ----------------------------------------------------
 
-    test "show renders the project header, status, and description" do
+    test "show renders the project header and description" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp", status: "active",
                                             description: "A nice lamp")
       get project_path(project)
       assert_response :success
       assert_select "h1", text: /Desk Lamp/
-      assert_select ".project-status", text: /active/i
       assert_select ".project-description", text: /A nice lamp/
     end
 
@@ -301,6 +299,31 @@ module Web
       patch unarchive_project_path(theirs)
       assert_response :not_found
       assert_equal "archived", theirs.reload.status
+    end
+
+    # --- status badge/select removal --------------------------------------------
+
+    test "the detail page shows no status badge for a live project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "paused")
+      get project_path(project)
+      assert_response :success
+      assert_select "h1", "Desk Lamp"
+      assert_select ".project-status", count: 0
+    end
+
+    test "the detail page badges an archived project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      get project_path(project)
+      assert_select ".badge.status-archived", text: "Archived"
+    end
+
+    test "the project form offers no status select" do
+      sign_in
+      get new_project_path
+      assert_response :success
+      assert_select "select[name=?]", "project[status]", count: 0
     end
   end
 end

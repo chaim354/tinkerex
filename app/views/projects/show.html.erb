@@ -9,7 +9,9 @@
 <div class="page-head project-head">
   <div>
     <h1><%= @project.name %></h1>
-    <span class="project-status badge status-<%= @project.status %>"><%= @project.status %></span>
+    <% if @project.status == "archived" %>
+      <span class="badge status-archived">Archived</span>
+    <% end %>
   </div>
   <div class="head-actions">
     <% if current_project == @project %>
