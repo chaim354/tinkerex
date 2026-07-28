@@ -146,5 +146,20 @@ module Web
       assert_select ".attachment-group-head", text: /Models \(1\)/
       assert_select ".attachment-tile.unavailable .grid-name", text: "bracket.stl"
     end
+
+    # The view iterates ROLE_LABELS, so a role outside that vocabulary would render nowhere at all —
+    # a file silently missing from the user's own project. Nothing can write such a value today
+    # (role_for is total, the model validates), so this has to bypass validation to set one up.
+    test "an attachment with an off-vocabulary role still renders, under Other" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      att = attach_node(user, project, name: "mystery.xyz", node_id: "n-x", role: "other")
+      att.update_column(:role, "bogus_role")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Other \(1\)/
+      assert_select ".attachment-tile .grid-name", text: "mystery.xyz"
+    end
   end
 end

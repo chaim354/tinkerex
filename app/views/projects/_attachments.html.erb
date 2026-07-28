@@ -22,7 +22,13 @@
   <% if @attachments.empty? %>
     <p class="muted">No files attached yet.</p>
   <% else %>
-    <% grouped = @attachments.group_by(&:role) %>
+    <%# Group by role, but fold anything off-vocabulary into "other" rather than dropping it. Every
+        writer of `role` currently routes through role_for (total) or the model validation, so this
+        cannot trigger today — but the render iterates ROLE_LABELS, so without this an unrecognized
+        role renders NOWHERE. A file silently vanishing from a user's project is a far worse failure
+        than one filed under the wrong heading, and role_for's own unknown-extension default makes
+        "other" the obvious bucket. %>
+    <% grouped = @attachments.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
     <div data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
         <% group = grouped[role] %>
