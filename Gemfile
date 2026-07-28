@@ -89,3 +89,8 @@ group :test do
 end
 
 gem "kramdown", "~> 2.5"
+
+# Lexxy — Basecamp's Action Text editor (MIT; CLAUDE.md §9 permissive-only). Used TEXT-ONLY:
+# attachments are disabled because Lexxy's attachment path runs through Active Storage, a store
+# separate from the file library, which §15 and the FileLayer port exist to avoid.
+gem "lexxy", "~> 0.9.21"

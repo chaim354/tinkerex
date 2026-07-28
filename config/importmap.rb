@@ -60,3 +60,9 @@ pin "three/addons/controls/OrbitControls.js", to: "OrbitControls.js" # @0.185.1
 pin "three/addons/loaders/STLLoader.js", to: "STLLoader.js" # @0.185.1
 pin "three/addons/loaders/OBJLoader.js", to: "OBJLoader.js" # @0.185.1
 pin "three/addons/loaders/3MFLoader.js", to: "3MFLoader.js" # @0.185.1
+# Lexxy (MIT) — the Action Text editor, replacing Trix. Served from the gem's own asset path, so
+# there is nothing vendored under vendor/javascript and no jspm shared-chunk patching (see the
+# jszip/Maker.js notes above). Attachments are disabled at the element, so @rails/activestorage is
+# not imported.
+pin "lexxy", to: "lexxy.js"
+pin "@rails/actiontext", to: "actiontext.esm.js"
