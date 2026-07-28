@@ -431,6 +431,21 @@ role:)` helper — use them rather than adding new ones.
       assert_select ".attachment-group-head", text: /Models \(1\)/
       assert_select ".attachment-tile.unavailable .grid-name", text: "bracket.stl"
     end
+
+    # The view iterates ROLE_LABELS, so a role outside that vocabulary would render nowhere at all —
+    # a file silently missing from the user's own project. Nothing can write such a value today
+    # (role_for is total, the model validates), so this has to bypass validation to set one up.
+    test "an attachment with an off-vocabulary role still renders, under Other" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      att = attach_node(user, project, name: "mystery.xyz", node_id: "n-x", role: "other")
+      att.update_column(:role, "bogus_role")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Other \(1\)/
+      assert_select ".attachment-tile .grid-name", text: "mystery.xyz"
+    end
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -470,7 +485,14 @@ Replace `app/views/projects/_attachments.html.erb` in full:
   <% if @attachments.empty? %>
     <p class="muted">No files attached yet.</p>
   <% else %>
-    <% grouped = @attachments.group_by(&:role) %>
+    <%# Group by role, but fold anything off-vocabulary into "other" rather than dropping it. Every
+        writer of `role` currently routes through role_for (total) or the model validation, so this
+        cannot trigger today — but the render iterates ROLE_LABELS, so without this an unrecognized
+        role renders NOWHERE. A file silently vanishing from a user's project is a far worse failure
+        than one filed under the wrong heading, and role_for's own unknown-extension default makes
+        "other" the obvious bucket. (The flat panel this replaces rendered every row unconditionally,
+        so grouping made an existing non-problem into a silent one — this restores the property.) %>
+    <% grouped = @attachments.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
     <div data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
         <% group = grouped[role] %>
