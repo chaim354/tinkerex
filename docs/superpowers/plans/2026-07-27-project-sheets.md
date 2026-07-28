@@ -1073,10 +1073,19 @@ any divergence here means the controller reached somewhere it shouldn't.
 - [ ] **Step 2: Confirm the §10 tripwire was not crossed**
 
 ```bash
-grep -rn "FileLayer\|Sync::\|ChunkStore" app/models/maker/sheet.rb app/controllers/projects/sheets_controller.rb
+grep -rn "FileLayer\|Sync::\|ChunkStore" app/models/maker/sheet.rb app/controllers/projects/sheets_controller.rb \
+  | grep -v ':[0-9]*: *#'
 ```
 
 Expected: **empty output.**
+
+> **The `grep -v` is load-bearing, not noise — this exact trap has now bitten three times in this
+> repo.** A comment that explains *why* a file doesn't touch the file layer necessarily contains the
+> words `FileLayer`, `Sync::` and `ChunkStore`, so the bare grep reports the very comment written to
+> document the absence. CLAUDE.md §12 records two earlier instances (the maker-layer proof and the
+> `rescue NotImplementedError` proof) and the same rule: **a proof that cries wolf gets ignored.**
+> Filtering comments lets the code say what it means and keeps the check honest. Do not "simplify"
+> the filter away, and do not instead contort the comments to avoid the words.
 
 - [ ] **Step 3: Browser-verify the grid**
 
