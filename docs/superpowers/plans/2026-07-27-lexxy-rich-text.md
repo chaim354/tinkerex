@@ -1114,10 +1114,18 @@ the intended behaviour, not a bug); and an existing pre-migration entry still sh
 breaks. Repeat on a file detail page for notes, and confirm a pre-migration markdown note renders
 as formatted HTML rather than literal asterisks.
 
-**Watch the browser console while you do the drag test, not just the page.** Lexxy's `uploadFiles()`
-returns early on `supportsAttachments` and logs a `console.warn` rather than failing silently — that
-warning is the signal the guard is still in place. A future Lexxy upgrade that reorders or drops
-that check would show up here first, before it ever reached a real upload.
+**Do not expect a `console.warn` on drag — an earlier version of this step said to watch for one and
+that was wrong.** Verified against lexxy 0.9.27 by source trace plus a live synthetic drop event:
+`registerDragAndDropHandlers()` only attaches the `dragenter`/`dragleave`/`dragover`/`drop`
+listeners **when `supportsAttachments` is true**. With attachments off, nothing ever dispatches to
+`uploadFiles()`, so the warning it would log never fires. The functional guarantee holds — dragging
+an image does nothing — but there is **no console signal**, so do not read silence as a broken guard,
+and do not rely on that warning as an upgrade tripwire.
+
+What to check instead, in the console: `document.querySelector("lexxy-editor").supportsAttachments`
+must be `false` (Lexxy parses the attribute with `JSON.parse`, so the *string* `"false"` really does
+become the boolean — worth confirming rather than assuming, since a naive parser would make it
+truthy).
 
 **Confirm rendered bodies are actually styled** — that Task 4 Step 2b's `.lexxy-content` wrapper
 took effect. This is confirmation of a fix that already landed, not discovery: no `assert_select`
