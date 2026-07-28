@@ -996,12 +996,21 @@ bin/rails test
 ```
 
 ```bash
-LIBRARY_BACKEND=share bin/rails test
+LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test
 ```
 
 ```bash
-LIBRARY_BACKEND=s3 bin/rails test
+LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+  LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+  bin/rails test
 ```
+
+> **The env vars are required, not decoration.** `LIBRARY_BACKEND=share` without `LIBRARY_PATH`
+> aborts at boot (`LibraryBackendCheck::Error`) and fails ~195 tests for that one reason, which
+> reads exactly like a catastrophic regression. `s3` needs the five `LIBRARY_S3_*` vars for the
+> same reason. Both sets are lifted from `.github/workflows/ci.yml`'s `test-share-backend` /
+> `test-s3-backend` jobs; the s3 values are deliberate stubs — the guard checks config *presence*,
+> never the network, so no bucket is contacted and none needs to exist.
 
 Expected: 0 failures, 0 errors, **identical counts on all three**. Sheets never touch the port, so
 any divergence here means the controller reached somewhere it shouldn't.
