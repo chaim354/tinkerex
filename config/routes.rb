@@ -62,6 +62,9 @@ Rails.application.routes.draw do
     end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
+    # project, the grid page and its autosave/CSV live at /sheets/:id.
+    resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
     # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
     resources :uploads, only: :create, module: :projects
