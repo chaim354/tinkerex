@@ -84,6 +84,28 @@ module Maker
       sheet = @project.sheets.create!(user: @user, name: "Odd", data: "not a hash")
       assert_equal [], sheet.cells
       assert_equal [], sheet.columns
+
+      # A Hash whose inner keys are the wrong shape — Array("x") would make this one garbage row.
+      sheet.update!(data: { "cells" => "not an array", "columns" => 42 })
+      assert_equal [], sheet.cells
+      assert_equal [], sheet.columns
+    end
+
+    test "column titles continue past Z the way a spreadsheet does" do
+      assert_equal "A",  Maker::Sheet.column_title(0)
+      assert_equal "Z",  Maker::Sheet.column_title(25)
+      assert_equal "AA", Maker::Sheet.column_title(26)
+      assert_equal "AB", Maker::Sheet.column_title(27)
+      assert_equal "BA", Maker::Sheet.column_title(52)
+    end
+
+    # `("A".."Z").first(30)` returns 26 titles without complaining, while Array.new(30) does not —
+    # so the naive version yields 26 headers over 30-wide rows, silently non-rectangular.
+    test "blank_data stays rectangular past 26 columns" do
+      data = Maker::Sheet.blank_data(rows: 2, columns: 30)
+      assert_equal 30, data["columns"].size
+      assert_equal 30, data["cells"].first.size
+      assert_equal "AD", data["columns"].last["title"]
     end
 
     test "to_csv writes the column titles then the cells" do
@@ -194,19 +216,34 @@ module Maker
     validates :name, presence: true
     validate  :project_belongs_to_user
 
-    # A blank workbook, spreadsheet-conventional A/B/C column titles.
+    # A…Z, then AA, AB, … — spreadsheet convention. NOT `("A".."Z").first(columns)`: Range#first
+    # silently returns fewer than asked past Z, which yields 26 headers over N-wide rows and breaks
+    # the rectangular-grid invariant (and to_csv's header alignment) with no error.
+    def self.column_title(index)
+      title = +""
+      n = index
+      loop do
+        title.prepend((("A".ord + (n % 26))).chr)
+        n = n / 26 - 1
+        break if n.negative?
+      end
+      title
+    end
+
+    # A blank workbook.
     def self.blank_data(rows: DEFAULT_ROWS, columns: DEFAULT_COLUMNS)
-      titles = ("A".."Z").first(columns)
       {
-        "columns" => titles.map { |t| { "title" => t, "width" => 120 } },
+        "columns" => Array.new(columns) { |i| { "title" => column_title(i), "width" => 120 } },
         "cells"   => Array.new(rows) { Array.new(columns, "") }
       }
     end
 
     # Defensive readers: `data` is written by the browser, so a malformed or half-written blob must
-    # render an empty grid rather than 500 the page.
-    def cells   = data.is_a?(Hash) ? Array(data["cells"]) : []
-    def columns = data.is_a?(Hash) ? Array(data["columns"]) : []
+    # render an empty grid rather than 500 the page. The INNER shape is checked too — Array("x")
+    # wraps a bare String into a one-element array, so a "cells" key holding a scalar would
+    # otherwise become one garbage row rather than nothing.
+    def cells   = data.is_a?(Hash) && data["cells"].is_a?(Array) ? data["cells"] : []
+    def columns = data.is_a?(Hash) && data["columns"].is_a?(Array) ? data["columns"] : []
 
     # Exports what is STORED, which means a formula exports as `=A1*B1`, not as its result. That is
     # the intent: the export is the sheet, not a snapshot of its output.
@@ -243,7 +280,7 @@ In `app/models/maker/project.rb`, below the `has_many :boms` line:
 bin/rails test test/models/maker/sheet_test.rb
 ```
 
-Expected: PASS, 8 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 7: Commit**
 
