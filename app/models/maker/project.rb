@@ -12,6 +12,8 @@ module Maker
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
     has_many :tasks, as: :taskable, class_name: "Maker::Task", dependent: :destroy
     has_many :boms, class_name: "Maker::Bom", foreign_key: :project_id, dependent: :destroy
+    has_many :sheets, -> { order(:position, :id) },
+             class_name: "Maker::Sheet", foreign_key: :project_id, dependent: :destroy
 
     before_validation :ensure_slug
 

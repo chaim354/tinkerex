@@ -63,6 +63,12 @@ gem "nokogiri", "~> 1.18"
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
 gem "aws-sdk-s3", require: false
 
+# Ruby's own stdlib CSV writer, used by Maker::Sheet#to_csv. As of Ruby 3.4 this is a "bundled gem"
+# rather than a default gem, so it still ships with Ruby but Bundler no longer activates it for
+# free — `require "csv"` raises LoadError under Bundler.setup without this line even though the
+# gem is present on disk. BSD (Ruby license), permissive per CLAUDE.md §9.
+gem "csv"
+
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
