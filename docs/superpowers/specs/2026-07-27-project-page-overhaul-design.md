@@ -238,6 +238,7 @@ this repo have been.
 | Risk | Mitigation |
 |---|---|
 | The backfills are one-way — a bad conversion loses formatting on every existing entry | Content-level tests before the column drop; the two failure modes (collapsed newlines, literal markdown) are each pinned by a test |
+| **Note HTML freezes at migration time.** The old page ran `render_note` at *render* time, every view — so any later improvement to the renderer (a kramdown upgrade, a sanitizer allow-list change) retroactively improved every existing note. After the migration the HTML is stored once and never re-rendered, so it never will again. | **Accepted, not mitigated** — it is the unavoidable consequence of moving to rich text at all: you cannot have both "the user edits this as WYSIWYG" and "it still tracks a live markdown renderer". Recorded because it is a genuine user-visible behaviour change with no other trail. |
 | Lexxy is pre-1.0 (`0.9.x`) and its API may move | Pinned pessimistically; the integration surface is one helper call and one attribute |
 | Jspreadsheet CE v5's dist format may not be what the vendoring assumes | Both routes work (script tag reading `window.jspreadsheet`, or an importmap pin); the choice is made at implementation time against the actual file |
 | Autosave silently failing looks identical to autosave working | The indicator has an error state, not just Saving/Saved |

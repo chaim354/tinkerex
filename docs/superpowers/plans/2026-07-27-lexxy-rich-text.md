@@ -797,6 +797,26 @@ red**, which is exactly what a whole-file rerun would then blame on your new cod
 Run `bin/rails test test/integration/web/notes_test.rb test/integration/web/files_flow_test.rb` and
 note which still fail — (1) should go green immediately, (2) only after Step 4.
 
+- [ ] **Step 0b: Two "notes are markdown" promises the app still makes**
+
+Neither is in this task's File Structure list; both become false the moment Step 4 lands.
+
+1. **`app/javascript/controllers/filemenu_controller.js:58`** — the right-click popover's textarea
+   placeholder reads `"Add a note (markdown)…"`. **This one is a real user-facing bug, not just
+   stale copy.** That popover stays a plain `<textarea>` (deliberately — it is not being swapped for
+   Lexxy), and its text now goes through Action Text's plain-string setter, which escapes it
+   literally. A user who types `**bold**` there, believing the placeholder, gets literal asterisks
+   in the note. Change it to `"Add a note…"`.
+2. **`config/routes.rb:45`** — the section comment reads
+   `# --- Per-file notes (markdown; keyed by node_id, session auth) ---`. Drop the word `markdown`;
+   notes are Action Text from Task 3 onward.
+
+Confirmed non-issues — do not "fix" these: `NotesController`'s JSON branch never serializes `body`
+(it returns `id` and a count), `test/models/maker/note_test.rb` never compares `.body` to a string,
+no v1 endpoint or Rust client struct reaches `Maker::Note` at all, and
+`app/views/models/show.html.erb:95`'s `render_note(@model.notes)` is a **different model's** still-plain
+column and must stay exactly as it is.
+
 > Third time in this plan-set that a task's plan missed a pre-existing test asserting behaviour an
 > earlier task removed. The habit that would have caught it: after any step that changes what a
 > model attribute *returns*, grep the suite for that attribute being compared, rendered, or passed
