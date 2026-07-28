@@ -31,6 +31,10 @@ class BuildLogBodyMigrationTest < ActiveSupport::TestCase
     assert_equal "<p>one<br>two</p>", Converter.to_html("one\r\ntwo")
   end
 
+  test "a bare carriage return becomes a line break, not a merge" do
+    assert_equal "<p>Day one<br>Day two</p>", Converter.to_html("Day one\rDay two")
+  end
+
   # After the column drops, `body` is an Action Text association rather than an attribute. This is
   # the test that would fail if `has_rich_text :body` were missing, misnamed, or shadowed.
   test "an entry round-trips a rich body through the model" do

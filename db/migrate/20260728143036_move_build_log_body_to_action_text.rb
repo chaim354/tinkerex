@@ -20,9 +20,11 @@ class MoveBuildLogBodyToActionText < ActiveRecord::Migration[8.1]
   # Plain text -> an Action Text body. Escape FIRST, then add markup: the source is plain text a
   # user typed, so a stray `<` is a less-than sign and `<script>` is something they wrote about,
   # never markup to honour. Blank-line-separated blocks become paragraphs; single newlines become
-  # <br>, which is what the old `white-space: pre-wrap` rendering showed.
+  # <br>, which is what the old `white-space: pre-wrap` rendering showed. Newlines are normalized
+  # (not just `\r` deleted) so a bare `\r` — a lone-CR classic-Mac line ending, not just `\r\n` —
+  # still becomes a line break instead of silently fusing the two sides together.
   def self.to_html(text)
-    ERB::Util.html_escape(text.to_s.delete("\r")).to_str
+    ERB::Util.html_escape(text.to_s.gsub(/\r\n?/, "\n")).to_str
       .split(/\n{2,}/)
       .reject(&:empty?)
       .map { |para| "<p>#{para.gsub("\n", "<br>")}</p>" }
@@ -41,15 +43,23 @@ class MoveBuildLogBodyToActionText < ActiveRecord::Migration[8.1]
     remove_column :maker_build_log_entries, :body
   end
 
+  # Deliberately irreversible. Two independent reasons, both verified rather than assumed:
+  #
+  # 1. `has_rich_text :body` reads `rich_text_body || build_rich_text_body`, so once the rich texts
+  #    are deleted the model returns a freshly built BLANK RichText — shadowing the plain column a
+  #    reconstruction would have just repopulated. A bare `db:rollback`, not paired with reverting
+  #    the model in lockstep, would leave every entry reading empty, silently, app-wide. A rollback
+  #    that erases visible content without erroring is worse than one that refuses.
+  # 2. Reconstruction is not merely lossy but garbling: once Lexxy is wired up, <ul>/<li>/<h1> match
+  #    neither the </p><p> nor the <br> pattern, so strip_tags fuses adjacent blocks with no
+  #    separator — "<h1>Day 1</h1><p>Started.</p>" comes back as "Day 1Started."
+  #
+  # The real undo for a dropped populated column is a pre-migration snapshot, which an operator
+  # should be taking regardless. A regex reconstruction does not replace that; it only makes it feel
+  # unnecessary.
   def down
-    add_column :maker_build_log_entries, :body, :text
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").find_each do |rt|
-      # Best-effort inverse: paragraphs and breaks back to newlines, tags stripped.
-      text = rt.body.to_s.gsub(%r{</p>\s*<p>}, "\n\n").gsub(%r{<br\s*/?>}, "\n")
-      text = ActionController::Base.helpers.strip_tags(text).to_s
-      MigrationEntry.where(id: rt.record_id).update_all(body: CGI.unescapeHTML(text))
-    end
-    change_column_null :maker_build_log_entries, :body, false
-    MigrationRichText.where(record_type: RECORD_TYPE, name: "body").delete_all
+    raise ActiveRecord::IrreversibleMigration,
+      "Action Text -> plain text is lossy and garbling, and the restored column is shadowed by " \
+      "has_rich_text :body (every entry would read blank). Restore from a pre-migration backup."
   end
 end
