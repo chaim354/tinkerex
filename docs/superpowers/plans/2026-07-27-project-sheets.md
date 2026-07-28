@@ -120,6 +120,24 @@ bin/rails test test/models/maker/sheet_test.rb
 
 Expected: FAIL with `NameError: uninitialized constant Maker::Sheet`.
 
+- [ ] **Step 2b: Declare the `csv` gem — the model's `require "csv"` will not resolve without it**
+
+On Ruby 3.4, `csv` moved from a *default* gem to a *bundled* gem: it still ships with Ruby, but
+Bundler no longer auto-activates it, so `require "csv"` raises `LoadError: cannot load such file --
+csv` under `Bundler.setup`. That surfaces as the whole test file erroring out, not as a test failure,
+which reads like something much worse than it is.
+
+Add to the `Gemfile`:
+
+```ruby
+# Ruby 3.4 demoted csv from a default gem to a bundled one — it still ships with Ruby, but Bundler
+# no longer auto-activates it, so Maker::Sheet's `require "csv"` raises LoadError without this line.
+gem "csv"
+```
+
+Then `bundle install`. Licence is **Ruby / BSD-2-Clause** — permissive, CLAUDE.md §9 satisfied
+(verify from `gem specification csv` rather than taking this on trust).
+
 - [ ] **Step 3: Generate and write the migration**
 
 ```bash
