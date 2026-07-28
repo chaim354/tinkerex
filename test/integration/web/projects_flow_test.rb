@@ -213,6 +213,36 @@ module Web
       assert_select ".project-card .project-name", text: "Desk Lamp", count: 0
     end
 
+    # The Unarchive button must live INSIDE its own card's container, never as a bare sibling of
+    # the card. `.projects-grid` is `display: grid`, and every DIRECT child of a grid container
+    # becomes its own independent grid item — a bare sibling button is a SECOND grid item per
+    # archived project, so auto-placement has no idea it belongs with the card next to it. With
+    # 2+ archived projects the button can visually land next to a different project entirely
+    # (most visibly once the grid wraps a row). Text-content assertions like the ones above can't
+    # see this; only checking the actual container structure can.
+    test "each archived card owns its own unarchive button" do
+      user = sign_in
+      old_rig = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      older_rig = user.maker_projects.create!(name: "Older Rig", status: "archived")
+
+      get projects_path(archived: 1)
+
+      # One grid item per project, each a `.project-tile` — never a bare card or a bare button
+      # sitting loose as its own grid item.
+      tiles = css_select(".projects-grid > .project-tile")
+      assert_equal 2, tiles.size, "expected one .project-tile per archived project"
+      assert_select ".projects-grid > form", count: 0
+      assert_select ".projects-grid > a.project-card", count: 0
+
+      [ old_rig, older_rig ].each do |project|
+        tile = tiles.find { |t| t.at_css(".project-name")&.text&.strip == project.name }
+        assert tile, "no .project-tile found for #{project.name}"
+        # Scoped to THIS tile: the unarchive form for THIS project must be nested inside the same
+        # container as its own card, not merely present somewhere on the page.
+        assert_select tile, "form[action=?] button", unarchive_project_path(project), text: "Unarchive"
+      end
+    end
+
     test "the default index links to the archived view when there are archived projects" do
       user = sign_in
       user.maker_projects.create!(name: "Old Rig", status: "archived")
