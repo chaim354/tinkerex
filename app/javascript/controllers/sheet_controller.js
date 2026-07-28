@@ -3,7 +3,8 @@ import { Controller } from "@hotwired/stimulus"
 // Drives the Jspreadsheet grid on a sheet page and debounces its autosave.
 //
 // The library is a UMD bundle loaded by a classic <script> in the page head (see
-// projects/sheets/show.html.erb), so it arrives as a global rather than an import.
+// projects/sheets/show.html.erb, which also explains why that page marks the tags
+// data-turbo-track="reload" — a Turbo Drive visit, not just a hard load, has to be accounted for).
 export default class extends Controller {
   static targets = ["grid", "status"]
   static values = { url: String, data: Object }
@@ -22,24 +23,69 @@ export default class extends Controller {
     const columns = this.dataValue?.columns || []
     const cells = this.dataValue?.cells || []
 
-    this.instance = jss(this.gridTarget, {
-      data: cells,
-      columns: columns.map((c) => ({ title: c.title, width: c.width || 120 })),
-      allowInsertRow: true,
-      allowInsertColumn: true,
-      allowDeleteRow: true,
-      allowDeleteColumn: true,
+    // jspreadsheet-ce 5's top-level factory is a WORKBOOK api, not a single-sheet one, and it is
+    // ASYNCHRONOUS — this whole shape was verified live against the actual vendored bundle
+    // (vendor/javascript/jspreadsheet.js), not assumed from docs. Two load-bearing facts that
+    // aren't obvious from the outside:
+    //
+    // 1. `jspreadsheet(el, options)` returns an EMPTY array SYNCHRONOUSLY and populates it only
+    //    after an internal promise resolves. The per-sheet config MUST be nested under a top-level
+    //    `worksheets: [...]` array — calling it with a flat `{data, columns}` (no `worksheets` key)
+    //    throws "JSS: worksheets are not defined" *inside that promise chain*, which has no
+    //    `.catch()`, so it surfaces only as an unhandled rejection — never as a normal synchronous
+    //    exception at the call site, and never touches the `if (!jss)` guard above. The grid just
+    //    renders empty, silently, with no visible error at all: worse than a crash, because it looks
+    //    like a blank sheet rather than a broken one. `onload` is the library's own designed
+    //    ready-signal, firing once the async build finishes; its argument is the WORKBOOK, and
+    //    `workbook.worksheets[0]` is the actual usable per-sheet instance (`.getData`, `.getHeaders`,
+    //    `.getWidth`, …) — confirmed live: the returned array IS `workbook.worksheets` by reference,
+    //    so it fills in in place, but reading `onload`'s own argument is the documented path rather
+    //    than relying on that aliasing.
+    //
+    // 2. Where each option goes is NOT uniform. Verified live with two probes that isolate the two
+    //    directions of getting this wrong:
+    //    - An `onchange` NESTED inside `worksheets[0]` never fires; only a TOP-LEVEL `onchange`
+    //      (sibling to `worksheets`/`onload`) does. Every worksheet's dispatch escalates straight to
+    //      its PARENT (the workbook)'s `.config` — verified in the bundle's dispatch function,
+    //      `r = t.parent ? t.parent : t`, which for a worksheet always takes the `t.parent` branch
+    //      and so never even looks at the worksheet's own `.options`.
+    //    - `allowInsertRow`/`allowInsertColumn`/`allowDeleteRow`/`allowDeleteColumn` are the
+    //      opposite: every call site in the bundle reads them as `worksheet.options.allow…`
+    //      directly, so they belong NESTED inside the worksheets[0] entry, alongside `data`/
+    //      `columns`. Putting them at the top level wouldn't error — it would just leave every
+    //      insert/delete action silently blocked, since the worksheet-level default is closed.
+    jss(this.gridTarget, {
+      worksheets: [ {
+        data: cells,
+        columns: columns.map((c) => ({ title: c.title, width: c.width || 120 })),
+        allowInsertRow: true,
+        allowInsertColumn: true,
+        allowDeleteRow: true,
+        allowDeleteColumn: true
+      } ],
       onchange: () => this.scheduleSave(),
       oninsertrow: () => this.scheduleSave(),
       ondeleterow: () => this.scheduleSave(),
       oninsertcolumn: () => this.scheduleSave(),
-      ondeletecolumn: () => this.scheduleSave()
+      ondeletecolumn: () => this.scheduleSave(),
+      onload: (workbook) => { this.instance = workbook.worksheets[0] }
     })
   }
 
   disconnect() {
     clearTimeout(this.timer)
-    if (this.instance?.destroy) this.instance.destroy()
+    // There is no per-instance destroy() on a worksheet or workbook — grepping the bundle for
+    // "destroy" turns up only `destroyMerge` (undoing merged cells, unrelated) and the one real
+    // teardown entry point: the STATIC `jspreadsheet.destroy(container, removeGlobalEvents)`, keyed
+    // off the CONTAINER element (factory.spreadsheet stashes the workbook at `container.spreadsheet`
+    // for exactly this reason). Passing `true` also removes the document-level mouseup/mousedown/
+    // keydown listeners jspreadsheet installs on load — otherwise those stay bound to a page that,
+    // under Turbo, may no longer even be in the DOM. Guarded on `hasGridTarget`/the library still
+    // being present, and `jspreadsheet.destroy` itself no-ops if `container.spreadsheet` was never
+    // set (e.g. disconnecting before `onload` ever fired), so this is safe to call unconditionally.
+    if (window.jspreadsheet?.destroy && this.hasGridTarget) {
+      window.jspreadsheet.destroy(this.gridTarget, true)
+    }
   }
 
   scheduleSave() {
@@ -49,6 +95,8 @@ export default class extends Controller {
   }
 
   async save() {
+    if (!this.instance) return
+
     const token = document.querySelector('meta[name="csrf-token"]')?.content
 
     // Verified against the vendored bundle (vendor/javascript/jspreadsheet.js) rather than assumed:

@@ -2,13 +2,34 @@
 
 <%# The grid library loads HERE ONLY, not in the global layout — it is a large bundle and no other
     page needs it. jsuites must precede jspreadsheet (see vendor/javascript/JSPREADSHEET-LICENSES.md).
-    Classic script tags rather than importmap: these are UMD bundles that publish globals. The
-    layout's `yield :head` renders before `javascript_importmap_tags` (app/views/layouts/application
-    .html.erb), and importmap's module scripts defer until after parsing, so these classic tags have
-    always finished executing by the time Stimulus registers and connects this page's controller. %>
+    Classic script tags rather than importmap: these are UMD bundles that publish globals.
+
+    "data-turbo-track": "reload" is NOT decoration copied from the layout — it is load-bearing, and
+    its absence is a real bug that only shows up under Turbo Drive, not a hard page load. On a plain
+    hard load, `yield :head` renders before `javascript_importmap_tags` and these classic tags block
+    the parser, so they have always finished executing before Stimulus connects — that guarantee is
+    what an earlier draft of this comment relied on. But every real path to this page (the sheets
+    panel's `link_to`, and the create-sheet redirect) is a Turbo Drive VISIT, not a hard load: Turbo
+    fetches the response and MERGES it into the live document rather than reparsing from scratch, and
+    an untracked <script> merged into a live <head> loads asynchronously — Stimulus's
+    MutationObserver routinely connects this page's controller (see sheet_controller.js) before that
+    fetch finishes, so `window.jspreadsheet` isn't there yet. Reproduced live: a hard reload of a
+    sheet page always found the library loaded; reaching the exact same page via the create-sheet
+    redirect (a Turbo visit) hit "Grid failed to load" every time.
+
+    `data-turbo-track="reload"` fixes the CAUSE, not the symptom: verified against the actual
+    vendored bundle (turbo-rails' turbo.min.js) — Turbo hashes every `data-turbo-track="reload"`
+    element into a `trackedElementSignature` per page and compares old vs. new before rendering
+    (`trackedElementsAreIdentical`). The project page carries no such tags; this page does — so the
+    signatures differ, `shouldRender` is false, and Turbo's `reload()` sets `window.location.href`
+    itself: a REAL browser navigation, which re-parses from scratch and restores the hard-load
+    guarantee instead of a soft merge. (This only protects entry/exit relative to a page that lacks
+    these tags. Two sheet pages linked directly to each other would carry an IDENTICAL signature and
+    would still race on a soft merge between them — moot today since nothing links sheet-to-sheet,
+    but worth knowing before adding one.) %>
 <% content_for :head do %>
-  <%= stylesheet_link_tag "jsuites", "jspreadsheet" %>
-  <%= javascript_include_tag "jsuites", "jspreadsheet" %>
+  <%= stylesheet_link_tag "jsuites", "jspreadsheet", "data-turbo-track": "reload" %>
+  <%= javascript_include_tag "jsuites", "jspreadsheet", "data-turbo-track": "reload" %>
 <% end %>
 
 <nav class="breadcrumb" aria-label="Sheet path">
