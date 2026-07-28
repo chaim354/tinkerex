@@ -1,0 +1,46 @@
+<%# MillMage CNC "recipe" panel, shown beside the preview on a .mage file page — the sibling of
+    _lbrn_settings. `meta` is the parsed Hash from Maker::Previews::MageMetadata (string keys).
+    Every field is optional: render only what's present, exactly as the LightBurn panel does.
+
+    Reuses the .lbrn-* class names on purpose — this is the same panel in the same slot with the
+    same layout, and forking the CSS to rename "laser" to "cnc" would buy nothing. %>
+<section class="lbrn-settings">
+  <div class="lbrn-head">
+    <h2>CNC settings</h2>
+    <% if meta["app_version"].present? %><span class="muted">MillMage <%= meta["app_version"] %></span><% end %>
+  </div>
+
+  <% if meta["operations"].present? %>
+    <table class="lbrn-layers">
+      <thead>
+        <tr><th>Operation</th><th>Tool</th><th class="num">Feed</th><th class="num">Spindle</th><th class="num">Depth</th></tr>
+      </thead>
+      <tbody>
+        <% meta["operations"].each do |op| %>
+          <tr>
+            <td><%= op["name"].presence || op["type"] %></td>
+            <td>
+              <%= op["tool"] %>
+              <% if op["tool_diameter"] %><span class="muted"><%= op["tool_diameter"] %> mm</span><% end %>
+            </td>
+            <td class="num"><%= "#{op["feed_rate"]} mm/s" if op["feed_rate"] %></td>
+            <td class="num"><%= "#{op["spindle_speed"].to_i} rpm" if op["spindle_speed"] %></td>
+            <td class="num">
+              <%# final depth is the whole cut; pass depth is one bite of it — both matter, so
+                  show the pair rather than picking one. %>
+              <%= op["final_depth"] ? "#{op["final_depth"]} mm" : nil %>
+              <% if op["pass_depth"] %><span class="muted">/ <%= op["pass_depth"] %> per pass</span><% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+
+  <dl class="lbrn-summary">
+    <% if meta.dig("job", "width") %><dt>Job size</dt><dd><%= meta["job"]["width"] %> × <%= meta["job"]["height"] %> mm</dd><% end %>
+    <% if meta["material_height"] %><dt>Material</dt><dd><%= meta["material_height"] %> mm</dd><% end %>
+    <% if meta["machine"].present? %><dt>Machine</dt><dd><%= meta["machine"] %></dd><% end %>
+    <% if meta["shape_count"] %><dt>Operations / shapes</dt><dd><%= Array(meta["operations"]).size %> / <%= meta["shape_count"] %></dd><% end %>
+  </dl>
+</section>

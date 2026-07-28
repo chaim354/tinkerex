@@ -83,6 +83,52 @@ module Tools
       assert_select "input[name=?]", "params[y]"
     end
 
+    # TrayLayout's `layout` is column-aligned ASCII art. An <input type="text"> runs HTML's value
+    # sanitization algorithm, which STRIPS line breaks — so the art reached the sidecar as one line
+    # and boxes.py answered "traylayout requires --layout, --input, or implementation of
+    # generate_layout". A textarea is the only control that carries the newlines.
+    test "a multiline param renders as a textarea, never a line-stripping text input" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      assert_select "textarea[name=?]", "params[layout]"
+      assert_select "input[type=text][name=?]", "params[layout]", count: 0
+      # its non-multiline siblings are untouched
+      assert_select "input[type=text][name=?]", "params[sx]"
+    end
+
+    test "the layout textarea carries the seeded art with its line breaks intact" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      art = css_select("textarea[name='params[layout]']").first.text
+      # Assert the WIRE, not the parsed round-trip — Nokogiri does not model the HTML parser's
+      # "swallow one newline after <textarea>" rule, so a round-trip assertion passes whether the
+      # spare newline is there, missing, or doubled (all three verified by mutation).
+      # EXACTLY one: none eats the first line of any layout that opens on a blank one (FrontPanel's
+      # default does), and two leaves one behind, growing a stray blank first line on every field.
+      assert_match %r{<textarea[^>]*name="params\[layout\]"[^>]*>\n(?!\n)}, response.body,
+                   "the textarea must open with exactly one spare newline for the parser to eat"
+      assert_equal FakeBoxes::TRAY_LAYOUT, art.delete_prefix("\n")
+      assert_operator art.lines.size, :>, 4, "the art collapsed to a single line"
+      assert_includes art, "+-+-+-+"
+    end
+
+    test "a layout loaded from a saved box is flagged so the sync controller leaves it alone" do
+      mine = FakeBoxes::TRAY_LAYOUT.sub("| | | | 50.0mm", "| |   | 50.0mm") # a wall removed by hand
+      get new_tools_box_path(generator: "TrayLayout", params: { params: { layout: mine } })
+      assert_response :success
+      assert_select "textarea[name='params[layout]'][data-prefilled=?]", "true"
+      assert_equal mine, css_select("textarea[name='params[layout]']").first.text.delete_prefix("\n")
+
+      get new_tools_box_path(generator: "TrayLayout") # unprefilled -> the flag is absent
+      assert_select "textarea[name='params[layout]'][data-prefilled]", count: 0
+    end
+
+    test "the editor form drives the layout/sx/sy sync controller" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      assert_select "form[data-controller~=traylayout] textarea[name=?]", "params[layout]"
+    end
+
     test "new renders the two-column editor with a params grid and a preview column" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success

@@ -46,13 +46,70 @@ def _param_type(action):
     return "str"
 
 
-def _param(a):
+def _multiline(a):
+    # boxes.py's own web UI renders a str param as a <textarea> exactly when its default carries a
+    # newline (see boxesserver.arg2html). Mirror that RULE rather than naming params: it covers
+    # TrayLayout/GridfinityTrayLayout's `layout`, Desksign's `label`, FrontPanel's `layout` and
+    # NightLightBox's `BackExtraHoles` — and any future one — for free.
+    #
+    # This is not cosmetic. An <input type="text"> runs HTML's value sanitization algorithm, which
+    # STRIPS line breaks, so every one of those params arrived here with its newlines silently
+    # deleted: TrayLayout 422'd, FrontPanel 422'd, NightLightBox 422'd, and Desksign quietly dropped
+    # the second line of the sign.
+    return a.type is str and isinstance(a.default, str) and "\n" in a.default
+
+
+def _seeded_default(box, a):
+    """A BLANK multiline default is a marker, not a value — hand the form a real starting layout.
+
+    boxes.py gives TrayLayout and GridfinityTrayLayout a `layout` default of "\\n". That newline is
+    there ONLY to trip the textarea rule above; it is not a layout. Submitted verbatim it fails with
+    "Need more than one wall in x direction", and stripped to "" it fails with "traylayout requires
+    --layout, --input, or implementation of generate_layout" unless the generator happens to have a
+    generate_layout() fallback (GridfinityTrayLayout does, TrayLayout does not). Either way the user
+    meets an error before they have touched anything.
+
+    So build a starting layout with boxes.py's OWN code, which makes it parseable by construction:
+    the generator's generate_layout() where it has one, else TrayLayoutFile — the class boxes.py
+    ships for exactly this job (it is step 1 of the two-step flow, and its __str__ IS the format).
+
+    Upstream instead seeds the textarea from JavaScript on page load. Doing it here means the form
+    works with no JS at all, and the keep-in-sync-with-sx/sy JS is polish rather than load-bearing.
+    """
+    if a.default.strip():
+        return a.default  # a real multiline default (Desksign's label, FrontPanel's layout) — leave it
+    try:
+        if callable(getattr(box, "generate_layout", None)):
+            fresh = type(box)()
+            fresh.parseArgs([])
+            return fresh.generate_layout()
+
+        # TrayLayout-shaped: the compartment sizes live in sx/sy, and TrayLayoutFile draws them.
+        sizes = {x.dest: x.default for g in box.argparser._action_groups for x in g._group_actions}
+        tray_layout_file = _all_generators().get("TrayLayoutFile")
+        if tray_layout_file is None or "sx" not in sizes or "sy" not in sizes:
+            return a.default
+        f = tray_layout_file()
+        f.parseArgs(["--sx", str(sizes["sx"]), "--sy", str(sizes["sy"])])
+        f.render()
+        return f.close().getvalue().decode()
+    except Exception:
+        # Never let seeding break /generators — a blank layout is the status quo, not a regression.
+        return a.default
+
+
+def _param(a, box):
+    multiline = _multiline(a)
     return {
         "name": a.dest,
         "type": _param_type(a),
-        "default": a.default,
+        "default": _seeded_default(box, a) if multiline else a.default,
         "help": (a.help or "").strip(),
         "choices": list(a.choices) if a.choices else None,
+        # Consumed by the form to pick <textarea> over <input type="text">. Additive: an app that
+        # predates this key just reads it as falsy and renders what it rendered before, so the
+        # sidecar and the app can deploy in either order.
+        "multiline": multiline,
     }
 
 
@@ -64,7 +121,7 @@ def _param_groups_for(cls):
     groups = []
     for g in box.argparser._action_groups:
         params = [
-            _param(a) for a in g._group_actions
+            _param(a, box) for a in g._group_actions
             if not isinstance(a, argparse._HelpAction) and a.dest not in SKIP
         ]
         if not params:

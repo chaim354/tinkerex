@@ -1,0 +1,71 @@
+require "test_helper"
+
+module Web
+  # The file page's recipe panel, driven end to end.
+  #
+  # `show.html.erb` picks between TWO partials off one metadata Hash — MillMage's "operations"
+  # get the CNC panel, LightBurn's "layers" get the laser one. No unit test can see that choice:
+  # both renderers return a Hash and both partials render fine in isolation, so getting the
+  # branch backwards shows a CNC job a "Laser settings" table with empty Speed/Power/Passes
+  # columns and no tooling at all — wrong, and silent. Only driving the page catches it.
+  class SettingsPanelTest < ActionDispatch::IntegrationTest
+    setup { pin_file_layer_backend("chunk") }
+
+    PASSWORD = "correct horse battery staple".freeze
+
+    def sign_in(email = "panel@example.com")
+      user = User.find_by(email:) ||
+             User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
+      post user_session_path, params: { user: { email:, password: PASSWORD } }
+      user
+    end
+
+    # A node + a ready thumbnail carrying `metadata`. The panel reads ONLY the metadata, so the
+    # rendered asset is irrelevant here and is deliberately left unattached — that also proves the
+    # panel does not quietly depend on having an image.
+    def node_with_metadata(user, name, metadata)
+      # In chunk mode the content_token IS the current version id, so a node needs one or the
+      # page has nothing to key a thumbnail to.
+      node = user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file", storage_path: name,
+                                current_version_id: SecureRandom.uuid)
+      # The page finds its thumbnail by the node's CURRENT content_token, not by node_id alone
+      # (that is what keeps a stale render off the page), so the row has to be keyed to whatever
+      # the port reports right now rather than to a literal.
+      token = FileLayer.current.stat(user, node_id: node.node_id).content_token
+      user.maker_previews.create!(node_id: node.node_id, version_id: token, kind: "thumbnail",
+                                  status: "ready", metadata:)
+      node
+    end
+
+    test "a MillMage file gets the CNC panel, with its tooling" do
+      user = sign_in
+      meta = Maker::Previews::MageMetadata.parse(
+        File.binread(Rails.root.join("test/fixtures/files/real-export.mage"))
+      )
+      node = node_with_metadata(user, "pocket.mage", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "h2", text: "CNC settings"
+      assert_select "th", text: "Spindle"
+      assert_select "td", text: /1\.5 mm endmil/
+      assert_select "td", text: /20000 rpm/
+      assert_select "dd", text: "100.0 × 60.0 mm"
+      assert_select "h2", { text: "Laser settings", count: 0 }, "the laser panel must not render"
+    end
+
+    test "a LightBurn file still gets the laser panel" do
+      user = sign_in("panel2@example.com")
+      meta = Maker::Previews::LbrnMetadata.parse(
+        File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
+      )
+      node = node_with_metadata(user, "cut.lbrn2", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "h2", text: "Laser settings"
+      assert_select "th", text: "Power"
+      assert_select "h2", { text: "CNC settings", count: 0 }, "the CNC panel must not render"
+    end
+  end
+end
