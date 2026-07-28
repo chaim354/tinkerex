@@ -17,13 +17,20 @@
     <% if current_project == @project %>
       <span class="badge current-project-badge">★ Current project</span>
       <%= button_to "Clear", current_project_path, method: :delete, class: "linkbtn" %>
-    <% else %>
+    <% elsif @project.status != "archived" %>
+      <%# An archived project cannot be the current project — CurrentProject scopes its lookup
+          with `where.not(status: "archived")`, so this button would post successfully and change
+          nothing, with no flash to say so. %>
       <%= button_to "Set as current", current_project_path, method: :patch,
                     params: { project_id: @project.id }, class: "linkbtn" %>
     <% end %>
     <%= link_to "Edit", edit_project_path(@project), class: "linkbtn" %>
-    <%= button_to "Archive", project_path(@project), method: :delete, class: "linkbtn danger",
-                  form: { data: { turbo_confirm: "Archive #{@project.name}?" } } %>
+    <% if @project.status == "archived" %>
+      <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "linkbtn" %>
+    <% else %>
+      <%= button_to "Archive", project_path(@project), method: :delete, class: "linkbtn danger",
+                    form: { data: { turbo_confirm: "Archive #{@project.name}?" } } %>
+    <% end %>
   </div>
 </div>
 

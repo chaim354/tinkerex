@@ -14,6 +14,16 @@
 .badge.status-archived { background: #f3f4f6; color: #9ca3af; }
 
 .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px; }
+/* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
+   with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
+   width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
+   the thumb's own content size (measured: a 161.5px tile shrank the thumb to ~50px). Leaving
+   `align-items` at its flex default (`stretch`) keeps `.project-card` — and so its `.thumb` — at
+   the tile's full width, exactly as the plain-block wrapper this replaces did. The Unarchive
+   button is centered instead by scoping `text-align: center` to the form alone, which centers its
+   inline-block `<button>` without touching `.project-card`'s box model at all. */
+.project-tile { display: flex; flex-direction: column; gap: 6px; }
+.project-tile form { text-align: center; }
 .project-card { display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--fg); }
 .project-card:hover { text-decoration: none; }
 .project-card:hover .thumb { border-color: var(--accent); }

@@ -324,5 +324,57 @@ module Web
       assert_response :success
       assert_select "select[name=?]", "project[status]", count: 0
     end
+
+    # --- the detail page's action bar tracks the archived state ---
+
+    test "an archived project's detail page offers unarchive, not archive" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get project_path(project)
+      assert_response :success
+      assert_select "form[action=?]", unarchive_project_path(project)
+      # The Archive button posts DELETE to the project itself; it must not render here.
+      assert_select "form[action=?][method=?]", project_path(project), "post", count: 0
+    end
+
+    test "a live project's detail page offers archive, not unarchive" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "active")
+
+      get project_path(project)
+      assert_select "form[action=?]", project_path(project)
+      assert_select "form[action=?]", unarchive_project_path(project), count: 0
+    end
+
+    test "an archived project cannot be set as the current project from its detail page" do
+      user = sign_in
+      archived = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      live = user.maker_projects.create!(name: "Desk Lamp", status: "active")
+
+      # Scoped to `.head-actions` (the detail page's own action bar): the top bar in
+      # app/views/layouts/application.html.erb also renders a `form_with url: current_project_path`
+      # whenever the user has ANY live project (`current_project_choices.any?`) — which `live` makes
+      # true here regardless of which project's page we're on. An unscoped selector would find that
+      # unrelated form and fail for the wrong reason.
+      get project_path(archived)
+      assert_select ".head-actions form[action=?]", current_project_path, count: 0
+
+      # The control is offered for a live project — proving the assertion above discriminates on
+      # status rather than passing because the selector never matches anything.
+      get project_path(live)
+      assert_select ".head-actions form[action=?]", current_project_path
+    end
+
+    test "unarchiving from the detail page restores the project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived",
+                                            archived_at: Time.current)
+
+      get project_path(project)
+      patch unarchive_project_path(project)
+      assert_redirected_to projects_path
+      assert_equal "active", project.reload.status
+    end
   end
 end
