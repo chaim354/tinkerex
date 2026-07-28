@@ -532,6 +532,23 @@ And change `.tile-meta` (line 49) — with the badge gone it holds a single butt
 .tile-meta { display: flex; align-items: center; justify-content: center; }
 ```
 
+- [ ] **Step 4b: Amend the pre-existing test that asserts the removed badge**
+
+`"attached files render as tiles linking to the file view"`, already in
+`test/integration/web/project_attachments_test.rb`, asserts
+`assert_select ".attachment-tile .badge", text: /model/` — the exact element Step 3 removes. Delete
+**only that assertion line**; the rest of the test (the tile renders, it links to the file view) is
+still valid and must stay.
+
+Verified during execution: that is the *only* place in the whole suite asserting on the per-tile
+badge (checked all of `test/`, including `test/system/`). Without this step, Step 5's "Expected:
+PASS, whole file" is unreachable.
+
+> **This is the second plan in this set to miss a pre-existing test asserting the behaviour it
+> removes** (the first was the status-UI plan's Step 5b). The authoring lesson: when a step deletes
+> a rendered element, grep the suite for that element's selector *while writing the plan* — the new
+> tests get written carefully and the old ones get forgotten, every time.
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
