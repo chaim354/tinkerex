@@ -24,7 +24,7 @@ module Web
       assert_redirected_to new_user_session_path
     end
 
-    test "index lists the user's projects grouped by status, empty state otherwise" do
+    test "index lists live projects in one flat list, empty state otherwise" do
       user = sign_in
       get projects_path
       assert_response :success
@@ -32,10 +32,18 @@ module Web
       assert_select ".projects-empty"
 
       user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Bench Jig", status: "paused")
       user.maker_projects.create!(name: "Old Rig", status: "archived")
       get projects_path
+
+      # One grid, no per-status sections.
+      assert_select ".projects-grid", count: 1
+      assert_select ".project-group", count: 0
+      # A non-archived status is no longer a heading and no longer a badge.
+      assert_select ".project-card .badge", count: 0
       assert_select ".project-card .project-name", text: "Desk Lamp"
-      # Archived projects are not in the default (non-archived) listing.
+      assert_select ".project-card .project-name", text: "Bench Jig"
+      # Archived projects stay out of the default listing.
       assert_select ".project-card .project-name", text: "Old Rig", count: 0
     end
 

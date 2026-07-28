@@ -18,14 +18,16 @@ class ProjectsController < ApplicationController
   # come from either.
   include MoveConflicts
 
-  # STATUS order for the grouped list; `archived` is intentionally excluded from the default view.
-  LISTED_STATUSES = %w[planning active paused done].freeze
-
+  # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
+  # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
+  # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
   def index
-    projects = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
-    @by_status = projects.reject { |p| p.status == "archived" }.group_by(&:status)
-    @archived_count = projects.count { |p| p.status == "archived" }
-    @covers = Maker::Previews::ThumbnailMap.for(current_user, projects.filter_map(&:cover_node_id))
+    @archived_view = params[:archived].present?
+    all = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
+    archived, live = all.partition { |p| p.status == "archived" }
+    @projects = @archived_view ? archived : live
+    @archived_count = archived.size
+    @covers = Maker::Previews::ThumbnailMap.for(current_user, @projects.filter_map(&:cover_node_id))
   end
 
   def show
