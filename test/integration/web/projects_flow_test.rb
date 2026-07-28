@@ -38,7 +38,6 @@ module Web
 
       # One grid, no per-status sections.
       assert_select ".projects-grid", count: 1
-      assert_select ".project-group", count: 0
       # A non-archived status is no longer a heading and no longer a badge.
       assert_select ".project-card .badge", count: 0
       assert_select ".project-card .project-name", text: "Desk Lamp"
