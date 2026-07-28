@@ -515,8 +515,34 @@ and the v1 API.
 grep -rn "status-active\|status-planning\|status-paused\|status-done\|project-group\|group-head" app/ test/
 ```
 
-Expected: only `app/assets/stylesheets/projects.css`. (`models.css` uses the separate `mstatus-`
-prefix and is not a match.) If anything else appears, stop and reconcile before deleting.
+**This returns THREE files, not one, and the step is to classify them — not to count them.** A
+literal-string grep across `app/` and `test/` cannot distinguish "styling that must be checked
+before deletion" from two other things it will always also match:
+
+1. **`app/assets/stylesheets/projects.css`** — the six lines to delete. The real hit.
+2. **`test/integration/web/project_tasks_test.rb`** — `.tasks-group.status-done`. A **false
+   positive from an unrelated feature**: that is `Maker::Task`'s status class (`todo`/`done`),
+   rendered by `_tasks.html.erb`. It never carries `.badge`, and `projects.css` never had a
+   `.tasks-group.status-*` rule, so deleting `.badge.status-done` cannot affect it. Substring
+   collision only.
+3. **`test/integration/web/projects_flow_test.rb`** — `assert_select ".project-group", count: 0`.
+   A **test asserting the string's own absence**, which by construction matches any grep for it.
+
+Only (1) is evidence about styling. Do not treat a file count as pass/fail.
+
+**And (3) is itself a defect to fix, not just noise.** `.project-group` appears nowhere in `app/` —
+Task 2 removed the grouped sections by rewriting the view outright — so that assertion is
+**vacuous**: a `count: 0` against a selector with zero live occurrences can never fail. Delete the
+line; the `assert_select ".projects-grid", count: 1` immediately above it already covers the real
+invariant in a way that *can* fail, because reintroduced grouping would produce a second grid.
+
+> **General rule for this plan and its siblings — a `count: 0` assertion is only meaningful if the
+> selector still exists somewhere in the markup.** If a change deletes a class outright, asserting
+> its absence tests nothing; assert instead on a selector that survives (`.badge.status-archived`
+> rather than `.project-status`) or on a positive invariant (`count: 1` on the grid). The check:
+> *can I make this assertion fail by reintroducing the bug?* If not, it is decoration. Two
+> assertions in this plan failed that test and both were caught only by someone asking the
+> question — reading the diff passed them.
 
 Then in `app/assets/stylesheets/projects.css` delete these six lines:
 
