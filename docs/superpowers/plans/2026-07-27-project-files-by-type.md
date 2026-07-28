@@ -253,6 +253,29 @@ class RederiveRolesMigrationTest < ActiveSupport::TestCase
     ActiveRecord::Migration.suppress_messages { RederiveVectorAndCadSourceRoles.new.down }
     assert_equal "other", dxf.reload.role
   end
+
+  # Safety under re-run is the property a migration most deserves an explicit assertion for — a real
+  # `db:migrate` can be interrupted and re-invoked.
+  test "running up twice is a no-op the second time" do
+    dxf = attach("panel.dxf", "other")
+    txt = attach("readme.txt", "other")
+
+    run_migration
+    run_migration
+
+    assert_equal "vector", dxf.reload.role
+    assert_equal "other", txt.reload.role
+  end
+
+  # The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the
+  # two can silently drift. This is the only thing that would notice — and it lives in the test
+  # suite, so the migration itself still executes with zero app-model dependency.
+  test "the migration's extension list still agrees with the model's" do
+    RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT.each do |ext, role|
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "migration maps #{ext} to #{role}, model disagrees"
+    end
+  end
 end
 ```
 
@@ -284,6 +307,13 @@ class RederiveVectorAndCadSourceRoles < ActiveRecord::Migration[8.1]
   # `ROLE_BY_EXT` (a data migration must not depend on app code that keeps moving), and the cost of
   # that choice is exactly this: an extension added to the model *after* this migration runs will
   # never re-derive the rows already sitting in `other`, and closing that needs a SECOND migration.
+  #
+  # `down` returns EVERY vector/cad_source row to "other", not only the rows `up` moved — it has no
+  # record of which those were. That is exact only until the first attachment is created directly
+  # with one of these roles, which `role_for` does at upload/attach time in four controllers; that
+  # code ships in Task 1, so the window can close before `up` ever runs — NOT "once the UI ships".
+  # Acceptable because the pair is self-healing: re-running `up` re-derives migrated and organic
+  # rows identically, since the mapping is a pure function of the current filename.
   NEW_ROLE_BY_EXT = {
     "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
     "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
@@ -324,7 +354,14 @@ end
 bin/rails test test/models/maker/rederive_roles_migration_test.rb
 ```
 
-Expected: PASS, 5 tests.
+Expected: PASS, 7 tests.
+
+> **Knowingly deferred here, with reasons — do not treat these as oversights.** (1) No test asserts
+> the `say "re-derived N…"` count; the arithmetic is trivially correct by inspection and asserting
+> on log text couples a test to output formatting. (2) `up` does one `find_by` per row — measured at
+> ~2 SQL statements and ~0.73 ms per attachment, so ~35-40s at a 50k-row backlog this single-user
+> deployment does not have. Batch it (pluck + one `update_all` per role, mirroring `down`) if this
+> shape is ever reused on a bigger table. (3) No incremental progress output, for the same reason.
 
 - [ ] **Step 6: Apply the migration and check the schema is unchanged**
 
