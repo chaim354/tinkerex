@@ -547,6 +547,28 @@ git commit -m "feat(projects): drop the status badge and select from the web UI"
 
 ---
 
+## Known deferred gap (raised in review, deliberately not fixed here)
+
+**`Maker::Project#unarchive!` has no state guard.** It is `update!(status: "active", archived_at: nil)`
+with no check that the project was archived to begin with, deliberately mirroring `archive!`, which
+is equally permissive. `PATCH /projects/:slug/unarchive` is reachable whatever the current status,
+so a hand-crafted request against a `paused` or `done` project silently forces it to `active`.
+
+Why it was judged non-blocking by two independent reviews: it is scoped to the requester's **own**
+projects (`set_project` scopes through `current_user.maker_projects`, pinned by a cross-user test),
+it is unreachable through any shipped UI (the button renders only when `status == "archived"`), and
+triggering it requires deliberately hand-crafting a request against your own data.
+
+Why it is worth writing down anyway: the web treats `status` as binary, but the value it **writes**
+is not — and the v1 API and the desktop app both read the full five-value vocabulary, so a forced
+`paused` → `active` is a real state change to a consumer the web cannot see. The design doc's
+"recorded consequence" note in §3 covers *display* of the other statuses, not *mutation* of them.
+
+The cheap close, whenever this is picked up: `return unless status == "archived"` in the model, or
+the equivalent check in `ProjectsController#unarchive`, with a test.
+
+---
+
 ## Task 5: Full-suite verification on all three backend legs
 
 **Files:** none — verification only.
