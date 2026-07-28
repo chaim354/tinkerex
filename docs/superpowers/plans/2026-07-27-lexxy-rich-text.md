@@ -168,6 +168,26 @@ git commit -m "feat: install Lexxy and Action Text, drop Trix"
 bin/rails generate migration MoveBuildLogBodyToActionText
 ```
 
+> **Clear the pending-migration gate against the TEST database only — `RAILS_ENV=test`.**
+> `rails/test_help` calls `maintain_test_schema!`, which raises a pending-migration error for
+> *every* test the moment an unapplied migration file exists on disk, before any test code runs. So
+> the empty generated migration has to be applied before Step 3's "watch it fail" can fail for the
+> right reason.
+>
+> **But do NOT apply it to development.** Doing so records this version in development's
+> `schema_migrations` while the file is still empty — so the later real `bin/rails db:migrate` sees
+> it as already applied and **silently skips the actual backfill and column drop**. And because
+> `down` raises `ActiveRecord::IrreversibleMigration` (below, deliberately), you cannot roll back to
+> force a re-run: the bookkeeping has to be repaired by hand. Use:
+>
+> ```bash
+> RAILS_ENV=test bin/rails db:migrate
+> ```
+>
+> That clears the gate for test runs and leaves development's bookkeeping alone, so the real
+> `bin/rails db:migrate` at the end genuinely executes `up`. Verify it did — the migration logs a
+> `remove_column` line — rather than assuming.
+
 - [ ] **Step 2: Write the failing test**
 
 Create `test/models/maker/build_log_body_migration_test.rb`:
@@ -387,6 +407,26 @@ git commit -m "feat(build log): move entry bodies to Action Text"
 ```bash
 bin/rails generate migration MoveNoteBodyToActionText
 ```
+
+> **Clear the pending-migration gate against the TEST database only — `RAILS_ENV=test`.**
+> `rails/test_help` calls `maintain_test_schema!`, which raises a pending-migration error for
+> *every* test the moment an unapplied migration file exists on disk, before any test code runs. So
+> the empty generated migration has to be applied before Step 3's "watch it fail" can fail for the
+> right reason.
+>
+> **But do NOT apply it to development.** Doing so records this version in development's
+> `schema_migrations` while the file is still empty — so the later real `bin/rails db:migrate` sees
+> it as already applied and **silently skips the actual backfill and column drop**. And because
+> `down` raises `ActiveRecord::IrreversibleMigration` (below, deliberately), you cannot roll back to
+> force a re-run: the bookkeeping has to be repaired by hand. Use:
+>
+> ```bash
+> RAILS_ENV=test bin/rails db:migrate
+> ```
+>
+> That clears the gate for test runs and leaves development's bookkeeping alone, so the real
+> `bin/rails db:migrate` at the end genuinely executes `up`. Verify it did — the migration logs a
+> `remove_column` line — rather than assuming.
 
 - [ ] **Step 2: Write the failing test**
 
