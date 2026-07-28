@@ -42,6 +42,14 @@ module Maker
       update!(status: "archived", archived_at: Time.current)
     end
 
+    # The inverse of archive!. "active" rather than the "planning" column default: a project you
+    # deliberately pull back out of the archive is one you are working on again. The web UI shows
+    # neither value — it reads status as archived-or-not (spec decision #1) — but the v1 API and
+    # the desktop app still see the full vocabulary, so this has to name a real member of STATUSES.
+    def unarchive!
+      update!(status: "active", archived_at: nil)
+    end
+
     # Return the project's library folder node, (re)creating `Projects/<slug>` if folder_node_id is
     # nil or points at a tombstoned/missing node (the user deleted it in the Files browser). Called
     # best-effort at create time (the controller rescues) and authoritatively at upload time, so it
