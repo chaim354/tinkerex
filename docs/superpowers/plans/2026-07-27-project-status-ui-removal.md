@@ -229,9 +229,53 @@ git commit -m "feat(projects): flat project index, no per-status sections"
 
 **Files:**
 - Modify: `config/routes.rb:51`
-- Modify: `app/controllers/projects_controller.rb` (new action + `set_project`)
+- Modify: `app/controllers/projects_controller.rb` (new action + `set_project` + Step 0 fix)
+- Modify: `app/views/projects/index.html.erb` (Step 0 fixes)
 - Modify: `app/views/projects/_card.html.erb`
 - Test: `test/integration/web/projects_flow_test.rb`
+
+- [ ] **Step 0: Three carried fixes to Task 2's code**
+
+Task 2's code-quality review raised three findings against code this plan supplied. All three live
+in files Task 3 touches anyway, so they are folded in here rather than left as debt.
+
+**(a) `?archived=0` currently renders the ARCHIVED view.** In
+`app/controllers/projects_controller.rb`, `@archived_view = params[:archived].present?` is true for
+*any* value including `"0"`. Nothing constructs that URL today, but this task adds UI around the
+parameter, and a checkbox would submit `"0"` for "off" by Rails convention — landing the user on
+the exact opposite page. Change it to an equality test:
+
+```ruby
+    # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
+    # "show me the archive" — the opposite page.
+    @archived_view = params[:archived] == "1"
+```
+
+**(b) The `.archived-note` paragraph renders empty when there is nothing to say.** In
+`app/views/projects/index.html.erb`, wrap the whole `<p>` so a fresh install with no archived
+projects doesn't get a stray empty paragraph and its default margin:
+
+```erb
+<% if @archived_view || @archived_count.positive? %>
+  <p class="archived-note muted">
+    <% if @archived_view %>
+      <%= link_to "← Back to projects", projects_path %>
+    <% else %>
+      <%= link_to pluralize(@archived_count, "archived project"), projects_path(archived: 1) %>
+    <% end %>
+  </p>
+<% end %>
+```
+
+**(c)** That block also replaces the nested string interpolation
+(`"#{@archived_count} archived project#{"s" unless @archived_count == 1}"`) with Rails'
+`pluralize` helper, which is what it is for.
+
+Run the existing test after these three, before writing anything new — they must stay green:
+
+```bash
+bin/rails test test/integration/web/projects_flow_test.rb
+```
 
 - [ ] **Step 1: Write the failing test**
 
@@ -255,6 +299,30 @@ Append to `test/integration/web/projects_flow_test.rb`:
       user.maker_projects.create!(name: "Old Rig", status: "archived")
       get projects_path
       assert_select ".archived-note a", text: "1 archived project"
+
+      user.maker_projects.create!(name: "Older Rig", status: "archived")
+      get projects_path
+      assert_select ".archived-note a", text: "2 archived projects"
+    end
+
+    # Step 0(b): with nothing archived there is nothing to say, so the note must not render at all.
+    test "the archived note is absent when nothing is archived" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      get projects_path
+      assert_select ".archived-note", count: 0
+    end
+
+    # Step 0(a): `.present?` would have made "0" truthy and served the ARCHIVED view here.
+    test "archived=0 shows the live list, not the archive" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get projects_path(archived: 0)
+      assert_select "h1", "Projects"
+      assert_select ".project-card .project-name", text: "Desk Lamp"
+      assert_select ".project-card .project-name", text: "Old Rig", count: 0
     end
 
     test "unarchive returns a project to the live list" do
