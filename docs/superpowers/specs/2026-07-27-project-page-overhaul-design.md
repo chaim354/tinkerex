@@ -342,3 +342,50 @@ can be taken later without data loss.
   question, so this is the heaviest option for the least reason.
 
 **Do not let decision #6 be read as settled.** It is correct about the grid and wrong about formulas.
+
+### 9b.1 RESOLVED: wire `hot-formula-parser` (MIT) behind the grid's own hook
+
+Decision (user, 2026-07-28): **option (c)** — a different, clearly-MIT engine, rather than vendoring
+the unlicensed one or shipping without formulas.
+
+**The grid's formula hook, reverse-engineered from the vendored bundle** (all of this was read out of
+`vendor/javascript/jspreadsheet.js`, not from documentation, and it is the expensive part of this
+work):
+
+```js
+res = formula(expression.substr(1), formulaExpressions, x, y, obj)
+if (typeof res === "function") res = "#ERROR"      // and a throw is caught → "#ERROR"
+```
+
+- **The grid resolves cell references itself.** Before calling, it strips `$` (`/\$?([A-Z]+)\$?([0-9]+)/g`
+  → `$1$2`), **expands ranges** — `SUM(A1:A5)` becomes `SUM(A1,A2,A3,A4,A5)` — and builds
+  `formulaExpressions`, a map of every remaining cell token to its value. So the engine's job is
+  **expression evaluation against an injected scope**, not reference resolution. That is a far
+  smaller contract than "be a spreadsheet engine".
+- **Values arrive pre-formatted for `eval`**, which is the trap: numbers come as numbers, blanks as
+  `null`, and **strings come wrapped in literal double quotes** (`'"text"'`). A parser-based engine
+  must unwrap them; passing them through yields quoted-looking output.
+- **The shims sit OUTSIDE the UMD factory**, at script top level — verified by reading the bytes
+  before `!function(e,t){…}(this,…)`. So `var formula` at top level *is* `window.formula`, and
+  setting the global before `jspreadsheet.js` loads works exactly the way `jsuites` already does.
+  Load order becomes: `jsuites` → `formula-parser` → the adapter → `jspreadsheet`.
+
+**Why `hot-formula-parser@4.0.0`:** MIT, ships a self-contained UMD browser build
+(`dist/formula-parser.min.js`) setting `window.formulaParser`, and its bundled dependencies are MIT
+too (`@handsontable/formulajs`, `tiny-emitter`) — which matters because they ship inside the file
+(§9 is about artifacts, not just direct deps). It resolves refs through a `callCellValue` callback,
+which is exactly the seam needed to feed it `formulaExpressions`.
+
+**Why not a `new Function` adapter over `@formulajs/formulajs`** (also MIT, and simpler): Excel and
+JavaScript disagree on operators, silently. `&` is concatenation in Excel and bitwise-AND in JS; `^`
+is exponentiation vs XOR; `<>` is not-equal vs invalid; `=` is equality vs assignment. Every one of
+those evaluates to something rather than erroring — the exact silently-wrong failure mode this whole
+arc has been fighting. `hot-formula-parser` implements the Excel semantics (it has per-operator
+modules: `ampersand.js`, `equal.js`, …).
+
+**Return the engine's error string rather than throwing.** hot-formula-parser yields real Excel error
+values (`#DIV/0!`, `#NAME?`, `#VALUE!`); returning them shows the user what is actually wrong,
+whereas throwing collapses everything to the grid's generic `#ERROR`.
+
+**CSP is not a constraint here** — `config/initializers/content_security_policy.rb` is entirely
+commented out, and the grid itself already calls `eval()` internally regardless.
