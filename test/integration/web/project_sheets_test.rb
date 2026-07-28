@@ -134,5 +134,38 @@ module Web
       end
       assert_response :not_found
     end
+
+    test "the grid page carries the data, the save URL and a breadcrumb back to the project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      sheet = project.sheets.create!(user:, name: "Cut list", data: {
+        "columns" => [ { "title" => "Part" } ], "cells" => [ [ "M3 bolt" ] ]
+      })
+
+      get sheet_path(sheet)
+      assert_response :success
+      assert_select ".breadcrumb a", text: "Lamp"
+      assert_select "[data-sheet-url-value=?]", sheet_path(sheet)
+      assert_select "[data-sheet-data-value*=?]", "M3 bolt"
+      assert_select "a[href=?]", sheet_path(sheet, format: :csv)
+
+      # Both targets must be INSIDE the controller element — Stimulus only resolves targets in its
+      # own subtree, and a status span left outside would leave the indicator stuck on "Saved"
+      # while every save failed. Asserting the nesting, not just the presence, is what catches it.
+      assert_select "[data-controller=sheet] [data-sheet-target=status]"
+      assert_select "[data-controller=sheet] [data-sheet-target=grid]"
+    end
+
+    test "the grid page loads the vendored library only on this page" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      sheet = project.sheets.create!(user:, name: "Cut list", data: Maker::Sheet.blank_data)
+
+      get sheet_path(sheet)
+      assert_select "script[src*=?]", "jspreadsheet"
+
+      get project_path(project)
+      assert_select "script[src*=?]", "jspreadsheet", count: 0
+    end
   end
 end

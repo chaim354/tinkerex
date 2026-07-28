@@ -97,3 +97,16 @@
 .chip-x { background: none; border: 0; cursor: pointer; color: var(--muted);
   font-size: 15px; line-height: 1; padding: 0 4px; }
 .chip-x:hover { color: var(--fg); }
+
+.sheet-head { align-items: flex-start; }
+.sheet-head h1 { margin: 0 0 6px; }
+.sheet-rename { display: inline-flex; gap: 6px; }
+/* The GRID scrolls sideways, not the whole page container — the page head sits in the same
+   element (it holds the Stimulus targets) and must stay put. */
+.sheet-grid { overflow-x: auto; }
+.sheet-status { font-size: 12px; }
+.sheet-status-error { color: var(--danger); }
+
+.sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between;
+                           padding: 6px 0; border-bottom: 1px solid var(--line); }
+.sheets-panel .sheet-row:last-child { border-bottom: 0; }

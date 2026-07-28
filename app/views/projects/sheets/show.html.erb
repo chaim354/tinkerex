@@ -1,4 +1,48 @@
 <% content_for :title, "#{@sheet.name} — Tinkerex" %>
 
-<h1><%= @sheet.name %></h1>
-<div data-controller="sheet"></div>
+<%# The grid library loads HERE ONLY, not in the global layout — it is a large bundle and no other
+    page needs it. jsuites must precede jspreadsheet (see vendor/javascript/JSPREADSHEET-LICENSES.md).
+    Classic script tags rather than importmap: these are UMD bundles that publish globals. The
+    layout's `yield :head` renders before `javascript_importmap_tags` (app/views/layouts/application
+    .html.erb), and importmap's module scripts defer until after parsing, so these classic tags have
+    always finished executing by the time Stimulus registers and connects this page's controller. %>
+<% content_for :head do %>
+  <%= stylesheet_link_tag "jsuites", "jspreadsheet" %>
+  <%= javascript_include_tag "jsuites", "jspreadsheet" %>
+<% end %>
+
+<nav class="breadcrumb" aria-label="Sheet path">
+  <%= link_to "Projects", projects_path %>
+  <span class="sep" aria-hidden="true">/</span>
+  <%= link_to @sheet.project.name, project_path(@sheet.project) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page"><%= @sheet.name %></span>
+</nav>
+
+<%# The controller element wraps the HEAD AS WELL AS the grid: Stimulus resolves targets only
+    within its own element's subtree, so a status span left up in the page head outside this div
+    would never be found and the indicator would sit on "Saved" forever while saves failed. %>
+<div class="sheet-page"
+     data-controller="sheet"
+     data-sheet-url-value="<%= sheet_path(@sheet) %>"
+     data-sheet-data-value="<%= @sheet.data.to_json %>">
+
+  <div class="page-head sheet-head">
+    <div>
+      <h1><%= @sheet.name %></h1>
+      <span class="sheet-status muted" data-sheet-target="status">Saved</span>
+    </div>
+    <div class="head-actions">
+      <%= form_with model: @sheet, scope: :sheet, url: sheet_path(@sheet), method: :patch,
+                    class: "sheet-rename" do |f| %>
+        <%= f.text_field :name, "aria-label": "Sheet name" %>
+        <%= f.submit "Rename", class: "btn small" %>
+      <% end %>
+      <%= link_to "Export CSV", sheet_path(@sheet, format: :csv), class: "linkbtn" %>
+      <%= button_to "Delete", sheet_path(@sheet), method: :delete, class: "linkbtn danger",
+                    form: { data: { turbo_confirm: "Delete #{@sheet.name}?" } } %>
+    </div>
+  </div>
+
+  <div class="sheet-grid" data-sheet-target="grid"></div>
+</div>
