@@ -773,6 +773,35 @@ git commit -m "feat(build log): Lexxy editor on entries, text-only"
 - Modify: `app/views/files/show.html.erb:152-155,162`
 - Test: `test/integration/web/notes_test.rb`
 
+- [ ] **Step 0: Fix the two pre-existing tests Task 3 turned red**
+
+Task 3 made `Maker::Note#body` an Action Text association, and two existing tests still treat it as
+a plain string. **They fail for two DIFFERENT reasons — fixing only the obvious one leaves the other
+red**, which is exactly what a whole-file rerun would then blame on your new code.
+
+1. **`test/integration/web/notes_test.rb:26`** — `assert_equal "print at 0.2mm", user.maker_notes.last.body`
+   compares a `String` to an `ActionText::RichText`. This test never renders the view; it posts and
+   asserts a redirect. Change the assertion to read through the rich text:
+
+   ```ruby
+       assert_equal "print at 0.2mm", user.maker_notes.last.body.to_plain_text
+   ```
+
+2. **`test/integration/web/files_flow_test.rb`**, `"the file detail page shows a notes section and
+   renders markdown notes"` — this one *does* render the view, and it fails because
+   `files/show.html.erb` still calls `render_note(note.body)`. Step 4 below replaces that with
+   `<%= note.body %>`, which fixes it. But the test's name and intent — "renders **markdown**
+   notes" — stop being true: new notes are rich text, not markdown. Rename it to
+   `"the file detail page shows a notes section and renders note bodies"` and keep its assertions.
+
+Run `bin/rails test test/integration/web/notes_test.rb test/integration/web/files_flow_test.rb` and
+note which still fail — (1) should go green immediately, (2) only after Step 4.
+
+> Third time in this plan-set that a task's plan missed a pre-existing test asserting behaviour an
+> earlier task removed. The habit that would have caught it: after any step that changes what a
+> model attribute *returns*, grep the suite for that attribute being compared, rendered, or passed
+> to a helper — before writing the new tests, not after.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to `test/integration/web/notes_test.rb`, inside `module Web` / `class NotesTest`. That file
