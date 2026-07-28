@@ -168,6 +168,30 @@ module Web
       assert_select "script[src*=?]", "jspreadsheet", count: 0
     end
 
+    # The formula engine only works if these four load in exactly this order: formula-parser must
+    # set window.formulaParser before lib/formula_adapter reads it, and the adapter must set
+    # window.formula before jspreadsheet.js's own top-level `if(!formula&&...)var
+    # formula=require(...)` shim runs — a browser no-op, but whatever window.formula already is at
+    # that point is what every cell formula calls for the rest of the page's life (see
+    # vendor/javascript/JSPREADSHEET-LICENSES.md and app/javascript/lib/formula_adapter.js).
+    # jsuites-before-jspreadsheet is the pre-existing requirement this test also re-covers. Classic
+    # <script> tags execute in document order, so asserting DOM order here is asserting the actual
+    # mechanism, not a proxy for it.
+    test "the grid page loads jsuites, the formula engine, and the adapter before jspreadsheet" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      sheet = project.sheets.create!(user:, name: "Cut list", data: Maker::Sheet.blank_data)
+
+      get sheet_path(sheet)
+      assert_response :success
+
+      script_srcs = response.body.scan(/<script[^>]*\ssrc="([^"]+)"/).flatten
+      keywords = %w[jsuites formula-parser lib/formula_adapter jspreadsheet]
+      matched = script_srcs.filter_map { |src| keywords.find { |keyword| src.include?(keyword) } }
+
+      assert_equal keywords, matched
+    end
+
     test "the project page lists its sheets and offers a new-sheet form" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")

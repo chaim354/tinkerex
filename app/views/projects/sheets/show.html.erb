@@ -27,9 +27,17 @@
     these tags. Two sheet pages linked directly to each other would carry an IDENTICAL signature and
     would still race on a soft merge between them — moot today since nothing links sheet-to-sheet,
     but worth knowing before adding one.) %>
+<%# Formula load order is load-bearing, not stylistic: formula-parser must set window.formulaParser
+    before lib/formula_adapter reads it, and lib/formula_adapter must set window.formula before
+    jspreadsheet.js runs its own top-level `if(!formula&&...)var formula=require(...)` shim (a
+    browser no-op, but it means whatever window.formula already is at that point is what every cell
+    formula calls for the rest of the page's life — see JSPREADSHEET-LICENSES.md and
+    formula_adapter.js). Classic <script> tags execute in document order, so listing them in this
+    order is the whole mechanism; there is no other synchronization. %>
 <% content_for :head do %>
   <%= stylesheet_link_tag "jsuites", "jspreadsheet", "data-turbo-track": "reload" %>
-  <%= javascript_include_tag "jsuites", "jspreadsheet", "data-turbo-track": "reload" %>
+  <%= javascript_include_tag "jsuites", "formula-parser", "lib/formula_adapter", "jspreadsheet",
+                              "data-turbo-track": "reload" %>
 <% end %>
 
 <nav class="breadcrumb" aria-label="Sheet path">
