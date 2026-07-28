@@ -267,6 +267,7 @@ class FilesController < ApplicationController
     # beta, Bravo". One comparator, applied to both.
     @projects = scope.to_a.sort_by { |p| name_key(p) }
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
+    @new_note = current_user.maker_notes.new(node_id: @node.node_id)
     @move_conflict = move_conflict_prompt
   end
 

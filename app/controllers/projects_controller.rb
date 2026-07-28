@@ -7,7 +7,7 @@
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
   before_action :authenticate_user!
-  before_action :set_project, only: %i[show edit update destroy]
+  before_action :set_project, only: %i[show edit update destroy unarchive]
 
   # Exposes the `capabilities` helper the attachments panel's upload control branches on
   # (chunk two-phase vs. share/s3 multipart). Read-only here — no action is capability-gated.
@@ -18,14 +18,18 @@ class ProjectsController < ApplicationController
   # come from either.
   include MoveConflicts
 
-  # STATUS order for the grouped list; `archived` is intentionally excluded from the default view.
-  LISTED_STATUSES = %w[planning active paused done].freeze
-
+  # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
+  # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
+  # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
   def index
-    projects = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
-    @by_status = projects.reject { |p| p.status == "archived" }.group_by(&:status)
-    @archived_count = projects.count { |p| p.status == "archived" }
-    @covers = Maker::Previews::ThumbnailMap.for(current_user, projects.filter_map(&:cover_node_id))
+    # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
+    # "show me the archive" — the opposite page.
+    @archived_view = params[:archived] == "1"
+    all = current_user.maker_projects.includes(:file_attachments).order(updated_at: :desc).to_a
+    archived, live = all.partition { |p| p.status == "archived" }
+    @projects = @archived_view ? archived : live
+    @archived_count = archived.size
+    @covers = Maker::Previews::ThumbnailMap.for(current_user, @projects.filter_map(&:cover_node_id))
   end
 
   def show
@@ -38,6 +42,11 @@ class ProjectsController < ApplicationController
     @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
     @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
     @tasks = @project.tasks.order(:position, :created_at).to_a
+    @sheets = @project.sheets.to_a
+    # The entry form binds to a real object: `rich_text_area` reads its value from the form's
+    # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
+    # textarea used.
+    @new_entry = @project.build_log_entries.new
     # The folder project-view uploads go into. Best-effort (re-ensured here so a folder the user
     # deleted is recreated); nil → uploads fall back to the library root rather than 500 the page.
     @upload_parent_node_id = begin
@@ -77,6 +86,13 @@ class ProjectsController < ApplicationController
   def destroy
     @project.archive!
     redirect_to projects_path, notice: "Archived #{@project.name}."
+  end
+
+  # The inverse of #destroy (which archives). Redirects to the live list, where the project has
+  # just reappeared — landing back on the archived view it left would read as a no-op.
+  def unarchive
+    @project.unarchive!
+    redirect_to projects_path, notice: "Restored #{@project.name}."
   end
 
   private

@@ -42,13 +42,16 @@ Rails.application.routes.draw do
     end
   end
 
-  # --- Per-file notes (markdown; keyed by node_id, session auth) ---
+  # --- Per-file notes (keyed by node_id, session auth) ---
   post   "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]
 
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do
+    # Return an archived project to the live list. A member PATCH rather than an update to a
+    # `status` field: the web form no longer exposes status at all (spec decision #1).
+    patch :unarchive, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
@@ -59,6 +62,9 @@ Rails.application.routes.draw do
     end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
+    # project, the grid page and its autosave/CSV live at /sheets/:id.
+    resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
     # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
     resources :uploads, only: :create, module: :projects

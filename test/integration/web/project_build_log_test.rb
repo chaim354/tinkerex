@@ -84,5 +84,23 @@ module Web
         post entry_photos_path(entry), params: { node_id: "theirs" }
       end
     end
+
+    test "the entry form renders a Lexxy editor with attachments disabled" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      get project_path(project)
+      assert_response :success
+      assert_select "lexxy-editor[attachments=?]", "false"
+      assert_select "textarea[name=?]", "build_log_entry[body]", count: 0
+    end
+
+    test "a rich entry body round-trips its formatting" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      post project_build_log_entries_path(project),
+           params: { build_log_entry: { body: "<p>Cut the <strong>panels</strong></p>" } }
+      follow_redirect!
+      assert_select ".entry-body strong", text: "panels"
+    end
   end
 end

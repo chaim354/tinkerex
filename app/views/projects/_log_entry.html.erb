@@ -4,7 +4,8 @@
     <%= button_to "Delete", build_log_entry_path(entry), method: :delete, class: "linkbtn danger",
                   form: { data: { turbo_confirm: "Delete this entry?" } } %>
   </div>
-  <p class="entry-body"><%= entry.body %></p>
+  <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
+  <div class="entry-body"><%= entry.body %></div>
 
   <% photos = entry.file_attachments.select { |a| @entry_nodes.key?(a.node_id) } %>
   <% if photos.any? %>

@@ -1,8 +1,99 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-27 (**OpenSCAD addon — `.scad` + params → 3MF, via a GPL-isolated sidecar. MERGED (PR #87) + DEPLOYED live on all three Unraid backends**)
+**Updated:** 2026-07-28 (**Project page overhaul — rich text, sheets, typed file groups, status pipeline hidden. PR #91**)
 
-## Latest (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **built + tested, NOT deployed**
+## OPEN ITEMS from the project-page overhaul (2026-07-28) — read this first
+
+Four things this arc deliberately did **not** close. Each is recorded with the evidence, because
+each was found by *running* something rather than reading, and would be expensive to rediscover.
+
+### 1. `attachments="false"` is a UI restriction, not an enforcement boundary — NEEDS A DECISION
+
+Full write-up: `docs/superpowers/specs/2026-07-27-project-page-overhaul-design.md` §9a.
+
+Lexxy is configured text-only so that Active Storage is never used (§15, the FileLayer port). The
+**client half is solid** — Lexxy `JSON.parse`s the attribute, so the string `"false"` really is the
+boolean, and with attachments off the drag/drop listeners are never even registered. **The server
+half does not exist:**
+
+- `POST /rails/active_storage/direct_uploads` is **live and unauthenticated**. Demonstrated: an
+  integration session that never signs in POSTs successfully, mints a real `ActiveStorage::Blob`,
+  and gets a signed upload URL back. `ActiveStorage::DirectUploadsController` descends from
+  `ActiveStorage::BaseController`, **not** this app's `ApplicationController`, and adds no auth.
+- Neither `NotesController#create` nor `Projects::BuildLogEntriesController#create` filters `body`,
+  and Action Text's sanitizer **preserves** `<action-text-attachment sgid="…">`. Demonstrated: a
+  hand-built attachment fragment assigned straight to `Maker::Note#body` survives save + reload and
+  is recognised as a real attachment.
+
+The route is **pre-existing** (Active Storage has been installed since the preview pipeline). What
+this arc added is a user-writable field where an attachment *renders*, turning a dormant route into
+a reachable one. Options, costed, in §9a — strip server-side, gate the route, both, or accept and
+document. It matters far more in the managed/SaaS mode (§7) than self-hosted.
+
+### 2. Sheet `data` has no size limit anywhere
+
+`maker_sheets.data` is user-controlled JSON written by the browser. No length/size validation on the
+model, `permit(data: {})` is unbounded in the controller, no body-size limit configured, and the
+whole blob is embedded into the page HTML on every view with no truncation. A buggy client or a
+genuinely large sheet grows this without bound.
+
+### 3. NOTHING in the test suite executes JavaScript
+
+`test/system/` and `ApplicationSystemTestCase` (Capybara + headless Chrome) already exist in this
+repo and are used elsewhere. Every test this arc added is a server-side integration or model test.
+**That is why 1587 green tests across three backends caught neither grid bug**: both were
+client-side only and structurally invisible. The two that got through to a browser check were:
+
+- `jspreadsheet-ce` v5's factory is an **async workbook** API — calling it with a flat
+  `{data, columns}` throws *inside an uncatchable promise*, so the grid renders permanently empty
+  with no error anywhere. Looks like a blank sheet, not a broken one.
+- Classic `<script>` tags needed `data-turbo-track="reload"`: every real path to the sheet page is a
+  Turbo **visit**, which merges `<head>` rather than reparsing, so untracked tags load async and
+  Stimulus connected before `window.jspreadsheet` existed.
+
+A single system test — type a formula, assert the computed value, reload, assert the raw formula
+persists — would have caught both. Worth adding before the next JS-heavy feature.
+
+### 4. The two file-type vocabularies still disagree
+
+`FilesHelper::EXT_FAMILIES` (Files-page filter chips) and `Maker::FileAttachment::ROLE_LABELS`
+(project panel headings) name overlapping files differently — `.svg`/`.dxf`/`.lbrn2` are "2D / laser"
+on one page and "Vector" on the other — and the five `cad_source` extensions have **no chip family
+at all**. Nothing is broken (the chips' free-text `add_ext` still reaches them). Both predate this
+arc. Worth one deliberate decision — one vocabulary or two, argued — next time either is touched.
+
+## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
+
+**Suite 1587 runs / 5482 assertions / 0 failures / 0 errors / 14 skips, byte-identical on chunk,
+share and s3.** `client/` has a zero-line diff.
+
+1. **Status pipeline hidden, not removed.** Flat project list, `?archived=1` view with Unarchive.
+   The column, `STATUSES`, the validation and the whole v1 API are **untouched on purpose**:
+   `client/sync-client/src/maker.rs` declares `pub status: String` with no `serde(default)`, so
+   dropping the field is a hard deserialize error for a shipped desktop client. Consequence: a
+   project set to `paused` from the desktop reads as an ordinary live project on the web.
+2. **Files grouped by type**, plus `vector` and `cad_source` roles and a self-contained migration
+   re-deriving rows marked `other`. `.sldprt`/`.sldasm` were nearly missed — the migration copies
+   its extension list rather than deriving it, so adding them later would have needed a *second*
+   migration.
+3. **Lexxy on build-log entries and file notes**, text-only. **Two irreversible migrations** —
+   both raise `ActiveRecord::IrreversibleMigration` by design, because `has_rich_text` reads
+   `rich_text_body || build_rich_text_body`: deleting the rich texts makes the model return a blank
+   that **shadows** any restored column, silently blanking every body. A pre-migration DB snapshot
+   is the only undo. v1 `body` still serves a plain `String`.
+4. **`Maker::Sheet`** — grid page, debounced autosave, CSV export, working formulas.
+   **The formula engine was swapped:** `jspreadsheet-ce` needs a second peer dep,
+   `@jspreadsheet/formula`, which publishes with **no licence grant at all** (no `license` field,
+   `/LICENSE` 404s, no banner) and whose README asks for a paid licence for redistribution/SaaS.
+   Under §9 it cannot ship. Replaced with `hot-formula-parser` 4.0.0 (MIT, MIT bundled deps) behind
+   the grid's own `window.formula` hook. The contract is documented in the design doc §9b.1 —
+   the grid resolves refs itself, expands ranges, and hands over a token→value map with
+   **strings double-quoted**, which is the trap.
+
+## Earlier (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **MERGED (PR #87) + DEPLOYED**
+
+> *Section header corrected 2026-07-28: it said "NOT deployed" while this file's own top line said
+> deployed. The top line was right — verified against the running containers on 192.168.1.95.*
 
 `/tools/openscad` — the **second server-sidecar addon** (after `sidecar/boxes`) and the **first that
 renders 3D**. A user picks a bundled generator or points the tool at their own `.scad` in the

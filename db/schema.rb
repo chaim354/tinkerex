@@ -10,7 +10,17 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_26_142217) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_28_172456) do
+  create_table "action_text_rich_texts", force: :cascade do |t|
+    t.text "body"
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.bigint "record_id", null: false
+    t.string "record_type", null: false
+    t.datetime "updated_at", null: false
+    t.index ["record_type", "record_id", "name"], name: "index_action_text_rich_texts_uniqueness", unique: true
+  end
+
   create_table "active_storage_attachments", force: :cascade do |t|
     t.bigint "blob_id", null: false
     t.datetime "created_at", null: false
@@ -150,7 +160,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_26_142217) do
   end
 
   create_table "maker_build_log_entries", force: :cascade do |t|
-    t.text "body", null: false
     t.datetime "created_at", null: false
     t.string "entry_type", default: "note", null: false
     t.datetime "logged_at", null: false
@@ -276,7 +285,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_26_142217) do
   end
 
   create_table "maker_notes", force: :cascade do |t|
-    t.text "body", null: false
     t.datetime "created_at", null: false
     t.string "node_id", null: false
     t.datetime "updated_at", null: false
@@ -328,6 +336,17 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_26_142217) do
     t.integer "user_id", null: false
     t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
     t.index ["user_id", "status"], name: "index_maker_projects_on_user_id_and_status"
+  end
+
+  create_table "maker_sheets", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.json "data"
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
+    t.integer "project_id", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "project_id", "position"], name: "index_maker_sheets_on_project_position"
   end
 
   create_table "maker_suppliers", force: :cascade do |t|

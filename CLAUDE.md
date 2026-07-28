@@ -497,10 +497,20 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
     SeaweedFS): the `FileLayer` port + `Chunk` adapter + the shared adapter contract, and
     `Maker::FileBytes` reduced to a shim. The maker layer no longer references chunks at all
     (`grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/
-    | grep -v ':[0-9]*: *#'` returns nothing — that grep IS the proof, not the test suite. The
+    | grep -v ':[0-9]*: *#'` — that grep IS the proof, not the test suite. The
     `grep -v` is load-bearing, not noise: without it the check reports two COMMENTS in
     `maker/file_bytes.rb` that describe the very coupling that was removed, so the bare grep has
     not returned nothing since phase 1 shipped. A proof that cries wolf gets ignored.)
+    **CORRECTED 2026-07-28: this grep no longer returns NOTHING — it returns exactly ONE line, and
+    that line is legitimate.** `app/services/maker/addons/library_output.rb:47` calls
+    `Storage::ChunkStore.current.put` directly, because addon-generated output has no client to
+    presign for: in chunk mode the server itself drives a single-chunk `Sync::Commit` plus the
+    `put`, mirroring what the web uploader does from the browser. That is the addon framework
+    (§3 "Addons"), which post-dates this sentence — the claim was true when written and the addon
+    work made it false without anyone updating it. **The invariant to check is therefore "one hit,
+    and it is `library_output.rb`", not "no hits"** — which is exactly the kind of drift this
+    paragraph's own last sentence warns about, and it took a fresh reader running the command to
+    notice.
     - **Design:** `docs/superpowers/specs/2026-07-14-maker-file-layer-split-design.md`.
       §2 = settled decisions (backend per **deployment**, not per user; index-existing AND
       write-new; **current-state only, no history** on share/s3; stable `node_id` reconciled by

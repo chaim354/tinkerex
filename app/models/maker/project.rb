@@ -12,6 +12,8 @@ module Maker
              as: :attachable, class_name: "Maker::FileAttachment", dependent: :destroy
     has_many :tasks, as: :taskable, class_name: "Maker::Task", dependent: :destroy
     has_many :boms, class_name: "Maker::Bom", foreign_key: :project_id, dependent: :destroy
+    has_many :sheets, -> { order(:position, :id) },
+             class_name: "Maker::Sheet", foreign_key: :project_id, dependent: :destroy
 
     before_validation :ensure_slug
 
@@ -40,6 +42,14 @@ module Maker
 
     def archive!
       update!(status: "archived", archived_at: Time.current)
+    end
+
+    # The inverse of archive!. "active" rather than the "planning" column default: a project you
+    # deliberately pull back out of the archive is one you are working on again. The web UI shows
+    # neither value — it reads status as archived-or-not (spec decision #1) — but the v1 API and
+    # the desktop app still see the full vocabulary, so this has to name a real member of STATUSES.
+    def unarchive!
+      update!(status: "active", archived_at: nil)
     end
 
     # Return the project's library folder node, (re)creating `Projects/<slug>` if folder_node_id is

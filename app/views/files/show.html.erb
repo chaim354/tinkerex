@@ -157,9 +157,12 @@
 <section class="notes-panel">
   <h2>Notes <span class="muted">(<%= @notes.size %>)</span></h2>
 
-  <%= form_with url: file_notes_path(@node.node_id), method: :post, class: "note-form" do %>
-    <textarea name="note[body]" rows="3" placeholder="Add a note (markdown supported)…" required></textarea>
-    <%= submit_tag "Add note", class: "btn small" %>
+  <%# scope: :note — Maker::Note is namespaced, so form_with would otherwise derive
+      `maker_note[...]` and NotesController's params.dig(:note, :body) would read nil. %>
+  <%= form_with model: @new_note, scope: :note, url: file_notes_path(@node.node_id),
+                method: :post, class: "note-form" do |f| %>
+    <%= f.rich_text_area :body, placeholder: "Add a note…", attachments: "false" %>
+    <%= f.submit "Add note", class: "btn small" %>
   <% end %>
 
   <% if @notes.empty? %>
@@ -167,7 +170,7 @@
   <% else %>
     <% @notes.each do |note| %>
       <article class="note">
-        <div class="note-body"><%= render_note(note.body) %></div>
+        <div class="note-body"><%= note.body %></div>
         <div class="note-meta muted">
           <time><%= note.created_at.strftime("%Y-%m-%d %H:%M") %></time>
           <%= button_to "Delete", note_path(note), method: :delete, class: "linkbtn danger small",

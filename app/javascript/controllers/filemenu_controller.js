@@ -55,7 +55,7 @@ export default class extends Controller {
     pop.style.top = `${y}px`
     pop.addEventListener("click", (e) => e.stopPropagation())
     pop.innerHTML = `
-      <textarea rows="3" placeholder="Add a note (markdown)…"></textarea>
+      <textarea rows="3" placeholder="Add a note…"></textarea>
       <div class="note-popover-actions">
         <button type="button" data-role="save" class="btn small">Save</button>
         <button type="button" data-role="cancel" class="linkbtn">Cancel</button>
