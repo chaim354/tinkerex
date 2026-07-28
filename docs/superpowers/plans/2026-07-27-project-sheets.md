@@ -625,13 +625,33 @@ reintroduce the shared-chunk problem documented in `config/importmap.rb` (the ha
 
 | File | Package | Version | Licence | Source |
 |---|---|---|---|---|
-| `vendor/javascript/jspreadsheet.js` | `jspreadsheet-ce` | 5.x | MIT | `https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5/dist/index.min.js` |
-| `app/assets/stylesheets/jspreadsheet.css` | `jspreadsheet-ce` | 5.x | MIT | `https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5/dist/jspreadsheet.min.css` |
-| `vendor/javascript/jsuites.js` | `jsuites` | 5.x | MIT | `https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js` |
-| `app/assets/stylesheets/jsuites.css` | `jsuites` | 5.x | MIT | `https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css` |
+| `vendor/javascript/jspreadsheet.js` | `jspreadsheet-ce` | 5.0.4 | MIT | `https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5/dist/index.min.js` |
+| `app/assets/stylesheets/jspreadsheet.css` | `jspreadsheet-ce` | 5.0.4 | MIT | `https://cdn.jsdelivr.net/npm/jspreadsheet-ce@5/dist/jspreadsheet.min.css` |
+| `vendor/javascript/jsuites.js` | `jsuites` | 5.13.5 | MIT | `https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.js` |
+| `app/assets/stylesheets/jsuites.css` | `jsuites` | 5.13.5 | MIT | `https://cdn.jsdelivr.net/npm/jsuites@5/dist/jsuites.min.css` |
 
-`jsuites` is jspreadsheet's peer dependency and MUST load first — jspreadsheet reads its globals at
-definition time.
+**`@5` is a floating range — those are what it resolved to on 2026-07-28.** Record whatever you
+actually get, from the jsDelivr `Original file:` banner and the package's `package.json`, not from
+this table. Note the bundles also carry an *internal* version string used only for a diagnostic
+printout (`5.0.0` and `5.13.3`) which lags the real patch release — that string is not authoritative.
+
+**Both are UMD**, confirmed by the wrapper
+`!function(e,t){"object"==typeof exports&&…?…:e.jspreadsheet=t()}`. Loaded by a classic `<script>`
+they fall to the global branch and set:
+
+- `window.jspreadsheet` (all lowercase)
+- **`window.jSuites`** — capital S in the middle, *not* `window.jsuites`
+
+**Licence provenance differs between the two, and the second one matters.** jspreadsheet-ce
+self-identifies inside the bundle (`license:"MIT"`, alongside `"Jspreadsheet CE"` — so the bundle
+itself confirms it is CE and not Pro). **jsuites carries no licence string at all** — grepping it for
+`licen[sc]e` returns nothing — so its MIT comes from `package.json`'s `licenses` array and the npm
+`LICENSE` file. Do not report "verified from the banner" for jsuites; there is no banner.
+
+`jsuites` is jspreadsheet's peer dependency and MUST load first — and this is demonstrable, not
+folklore: jspreadsheet's bundle calls `jSuites.ajax(`, `.calendar(`, `.color(`, `.contextmenu(`,
+`.dropdown(`, `.editor(`, `.image(`, `.picker(`, `.setDictionary(` and `.tabs(` directly. Load it
+second and `window.jSuites` is `undefined` at those call sites, giving a `TypeError`.
 
 **Community Edition only.** Jspreadsheet *Pro* is a paid commercial licence; do not upgrade the
 package to Pro or copy Pro-only code in. Formulas, which are what this is here for, are in CE.
