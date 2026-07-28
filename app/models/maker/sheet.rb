@@ -17,19 +17,33 @@ module Maker
     validates :name, presence: true
     validate  :project_belongs_to_user
 
+    # A…Z, then AA, AB, … — spreadsheet convention. NOT `("A".."Z").first(columns)`: Range#first
+    # silently returns fewer than asked past Z, which produced 26 headers over 30-wide rows.
+    def self.column_title(index)
+      title = +""
+      n = index
+      loop do
+        title.prepend((("A".ord + (n % 26))).chr)
+        n = n / 26 - 1
+        break if n.negative?
+      end
+      title
+    end
+
     # A blank workbook, spreadsheet-conventional A/B/C column titles.
     def self.blank_data(rows: DEFAULT_ROWS, columns: DEFAULT_COLUMNS)
-      titles = ("A".."Z").first(columns)
       {
-        "columns" => titles.map { |t| { "title" => t, "width" => 120 } },
+        "columns" => Array.new(columns) { |i| { "title" => column_title(i), "width" => 120 } },
         "cells"   => Array.new(rows) { Array.new(columns, "") }
       }
     end
 
     # Defensive readers: `data` is written by the browser, so a malformed or half-written blob must
-    # render an empty grid rather than 500 the page.
-    def cells   = data.is_a?(Hash) ? Array(data["cells"]) : []
-    def columns = data.is_a?(Hash) ? Array(data["columns"]) : []
+    # render an empty grid rather than 500 the page. The INNER shape is checked too — Array("x")
+    # wraps a bare String into a one-element array, so a "cells" key holding a scalar would
+    # otherwise become one garbage row rather than nothing.
+    def cells   = data.is_a?(Hash) && data["cells"].is_a?(Array) ? data["cells"] : []
+    def columns = data.is_a?(Hash) && data["columns"].is_a?(Array) ? data["columns"] : []
 
     # Exports what is STORED, which means a formula exports as `=A1*B1`, not as its result. That is
     # the intent: the export is the sheet, not a snapshot of its output.

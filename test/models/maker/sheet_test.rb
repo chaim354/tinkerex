@@ -32,8 +32,28 @@ module Maker
       assert_equal [ "", "" ], data["cells"].first
     end
 
+    test "column titles continue past Z the way a spreadsheet does" do
+      assert_equal "A",  Maker::Sheet.column_title(0)
+      assert_equal "Z",  Maker::Sheet.column_title(25)
+      assert_equal "AA", Maker::Sheet.column_title(26)
+      assert_equal "AB", Maker::Sheet.column_title(27)
+      assert_equal "BA", Maker::Sheet.column_title(52)
+    end
+
+    test "blank_data stays rectangular past 26 columns" do
+      data = Maker::Sheet.blank_data(rows: 2, columns: 30)
+      assert_equal 30, data["columns"].size
+      assert_equal 30, data["cells"].first.size
+      assert_equal "AD", data["columns"].last["title"]
+    end
+
     test "cells and columns read defensively from a malformed blob" do
       sheet = @project.sheets.create!(user: @user, name: "Odd", data: "not a hash")
+      assert_equal [], sheet.cells
+      assert_equal [], sheet.columns
+
+      # A Hash whose inner keys are the wrong shape — Array("x") would make this one garbage row.
+      sheet.update!(data: { "cells" => "not an array", "columns" => 42 })
       assert_equal [], sheet.cells
       assert_equal [], sheet.columns
     end
