@@ -5,12 +5,30 @@ module Maker
     belongs_to :user
     belongs_to :attachable, polymorphic: true
 
-    ROLES = %w[model instructions image source_archive gcode other].freeze
+    # Display order AND the source of truth for the vocabulary — the Files panel renders one
+    # section per key, in this order, using these labels. ROLES derives from the keys so a
+    # heading can never name a role the validation would reject.
+    ROLE_LABELS = {
+      "model"          => "Models",
+      "image"          => "Images",
+      "instructions"   => "Instructions",
+      "vector"         => "Vector",
+      "cad_source"     => "CAD source",
+      "gcode"          => "G-code",
+      "source_archive" => "Archives",
+      "other"          => "Other"
+    }.freeze
+
+    ROLES = ROLE_LABELS.keys.freeze
 
     ROLE_BY_EXT = {
       "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
-      "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive"
+      "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive",
+      # Laser / 2D vector work. Without these a laser-heavy project is mostly "Other".
+      "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
+      # Editable CAD sources, as opposed to the exported meshes above.
+      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
     }.freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
