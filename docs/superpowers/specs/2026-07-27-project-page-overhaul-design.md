@@ -293,3 +293,52 @@ decision about storage that reaches past this feature. The options:
 
 **Do not let this be read as closed by decision #2's wording.** That decision is correct about what
 the editor does and silent about what the server accepts.
+
+## 9b. OPEN: formulas need a SECOND package, and it has no licence
+
+Decision #6 says Jspreadsheet CE is "MIT (§9 ✅) … and formulas are in CE — Pro adds XLSX
+import/export and collaboration, which we don't need." **The first half is true; the second half is
+wrong**, and it was the reason the library was chosen at all.
+
+**What was verified, independently and from primary sources:**
+
+- `jspreadsheet-ce@5.0.4`'s own `package.json` declares **two** runtime dependencies of equal
+  standing: `"jsuites": "^5.12.0"` **and** `"@jspreadsheet/formula": "^2.0.2"`. The bundle carries
+  two identical peer shims, one per dependency:
+  `if(!jSuites&&"function"==typeof require)var jSuites=require("jsuites")` and
+  `if(!formula&&"function"==typeof require)var formula=require("@jspreadsheet/formula")`.
+- Only `jsuites` was vendored. With `window.formula` undefined, **every formula renders `#ERROR`** —
+  including `=1+1`, which has no cell references, so this is not a cross-reference problem. Observed
+  live in the browser, not inferred.
+- **`@jspreadsheet/formula@2.0.2` publishes with no licence grant at all:** the npm registry's
+  `license` field is absent, `/LICENSE` 404s on the CDN, and the bundle carries no licence banner
+  (grepping it for `licen[sc]e` returns nothing).
+- Its GitHub README describes a **Basic (MIT) / Premium (paid)** split and states: *"This plugin
+  requires a license that should be associated with one specified domain. If you need a license for
+  redistribution or SaaS, please keep in touch."* Which of the two the unlabelled npm artifact is,
+  the artifact does not say.
+
+**Why this is not a mechanical fix.** §9 is a hard constraint on *shipped artifacts*, and vendoring
+puts the file in this repo. An artifact with no licence grant is worse than a copyleft one: copyleft
+at least grants something. And this product has a managed/SaaS mode (§7) — precisely the case the
+README says needs a licence.
+
+**Storage is unaffected, and that was the thing worth protecting.** The autosave persists raw
+formula text (`getData(false, false)` reads `options.data`, which `updateCell` writes before the
+evaluator runs and which the evaluator never writes back). Verified: the DB row holds `=A1+B1`
+literally while the cell displays. So **nothing has been destroyed** and any of the options below
+can be taken later without data loss.
+
+**Options, none taken:**
+
+- **(a) Ship sheets without formulas.** Everything else works — typing, autosave, insert/delete
+  rows and columns, rename, CSV. Cost: `=1+1` shows `#ERROR`, which is a bad thing for a user to
+  meet; worth suppressing the formula prefix or saying so in the UI.
+- **(b) Clarify the licence with Jspreadsheet** and vendor it if Basic-as-published is genuinely MIT.
+  A one-email answer that unblocks the original design.
+- **(c) Wire a different, clearly-MIT engine** (e.g. formula.js). The grid reads a global `formula`
+  with a specific API, so this is real work, not a swap.
+- **(d) Reconsider the grid library** — but CE itself is fine and MIT; only the formula plugin is in
+  question, so this is the heaviest option for the least reason.
+
+**Do not let decision #6 be read as settled.** It is correct about the grid and wrong about formulas.
