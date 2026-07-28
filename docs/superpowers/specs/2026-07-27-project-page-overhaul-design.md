@@ -240,6 +240,56 @@ this repo have been.
 | The backfills are one-way — a bad conversion loses formatting on every existing entry | Content-level tests before the column drop; the two failure modes (collapsed newlines, literal markdown) are each pinned by a test |
 | **Note HTML freezes at migration time.** The old page ran `render_note` at *render* time, every view — so any later improvement to the renderer (a kramdown upgrade, a sanitizer allow-list change) retroactively improved every existing note. After the migration the HTML is stored once and never re-rendered, so it never will again. | **Accepted, not mitigated** — it is the unavoidable consequence of moving to rich text at all: you cannot have both "the user edits this as WYSIWYG" and "it still tracks a live markdown renderer". Recorded because it is a genuine user-visible behaviour change with no other trail. |
 | Lexxy is pre-1.0 (`0.9.x`) and its API may move | Pinned pessimistically; the integration surface is one helper call and one attribute |
+| **`attachments="false"` is a UI restriction, not an enforcement boundary — OPEN, needs a decision** | See §9a below. Not mitigated by this work. |
 | Jspreadsheet CE v5's dist format may not be what the vendoring assumes | Both routes work (script tag reading `window.jspreadsheet`, or an importmap pin); the choice is made at implementation time against the actual file |
 | Autosave silently failing looks identical to autosave working | The indicator has an error state, not just Saving/Saved |
 | A large `data` blob on a sheet with thousands of rows | Accepted. Single-user scale; if it bites, the fix is a normalized cells table behind the same controller |
+
+## 9a. OPEN: `attachments="false"` does not survive leaving the editor
+
+Found by Task 4/5's review, **by exercising it rather than reading it**. Decision #2 says attachments
+are off so that Lexxy's Active Storage path — bytes through Rails, into a store separate from the
+file library — is never used, citing §15 and the FileLayer port. **The client-side half of that is
+solid; the server-side half does not exist.**
+
+**What was verified to hold.** `attachments="false"` genuinely disables the editor UI. Lexxy parses
+the attribute with `JSON.parse`, so the *string* `"false"` really does become boolean `false` (not
+the classic truthy-string bug). Every creation path funnels through one chokepoint,
+`Contents#uploadFiles`, which bails on `!supportsAttachments`; drag/drop listeners are never
+registered, paste short-circuits, the whole `AttachmentsExtension` is conditionally disabled, and CSS
+hides the toolbar buttons. Nothing in this app's JS bypasses it.
+
+**What was verified NOT to hold — both demonstrated, not reasoned:**
+
+1. **`POST /rails/active_storage/direct_uploads` is live and unauthenticated.**
+   `ActiveStorage::DirectUploadsController` descends from `ActiveStorage::BaseController`, *not* this
+   app's `ApplicationController`, and adds no authentication. An integration session that never signs
+   in POSTs successfully, mints a real `ActiveStorage::Blob`, and gets a signed upload URL back. That
+   is an anonymous write surface into storage through Rails — the shape §15 exists to prevent.
+2. **The server does not filter attachment markup out of a body.** `NotesController#create` and
+   `Projects::BuildLogEntriesController#create` assign the raw `body` param. Action Text's own
+   sanitizer **preserves** `<action-text-attachment sgid="…">`, so a signed-in user posting the form
+   field directly (curl, devtools, a modified fetch) creates a real, rendering attachment — the
+   editor never involved.
+
+**Scope, honestly:** the route is **pre-existing** — Active Storage has been installed since the
+preview pipeline, and its engine mounts that route automatically. What this work changed is that
+there is now a **user-writable field where an attachment renders**, which turns a dormant route into
+a reachable one. Attachment injection is self-scoped (your own notes and entries); anonymous blob
+creation is not.
+
+**This is left open deliberately rather than fixed in passing**, because it is a security-posture
+decision about storage that reaches past this feature. The options:
+
+- **(a) Strip server-side.** Remove `<action-text-attachment>` from `body` before save on both
+  models. Closes injection, cheap, keeps the route.
+- **(b) Gate the route.** Constrain or remove `rails/active_storage/direct_uploads`. Closes anonymous
+  blob creation — the §15 half. Nothing in this app appears to use direct uploads (previews attach
+  server-side), so the exposure of removing it looks low, but that needs checking rather than
+  assuming.
+- **(c) Both**, which is the only combination that makes decision #2's stated rationale true.
+- **(d) Accept and document** — reasonable for a single-user self-hosted deployment, much less so for
+  the managed/SaaS mode §7 describes.
+
+**Do not let this be read as closed by decision #2's wording.** That decision is correct about what
+the editor does and silent about what the server accepts.
