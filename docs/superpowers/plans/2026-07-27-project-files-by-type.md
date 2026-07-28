@@ -48,6 +48,8 @@ Append inside `module Maker` / `class FileAttachmentTest` in
       assert_equal "cad_source", Maker::FileAttachment.role_for("box.scad")
       assert_equal "cad_source", Maker::FileAttachment.role_for("Bracket.f3d")
       assert_equal "cad_source", Maker::FileAttachment.role_for("frame.FCStd")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("mount.sldprt")
+      assert_equal "cad_source", Maker::FileAttachment.role_for("Rig.SLDASM")
     end
 
     test "the existing derivations are unchanged" do
@@ -60,10 +62,12 @@ Append inside `module Maker` / `class FileAttachmentTest` in
       assert_equal "other", Maker::FileAttachment.role_for("no-extension")
     end
 
-    # The invariant that keeps a display heading from ever naming a role that isn't valid.
-    test "every role has a label and every label is a role" do
-      assert_equal Maker::FileAttachment::ROLES.sort,
-                   Maker::FileAttachment::ROLE_LABELS.keys.sort
+    # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys would be
+    # TAUTOLOGICAL — ROLES is DEFINED as those keys — so it could not catch a typo'd key like
+    # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
+    test "the role vocabulary is exactly these eight values" do
+      assert_equal %w[cad_source gcode image instructions model other source_archive vector],
+                   Maker::FileAttachment::ROLES.sort
     end
 
     test "the two new roles are accepted by the validation" do
@@ -111,8 +115,11 @@ In `app/models/maker/file_attachment.rb`, replace lines 8-19 (the `ROLES`, `ROLE
       "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive",
       # Laser / 2D vector work. Without these a laser-heavy project is mostly "Other".
       "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
-      # Editable CAD sources, as opposed to the exported meshes above.
-      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
+      # Editable CAD sources, as opposed to the exported meshes above. SolidWorks sits with Fusion
+      # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
+      # — proprietary, no FOSS parser, you open them in the tool that made them.
+      "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
+      "sldprt" => "cad_source", "sldasm" => "cad_source"
     }.freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
@@ -195,11 +202,15 @@ class RederiveRolesMigrationTest < ActiveSupport::TestCase
   test "an 'other' dxf becomes vector and an 'other' scad becomes cad_source" do
     dxf  = attach("panel.dxf", "other")
     scad = attach("box.scad", "other")
+    # SolidWorks travels with Fusion — if this list ever drifts from ROLE_BY_EXT, closing the gap
+    # after this migration has run needs a whole second migration, so it is pinned here too.
+    sld  = attach("mount.sldprt", "other")
 
     run_migration
 
     assert_equal "vector", dxf.reload.role
     assert_equal "cad_source", scad.reload.role
+    assert_equal "cad_source", sld.reload.role
   end
 
   test "a role set deliberately by the importer is never re-derived" do
@@ -260,9 +271,15 @@ Replace the generated file's contents with:
 # gains in this change, which is also what makes `down` exact — before this, no row could hold
 # either role, so every row holding one now was put there by `up`.
 class RederiveVectorAndCadSourceRoles < ActiveRecord::Migration[8.1]
+  # Must stay in step with the extensions ROLE_BY_EXT gains in Task 1 — including `sldprt`/`sldasm`,
+  # which were added there after review. This list is deliberately a COPY rather than a reference to
+  # `ROLE_BY_EXT` (a data migration must not depend on app code that keeps moving), and the cost of
+  # that choice is exactly this: an extension added to the model *after* this migration runs will
+  # never re-derive the rows already sitting in `other`, and closing that needs a SECOND migration.
   NEW_ROLE_BY_EXT = {
     "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
-    "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source"
+    "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
+    "sldprt" => "cad_source", "sldasm" => "cad_source"
   }.freeze
 
   class MigrationAttachment < ActiveRecord::Base
