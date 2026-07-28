@@ -573,6 +573,41 @@ bin/rails test test/integration/web/project_build_log_test.rb
 
 Expected: FAIL — no `lexxy-editor` element; the plain textarea is still rendered.
 
+- [ ] **Step 2b: Fix the content wrapper's class — do this BEFORE rendering any body**
+
+`app/views/layouts/action_text/contents/_content.html.erb` (created by `action_text:install`) wraps
+every rendered rich-text body in `<div class="trix-content">`. Lexxy scopes all of its typographic
+and attachment styling under `:where(.lexxy-content)` and has **no `.trix-content` selector at all**.
+So the first body this plan renders would come out unstyled.
+
+Change that partial's wrapper class:
+
+```erb
+<div class="lexxy-content">
+  <%= yield -%>
+</div>
+```
+
+Three reasons this is the right fix rather than a guess:
+
+1. `ActionText::Content#to_s` always renders through `layout: "action_text/contents/content"`, so
+   this **one** partial governs every rich-text render in the app — it fixes the build log (Task 4)
+   and file notes (Task 5) together, with no per-view change.
+2. It is what Lexxy's own docs prescribe (`lexxy.dev/docs/css-setup.html`), with exactly this markup.
+3. Verified against the installed gem: zero `trix-content` hits across all four Lexxy stylesheets.
+
+**Do not emit both classes.** Nothing in this app's CSS references `.trix-content` (swept), so there
+is no compatibility to preserve, and a dead class name left behind after Trix is gone is precisely
+the stale reference that misleads the next reader.
+
+*Do not be misled by a Lexxy internal named `TrixContentExtension` (`lexxy/trix-content`) — it is an
+HTML **import** converter for parsing old Trix-authored markup back **into** the editor, unrelated to
+how rendered output is wrapped for display.*
+
+This lands here, with the code, rather than being left for Task 7's browser check to discover:
+`assert_select` passes happily on unstyled markup, so no server-rendered test will catch it either
+way — but the browser check should be *confirmation*, not discovery.
+
 - [ ] **Step 3: Give the form a model object**
 
 In `app/controllers/projects_controller.rb`, inside `show`, add after the `@tasks` line:
@@ -923,6 +958,15 @@ uploads and attaches beneath the entry; **dragging an image into the editor does
 the intended behaviour, not a bug); and an existing pre-migration entry still shows its line
 breaks. Repeat on a file detail page for notes, and confirm a pre-migration markdown note renders
 as formatted HTML rather than literal asterisks.
+
+**Watch the browser console while you do the drag test, not just the page.** Lexxy's `uploadFiles()`
+returns early on `supportsAttachments` and logs a `console.warn` rather than failing silently — that
+warning is the signal the guard is still in place. A future Lexxy upgrade that reorders or drops
+that check would show up here first, before it ever reached a real upload.
+
+**Confirm rendered bodies are actually styled** — that Task 4 Step 2b's `.lexxy-content` wrapper
+took effect. This is confirmation of a fix that already landed, not discovery: no `assert_select`
+test can tell styled markup from unstyled.
 
 ```bash
 bin/rails server -p 3001
