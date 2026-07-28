@@ -223,6 +223,15 @@ this repo have been.
   in this area and touches all three upload paths.
 - **Removing `status` from v1 or the desktop app.** Decision #1.
 - **Realtime or multi-user sheet editing.**
+- **Reconciling the two file-type vocabularies.** Surfaced by §4's whole-change review, recorded
+  rather than fixed: `FilesHelper::EXT_FAMILIES` (the Files-page filter chips) and
+  `Maker::FileAttachment::ROLE_LABELS` (the project panel's group headings) now describe overlapping
+  files in different words — `.svg`/`.dxf`/`.lbrn2` are "2D / laser" on one page and "Vector" on the
+  other — and the five `cad_source` extensions have **no chip family at all**, so a project gets a
+  first-class "CAD source" section with no library-wide one-click filter to match. Nothing is
+  broken: the chips' free-text `add_ext` field still reaches those files by that helper's own
+  design. Both predate this work and neither surface was in scope here. Worth a deliberate decision
+  — one vocabulary or two, argued — the next time either is touched.
 
 ## 9. Risks
 
