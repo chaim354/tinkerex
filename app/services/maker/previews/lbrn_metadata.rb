@@ -14,7 +14,7 @@ module Maker
 
       # Nokogiri returns strings; keep keys as strings so the Hash round-trips a JSON column.
       def parse(bytes)
-        doc = Nokogiri::XML(bytes) { |c| c.recover }
+        doc = Lbrn2.parse_document(bytes)
         root = doc.root
         return nil if root.nil? || root.name != "LightBurnProject"
 
@@ -35,7 +35,7 @@ module Maker
       end
 
       def layers(doc, used)
-        doc.xpath("//CutSetting").filter_map do |cs|
+        Lbrn2.cut_settings(doc).filter_map do |cs|
           idx = val(cs, "index")
           next if idx.nil? || !used.include?(idx.to_s)
 
@@ -80,41 +80,17 @@ module Maker
         end
       end
 
-      # Job size = the shapes' bounding box in mm. Reuses Lbrn2's transform + BBox; extracts each
-      # shape's raw points here (small, and keeps Lbrn2's tested SVG path untouched).
+      # Job size = the shapes' bounding box in mm.
+      #
+      # Runs THE SAME traversal the thumbnail does (`Lbrn2.each_geometry`) rather than a private
+      # second copy. The copy this replaced is exactly why the two could disagree: it re-derived
+      # per-shape points and so inherited every dialect bug independently — a file could render
+      # one way and report a size computed from different geometry, with nothing to catch it.
       def job_size(doc)
         bbox = Lbrn2::BBox.new
-        doc.xpath("//Shape").each do |shape|
-          xform = Lbrn2.parse_xform(shape["XForm"])
-          points_for(shape).each do |(x, y)|
-            px, py = Lbrn2.apply(xform, x, y)
-            bbox.add(px, py)
-          end
-        end
+        Lbrn2.each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
         w, h = bbox.dimensions
         w && { "width" => w.round(1), "height" => h.round(1) }
-      end
-
-      def points_for(shape)
-        case shape["Type"]
-        when "Rect"
-          w = Lbrn2.num(shape["W"]); h = Lbrn2.num(shape["H"])
-          return [] if w.nil? || h.nil?
-
-          [ [ -w / 2, -h / 2 ], [ w / 2, -h / 2 ], [ w / 2, h / 2 ], [ -w / 2, h / 2 ] ]
-        when "Ellipse"
-          rx = Lbrn2.num(shape["Rx"]); ry = Lbrn2.num(shape["Ry"])
-          return [] if rx.nil? || ry.nil?
-
-          # Sample the perimeter (not just two axis corners) so the bbox is correct even when the
-          # XForm rotates the ellipse. 32 is divisible by 4, so an unrotated ellipse's axis extents
-          # are still hit exactly (the fixture's circle stays 40x20).
-          (0...32).map { |i| t = i * (Math::PI / 16); [ rx * Math.cos(t), ry * Math.sin(t) ] }
-        when "Line", "Path"
-          Lbrn2.vertices(shape)
-        else
-          []
-        end
       end
     end
   end
