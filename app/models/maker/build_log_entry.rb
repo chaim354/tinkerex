@@ -5,6 +5,8 @@ module Maker
     belongs_to :user
     belongs_to :project, class_name: "Maker::Project"
 
+    has_rich_text :body
+
     ENTRY_TYPES = %w[note milestone].freeze
 
     has_many :file_attachments, -> { order(:position) },
