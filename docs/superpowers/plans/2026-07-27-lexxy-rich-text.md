@@ -788,11 +788,22 @@ red**, which is exactly what a whole-file rerun would then blame on your new cod
    ```
 
 2. **`test/integration/web/files_flow_test.rb`**, `"the file detail page shows a notes section and
-   renders markdown notes"` — this one *does* render the view, and it fails because
-   `files/show.html.erb` still calls `render_note(note.body)`. Step 4 below replaces that with
-   `<%= note.body %>`, which fixes it. But the test's name and intent — "renders **markdown**
-   notes" — stop being true: new notes are rich text, not markdown. Rename it to
-   `"the file detail page shows a notes section and renders note bodies"` and keep its assertions.
+   renders markdown notes"` — this one renders the view, and **Step 4 alone does NOT fix it.** Two
+   of its assumptions are now permanently unsatisfiable, and both need the *fixture* changed, not
+   just the view:
+   - Its fixture is `body: "**important** note"` — literal markdown with no tags. Action Text parses
+     an assigned plain string as an **HTML fragment**, never as markdown, so those asterisks are
+     stored and rendered literally forever, whatever the view does. Change the fixture to real HTML,
+     matching every other rich-text test in this plan: `"<p><strong>important</strong> note</p>"`.
+   - It asserts `.note-form textarea`. **Lexxy renders no `<textarea>` at all** — its
+     `rich_text_area` emits a single `<lexxy-editor>` custom element carrying the field `name`
+     itself, with no companion hidden input. Change the selector to `.note-form lexxy-editor`.
+
+   Then rename it to `"the file detail page shows a notes section and renders note bodies"` — "renders
+   **markdown** notes" stops being true either way.
+
+   *(An earlier draft of this step said Step 4 fixes this test and to "keep its assertions". Both
+   halves were wrong, and only running it showed that.)*
 
 Run `bin/rails test test/integration/web/notes_test.rb test/integration/web/files_flow_test.rb` and
 note which still fail — (1) should go green immediately, (2) only after Step 4.
