@@ -897,6 +897,10 @@ hardened, and connected to the browser**:
 - **Deploy.** `resvg` is added to the Dockerfile (build stage verified in `rust:1-slim`) and to CI's
   three test legs (idempotent, non-fatal). **STEP/OBJ/IGES stay `unsupported` in-deploy** — F3D is
   still not shipped in the image (deliberate; `Mesh` stays registered so a box with F3D renders them).
+  *(Superseded 2026-07-29 — **F3D is installed**: STEP/IGES/OBJ now render on the deployed image, via
+  the `Dockerfile`'s `f3d` stage. The more surprising half: `model_glb` is now refused outright, not
+  rendered — F3D's `--output` renders a raster and cannot emit a GLB by any CLI route, so a GLB was
+  never obtainable this way.)*
 - Suite **978 → 1023** runs, **identical on all three backend legs** (`bin/rails test`,
   `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`: 1023 / 3329 / 0 / 0 / 5). The preview layer touches
   no sync internals (§10 tripwire grep clean).
