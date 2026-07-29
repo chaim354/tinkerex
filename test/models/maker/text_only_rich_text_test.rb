@@ -45,13 +45,13 @@ module Maker
     test "a body that is only an attachment fails presence validation on a note" do
       note = build_note(CAPTIONED_ATTACHMENT)
       assert_not note.valid?
-      assert_includes note.errors.full_messages.join, "Body"
+      assert_includes note.errors[:body], "can't be blank"
     end
 
     test "a body that is only an attachment fails presence validation on a build log entry" do
       entry = build_entry(CAPTIONED_ATTACHMENT)
       assert_not entry.valid?
-      assert_includes entry.errors.full_messages.join, "Body"
+      assert_includes entry.errors[:body], "can't be blank"
     end
 
     # Guards against an over-broad strip. Without this, removing the whole body would pass every

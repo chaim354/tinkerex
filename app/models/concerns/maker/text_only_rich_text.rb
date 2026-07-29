@@ -25,12 +25,23 @@ module Maker
 
     private
 
-    # Returns early when there is nothing to strip, so an untouched body is never re-serialised
-    # (a rewrite would churn the stored HTML on every save for no reason).
+    # Returns early when there is nothing to strip — we do not re-serialise a fragment we did not
+    # touch. NOT because a rewrite would churn the stored HTML: measured, `fragment.to_html` is
+    # byte-identical to the stored value (the value came from this same serialiser), so an
+    # unconditional rewrite would leave `changed?` false and issue no UPDATE at all. The saving is
+    # a serialisation and an attribute write, which is a smaller claim than "prevents churn" and
+    # is the one that is actually true.
     def strip_rich_text_attachments
       content = body&.body
       return if content.nil?
 
+      # MUTATES THE LIVE TREE IN PLACE, and that is safe only because of the line that follows it.
+      # `body.body` returns a MEMOIZED Content — the same object across reads — so this is not a
+      # throwaway copy, and Action Text's own ActionText::Fragment#update dups the source before
+      # yielding precisely to avoid what this does. What makes it correct here is that the strip is
+      # immediately followed by replacing the attribute, so the mutated Content is discarded on the
+      # next read. Moving that replacement away from here, or "simplifying" it to reuse this
+      # fragment, breaks a property no other line states.
       fragment = content.fragment.source
       nodes = fragment.css(ATTACHMENT_SELECTOR)
       return if nodes.empty?
