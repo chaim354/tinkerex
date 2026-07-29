@@ -61,34 +61,41 @@ class SheetGridTest < ApplicationSystemTestCase
 
     # C1 STARTS EMPTY. Without this, both assertions about C1 below — the computed 42 and the stored
     # "=A1*B1" — could in principle be satisfied by the seeded blob rather than by anything the
-    # browser did. A test has to own the value it checks.
+    # browser did. A test has to own the value it checks. Read once rather than polled: this is a
+    # precondition on state that already exists, so there is nothing to wait for.
     assert_equal "", stored_value(2, 0)
 
     fill_cell(0, 0, "6")
     fill_cell(1, 0, "7")
     fill_cell(2, 0, "=A1*B1")
 
-    # Asserted BEFORE "Saved", and the order is load-bearing: the page is SERVER-RENDERED with the
-    # indicator already reading "Saved", so waiting only for "Saved" would be satisfied by the
-    # markup that arrived with the page — vacuously true before any save, and worse, it would let
-    # the stored-value assertion below race the debounce. "Saving…" is written only by the grid's
-    # onchange, so it is both honest proof an edit registered and the point from which a later
-    # "Saved" means THIS edit.
-    assert_selector STATUS, exact_text: "Saving…"
-
-    # THE COMPUTED VALUE. An empty grid never gets here — this is what catches both bugs.
+    # THE COMPUTED VALUE. An empty grid never gets here — this is what catches both bugs. It is also
+    # what proves the edit registered in the grid at all, which is why nothing below has to watch for
+    # the transient "Saving…" to establish that.
     assert_equal "42", cell_text(2, 0)
-
-    # Autosave is debounced (1000 ms); wait for the indicator rather than sleeping. exact_text, not
-    # text: the failure wording is "Not saved — …", which a substring match on "saved" would accept.
-    assert_selector STATUS, exact_text: "Saved", wait: 10
 
     # THE RAW FORMULA, NOT THE RESULT. getData(false, false) reads the underlying data model, so
     # "=A1*B1" must come back as itself — persisting "42" instead would silently destroy every
     # formula in the sheet on the next load.
-    assert_equal "=A1*B1", stored_value(2, 0)
-    # …and its operands went with it, so the formula still has something to multiply next time.
-    assert_equal [ "6", "7" ], [ stored_value(0, 0), stored_value(1, 0) ]
+    #
+    # POLLED, not read once, and NOT gated on the status indicator. The autosave is debounced 1000ms,
+    # so a single read races it. The indicator cannot substitute: the span ships from the server
+    # already reading "Saved" (show.html.erb:68), so it is vacuous before the first save, and
+    # asserting the intermediate "Saving…" instead only moves the race — that string lives for one
+    # debounce window, so a slow round-trip on a loaded runner misses it and the test flakes.
+    # Polling the row is the only form that is neither vacuous nor timed.
+    assert_persisted_cell(2, 0, "=A1*B1")
+    # …and its operands went with it, so the formula still has something to multiply next time. They
+    # rode the same save, so they are already on the row — polled anyway rather than switching to a
+    # bare read, because one form for "what reached the database" is one fewer thing to get wrong
+    # when someone later inserts an edit between these lines.
+    assert_persisted_cell(0, 0, "6")
+    assert_persisted_cell(1, 0, "7")
+
+    # Now safe to assert, and only now: the polls above prove the save landed, so this can fail only
+    # if the indicator itself lies. exact_text, not text — the failure wording is "Not saved — …",
+    # which a substring match on "Saved" would happily accept as success.
+    assert_selector STATUS, exact_text: "Saved"
   end
 
   private
@@ -116,8 +123,24 @@ class SheetGridTest < ApplicationSystemTestCase
 
     def cell_text(x, y) = cell(x, y).text.strip
 
-    # Reads what was STORED, not what is displayed — the model's own row, straight from the DB.
-    # `fetch`, not `[]`: a malformed or half-written blob then names the missing key instead of
-    # failing later as a nil somewhere unrelated.
+    # Waits on the DATABASE rather than the DOM. Capybara's waiting matchers don't help here — the
+    # value never appears on the page. Hand-rolled rather than reached for out of habit: the thing
+    # being waited on is a debounced write landing on a row, and every DOM-shaped alternative either
+    # asserts something vacuous or races the debounce (see the call site).
+    def assert_persisted_cell(x, y, expected, timeout: 10)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+      actual = nil
+      loop do
+        actual = stored_value(x, y)
+        break if actual == expected
+        break if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        sleep 0.1
+      end
+      assert_equal expected, actual, "cell (#{x},#{y}) never persisted as #{expected.inspect}"
+    end
+
+    # The single raw read of the stored blob — what the poll above spins on, and what the test's
+    # empty-C1 precondition reads once. `fetch`, not `[]`: a malformed or half-written blob then
+    # names the missing key instead of failing later as a nil somewhere unrelated.
     def stored_value(x, y) = @sheet.reload.data.fetch("cells").fetch(y).fetch(x)
 end
