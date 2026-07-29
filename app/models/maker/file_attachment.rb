@@ -22,6 +22,12 @@ module Maker
 
     ROLES = ROLE_LABELS.keys.freeze
 
+    # EVERY EXTENSION HERE MUST SATISFY `FilesController::EXT_RE` (/\A[a-z0-9]{1,8}\z/), because
+    # FilesHelper::EXT_FAMILIES now derives the Files-page filter chips from this hash. An extension
+    # the controller then drops renders a chip that links and silently does nothing. The warning
+    # lives HERE, at the edit site, rather than beside EXT_FAMILIES where it used to: extensions are
+    # added in this file, and whoever adds one has no reason to go looking two files away.
+    # `markdown` is the current bound at exactly 8 characters. Pinned by files_helper_test.rb.
     ROLE_BY_EXT = {
       "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",

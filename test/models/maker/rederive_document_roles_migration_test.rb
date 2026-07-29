@@ -60,4 +60,26 @@ class RederiveDocumentRolesMigrationTest < ActiveSupport::TestCase
     run_rollback
     assert_equal "other", att.reload.role
   end
+
+  # The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the
+  # two can silently drift. This is the only thing that would notice — the same guard the
+  # predecessor migration's test carries, and it is NOT redundant with the tests above: re-mapping
+  # `csv` in the model while leaving the migration's frozen copy alone was verified to leave the
+  # ENTIRE suite green, because every other test here derives its expectation from one side only.
+  test "the migration's extension list still agrees with the model's" do
+    RederiveDocumentRoles::NEW_ROLE_BY_EXT.each do |ext, role|
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "migration maps #{ext} to #{role}, model disagrees"
+    end
+  end
+
+  # The predecessor pins this too. `up` is re-runnable by design (the mapping is a pure function of
+  # the current filename), and a migration that double-counted or errored on a second pass would be
+  # a real hazard on a retried deploy.
+  test "running up twice is a no-op the second time" do
+    att = attach("readme.txt", "other")
+    run_migration
+    run_migration
+    assert_equal "document", att.reload.role
+  end
 end
