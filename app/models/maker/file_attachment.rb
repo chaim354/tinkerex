@@ -12,6 +12,7 @@ module Maker
       "model"          => "Models",
       "image"          => "Images",
       "instructions"   => "Instructions",
+      "document"       => "Documents",
       "vector"         => "Vector",
       "cad_source"     => "CAD source",
       "gcode"          => "G-code",
@@ -31,7 +32,15 @@ module Maker
       # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
       # — proprietary, no FOSS parser, you open them in the tool that made them.
       "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
-      "sldprt" => "cad_source", "sldasm" => "cad_source"
+      "sldprt" => "cad_source", "sldasm" => "cad_source",
+      # Text formats. DERIVED, not chosen here: Maker::Previews::Registry already routes
+      # txt/md/markdown/json to TextThumb, and FilesHelper::EXT_FAMILIES already grouped txt/md/csv
+      # as "Documents" — this is the union of the two sets the app already had.
+      #
+      # `pdf` is NOT here on purpose: it stays `instructions` because
+      # Models::AttachmentsController dispatches ExtractPdfMetadataJob on that exact value.
+      "txt" => "document", "md" => "document", "markdown" => "document",
+      "json" => "document", "csv" => "document"
     }.freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
