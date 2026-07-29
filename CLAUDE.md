@@ -273,7 +273,7 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
   **real auth (signup/confirm/login/reset) + register hardening + device pairing**, **conflict
   detect/keep/split**, **best-effort edit locks**, **file-mode sync**, **GC retention +
   storage-orphan chunk reaper (G4)**, **concurrent-`next_seq!` no-deadlock (G2)**.
-- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. **53 tests** across hermetic suites (`tests/`): **caching** (mtime-freshness + random-write-on-hydrated), **chunking**
+- `fs-provider`: local SQLite tree + FastCDC chunks + `export_tree`/`apply_remote`/`apply_remote_delete`/`truncate`. Hermetic suites (`tests/`; count in `docs/STATUS.md`): **caching** (mtime-freshness + random-write-on-hydrated), **chunking**
   (round-trip / dedup / block-delta boundary stability / pathological inputs, proptest),
   **posix_semantics** (rename-over replace, dup/missing, unicode/deep nesting),
   **convergence** (3-replica FakeFolder-style random op stream + durability + idempotency),
@@ -286,8 +286,8 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
   versions methods. 5 tests.
 - `sync-engine`: `push`/`pull_snapshot`/`pull_changes`/`hydrate`/`sync_once` **plus the
   daemon loop primitives** `push_outbox`/`sync_tick` + `EngineHydrator`/`EngineFreshness`/
-  `EngineRemoteLock`. **Server-backed integration suite** (`tests/integration.rs`,
-  **14 tests**: roundtrip, delete/move delta, hydrate (only-missing/after-conflict), push
+  `EngineRemoteLock`. **Server-backed integration suite** (`tests/integration.rs`; count in
+  `docs/STATUS.md`): roundtrip, delete/move delta, hydrate (only-missing/after-conflict), push
   dedup, cursor monotonicity, changelog paging, offline reconcile, **freshness-on-access**,
   **pairing**, **offline-edit conflict + split**, **best-effort lock coordination**,
   **executable-bit propagation**) — skips with no server; CI boots `STORAGE_BACKEND=memory`
