@@ -6,6 +6,7 @@ module Maker
     belongs_to :project, class_name: "Maker::Project"
 
     has_rich_text :body
+    include Maker::TextOnlyRichText
 
     ENTRY_TYPES = %w[note milestone].freeze
 
