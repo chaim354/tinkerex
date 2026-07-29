@@ -1,66 +1,149 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-28 (**Project page overhaul — rich text, sheets, typed file groups, status pipeline hidden. PR #91**)
+**Updated:** 2026-07-29 (**All four open items from the project-page overhaul CLOSED — branch `claude/status-md-open-issues-92c847`**)
 
-## OPEN ITEMS from the project-page overhaul (2026-07-28) — read this first
+## Latest (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
 
-Four things this arc deliberately did **not** close. Each is recorded with the evidence, because
-each was found by *running* something rather than reading, and would be expensive to rediscover.
+**Suite 1625 runs / 5655 assertions / 0 failures / 0 errors / 14 skips — byte-identical on chunk,
+share and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
+offenses** (the repo's one pre-existing offence was swept too). `client/` has a zero-line diff. Both
+standing tripwire greps still answer what CLAUDE.md §12 step 10 says they should.
 
-### 1. `attachments="false"` is a UI restriction, not an enforcement boundary — NEEDS A DECISION
+Design: `docs/superpowers/specs/2026-07-28-status-open-items-design.md`.
+Plan: `docs/superpowers/plans/2026-07-28-status-open-items.md`.
 
-Full write-up: `docs/superpowers/specs/2026-07-27-project-page-overhaul-design.md` §9a.
+### 1. `attachments="false"` — CLOSED, option (c): BOTH halves
 
-Lexxy is configured text-only so that Active Storage is never used (§15, the FileLayer port). The
-**client half is solid** — Lexxy `JSON.parse`s the attribute, so the string `"false"` really is the
-boolean, and with attachments off the drag/drop listeners are never even registered. **The server
-half does not exist:**
+- **Server-side strip.** `Maker::TextOnlyRichText`, included by `Maker::Note` and
+  `Maker::BuildLogEntry`, removes every `<action-text-attachment>` element on `before_validation`.
+  It removes the ELEMENT rather than scrubbing attributes, so the guarantee survives whatever
+  attributes Action Text or Lexxy emit next. **Stronger than designed, verified by probe:** a Trix
+  `<figure data-trix-attachment='{"sgid":…}'>` posted by hand is *also* stripped, because Action
+  Text canonicalises it into `action-text-attachment` on assignment, before the hook reads the
+  fragment. Both wire formats an attacker could post are covered.
+- **The route is REMOVED, not authenticated.** `POST <ActiveStorage.routes_prefix>/direct_uploads`
+  is shadowed by an app-drawn 404. Confirmed the hole was real first: an unauthenticated POST
+  returned **200, minted a real `ActiveStorage::Blob`, and returned a signed upload URL**.
 
-- `POST /rails/active_storage/direct_uploads` is **live and unauthenticated**. Demonstrated: an
-  integration session that never signs in POSTs successfully, mints a real `ActiveStorage::Blob`,
-  and gets a signed upload URL back. `ActiveStorage::DirectUploadsController` descends from
-  `ActiveStorage::BaseController`, **not** this app's `ApplicationController`, and adds no auth.
-- Neither `NotesController#create` nor `Projects::BuildLogEntriesController#create` filters `body`,
-  and Action Text's sanitizer **preserves** `<action-text-attachment sgid="…">`. Demonstrated: a
-  hand-built attachment fragment assigned straight to `Maker::Note#body` survives save + reload and
-  is recognised as a real attachment.
+**Three things about this that cost a review cycle each — do not rediscover them:**
 
-The route is **pre-existing** (Active Storage has been installed since the preview pipeline). What
-this arc added is a user-writable field where an attachment *renders*, turning a dormant route into
-a reachable one. Options, costed, in §9a — strip server-side, gate the route, both, or accept and
-document. It matters far more in the managed/SaaS mode (§7) than self-hosted.
+- **`recognize_path` IS THE WRONG INSTRUMENT and reports the opposite answer.** A `proc` route
+  carries no controller/action, so `recognize_path` skips it and names the *engine's* route. Only
+  driving a real request settles it. The app route wins because `Rails::Engine#add_routing_paths`
+  `unshift`s railtie route files while the app's own initializers run last — app route at index 9,
+  engine's at 232, stable across `reload_routes!` and `eager_load!`.
+- **THE SHADOW PATH MUST BE DERIVED, NEVER LITERAL.** The engine wraps its routes in
+  `scope ActiveStorage.routes_prefix`. A hard-coded `/rails/active_storage/...` silently stops
+  shadowing anything the moment that prefix is configured — **demonstrated**: with
+  `routes_prefix = "/attachments"` the live endpoint moved and an anonymous POST again returned 200
+  with a blob minted, while the suite went red on the *wrong* assertion carrying a *false* message.
+  Loud about the wrong thing is close to silent.
+- **`draw_routes = false` is ruled out** and must stay ruled out: `Maker::Preview` uses
+  `has_one_attached :asset` served via `url_for`, so the blob routes are load-bearing. Pinned by a
+  test, and verified end-to-end (real preview → `url_for` → 302 → 200 → bytes).
 
-### 2. Sheet `data` has no size limit anywhere
+**A caveat on the "deliberate consequence" this design recorded.** The claim was that stripping makes
+an attachment-only body fail `presence`. True only for a **captioned** attachment. An attachment
+whose `sgid` does not resolve has no plain-text representation, so `ActionText::RichText#blank?` is
+*already* true and the body was *already* invalid — a test using the bare form passes with or
+without the concern. The presence tests use `CAPTIONED_ATTACHMENT` for exactly this reason.
 
-`maker_sheets.data` is user-controlled JSON written by the browser. No length/size validation on the
-model, `permit(data: {})` is unbounded in the controller, no body-size limit configured, and the
-whole blob is embedded into the page HTML on every view with no truncation. A buggy client or a
-genuinely large sheet grows this without bound.
+### 2. Sheet `data` — CLOSED, bounded at 1 MB
 
-### 3. NOTHING in the test suite executes JavaScript
+`Maker::Sheet::MAX_DATA_BYTES = 1_048_576`, validated on `data.to_json.bytesize`. Bytesize rather
+than row/column caps: one number, and it is the quantity that hurts — `projects/sheets/show.html.erb`
+embeds the whole blob into the page on every view, so the blob size IS the page size. Measured cost:
+`to_json` runs **once** per save, ~0.27 ms against a 13.4 ms save on a 272 KB blob.
 
-`test/system/` and `ApplicationSystemTestCase` (Capybara + headless Chrome) already exist in this
-repo and are used elsewhere. Every test this arc added is a server-side integration or model test.
-**That is why 1587 green tests across three backends caught neither grid bug**: both were
-client-side only and structurally invisible. The two that got through to a browser check were:
+**THE PLAN'S PREMISE WAS WRONG, and the correction is worth keeping.** It said an unrescued
+`RecordInvalid` yields a **500**. It does not: `ActionDispatch::ExceptionWrapper.rescue_responses`
+maps `ActiveRecord::RecordInvalid` to `:unprocessable_content` **by Rails default**, in both
+`test` (`show_exceptions = :rescuable`) and production (`:all`). So the 422 was already free. What
+the rescue actually adds is the **JSON body** — without it the grid's `response.json()` rejects and
+the user is told to "check your connection" about a file that will never save. That made the
+originally-specified test vacuous (it asserted only the status), so it also asserts
+`response.media_type`.
 
-- `jspreadsheet-ce` v5's factory is an **async workbook** API — calling it with a flat
-  `{data, columns}` throws *inside an uncatchable promise*, so the grid renders permanently empty
-  with no error anywhere. Looks like a blank sheet, not a broken one.
-- Classic `<script>` tags needed `data-turbo-track="reload"`: every real path to the sheet page is a
-  Turbo **visit**, which merges `<head>` rather than reparsing, so untracked tags load async and
-  Stimulus connected before `window.jspreadsheet` existed.
+Two more the review caught, both demonstrated:
 
-A single system test — type a formula, assert the computed value, reload, assert the raw formula
-persists — would have caught both. Worth adding before the next JS-heavy feature.
+- **`number_to_human_size` rounds both sides identically** → *"Data is too large (1 MB; limit 1 MB)"*
+  for the first ~5,242 bytes of overage. Since a sheet grows one keystroke at a time via debounced
+  autosave, **the first rejection a user ever sees is always that self-contradicting message**. Now
+  raw delimited bytes.
+- **The JS fallback had regressed the one case it exists for.** Sniffing `error.message` for an
+  `"HTTP "` prefix routed the server's refusals correctly but showed the *browser's* jargon
+  ("Failed to fetch" / "Load failed") for an actual outage. `save()` now handles `!response.ok`
+  inline and returns, so the `catch` means one thing: transport failure.
 
-### 4. The two file-type vocabularies still disagree
+### 3. Nothing executed JavaScript — CLOSED
 
-`FilesHelper::EXT_FAMILIES` (Files-page filter chips) and `Maker::FileAttachment::ROLE_LABELS`
-(project panel headings) name overlapping files differently — `.svg`/`.dxf`/`.lbrn2` are "2D / laser"
-on one page and "Vector" on the other — and the five `cad_source` extensions have **no chip family
-at all**. Nothing is broken (the chips' free-text `add_ext` still reaches them). Both predate this
-arc. Worth one deliberate decision — one vocabulary or two, argued — next time either is touched.
+`test/system/sheet_grid_test.rb` — the repo's second system test and the first to cover the grid.
+Types a formula, asserts the **computed value**, then asserts the **raw formula persisted**.
+
+- **It reaches the page by a Turbo VISIT** (clicking through from the project page), never
+  `visit sheet_path`. A direct `visit` is a hard load — the one path where the `data-turbo-track`
+  bug does not reproduce. This is the single easiest line in the file to lose in a later edit.
+- **The obvious mutation is a FALSE NEGATIVE.** Removing `data-turbo-track` from the
+  `javascript_include_tag` alone leaves the test green, because the `stylesheet_link_tag` on the
+  same page is *also* tracked and Turbo hashes all tracked elements into one signature — it still
+  hard-reloads. The honest reproduction removes it from **both** tags, and then the test fails at
+  the missing `<td>`. Recorded in the test's own header so the next reader running the one-tag
+  version does not conclude the test is worthless. The async-workbook bug (bug #1) was also
+  reintroduced and also fails.
+- **Waits on the ROW, not the indicator.** `assert_text "Saved"` is **vacuous** here — the status
+  span ships from the server already reading `Saved`, so it passes before any save. Asserting the
+  intermediate `Saving…` only moves the race (it lives for one 1000 ms debounce window; a slow
+  round-trip on a loaded runner misses it). The test polls the record instead, then asserts the
+  indicator last, when it is deterministic. Five consecutive suite runs, no flake.
+- **No CI change was needed.** `.github/workflows/ci.yml` already runs `test:system` on a
+  self-hosted linux runner with failure-screenshot upload. `test/system` is simply excluded from
+  `bin/rails test`, which is exactly why the 1587 count never covered it.
+
+### 4. The two vocabularies — CLOSED, ONE vocabulary
+
+`FilesHelper::EXT_FAMILIES` is now **derived** from `Maker::FileAttachment::ROLE_BY_EXT`, grouped by
+role and labelled/ordered by `ROLE_LABELS`, with `other` dropping out on its own (it is the fallback
+for unrecognised extensions, so nothing maps to it). A new **`document`** role covers `txt`, `md`,
+`markdown`, `json`, `csv` — the union of what `Maker::Previews::Registry` already routed to
+`TextThumb` and what `EXT_FAMILIES` already grouped as "Documents", so the set is derived rather than
+invented. `pdf` **stays `instructions`**: `Models::AttachmentsController` dispatches
+`ExtractPdfMetadataJob` on that exact value, and a tripwire test now says so.
+
+Chip families went **5 → 8** (Models, Images, Instructions, Documents, Vector, CAD source, G-code,
+Archives) and extensions **19 → 28** — a strict superset, nothing lost. `.svg` now reads "Vector" on
+both pages, and the five `cad_source` extensions finally have a chip. `markdown` is exactly 8
+characters, the bound of `FilesController::EXT_RE`; the EXT_RE warning now lives at `ROLE_BY_EXT`
+itself, because that is where extensions get added and whoever adds a 9-character one has no reason
+to look in `files_helper.rb` to learn it renders a dead chip.
+
+**The chosen option's cost, accepted deliberately and recorded so it is not read later as an
+oversight:** `document` is an API-visible enum value whose only consumer is display, and it required
+a second data migration. The argued alternative — keep two vocabularies, since `role` is a persisted
+classification driving cover-pick/job-dispatch/API while `EXT_FAMILIES` is a display grouping — was
+raised and set aside.
+
+**Deriving at class-body evaluation time is correct, and the one real risk was tested rather than
+reasoned:** a frozen snapshot going stale across a development reload does **not** occur — Zeitwerk
+unloads `FilesHelper` along with the model, so the constant recomputes. Verified live, plus a
+production eager-load check.
+
+**The migration carries the predecessor's drift guard**, which it originally lacked. That matters:
+re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
+the **entire suite green**, because every other test derives its expectation from one side only.
+
+## Still open after this arc (small, deliberate)
+
+- **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
+  hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
+  broken:** the value never leaves the browser — only `node_id`/`cover` are POSTed and the server
+  re-derives authoritatively via `Maker::FileAttachment.role_for` — so the persisted role is
+  correct. Its only effect is the pre-upload summary, which has always lumped everything but
+  model/image/PDF into "other", so `.txt` behaves there exactly as `.svg` already did. Recorded
+  because "one vocabulary" is this arc's whole point and a third copy has now drifted twice; fixing
+  it means plumbing the Ruby vocabulary into JS, which is a real change and was out of scope here.
+- **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
+  too *high* fails nothing, because every other test derives its filler from the constant. Closed as
+  far as it can be by one test pinning the literal.
 
 ## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
 
@@ -422,9 +505,15 @@ is why the resolution is a **concern** (`MoveConflicts`) and not two copies of a
 navigable and doubles as a way to find things. `?folder=` is **ignored outright** rather than
 intersected: "show me every .stl" that quietly meant "in this folder" would be the wrong answer to
 the only question the chips can ask. Extensions are whitelisted to `[a-z0-9]{1,8}`, which is what
-bounds the OR-ed LIKE, and the chip row is a **curated shelf, not real facet counts** — counting
+bounds the OR-ed LIKE, and the chip row is a **fixed shelf, not real facet counts** — counting
 "you have 214 .stl files" means plucking every filename in the library on every Files page load,
 including plain folder browsing that never looks at the chips.
+
+  *(Amended 2026-07-29: this said "**curated** shelf" and the curation half is no longer true.
+  `EXT_FAMILIES` is now DERIVED from `Maker::FileAttachment::ROLE_BY_EXT` — see the 2026-07-29 entry
+  at the top — so the row is whatever the role vocabulary contains, not a hand-picked list. The
+  argument the sentence exists for is untouched: it is still a fixed shelf rather than counted
+  facets, and the cost argument against real counts still stands.)*
 
 - **`LOWER(name) LIKE`, not a bare LIKE:** SQLite's LIKE is ASCII-case-insensitive and Postgres' is
   **not**, so the bare form answers differently on self-host and managed. **No test leg can see that**
