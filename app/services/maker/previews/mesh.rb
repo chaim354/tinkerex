@@ -46,11 +46,25 @@ module Maker
       # marked "ready": a corrupt file presented as valid, reachable from the v1 previews API, which
       # permits a client-supplied `kind`. `.glb` is an INPUT format for F3D, not an output one.
       # This was unreachable only because `available?` never returned true (see above) — so it must
-      # be closed in the same change that makes `available?` work. Raising lands the preview in
-      # "failed" with a legible reason instead of shipping a broken model.
+      # be closed in the same change that makes `available?` work.
+      #
+      # It raises GeneratePreviewJob::Unsupported, NOT RenderError, and the difference is
+      # behavioural rather than cosmetic. `failed` is the state V1::Maker::PreviewsController#create
+      # RE-ENQUEUES on a re-POST, so a RenderError here would let a client re-request, forever, a
+      # preview that can never succeed. `unsupported` is this codebase's designated deliberate,
+      # NON-error, never-retried terminal state — exactly what "this renderer cannot produce this
+      # kind" is, and the same answer the job already gives when a renderer's toolchain is missing.
+      #
+      # The cost is a renderer naming the job's error class, which no other renderer does. Accepted
+      # deliberately: the alternative that preserves the layering — a `supports_kind?` predicate the
+      # job gates on before calling — buys nothing here, because the job's `rescue Unsupported`
+      # already precedes its `rescue StandardError` and maps this cleanly (driven, not reasoned —
+      # see generate_preview_job_test.rb). And the naming argument at file_layer.rb:57 is about not
+      # minting a SECOND class called `Unsupported`; reusing THIS one is what it asks for.
       def render(mesh_bytes, size: 512, kind: "thumbnail", ext: nil)
         if kind == "model_glb"
-          raise RenderError, "f3d cannot export GLB: --output renders a raster image (.glb is an input format only)"
+          raise ::Maker::GeneratePreviewJob::Unsupported,
+                "f3d cannot export GLB: --output renders a raster image (.glb is an input format only)"
         end
 
         png = to_output(mesh_bytes, ext:, out_ext: ".png", size:)

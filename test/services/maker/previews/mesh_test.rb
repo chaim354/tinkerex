@@ -43,9 +43,13 @@ module Maker
       # returned true, so nobody ever saw that `--output out.glb` writes a PNG (f3d --help spells
       # the argument "<png file>"). The old code labelled those PNG bytes model/gltf-binary and
       # GeneratePreviewJob attached them as .glb marked "ready". Refusing is the honest answer.
+      #
+      # DELIBERATELY NOT SKIPPED when f3d is absent, unlike every other test here: the raise is the
+      # first statement in `render`, so no subprocess runs and the binary is irrelevant. Nothing in
+      # .github/ installs f3d, so a skip guard would mean this guard never runs in CI at all — the
+      # exact "passes only by skipping" hole that hid the bug it was written for.
       test "refuses the model_glb kind — f3d renders rasters, it does not export GLB" do
-        skip "f3d not installed" unless Maker::Previews::Mesh.available?
-        err = assert_raises(Maker::Previews::Mesh::RenderError) do
+        err = assert_raises(Maker::GeneratePreviewJob::Unsupported) do
           Maker::Previews::Mesh.render(@stl, kind: "model_glb", ext: "stl")
         end
         assert_match(/cannot export GLB/, err.message)

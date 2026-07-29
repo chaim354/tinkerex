@@ -87,7 +87,7 @@ RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDF
 # OCCT plugin it is what gives STEP/IGES a preview at all. OCCT is LGPL and stays process-isolated in
 # the f3d subprocess — the same posture §9 takes for the GPL sidecars and the FUSE drivers, and the
 # reason Maker::Previews::Mesh shells out rather than linking. (The tarball ships OCCT's own LGPL
-# licence text at share/licences/occt/, which the COPY below carries into the image with it.)
+# licence text at share/licenses/occt/, which the COPY below carries into the image with it.)
 #
 # xz-utils IS required: ruby:slim has GNU tar but no `xz`, and `tar -J` shells out to it, so the
 # plain `tar -xJf` fails with "Cannot exec". Installing it here rather than switching to the .tar.gz
