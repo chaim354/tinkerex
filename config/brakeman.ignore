@@ -30,7 +30,7 @@
       "check_name": "Execute",
       "message": "Possible command injection",
       "file": "app/services/maker/previews/mesh.rb",
-      "line": 59,
+      "line": 74,
       "link": "https://brakemanscanner.org/docs/warning_types/command_injection/",
       "code": "Open3.capture3(F3D, Tempfile.new.path, \"--output\", \"#{Tempfile.new.path}#{out_ext}\", \"--resolution\", \"#{size},#{size}\")",
       "render_path": null,

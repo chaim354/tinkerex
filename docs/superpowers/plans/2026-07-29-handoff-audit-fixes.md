@@ -554,10 +554,14 @@ cross-built once on the Mac via QEMU and both boxes pull it), so `F3D-3.5.0-Linu
 
 ### ⚠ The trap in this task
 
-`Maker::Previews::Mesh#to_output` builds its argv at **`mesh.rb:59-60`** and splats it into
-`Open3.capture3` at **`mesh.rb:62`**. `config/brakeman.ignore`'s entry for this records **line 59** —
-brakeman reports where the flagged expression is *built*, not where it is called, which is why the
-recorded line is 59 and not 62. That is not drift; do not "correct" it.
+`Maker::Previews::Mesh#to_output` builds its argv and splats it into `Open3.capture3`.
+**Brakeman reports the `capture3` CALL line** — measured, after an earlier revision of this
+paragraph claimed the opposite: with an empty ignore config it reports the line holding
+`_stdout, stderr, status = Open3.capture3(*args)`. `config/brakeman.ignore` recorded **59**, which
+was correct when written and had **already drifted** by the time this arc started (the call had moved
+to 62, then to 74 once Task 6 edited the file). That *is* drift, and it is harmless only because the
+line is not hashed — the entry kept matching throughout. It has since been corrected to the measured
+value. **Re-measure rather than trusting any line number written here.**
 
 **If you add a flag (e.g. `--rendering-backend=egl`) to make headless rendering work, brakeman goes
 back to exit 3 and Task 2's work silently unravels.** The fingerprint hashes `warning_code + code +
