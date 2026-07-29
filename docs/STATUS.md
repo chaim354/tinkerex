@@ -177,6 +177,15 @@ advisories, one of them High on the always-on `/cable` path.
 - **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
   too *high* fails nothing, because every other test derives its filler from the constant. Closed as
   far as it can be by one test pinning the literal.
+- **`ENABLE_TEST_SIGNUP` is inherited by the OVH deployment, knowingly.** `config/deploy.yml:64` sets it
+  in the **base** env.clear, which Kamal deep-merges, so `-d ovh` gets it too — the base comment's
+  justification ("this Unraid instance is a NON-production test/dev deploy") covers the LAN box only.
+  `POST /v1/test/users` mints **confirmed accounts with no email verification**. Left ON deliberately:
+  OVH is a prod-*like* test box, and blanking it at the base would break
+  `client/test-conformance/two-device-cfapi.ps1`, which enrolls against the deployed Unraid server
+  through this seam. The fix, when this stops being acceptable, is one line —
+  `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
+  defeat exactly this deep-merge. Recorded at the edit site too.
 
 ## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
 
