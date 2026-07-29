@@ -161,5 +161,23 @@ module Web
       assert_select ".attachment-group-head", text: /Other \(1\)/
       assert_select ".attachment-tile .grid-name", text: "mystery.xyz"
     end
+
+    # THE COMPLAINT THIS ITEM STARTED FROM, asserted on both surfaces at once: a .csv is filed under
+    # "Documents" in the project panel AND the Files page offers a chip in a family of that same
+    # name. Before this the two pages named overlapping files differently, and .csv had no role at
+    # all. This fails if either surface drifts, which is what "one vocabulary" has to mean.
+    test "a document is filed under Documents and the chips agree" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      attach_node(user, project, name: "cutlist.csv", node_id: "n-doc",
+                  role: Maker::FileAttachment.role_for("cutlist.csv"))
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Documents/
+
+      assert_includes FilesHelper::EXT_FAMILIES.keys, "Documents"
+      assert_includes FilesHelper::EXT_FAMILIES["Documents"], "csv"
+    end
   end
 end
