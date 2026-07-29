@@ -35,4 +35,23 @@ class DeployHygieneTest < ActiveSupport::TestCase
              "#{key} must be blank in the OVH overlay, got #{cleared[key].inspect}"
     end
   end
+
+  test "every GPL sidecar image carries its own licence text" do
+    # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
+    # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.
+    # A DIRECTORY-DRIVEN sweep, not a hard-coded pair: the point is to close the class, so a third
+    # sidecar added later is covered on the day it appears rather than the day someone remembers.
+    # Discovery is "has a LICENSE next to a Dockerfile" — every sidecar here is GPL by construction
+    # (that is why they are sidecars invoked over HTTP instead of libraries we link).
+    sidecars = ROOT.glob("sidecar/*/Dockerfile").select { |df| df.dirname.join("LICENSE").exist? }
+    assert sidecars.any?, "expected at least one sidecar/<name>/Dockerfile with a LICENSE beside it"
+
+    sidecars.each do |dockerfile|
+      name = dockerfile.dirname.basename.to_s
+      copies_licence = dockerfile.read.lines.any? { |l| l.start_with?("COPY") && l.include?("LICENSE") }
+      assert copies_licence,
+             "sidecar/#{name}/Dockerfile must COPY its LICENSE into the image — we push this image, " \
+             "which is redistribution (CLAUDE.md §9). sidecar/openscad is the pattern to copy."
+    end
+  end
 end

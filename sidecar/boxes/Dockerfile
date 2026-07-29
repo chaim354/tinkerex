@@ -25,6 +25,11 @@ RUN mkdir -p /app/samples && \
 
 COPY app.py ./
 
+# The GPL-3.0 licence text travels INSIDE the image: we build this and push it to a registry, which
+# is redistribution. sidecar/openscad does the same for its GPL-2.0 text. Guarded by
+# test/deploy_hygiene_test.rb, which can see this file — the Rails process never loads it.
+COPY LICENSE README.md ./
+
 EXPOSE 8000
 # 2 workers is plenty for one user; a generate call is CPU-bound and short. Bind on all interfaces
 # (the internal Kamal network); never published to the host/internet.
