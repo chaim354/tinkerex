@@ -5,7 +5,7 @@ module Maker
   # Both models are exercised by the same cases: the guarantee has to hold per-model, and a concern
   # included in one place and forgotten in another is exactly the failure this file catches.
   class TextOnlyRichTextTest < ActiveSupport::TestCase
-    ATTACHMENT = %q{<action-text-attachment sgid="abc" content-type="image/png" filename="x.png"></action-text-attachment>}.freeze
+    ATTACHMENT = %q(<action-text-attachment sgid="abc" content-type="image/png" filename="x.png"></action-text-attachment>).freeze
 
     setup do
       @user = User.create!(email: "tort-#{SecureRandom.hex(4)}@example.com")
