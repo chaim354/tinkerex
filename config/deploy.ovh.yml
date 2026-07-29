@@ -48,3 +48,19 @@ env:
     # real URL if a sidecar is ever booted on OVH.
     BOXES_SIDECAR_URL: ""
     OPENSCAD_SIDECAR_URL: ""
+
+    # ENABLE_TEST_SIGNUP IS INHERITED HERE, DELIBERATELY AND WITH EYES OPEN (2026-07-29).
+    #
+    # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true, and Kamal DEEP-MERGES env.clear — the same
+    # mechanism the two blank lines above exist to defeat. So this box, unlike the LAN-only Unraid one
+    # the base comment justifies, serves POST /v1/test/users: an unverified signup that mints CONFIRMED
+    # accounts, reachable by anyone who can reach the host.
+    #
+    # Accepted for now because this is a prod-LIKE TEST box, not the managed SaaS. Blanking it is one
+    # line (`ENABLE_TEST_SIGNUP: ""`) beside the sidecar blanks above, and that is the fix the day this
+    # box holds anything real. The boot warning fires either way
+    # (config/initializers/test_signup_warning.rb).
+    #
+    # NOT blanked at the base instead, because the Unraid box needs it:
+    # client/test-conformance/two-device-cfapi.ps1 enrolls against http://192.168.1.95 through this
+    # seam. The other harnesses boot their own server and set the var themselves.

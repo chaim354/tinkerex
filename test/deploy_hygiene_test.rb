@@ -35,4 +35,41 @@ class DeployHygieneTest < ActiveSupport::TestCase
              "#{key} must be blank in the OVH overlay, got #{cleared[key].inspect}"
     end
   end
+
+  test "every GPL sidecar image carries its own licence text" do
+    # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
+    # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.
+    # A DIRECTORY-DRIVEN sweep, not a hard-coded pair: the point is to close the class, so a third
+    # sidecar added later is covered on the day it appears rather than the day someone remembers.
+    # Discovery is every sidecar/*/Dockerfile, full stop — every sidecar here is GPL by construction
+    # (that is why they are sidecars invoked over HTTP instead of libraries we link). Earlier this
+    # filtered discovery down to "has a LICENSE beside it", which conflates "this licence needs
+    # copying into the image" with "this licence was ever committed at all", and silently skipped
+    # exactly the worse case: a future sidecar whose author never added a LICENSE file passed with
+    # an unchanged assertion count, because the missing file is what the filter used to exclude it.
+    sidecars = ROOT.glob("sidecar/*/Dockerfile")
+    assert sidecars.any?, "expected at least one sidecar/<name>/Dockerfile"
+
+    # A missing LICENSE is checked BEFORE, and separately from, the per-Dockerfile COPY check below
+    # — the two failures mean different things and want different fixes. A Dockerfile with no COPY
+    # line still has the licence text SOMEWHERE in the repo, one line away from being fixed; a
+    # sidecar with no LICENSE file at all has never had the licence checked in, is being built and
+    # pushed under GPL with no licence to point to anywhere, and there is nothing yet for the COPY
+    # check below to even ask about. That is the more serious §9 lapse, and it is the one a
+    # presence-filtered discovery step would hide from itself.
+    missing_licence = sidecars.reject { |df| df.dirname.join("LICENSE").exist? }
+    assert missing_licence.empty?,
+           "sidecar Dockerfile(s) with no sibling LICENSE file: " \
+           "#{missing_licence.map { |df| df.dirname.basename }.join(', ')} — a GPL sidecar's " \
+           "licence text must be committed to the repo before the image is ever built and pushed " \
+           "(CLAUDE.md §9)."
+
+    sidecars.each do |dockerfile|
+      name = dockerfile.dirname.basename.to_s
+      copies_licence = dockerfile.read.lines.any? { |l| l.start_with?("COPY") && l.include?("LICENSE") }
+      assert copies_licence,
+             "sidecar/#{name}/Dockerfile must COPY its LICENSE into the image — we push this image, " \
+             "which is redistribution (CLAUDE.md §9). sidecar/openscad is the pattern to copy."
+    end
+  end
 end

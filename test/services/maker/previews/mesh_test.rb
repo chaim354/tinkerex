@@ -6,7 +6,10 @@ module Maker
     # this box. `available?` gates on it; the render tests SKIP when it's absent (matching the
     # SVG test's posture and docs/research-format-processing.md §8 point 6) rather than erroring.
     class MeshTest < ActiveSupport::TestCase
-      setup { @stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl")) }
+      setup do
+        @stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl"))
+        @obj = File.binread(Rails.root.join("test/fixtures/files/tetra.obj"))
+      end
 
       test "available? reflects whether the f3d binary is on PATH" do
         assert_includes [ true, false ], Maker::Previews::Mesh.available?
@@ -24,12 +27,32 @@ module Maker
         assert_equal "\x89PNG".b, result[:bytes][0, 4].b
       end
 
-      test "renders a GLB for the model_glb kind via f3d" do
+      # OBJ is the one extension Mesh::EXTENSIONS actually OWNS that had no render coverage — the
+      # other three tests all feed STL, which routes to the euc Stl renderer in production and only
+      # reaches F3D here because the test calls Mesh directly. So an F3D build that could not load an
+      # OBJ would have passed the whole suite.
+      test "renders an OBJ to a PNG thumbnail via f3d" do
         skip "f3d not installed" unless Maker::Previews::Mesh.available?
-        result = Maker::Previews::Mesh.render(@stl, kind: "model_glb", ext: "stl")
-        assert_equal "model/gltf-binary", result[:content_type]
-        # GLB magic = "glTF".
-        assert_equal "glTF".b, result[:bytes][0, 4].b
+        result = Maker::Previews::Mesh.render(@obj, size: 128, ext: "obj")
+        assert_equal "image/png", result[:content_type]
+        assert_equal 128, result[:width]
+        assert_equal "\x89PNG".b, result[:bytes][0, 4].b
+      end
+
+      # This test used to assert a GLB came back, and PASSED ONLY BY SKIPPING: `available?` never
+      # returned true, so nobody ever saw that `--output out.glb` writes a PNG (f3d --help spells
+      # the argument "<png file>"). The old code labelled those PNG bytes model/gltf-binary and
+      # GeneratePreviewJob attached them as .glb marked "ready". Refusing is the honest answer.
+      #
+      # DELIBERATELY NOT SKIPPED when f3d is absent, unlike every other test here: the raise is the
+      # first statement in `render`, so no subprocess runs and the binary is irrelevant. Nothing in
+      # .github/ installs f3d, so a skip guard would mean this guard never runs in CI at all — the
+      # exact "passes only by skipping" hole that hid the bug it was written for.
+      test "refuses the model_glb kind — f3d renders rasters, it does not export GLB" do
+        err = assert_raises(Maker::GeneratePreviewJob::Unsupported) do
+          Maker::Previews::Mesh.render(@stl, kind: "model_glb", ext: "stl")
+        end
+        assert_match(/cannot export GLB/, err.message)
       end
 
       test "raises RenderError when f3d cannot process the input" do

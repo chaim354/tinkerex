@@ -44,9 +44,15 @@ This feature:
 
 **Out of scope (YAGNI)**
 
-- STEP/IGES interactive 3D (would need server-side GLB via F3D — not installed on the deploy box —
-  plus a GLTF loader). Possible later follow-up; the dormant `model_glb` scaffolding in
-  `Maker::Previews::Mesh` stays dormant.
+- STEP/IGES interactive 3D. **This route is closed, not merely deferred, and the original reason
+  given here was wrong twice over.** F3D *is* installed on the deploy box as of 2026-07-29 — but
+  F3D can never produce the GLB, because its `--output` is a raster screenshot (`--help` spells the
+  argument `<png file>`) and it writes a PNG whatever the extension says; `.glb` is an input format
+  for F3D, not an output one. The `model_glb` scaffolding in `Maker::Previews::Mesh` is therefore
+  gone rather than dormant: that kind is now refused outright, because it was silently returning
+  PNG bytes labelled `model/gltf-binary`. See the comment on `Maker::Previews::Mesh#render`.
+  Interactive STEP/IGES would need a *different* converter (an OCCT- or assimp-based mesher that
+  actually writes glTF) plus a GLTF loader — a real piece of work, not a flag.
 - Inline 3D in the file browser grid/list (`/files`). Untouched.
 - Remembering an "always open in 3D" preference.
 - Updating the static hero image to the selected file's thumbnail *before* the viewer is loaded.

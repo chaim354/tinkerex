@@ -15,6 +15,20 @@ module Maker
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
     end
 
+    # Run the block with `renderer.available?` forced true. Hand-rolled rather than Object#stub:
+    # minitest 6 DROPPED minitest/mock, so `stub` does not exist in this suite (requiring it is a
+    # LoadError, not a missing-gem warning). `module_function` copies available? onto the singleton,
+    # so capture-and-redefine is the restore — removing it would leave the module with no method at
+    # all. The ensure is load-bearing: a leaked override would make later tests in this process
+    # believe an absent toolchain is present.
+    def forcing_available(renderer)
+      original = renderer.method(:available?)
+      renderer.define_singleton_method(:available?) { true }
+      yield
+    ensure
+      renderer.define_singleton_method(:available?, original)
+    end
+
     # `name:` is the file's real name on the Node row, which the job resolves when no filename
     # arg is given; it defaults to node_id because most tests here use a node_id that already
     # looks like a filename.
@@ -261,6 +275,32 @@ module Maker
         assert preview.error.present?
         assert_not preview.asset.attached?
       end
+    end
+
+    # The reason Mesh raises GeneratePreviewJob::Unsupported rather than its own RenderError:
+    # `failed` is the state PreviewsController#create RE-ENQUEUES on a re-POST, so a client could
+    # re-request forever a preview that can never succeed. This drives the real job to prove the
+    # renderer-raised Unsupported reaches the terminal status — the claim in Mesh#render's comment.
+    #
+    # `available?` is stubbed true so this does NOT depend on f3d, which CI does not install. That
+    # matters for a second reason: with f3d absent the job raises its OWN Unsupported at the
+    # availability gate, so an unstubbed test would land on "unsupported" WITHOUT EVER REACHING the
+    # refusal and pass for entirely the wrong reason. The error-message assertion is what pins which
+    # of the two raised — the availability gate says "renderer toolchain unavailable".
+    test "a renderer that refuses a kind lands in unsupported, not failed" do
+      obj = File.binread(Rails.root.join("test/fixtures/files/tetra.obj"))
+      stage_version(node_id: "n-glb", version_id: "vglb", bytes: obj, name: "part.obj")
+      preview = @user.maker_previews.create!(node_id: "n-glb", version_id: "vglb", kind: "model_glb")
+
+      forcing_available(Maker::Previews::Mesh) do
+        assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "part.obj") }
+      end
+
+      preview.reload
+      assert_equal "unsupported", preview.status, "a kind the renderer cannot produce is not a failure"
+      assert_match(/cannot export GLB/, preview.error,
+                   "must be Mesh's refusal, not the job's toolchain-availability gate")
+      assert_not preview.asset.attached?, "nothing may be attached for a refused kind"
     end
 
     test "a real fetch/render error flips status to failed with the error message" do

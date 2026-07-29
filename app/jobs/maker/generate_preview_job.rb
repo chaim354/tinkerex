@@ -75,8 +75,11 @@ module Maker
     private
 
     # Renderers share a `render(bytes, size:)` contract; some (e.g. Mesh/F3D) also accept
-    # `ext:` (to pick the loader) and `kind:` (thumbnail vs model_glb). Pass each kwarg only
-    # when the renderer's signature declares it, so the simpler renderers stay unchanged.
+    # `ext:` (to pick the loader) and `kind:`. Accepting `kind:` is not a promise to produce
+    # every kind — Mesh takes it only to REFUSE `model_glb` (f3d renders rasters and cannot
+    # export GLB), raising Unsupported, which the rescue above maps to that terminal status.
+    # Pass each kwarg only when the renderer's signature declares it, so the simpler
+    # renderers stay unchanged.
     def render_with(renderer, bytes, ext:, kind:)
       accepted = renderer.method(:render).parameters.select { |t, _| %i[key keyreq].include?(t) }.map(&:last)
       opts = { size: 512 }

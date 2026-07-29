@@ -1,8 +1,229 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**All four open items from the project-page overhaul CLOSED — branch `claude/status-md-open-issues-92c847`**)
+**Updated:** 2026-07-29 (**Audit-fix arc: two security gates that ran zero now run; F3D shipped — branch `claude/handoff-audit-fixes-plan-d0f8b3`**)
 
-## Latest (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
+## Latest (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
+
+**Suite 1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
+and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
+offenses**. The three security gates green **by exit code**: `brakeman=0`, `audit=0`, `js=0`.
+`client/` has a zero-line diff, and all three standing tripwires still answer what CLAUDE.md §12
+step 10 says they should.
+
+**11 skips, where this file has recorded 14 since the previews arc — and the difference IS item 3.**
+F3D is installed on this build box now, so `Maker::Previews::Mesh`'s tests **run** instead of
+skipping. Measured both ways on the same tree: `F3D_BIN=/nonexistent/f3d bin/rails test` gives
+**1628 runs / 5667 assertions / 14 skips**. CI has no F3D and will see 14. A reader comparing skip
+counts across entries has to know which of the two numbers they are holding; neither is wrong.
+
+Plan: `docs/superpowers/plans/2026-07-29-handoff-audit-fixes.md`. Queue it came from:
+`docs/HANDOFF-AUDIT-FIXES.md`.
+
+### 1. `scan_ruby` was two gates running zero
+
+`bin/brakeman` exited **3** on a false positive — an argv-array `Open3.capture3` in
+`Maker::Previews::ImageThumb`, the same shell-free, no-shell-anywhere form already accepted at
+length for the sibling `mesh.rb` renderer. `scan_ruby` runs brakeman as step 1 and
+`bin/bundler-audit` as step 2, so **the audit gate had never executed**. The job looked like two
+gates and was zero.
+
+**The rule this arc exists to install: read a security gate by EXIT CODE, never by reading its
+output.** A gate that aborts before it runs is, in a log skim, indistinguishable from a gate that
+ran and found nothing — and because the two are chained, the *first* gate's false positive silently
+disarmed the *second* gate's real findings. That is how five gems drifted behind published
+advisories, one of them High, on a socket every device holds open. Both gates now exit 0, and the
+"CI cannot run" section below states the exit-code rule at the place someone will actually be
+standing when they need it.
+
+### 2. Five gems, eighteen advisories, one High on the always-on `/cable` path
+
+Measured against the pre-arc lockfile (`bin/bundler-audit check` on `4ed32fe`'s `Gemfile.lock`):
+**18 distinct advisories across 5 gems** — nokogiri 9, crass 4, loofah 3, rails-html-sanitizer 1,
+websocket-driver 1. One **High**, one Medium, one Low, 15 unrated by the DB.
+
+- **websocket-driver 0.8.1 → 0.8.2** — **CVE-2026-61666 / GHSA-2x63-gw47-w4mm, High: denial of
+  service via a malformed `Host` header.** This is `actioncable`'s own dependency, and §12 step 1
+  put an ActionCable socket on the **continuously-open** path: every device subscribes to
+  `LibraryChannel` for the `{head_seq}` nudge and holds it. The exposed surface is not an
+  occasional request — it is the one connection the sync loop depends on existing.
+- **loofah 2.25.1 → 2.25.2**, **rails-html-sanitizer 1.7.0 → 1.7.1**, **crass 1.0.6 → 1.0.7** — the
+  Action Text sanitizer path, which since the project-page overhaul renders **user-authored notes
+  and build-log entries**. Two of the loofah three are `allowed_uri?` failing to see a
+  `javascript:` URI split by character references; the crass four are parser DoS.
+- **nokogiri 1.19.3 → 1.19.4** — six of the nine are **use-after-free or out-of-bounds read in XML
+  parsing**, and this app parses **untrusted uploaded XML** on exactly that path:
+  `Maker::Previews::Lbrn2` reads user-supplied `.lbrn2`, and `Maker::Previews::ThreeMf` reads the
+  XML inside an uploaded `.3mf` zip. **`lbrn2.rb:70` does `Nokogiri::XML(bytes) { |c| c.recover.huge }`
+  — recover-past-malformed with libxml2's built-in limits LIFTED**. `huge` is **required, not a
+  tuning knob** (the reason is recorded at the method: LightBurn inlines a placed photo as base64 in
+  `Bitmap@Data`, libxml2 caps one attribute at 10 MB, and past that `recover` silently returns a
+  TRUNCATED tree — 2 of the 58 real files hit it). Both halves are correct and neither is being
+  undone here; the point is only that this parser is aimed at attacker-shaped input with its own
+  guardrails deliberately off, which is why keeping it patched is not routine hygiene. **All 7 platform lines moved** (`aarch64-linux-gnu/musl`,
+  `arm-linux-gnu/musl`, `arm64-darwin`, `x86_64-linux-gnu/musl`) — the deploy builds `linux/amd64`
+  while this box is `arm64-darwin`, so bumping only the line you can see locally leaves the
+  **shipped image** behind while the local suite goes green.
+
+**Lockfile-only, and each gem named explicitly rather than a bare `bundle update`** — which would
+have ridden in the deliberate exact `lexxy` pin along with everything else, turning a security fix
+into an unreviewed dependency sweep.
+
+**The count is a snapshot of a moving target, not a property of the code.** `bundler-audit` refreshes
+`ruby-advisory-db` on each run, so re-measuring the same lockfile later can legitimately report more
+advisories than it did an hour earlier — the plan for this arc recorded seven. Quote the exit code,
+which is stable; treat the count as the date-stamped reading it is.
+
+### 3. F3D installed — and installing it alone would have achieved NOTHING
+
+`Mesh.available?` shelled out to `f3d --version` and matched the literal lowercase `"f3d"`. **F3D
+3.x's banner is `F3D 3.5.0 / F3D - A fast and minimalist 3D viewer` — there is no lowercase spelling
+anywhere in it** (verified against the 3.5.0 binary). So the gate reported a working, installed
+binary as **absent**, and shipping the Dockerfile change without fixing the match would have added
+~526 MB to the image and changed nothing observable — the install alone achieves exactly nothing.
+
+**That dead gate is also why a second bug was invisible.** With `available?` permanently false the
+Mesh render path never ran and its tests could only ever **skip** — hiding that
+`render(kind: "model_glb")` returned **PNG bytes labelled `model/gltf-binary`**, attached as `.glb`
+and marked `"ready"`. F3D's `--output` is a raster screenshot and writes PNG whatever the extension
+says. `kind` is **client-supplied**, through `V1::Maker::PreviewsController`. Fixing `available?`
+would have made that path live, so **it is refused in the same change** — the two are one commit on
+purpose, and splitting them later would re-open the window.
+
+**State it plainly so nobody tries again: F3D cannot emit a GLB by any CLI route.** `--help` has no
+export option; `.glb` is an **input** format for F3D, not an output one. The refusal raises
+`GeneratePreviewJob::Unsupported`, which maps to the terminal **`unsupported`** status — deliberately
+not `failed`, which a re-POST re-enqueues, so a client asking for the impossible would retry forever.
+
+**⚠ DEPLOYING THIS DOES NOT MAKE EXISTING CAD FILES SPROUT THUMBNAILS, and that will look like the
+feature is broken.** `available?` going true is not retroactive. Every `.obj`/`.step`/`.stp`/`.iges`/
+`.igs` already seen on the deployed boxes carries `status: "unsupported"`, written by the job's own
+`renderer toolchain unavailable` gate — and **nothing re-enqueues an `unsupported` row**:
+`Maker::Previews::Enqueue` returns early unless the row is new or `failed`;
+`V1::Maker::PreviewsController` resets to `pending` on the same two conditions; and
+`FilesController#backfill_thumbnails` skips any node that already has a row for the current
+`content_token`, whatever that row's status. Driven, not read: calling `Enqueue.call` on an
+`unsupported` row leaves it `unsupported` and enqueues nothing. Registry has mapped these extensions
+to `Mesh` since 2026-07-20 and `backfill_thumbnails` walks every renderable file in a viewed folder,
+so those rows almost certainly exist on all three deployed backends already. **Consequence: the
+feature reaches only content that arrives after the deploy; every CAD file already in a library keeps
+its static "unsupported" badge until its bytes change.** A one-off sweep clearing `unsupported` rows
+whose extension now has an available renderer is what closes it — `app/services/maker/previews/lbrn_backfill.rb`
+is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
+migration-shaped operation, not an audit fix) and left as an open item below.
+
+**The image cost, honestly, because the totals disagree with each other.** Per-layer from
+`docker history`: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer = **205 MB** — **~526 MB of
+new content**, against a base image of **229.8 MB**, roughly tripling it. **296 MB of the 307 MB
+`/opt/f3d` tree is `lib/`** — bundled VTK/OCCT/GDAL/USD that ships whether or not a deployment ever
+opens a STEP file. **`docker image inspect --format '{{.Size}}'` says 229.8 → 387.5 MB while
+`docker image ls` says 230 MB → 1.57 GB: a 4x disagreement on the F3D image, from two commands that
+agree exactly on the base.** Neither total is trustworthy here; **quote the per-layer numbers.**
+
+**The runtime package list is 4 packages and it is DERIVED, not guessed** —
+`libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri`. `readelf -d` across the binary and every bundled
+`.so` shows **libX11 as the only external NEEDED** beyond what `base` already has. The rest is the
+GL stack, and **the Mesa EGL driver is `dlopen`ed — invisible to `ldd`**, so the honest-looking
+minimal list (drop `libegl-mesa0`, since nothing links it) gives **SIGSEGV 139 at render time**.
+Only a real render settles this; static inspection cannot. Verified by rendering both `tetra.obj`
+and a real 4.7 MB STEP file to PNG inside the image.
+
+### 4. The GPL-3.0 boxes sidecar ships its own licence text
+
+`sidecar/boxes/Dockerfile` now does `COPY LICENSE README.md ./`, matching `sidecar/openscad`. We
+build these images and push them to a registry, which is **redistribution** — so under §9 the
+licence has to be **inside the image**, not merely committed beside the Dockerfile. The `LICENSE`
+had been in the repo since the addon landed and had simply never been copied in.
+
+**`test/deploy_hygiene_test.rb`'s new assertion is DIRECTORY-DRIVEN, so it closes the class rather
+than the instance:** it globs `sidecar/*/Dockerfile` and requires a `COPY … LICENSE` line in each,
+so a third sidecar is covered the day it appears rather than the day someone remembers. Every
+sidecar here is GPL by construction — that is *why* they are HTTP sidecars instead of linked
+libraries — so the glob needs no allow-list.
+
+**The second assertion exists because the first version was mutation-tested and failed.** Discovery
+originally filtered to sidecars that "have a LICENSE beside them", which conflates *"this licence
+needs copying into the image"* with *"this licence was ever committed at all"* — and so **silently
+skipped the worse case**: a future sidecar whose author never added a LICENSE passes with an
+unchanged assertion count, because the missing file is precisely what excluded it. A missing
+`LICENSE` is now checked **first and separately**, because the two failures want different fixes: no
+`COPY` line means the text is in the repo one line from being fixed; no `LICENSE` at all means the
+image is being built and pushed under GPL with nothing to point at anywhere. **Found by mutating the
+test, not by reading it.**
+
+### 5. Two findings documented rather than fixed, both deliberately
+
+Neither is duplicated here — each already has its own home in this file, and a second copy is a
+second thing to go stale:
+
+- **No Linux runner is registered, so all 7 `ci.yml` jobs queue forever** — see "CI cannot run"
+  below. A separate agent owns CI and testing infrastructure; this arc corrected CLAUDE.md §15's
+  claim that all three runners exist and recorded how to verify locally.
+- **The OVH deployment inherits `ENABLE_TEST_SIGNUP`** through Kamal's `env.clear` deep-merge — see
+  the bullet under "Still open after this arc". Left on knowingly, with the one-line fix recorded
+  both there and at the edit site.
+
+### 6. The Rust counts CLAUDE.md now defers to this file
+
+CLAUDE.md carried **`53 tests`** for `fs-provider`. Measured: **192 passed across 20 test binaries,
+0 failed** (`cd client/fs-provider && cargo test`). **The stale number was DELETED, not updated** —
+that list's own header already defers per-suite counts here, so writing the number in two places is
+writing a number that will be wrong in one of them, and this one already was by 3.6x. A second count
+of the same class went with it: `sync-engine`'s **`14 tests`** for the server-backed integration
+suite, in the same list, for the same reason.
+
+**So the deferral has to land somewhere, and this is it:**
+
+- `client/fs-provider` — **192 / 0**, 20 binaries, hermetic (no server). Re-measured this arc.
+- `client/sync-engine` `tests/integration.rs` — **NOT re-measured here**; it needs a running server
+  and skips cleanly without one. Last recorded figure in this file is **19/0** (2026-06-14 entry).
+  Treat that as dated, not current.
+
+**A count in a file that is not the one that produces it is a count that rots.** Both of these are
+readings taken on a date, not properties of the code — which is the same lesson as the stale
+brakeman line below, and the same lesson as the advisory count above.
+
+### Left open by the audit-fix arc
+
+*(Distinct from the older `## Still open after this arc` section further down, which belongs to the
+project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced above lives.)*
+
+- **Existing CAD previews stay `unsupported` after the F3D deploy — a backfill sweep is needed.**
+  Detailed in item 3 above. Nothing re-enqueues an `unsupported` row, so every `.obj`/`.step`/`.iges`
+  already in a deployed library keeps its badge until its bytes change, and the shipped feature will
+  read as broken to anyone looking at files they already had. The fix is a one-off sweep clearing
+  `unsupported` rows whose extension now resolves to an available renderer, modelled on
+  `app/services/maker/previews/lbrn_backfill.rb`. Deliberately not done in an audit-fix branch: it is
+  a data migration over deployed rows, and it wants its own verification against a real library.
+
+- **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —
+  but the lesson is the one worth keeping.** All four entries were verified against brakeman's own
+  output at the end of the arc; two disagreed and were corrected (`mesh.rb` 74 → **88**,
+  `files_controller.rb` 728 → **729**, the latter pre-existing and not caused here). Fingerprints
+  byte-identical, `bin/brakeman` still exits 0.
+  **Measuring it requires re-running brakeman against an EMPTY ignore config** — that is the only
+  way to see the line of a warning you have already suppressed, and it is why the drift survived so
+  long unnoticed.
+  **The mechanism this arc established is confirmed:** brakeman reports the `Open3.capture3` **call**
+  line, not the line the argv array is built on. An earlier revision of the plan claimed the
+  opposite and was corrected.
+  **The lesson is the arc's own rule turned on itself.** The entry was fixed once mid-arc (59 → 74),
+  and then `72e4e3f` added the GLB refusal *above* the call, moving it to 88 — re-staling a number
+  that had been correct for three commits. A line number in a hand-maintained file is a
+  **measurement**, and it expires the moment anything above it moves. Re-measure in the same commit
+  that edits the file, or do not record it. Nothing about this ever threatened the gate — the
+  fingerprint does not hash the line — but that file's whole value is that a reader can check it
+  against the code.
+  **Considered and declined: a test asserting every recorded line matches brakeman's output.**
+  Brakeman runs in ~1 s, so cost is not the objection; the objection is that it would make the
+  default suite depend on the `brakeman` binary being installed, which no test does today, to guard
+  a field that is documentation rather than behaviour. Re-run the comparison by hand when editing a
+  file that has an entry — the two-line Python that does it is in this arc's history.
+- **`sidecar/boxes`'s licence obligation is closed; the wider one is not audited.** The test proves
+  each sidecar Dockerfile copies *a* LICENSE. It does not check that the text matches the licence
+  the upstream project actually ships under — for boxes.py that is GPL-3.0 and was checked by hand
+  here, but the guard would not catch a wrong file.
+
+## Earlier (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
 
 **Suite 1625 runs / 5655 assertions / 0 failures / 0 errors / 14 skips — byte-identical on chunk,
 share and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
@@ -131,6 +352,39 @@ production eager-load check.
 re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
 the **entire suite green**, because every other test derives its expectation from one side only.
 
+## CI cannot run — no Linux runner is registered (2026-07-29)
+
+**Open, and assigned elsewhere: a separate agent owns fixing CI + testing infrastructure.** Recorded
+here so nobody re-diagnoses it.
+
+All 7 jobs in `.github/workflows/ci.yml` declare `runs-on: [self-hosted, linux]`.
+`gh api repos/:owner/:repo/actions/runners` reports exactly one runner —
+`charless-MacBook-Pro-maker-mac`, macOS. So every job **queues forever** rather than failing: on PR #94
+they sat `pending` with **0 elapsed**, `mergeStateStatus` stayed UNSTABLE, and the merge needed
+`--admin`. CLAUDE.md §15 claimed all three runners were registered; corrected in the same commit.
+
+**The fix is NOT `ubuntu-latest`** — §15 forbids GitHub-hosted runners because they are the only billed
+ones. Either re-register a Linux runner, or retarget at the Mac, noting that `system-test` needs headless
+Chrome and `db:test:prepare` there and that the Mac then serialises every PR check.
+
+**Until then, verify locally — this is exactly what those jobs run:**
+
+    bin/rails test
+    LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
+    LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+      LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+      bin/rails test
+    bin/rails db:test:prepare test:system
+    bin/rubocop
+    bin/brakeman --no-pager >/dev/null 2>&1; echo "brakeman=$?"   # must be 0
+    bin/bundler-audit        >/dev/null 2>&1; echo "audit=$?"     # must be 0
+    bin/importmap audit      >/dev/null 2>&1; echo "js=$?"        # must be 0
+
+**Read the last three by EXIT CODE, not by output.** Until 2026-07-29 `bin/brakeman` exited 3, and
+because `scan_ruby` runs it as step 1 and `bin/bundler-audit` as step 2, the audit gate had **never
+executed** — the job looked like two gates and was zero. That is how five gems drifted behind published
+advisories, one of them High on the always-on `/cable` path.
+
 ## Still open after this arc (small, deliberate)
 
 - **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
@@ -144,6 +398,15 @@ the **entire suite green**, because every other test derives its expectation fro
 - **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
   too *high* fails nothing, because every other test derives its filler from the constant. Closed as
   far as it can be by one test pinning the literal.
+- **`ENABLE_TEST_SIGNUP` is inherited by the OVH deployment, knowingly.** `config/deploy.yml:64` sets it
+  in the **base** env.clear, which Kamal deep-merges, so `-d ovh` gets it too — the base comment's
+  justification ("this Unraid instance is a NON-production test/dev deploy") covers the LAN box only.
+  `POST /v1/test/users` mints **confirmed accounts with no email verification**. Left ON deliberately:
+  OVH is a prod-*like* test box, and blanking it at the base would break
+  `client/test-conformance/two-device-cfapi.ps1`, which enrolls against the deployed Unraid server
+  through this seam. The fix, when this stops being acceptable, is one line —
+  `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
+  defeat exactly this deep-merge. Recorded at the edit site too.
 
 ## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
 
@@ -855,6 +1118,10 @@ hardened, and connected to the browser**:
 - **Deploy.** `resvg` is added to the Dockerfile (build stage verified in `rust:1-slim`) and to CI's
   three test legs (idempotent, non-fatal). **STEP/OBJ/IGES stay `unsupported` in-deploy** — F3D is
   still not shipped in the image (deliberate; `Mesh` stays registered so a box with F3D renders them).
+  *(Superseded 2026-07-29 — **F3D is installed**: STEP/IGES/OBJ now render on the deployed image, via
+  the `Dockerfile`'s `f3d` stage. The more surprising half: `model_glb` is now refused outright, not
+  rendered — F3D's `--output` renders a raster and cannot emit a GLB by any CLI route, so a GLB was
+  never obtainable this way.)*
 - Suite **978 → 1023** runs, **identical on all three backend legs** (`bin/rails test`,
   `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`: 1023 / 3329 / 0 / 0 / 5). The preview layer touches
   no sync internals (§10 tripwire grep clean).
