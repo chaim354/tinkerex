@@ -34,11 +34,22 @@ module Projects
 
     # Two callers, one action: the grid's debounced JSON autosave (sends `data`) and the rename
     # form (sends `name`). Answering by format keeps them from needing separate routes.
+    #
+    # THE RESCUE IS NOT DECORATION. `update!` on an over-limit blob raises RecordInvalid, which for
+    # the autosave means a 500 the debounced fetch shows as NOTHING — trading unbounded growth for a
+    # save that fails silently while the user keeps typing. The JSON branch answers 422 with the
+    # message so the status indicator's error state can say it.
     def update
       @sheet.update!(sheet_params)
       respond_to do |format|
         format.json { render json: { status: "ok", updated_at: @sheet.updated_at } }
         format.html { redirect_to sheet_path(@sheet) }
+      end
+    rescue ActiveRecord::RecordInvalid => e
+      respond_to do |format|
+        format.json { render json: { status: "error", error: e.record.errors.full_messages.to_sentence },
+                             status: :unprocessable_entity }
+        format.html { redirect_to sheet_path(@sheet), alert: e.record.errors.full_messages.to_sentence }
       end
     end
 

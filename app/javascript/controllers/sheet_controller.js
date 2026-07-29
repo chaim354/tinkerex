@@ -136,12 +136,21 @@ export default class extends Controller {
         },
         body: JSON.stringify({ sheet: { data: payload } })
       })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) {
+        // A 422 carries a REASON the user can act on ("data is too large…"), and a connection
+        // message would be an actively wrong diagnosis of it — the sheet is not going to save on
+        // the next attempt either. Anything without a parseable body falls back below.
+        const reason = await response.json().then((b) => b.error).catch(() => null)
+        throw new Error(reason || `HTTP ${response.status}`)
+      }
       this.setStatus("Saved")
     } catch (error) {
       // An autosave that fails silently is indistinguishable from one that worked, which is the
       // whole risk of choosing autosave over a Save button.
-      this.setStatus("Not saved — check your connection", true)
+      const detail = error?.message && !error.message.startsWith("HTTP ")
+        ? error.message
+        : "check your connection"
+      this.setStatus(`Not saved — ${detail}`, true)
     }
   }
 
