@@ -708,8 +708,14 @@ In the final stage, after the existing `COPY --from=pdfium /tmp/pdfium /usr/loca
 append:
 
 ```dockerfile
-# F3D → Maker::Previews::Mesh#available? is true, so .obj/.step/.stp/.iges/.igs get a thumbnail (and
-# the model_glb kind gets a GLB) instead of falling through to `unsupported`.
+# F3D → Maker::Previews::Mesh#available? is true, so .obj/.step/.stp/.iges/.igs get a thumbnail
+# instead of falling through to `unsupported`.
+#
+# CORRECTED after implementation: this comment originally also promised "(and the model_glb kind
+# gets a GLB)". F3D CANNOT emit a GLB by any CLI route — `--output` renders a raster and `--help`
+# has no export option; `.glb` is an INPUT format only. The real Dockerfile dropped the clause; the
+# plan kept it. `render(kind: "model_glb")` now RAISES `GeneratePreviewJob::Unsupported` rather
+# than returning PNG bytes mislabelled `model/gltf-binary`.
 #
 # F3D_BIN RATHER THAN A PATH SYMLINK: the renderer already reads ENV["F3D_BIN"], and the final stage
 # has switched to USER 1000:1000 by the time these COPYs run, so a `RUN ln -s` into /usr/local/bin
@@ -792,6 +798,13 @@ bin/rails test
 
 Expected: `1626 runs, … 0 failures, 0 errors, 15 skips` — one more run and one more skip than the
 baseline, from the new OBJ test skipping on this f3d-less Mac.
+
+**SUPERSEDED by what was measured (Task 10).** Two premises here turned out wrong. (a) This step's
+own review added a **third** test (the `model_glb` refusal), so the arc lands at **1628 runs**, not
+1627. (b) The Mac is **no longer f3d-less** — F3D 3.5.0 is installed on the build box, so the
+f3d-gated tests **run** and the suite reports **11 skips**; with `F3D_BIN=/nonexistent/f3d` it
+reports `1628 runs, 5667 assertions, 14 skips`, which is what CI (no F3D) will see. Read the final
+numbers off Task 10, not off this line.
 
 - [ ] **Step 14: Commit**
 
@@ -1132,9 +1145,13 @@ LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-e
 bin/rails db:test:prepare test:system
 ```
 
-Expected: `1627 runs, … 0 failures, 0 errors, 15 skips` on each of the three legs (baseline 1625, +1 OBJ
-test in Task 6, +1 hygiene test in Task 5; the OBJ test skips without f3d, so skips go 14 → 15), and
-`6 runs, 28 assertions, 0 failures` on system. **If the three legs disagree with each other, stop** —
+Expected — **MEASURED, replacing this plan's prediction of `1627 … 15 skips`**:
+`1628 runs, 5678 assertions, 0 failures, 0 errors, 11 skips` on each of the three legs, and
+`6 runs, 28 assertions, 0 failures` on system. Baseline 1625, **+3** not +2: +1 OBJ test (Task 6),
++1 hygiene test (Task 5), +1 `model_glb`-refusal test (Task 6's review). **Skips are 11 here and 14
+in CI**, and the difference is not a discrepancy — F3D 3.5.0 is installed on this build box so the
+f3d-gated tests run, while CI has no F3D. Confirm with
+`F3D_BIN=/nonexistent/f3d bin/rails test` → `1628 runs, 5667 assertions, 14 skips`. **If the three legs disagree with each other, stop** —
 that is the standing invariant this repo has caught several one-leg bugs with.
 
 - [ ] **Step 2: Re-run the three architectural tripwires**
@@ -1244,6 +1261,13 @@ deferral:
 **Counts used consistently:** baseline 1625/5655/14 skips → 1626 after Task 6's OBJ test (+1 run, +1
 skip) → 1627 after Task 5's hygiene test (+1 run). Task 6 Step 13 says 1626/15, Task 10 Step 1 says
 1627/15. Task 5 Step 5 and Task 9 Step 5 both expect `deploy_hygiene_test.rb` at 3 runs.
+
+**MEASURED OUTCOME (Task 10): `1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips`,
+identical on chunk, share and s3.** The prediction above was wrong in two independent ways, both
+recorded rather than quietly overwritten: **+3 runs, not +2** (Task 6's review added a third test,
+the `model_glb` refusal), and **skips went DOWN to 11, not up to 15** — installing F3D on the build
+box makes the f3d-gated tests run instead of skip, which the plan wrote before F3D existed here.
+Without F3D the same tree gives `1628 / 5667 / 14 skips`, which is the CI number.
 
 **Names used consistently:** `Maker::Previews::Mesh` (`available?`, `render`, `to_output`,
 `EXTENSIONS`, `F3D`), `Maker::Previews::ImageThumb#render`, `Maker::FileAttachment.role_for`,
