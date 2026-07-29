@@ -111,13 +111,30 @@ whose extension now has an available renderer is what closes it — `app/service
 is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
 migration-shaped operation, not an audit fix) and left as an open item below.
 
-**The image cost, honestly, because the totals disagree with each other.** Per-layer from
-`docker history`: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer = **205 MB** — **~526 MB of
-new content**, against a base image of **229.8 MB**, roughly tripling it. **296 MB of the 307 MB
-`/opt/f3d` tree is `lib/`** — bundled VTK/OCCT/GDAL/USD that ships whether or not a deployment ever
-opens a STEP file. **`docker image inspect --format '{{.Size}}'` says 229.8 → 387.5 MB while
-`docker image ls` says 230 MB → 1.57 GB: a 4x disagreement on the F3D image, from two commands that
-agree exactly on the base.** Neither total is trustworthy here; **quote the per-layer numbers.**
+**The image cost — SETTLED BY THE DEPLOY, after two local tools disagreed 4x.** On the Unraid box,
+which is the only measurement that decides anything: **887 MB → 1.57 GB, +683 MB (+77 %)**. Per-layer
+from `docker history` on the build host agrees: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer =
+**205 MB**. **296 MB of the 307 MB `/opt/f3d` tree is `lib/`** — bundled VTK/OCCT/GDAL/USD that ships
+whether or not a deployment ever opens a STEP file.
+
+**An earlier revision of this paragraph said "roughly tripling", against a locally-built "before"
+image of 229.8 MB. That baseline was wrong** — the real predecessor on the box is 887 MB, so the local
+before-image was not the same artifact and the ratio taken from it meant nothing.
+**`docker image inspect --format '{{.Size}}'` reported 229.8 → 387.5 MB while `docker image ls`
+reported 230 MB → 1.57 GB** — a 4x disagreement between two commands that agreed *exactly* on the
+base, and **the deploy proved `ls` right**. The lesson is this arc's own in a new place: when two
+instruments disagree, do not average them and do not pick the reassuring one — **find the instrument
+that decides.** Here that was the machine the image actually lands on.
+
+**This is also what filled the box, and it is worth budgeting for.** The first deploy attempt failed
+with `mkdir: No space left on device` at 31 G / **100 %** full. Kamal aborted while acquiring its lock,
+**before touching the running container**, so the old version stayed up and serving — the failure mode
+is safe, and a retry costs nothing. Dangling images reclaimed only **144 MB** (they share layers with
+tagged ones, so the `docker system df` "reclaimable" figure badly overstated them); the real reclaim
+was **7.5 GB of Docker build cache**, which is pure dead weight on that host because images are
+cross-built on the Mac and the box only ever pulls. 99 % → **80 %**. All three destinations pull the
+same tag, so one image's growth is paid once — but two versions are retained for rollback, so the next
+image growth costs roughly double its own size.
 
 **The runtime package list is 4 packages and it is DERIVED, not guessed** —
 `libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri`. `readelf -d` across the binary and every bundled
