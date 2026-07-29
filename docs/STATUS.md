@@ -94,6 +94,23 @@ export option; `.glb` is an **input** format for F3D, not an output one. The ref
 `GeneratePreviewJob::Unsupported`, which maps to the terminal **`unsupported`** status — deliberately
 not `failed`, which a re-POST re-enqueues, so a client asking for the impossible would retry forever.
 
+**⚠ DEPLOYING THIS DOES NOT MAKE EXISTING CAD FILES SPROUT THUMBNAILS, and that will look like the
+feature is broken.** `available?` going true is not retroactive. Every `.obj`/`.step`/`.stp`/`.iges`/
+`.igs` already seen on the deployed boxes carries `status: "unsupported"`, written by the job's own
+`renderer toolchain unavailable` gate — and **nothing re-enqueues an `unsupported` row**:
+`Maker::Previews::Enqueue` returns early unless the row is new or `failed`;
+`V1::Maker::PreviewsController` resets to `pending` on the same two conditions; and
+`FilesController#backfill_thumbnails` skips any node that already has a row for the current
+`content_token`, whatever that row's status. Driven, not read: calling `Enqueue.call` on an
+`unsupported` row leaves it `unsupported` and enqueues nothing. Registry has mapped these extensions
+to `Mesh` since 2026-07-20 and `backfill_thumbnails` walks every renderable file in a viewed folder,
+so those rows almost certainly exist on all three deployed backends already. **Consequence: the
+feature reaches only content that arrives after the deploy; every CAD file already in a library keeps
+its static "unsupported" badge until its bytes change.** A one-off sweep clearing `unsupported` rows
+whose extension now has an available renderer is what closes it — `app/services/maker/previews/lbrn_backfill.rb`
+is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
+migration-shaped operation, not an audit fix) and left as an open item below.
+
 **The image cost, honestly, because the totals disagree with each other.** Per-layer from
 `docker history`: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer = **205 MB** — **~526 MB of
 new content**, against a base image of **229.8 MB**, roughly tripling it. **296 MB of the 307 MB
@@ -169,6 +186,14 @@ brakeman line below, and the same lesson as the advisory count above.
 
 *(Distinct from the older `## Still open after this arc` section further down, which belongs to the
 project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced above lives.)*
+
+- **Existing CAD previews stay `unsupported` after the F3D deploy — a backfill sweep is needed.**
+  Detailed in item 3 above. Nothing re-enqueues an `unsupported` row, so every `.obj`/`.step`/`.iges`
+  already in a deployed library keeps its badge until its bytes change, and the shipped feature will
+  read as broken to anyone looking at files they already had. The fix is a one-off sweep clearing
+  `unsupported` rows whose extension now resolves to an available renderer, modelled on
+  `app/services/maker/previews/lbrn_backfill.rb`. Deliberately not done in an audit-fix branch: it is
+  a data migration over deployed rows, and it wants its own verification against a real library.
 
 - **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —
   but the lesson is the one worth keeping.** All four entries were verified against brakeman's own
