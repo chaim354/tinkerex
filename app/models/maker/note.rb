@@ -8,6 +8,7 @@ module Maker
     belongs_to :user
 
     has_rich_text :body
+    include Maker::TextOnlyRichText
 
     validates :node_id, presence: true
     validates :body, presence: true

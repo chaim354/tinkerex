@@ -488,6 +488,19 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
      verb that more than one caller performs does not have one. (Excluded from the count on
      purpose: the `require_capability!` gates and the views that pick an upload FORM. Those select
      a UI, which is `port_writable`'s stated one job — they do not open a door to the bytes.)
+     **ONE file-type vocabulary, as of 2026-07-29.** `FilesHelper::EXT_FAMILIES` (the Files-page
+     filter chips) is no longer a hand-written list that could disagree with
+     `Maker::FileAttachment::ROLE_LABELS` (the project panel headings) — it is **derived** from
+     `ROLE_BY_EXT`, grouped by role and labelled/ordered by `ROLE_LABELS`, with `other` dropping out
+     because nothing maps to it. Add an extension in **`ROLE_BY_EXT` only**; the chips follow.
+     **Two consequences a future editor must know:** every extension there must satisfy
+     `FilesController::EXT_RE` (`/\A[a-z0-9]{1,8}\z/`) or it renders a chip that links and silently
+     does nothing (`markdown` is the current bound at exactly 8 chars), and the `role` column is
+     **behavioural** — cover-image selection reads `image`/`model`, and
+     `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so `pdf`
+     must stay `instructions`. A THIRD copy still exists in `importer_controller.js`'s `roleFor`
+     and has drifted; it is browser-only and the server re-derives authoritatively, so nothing is
+     broken — see `docs/STATUS.md`.
 10. **Split the maker layer from the file layer** (2026-07-14) so a **web-only deployment can be
     backed by a plain network share or the user's own S3** instead of the FastCDC chunk store —
     the Immich/Photoprism "point it at my existing NAS" on-ramp. **✅ COMPLETE (2026-07-17,
@@ -1015,6 +1028,17 @@ Rails on the Unraid VM → content-addressed chunk in SeaweedFS, hash-matched on
 
 - Permissive licenses only (§9); check new deps.
 - **Keep bytes out of Rails** — presigned URLs, control plane only.
+  **Active Storage's `direct_uploads` route is REMOVED** (2026-07-29), because it was the one
+  standing hole in this: `ActiveStorage::DirectUploadsController` descends from
+  `ActiveStorage::BaseController`, **not** `ApplicationController`, so it shipped live and
+  **unauthenticated** — an anonymous POST minted a real `Blob` and returned a signed upload URL.
+  `config/routes.rb` shadows it with a 404. **The shadow path derives from
+  `ActiveStorage.routes_prefix` and must never be hard-coded** (the engine scopes its own routes to
+  that prefix, so a literal silently stops shadowing anything if it is ever configured), and
+  `draw_routes = false` is NOT the fix — `Maker::Preview` uses `has_one_attached :asset` served via
+  `url_for`, so the blob routes are load-bearing. Verify by driving a real request:
+  `recognize_path` reports the engine's route for a proc endpoint and is the wrong instrument.
+  Rich text is text-only on the server too (`Maker::TextOnlyRichText`), not just in the editor.
 - **Local-first**: metadata reads hit local SQLite, never the WAN.
 - Content-addressed chunks + immutable versions everywhere; **keep versions** for restore.
 - Adapter-agnostic server code (SQLite + Postgres) without perf compromise.

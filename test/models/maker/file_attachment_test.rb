@@ -52,15 +52,15 @@ module Maker
       assert_equal "instructions", Maker::FileAttachment.role_for("manual.pdf")
       assert_equal "gcode", Maker::FileAttachment.role_for("print.gcode")
       assert_equal "source_archive", Maker::FileAttachment.role_for("bundle.zip")
-      assert_equal "other", Maker::FileAttachment.role_for("readme.txt")
+      assert_equal "document", Maker::FileAttachment.role_for("readme.txt")
       assert_equal "other", Maker::FileAttachment.role_for("no-extension")
     end
 
     # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
     # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
-    test "the role vocabulary is exactly these eight values" do
-      assert_equal %w[cad_source gcode image instructions model other source_archive vector],
+    test "the role vocabulary is exactly these nine values" do
+      assert_equal %w[cad_source document gcode image instructions model other source_archive vector],
                    Maker::FileAttachment::ROLES.sort
     end
 
@@ -69,6 +69,27 @@ module Maker
         att = @item.file_attachments.build(user: @user, node_id: "n", role:)
         assert att.valid?, "expected #{role} to be a valid role"
       end
+    end
+
+    # The extension set is DERIVED from what this app already believes, not invented here:
+    # Maker::Previews::Registry already routes txt/md/markdown/json to TextThumb, and
+    # FilesHelper::EXT_FAMILIES already grouped txt/md/csv as "Documents". This is the union.
+    test "the document role covers the text formats the app already recognises" do
+      %w[notes.txt readme.md readme.markdown data.json cutlist.csv].each do |name|
+        assert_equal "document", Maker::FileAttachment.role_for(name), "expected #{name} to be a document"
+      end
+    end
+
+    test "document is accepted by the validation" do
+      att = @item.file_attachments.build(user: @user, node_id: "n", role: "document")
+      assert att.valid?
+    end
+
+    # pdf STAYS `instructions`: Models::AttachmentsController dispatches ExtractPdfMetadataJob on
+    # exactly that value, so folding pdf into `document` would silently stop PDF metadata
+    # extraction. This test is the tripwire for that.
+    test "pdf stays instructions, not document" do
+      assert_equal "instructions", Maker::FileAttachment.role_for("manual.pdf")
     end
   end
 end

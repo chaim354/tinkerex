@@ -44,35 +44,18 @@ module FilesHelper
     File.extname(node.name).delete(".").upcase.presence || "—"
   end
 
-  # The chip row's vocabulary: extensions this app already knows something about — it can thumbnail
-  # them (Maker::Previews::Registry::RENDERERS), give them a role on a project
-  # (Maker::FileAttachment::ROLE_BY_EXT) or preview them on the file page
-  # (FilesController#preview_kind) — grouped so the row reads as a maker's shelf rather than an
-  # alphabet.
+  # DERIVED, not hand-written, and that is the point. These chips and the project Files panel's
+  # headings were two independent lists that disagreed: `.svg`/`.dxf`/`.lbrn2` read "2D / laser"
+  # here and "Vector" there, and the five cad_source extensions had no chip at all. One source of
+  # truth now — Maker::FileAttachment's ROLE_BY_EXT for the grouping, ROLE_LABELS for the label and
+  # the order — so they cannot drift again. Pinned by test/helpers/files_helper_test.rb.
   #
-  # HAND-PICKED, NOT DERIVED from those three, and that is the point rather than laziness: their
-  # union includes `rb`, `cpp`, `yaml` and `markdown`, which is a programmer's file list, not the
-  # shelf a maker wants to click. Membership and grouping are editorial; the only claim made here
-  # is that at least one of the three already recognises every entry. How MANY recognise it varies
-  # and means nothing — `zip` is in ROLE_BY_EXT alone, `csv` in #preview_kind alone, `dxf` and
-  # `lbrn2` in the Registry alone — so do not read the list as a union of any two of them.
-  #
-  # A CURATED LIST, NOT REAL FACET COUNTS, and the reason is cost: counting "you have 214 .stl
-  # files" means plucking every filename in the library on EVERY Files page load, including plain
-  # folder browsing that never looks at the chips. A chip that matches nothing is a harmless dead
-  # end; a query the folder view pays for and never reads is not. The free-text field beside the
-  # row is what covers a format this list has never heard of.
-  #
-  # Every value here must satisfy FilesController::EXT_RE — a chip the controller then drops is a
-  # control that renders, links, and silently does nothing. files_type_filter_test.rb's "every
-  # chip in the row is an extension the controller actually accepts" clicks all of them.
-  EXT_FAMILIES = {
-    "3D models"  => %w[stl 3mf obj step stp],
-    "2D / laser" => %w[svg dxf lbrn2],
-    "Documents"  => %w[pdf txt md csv],
-    "Images"     => %w[png jpg jpeg webp],
-    "Machine"    => %w[gcode zip]
-  }.freeze
+  # `other` drops out on its own: it is the fallback for UNRECOGNISED extensions, so no extension
+  # maps to it and filter_map skips the empty family rather than rendering an empty labelled row.
+  EXT_FAMILIES = Maker::FileAttachment::ROLE_LABELS.filter_map { |role, label|
+    exts = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, r| r == role }.keys.freeze
+    [ label, exts ] if exts.any?
+  }.to_h.freeze
 
   # The URL for toggling `ext` into or out of the active set.
   #

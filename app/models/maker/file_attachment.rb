@@ -12,6 +12,7 @@ module Maker
       "model"          => "Models",
       "image"          => "Images",
       "instructions"   => "Instructions",
+      "document"       => "Documents",
       "vector"         => "Vector",
       "cad_source"     => "CAD source",
       "gcode"          => "G-code",
@@ -21,6 +22,12 @@ module Maker
 
     ROLES = ROLE_LABELS.keys.freeze
 
+    # EVERY EXTENSION HERE MUST SATISFY `FilesController::EXT_RE` (/\A[a-z0-9]{1,8}\z/), because
+    # FilesHelper::EXT_FAMILIES now derives the Files-page filter chips from this hash. An extension
+    # the controller then drops renders a chip that links and silently does nothing. The warning
+    # lives HERE, at the edit site, rather than beside EXT_FAMILIES where it used to: extensions are
+    # added in this file, and whoever adds one has no reason to go looking two files away.
+    # `markdown` is the current bound at exactly 8 characters. Pinned by files_helper_test.rb.
     ROLE_BY_EXT = {
       "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
@@ -31,7 +38,15 @@ module Maker
       # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
       # — proprietary, no FOSS parser, you open them in the tool that made them.
       "scad" => "cad_source", "f3d" => "cad_source", "fcstd" => "cad_source",
-      "sldprt" => "cad_source", "sldasm" => "cad_source"
+      "sldprt" => "cad_source", "sldasm" => "cad_source",
+      # Text formats. DERIVED, not chosen here: Maker::Previews::Registry already routes
+      # txt/md/markdown/json to TextThumb, and FilesHelper::EXT_FAMILIES already grouped txt/md/csv
+      # as "Documents" — this is the union of the two sets the app already had.
+      #
+      # `pdf` is NOT here on purpose: it stays `instructions` because
+      # Models::AttachmentsController dispatches ExtractPdfMetadataJob on that exact value.
+      "txt" => "document", "md" => "document", "markdown" => "document",
+      "json" => "document", "csv" => "document"
     }.freeze
 
     # Best-effort role from a filename's extension; unknown -> "other".
