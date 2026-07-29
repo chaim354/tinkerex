@@ -82,8 +82,50 @@ RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDF
       -o /tmp/pdfium && chmod +x /tmp/pdfium
 
 
+# ---- F3D: mesh + CAD → PNG thumbnails (BSD-3 — CLAUDE.md §9). The one renderer here that is NOT a
+# small static binary: the tarball carries its own VTK, OCCT, GDAL, USD etc. in lib/, and through the
+# OCCT plugin it is what gives STEP/IGES a preview at all. OCCT is LGPL and stays process-isolated in
+# the f3d subprocess — the same posture §9 takes for the GPL sidecars and the FUSE drivers, and the
+# reason Maker::Previews::Mesh shells out rather than linking. (The tarball ships OCCT's own LGPL
+# licence text at share/licences/occt/, which the COPY below carries into the image with it.)
+#
+# xz-utils IS required: ruby:slim has GNU tar but no `xz`, and `tar -J` shells out to it, so the
+# plain `tar -xJf` fails with "Cannot exec". Installing it here rather than switching to the .tar.gz
+# asset keeps the download at 58 MB instead of 87 MB, and this whole stage is thrown away.
+# The deploy builds linux/amd64 (config/deploy.yml `arch: amd64`), so x86_64 is the right asset.
+FROM base AS f3d
+ARG F3D_VERSION=3.5.0
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y xz-utils && \
+    curl -fsSL "https://github.com/f3d-app/f3d/releases/download/v${F3D_VERSION}/F3D-${F3D_VERSION}-Linux-x86_64.tar.xz" \
+      -o /tmp/f3d.tar.xz && \
+    mkdir -p /opt/f3d && \
+    tar -xJf /tmp/f3d.tar.xz -C /opt/f3d --strip-components=1 && \
+    rm /tmp/f3d.tar.xz && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
+
+
 # Final stage for app image
 FROM base
+
+# F3D's runtime libraries — must precede the USER switch below, since apt needs root. These are the
+# only packages in this image that exist for ONE renderer; every other one is a static binary, which
+# is why they are listed here rather than folded into `base`.
+#
+# The list is DERIVED, not guessed: `readelf -d` across the f3d binary and every bundled .so shows
+# libX11 as the only external NEEDED beyond glibc/libstdc++/libcrypto (all already in base). The
+# rest is the GL stack, which VTK dlopens — invisible to ldd, so it was settled by running a real
+# render. F3D renders OFFSCREEN (Maker::Previews::Mesh always passes --output): no X server, no GPU,
+# so Mesa's software EGL is what actually draws.
+#   libegl1        the vendor-neutral GLVND loader — DISPATCH ONLY, it draws nothing on its own
+#   libegl-mesa0   the Mesa EGL driver the loader dlopens; WITHOUT IT EGL finds no device and the
+#                  render fails, which is why libegl1 alone is not enough
+#   libgl1-mesa-dri  the gallium/llvmpipe software rasterizer that does the actual drawing
+# Verified sufficient by rendering both tetra.obj and a real 4.7 MB STEP file to PNG in this image.
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y \
+      libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # Run and own only the runtime files as a non-root user for security
 RUN groupadd --system --gid 1000 rails && \
@@ -105,6 +147,17 @@ COPY --from=resvg /out/bin/resvg /usr/local/bin/resvg
 # The pdfium binary on PATH → Maker::Previews::Pdf#available? is true, so PDF uploads get a page-1
 # PNG grid thumbnail. (The detail view embeds the whole PDF via the browser's own viewer — no tool.)
 COPY --from=pdfium /tmp/pdfium /usr/local/bin/pdfium
+
+# F3D → Maker::Previews::Mesh#available? is true, so .obj/.step/.stp/.iges/.igs get a thumbnail
+# instead of falling through to `unsupported`.
+#
+# F3D_BIN RATHER THAN A PATH SYMLINK: the renderer already reads ENV["F3D_BIN"], and the final stage
+# has switched to USER 1000:1000 by the time these COPYs run, so a `RUN ln -s` into /usr/local/bin
+# would need root back. Pointing the existing knob at the tree is the smaller change and keeps F3D's
+# own bin/../lib layout intact — the binary resolves its bundled libraries and its OCCT plugin
+# relative to itself, so it must NOT be lifted out of the tree the way the static binaries above are.
+COPY --from=f3d /opt/f3d /opt/f3d
+ENV F3D_BIN="/opt/f3d/bin/f3d"
 
 # Entrypoint prepares the database.
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
