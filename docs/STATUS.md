@@ -73,6 +73,65 @@ tombstone test **GREEN** — `stat_all` omits a deleted node as an absent key, s
 filter all along and the test never pinned the scope it appeared to. Said so at both sites rather
 than leaving a test whose name claims more than it checks.
 
+### Follow-up (same branch): a truncated setting, an unrendered photo, and a palette NOT shipped
+
+**Suite 1633 → 1645, identical on all three legs. Prompted by "did you base it off
+[jlucaso1/lbrn2-to-svg](https://github.com/jlucaso1/lbrn2-to-svg)?" — no, and reading it was still
+worth it.** It is MIT (so §9 would have allowed borrowing) and it independently arrived at the same
+dialect: `<XForm>` as a child element, `V<x> <y>c0x..` vert lists, `L`/`B` prims, `VertID`/`PrimID`
+instancing, `<Children>` groups, and the Text `BackupPath` replacing rather than composing with its
+Text. **Two implementations from different evidence agreeing is the strongest corroboration the
+dialect reading has.** Cross-checked ours against its six fixtures: bounds match all six within our
+1 dp rounding, and the drawn geometry is visually identical.
+
+**`.to_i` IN THE RECIPE PANELS TRUNCATED EVERY FRACTIONAL SETTING.** A layer cut at 6.67 mm/s
+rendered **"6 mm/s"** — not a rounding nit but a number the machine will not run, displayed as
+though it were the setting, and the same class of error as reading a MillMage `ToolDef` instead of
+its `Operation`. Live on `reference card.lbrn2`. **Invisible to the suite because every checked-in
+`.lbrn2` fixture uses whole speeds and powers** — the value that exposed it came off a real file.
+Now one `FilesHelper#recipe_num` for both panels: round (never truncate) to 3 dp — the precision
+`MageMetadata#num` already stores at — then drop a trailing zero that carries no information, so
+`50.0` prints `50` and `6.67` prints `6.67`. Mutation-checked: restoring truncation turns the new
+page-driven test red.
+
+**A placed photo previewed as an EMPTY BOX.** `emit_shape` routed `Bitmap` through the `Rect` arm —
+four corners, `fill="none"` — so a `.lbrn2` built around a traced or engraved image drew its bounding
+rectangle and nothing inside. Now emits `<image>` with the inlined PNG. Three refusals fall back to
+the old outline, each for its own reason: **not axis-aligned** (an `<image>` is upright; drawing a
+rotated one unrotated puts the photo where it is not — the call `Ellipse` already makes),
+**not base64** (`Data` is bytes from an uploaded file about to enter an SVG attribute, and a `"`
+would close it — the guard REQUIRES the alphabet rather than escaping after), and **not a PNG**
+(checked on the first 16 characters, because this attribute is routinely megabytes — it is why
+`parse_document` needs `huge`).
+
+**ORIENTATION WAS MEASURED, NOT REASONED, AND THE FIXTURE COULD NOT HAVE SETTLED IT.** `apply`
+negates y, so whether the raster needs flipping back is a real question — and the reference carries
+`-0.252` in its own image matrix, so neither implementation answers it by inspection. The reference's
+`image` fixture is a **symmetric grid**, which renders identically upside down. Pinned with an 8×8
+red-over-blue PNG built by hand in the test, rasterized, and pixel-sampled: red must land on top.
+Mutation-checked with the flip the reference's matrix form implies — it turns the test red.
+
+**THE PALETTE IS DELIBERATELY NOT SHIPPED, and the corpus is why.** The reference colours layers
+from a hard-coded 8-entry table indexed `cutIndex % 8`; `cut_colors`'s long-standing comment declines
+to guess ~30 colours LightBurn never writes into the file. Tested the guess against the 58-file
+corpus, using each file's embedded thumbnail — LightBurn's own render — as the oracle. On a tight
+saturation filter the single-layer files read **0 → black, 1 → blue, 2 → red, 6 → cyan**, against the
+reference's **1 → red, 2 → green**: **copying that table would have coloured two of the four
+checkable indices WRONG.** Widening the filter then showed the oracle is contaminated anyway —
+thumbnails carry placed photos and engraved raster, so one file yields several unrelated hues
+(`idx 2` reads red, orange and yellow at once). **The corpus does not determine the palette, so the
+existing decision stands** — and now rests on evidence rather than on caution.
+
+**Fills were reported as a gap and are NOT one, which is a correction to this arc's own earlier
+claim.** The filled `k.svg`/`crucifix.svg` in the reference's tree are **stale committed artifacts**;
+its live `styleUtils.ts` emits `fill:none` on every path, exactly as we do. Doing fills properly
+(mode-driven, `Scan`/Fill filled and `Cut` stroked) additionally needs one shape's subpaths emitted
+as a single `fill-rule="evenodd"` path or a letter's counter paints over — a change to the yield
+contract. **Measured payoff today: zero.** Only files with no embedded thumbnail reach this renderer
+— **200 of 217** live `.lbrn2`/`.mage` previews use LightBurn's own — and of the three that do
+fall back, two are `.mage` (operations, not Cut/Scan layers) and none contains a bitmap. Left alone
+on purpose.
+
 ### Left open by this fix
 
 - **Every save leaks a preview row and its ActiveStorage blob.** The row for the superseded content
