@@ -14,8 +14,23 @@ Rails.application.routes.draw do
   # url_for, so the blob routes must survive. An app-drawn route DOES win over the engine's — this
   # was verified by driving a real request, because `recognize_path` reports the engine's route for
   # a proc endpoint (it carries no controller/action) and is the wrong instrument for the check.
-  post "/rails/active_storage/direct_uploads", to: proc {
-    [ 404, { "Content-Type" => "text/plain" }, [ "Not Found" ] ]
+  #
+  # THE PATH MUST BE DERIVED, NEVER A LITERAL. The engine wraps its own direct_uploads route (and
+  # every other Active Storage route) in `scope ActiveStorage.routes_prefix` (activestorage's own
+  # config/routes.rb), not a hard-coded "/rails/active_storage" — that's only the DEFAULT. Reconfigure
+  # config.active_storage.routes_prefix and a literal shadow here silently guards nothing: the old
+  # path 404s (nothing left to hit), the engine's route reappears live at the NEW prefix, and an
+  # anonymous POST there mints a real Blob again — the original hole, reopened by a one-line config
+  # change nobody would think to connect to this file. `ActiveStorage.routes_prefix` is assigned by
+  # the engine's own `active_storage.configs` initializer, which runs during app boot strictly before
+  # routes are ever drawn or reloaded — so reading it here, at draw time, is safe.
+  #
+  # `bin/rails routes` still lists the engine's own direct_uploads entry further down the table
+  # (routes are tried in declaration order, and ours is declared first) — that is expected and
+  # correct. It is SHADOWED, not removed from the table; an auditor grepping the route list will
+  # still see it and should not read its presence there as the hole being open.
+  post "#{ActiveStorage.routes_prefix}/direct_uploads", to: proc { |_env|
+    [ 404, { "content-type" => "text/plain" }, [ "Not Found" ] ]
   }
 
   # --- Web UI (server-rendered file browser) ---
