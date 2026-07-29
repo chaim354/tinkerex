@@ -137,20 +137,23 @@ export default class extends Controller {
         body: JSON.stringify({ sheet: { data: payload } })
       })
       if (!response.ok) {
-        // A 422 carries a REASON the user can act on ("data is too large…"), and a connection
-        // message would be an actively wrong diagnosis of it — the sheet is not going to save on
-        // the next attempt either. Anything without a parseable body falls back below.
+        // We DID reach the server and it refused. A 422 carries a reason the user can act on
+        // ("data is too large…"), and a connection message would be an actively wrong diagnosis:
+        // this will not succeed on the next attempt either. Returning here is what keeps the catch
+        // below meaning only one thing.
         const reason = await response.json().then((b) => b.error).catch(() => null)
-        throw new Error(reason || `HTTP ${response.status}`)
+        this.setStatus(`Not saved — ${reason || `the server refused it (HTTP ${response.status})`}`, true)
+        return
       }
       this.setStatus("Saved")
     } catch (error) {
-      // An autosave that fails silently is indistinguishable from one that worked, which is the
-      // whole risk of choosing autosave over a Save button.
-      const detail = error?.message && !error.message.startsWith("HTTP ")
-        ? error.message
-        : "check your connection"
-      this.setStatus(`Not saved — ${detail}`, true)
+      // We never reached a response, so this is a transport failure. An earlier draft told the two
+      // cases apart by sniffing error.message for an "HTTP " prefix; that routed the server's
+      // refusals correctly but then showed the user their BROWSER'S jargon for an actual outage
+      // ("Failed to fetch" / "Load failed" / "NetworkError when attempting to fetch resource") —
+      // regressing the one scenario this wording exists for. Handling !response.ok above and
+      // returning removes the need to guess.
+      this.setStatus("Not saved — check your connection", true)
     }
   }
 

@@ -114,5 +114,12 @@ module Maker
       sheet = @project.sheets.build(user: @user, name: "Weird", data: { "cells" => "nonsense" })
       assert sheet.valid?, sheet.errors.full_messages.join(", ")
     end
+
+    # Pins the CONSTANT, not merely the behaviour. Every other test here derives its filler from
+    # MAX_DATA_BYTES, so raising the constant rescales them identically and nothing goes red — the
+    # coverage catches a limit set too LOW and says nothing about one set too high.
+    test "the limit is one mebibyte" do
+      assert_equal 1_048_576, Maker::Sheet::MAX_DATA_BYTES
+    end
   end
 end

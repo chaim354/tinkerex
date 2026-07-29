@@ -77,12 +77,18 @@ module Maker
     # Deliberately says NOTHING about shape. `data` is permitted whole by the controller and
     # defended at render time by the `cells`/`columns` readers; a validation that also rejected a
     # malformed blob would turn a recoverable empty grid into a save the user cannot complete.
+    #
+    # RAW DELIMITED BYTES, NOT number_to_human_size: the sheet grows by debounced autosave one
+    # keystroke at a time, so a user's first rejection is always just a few bytes over the cap —
+    # and number_to_human_size rounds both sides identically for roughly the first 5,242 bytes of
+    # overage, producing "is too large (1 MB; limit 1 MB)" for exactly the case that hits first.
+    # `precision:` does not fix this; it is the same rounding at a different threshold.
     def data_within_size_limit
       return if data.nil?
       size = data.to_json.bytesize
       return if size <= MAX_DATA_BYTES
-      errors.add(:data, "is too large (#{ActiveSupport::NumberHelper.number_to_human_size(size)}; " \
-                        "limit #{ActiveSupport::NumberHelper.number_to_human_size(MAX_DATA_BYTES)})")
+      errors.add(:data, "is too large (#{ActiveSupport::NumberHelper.number_to_delimited(size)} bytes; " \
+                        "limit #{ActiveSupport::NumberHelper.number_to_delimited(MAX_DATA_BYTES)} bytes)")
     end
   end
 end

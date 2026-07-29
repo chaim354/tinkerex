@@ -57,5 +57,14 @@ module Projects
       assert_redirected_to sheet_path(@sheet)
       assert_equal "Renamed", @sheet.reload.name
     end
+
+    # The rescue's HTML branch. Mutation-verified as the one shipped line no other test in this repo
+    # touches: deleting `format.html` from the rescue leaves all 1605 tests green.
+    test "an over-limit HTML save redirects with the reason in the alert" do
+      filler = "x" * (Maker::Sheet::MAX_DATA_BYTES + 1000)
+      patch sheet_path(@sheet), params: { sheet: { data: { "cells" => [ [ filler ] ] } } }
+      assert_redirected_to sheet_path(@sheet)
+      assert_match(/too large/i, flash[:alert])
+    end
   end
 end
