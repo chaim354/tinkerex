@@ -170,20 +170,29 @@ brakeman line below, and the same lesson as the advisory count above.
 *(Distinct from the older `## Still open after this arc` section further down, which belongs to the
 project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced above lives.)*
 
-- **`config/brakeman.ignore` records `mesh.rb:74`; brakeman reports `mesh.rb:88`.** Measured by
-  re-running brakeman against an empty ignore config, which is the only way to see the line for a
-  warning you have suppressed. **The mechanism this arc established is confirmed** — brakeman
-  reports the `Open3.capture3` **call** line, not the line the argv array is built on — and the
-  entry was corrected once inside this arc (it recorded 59; the call was at 74). Then **this arc's
-  own later commit re-staled it**: `72e4e3f` added the GLB refusal above the call and moved it 74 →
-  88 without re-running the measurement. **Harmless to the gate** — the fingerprint does not hash
-  the line, all 4 entries still match, and brakeman exits 0 either way — but that file's whole value
-  is that a reader can check it against the code, and it currently cannot be. A second entry,
-  `files_controller.rb`, records 728 against an actual **729**; that one is **pre-existing**, not
-  from this arc (the file is untouched by it). Fix is two integers.
-  **The general lesson is the arc's own, turned on itself: a line number in a hand-maintained file
-  is a measurement, and it goes stale the moment anything above it moves.** Either re-measure it in
-  the same commit that edits the file, or stop recording it.
+- **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —
+  but the lesson is the one worth keeping.** All four entries were verified against brakeman's own
+  output at the end of the arc; two disagreed and were corrected (`mesh.rb` 74 → **88**,
+  `files_controller.rb` 728 → **729**, the latter pre-existing and not caused here). Fingerprints
+  byte-identical, `bin/brakeman` still exits 0.
+  **Measuring it requires re-running brakeman against an EMPTY ignore config** — that is the only
+  way to see the line of a warning you have already suppressed, and it is why the drift survived so
+  long unnoticed.
+  **The mechanism this arc established is confirmed:** brakeman reports the `Open3.capture3` **call**
+  line, not the line the argv array is built on. An earlier revision of the plan claimed the
+  opposite and was corrected.
+  **The lesson is the arc's own rule turned on itself.** The entry was fixed once mid-arc (59 → 74),
+  and then `72e4e3f` added the GLB refusal *above* the call, moving it to 88 — re-staling a number
+  that had been correct for three commits. A line number in a hand-maintained file is a
+  **measurement**, and it expires the moment anything above it moves. Re-measure in the same commit
+  that edits the file, or do not record it. Nothing about this ever threatened the gate — the
+  fingerprint does not hash the line — but that file's whole value is that a reader can check it
+  against the code.
+  **Considered and declined: a test asserting every recorded line matches brakeman's output.**
+  Brakeman runs in ~1 s, so cost is not the objection; the objection is that it would make the
+  default suite depend on the `brakeman` binary being installed, which no test does today, to guard
+  a field that is documentation rather than behaviour. Re-run the comparison by hand when editing a
+  file that has an entry — the two-line Python that does it is in this arc's history.
 - **`sidecar/boxes`'s licence obligation is closed; the wider one is not audited.** The test proves
   each sidecar Dockerfile copies *a* LICENSE. It does not check that the text matches the licence
   the upstream project actually ships under — for boxes.py that is GPL-3.0 and was checked by hand
