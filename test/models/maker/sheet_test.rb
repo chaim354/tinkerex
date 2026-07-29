@@ -80,5 +80,39 @@ module Maker
         @project.destroy!
       end
     end
+
+    # `data` is user-controlled JSON written by the browser, permitted whole by the controller, and
+    # embedded into the page HTML on EVERY view with no truncation — so the blob size IS the page
+    # size. A buggy client or a genuinely huge sheet grew it without bound.
+    test "a sheet at the size limit is valid" do
+      sheet = @project.sheets.build(user: @user, name: "Big")
+      # One long cell sized so the serialised blob lands just under the cap.
+      filler = "x" * (Maker::Sheet::MAX_DATA_BYTES - 200)
+      sheet.data = { "columns" => [ { "title" => "A", "width" => 120 } ], "cells" => [ [ filler ] ] }
+      assert_operator sheet.data.to_json.bytesize, :<=, Maker::Sheet::MAX_DATA_BYTES
+      assert sheet.valid?, sheet.errors.full_messages.join(", ")
+    end
+
+    test "a sheet over the size limit is rejected" do
+      sheet = @project.sheets.build(user: @user, name: "Too big")
+      filler = "x" * (Maker::Sheet::MAX_DATA_BYTES + 1000)
+      sheet.data = { "columns" => [ { "title" => "A", "width" => 120 } ], "cells" => [ [ filler ] ] }
+      assert_not sheet.valid?
+      assert_match(/too large/i, sheet.errors.full_messages.join(", "))
+    end
+
+    test "a blank sheet is comfortably inside the limit" do
+      sheet = @project.sheets.build(user: @user, name: "Blank", data: Maker::Sheet.blank_data)
+      assert sheet.valid?
+      assert_operator sheet.data.to_json.bytesize, :<, Maker::Sheet::MAX_DATA_BYTES / 100
+    end
+
+    # A malformed blob must still reach the DEFENSIVE READERS rather than being rejected here —
+    # the readers exist so a half-written blob renders an empty grid instead of 500ing the page,
+    # and a size validation that also rejected shape would defeat them.
+    test "a malformed blob is not rejected by the size validation" do
+      sheet = @project.sheets.build(user: @user, name: "Weird", data: { "cells" => "nonsense" })
+      assert sheet.valid?, sheet.errors.full_messages.join(", ")
+    end
   end
 end

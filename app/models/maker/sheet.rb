@@ -14,8 +14,20 @@ module Maker
     DEFAULT_ROWS    = 20
     DEFAULT_COLUMNS = 6
 
+    # The blob is embedded into the page HTML on EVERY view with no truncation (see
+    # projects/sheets/show.html.erb), so this bounds the PAGE, not just the row.
+    #
+    # The arithmetic, so the number is not mistaken for a guess: `blank_data` (20x6) is ~600 bytes;
+    # a large but genuinely plausible sheet — 1000 rows x 20 columns, cells averaging 8 characters —
+    # is ~220 KB. 1 MB is ~4.5x that.
+    #
+    # BYTESIZE, NOT ROW/COLUMN CAPS: one number, and it is the quantity that actually hurts. Row and
+    # column caps reject legitimately-shaped sheets while still permitting an enormous one.
+    MAX_DATA_BYTES = 1_048_576
+
     validates :name, presence: true
     validate  :project_belongs_to_user
+    validate  :data_within_size_limit
 
     # A…Z, then AA, AB, … — spreadsheet convention. NOT `("A".."Z").first(columns)`: Range#first
     # silently returns fewer than asked past Z, which produced 26 headers over 30-wide rows.
@@ -60,6 +72,17 @@ module Maker
       unless Maker::Project.exists?(id: project_id, user_id: user_id)
         errors.add(:project_id, "must reference your own project")
       end
+    end
+
+    # Deliberately says NOTHING about shape. `data` is permitted whole by the controller and
+    # defended at render time by the `cells`/`columns` readers; a validation that also rejected a
+    # malformed blob would turn a recoverable empty grid into a save the user cannot complete.
+    def data_within_size_limit
+      return if data.nil?
+      size = data.to_json.bytesize
+      return if size <= MAX_DATA_BYTES
+      errors.add(:data, "is too large (#{ActiveSupport::NumberHelper.number_to_human_size(size)}; " \
+                        "limit #{ActiveSupport::NumberHelper.number_to_human_size(MAX_DATA_BYTES)})")
     end
   end
 end
