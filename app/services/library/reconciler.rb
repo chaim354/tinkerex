@@ -141,17 +141,7 @@ module Library
       apply_moves!(moves)                                      # 2 (apply)
       doomed.each { |node| node.update!(deleted: true) }
       leftovers.each do |o, hash|                                # 3 & 4
-        node = create_or_revive!(o, hash)
-        # Eagerly render a thumbnail for a file the scan just brought into the catalog. Best-effort:
-        # a render enqueue must NEVER fail the scan (which is tombstoning/reviving the whole
-        # library). Enqueue self-guards on renderer presence (nil for non-renderable names), and
-        # `hash` is the content_token for the share/s3 port -- the same value stat returns.
-        begin
-          Maker::Previews::Enqueue.call(user: @user, node_id: node.node_id,
-                                        name: File.basename(o.rel_path), version_id: hash)
-        rescue StandardError
-          nil
-        end
+        enqueue_thumbnail(create_or_revive!(o, hash), hash)
       end
       tombstone_vanished_dirs(dirs)
       # nil on purpose. Task 9's ScanJob reads #unreadable_dirs off the Scanner instance and
@@ -313,7 +303,18 @@ module Library
         # It is claimed either way (its path is observed, so vanished_paths never listed it),
         # so nothing below can tombstone it. The next pass picks it up when the blip clears.
         # The row is loaded only once `hash` proves there is something to write.
-        @user.nodes.find(id).update!(size: o.size, mtime: o.mtime, content_hash: hash) if hash
+        if hash
+          node = @user.nodes.find(id)
+          node.update!(size: o.size, mtime: o.mtime, content_hash: hash)
+          # THIS IS THE SAVE PATH, and the enqueue is not optional here. Reaching this line means
+          # the bytes under a path the catalog already knew have CHANGED — a file re-saved in
+          # place, which for a share library is the single most ordinary thing that happens to
+          # it. Previews are keyed by [node_id, content_token]; without this the row rendered
+          # from the previous content is stranded and the file has no preview for what is
+          # actually on disk. It is the same eager render `leftovers` does, on the other half of
+          # the same question, and it was missing for both share and s3 (one Reconciler).
+          enqueue_thumbnail(node, hash)
+        end
         true
       end
     end
@@ -472,6 +473,22 @@ module Library
       bucket = by_key[[ node.content_hash, node.size ]]
       return nil if bucket.nil? || bucket.empty?
       bucket.min_by { |o, _h| [ -common_prefix_len(node.storage_path, o.rel_path), o.rel_path ] }
+    end
+
+    # Eagerly render a thumbnail for content the scan just put in the catalog — whether the file
+    # is NEW to it (`leftovers`) or was already there and its bytes CHANGED (`match_live_paths`).
+    # Both callers matter and neither is the general case: the first is an import, the second is
+    # a save, and a library that is a mounted NAS gets far more of the second.
+    #
+    # Best-effort by construction: a render enqueue must NEVER fail the scan, which is
+    # tombstoning and reviving the whole library. `Enqueue` self-guards on renderer presence
+    # (nil for a non-renderable name), and `hash` is the content_token for the share/s3 port --
+    # the same value `stat` returns, which is what makes the row findable by the UI.
+    def enqueue_thumbnail(node, hash)
+      Maker::Previews::Enqueue.call(user: @user, node_id: node.node_id,
+                                    name: node.name, version_id: hash)
+    rescue StandardError
+      nil
     end
 
     # Steps 3 & 4. A file reappearing where a tombstoned one used to be REVIVES that node rather

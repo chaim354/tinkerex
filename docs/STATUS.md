@@ -1,8 +1,145 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**Audit-fix arc: two security gates that ran zero now run; F3D shipped — branch `claude/handoff-audit-fixes-plan-d0f8b3`**)
+**Updated:** 2026-07-29 (**A scanned library lost its preview on every save — branch `claude/lbrn2-mage-preview-save-bug-fe80d4`**)
 
-## Latest (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
+## Latest (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
+
+**Suite 1628 → 1633 runs / 5694 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files.
+
+**The report was "the lbrn2/mage preview fixes still don't work — check hex tiles and reference
+card", and the parser was not involved at all.** Both files render correctly on demand: fed the
+bytes the deployed share library holds right now, `Lbrn2` returns a 256×256 PNG and reports
+`hex tiles.lbrn2` at 408.7 × 538.7 mm / 1494 shapes and `reference card.lbrn2` at 292.1 × 144.6 mm
+/ 1254 shapes. **Nothing was ever asking it to.** Checked before proposing anything, which is what
+kept this out of `Lbrn2`/`Mage`, where the two preceding arcs had been and where it would have
+found nothing.
+
+**ROOT CAUSE — `Library::Reconciler` enqueued a thumbnail for a file it had never seen, and only
+for that.** The one `Maker::Previews::Enqueue` call sat in `#call`'s `leftovers` loop, which is
+reached by step 3/4 — create-or-revive. A file whose bytes CHANGE under a path the catalog already
+knows is claimed in step 1 by `#match_live_paths`, updated in place with
+`update!(size:, mtime:, content_hash:)`, and **returned without an enqueue**. Previews are keyed by
+`[node_id, content_token]` and share/s3 answer `content_token` with `content_hash`, so the instant a
+file is saved its existing row points at content that no longer exists and **every surface that
+resolves a preview by the current token — `FilesController#show` and `#thumbnails_for` — finds
+none.** The file goes blank and stays blank.
+
+**Not an lbrn2/mage bug: a SAVE bug, which is why it looked like one.** Format is irrelevant — what
+matters is whether a file is ever rewritten in place, and in a library that is a mounted NAS that is
+exactly LightBurn, MillMage and a slicer. Everything else in that library was written once and never
+noticed. Measured on the deployed share library, the files with no preview for their current bytes
+split cleanly: **10 per user carried a row for SUPERSEDED content** — `hex tiles.lbrn2`,
+`reference card.lbrn2`, `piecies card.lbrn2`, four more `.mage`, and `Catan prints.3mf` — and the
+rest (45, one user) had never had one at all and belong to the older `backfill_thumbnails` backlog.
+Nine of ten are `.lbrn2`/`.mage`/`.3mf`.
+
+**THE FINGERPRINT THAT NAMES THE MECHANISM: LightBurn's `_backup` twin had a preview and the real
+file did not.** Saving writes `<name>_backup.lbrn2` beside the file. That path is NEW to the scan, so
+it lands in `leftovers` and gets its thumbnail; the file the user actually opens takes the path-match
+branch and gets nothing. `hex tiles_backup.lbrn2` (since tombstoned) held previews rendered at 18:30
+and 19:00 on 2026-07-29 while `hex tiles.lbrn2`'s newest was from **07-28 03:19**, for content three
+saves gone. A preview beside a file that has none is not a coincidence — it is the two branches,
+photographed.
+
+**`FilesController#backfill_thumbnails` was masking it, partially, which is why it read as
+intermittent.** That pass DOES enqueue on a changed token, so browsing the folder listing healed
+whatever it reached — capped at `BACKFILL_LIMIT = 100`, in display order, and **only on `#index`**.
+Open the file's own page and nothing repairs it, ever.
+
+**The fix is one enqueue at the update site, sharing a seam with the one that already existed.**
+`#enqueue_thumbnail(node, hash)` carries the best-effort contract (a render enqueue must never fail a
+scan that is tombstoning the whole library) and both branches call it. Enqueuing inside step 1, ahead
+of `guard_mass_deletion!`, is safe on the guard's own stated terms: it writes only for paths this
+pass positively OBSERVED, and the case the guard exists for — an unmounted NAS — hands step 1 an
+empty list and enqueues nothing.
+
+**A SCAN CANNOT HEAL THE BACKLOG, and that is not a gap in the fix — it is `unchanged?` working.**
+Those files now record their current hash, mtime and size, so the next pass skips them WITHOUT
+re-reading them, which is the behaviour that keeps a 2TB archive cheap. Hence
+`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`), modelled on
+`LbrnBackfill`: enqueue a thumbnail for every live file whose current `content_token` has no row.
+Backend-neutral through `stat_all` — the port's bulk read, DB-only on all three — and idempotent,
+since the rows it creates are what the next run finds. **Deliberately NOT the `unsupported`-row
+sweep still open below:** a row saying `unsupported` for the current content is present and terminal,
+and this only ever looks for content with NO row, so the two migrations keep separate correctness
+arguments. Dry-run against the live share library: **65 enqueues across two users**, both named files
+among them.
+
+**Mutation-checked, and one of the checks came back wrong.** Reverting the Reconciler leaves the new
+test RED for the stated reason ("No jobs were enqueued"); dropping the sweep's already-has-a-row
+guard turns two of its four tests RED. But dropping the sweep's own `present` scope left the
+tombstone test **GREEN** — `stat_all` omits a deleted node as an absent key, so the port was the
+filter all along and the test never pinned the scope it appeared to. Said so at both sites rather
+than leaving a test whose name claims more than it checks.
+
+### Follow-up (same branch): a truncated setting, an unrendered photo, and a palette NOT shipped
+
+**Suite 1633 → 1645, identical on all three legs. Prompted by "did you base it off
+[jlucaso1/lbrn2-to-svg](https://github.com/jlucaso1/lbrn2-to-svg)?" — no, and reading it was still
+worth it.** It is MIT (so §9 would have allowed borrowing) and it independently arrived at the same
+dialect: `<XForm>` as a child element, `V<x> <y>c0x..` vert lists, `L`/`B` prims, `VertID`/`PrimID`
+instancing, `<Children>` groups, and the Text `BackupPath` replacing rather than composing with its
+Text. **Two implementations from different evidence agreeing is the strongest corroboration the
+dialect reading has.** Cross-checked ours against its six fixtures: bounds match all six within our
+1 dp rounding, and the drawn geometry is visually identical.
+
+**`.to_i` IN THE RECIPE PANELS TRUNCATED EVERY FRACTIONAL SETTING.** A layer cut at 6.67 mm/s
+rendered **"6 mm/s"** — not a rounding nit but a number the machine will not run, displayed as
+though it were the setting, and the same class of error as reading a MillMage `ToolDef` instead of
+its `Operation`. Live on `reference card.lbrn2`. **Invisible to the suite because every checked-in
+`.lbrn2` fixture uses whole speeds and powers** — the value that exposed it came off a real file.
+Now one `FilesHelper#recipe_num` for both panels: round (never truncate) to 3 dp — the precision
+`MageMetadata#num` already stores at — then drop a trailing zero that carries no information, so
+`50.0` prints `50` and `6.67` prints `6.67`. Mutation-checked: restoring truncation turns the new
+page-driven test red.
+
+**A placed photo previewed as an EMPTY BOX.** `emit_shape` routed `Bitmap` through the `Rect` arm —
+four corners, `fill="none"` — so a `.lbrn2` built around a traced or engraved image drew its bounding
+rectangle and nothing inside. Now emits `<image>` with the inlined PNG. Three refusals fall back to
+the old outline, each for its own reason: **not axis-aligned** (an `<image>` is upright; drawing a
+rotated one unrotated puts the photo where it is not — the call `Ellipse` already makes),
+**not base64** (`Data` is bytes from an uploaded file about to enter an SVG attribute, and a `"`
+would close it — the guard REQUIRES the alphabet rather than escaping after), and **not a PNG**
+(checked on the first 16 characters, because this attribute is routinely megabytes — it is why
+`parse_document` needs `huge`).
+
+**ORIENTATION WAS MEASURED, NOT REASONED, AND THE FIXTURE COULD NOT HAVE SETTLED IT.** `apply`
+negates y, so whether the raster needs flipping back is a real question — and the reference carries
+`-0.252` in its own image matrix, so neither implementation answers it by inspection. The reference's
+`image` fixture is a **symmetric grid**, which renders identically upside down. Pinned with an 8×8
+red-over-blue PNG built by hand in the test, rasterized, and pixel-sampled: red must land on top.
+Mutation-checked with the flip the reference's matrix form implies — it turns the test red.
+
+**THE PALETTE IS DELIBERATELY NOT SHIPPED, and the corpus is why.** The reference colours layers
+from a hard-coded 8-entry table indexed `cutIndex % 8`; `cut_colors`'s long-standing comment declines
+to guess ~30 colours LightBurn never writes into the file. Tested the guess against the 58-file
+corpus, using each file's embedded thumbnail — LightBurn's own render — as the oracle. On a tight
+saturation filter the single-layer files read **0 → black, 1 → blue, 2 → red, 6 → cyan**, against the
+reference's **1 → red, 2 → green**: **copying that table would have coloured two of the four
+checkable indices WRONG.** Widening the filter then showed the oracle is contaminated anyway —
+thumbnails carry placed photos and engraved raster, so one file yields several unrelated hues
+(`idx 2` reads red, orange and yellow at once). **The corpus does not determine the palette, so the
+existing decision stands** — and now rests on evidence rather than on caution.
+
+**Fills were reported as a gap and are NOT one, which is a correction to this arc's own earlier
+claim.** The filled `k.svg`/`crucifix.svg` in the reference's tree are **stale committed artifacts**;
+its live `styleUtils.ts` emits `fill:none` on every path, exactly as we do. Doing fills properly
+(mode-driven, `Scan`/Fill filled and `Cut` stroked) additionally needs one shape's subpaths emitted
+as a single `fill-rule="evenodd"` path or a letter's counter paints over — a change to the yield
+contract. **Measured payoff today: zero.** Only files with no embedded thumbnail reach this renderer
+— **200 of 217** live `.lbrn2`/`.mage` previews use LightBurn's own — and of the three that do
+fall back, two are `.mage` (operations, not Cut/Scan layers) and none contains a bitmap. Left alone
+on purpose.
+
+### Left open by this fix
+
+- **Every save leaks a preview row and its ActiveStorage blob.** The row for the superseded content
+  is never cleaned up — `hex tiles.lbrn2` alone carries two. Harmless to correctness (nothing
+  resolves them) and unbounded in storage on a library that is edited in place. A reaper wants its
+  own verification against deployed rows, the same argument as the `unsupported` sweep below.
+
+## Previously (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
 
 **Suite 1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
 and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0

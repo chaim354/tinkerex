@@ -55,6 +55,29 @@ module Library
       assert @user.maker_previews.exists?(node_id: node.node_id, kind: "thumbnail")
     end
 
+    # THE SAVE CASE — and the one the create-enqueue test above cannot see. A file already in the
+    # catalog whose bytes change is claimed by PATH in step 1 and updated in place; it never
+    # reaches the `leftovers` loop, which is where that enqueue lives. Previews are keyed by
+    # [node_id, content_token], so with no enqueue here the row from the PREVIOUS content is
+    # orphaned the instant the file is saved, and every surface that looks a preview up by the
+    # current token (`FilesController#show`, `#thumbnails_for`) finds nothing at all.
+    #
+    # Observed on the deployed share library, which is what makes this a bug report rather than a
+    # gap: `hex tiles.lbrn2` and `reference card.lbrn2` — re-saved from LightBurn onto the NAS —
+    # each carried preview rows for content that no longer existed and none for the bytes on disk.
+    test "an EDIT in place enqueues a thumbnail for the NEW content" do
+      reconcile([ obs("part.stl", "v1") ], { "part.stl" => "v1" })
+      node_id = @user.nodes.find_by!(storage_path: "part.stl").node_id
+
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+        reconcile([ obs("part.stl", "v2-longer", mtime: T0 + 1) ], { "part.stl" => "v2-longer" })
+      end
+
+      assert @user.maker_previews.exists?(node_id:, kind: "thumbnail",
+                                          version_id: Digest::SHA256.hexdigest("v2-longer")),
+             "the preview must be keyed to the content now on disk, or the UI shows none"
+    end
+
     test "a RENAME keeps the node_id — the attachment survives" do
       reconcile([ obs("old.stl", "same bytes") ], { "old.stl" => "same bytes" })
       id = @user.nodes.find_by!(storage_path: "old.stl").node_id

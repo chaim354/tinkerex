@@ -1,5 +1,6 @@
 require "nokogiri"
 require "set"
+require "base64"
 
 module Maker
   module Previews
@@ -80,10 +81,15 @@ module Maker
         elements = []
         bbox = BBox.new
 
-        each_geometry(doc) do |cut_index, points, closed, ellipse|
+        each_geometry(doc) do |cut_index, points, closed, ellipse, image|
           points.each { |(x, y)| bbox.add(x, y) }
           stroke = colors[cut_index.to_s] || DEFAULT_STROKE
-          elements << if ellipse
+          # `image` FIRST: a placed photo replaces its outline rather than being drawn under one.
+          # The points are still added to the bbox above, so the picture bounds the drawing and
+          # the reported job size either way.
+          elements << if image
+                        image_svg(image)
+          elsif ellipse
                         ellipse_svg(ellipse, stroke)
           elsif closed
                         polygon(points[0..-2], stroke)
@@ -99,8 +105,13 @@ module Maker
 
       # THE one traversal, shared with LbrnMetadata so the thumbnail and the reported job size
       # can never disagree. Yields every drawable leaf as
-      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil)
+      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil)
       # with the points already transformed into SVG space (composed affine, then Y-flipped).
+      #
+      # The last two are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
+      # measuring caller (`job_size`) reads only the points and is correct ignoring both, which is
+      # what lets an ellipse stay exact and a bitmap show its photo without either of them
+      # changing what the file measures.
       def each_geometry(doc, &block)
         return if doc.root.nil?
 
@@ -201,7 +212,8 @@ module Maker
 
           corners = [ [ -w / 2, -h / 2 ], [ w / 2, -h / 2 ], [ w / 2, h / 2 ], [ -w / 2, h / 2 ] ]
           pts = corners.map { |(x, y)| apply(world, x, y) }
-          yield cut, pts + [ pts.first ], true, nil
+          image = shape["Type"] == "Bitmap" ? bitmap_image(shape, world, pts) : nil
+          yield cut, pts + [ pts.first ], true, nil, image
         when "Ellipse"
           rx = num(shape["Rx"]); ry = num(shape["Ry"])
           return if rx.nil? || ry.nil?
@@ -221,6 +233,44 @@ module Maker
             yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil
           end
         end
+      end
+
+      # Base64's alphabet, plus the whitespace an XML attribute may wrap it with. Anchored.
+      BITMAP_DATA = %r{\A[A-Za-z0-9+/=\s]+\z}
+
+      # A placed photo, ready to emit as an `<image>` — or nil, meaning "draw the outline
+      # instead", which is what this shape did in every case before.
+      #
+      # `Bitmap` used to fall through to the `Rect` arm and render as four corners with
+      # `fill="none"`, so a .lbrn2 built around a traced or engraved photo previewed as an EMPTY
+      # BOX. Only reachable on files carrying no `<Thumbnail>` of their own — which is the only
+      # path this renderer serves.
+      #
+      # Three refusals, each for a different reason, and each falling back to the old outline:
+      #
+      #   * NOT AXIS-ALIGNED — an `<image>` is an upright rectangle. Carrying a rotation onto the
+      #     element is possible but drawing it WITHOUT one would put the photo somewhere it is
+      #     not, which is worse than a box that claims nothing. The `Ellipse` arm already makes
+      #     exactly this call with the same predicate.
+      #   * NOT BASE64 — `Data` is bytes out of an uploaded file, about to be interpolated into
+      #     an SVG attribute. A `"` in it closes the attribute and turns the remainder into
+      #     markup. REQUIRING the alphabet is the guard; escaping afterwards would leave open the
+      #     question of what else needs escaping.
+      #   * NOT A PNG — `data:image/png` has to be true. Checked on the first few characters
+      #     rather than the whole value, because this attribute is routinely megabytes (it is the
+      #     reason `parse_document` needs `huge`) and the magic lives in the first 8 bytes.
+      def bitmap_image(shape, world, pts)
+        return nil unless axis_aligned?(world)
+
+        data = shape["Data"].to_s
+        return nil unless data.match?(BITMAP_DATA)
+
+        b64 = data.gsub(/\s/, "")
+        return nil unless Base64.decode64(b64[0, 16].to_s)[0, 8] == Maker::Previews::EmbeddedThumbnail::PNG_MAGIC
+
+        xs = pts.map(&:first); ys = pts.map(&:last)
+        { href: "data:image/png;base64,#{b64}",
+          x: xs.min, y: ys.min, w: xs.max - xs.min, h: ys.max - ys.min }
       end
 
       # CutIndex (string) → stroke color "#rrggbb". LightBurn stores the color as a 0xBBGGRR
@@ -448,6 +498,19 @@ module Maker
         cx, cy, rx, ry = ellipse
         %(<ellipse cx="#{f(cx)}" cy="#{f(cy)}" rx="#{f(rx)}" ry="#{f(ry)}" ) +
           %(fill="none" stroke="#{stroke}" stroke-width="0.5"/>)
+      end
+
+      # `preserveAspectRatio="none"` because LightBurn STRETCHES a placed image to the shape's
+      # W/H — it does not letterbox it — so honouring the raster's own ratio would draw the photo
+      # at a size the file does not describe.
+      #
+      # No y-flip on the element. `apply` negates y, which puts the box's smaller y (its visual
+      # top) at LightBurn's LARGER Y — and LightBurn's larger Y is the top of a Y-up canvas, which
+      # is where the raster's row 0 belongs. The flip is already paid for; adding one here would
+      # stand the photo on its head. Verified against jlucaso1/lbrn2-to-svg's own `image` fixture.
+      def image_svg(img)
+        %(<image x="#{f(img[:x])}" y="#{f(img[:y])}" width="#{f(img[:w])}" height="#{f(img[:h])}" ) +
+          %(preserveAspectRatio="none" href="#{img[:href]}"/>)
       end
 
       def polygon(pts, stroke)

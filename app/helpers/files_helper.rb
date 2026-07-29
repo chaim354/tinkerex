@@ -85,4 +85,34 @@ module FilesHelper
   def ext_limit_title
     "Turn one off first — at most #{FilesController::MAX_EXTS} types at a time."
   end
+
+  # ONE number formatter for both recipe panels (laser and CNC), because they were each getting
+  # it wrong in a different direction and neither could be caught by the fixtures.
+  #
+  # `.to_i` — what the laser panel used for speed and power — does not round, it TRUNCATES. A
+  # layer cut at 6.67 mm/s displayed as "6 mm/s": not a formatting nit but a wrong setting shown
+  # as though it were the real one, and the same class of error as reading a MillMage ToolDef
+  # instead of its Operation. Every checked-in fixture uses whole speeds and powers, so the suite
+  # could not see it.
+  #
+  # Printing the raw float instead is not the fix either: a metadata Hash holds 50.0 and 13.0, and
+  # "50.0 mm/s" is noise in a table. So round — never truncate — then drop a trailing zero that
+  # carries no information. THREE DECIMALS because that is what `MageMetadata#num` already rounds
+  # tool values to (MillMage stores 1/8" as 3.1749999523162842), so the panel and the stored Hash
+  # agree instead of the view inventing a second precision.
+  #
+  # Numeric strings are accepted because the Hash comes back out of a JSON column, and anything
+  # that is not a number answers nil so a best-effort metadata gap renders as an empty cell rather
+  # than the word "nil" beside a unit.
+  RECIPE_DECIMALS = 3
+
+  def recipe_num(value)
+    return nil if value.nil?
+
+    f = Float(value, exception: false)
+    return nil if f.nil?
+
+    r = f.round(RECIPE_DECIMALS)
+    (r == r.to_i ? r.to_i : r).to_s
+  end
 end

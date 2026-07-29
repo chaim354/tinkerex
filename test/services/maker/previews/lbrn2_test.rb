@@ -279,6 +279,108 @@ module Maker
           assert_equal({ "width" => 30.0, "height" => 20.0 }, meta["job"])
         end
 
+        # A 1x1 red PNG. Small enough to inline, real enough to survive the PNG-magic check.
+        PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".freeze
+
+        def bitmap_xml(data, xform: "1 0 0 1 55 55")
+          %(<LightBurnProject AppVersion="1.6.00">) +
+            %(<Shape Type="Bitmap" CutIndex="0" W="10" H="10" Data="#{data}"><XForm>#{xform}</XForm></Shape>) +
+            %(</LightBurnProject>)
+        end
+
+        # A PLACED PHOTO IS THE PICTURE, NOT ITS OUTLINE. `emit_shape` treated Bitmap exactly like
+        # Rect — four corners, `fill="none"` — so a .lbrn2 built around a traced or engraved image
+        # previewed as an empty box. Only reachable when the file carries no <Thumbnail> of its
+        # own, which is the path this whole renderer exists for.
+        test "a Bitmap renders its actual image, not an empty box" do
+          svg = Maker::Previews::Lbrn2.to_svg(bitmap_xml(PNG_B64))
+          assert_includes svg, "<image "
+          assert_includes svg, "data:image/png;base64,#{PNG_B64}"
+          assert_not_includes svg, "<polygon", "the bbox outline is replaced by the image, not drawn under it"
+        end
+
+        # The bitmap still has to BOUND the drawing whether or not its bytes are usable, because
+        # job_size and the viewBox are measured from the same walk.
+        test "an embedded Bitmap still contributes its box to the job size" do
+          meta = Maker::Previews::LbrnMetadata.parse(bitmap_xml(PNG_B64))
+          assert_equal({ "width" => 10.0, "height" => 10.0 }, meta["job"])
+        end
+
+        # `Data` IS ATTACKER-CONTROLLED — it is whatever bytes are in an uploaded file, and it is
+        # about to be interpolated into an SVG attribute. A quote would close the attribute early
+        # and let the rest of the value become markup. Base64 has no quote, so the guard is to
+        # REQUIRE the base64 alphabet rather than to escape afterwards.
+        test "a Bitmap whose Data is not base64 falls back to the outline and injects nothing" do
+          svg = Maker::Previews::Lbrn2.to_svg(bitmap_xml(%(x"/><script>alert(1)</script>)))
+          assert_not_includes svg, "<script"
+          assert_not_includes svg, "<image "
+          assert_includes svg, "<polygon", "an unusable image still draws its box, as before"
+        end
+
+        # Base64 that decodes to something that is not a PNG is not an image we can hand a
+        # rasterizer, and `data:image/png` would be a lie about it.
+        test "a Bitmap whose Data is not a PNG falls back to the outline" do
+          svg = Maker::Previews::Lbrn2.to_svg(bitmap_xml(Base64.strict_encode64("GIF89a not really")))
+          assert_not_includes svg, "<image "
+          assert_includes svg, "<polygon"
+        end
+
+        # ORIENTATION, MEASURED RATHER THAN REASONED. `apply` negates y, so whether the raster
+        # needs flipping back is a real question and getting it wrong stands every placed photo on
+        # its head — invisibly, on the symmetric test grid the reference ships, which is exactly
+        # why that fixture could not settle it. jlucaso1/lbrn2-to-svg carries `-0.252` in its own
+        # image matrix, so the answer is genuinely not obvious from either implementation.
+        #
+        # An 8x8 PNG, red over blue, rasterized and sampled: red must land on top. Hand-built so
+        # the test needs no image gem, and skipped rather than faked where the toolchain is
+        # absent — the same trade every other rasterizing test here makes.
+        test "a Bitmap is not upside down" do
+          skip "resvg not installed" unless Maker::Previews::Svg.available?
+          skip "vips not installed" unless system("vips", "--version", out: File::NULL, err: File::NULL)
+
+          xml = bitmap_xml(red_over_blue_png_b64, xform: "1 0 0 1 50 50")
+          Dir.mktmpdir do |dir|
+            svg = File.join(dir, "o.svg")
+            png = File.join(dir, "o.png")
+            File.write(svg, Maker::Previews::Lbrn2.to_svg(xml, size: 256))
+            assert system("resvg", "--background", "white", "--width", "120", "--height", "120",
+                          svg, png, out: File::NULL, err: File::NULL)
+            assert_equal "255 0 0", sample(png, 60, 30), "the image's own top row must render at the top"
+            assert_equal "0 0 255", sample(png, 60, 90)
+          end
+        end
+
+        def sample(png, x, y)
+          Open3.capture2("vips", "getpoint", png, x.to_s, y.to_s).first.split[0, 3].join(" ")
+        end
+
+        # 8x8, top half red, bottom half blue — a raw PNG assembled by hand (IHDR + IDAT + IEND)
+        # so this needs no image library at test time.
+        def red_over_blue_png_b64
+          w = h = 8
+          raw = (0...h).map { |y|
+            "\x00".b + ((y < h / 2 ? "\xFF\x00\x00" : "\x00\x00\xFF").b * w)
+          }.join
+          chunk = lambda do |type, data|
+            [ data.bytesize ].pack("N") + type + data + [ Zlib.crc32(type + data) ].pack("N")
+          end
+          png = "\x89PNG\r\n\x1A\n".b +
+                chunk.call("IHDR".b, [ w, h, 8, 2, 0, 0, 0 ].pack("NNC5")) +
+                chunk.call("IDAT".b, Zlib::Deflate.deflate(raw)) +
+                chunk.call("IEND".b, "".b)
+          Base64.strict_encode64(png)
+        end
+
+        # An <image> is an axis-aligned rectangle; a rotated one would need the transform carried
+        # through, and drawing it unrotated would put the photo somewhere it is not. The ellipse
+        # path already makes exactly this call (`axis_aligned?`), so this follows its precedent.
+        test "a ROTATED Bitmap keeps the outline rather than placing the image wrong" do
+          rot = "0.866 -0.5 0.5 0.866 55 55"
+          svg = Maker::Previews::Lbrn2.to_svg(bitmap_xml(PNG_B64, xform: rot))
+          assert_not_includes svg, "<image "
+          assert_includes svg, "<polygon"
+        end
+
         test "a file whose embedded image exceeds libxml2's 10MB attribute cap still parses" do
           # LightBurn inlines a placed photo as base64 in Bitmap@Data. Past ~10MB libxml2
           # aborts the document ("Buffer size limit exceeded, try XML_PARSE_HUGE") and
