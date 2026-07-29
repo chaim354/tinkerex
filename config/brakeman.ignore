@@ -90,7 +90,7 @@
       "cwe_id": [
         77
       ],
-      "note": "False positive, same argument as the mesh.rb entry above. `Open3.capture3(*args)` is invoked with an ARGV ARRAY, so Ruby execs the binary directly with NO shell — there is no shell-injection vector. `BIN` is an operator-controlled constant (ENV['VIPSTHUMBNAIL_BIN'] default 'vipsthumbnail'); both the input and output paths are Tempfile-generated, not user-supplied (`out_path` is the tempfile's own path plus a fixed '.thumb.png' suffix); and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make vipsthumbnail error out, which is handled and raised as RenderError). No user input reaches a shell. An argv-array capture3 is the deliberate pattern every renderer in Maker::Previews::* uses."
+      "note": "False positive, same argument as the mesh.rb entry above. `Open3.capture3` is called here with `BIN` and each flag and path as its own separate positional string — the same multi-arg, no-shell form as the splatted `*args` in the mesh.rb entry above — so Ruby execs the binary directly with NO shell; there is no shell-injection vector. `BIN` is an operator-controlled constant (ENV['VIPSTHUMBNAIL_BIN'] default 'vipsthumbnail'); both the input and output paths are Tempfile-generated, not user-supplied (`out_path` is the tempfile's own path plus a fixed '.thumb.png' suffix); and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make vipsthumbnail error out, which is handled and raised as RenderError). No user input reaches a shell. An argv-array capture3 is the deliberate pattern every renderer in Maker::Previews::* uses."
     }
   ],
   "brakeman_version": "8.0.5"
