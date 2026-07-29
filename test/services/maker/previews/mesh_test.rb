@@ -6,7 +6,10 @@ module Maker
     # this box. `available?` gates on it; the render tests SKIP when it's absent (matching the
     # SVG test's posture and docs/research-format-processing.md §8 point 6) rather than erroring.
     class MeshTest < ActiveSupport::TestCase
-      setup { @stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl")) }
+      setup do
+        @stl = File.binread(Rails.root.join("test/fixtures/files/tetra.stl"))
+        @obj = File.binread(Rails.root.join("test/fixtures/files/tetra.obj"))
+      end
 
       test "available? reflects whether the f3d binary is on PATH" do
         assert_includes [ true, false ], Maker::Previews::Mesh.available?
@@ -19,6 +22,18 @@ module Maker
       test "renders an STL to a PNG thumbnail via f3d" do
         skip "f3d not installed" unless Maker::Previews::Mesh.available?
         result = Maker::Previews::Mesh.render(@stl, size: 128, ext: "stl")
+        assert_equal "image/png", result[:content_type]
+        assert_equal 128, result[:width]
+        assert_equal "\x89PNG".b, result[:bytes][0, 4].b
+      end
+
+      # OBJ is the one extension Mesh::EXTENSIONS actually OWNS that had no render coverage — the
+      # other three tests all feed STL, which routes to the euc Stl renderer in production and only
+      # reaches F3D here because the test calls Mesh directly. So an F3D build that could not load an
+      # OBJ would have passed the whole suite.
+      test "renders an OBJ to a PNG thumbnail via f3d" do
+        skip "f3d not installed" unless Maker::Previews::Mesh.available?
+        result = Maker::Previews::Mesh.render(@obj, size: 128, ext: "obj")
         assert_equal "image/png", result[:content_type]
         assert_equal 128, result[:width]
         assert_equal "\x89PNG".b, result[:bytes][0, 4].b
