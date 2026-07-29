@@ -131,6 +131,39 @@ production eager-load check.
 re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
 the **entire suite green**, because every other test derives its expectation from one side only.
 
+## CI cannot run — no Linux runner is registered (2026-07-29)
+
+**Open, and assigned elsewhere: a separate agent owns fixing CI + testing infrastructure.** Recorded
+here so nobody re-diagnoses it.
+
+All 7 jobs in `.github/workflows/ci.yml` declare `runs-on: [self-hosted, linux]`.
+`gh api repos/:owner/:repo/actions/runners` reports exactly one runner —
+`charless-MacBook-Pro-maker-mac`, macOS. So every job **queues forever** rather than failing: on PR #94
+they sat `pending` with **0 elapsed**, `mergeStateStatus` stayed UNSTABLE, and the merge needed
+`--admin`. CLAUDE.md §15 claimed all three runners were registered; corrected in the same commit.
+
+**The fix is NOT `ubuntu-latest`** — §15 forbids GitHub-hosted runners because they are the only billed
+ones. Either re-register a Linux runner, or retarget at the Mac, noting that `system-test` needs headless
+Chrome and `db:test:prepare` there and that the Mac then serialises every PR check.
+
+**Until then, verify locally — this is exactly what those jobs run:**
+
+    bin/rails test
+    LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
+    LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
+      LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
+      bin/rails test
+    bin/rails db:test:prepare test:system
+    bin/rubocop
+    bin/brakeman --no-pager >/dev/null 2>&1; echo "brakeman=$?"   # must be 0
+    bin/bundler-audit        >/dev/null 2>&1; echo "audit=$?"     # must be 0
+    bin/importmap audit      >/dev/null 2>&1; echo "js=$?"        # must be 0
+
+**Read the last three by EXIT CODE, not by output.** Until 2026-07-29 `bin/brakeman` exited 3, and
+because `scan_ruby` runs it as step 1 and `bin/bundler-audit` as step 2, the audit gate had **never
+executed** — the job looked like two gates and was zero. That is how five gems drifted behind published
+advisories, one of them High on the always-on `/cable` path.
+
 ## Still open after this arc (small, deliberate)
 
 - **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
