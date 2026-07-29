@@ -39,12 +39,16 @@ module Maker
         assert_equal "\x89PNG".b, result[:bytes][0, 4].b
       end
 
-      test "renders a GLB for the model_glb kind via f3d" do
+      # This test used to assert a GLB came back, and PASSED ONLY BY SKIPPING: `available?` never
+      # returned true, so nobody ever saw that `--output out.glb` writes a PNG (f3d --help spells
+      # the argument "<png file>"). The old code labelled those PNG bytes model/gltf-binary and
+      # GeneratePreviewJob attached them as .glb marked "ready". Refusing is the honest answer.
+      test "refuses the model_glb kind — f3d renders rasters, it does not export GLB" do
         skip "f3d not installed" unless Maker::Previews::Mesh.available?
-        result = Maker::Previews::Mesh.render(@stl, kind: "model_glb", ext: "stl")
-        assert_equal "model/gltf-binary", result[:content_type]
-        # GLB magic = "glTF".
-        assert_equal "glTF".b, result[:bytes][0, 4].b
+        err = assert_raises(Maker::Previews::Mesh::RenderError) do
+          Maker::Previews::Mesh.render(@stl, kind: "model_glb", ext: "stl")
+        end
+        assert_match(/cannot export GLB/, err.message)
       end
 
       test "raises RenderError when f3d cannot process the input" do
