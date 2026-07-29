@@ -554,11 +554,17 @@ cross-built once on the Mac via QEMU and both boxes pull it), so `F3D-3.5.0-Linu
 
 ### ⚠ The trap in this task
 
-`Maker::Previews::Mesh#to_output` builds its argv at `mesh.rb:57-58`, and that exact line is what
-`config/brakeman.ignore`'s `mesh.rb:59` fingerprint covers. **If you end up adding a flag (e.g.
-`--rendering-backend=egl`) to make headless rendering work, the fingerprint changes and brakeman goes
-back to exit 3** — you must then regenerate that ignore entry (Task 2's procedure) and re-run Task 4.
-Check for this before you commit, not after.
+`Maker::Previews::Mesh#to_output` builds its argv at **`mesh.rb:59-60`** and splats it into
+`Open3.capture3` at **`mesh.rb:62`**. `config/brakeman.ignore`'s entry for this records **line 59** —
+brakeman reports where the flagged expression is *built*, not where it is called, which is why the
+recorded line is 59 and not 62. That is not drift; do not "correct" it.
+
+**If you add a flag (e.g. `--rendering-backend=egl`) to make headless rendering work, brakeman goes
+back to exit 3 and Task 2's work silently unravels.** The fingerprint hashes `warning_code + code +
+location + file + confidence` — `code` is the rendered argv, so changing the argv changes the
+fingerprint and the existing entry stops matching. (The line number is *not* in the hash, so merely
+moving the call is harmless.) If that happens you must regenerate the `mesh.rb` ignore entry using
+Task 2's procedure and re-run Task 4. Check before you commit, not after.
 
 - [ ] **Step 1: Write the OBJ fixture**
 
