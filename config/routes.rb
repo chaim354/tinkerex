@@ -75,7 +75,7 @@ Rails.application.routes.draw do
   end
 
   # --- Per-file notes (keyed by node_id, session auth) ---
-  post   "files/:node_id/notes", to: "notes#create", as: :file_notes
+  post "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]
 
   # --- Maker: Projects (server-rendered web UI, session auth) ---
