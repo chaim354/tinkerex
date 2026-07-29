@@ -1,8 +1,195 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**All four open items from the project-page overhaul CLOSED — branch `claude/status-md-open-issues-92c847`**)
+**Updated:** 2026-07-29 (**Audit-fix arc: two security gates that ran zero now run; F3D shipped — branch `claude/handoff-audit-fixes-plan-d0f8b3`**)
 
-## Latest (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
+## Latest (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
+
+**Suite 1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
+and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
+offenses**. The three security gates green **by exit code**: `brakeman=0`, `audit=0`, `js=0`.
+`client/` has a zero-line diff, and all three standing tripwires still answer what CLAUDE.md §12
+step 10 says they should.
+
+**11 skips, where this file has recorded 14 since the previews arc — and the difference IS item 3.**
+F3D is installed on this build box now, so `Maker::Previews::Mesh`'s tests **run** instead of
+skipping. Measured both ways on the same tree: `F3D_BIN=/nonexistent/f3d bin/rails test` gives
+**1628 runs / 5667 assertions / 14 skips**. CI has no F3D and will see 14. A reader comparing skip
+counts across entries has to know which of the two numbers they are holding; neither is wrong.
+
+Plan: `docs/superpowers/plans/2026-07-29-handoff-audit-fixes.md`. Queue it came from:
+`docs/HANDOFF-AUDIT-FIXES.md`.
+
+### 1. `scan_ruby` was two gates running zero
+
+`bin/brakeman` exited **3** on a false positive — an argv-array `Open3.capture3` in
+`Maker::Previews::ImageThumb`, the same shell-free, no-shell-anywhere form already accepted at
+length for the sibling `mesh.rb` renderer. `scan_ruby` runs brakeman as step 1 and
+`bin/bundler-audit` as step 2, so **the audit gate had never executed**. The job looked like two
+gates and was zero.
+
+**The rule this arc exists to install: read a security gate by EXIT CODE, never by reading its
+output.** A gate that aborts before it runs is, in a log skim, indistinguishable from a gate that
+ran and found nothing — and because the two are chained, the *first* gate's false positive silently
+disarmed the *second* gate's real findings. That is how five gems drifted behind published
+advisories, one of them High, on a socket every device holds open. Both gates now exit 0, and the
+"CI cannot run" section below states the exit-code rule at the place someone will actually be
+standing when they need it.
+
+### 2. Five gems, eighteen advisories, one High on the always-on `/cable` path
+
+Measured against the pre-arc lockfile (`bin/bundler-audit check` on `4ed32fe`'s `Gemfile.lock`):
+**18 distinct advisories across 5 gems** — nokogiri 9, crass 4, loofah 3, rails-html-sanitizer 1,
+websocket-driver 1. One **High**, one Medium, one Low, 15 unrated by the DB.
+
+- **websocket-driver 0.8.1 → 0.8.2** — **CVE-2026-61666 / GHSA-2x63-gw47-w4mm, High: denial of
+  service via a malformed `Host` header.** This is `actioncable`'s own dependency, and §12 step 1
+  put an ActionCable socket on the **continuously-open** path: every device subscribes to
+  `LibraryChannel` for the `{head_seq}` nudge and holds it. The exposed surface is not an
+  occasional request — it is the one connection the sync loop depends on existing.
+- **loofah 2.25.1 → 2.25.2**, **rails-html-sanitizer 1.7.0 → 1.7.1**, **crass 1.0.6 → 1.0.7** — the
+  Action Text sanitizer path, which since the project-page overhaul renders **user-authored notes
+  and build-log entries**. Two of the loofah three are `allowed_uri?` failing to see a
+  `javascript:` URI split by character references; the crass four are parser DoS.
+- **nokogiri 1.19.3 → 1.19.4** — six of the nine are **use-after-free or out-of-bounds read in XML
+  parsing**, and this app parses **untrusted uploaded XML** on exactly that path:
+  `Maker::Previews::Lbrn2` reads user-supplied `.lbrn2`, and `Maker::Previews::ThreeMf` reads the
+  XML inside an uploaded `.3mf` zip. **`lbrn2.rb:70` does `Nokogiri::XML(bytes) { |c| c.recover.huge }`
+  — recover-past-malformed with libxml2's built-in limits LIFTED**. `huge` is **required, not a
+  tuning knob** (the reason is recorded at the method: LightBurn inlines a placed photo as base64 in
+  `Bitmap@Data`, libxml2 caps one attribute at 10 MB, and past that `recover` silently returns a
+  TRUNCATED tree — 2 of the 58 real files hit it). Both halves are correct and neither is being
+  undone here; the point is only that this parser is aimed at attacker-shaped input with its own
+  guardrails deliberately off, which is why keeping it patched is not routine hygiene. **All 7 platform lines moved** (`aarch64-linux-gnu/musl`,
+  `arm-linux-gnu/musl`, `arm64-darwin`, `x86_64-linux-gnu/musl`) — the deploy builds `linux/amd64`
+  while this box is `arm64-darwin`, so bumping only the line you can see locally leaves the
+  **shipped image** behind while the local suite goes green.
+
+**Lockfile-only, and each gem named explicitly rather than a bare `bundle update`** — which would
+have ridden in the deliberate exact `lexxy` pin along with everything else, turning a security fix
+into an unreviewed dependency sweep.
+
+**The count is a snapshot of a moving target, not a property of the code.** `bundler-audit` refreshes
+`ruby-advisory-db` on each run, so re-measuring the same lockfile later can legitimately report more
+advisories than it did an hour earlier — the plan for this arc recorded seven. Quote the exit code,
+which is stable; treat the count as the date-stamped reading it is.
+
+### 3. F3D installed — and installing it alone would have achieved NOTHING
+
+`Mesh.available?` shelled out to `f3d --version` and matched the literal lowercase `"f3d"`. **F3D
+3.x's banner is `F3D 3.5.0 / F3D - A fast and minimalist 3D viewer` — there is no lowercase spelling
+anywhere in it** (verified against the 3.5.0 binary). So the gate reported a working, installed
+binary as **absent**, and shipping the Dockerfile change without fixing the match would have added
+~526 MB to the image and changed nothing observable — the install alone achieves exactly nothing.
+
+**That dead gate is also why a second bug was invisible.** With `available?` permanently false the
+Mesh render path never ran and its tests could only ever **skip** — hiding that
+`render(kind: "model_glb")` returned **PNG bytes labelled `model/gltf-binary`**, attached as `.glb`
+and marked `"ready"`. F3D's `--output` is a raster screenshot and writes PNG whatever the extension
+says. `kind` is **client-supplied**, through `V1::Maker::PreviewsController`. Fixing `available?`
+would have made that path live, so **it is refused in the same change** — the two are one commit on
+purpose, and splitting them later would re-open the window.
+
+**State it plainly so nobody tries again: F3D cannot emit a GLB by any CLI route.** `--help` has no
+export option; `.glb` is an **input** format for F3D, not an output one. The refusal raises
+`GeneratePreviewJob::Unsupported`, which maps to the terminal **`unsupported`** status — deliberately
+not `failed`, which a re-POST re-enqueues, so a client asking for the impossible would retry forever.
+
+**The image cost, honestly, because the totals disagree with each other.** Per-layer from
+`docker history`: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer = **205 MB** — **~526 MB of
+new content**, against a base image of **229.8 MB**, roughly tripling it. **296 MB of the 307 MB
+`/opt/f3d` tree is `lib/`** — bundled VTK/OCCT/GDAL/USD that ships whether or not a deployment ever
+opens a STEP file. **`docker image inspect --format '{{.Size}}'` says 229.8 → 387.5 MB while
+`docker image ls` says 230 MB → 1.57 GB: a 4x disagreement on the F3D image, from two commands that
+agree exactly on the base.** Neither total is trustworthy here; **quote the per-layer numbers.**
+
+**The runtime package list is 4 packages and it is DERIVED, not guessed** —
+`libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri`. `readelf -d` across the binary and every bundled
+`.so` shows **libX11 as the only external NEEDED** beyond what `base` already has. The rest is the
+GL stack, and **the Mesa EGL driver is `dlopen`ed — invisible to `ldd`**, so the honest-looking
+minimal list (drop `libegl-mesa0`, since nothing links it) gives **SIGSEGV 139 at render time**.
+Only a real render settles this; static inspection cannot. Verified by rendering both `tetra.obj`
+and a real 4.7 MB STEP file to PNG inside the image.
+
+### 4. The GPL-3.0 boxes sidecar ships its own licence text
+
+`sidecar/boxes/Dockerfile` now does `COPY LICENSE README.md ./`, matching `sidecar/openscad`. We
+build these images and push them to a registry, which is **redistribution** — so under §9 the
+licence has to be **inside the image**, not merely committed beside the Dockerfile. The `LICENSE`
+had been in the repo since the addon landed and had simply never been copied in.
+
+**`test/deploy_hygiene_test.rb`'s new assertion is DIRECTORY-DRIVEN, so it closes the class rather
+than the instance:** it globs `sidecar/*/Dockerfile` and requires a `COPY … LICENSE` line in each,
+so a third sidecar is covered the day it appears rather than the day someone remembers. Every
+sidecar here is GPL by construction — that is *why* they are HTTP sidecars instead of linked
+libraries — so the glob needs no allow-list.
+
+**The second assertion exists because the first version was mutation-tested and failed.** Discovery
+originally filtered to sidecars that "have a LICENSE beside them", which conflates *"this licence
+needs copying into the image"* with *"this licence was ever committed at all"* — and so **silently
+skipped the worse case**: a future sidecar whose author never added a LICENSE passes with an
+unchanged assertion count, because the missing file is precisely what excluded it. A missing
+`LICENSE` is now checked **first and separately**, because the two failures want different fixes: no
+`COPY` line means the text is in the repo one line from being fixed; no `LICENSE` at all means the
+image is being built and pushed under GPL with nothing to point at anywhere. **Found by mutating the
+test, not by reading it.**
+
+### 5. Two findings documented rather than fixed, both deliberately
+
+Neither is duplicated here — each already has its own home in this file, and a second copy is a
+second thing to go stale:
+
+- **No Linux runner is registered, so all 7 `ci.yml` jobs queue forever** — see "CI cannot run"
+  below. A separate agent owns CI and testing infrastructure; this arc corrected CLAUDE.md §15's
+  claim that all three runners exist and recorded how to verify locally.
+- **The OVH deployment inherits `ENABLE_TEST_SIGNUP`** through Kamal's `env.clear` deep-merge — see
+  the bullet under "Still open after this arc". Left on knowingly, with the one-line fix recorded
+  both there and at the edit site.
+
+### 6. The Rust counts CLAUDE.md now defers to this file
+
+CLAUDE.md carried **`53 tests`** for `fs-provider`. Measured: **192 passed across 20 test binaries,
+0 failed** (`cd client/fs-provider && cargo test`). **The stale number was DELETED, not updated** —
+that list's own header already defers per-suite counts here, so writing the number in two places is
+writing a number that will be wrong in one of them, and this one already was by 3.6x. A second count
+of the same class went with it: `sync-engine`'s **`14 tests`** for the server-backed integration
+suite, in the same list, for the same reason.
+
+**So the deferral has to land somewhere, and this is it:**
+
+- `client/fs-provider` — **192 / 0**, 20 binaries, hermetic (no server). Re-measured this arc.
+- `client/sync-engine` `tests/integration.rs` — **NOT re-measured here**; it needs a running server
+  and skips cleanly without one. Last recorded figure in this file is **19/0** (2026-06-14 entry).
+  Treat that as dated, not current.
+
+**A count in a file that is not the one that produces it is a count that rots.** Both of these are
+readings taken on a date, not properties of the code — which is the same lesson as the stale
+brakeman line below, and the same lesson as the advisory count above.
+
+### Left open by the audit-fix arc
+
+*(Distinct from the older `## Still open after this arc` section further down, which belongs to the
+project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced above lives.)*
+
+- **`config/brakeman.ignore` records `mesh.rb:74`; brakeman reports `mesh.rb:88`.** Measured by
+  re-running brakeman against an empty ignore config, which is the only way to see the line for a
+  warning you have suppressed. **The mechanism this arc established is confirmed** — brakeman
+  reports the `Open3.capture3` **call** line, not the line the argv array is built on — and the
+  entry was corrected once inside this arc (it recorded 59; the call was at 74). Then **this arc's
+  own later commit re-staled it**: `72e4e3f` added the GLB refusal above the call and moved it 74 →
+  88 without re-running the measurement. **Harmless to the gate** — the fingerprint does not hash
+  the line, all 4 entries still match, and brakeman exits 0 either way — but that file's whole value
+  is that a reader can check it against the code, and it currently cannot be. A second entry,
+  `files_controller.rb`, records 728 against an actual **729**; that one is **pre-existing**, not
+  from this arc (the file is untouched by it). Fix is two integers.
+  **The general lesson is the arc's own, turned on itself: a line number in a hand-maintained file
+  is a measurement, and it goes stale the moment anything above it moves.** Either re-measure it in
+  the same commit that edits the file, or stop recording it.
+- **`sidecar/boxes`'s licence obligation is closed; the wider one is not audited.** The test proves
+  each sidecar Dockerfile copies *a* LICENSE. It does not check that the text matches the licence
+  the upstream project actually ships under — for boxes.py that is GPL-3.0 and was checked by hand
+  here, but the guard would not catch a wrong file.
+
+## Earlier (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
 
 **Suite 1625 runs / 5655 assertions / 0 failures / 0 errors / 14 skips — byte-identical on chunk,
 share and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
