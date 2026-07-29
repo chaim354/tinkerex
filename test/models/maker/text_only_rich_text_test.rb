@@ -7,6 +7,13 @@ module Maker
   class TextOnlyRichTextTest < ActiveSupport::TestCase
     ATTACHMENT = %q(<action-text-attachment sgid="abc" content-type="image/png" filename="x.png"></action-text-attachment>).freeze
 
+    # CAPTIONED, and that is load-bearing rather than decorative. An attachment whose sgid does not
+    # resolve has NO plain-text representation, so ActionText::RichText#blank? is already true for
+    # it and a presence test using one passes with or without this concern — a vacuous guard that
+    # reads as coverage. A caption gives it plain text, so the body is genuinely non-blank BEFORE
+    # the strip and blank after: the test can only pass because the strip ran.
+    CAPTIONED_ATTACHMENT = %q(<action-text-attachment sgid="abc" caption="a photo"></action-text-attachment>).freeze
+
     setup do
       @user = User.create!(email: "tort-#{SecureRandom.hex(4)}@example.com")
       @project = @user.maker_projects.create!(name: "Lamp")
@@ -36,13 +43,13 @@ module Maker
     # `validates :body, presence: true`, so a body that was ONLY an attachment strips to nothing
     # and is rejected. The user submitted only a thing this app does not accept.
     test "a body that is only an attachment fails presence validation on a note" do
-      note = build_note(ATTACHMENT)
+      note = build_note(CAPTIONED_ATTACHMENT)
       assert_not note.valid?
       assert_includes note.errors.full_messages.join, "Body"
     end
 
     test "a body that is only an attachment fails presence validation on a build log entry" do
-      entry = build_entry(ATTACHMENT)
+      entry = build_entry(CAPTIONED_ATTACHMENT)
       assert_not entry.valid?
       assert_includes entry.errors.full_messages.join, "Body"
     end
