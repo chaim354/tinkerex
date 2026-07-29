@@ -1,6 +1,23 @@
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
 
+  # Active Storage's direct-upload endpoint, REMOVED. ActiveStorage::DirectUploadsController
+  # descends from ActiveStorage::BaseController — not this app's ApplicationController — so it
+  # shipped live and UNAUTHENTICATED: an anonymous POST minted a real Blob and returned a signed
+  # upload URL. That is an anonymous write surface into storage through Rails (CLAUDE.md §15).
+  #
+  # REMOVED rather than authenticated: `direct_upload` appears nowhere in app/, config/ or lib/, and
+  # both Lexxy editors run attachments-off, so nothing in this app calls it. Re-enabling it should
+  # be a deliberate act.
+  #
+  # DRAWN HERE, NOT VIA draw_routes = false: Maker::Preview uses has_one_attached :asset served with
+  # url_for, so the blob routes must survive. An app-drawn route DOES win over the engine's — this
+  # was verified by driving a real request, because `recognize_path` reports the engine's route for
+  # a proc endpoint (it carries no controller/action) and is the wrong instrument for the check.
+  post "/rails/active_storage/direct_uploads", to: proc {
+    [ 404, { "Content-Type" => "text/plain" }, [ "Not Found" ] ]
+  }
+
   # --- Web UI (server-rendered file browser) ---
   root to: redirect("/files")
 
