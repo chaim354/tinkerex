@@ -660,8 +660,8 @@ small static binary is that the image stays lean — you cannot judge the trade 
 
 - [ ] **Step 6: Add the F3D builder stage**
 
-In `Dockerfile`, after the `pdfium` stage (which ends at line 84 with the `curl … chmod +x /tmp/pdfium`
-RUN) and before `# Final stage for app image`, insert:
+In `Dockerfile`, after the `pdfium` stage (its `RUN curl … chmod +x /tmp/pdfium` ends at **line 82**;
+lines 83–84 are blank) and before `# Final stage for app image` (**line 85**), insert:
 
 ```dockerfile
 # ---- F3D: mesh + CAD → PNG/GLB (BSD-3 — CLAUDE.md §9). The one renderer here that is NOT a small
