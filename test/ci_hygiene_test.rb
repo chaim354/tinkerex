@@ -54,6 +54,16 @@ class CiHygieneTest < ActiveSupport::TestCase
     # install-app-on-runners.yml) satisfies this with no special-casing: the literal element is
     # still there, unresolved template or not — DYNAMIC_MATRIX_WORKFLOWS/each_static_job below are
     # for a different, still-unused check, not this one.
+    #
+    # KNOWN LIMIT, deliberately not closed: `runs-on` also has a MAP form,
+    # `{ group: ..., labels: [...] }`, and `Array(hash)` yields `[key, value]` PAIRS rather than a
+    # flat label list — so a map-form job can never match `"self-hosted"` and therefore always FAILS
+    # this check. Left alone for two reasons. It fails in the SAFE direction (loudly over-flagging,
+    # never silently passing a billed runner, which is the whole point of the file), and a correct
+    # reading is genuinely ambiguous: an org-level HOSTED larger-runner group and a self-hosted
+    # runner group use the identical YAML shape, so static inspection cannot tell them apart. No
+    # workflow here uses the map form today (verified: all 38 `runs-on` values are Array-shaped).
+    # If this repo ever adopts runner groups, that ambiguity is the problem to solve first.
     offenders = []
     each_job do |file, name, job|
       raw = Array(job["runs-on"])
