@@ -51,7 +51,16 @@ module Web
         assert_equal "image", entry.file_attachments.last.role
       end
 
-      test "a project-view chunk upload lands in the project's folder" do
+      # UPDATED FOR TASK 11's EAGER NUDGE: before it existed, a two-phase upload aimed straight at
+      # the project folder stayed loose right there until the next periodic sweep, so "lands in the
+      # project's folder" meant the folder's ROOT and this test asserted parent_node_id ==
+      # folder.node_id. finalize_upload now calls Maker::ProjectIntake.for_node in the same request
+      # (see FilesController#intake_project_folder), which FILES a loose root file into its category
+      # subfolder immediately — so an .stl now lands one hop deeper, in "models", not bare at the
+      # folder root. See project_folder_intake_test.rb for the nudge's own dedicated coverage
+      # (including the share/s3 door and the best-effort-on-failure guarantee); this test's remaining
+      # job is narrower: prove the CHUNK two-phase flow reaches the same place.
+      test "a project-view chunk upload is filed into the project's category subfolder" do
         project = @user.maker_projects.create!(name: "Lamp")
         folder = project.ensure_library_folder!(@user)
         bytes = "solid\n".b
@@ -62,7 +71,9 @@ module Web
         begun = JSON.parse(response.body)
         (begun["put_urls"] || {}).each_value { |u| put u, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" } }
         post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-        assert_equal folder.node_id, @user.nodes.find_by(node_id: begun["node_id"]).parent_node_id
+        node = @user.nodes.find_by(node_id: begun["node_id"])
+        assert_not_equal folder.node_id, node.parent_node_id, "no longer loose at the folder root"
+        assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
       end
 
       test "the project page wires the chunk uploader to upload into the project folder" do
