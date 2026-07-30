@@ -476,16 +476,11 @@ module Maker
       assert_equal "other", Maker::ProjectFolders.folder_for("README")
     end
 
-    test "NAMES is every distinct folder, deduped" do
-      assert_equal Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.sort,
-                   Maker::ProjectFolders::NAMES.sort
-      assert_equal 9, Maker::ProjectFolders::NAMES.size
-    end
-
-    # The names are lowercase because they appear in Finder and on the NAS — deliberately NOT
-    # ROLE_LABELS ("G-code", "CAD source"), which are UI headings.
+    # The names are lowercase because they appear in Finder and on the NAS. NOT asserted against
+    # NAMES, which was removed as speculative: nothing consumed it, and its presence nudged a
+    # reader toward pre-creating all nine folders — the opposite of the lazy creation Task 5 needs.
     test "folder names are single lowercase path segments" do
-      Maker::ProjectFolders::NAMES.each do |name|
+      Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.each do |name|
         assert_match(/\A[a-z0-9]+\z/, name, name)
       end
     end
@@ -543,10 +538,6 @@ module Maker
       "source_archive" => "archives",
       "other"          => "other"
     }.freeze
-
-    # Every distinct folder name. `instructions` and `document` share `docs`, so this is shorter
-    # than ROLE_FOLDERS — the dedupe is the point, not an accident of the literal.
-    NAMES = ROLE_FOLDERS.values.uniq.freeze
 
     module_function
 
