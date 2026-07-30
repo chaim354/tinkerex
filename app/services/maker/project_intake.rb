@@ -171,11 +171,17 @@ module Maker
     # would have caught it anyway — measured at 3 queries with it against 33 without, on a 2-node
     # cycle. Worth keeping for that; not what stops the spin.
     #
-    # CONTRAST #subtree_files, where its visited set DOES change the answer: without it, a file
-    # reachable by two paths would be collected twice, and since maker_file_attachments has no
-    # uniqueness index, that would write two rows for one file. There is no equivalent double-count
-    # to prevent here — this walk stops at the first match, so the two methods' visited sets are not
-    # doing the same job even though they look like the same idiom.
+    # CONTRAST #subtree_files, where its visited set DOES change the answer — though what it
+    # protects against changed shape under Task 9a. Without it, a file reachable by two paths
+    # would be collected into `files` twice, so #attach's `rows` would carry two identical hashes
+    # into the SAME insert_all call. Before Task 9a's unique index that meant two stored rows for
+    # one file; today insert_all's `unique_by:` skips the intra-batch duplicate the same way it
+    # skips a genuinely concurrent one (verified directly: `insert_all([row, row], unique_by:
+    # idx_maker_file_attachments_unique)` inserts one and silently skips the other) — so the
+    # failure mode moved from a duplicated row to a merely-wasted collection pass. Still worth
+    # preventing at the source rather than leaning on that. There is no equivalent double-count to
+    # prevent here in #owning_project, either way: this walk stops at the first match, so the two
+    # methods' visited sets are not doing the same job even though they look like the same idiom.
     #
     # One pluck up front means the loop compares against a hash rather than querying maker_projects
     # per level.
@@ -306,9 +312,30 @@ module Maker
     # is present, user and attachable are set right here, `position` has a DB default, and
     # created_at/updated_at are stamped by record_timestamps.
     #
-    # The dedupe is a pluck-and-reject rather than find_or_create_by per file for the same reason,
-    # and it is load-bearing: maker_file_attachments has NO uniqueness index, so a second row for
-    # one node is storable and would render the same file twice on the project page.
+    # TWO LAYERS HERE, DOING TWO DIFFERENT JOBS — NEITHER MAKES THE OTHER REDUNDANT (Task 9a):
+    #
+    #   1. THE PLUCK-AND-REJECT READ, still first, still a plain dedupe. It is what keeps the
+    #      ORDINARY case cheap: a sweep that finds nothing new to attach sends no INSERT at all,
+    #      and one that finds a few new files sends a small one — not a statement re-proposing
+    #      every file the project already has and relying on the database to quietly discard most
+    #      of it, every 15 minutes, forever. What it is NOT is a concurrency guard: a read followed
+    #      later by a write, with nothing atomic tying the two together, cannot be one — any writer
+    #      that attaches the same tuple in the gap between them still gets through.
+    #
+    #   2. `unique_by:`, naming the unique index the DedupeAndIndexMakerFileAttachments migration
+    #      added on (user_id, attachable_type, attachable_id, node_id). THIS is what makes the
+    #      write correct when a second writer lands that exact tuple in the gap #1 cannot close —
+    #      the gap a PERIODIC, unserialized sweep (Task 9 wires this class into one) opens up in a
+    #      way every earlier, user-triggered writer of this table never had to survive; see that
+    #      migration's own header for why the index has to exist before this can work at all, and
+    #      CLAUDE.md's count of this table's other five writers for who else can land in the gap.
+    #      The conflicting row is skipped BY THE DATABASE rather than raising or duplicating.
+    #      Naming the index explicitly — rather than leaving `unique_by:` unset — is not cosmetic:
+    #      omitted, insert_all still defaults to `on_duplicate: :skip`, but resolves to a bare,
+    #      UNTARGETED `ON CONFLICT DO NOTHING` that would silently swallow a violation of ANY
+    #      unique constraint this table ever gains, not only this one. Naming it scopes the skip to
+    #      exactly the tuple this method already knows it might be racing on. See
+    #      project_intake_test.rb's race test for the SQL both forms actually emit.
     def attach(files)
       return 0 if files.empty?
 
@@ -320,7 +347,7 @@ module Maker
       end
       return rows.size if rows.empty? || @dry_run
 
-      Maker::FileAttachment.insert_all(rows)
+      Maker::FileAttachment.insert_all(rows, unique_by: :idx_maker_file_attachments_unique)
       rows.size
     end
 

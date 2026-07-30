@@ -86,6 +86,89 @@ module Maker
       assert_equal 1, @project.file_attachments.count
     end
 
+    # THE RACE TASK 9a EXISTS TO CLOSE, driven end to end. The test above covers the NON-concurrent
+    # case: a row that already existed by the time #attach's read ran. This one covers the case
+    # that read-then-reject cannot, by construction: a second writer that inserts the SAME
+    # (user, attachable_type, attachable_id, node_id) tuple AFTER #attach has already read "not
+    # attached yet" but BEFORE #attach's own insert_all lands. Before the migration's unique index
+    # existed, that window let a second row through silently — no constraint anywhere stopped it.
+    #
+    # WHAT THIS TEST CAN AND CANNOT DISCRIMINATE, recorded because it is not obvious and would
+    # otherwise be assumed wrong the first time someone reverted `unique_by:` and watched this stay
+    # green. Bare `Model.insert_all(rows)` — no `on_duplicate:`, no `unique_by:` — is NOT "insert,
+    # raise on conflict": ActiveRecord::Relation#insert_all hardcodes `on_duplicate: :skip`, and
+    # find_unique_index_for resolves an unspecified `unique_by:` against the model's PRIMARY KEY,
+    # which (for an all-new batch with no `id` set) always matches trivially — so it emits a bare,
+    # UNTARGETED `ON CONFLICT DO NOTHING`, which Postgres and SQLite both apply to ANY unique
+    # constraint violation on the insert, not just ours. Measured directly against this table
+    # (`bin/rails runner`, both with and without `unique_by:`): once the migration's index exists,
+    # the NO-RAISE / EXACTLY-ONE-ROW assertions below hold EITHER WAY. So this test's row-count and
+    # assert_nothing_raised assertions are pinned to the MIGRATION (Part A), not to this method's
+    # `unique_by:` (Part B) — reverting just the `unique_by:` argument leaves them green.
+    #
+    # THE KWARGS ASSERTION AT THE BOTTOM IS THE ONE THAT PINS PART B, by asserting on the call
+    # itself rather than only its emergent effect: that #attach names `idx_maker_file_attachments_
+    # unique` explicitly rather than leaning on the untargeted default. That is not cosmetic —
+    # naming the index scopes the swallowed conflict to exactly this tuple, so a DIFFERENT, future
+    # unique constraint on this table that a race also violated would still raise instead of being
+    # silently absorbed by a blanket DO NOTHING. Confirmed by inspecting the emitted SQL directly:
+    # unique_by: produces `ON CONFLICT ("user_id","attachable_type","attachable_id","node_id") DO
+    # NOTHING`; its absence produces `ON CONFLICT DO NOTHING` with no column list at all.
+    #
+    # HOOKED AT insert_all, NOT A REAL SECOND THREAD, and that is deliberate. A real thread cannot
+    # GUARANTEE the interleaving lands inside the window on every run — a race test that only
+    # sometimes exercises the race is worse than none, since it reports green on a coin flip.
+    # Hooking the one call site #attach makes to insert_all — the exact place a concurrent
+    # committer's row must already have landed for the skip to have anything to skip — makes the
+    # interleaving happen on every run, deterministically, while every OTHER line of #attach (the
+    # read, the reject, the row-building) runs completely unmodified: this is the real code path,
+    # not a rewritten stand-in for it.
+    #
+    # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist in
+    # this suite (requiring it is a LoadError) — the same constraint with_broken_move above answers
+    # by defining a singleton method rather than reaching for a mocking library.
+    test "#attach is safe under a concurrent insert into the same race window" do
+      node = file("bracket.stl")
+
+      raced = false
+      captured_kwargs = nil
+      original_insert_all = Maker::FileAttachment.method(:insert_all)
+      Maker::FileAttachment.define_singleton_method(:insert_all) do |rows, **kwargs|
+        captured_kwargs = kwargs
+        unless raced
+          raced = true
+          # THE CONCURRENT WRITER — the identical tuple #attach is about to insert, landed by a
+          # SEPARATE statement first. Stands in for any of the six other writers CLAUDE.md counts
+          # (AttachToProject#call, AttachToProject#attach_bundle, Projects::UploadsController,
+          # Models::AttachmentsController, CurrentProject#attach_addon_files_to_current_project,
+          # Projects::EntryPhotosController) or a second ProjectIntake sweep running concurrently.
+          row = rows.first
+          Maker::FileAttachment.create!(user_id: row[:user_id], attachable_type: row[:attachable_type],
+                                        attachable_id: row[:attachable_id], node_id: row[:node_id],
+                                        role: "other")
+        end
+        original_insert_all.call(rows, **kwargs)
+      end
+
+      begin
+        result = nil
+        # assert_nothing_raised takes NO message argument (ActiveSupport::Testing::Assertions) —
+        # unlike most assertions here, it is arity 0 plus a block.
+        assert_nothing_raised do
+          result = intake
+        end
+        assert_equal 1, @project.file_attachments.where(node_id: node.node_id).count,
+                     "exactly one row must survive the race — not two, and not zero"
+        assert_equal 1, result.attached,
+                     "the sweep still reports its own attempt; the race is invisible to this count"
+        assert_equal :idx_maker_file_attachments_unique, captured_kwargs[:unique_by],
+                     "#attach must name the index explicitly, not lean on insert_all's untargeted " \
+                     "default — see this test's own comment for why that is not merely cosmetic"
+      ensure
+        Maker::FileAttachment.singleton_class.send(:remove_method, :insert_all)
+      end
+    end
+
     test "the role is derived per file, not copied" do
       stl = file("bracket.stl")
       pdf = file("guide.pdf")
@@ -134,8 +217,10 @@ module Maker
     # folder -> dir_a -> dir_b -> folder — is what actually re-presents an already-`seen` node_id to
     # the visited check. Without that check firing first, this would spin (MAX_DEPTH.times still
     # bounds the iteration count, but the visited set is what stops the file from being collected
-    # more than once via repeated re-expansion — and maker_file_attachments has no uniqueness index,
-    # so a double-collect would silently write two rows for one file).
+    # more than once via repeated re-expansion — and before Task 9a's unique index, a double-collect
+    # would have silently written two rows for one file; today it would instead cost a second,
+    # database-skipped insert attempt for the same tuple — see #owning_project's comment, just above
+    # this class in app/services/maker/project_intake.rb, for the same contrast worked out in full).
     test "a cycle through the project folder terminates and attaches the file inside once" do
       dir_a = dir("dir_a")
       dir_b = dir("dir_b", parent: dir_a.node_id)
