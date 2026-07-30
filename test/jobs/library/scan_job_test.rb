@@ -305,6 +305,35 @@ module Library
                    "the intake ran after the reconcile — it filed a node the reconcile created"
     end
 
+    # THE FINDING THIS PINS: intake_project_folders used to call Maker::ProjectIntake.for_user
+    # directly and throw its RunResult away, so a cap refusal reached via a scan-triggered intake
+    # logged NOTHING — reproduced by forcing PROJECT_ORGANIZE_MAX_MOVES=1 against two loose files
+    # and finding no match anywhere in the log for /cap/i, /refus/i or /attached/i. The identical
+    # trip on a chunk deployment (Maker::ProjectIntakeJob#report) already warns — see
+    # project_intake_job_test.rb's "the cap refusal is logged", same wording, same regex, driven
+    # through Library::ScanJob here instead of Maker::ProjectIntakeJob directly, because that is
+    # the path this finding was about. There is no shared capture_log helper reachable from this
+    # sibling class (see the class comment above), so this inlines it exactly as
+    # project_intake_job_test.rb's own version of this test does.
+    test "a cap refusal reached via the scan is logged, identically to the scheduled sweep" do
+      # A second loose file: two loose files trip a cap of 1 (setup already staged "panel.svg").
+      File.binwrite(File.join(@root, @folder.storage_path, "second.svg"), "<svg/>")
+
+      prior = ENV["PROJECT_ORGANIZE_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_MAX_MOVES"] = "1"
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = Logger.new(log)
+      begin
+        Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+      ensure
+        Rails.logger = original_logger
+        ENV["PROJECT_ORGANIZE_MAX_MOVES"] = prior
+      end
+
+      assert_match(/REFUSED to file 2 loose files for user #{@user.id} — over the 1 cap/, log.string)
+    end
+
     # A scan that SUCCEEDED must not be reported as failed because the intake blew up. The
     # reconcile is already committed (there is no transaction), so an operator reading a failed
     # ScanJob would conclude the library did not index — which would be false.
