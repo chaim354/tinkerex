@@ -5,8 +5,8 @@ module Maker
   # WHY A SWEEP RATHER THAN A HOOK ON EVERY WRITE. A file can reach `Projects/<slug>/` seven ways —
   # FilesController#create (share/s3), #finalize_upload (chunk), Library::Reconciler (the scan),
   # Sync::Commit#finalize (a device push), Maker::Addons::LibraryOutput, Maker::MoveNode, and a
-  # trash restore. There is no single funnel. Hooking each is seven sites that must agree, and a
-  # SEVENTH door silently skips the rule — the failure this repo has recorded more than once
+  # trash restore. There is no single funnel. Hooking each is seven sites that must agree, and an
+  # EIGHTH door silently skips the rule — the failure this repo has recorded more than once
   # (Maker::AttachToProject's header; the five port_writable? copies; the four instances of the
   # Scanner's skip-list blind spot, each found only after the previous explanation said it could not
   # happen). This reads `nodes`, the catalog ALL THREE BACKENDS populate, so it covers every door
