@@ -188,7 +188,12 @@ observations, the Reconciler sees the node at `design/part.svg` unobserved and t
 observation at the root unclaimed, pairs them by `(content_hash, size)` — that is
 `best_pairing` working exactly as designed — and re-points the node **back** to the root path
 while the bytes sit in `design/`. It self-heals on the next scan, but in the window the
-node's `storage_path` has no bytes behind it and a download answers 503.
+node's `storage_path` has no bytes behind it and a download answers **404** — the TERMINAL
+answer, not the retryable one. (Corrected 2026-07-30: this said 503. `library_present?` still
+reads true, because it only reads false when the share root itself is empty or missing, so
+`Share#download` raises `NotFound` rather than `FetchError`. That makes the window worse than
+first described: the user is told the file is permanently gone, which is exactly the sentence
+`Share#read`'s comments say must never be said when it is not true.)
 
 So the trigger is placed to make the overlap impossible rather than to survive it:
 
