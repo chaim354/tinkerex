@@ -206,6 +206,24 @@ module Tools
       assert_select "*", text: /Reopen Me/
     end
 
+    test "show lists the params and offers the JSON download (they are not a file any more)" do
+      state = @user.maker_addon_states.create!(
+        addon_key: "boxes", name: "Multi Tray",
+        # A MULTILINE value: boxes' TrayLayout/FrontPanel/NightLightBox section params are
+        # newline-separated, and they are why the value cell must not collapse whitespace.
+        data: { "generator" => "ABox", "params" => { "x" => "120", "sx" => "50 60\n70 80" } }
+      )
+      get tools_box_path(state)
+      assert_response :success
+      assert_select "section.addon-params dl.meta dt", text: "x"
+      assert_select "section.addon-params dl.meta dd", text: "120"
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
+      # The newline must survive into the markup. The `white-space: pre-wrap` that makes it RENDER as
+      # two lines is CSS and cannot be asserted here; this guards the half that can be — that the
+      # view never squishes or truncates the value.
+      assert_includes response.body, "50 60\n70 80"
+    end
+
     test "new lists prior boxes for this generator only, newest first" do
       post tools_boxes_path, params: { name: "Older ABox", generator: "ABox", params: { x: 1, y: 2 } }
       post tools_boxes_path, params: { name: "Newer ABox", generator: "ABox", params: { x: 3, y: 4 } }

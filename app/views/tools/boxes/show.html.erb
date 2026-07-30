@@ -18,6 +18,8 @@
   <% end %>
 </ul>
 
+<%= render "tools/shared/params", state: @state %>
+
 <%= link_to "Duplicate & tweak",
       box_prefill_path(@state.data["generator"], @state.data["params"]),
       class: "btn ghost" %>

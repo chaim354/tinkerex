@@ -180,6 +180,28 @@ module Tools
       assert_response :not_found
     end
 
+    test "show lists the params and offers the JSON download" do
+      state = @user.maker_addon_states.create!(
+        addon_key: "generators", name: "Grid P",
+        data: { "generator" => "material-test-grid", "params" => { "cols" => "4" } }
+      )
+      get tools_generator_path(state)
+      assert_response :success
+      assert_select "section.addon-params dl.meta dt", text: "cols"
+      assert_select "section.addon-params dl.meta dd", text: "4"
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
+    end
+
+    test "show says so when a state has no params at all" do
+      state = @user.maker_addon_states.create!(addon_key: "generators", name: "Bare",
+                                               data: { "generator" => "material-test-grid" })
+      get tools_generator_path(state)
+      assert_response :success
+      assert_select "section.addon-params", text: /No parameters/
+      # The download stays offered either way — `data` still carries the generator.
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
+    end
+
     test "index pre-selects the current project's folder in the save picker" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       patch current_project_path, params: { project_id: project.id }

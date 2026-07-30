@@ -19,6 +19,8 @@
   <% end %>
 </ul>
 
+<%= render "tools/shared/params", state: @state %>
+
 <%= link_to "Duplicate & tweak",
       openscad_prefill_path(openscad_source_key(@state), @state.data["params"]),
       class: "btn ghost" %>

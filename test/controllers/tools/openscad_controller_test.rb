@@ -387,6 +387,19 @@ module Tools
       assert_select "input[name='params[cols]'][value=?]", "9"
     end
 
+    test "show lists the params and offers the JSON download" do
+      # POSTed rather than hand-built: `show` resolves the source through `openscad_source_key`, and
+      # a real save is the honest way to get a state that helper can read.
+      post tools_openscad_path, params: { name: "OS Params", generator: "hex_plate",
+                                          params: { cols: "6", wall: "2.5" } }
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+      get tools_openscad_design_path(state)
+      assert_response :success
+      assert_select "section.addon-params dl.meta dt", text: "cols"
+      assert_select "section.addon-params dl.meta dd", text: "6"
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
+    end
+
     # --- graceful degradation --------------------------------------------------------------------
 
     test "the addon greys out on a deployment with no sidecar" do

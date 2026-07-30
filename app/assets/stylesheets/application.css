@@ -176,6 +176,10 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 }
 .addon-card[hidden], .box-group[hidden] { display: none; }
 
+/* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
+   so the value cell must not collapse it into one line. */
+.addon-params dd { white-space: pre-wrap; }
+
 .saved-boxes {
   list-style: none; padding: 0; margin: 0;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;

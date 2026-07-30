@@ -1,0 +1,27 @@
+<%# The params behind this state, straight from the DB. They used to ALSO be written into the
+    library as a `.params.json` file; that file was write-only (nothing read it back) and is gone —
+    `Maker::AddonState#data` is the record. `state` is the only local, because `Maker::AddonState` is
+    addon-agnostic and so is this: boxes, generators and openscad all render it unchanged.
+
+    VALUES CAN BE MULTILINE — boxes' TrayLayout/FrontPanel/NightLightBox section params are
+    newline-separated — so `.addon-params dd` carries `white-space: pre-wrap`. A collapsing cell
+    renders those as one mangled line. %>
+<section class="addon-params">
+  <h2>Parameters</h2>
+
+  <% values = state.data["params"] || {} %>
+  <% if values.empty? %>
+    <p class="muted">No parameters.</p>
+  <% else %>
+    <dl class="meta">
+      <% values.each do |key, value| %>
+        <dt><%= key %></dt>
+        <dd class="mono"><%= value.to_s.presence || "—" %></dd>
+      <% end %>
+    </dl>
+  <% end %>
+
+  <%# The download serves the WHOLE `data` hash — byte-identical to the removed file. The list above
+      shows only `params`, because every show page already prints the generator above it. %>
+  <%= link_to "Download params.json", tools_addon_params_path(state), class: "btn ghost" %>
+</section>
