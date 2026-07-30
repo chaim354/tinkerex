@@ -83,3 +83,18 @@ production:
     class: Maker::DeadNodeReaperJob
     queue: background
     schedule: every saturday at 5am
+
+  # Project-folder intake: attach what is under each Projects/<slug>/ folder, file what is loose at
+  # its root. CHUNK DEPLOYMENTS ONLY — sweep_all! declines when the backend is `scannable`, because
+  # on share/s3 Library::ScanJob already calls the intake at the end of its own perform, strictly
+  # after the reconcile. A second caller there would reintroduce the scan overlap that placement
+  # exists to prevent (a move made after the Scanner captured its observations is paired back by
+  # content hash, leaving the node pointed at a path with no bytes until the next scan).
+  #
+  # `command:` rather than `class:`, matching library_scan, because the backend gate lives in a
+  # class method rather than in #perform — a caller who names a user deserves the operation. Every
+  # 15 minutes: the interval library_scan already establishes, so both deployments have the same
+  # worst-case lateness rather than two numbers to reason about.
+  project_folder_intake:
+    command: "Maker::ProjectIntakeJob.sweep_all!"
+    schedule: every 15 minutes
