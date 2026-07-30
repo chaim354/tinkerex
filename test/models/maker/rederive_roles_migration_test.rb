@@ -79,10 +79,33 @@ class RederiveRolesMigrationTest < ActiveSupport::TestCase
 
   # The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the
   # two can silently drift. This is the only thing that would notice.
+  #
+  # ONE EXTENSION IS ALLOWED TO DISAGREE, and it is listed rather than skipped. `lbrn2` was remapped
+  # `vector` -> `laser` when the laser role was added; this migration's snapshot stays frozen (its
+  # own header forbids rewriting it — it must run against whatever the code looks like months from
+  # now), and RederiveLaserRoles is what carries those rows forward instead.
+  #
+  # THE SECOND ASSERTION IS WHAT STOPS THE EXCEPTION OUTLIVING ITS CAUSE. Without it, an entry here
+  # would silently stay valid forever — including after someone remapped lbrn2 back — and the
+  # allowlist would quietly become the drift it exists to catch.
+  SUPERSEDED = { "lbrn2" => "laser" }.freeze
+
   test "the migration's extension list still agrees with the model's" do
     RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT.each do |ext, role|
+      next if SUPERSEDED.key?(ext)
+
       assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
                    "migration maps #{ext} to #{role}, model disagrees"
+    end
+  end
+
+  test "every superseded extension really is superseded" do
+    SUPERSEDED.each do |ext, role|
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "#{ext} is listed as superseded to #{role}, but the model says " \
+                   "#{Maker::FileAttachment::ROLE_BY_EXT[ext].inspect} — remove it from SUPERSEDED"
+      assert_not_equal role, RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT[ext],
+                       "#{ext} no longer disagrees with the old migration — remove it from SUPERSEDED"
     end
   end
 end
