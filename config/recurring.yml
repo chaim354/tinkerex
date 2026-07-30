@@ -92,9 +92,28 @@ production:
   # content hash, leaving the node pointed at a path with no bytes until the next scan).
   #
   # `command:` rather than `class:`, matching library_scan, because the backend gate lives in a
-  # class method rather than in #perform — a caller who names a user deserves the operation. Every
-  # 15 minutes: the interval library_scan already establishes, so both deployments have the same
-  # worst-case lateness rather than two numbers to reason about.
+  # class method rather than in #perform — a caller who names a user deserves the operation.
+  #
+  # EVERY 15 MINUTES, MATCHING library_scan — BUT NOT FOR THE REASON AN EARLIER VERSION OF THIS
+  # COMMENT GAVE. It used to say the shared number gives "both deployments the same worst-case
+  # lateness", which treats the two 15-minute figures as the same kind of constraint, and they are
+  # not — the same "two things that happen to share a value today" trap FileLayer::Capabilities'
+  # scannable/port_writable commentary warns against, made here instead of merely described. On
+  # share/s3, 15 minutes is a genuine FLOOR: Library::ScanJob cannot discover a change any faster
+  # than its own poll, so this job riding the same interval costs nothing extra. On chunk there is
+  # no floor behind it — Sync::Commit#finalize is synchronous — so 15 minutes here is an arbitrary
+  # choice, not an inherited limit.
+  #
+  # THE REAL CONSEQUENCE, worth stating rather than leaving to be discovered: Task 11's eager nudge
+  # covers only the two WEB upload doors (FilesController#create / #finalize_upload). It is never
+  # wired into Sync::Commit#finalize, so a DEVICE PUSH THROUGH THE MOUNT — arguably chunk's defining
+  # path per this repo's architecture — has NO fast path at all. This job's interval is the ONLY
+  # latency bound it gets. That omission is deliberate, not an oversight: #finalize runs once PER
+  # FILE, so a device syncing 500 files would trigger 500 synchronous full-project sweeps — the same
+  # cost problem measured on .for_node (2,425 queries / ~390ms for a 200-file backlog), multiplied
+  # by every file in the batch. The periodic sweep is the right mechanism for that path, and 15
+  # minutes is the accepted latency for it — not a floor borrowed from a job that merely happens to
+  # share the number.
   project_folder_intake:
     command: "Maker::ProjectIntakeJob.sweep_all!"
     schedule: every 15 minutes
