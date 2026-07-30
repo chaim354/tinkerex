@@ -29,9 +29,40 @@ module Maker
     # implausible.
     RunResult = Data.define(:results, :status, :inbox_total, :cap)
 
-    # The default ceiling on files filed in one run. See .for_user for why it is an absolute count
-    # rather than a percentage.
+    # The default ceiling on files filed in one PERIODIC, UNATTENDED run — .for_user (the 15-minute
+    # sweep / a chunk deployment's Maker::ProjectIntakeJob, or Library::ScanJob's post-reconcile
+    # call on share/s3). See .for_user for why it is an absolute count rather than a percentage.
+    #
+    # NOT THE CAP A WEB REQUEST USES — see SYNC_MAX_MOVES just below. Two constants that both
+    # answer "how many files get filed" is exactly the shape a future reader collapses into one, so
+    # the distinction is recorded at both definitions: this one bounds CHURN across a run nobody is
+    # waiting on (SQLite has no statement timeout; a NAS or a bucket does not care how long a
+    # background job takes), SYNC_MAX_MOVES bounds LATENCY inside a request a browser IS waiting on.
+    # Measured, not assumed: 200 loose files already at a project root costs 2,425 queries and
+    # ~340 ms on local SQLite with zero network latency to file (see the query-count test below) —
+    # fine once every 15 minutes in a background job, not fine stacked onto the response time of
+    # every single upload into a project with any kind of backlog.
     MAX_MOVES = 500
+
+    # The ceiling .for_node uses INSTEAD OF MAX_MOVES — deliberately a different constant, a
+    # different env var, and a much smaller default, because .for_node is the only entry point this
+    # class has that can run INSIDE a web request (FilesController's eager nudge, Task 11) rather
+    # than an unattended background job. Reusing MAX_MOVES here would let a single upload's response
+    # wait on the cost described in that constant's comment, and a 200-file backlog is not exotic —
+    # the Printables zip importer drops a whole bundle into a project in one request.
+    #
+    # A LOW-TENS DEFAULT keeps the synchronous path cheap: the attach half is always O(new files)
+    # regardless of this cap (see .call's ordering), and filing a couple dozen files is a couple
+    # dozen Maker::MoveNode calls, not a couple hundred — while staying large enough that the
+    # ordinary case, a handful of files dropped into a folder, files itself immediately without ever
+    # touching this ceiling.
+    #
+    # OVER THIS CAP: attach still runs (always — see .for_node), filing does not, and the PERIODIC
+    # sweep (MAX_MOVES' run) picks up the backlog on its own schedule. That is the SAME
+    # durable-now/best-effort-later split .for_user already applies to MAX_MOVES; this constant does
+    # not introduce a new policy, it gives the existing policy a cheaper threshold for the one caller
+    # that cannot afford the expensive one.
+    SYNC_MAX_MOVES = 25
 
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
@@ -129,28 +160,37 @@ module Maker
     # is identical, the work is bounded by one project's inbox, and a single-file path would be a
     # second copy of the two steps — the thing this class exists to avoid having.
     #
-    # IT APPLIES THE CAP, SCOPED TO THIS PROJECT'S OWN INBOX — the only count this entry point can
-    # honestly take, since one node names one project and nothing here sees the rest of the user's
-    # library. What that guarantees: a SINGLE project's inbox cannot be drained past the cap one
-    # upload at a time — each call re-checks that project's own count before moving anything, so a
-    # project already sitting over the cap stays refused across repeated uploads into it.
+    # IT APPLIES ITS OWN CAP — SYNC_MAX_MOVES / .sync_max_moves, NOT MAX_MOVES / .max_moves — SCOPED
+    # TO THIS PROJECT'S OWN INBOX, the only count this entry point can honestly take, since one node
+    # names one project and nothing here sees the rest of the user's library. See SYNC_MAX_MOVES's
+    # comment for why this entry point needs a cap of its own rather than reusing for_user's: this
+    # is the one caller that runs INSIDE a web request. What the scoping guarantees is unchanged by
+    # that split: a SINGLE project's inbox cannot be drained past the cap one upload at a time — each
+    # call re-checks that project's own count before moving anything, so a project already sitting
+    # over the cap stays refused across repeated uploads into it.
     #
-    # WHAT IT DOES NOT GUARANTEE: for_user's run-level total. Two projects at 300 loose files each
-    # sum to 600 — over the default 500 cap, so for_user refuses the whole run — but a for_node call
-    # into EITHER project alone sees only that project's own 301, under the cap, and files all of
-    # it. That is not a bug to fix here: reproducing the whole-run total would mean scanning every
-    # other project on every single upload, a cost this eager path is not meant to pay.
+    # WHAT IT DOES NOT GUARANTEE: for_user's run-level total — and splitting the two caps apart
+    # (Task 11 Part A) makes that MORE true, not less. for_node checks ITS PROJECT'S inbox against
+    # SYNC_MAX_MOVES (a request-latency budget); for_user checks the WHOLE RUN's inbox against
+    # MAX_MOVES (a per-run churn budget). Different counts, against different numbers, for different
+    # reasons — neither tells you anything about the other. A project sitting at, say, 30 loose
+    # files is over for_node's own cap (an eager upload into it only attaches) while nowhere near
+    # for_user's 500 (the periodic sweep files it without complaint next time it runs). That is not
+    # a bug to fix here: reproducing the whole-run total would mean scanning every other project on
+    # every single upload, a cost this eager path is not meant to pay — and even if it did, MAX_MOVES
+    # would be the wrong number to compare against, since the two methods are not protecting the
+    # same resource.
     def self.for_node(user:, node:)
       project = owning_project(user, node)
       return nil unless project
 
       inbox = user.nodes.present.where(kind: "file", parent_node_id: project.folder_node_id).count
-      cap = max_moves
+      cap = sync_max_moves
       if inbox > cap
         Rails.logger.warn("Maker::ProjectIntake: attaching but NOT filing #{project.slug} — " \
-                          "#{inbox} loose files is over the #{cap} cap. Run " \
-                          "`rake projects:organize` (it lifts the cap) or raise " \
-                          "PROJECT_ORGANIZE_MAX_MOVES.")
+                          "#{inbox} loose files is over the #{cap}-file synchronous cap. The " \
+                          "periodic sweep will file the rest on its own schedule; raise " \
+                          "PROJECT_ORGANIZE_SYNC_MAX_MOVES to file more inline.")
       end
       for_project(user:, project:, move: inbox <= cap)
     end
@@ -216,6 +256,20 @@ module Maker
     # zero-padded value parses as OCTAL (`Integer("0500") => 320`, not 500).
     def self.max_moves
       Integer(ENV.fetch("PROJECT_ORGANIZE_MAX_MOVES", MAX_MOVES.to_s))
+    end
+
+    # THE SAME MECHANICS AS .max_moves, FOR THE SAME REASONS — read per call (not frozen at boot),
+    # Integer() raises uncaught on a malformed value (including the zero-padded-octal gotcha) —
+    # not repeated verbatim here; see .max_moves' comment just above for the full argument, which
+    # applies to this method unchanged.
+    #
+    # WHAT IS DIFFERENT IS WHICH CALLER READS WHICH VARIABLE, AND THAT IS THE WHOLE POINT: .for_user
+    # (and .for_project) never read PROJECT_ORGANIZE_SYNC_MAX_MOVES, and .for_node never reads
+    # PROJECT_ORGANIZE_MAX_MOVES. See SYNC_MAX_MOVES's comment for why collapsing the two would be
+    # wrong, and project_intake_test.rb's independence tests for proof rather than assertion —
+    # setting one variable and checking the OTHER method's behaviour is untouched.
+    def self.sync_max_moves
+      Integer(ENV.fetch("PROJECT_ORGANIZE_SYNC_MAX_MOVES", SYNC_MAX_MOVES.to_s))
     end
 
     def initialize(user:, project:, dry_run: false, move: true)

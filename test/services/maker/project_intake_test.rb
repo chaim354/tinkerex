@@ -30,6 +30,22 @@ module Maker
 
     def roles = @project.file_attachments.pluck(:node_id, :role).to_h
 
+    # Count real SQL round-trips inside the block, same shape as Sync::ScaleTest's helper of the
+    # same name: `uncached` so the AR query cache can't make a repeat measurement read artificially
+    # low, schema/transaction bookkeeping excluded so only real work counts.
+    def count_queries(&block)
+      count = 0
+      counter = ->(_name, _start, _finish, _id, payload) do
+        next if payload[:name] == "SCHEMA" || payload[:cached]
+        next if payload[:sql].match?(/\A\s*(BEGIN|COMMIT|ROLLBACK|RELEASE|SAVEPOINT|PRAGMA)/i)
+        count += 1
+      end
+      ActiveRecord::Base.uncached do
+        ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
+      end
+      count
+    end
+
     # --- the attach step ---------------------------------------------------------
 
     test "a file at the project folder root is attached" do
@@ -745,6 +761,29 @@ module Maker
       assert_equal 500, Maker::ProjectIntake.max_moves
     end
 
+    # --- the SYNC cap (Task 11 Part A) --------------------------------------------
+    #
+    # A separate, much smaller cap for the ONE caller that runs INSIDE a web request (for_node,
+    # below) rather than an unattended background job (for_user/the periodic sweep, above). See
+    # SYNC_MAX_MOVES's comment in project_intake.rb for the full argument; these tests exist to
+    # PROVE the two never leak into each other, not just assert it in a comment.
+
+    test "PROJECT_ORGANIZE_SYNC_MAX_MOVES is honored per call" do
+      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "3"
+      begin
+        assert_equal 3, Maker::ProjectIntake.sync_max_moves
+      ensure
+        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+      end
+    end
+
+    test "the default sync cap is a low-tens number, well under MAX_MOVES" do
+      assert_equal 25, Maker::ProjectIntake::SYNC_MAX_MOVES
+      assert_equal 25, Maker::ProjectIntake.sync_max_moves
+      assert_operator Maker::ProjectIntake::SYNC_MAX_MOVES, :<, Maker::ProjectIntake::MAX_MOVES
+    end
+
     # --- for_node ----------------------------------------------------------------
 
     test "for_node files a file dropped at a project root" do
@@ -776,19 +815,94 @@ module Maker
       assert_nil Maker::ProjectIntake.for_node(user: other, node:)
     end
 
-    # THE HOLE THIS CLOSES: if the periodic run REFUSED on the cap, an uncapped for_node would file
-    # the library anyway, one upload at a time, and the guard would guard nothing.
-    test "for_node respects the cap, so a refused library stays refused" do
+    # THE HOLE THIS CLOSES, UNCHANGED BY THE SYNC/PERIODIC SPLIT BELOW: without a cap-check of its
+    # own, for_node would file an over-cap project's backlog anyway, one eager upload at a time --
+    # each individual call would see only the one new file it is attaching, never the pile already
+    # sitting there, unless it re-counts the WHOLE inbox before moving anything. It does.
+    #
+    # USES THE SYNC CAP, NOT THE PERIODIC ONE (Task 11 Part A) -- for_node is the entry point that
+    # runs INSIDE a web request, so PROJECT_ORGANIZE_SYNC_MAX_MOVES bounds it; PROJECT_ORGANIZE_
+    # MAX_MOVES (for_user's cap) has no effect on it at all. See the independence tests below for
+    # proof, not just this comment's say-so.
+    test "for_node respects the sync cap, so a large backlog stays attach-only" do
       3.times { |i| file("p#{i}.svg") }
       node = file("trigger.svg")
-      prior = ENV["PROJECT_ORGANIZE_MAX_MOVES"]
-      ENV["PROJECT_ORGANIZE_MAX_MOVES"] = "2"
+      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "2"
       begin
         result = Maker::ProjectIntake.for_node(user: @user, node:)
         assert_equal 0, result.moved
         assert_equal 4, result.attached, "the attach half still runs, as it does for a whole run"
       ensure
+        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+      end
+    end
+
+    test "under the sync cap, for_node both attaches and files" do
+      3.times { |i| file("p#{i}.svg") }
+      node = file("trigger.svg")
+      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "10"
+      begin
+        result = Maker::ProjectIntake.for_node(user: @user, node:)
+        assert_equal 4, result.attached
+        assert_equal 4, result.moved
+      ensure
+        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+      end
+    end
+
+    # THE MEASURED IMPROVEMENT ITSELF, NOT JUST THAT A CAP EXISTS. Before this cap, a request that
+    # landed in a project already holding 200 loose files paid for filing all 201 of them inline: a
+    # `Maker::MoveNode` call per file, measured directly against this code at 2,425 queries and
+    # ~340 ms on local SQLite with zero network latency (a runner script mirroring exactly this
+    # setup, before Part A existed). Over the sync cap, the whole file_all loop is skipped — the
+    # remaining cost is the two fixed-size steps: the inbox COUNT and the bulk attach (one pluck +
+    # one insert_all, never one query per file). The bound below is deliberately loose (real cost is
+    # under 10) so ordinary drift in the attach path cannot make this flaky; what it must catch is
+    # the shape coming back — a regression that lets filing run anyway would blow through 30 by two
+    # orders of magnitude, not by a little.
+    test "an over-cap upload costs a small, backlog-independent number of queries" do
+      200.times { |i| file("loose#{i}.svg") }
+      node = file("just_uploaded.svg")
+
+      n = count_queries { Maker::ProjectIntake.for_node(user: @user, node:) }
+
+      assert_operator n, :<, 30,
+        "an over-the-sync-cap intake must not scale with backlog size (got #{n} queries for 201 " \
+        "loose files -- the pre-Part-A shape cost 2,425 for the same setup)"
+    end
+
+    # PROOF, NOT ASSERTION, THAT THE TWO CAPS ARE INDEPENDENT -- a comment saying so is exactly the
+    # kind of claim that silently rots the moment someone "simplifies" the two methods back into
+    # one shared cap. Both directions: setting EITHER variable must leave the OTHER method's
+    # behaviour alone.
+    test "the periodic cap does not bound for_node" do
+      4.times { |i| file("p#{i}.svg") }
+      node = file("trigger.svg")
+      prior = ENV["PROJECT_ORGANIZE_MAX_MOVES"]
+      # Far below the 5-file inbox -- if for_node read this variable at all, it would refuse to file.
+      ENV["PROJECT_ORGANIZE_MAX_MOVES"] = "1"
+      begin
+        result = Maker::ProjectIntake.for_node(user: @user, node:)
+        assert_equal 5, result.moved, "for_node must not be bounded by PROJECT_ORGANIZE_MAX_MOVES"
+      ensure
         ENV["PROJECT_ORGANIZE_MAX_MOVES"] = prior
+      end
+    end
+
+    test "the sync cap does not bound for_user" do
+      4.times { |i| file("p#{i}.svg") }
+      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
+      # Far below the 4-file inbox -- if for_user read this variable at all, it would refuse the run.
+      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "1"
+      begin
+        run = Maker::ProjectIntake.for_user(user: @user)
+        assert_equal :ok, run.status
+        assert_equal 4, run.results.sum { |_p, r| r.moved },
+                     "for_user must not be bounded by PROJECT_ORGANIZE_SYNC_MAX_MOVES"
+      ensure
+        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
       end
     end
 
