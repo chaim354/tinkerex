@@ -38,10 +38,11 @@ module Maker
       # ARE g-code — the folder split (cnc vs laser) is Maker::ProjectFolders' job, not a reason to
       # fragment the vocabulary.
       "gcode" => "gcode", "gco" => "gcode", "nc" => "gcode", "tap" => "gcode", "ngc" => "gcode",
-      # Laser / 2D vector work. `lbrn2` is LASER, not vector: a LightBurn document is a machine
-      # program, while svg/dxf are drawings you might cut on anything. That distinction is what
-      # lets Maker::ProjectFolders put them in different folders — and the ONE vocabulary is where
-      # it has to live, or the panel headings and the folders disagree.
+      # Laser / 2D vector work. `lbrn2` is LASER, not vector: `.lbrn2` is a LightBurn project —
+      # vector shapes plus per-layer laser settings — while svg/dxf are drawings you might cut on
+      # anything. That distinction is what lets Maker::ProjectFolders put them in different
+      # folders — and the ONE vocabulary is where it has to live, or the panel headings and the
+      # folders disagree.
       "svg" => "vector", "dxf" => "vector", "lbrn2" => "laser",
       # Editable CAD sources, as opposed to the exported meshes above. SolidWorks sits with Fusion
       # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category

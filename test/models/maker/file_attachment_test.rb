@@ -118,6 +118,17 @@ module Maker
       assert_equal "Laser", Maker::FileAttachment::ROLE_LABELS["laser"]
     end
 
+    # PINNED ON PURPOSE: both the project attachments panel and the Files-page chips iterate
+    # ROLE_LABELS in order, so where "laser" sits is a UI decision, not incidental hash order. The
+    # split put it right after "vector" so the two 2D/laser categories render adjacent — the panel
+    # section and the filter chip for one sit next to the other's. Asserting the adjacency rather
+    # than freezing the whole ten-key order: a test that pins every position would fail on any
+    # unrelated future insertion, which is noise rather than a guard.
+    test "laser sits immediately after vector in ROLE_LABELS" do
+      keys = Maker::FileAttachment::ROLE_LABELS.keys
+      assert_equal keys.index("vector") + 1, keys.index("laser")
+    end
+
     # Every extension must satisfy FilesController::EXT_RE or it renders a filter chip that links and
     # silently does nothing. The three new ones are short, but the rule is what matters.
     test "every extension satisfies the Files-page filter regex" do
