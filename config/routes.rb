@@ -176,6 +176,12 @@ Rails.application.routes.draw do
   post "tools/openscad",         to: "tools/openscad#create"
   get  "tools/openscad/:id",     to: "tools/openscad#show",    as: :tools_openscad_design
 
+  # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
+  # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
+  # Declared at top level rather than inside `namespace :tools` for the same reason the openscad
+  # routes above are — `as:` here is the whole helper name, so this reads like its siblings.
+  get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
+
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
   unless Rails.env.production?
