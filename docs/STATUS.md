@@ -188,12 +188,33 @@ simply was not found.
 
 ### Left open by this arc
 
-**Nothing.** The one item this arc opened — "every save leaks a preview row and its blob" — is
-closed by the follow-up above, and the header is kept saying so rather than deleted: an empty
-open-list that used to have an entry is worth one line, while a stale one that still lists finished
-work spends the next reader's attention (the lesson the phase-4 follow-up recorded).
-The **`unsupported`-row sweep** left open by the audit-fix arc is a different migration and is
-still open — see that arc's own list below.
+**The SAVE leak is closed by construction; a SECOND orphan class is not, and the deploy is what
+proved it.** An earlier revision of this line said "Nothing" — written after the code was green and
+before the migration had run against real data, which is exactly the kind of claim this file exists
+to stop. The migration's own output settled it:
+
+| backend | collapsed | rows after | pointing at superseded content | **node is gone** |
+|---|---|---|---|---|
+| chunk | 3 | 570 | 0 | **3** |
+| share | 71 | 1267 | 0 | **93** |
+| s3 | 0 | 0 | 0 | 0 |
+
+- **Superseded-content rows: gone, and cannot come back.** Zero on every backend, and the unique
+  index on `(user_id, node_id, kind)` is what keeps it that way. share dropped 1338 → 1267 rows and
+  36.3 → 33.2 MB of blobs.
+- **Rows whose NODE no longer exists: 93 on share, 3 on chunk — untouched, and now the dominant
+  class.** The migration only collapses DUPLICATES within a `(user, node, kind)` group; a dead
+  node's row is the only row for that node, so the index has no opinion about it and nothing sweeps
+  it. **This is why 71 were collapsed and not the 160 the pre-deploy measurement counted** — 115 of
+  that 160 were dead-node rows, and only the ~45 live-node duplicates were ever in scope.
+  **It is a bounded leak, and bounded differently from the one just fixed:** it grows when files are
+  DELETED, not when they are edited, so it tracks library churn rather than editing activity. And
+  it is not simply garbage — a share tombstone is revivable by path, and a file moved back returns
+  with the same `node_id`, at which point its row is live again if the content matches. A sweep
+  wants that argued, plus a grace period, before it deletes anything.
+
+The **`unsupported`-row sweep** left open by the audit-fix arc is a third, separate migration and is
+also still open — see that arc's own list below.
 
 ## Previously (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
 
