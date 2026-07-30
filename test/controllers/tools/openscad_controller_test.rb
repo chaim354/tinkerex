@@ -271,21 +271,21 @@ module Tools
     # --- create: the bundle actually lands ------------------------------------------------------
 
     # THE TEST SPEC §11 SINGLES OUT, and the one CLAUDE.md's Phase 4 lesson says is easiest to fake:
-    # it asserts two AddonFiles with the right roles, REAL nodes in the library, and the BYTES read
+    # it asserts the ONE AddonFile with its role, a REAL node in the library, and the BYTES read
     # back through FileLayer and confirmed to be a zip/OPC container — not merely that the
     # controller redirected. Reading through FileLayer is also what makes it meaningful on share and
     # s3 rather than only on chunk.
-    test "create writes a real 3mf + params.json bundle into the library" do
+    test "create writes a real 3mf into the library, and the params stay in the DB" do
       assert_difference("Maker::AddonState.count", 1) do
         post tools_openscad_path, params: { name: "OS Bundle", generator: "hex_plate",
                                             params: { cols: "6", wall: "2.5" } }
       end
       state = @user.maker_addon_states.for_addon("openscad").order(:id).last
 
-      assert_equal %w[output parameters], state.files.map(&:role)
-      assert_equal [ "model/3mf", "application/json" ], state.files.map(&:content_type)
+      assert_equal %w[output], state.files.map(&:role)
+      assert_equal [ "model/3mf" ], state.files.map(&:content_type)
 
-      # Real library nodes, not just join rows.
+      # A real library node, not just a join row.
       state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id), "no node for #{af.role}" }
 
       out = state.files.find { |f| f.role == "output" }
@@ -299,13 +299,17 @@ module Tools
       Zip::File.open_buffer(bytes.b) { |z| entries = z.map(&:name) }
       assert_includes entries, "3D/3dmodel.model", "not a 3MF: no OPC model part inside the zip"
 
-      # The params file records what was rendered — COERCED, so the design reproduces exactly.
-      params_node = state.files.find { |f| f.role == "parameters" }
-      assert @user.nodes.find_by(node_id: params_node.node_id).name.end_with?(".params.json")
-      saved = JSON.parse(FileLayer.current.read(@user, node_id: params_node.node_id))
-      assert_equal "hex_plate", saved["generator"]
-      assert_equal 6, saved["params"]["cols"], "cols should be the coerced Integer, not the string"
-      assert_equal 2.5, saved["params"]["wall"]
+      # NO params file. Asserted at the library level, not just on the join rows.
+      assert_empty @user.nodes.present.where("name LIKE ?", "%.params.json"),
+                   "no .params.json may be written into the library"
+
+      # The DB records what was rendered — COERCED, so the design reproduces exactly. This assertion
+      # used to read the params FILE; it MOVED to `data` rather than being deleted, because the
+      # coercion it pins (a form String becoming an Integer/Float) is the reason OpenscadParams
+      # exists, and `data` is now the only place it is recorded.
+      assert_equal "hex_plate", state.data["generator"]
+      assert_equal 6, state.data["params"]["cols"], "cols should be the coerced Integer, not the string"
+      assert_equal 2.5, state.data["params"]["wall"]
 
       assert_redirected_to tools_openscad_design_path(state)
     end
@@ -349,17 +353,17 @@ module Tools
       assert_equal folder.node_id, captured
     end
 
-    test "create attaches BOTH bundle files to the current project" do
+    test "create attaches the output file to the current project" do
       project = @user.maker_projects.create!(name: "OpenSCAD Lamp")
       folder = project.ensure_library_folder!(@user)
       patch current_project_path, params: { project_id: project.id }
-      assert_difference "project.file_attachments.count", 2 do
+      assert_difference "project.file_attachments.count", 1 do
         post tools_openscad_path, params: { name: "OS Attached", generator: "hex_plate",
                                             params: { cols: "4" }, parent_node_id: folder.node_id }
       end
       state = @user.maker_addon_states.for_addon("openscad").order(:id).last
       assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
-                   "both bundle files (3mf + params.json) must be the attached nodes"
+                   "the one bundle file (3mf) must be the attached node"
     end
 
     # --- show + the prefill link ----------------------------------------------------------------
@@ -371,7 +375,7 @@ module Tools
       get tools_openscad_design_path(state)
       assert_response :success
       assert_select "*", text: /OS Reopen/
-      assert_select ".bundle-files li", 2 # the tied bundle is what `show` is for
+      assert_select ".bundle-files li", 1 # the tied bundle is what `show` is for — now just the output
 
       # WIRE FORMAT, asserted deliberately: params must be NESTED (params[cols]=9), not flattened.
       # `:params` is a reserved url_for option that appends its hash to the query string, so the
@@ -385,6 +389,19 @@ module Tools
       get href
       assert_response :success
       assert_select "input[name='params[cols]'][value=?]", "9"
+    end
+
+    test "show lists the params and offers the JSON download" do
+      # POSTed rather than hand-built: `show` resolves the source through `openscad_source_key`, and
+      # a real save is the honest way to get a state that helper can read.
+      post tools_openscad_path, params: { name: "OS Params", generator: "hex_plate",
+                                          params: { cols: "6", wall: "2.5" } }
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+      get tools_openscad_design_path(state)
+      assert_response :success
+      assert_select "section.addon-params dl.meta dt", text: "cols"
+      assert_select "section.addon-params dl.meta dd", text: "6"
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
     end
 
     # --- graceful degradation --------------------------------------------------------------------

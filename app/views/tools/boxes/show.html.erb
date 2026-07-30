@@ -11,12 +11,14 @@
 </dl>
 
 <h2>Bundle</h2>
-<%# The tied files: the SVG output AND the parameters that made it (plus any future formats). %>
+<%# The tied files: the SVG output (plus any future formats). The parameters that made it are below, from the DB. %>
 <ul class="bundle-files">
   <% @state.files.each do |af| %>
     <li><%= link_to "#{af.role}", file_path(af.node_id) %> <span class="muted mono"><%= af.content_type %></span></li>
   <% end %>
 </ul>
+
+<%= render "tools/shared/params", state: @state %>
 
 <%= link_to "Duplicate & tweak",
       box_prefill_path(@state.data["generator"], @state.data["params"]),

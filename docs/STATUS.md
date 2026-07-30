@@ -1,8 +1,79 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**A scanned library lost its preview on every save — branch `claude/lbrn2-mage-preview-save-bug-fe80d4`**)
+**Updated:** 2026-07-29 (**Addon params live in the DB, not in a library file — branch `claude/boxes-sidecar-params-db-1c508f`**)
 
-## Latest (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
+## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
+
+**Suite 1660 → 1678 runs / 5862 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files. +18 = 7 endpoint, 4 show-page, 7 migration.
+
+**The baseline is 1660, and the plan's "1633" was wrong** — worth recording because the wrong number
+came from *this file*. The previous entry's `1628 → 1633` was copied forward as the starting point,
+but two entries further down claim `1633 → 1645` and `1645 → 1650`, so the figures in STATUS.md do not
+form a chain and cannot be used as a baseline. Measured instead: a throwaway worktree at the
+merge-base (`8dfbfde`) runs **1660**, and a static count of `test "` blocks is 1576 there vs 1594 here
+— **+18, exactly the tests this branch adds**. Run count exceeds the static count because the shared
+adapter contracts are included into several test classes. **Take a suite baseline by running the
+merge-base, not by reading the last entry.**
+
+**THE SHARE LEG'S DOCUMENTED COMMAND IS INCOMPLETE, AND IT FAILS LOUDLY ENOUGH TO LOOK LIKE A
+CATASTROPHE.** `LIBRARY_BACKEND=share bin/rails test` — the form in CLAUDE.md §10 and the one this
+branch's plan copied — reports **1 failure / 202 errors**, because `LibraryBackendCheck` refuses to
+boot without `LIBRARY_PATH`. The correct invocation is CI's (`ci.yml`, `test-share-backend`):
+`LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`. With it, the leg is green. **The
+diagnosis that mattered was running the BASELINE the same wrong way** — 8dfbfde reports 202 errors
+too, which is what separated "we broke the share backend" from "the command is wrong" in one step
+rather than by reading 200 stack traces. The s3 leg needs its own five `LIBRARY_S3_*` stub knobs for
+the same reason; they point at nothing real on purpose.
+
+**The request was "store the boxes params in the DB instead of a separate file", and the params were
+already in the DB.** `Maker::AddonState#data` is a `json` column holding `{ generator:, params: }`,
+and every reader in the app already went there: the show pages' Generator/Source line, "Duplicate &
+tweak", and the prior rail on boxes' `new`. **Nothing read the file.** It was write-only. So the work
+was a removal plus a replacement for the one job the file did.
+
+**All three addons, not just boxes** — the three `LibraryOutput.write` calls were identical, and
+fixing one would have left three addons with different bundle shapes for no stated reason.
+
+**The replacement is ONE surface, because `AddonState` is addon-agnostic and so is the replacement:**
+`Tools::AddonParamsController#show` (one route, top-level to sidestep the two documented openscad
+inflector traps) serves `JSON.pretty_generate(state.data)` as a download, and
+`app/views/tools/shared/_params.html.erb` lists the params on all three show pages.
+
+**The download serves the WHOLE `data` hash, while the list shows only `data["params"]`.** Deliberate
+asymmetry: the download is byte-identical to the removed file, and `generator` is what made that file
+self-describing — without it the download is an anonymous bag of numbers. In the *display* it is
+redundant, since every show page prints it above the list.
+
+**Param values can be MULTILINE** (boxes' TrayLayout/FrontPanel/NightLightBox section params are
+newline-separated), so `.addon-params dd` carries `white-space: pre-wrap`. Worth knowing what the
+tests can prove: the newline sits in the HTML either way, so **no integration test can verify that
+CSS** — the test asserts the half that can be, that the view never squishes or truncates the value.
+
+**Files already written were LEFT IN PLACE; only their `AddonFile` join rows were dropped**
+(`20260730010000`, `def up` only, raw SQL so a migration does not depend on a model). They are
+ordinary library files a user may have renamed, organized, or attached to a project. Three things
+survive on purpose: a project attachment (a separate `Maker::FileAttachment` record) keeps the file
+visible in the project panel; its `Maker::Preview` rows stay valid because the node still exists; and
+the file name embeds the state id, so it is traceable by hand.
+
+**"Rows go, bytes stay" is now PINNED, and it needed to be** — the plan specified only a manual
+`bin/rails runner` check, missing that this repo already has a convention for testing data migrations
+(four of them under `test/models/maker/*_migration_test.rb`, all `require Dir[...]` + `Migration.new.up`
+against seeded rows). `delete_addon_parameters_file_rows_migration_test.rb` follows it. **The
+load-bearing assertion is the negative one**: the library nodes must survive. It is invisible in the
+SQL — which names only `maker_addon_files` and so looks harmless either way — so the thing most likely
+to break it is a later "tidy up the orphaned files too" change, and nothing else would notice.
+Mutation-checked rather than trusted for passing first try: dropping the `WHERE` clause fails 2 tests,
+and adding a `DELETE FROM nodes` fails the node-survival test.
+
+**One test's coverage MOVED rather than being deleted.** `openscad_controller_test`'s bundle test read
+the params *file* back to assert `OpenscadParams` coercion round-trips (a form String becoming Integer
+`6` / Float `2.5`). That is the reason `OpenscadParams` exists, and `data` is now the only place it is
+recorded — so the assertion moved to `state.data`. Deleting it with the file it happened to live in
+would have dropped the only proof of coercion in the suite.
+
+## Earlier (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
 
 **Suite 1628 → 1633 runs / 5694 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
 share and s3.** rubocop clean on the touched files.

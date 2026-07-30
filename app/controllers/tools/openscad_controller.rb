@@ -1,5 +1,3 @@
-require "json"
-
 module Tools
   # The OpenSCAD addon. Rails owns the UI, param handling, auth and save-to-library; the sidecar
   # (via OpenscadClient) only renders.
@@ -45,7 +43,7 @@ module Tools
       render plain: e.message, status: :unprocessable_entity
     end
 
-    # POST /tools/openscad -> save the state + write the tied bundle (3mf output + params file).
+    # POST /tools/openscad -> save the state + write the tied bundle (3mf output).
     def create
       scad = source_text!
       p = scad_params(scad)
@@ -56,19 +54,18 @@ module Tools
         # Record WHICH source produced this so `show` and "duplicate & tweak" can reopen it. We do
         # NOT store the .scad itself (spec §6.1): for a bring-your-own file that would copy a
         # possibly restrictively-licensed design around the user's library and into any future
-        # share/export path. params.json records what was rendered; the source stays where the user
+        # share/export path. `data` records what was rendered; the source stays where the user
         # put it.
         data: { generator: params[:generator].presence, node_id: params[:node_id].presence,
                 params: p }.compact
       )
       base = state.name.parameterize.presence || "model"
+      # ONE file. The params are NOT written beside it: `state.data` above is the record, and
+      # `Tools::AddonParamsController` serves it as a download.
       addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
-          { name: "#{base}-#{state.id}.3mf", bytes:, content_type: "model/3mf", role: "output" },
-          { name: "#{base}-#{state.id}.params.json",
-            bytes: JSON.pretty_generate(state.data), content_type: "application/json",
-            role: "parameters" }
+          { name: "#{base}-#{state.id}.3mf", bytes:, content_type: "model/3mf", role: "output" }
         ]
       )
       attach_addon_files_to_current_project(addon_files)
