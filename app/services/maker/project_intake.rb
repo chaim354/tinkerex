@@ -69,13 +69,18 @@ module Maker
     # would deny the harmless half of the feature out of concern for the other. That is the
     # durable/best-effort split applied to the guard itself.
     #
-    # IT ANSWERS A STATUS AND DOES NOT RAISE, unlike Library::Scanner::UnsafeScan, for two reasons —
-    # and the second is the load-bearing one. A cap trip on a big first run is an EXPECTED outcome,
-    # not a malfunction (Maker::AttachToProject's argument for every move outcome being a symbol:
-    # "each one is a normal thing that happens to a user's library"). And on share/s3 this is called
-    # at the END of Library::ScanJob#perform, where there is no transaction — so a raise would fail a
-    # job whose scan had ALREADY SUCCEEDED AND COMMITTED, telling an operator the library did not
-    # index when it did. A guard must not lie about which operation it stopped.
+    # IT ANSWERS A STATUS AND DOES NOT RAISE FOR THE CAP TRIP, unlike Library::Scanner::UnsafeScan,
+    # for two reasons — and the second is the load-bearing one. A cap trip on a big first run is an
+    # EXPECTED outcome, not a malfunction (Maker::AttachToProject's argument for every move outcome
+    # being a symbol: "each one is a normal thing that happens to a user's library"). And on share/s3
+    # this is called at the END of Library::ScanJob#perform, where there is no transaction — so a
+    # raise would fail a job whose scan had ALREADY SUCCEEDED AND COMMITTED, telling an operator the
+    # library did not index when it did. A guard must not lie about which operation it stopped.
+    #
+    # THAT CLAIM IS SCOPED TO THE CAP TRIP, NOT TO A MALFORMED CAP — the two are different failure
+    # modes and only one of them is an expected outcome of a healthy run. A non-numeric
+    # PROJECT_ORGANIZE_MAX_MOVES DOES raise, uncaught, out of .max_moves below, deliberately: see its
+    # comment for why that stays a raise rather than a silent fallback.
     #
     # WHAT IT DOES NOT PROTECT AGAINST, so it is not mistaken for covered: it bounds VOLUME, not
     # correctness. There is no data loss to guard — node_id never changes (the port's stated
@@ -83,12 +88,21 @@ module Maker
     # dragging the file back. That asymmetry is exactly why a count suffices here where a percentage
     # of the library was necessary there.
     def self.for_user(user:, dry_run: false, cap: nil)
-      projects = user.maker_projects.where.not(folder_node_id: nil).to_a
-      return RunResult.new(results: [], status: :ok, inbox_total: 0, cap: cap || max_moves) if projects.empty?
-
       cap ||= max_moves
+      projects = user.maker_projects.where.not(folder_node_id: nil).to_a
+
       # ONE query for the whole run's inbox, and it is what makes "checked before the first move"
       # true. An observer cannot decide this per project: the cap is a property of the run.
+      #
+      # THIS IS ALSO THE ONLY RunResult.new CALL IN THE METHOD, DELIBERATELY — an earlier version
+      # short-circuited `projects.empty?` with a second, separately-worded construction that
+      # hardcoded `status: :ok`. There was nothing to save: `parent_node_id: []` already makes
+      # ActiveRecord short-circuit to a NullRelation (zero SQL), so the empty case flows through the
+      # very same arithmetic below for free. Splitting it cost correctness for no speed — under a
+      # negative cap, "zero projects" and "one project with an empty inbox" are the SAME real
+      # situation (nothing to file) but disagreed on `status`, because 0 > cap is true in both yet
+      # only one of them ever reached that comparison. One construction site cannot disagree with
+      # itself. Pinned by the "zero-projects and zero-loose-files agree" test below.
       inbox_total = user.nodes.present
                         .where(kind: "file", parent_node_id: projects.map(&:folder_node_id)).count
 
@@ -106,6 +120,13 @@ module Maker
     # running process and unreachable from a test — which is how an escape hatch rots shut. That is
     # Library::Reconciler#max_delete_pct's recorded lesson, and it applies verbatim. One ENV fetch
     # per run costs nothing.
+    #
+    # Integer() RAISES, UNCAUGHT, ON A NON-NUMERIC VALUE — inherited verbatim from
+    # Reconciler#max_delete_pct, and deliberately not rescued: a malformed cap is an operator
+    # configuration error that should be loud, not one this method should paper over with a default
+    # the operator never chose. That is a different failure mode from .for_user's cap-trip status —
+    # see its comment just above. Also inherited, also worth knowing before it surprises someone: a
+    # zero-padded value parses as OCTAL (`Integer("0500") => 320`, not 500).
     def self.max_moves
       Integer(ENV.fetch("PROJECT_ORGANIZE_MAX_MOVES", MAX_MOVES.to_s))
     end

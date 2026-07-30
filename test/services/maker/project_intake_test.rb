@@ -548,6 +548,48 @@ module Maker
       assert_equal 1, run.results.size, "a folderless project is not even visited"
     end
 
+    # THE projects.empty? BRANCH — nothing else in this file reaches it, since setup always gives
+    # @user one project with a folder. That gap is exactly what let two RunResult.new call sites
+    # disagree unnoticed (see the agreement test below): a suite that never visits zero projects
+    # cannot catch a bug that only shows up there.
+    test "for_user with no folder'd projects at all reports ok and moves nothing" do
+      fresh = User.create!(email: "pi-empty-#{SecureRandom.hex(4)}@example.com",
+                           confirmed_at: Time.current, omniauth_signup: true)
+      run = Maker::ProjectIntake.for_user(user: fresh)
+      assert_equal :ok, run.status
+      assert_empty run.results
+      assert_equal 0, run.inbox_total
+    end
+
+    # THE BUG THIS PINS: for_user used to construct its RunResult in two places — one hardcoded
+    # `status: :ok` for zero projects, the other computed `refused` from `inbox_total > cap` for
+    # everyone else. "Zero projects" and "one project with an empty inbox" are the SAME real
+    # situation — nothing to file — so under a cap that refuses even zero (any negative number,
+    # since a count is never negative) they must answer identically. They did not: the hardcoded
+    # branch always said :ok no matter what cap was passed. Collapsing to one construction site
+    # fixed it; this is what would catch a regression back to two.
+    test "a zero-projects run and a zero-loose-files run agree under a cap that refuses zero" do
+      fresh = User.create!(email: "pi-empty-#{SecureRandom.hex(4)}@example.com",
+                           confirmed_at: Time.current, omniauth_signup: true)
+      zero_projects = Maker::ProjectIntake.for_user(user: fresh, cap: -1)
+      zero_inbox = Maker::ProjectIntake.for_user(user: @user, cap: -1) # @project has a folder, empty
+
+      assert_equal :refused_too_many_moves, zero_projects.status
+      assert_equal zero_inbox.status, zero_projects.status
+    end
+
+    # An archived project's folder is still its folder — for_project already proves this on its own
+    # ("an archived project is still swept" above). This pins the same rule at the for_user level,
+    # where a future `.active` scope tacked onto the projects query would look like a reasonable
+    # cleanup and would silently stop organizing anything archived.
+    test "for_user still sweeps an archived project" do
+      @project.archive!
+      file("panel.svg")
+      run = Maker::ProjectIntake.for_user(user: @user)
+      assert_equal 1, run.results.size
+      assert_equal 1, run.results.sum { |_p, r| r.moved }
+    end
+
     # THE CAP'S DESIGN, AND THE HALF A TEST THAT ONLY COUNTS MOVES WOULD MISS: over the cap,
     # NOTHING MOVES AND EVERYTHING STILL ATTACHES.
     test "over the cap nothing is filed but everything is still attached" do
