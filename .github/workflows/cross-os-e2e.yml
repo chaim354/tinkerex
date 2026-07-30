@@ -44,13 +44,43 @@ env:
   SEED_EMAIL: ${{ github.event.inputs.email || 'crossos-e2e@maker.test' }}
 
 jobs:
+  # Which runner families exist for this run. See ci/preflight.sh — a DECLARATION (the repo variable
+  # CI_RUNNERS), not an API call, because a workflow GITHUB_TOKEN cannot list runners.
+  preflight:
+    runs-on: [self-hosted, macos]
+    outputs:
+      macos:   ${{ steps.p.outputs.macos }}
+      linux:   ${{ steps.p.outputs.linux }}
+      windows: ${{ steps.p.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v6
+        with: { clean: false }
+      - id: p
+        name: Resolve the declared runner fleet
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Report what is available, and what was therefore skipped
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
+
   # 1. SEED — register a FRESH unique test user + pair THREE devices (windows/mac/linux) into one
   #    library, emit the shared server url, the three device tokens, and a unique test_tag as job
-  #    outputs. Runs on Linux (it's the runner most likely to reach the deployed server). If the
-  #    server is unreachable, the seed example exits 3 → this job reports BLOCKED (continue-on-error
-  #    keeps it green) and the downstream legs self-BLOCK on the empty tokens.
+  #    outputs. If the server is unreachable, the seed example exits 3 → this job reports BLOCKED
+  #    (continue-on-error keeps it green) and the downstream legs self-BLOCK on the empty tokens.
+  #
+  # RUNS ON macos, NOT linux: this is curl + `cargo run --example`, and every leg below needs it,
+  # so a linux label here hung the entire workflow on a box that no longer exists.
+  #
+  # NOTE the server-reachability caveat this does not fix: seed curls the deployed server at
+  # $SERVER_URL and treats an unreachable one as BLOCKED (exit 0, clean skip). From the Mac,
+  # `curl http://192.168.1.95/up` returns 404 — kamal-proxy routes by Host header, so a bare-IP
+  # request matches no route. Do not claim cross-OS reachability from this runner without
+  # re-testing with the right Host.
   seed:
-    runs-on: [self-hosted, linux]
+    needs: preflight
+    runs-on: [self-hosted, macos]
     continue-on-error: true
     outputs:
       server_url: ${{ steps.seed.outputs.server_url }}
@@ -97,7 +127,8 @@ jobs:
   # 2. WIN-PUSH — Windows writes a tagged file THROUGH the CfAPI mount, waits for the push, emits
   #    the expected v1 sha. BLOCKED if CfAPI can't run (Session-0 / interactive-session wall).
   win-push:
-    needs: seed
+    needs: [preflight, seed]
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     continue-on-error: true
     outputs:
@@ -120,7 +151,7 @@ jobs:
   #    the v1 sha, asserts. BLOCKED if the server is unroutable or the mount won't come up (needs an
   #    interactive desktop session).
   mac-pull-1:
-    needs: [seed, win-push]
+    needs: [preflight, seed, win-push]
     runs-on: [self-hosted, macos]
     continue-on-error: true
     steps:
@@ -139,7 +170,8 @@ jobs:
   # 4. LINUX-EDIT — Linux mounts FUSE, polls until the v1 file is present, EDITs it THROUGH the
   #    mount to v2, waits for the push, emits the v2 sha. BLOCKED if /dev/fuse is unavailable.
   linux-edit:
-    needs: [seed, win-push, mac-pull-1]
+    needs: [preflight, seed, win-push, mac-pull-1]
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     continue-on-error: true
     outputs:
@@ -162,7 +194,7 @@ jobs:
 
   # 5a. MAC-PULL-2 — macOS re-mounts, polls until the EDITED content is present byte-for-byte.
   mac-pull-2:
-    needs: [seed, linux-edit]
+    needs: [preflight, seed, linux-edit]
     runs-on: [self-hosted, macos]
     continue-on-error: true
     steps:
@@ -179,7 +211,8 @@ jobs:
 
   # 5b. WIN-PULL-2 — Windows re-mounts, polls until the EDITED content is present byte-for-byte.
   win-pull-2:
-    needs: [seed, linux-edit]
+    needs: [preflight, seed, linux-edit]
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     continue-on-error: true
     steps:
