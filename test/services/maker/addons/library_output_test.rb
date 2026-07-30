@@ -20,16 +20,22 @@ module Maker
 
       test "writes a bundle of mixed-type files and ties each to the state" do
         state = @user.maker_addon_states.create!(addon_key: "boxes", name: "Box A", data: {})
+        # `thumbnail` is deliberately a role NO ADDON EMITS. The point of this test is that
+        # LibraryOutput is role-agnostic — it never inspects the bytes or the role — and a role the
+        # app has never heard of proves that better than a real one, which could pass by coincidence.
+        # (It used to be `parameters`, back when every addon wrote a `.params.json` beside its output.
+        # That file was removed 2026-07-29 — `Maker::AddonState#data` is the record — so keeping the
+        # word here would have left a fixture naming a concept the app no longer has.)
         files = [
           { name: "boxa.svg", bytes: "<svg/>".b, content_type: "image/svg+xml", role: "output" },
-          { name: "boxa.params.json", bytes: '{"x":100}'.b, content_type: "application/json", role: "parameters" }
+          { name: "boxa-thumb.png", bytes: "\x89PNG".b, content_type: "image/png", role: "thumbnail" }
         ]
 
         result = Maker::Addons::LibraryOutput.write(user: @user, state:, parent_node_id: nil, files:)
 
         assert_equal 2, result.length
         state.reload
-        assert_equal %w[output parameters], state.files.map(&:role)
+        assert_equal %w[output thumbnail], state.files.map(&:role)
         state.files.each do |af|
           assert @user.nodes.exists?(node_id: af.node_id), "node #{af.node_id} must exist in the library"
         end

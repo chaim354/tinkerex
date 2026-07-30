@@ -4,17 +4,17 @@
 
 ## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
 
-**Suite 1660 → 1671 runs / 5851 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
-share and s3.** rubocop clean on the touched files.
+**Suite 1660 → 1678 runs / 5862 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files. +18 = 7 endpoint, 4 show-page, 7 migration.
 
 **The baseline is 1660, and the plan's "1633" was wrong** — worth recording because the wrong number
 came from *this file*. The previous entry's `1628 → 1633` was copied forward as the starting point,
 but two entries further down claim `1633 → 1645` and `1645 → 1650`, so the figures in STATUS.md do not
 form a chain and cannot be used as a baseline. Measured instead: a throwaway worktree at the
-merge-base (`8dfbfde`) runs **1660**, and a static count of `test "` blocks is 1576 there vs 1587 here
-— **+11, exactly the 11 tests this branch adds** (7 endpoint + 4 show-page). Run count exceeds the
-static count because the shared adapter contracts are included into several test classes. **Take a
-suite baseline by running the merge-base, not by reading the last entry.**
+merge-base (`8dfbfde`) runs **1660**, and a static count of `test "` blocks is 1576 there vs 1594 here
+— **+18, exactly the tests this branch adds**. Run count exceeds the static count because the shared
+adapter contracts are included into several test classes. **Take a suite baseline by running the
+merge-base, not by reading the last entry.**
 
 **THE SHARE LEG'S DOCUMENTED COMMAND IS INCOMPLETE, AND IT FAILS LOUDLY ENOUGH TO LOOK LIKE A
 CATASTROPHE.** `LIBRARY_BACKEND=share bin/rails test` — the form in CLAUDE.md §10 and the one this
@@ -56,6 +56,16 @@ ordinary library files a user may have renamed, organized, or attached to a proj
 survive on purpose: a project attachment (a separate `Maker::FileAttachment` record) keeps the file
 visible in the project panel; its `Maker::Preview` rows stay valid because the node still exists; and
 the file name embeds the state id, so it is traceable by hand.
+
+**"Rows go, bytes stay" is now PINNED, and it needed to be** — the plan specified only a manual
+`bin/rails runner` check, missing that this repo already has a convention for testing data migrations
+(four of them under `test/models/maker/*_migration_test.rb`, all `require Dir[...]` + `Migration.new.up`
+against seeded rows). `delete_addon_parameters_file_rows_migration_test.rb` follows it. **The
+load-bearing assertion is the negative one**: the library nodes must survive. It is invisible in the
+SQL — which names only `maker_addon_files` and so looks harmless either way — so the thing most likely
+to break it is a later "tidy up the orphaned files too" change, and nothing else would notice.
+Mutation-checked rather than trusted for passing first try: dropping the `WHERE` clause fails 2 tests,
+and adding a `DELETE FROM nodes` fails the node-survival test.
 
 **One test's coverage MOVED rather than being deleted.** `openscad_controller_test`'s bundle test read
 the params *file* back to assert `OpenscadParams` coercion round-trips (a form String becoming Integer
