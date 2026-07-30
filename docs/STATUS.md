@@ -132,12 +132,68 @@ contract. **Measured payoff today: zero.** Only files with no embedded thumbnail
 fall back, two are `.mage` (operations, not Cut/Scan layers) and none contains a bitmap. Left alone
 on purpose.
 
-### Left open by this fix
+### Follow-up 2 (same branch): ONE PREVIEW ROW PER (node, kind) — the leak is gone at the source
 
-- **Every save leaks a preview row and its ActiveStorage blob.** The row for the superseded content
-  is never cleaned up — `hex tiles.lbrn2` alone carries two. Harmless to correctness (nothing
-  resolves them) and unbounded in storage on a library that is edited in place. A reaper wants its
-  own verification against deployed rows, the same argument as the `unsupported` sweep below.
+**Suite 1645 → 1650, identical on all three legs.** The open item below said "every save leaks a
+preview row and its blob" and proposed a reaper. **The reaper was the wrong answer, and the
+question that produced the right one was "why aren't we just updating them when the new one is
+created?"** — stop minting the rows rather than sweep them up.
+
+**Measured first, because it decides the shape.** On the deployed share library: 1334 rows, 1174
+current, **160 orphaned** (3.1 MB of blobs), growing **~17.6 rows/day** — and the orphans split
+into two unequal kinds, **115 whose node is gone** and **45 superseded-content-with-a-live-node**.
+Every web surface (`FilesController#show`, `#thumbnails_for`, `ThumbnailMap`) resolves by the
+node's CURRENT content token, so **nothing can see an orphan** — they were pure dead weight.
+
+**The mechanical fact that made it free:** attaching over a `has_one_attached` **enqueues
+`ActiveStorage::PurgeJob` for the replaced blob by itself** — verified by driving it, not assumed
+(the first probe showed the old blob row still present, which was only the test adapter not running
+the job). So repointing a row reclaims its old bytes with no code of ours.
+
+**The migration IS the cleanup.** The new unique index cannot be added while duplicates exist, so
+the collapse has to happen in `20260730001500_one_preview_per_node_and_kind.rb` — which is why this
+change removes a recurring job instead of adding one. It keeps the most recently updated row per
+group (the last render, which is the current content in every ordinary case, and self-healing where
+it is not, since `Enqueue` repoints any row whose version does not match). Self-contained per the
+house style, with one deliberate exception: `ActiveStorage::Attachment#purge` is **framework** API,
+and skipping it would have traded a database leak for a stored-file leak.
+
+**THE HAZARD THIS INTRODUCES, AND THE GUARD THAT PAYS FOR IT.** With a row per VERSION, two quick
+saves made two rows and each job wrote its own — **a wrong thumbnail was impossible by
+construction, and that immunity was exactly what the extra rows were buying.** With one row, a slow
+render of v1 finishing after a fast render of v2 attaches v1's bytes to a row that says v2 and marks
+it ready: **a wrong image shown as current, silently** — strictly worse than the leak being removed.
+`GeneratePreviewJob` now captures the version it is rendering and refuses to write if the row moved
+on (`#commit_if_current`). Written as a failing test first, which reproduced the wrong-image write
+exactly; mutation-checked by removing the guard.
+**EVERY terminal write goes through it, not just the successful one** — the part most likely to be
+trimmed later. A stale `unsupported` or `failed` is as wrong as a stale image, and worse in one way:
+`Enqueue` treats `failed` as "retry me", so an old verdict would look repaired while describing
+content nobody asked about. Losing the write is the CORRECT outcome — whoever repointed the row
+already enqueued a job for the new content.
+
+**The v1 API loses per-version previews, and says so rather than clobbering.** `POST
+/v1/maker/previews` was idempotent per `(node, version, kind)`; it is now per `(node, kind)`, so
+honouring a request for an old version would throw away the current render — and on share/s3, where
+there is no history, point it at bytes that do not exist, so the render would then fail and leave
+the node with **no** preview. It answers **422 `stale_version`** naming the current one. **Only when
+the port can adjudicate:** a node the backend cannot resolve (never synced, deleted, unmounted
+share) gives no basis to refuse, and rejecting anyway would break a client rendering a node it is
+about to create — which is what every other test in that file relies on.
+
+**Also deliberate:** a repoint sets `status = "pending"`, so the row still holds the previous render
+but `_thumb.html.erb` shows an image only when `ready` — the user sees a spinner, not last week's
+picture labelled as today's content. Identical to what they saw before, when the superseded row
+simply was not found.
+
+### Left open by this arc
+
+**Nothing.** The one item this arc opened — "every save leaks a preview row and its blob" — is
+closed by the follow-up above, and the header is kept saying so rather than deleted: an empty
+open-list that used to have an entry is worth one line, while a stale one that still lists finished
+work spends the next reader's attention (the lesson the phase-4 follow-up recorded).
+The **`unsupported`-row sweep** left open by the audit-fix arc is a different migration and is
+still open — see that arc's own list below.
 
 ## Previously (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
 

@@ -74,6 +74,53 @@ module V1
         assert item["url"].present?, "ready preview should expose a blob url"
       end
 
+      # THE COST OF ONE ROW PER (node, kind): "which version" stopped being the client's to choose.
+      # Honouring a POST for an old version would throw away the current render and repoint the
+      # live row at content the library has moved past — and on share/s3, where there is no
+      # history, at bytes that do not exist, so the render would then fail and leave the node with
+      # NO preview. 422 naming the current version is the honest answer.
+      test "POSTing a superseded version is refused rather than clobbering the current render" do
+        pin_file_layer_backend("chunk")
+        token = register(email: "stale@example.com")
+        user  = User.find_by(email: "stale@example.com")
+        user.nodes.create!(node_id: "moved.svg", name: "moved.svg", kind: "file",
+                           deleted: false, current_version_id: "v2")
+
+        assert_no_enqueued_jobs(only: ::Maker::GeneratePreviewJob) do
+          post "/v1/maker/previews", params: { preview: { node_id: "moved.svg", version_id: "v1" } },
+               as: :json, headers: auth(token)
+        end
+        assert_response :unprocessable_entity
+        assert_equal "v2", JSON.parse(response.body)["current_version_id"]
+        assert_not ::Maker::Preview.exists?(node_id: "moved.svg")
+      end
+
+      test "POSTing the CURRENT version is accepted" do
+        pin_file_layer_backend("chunk")
+        token = register(email: "current@example.com")
+        user  = User.find_by(email: "current@example.com")
+        user.nodes.create!(node_id: "here.svg", name: "here.svg", kind: "file",
+                           deleted: false, current_version_id: "v2")
+
+        post "/v1/maker/previews", params: { preview: { node_id: "here.svg", version_id: "v2" } },
+             as: :json, headers: auth(token)
+        assert_response :created
+        assert_equal "v2", JSON.parse(response.body)["version_id"]
+      end
+
+      # The gate can only refuse what the port can adjudicate. A node the backend cannot resolve —
+      # never synced, already deleted, an unmounted share — gives no basis to reject, and rejecting
+      # anyway would break a client rendering a node it is about to create. Every other test in
+      # this file relies on that fall-through.
+      test "a node the port cannot resolve falls through rather than 422-ing" do
+        pin_file_layer_backend("chunk")
+        token = register(email: "unknown@example.com")
+
+        post "/v1/maker/previews", params: { preview: { node_id: "never-synced.svg", version_id: "v9" } },
+             as: :json, headers: auth(token)
+        assert_response :created
+      end
+
       test "requires auth" do
         get "/v1/maker/previews?node_id=a"
         assert_response :unauthorized
