@@ -16,6 +16,12 @@
 # CONTINUES, so every scanner here runs whatever any other one does. That is a structural fix, not a
 # convention, and it is the reason not to split these back into separate gates.
 #
+# ONE SCAFFOLD STEP WAS DROPPED, DELIBERATELY: `Tests: Seeds` (`db:seed:replant`). It asserts
+# nothing here — `db/seeds.rb` is comments only, so replanting an empty seed set cannot fail for a
+# reason anyone wants to hear about — and `ci.yml` never ran it, so keeping it would re-open the same
+# gap in the other direction: a gate `bin/ci` runs and CI does not. If `db/seeds.rb` ever gains real
+# content, add a `seeds` gate here AND a job in ci.yml, together.
+#
 # Usage:
 #   bin/ci                 # every gate, in this order
 #   bin/ci test test-s3    # exactly those gates

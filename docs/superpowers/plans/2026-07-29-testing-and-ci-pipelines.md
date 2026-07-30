@@ -276,13 +276,39 @@ and add this to the `private` section, above `each_job`:
 
 - [ ] **Step 2: Run it and verify it FAILS**
 
-Run:
+> ⚠️ **DO NOT run the new test against the unmodified `config/ci.rb`. It is a fork bomb.**
+>
+> This was the plan's own bug, hit during implementation on 2026-07-29 (~95 processes, load average
+> 17.8) and corrected here. The old scaffold **ignores `ARGV` entirely**, so `bin/ci --list` runs its
+> hardcoded `bin/rails test` — the *unscoped* suite. That suite includes `test/ci_hygiene_test.rb`,
+> whose new test shells out to `bin/ci --list`, which runs the unscoped suite again. **There is no
+> base case.** Scoping the outer command with `-n` does not help: the recursion is inside the test
+> body, against the unpatched script's fixed behaviour.
+>
+> The hazard disappears the moment Step 3 lands, because `--list` then exits before `CI.run` is
+> reached. It exists only in this one window — which is exactly why the red-check has to be taken a
+> different way.
+
+Establish RED **statically** instead. This is better evidence than a hung test anyway: it shows
+*why* the test cannot pass rather than merely that it doesn't.
+
 ```bash
-bin/rails test test/ci_hygiene_test.rb -n test_bin_ci_defines_every_gate_CI_depends_on
+grep -c "ARGV" config/ci.rb
 ```
-Expected: **FAIL.** `bin/ci --list` is not understood by the current `config/ci.rb`, so `bin/ci`
-will run the whole scaffold suite and then the assertion on the exit status or the parsed list will
-fail. Either way it must be red before Step 3.
+Expected: `0`. The scaffold contains no `ARGV` handling whatsoever, so `--list` cannot be understood,
+`bin/ci` falls through to its hardcoded step list, and `bin_ci_gates` can never receive a gate list.
+That *is* the failure, proven at the source and costing nothing.
+
+```bash
+grep -n "step \"" config/ci.rb
+```
+Expected: the scaffold's hardcoded steps, with **no** `LIBRARY_BACKEND` anywhere and `Tests: System`
+commented out — the three-gate drift this task exists to close, visible in one command.
+
+**Do not try to demonstrate it by executing the old script**, even with a timeout or a background
+kill. `timeout` is not installed on this box, and `kill -- -$!` is actively unsafe here: without job
+control a background job shares the *shell's* process group, so that PGID kill can take out the shell
+running it. There is no bounded way to run the recursive version, which is why the check is static.
 
 - [ ] **Step 3: Replace `config/ci.rb` entirely**
 
@@ -420,9 +446,15 @@ confirm the *other two scanners still run*:
 ```bash
 bin/ci scan 2>&1 | grep -E "✅|❌"
 ```
-Then temporarily add `raise "boom"` as the first line of `bin/brakeman`, re-run the same command, and
-confirm the output shows **✅ Gem audit, ✅ Importmap, ❌ Brakeman** — three results, not one — and
-that the overall run is ❌ with a non-zero exit. Revert `bin/brakeman`.
+Then break brakeman deliberately: insert `raise "boom"` into `bin/brakeman` **immediately after its
+`#!/usr/bin/env ruby` shebang — line 2, not line 1.** Putting it on line 1 displaces the shebang, so
+the kernel exec fails and `sh` interprets the Ruby file, producing `raise: command not found` instead
+of a Ruby exception. The step still fails and the proof still stands, but you are then testing a
+broken *shebang* rather than a broken *scanner*, which is not the thing being claimed.
+
+Re-run the same command and confirm the output shows **✅ Gem audit, ✅ Importmap, ❌ Brakeman** —
+three results, not one — and that the overall run is ❌ with a non-zero exit. Revert `bin/brakeman`
+and confirm `git diff bin/brakeman` is empty.
 
 This is the exact bug that hid for five weeks, inverted: under `ci.yml`'s old step ordering a
 brakeman failure meant bundler-audit never ran at all.
