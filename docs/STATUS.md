@@ -359,15 +359,36 @@ the **entire suite green**, because every other test derives its expectation fro
 Design: `docs/superpowers/specs/2026-07-29-testing-and-ci-pipelines-design.md`.
 Plan: `docs/superpowers/plans/2026-07-29-testing-and-ci-pipelines.md`.
 
-**⚠️ ONE STEP OUTSTANDING: the branch is not pushed, so no green run has been OBSERVED.** Every gate
-is measured green locally on the mac box and `actionlint` reports no findings, but "expected to go
-green" is not "went green". Whoever pushes must (1) `gh variable set CI_RUNNERS --body "macos"`
-**first** — without it the preflight defaults to macos-only anyway, but the declaration should be
-explicit — and (2) confirm the run by **status**, not wall-clock:
-`gh run list --workflow=ci.yml --limit 1 --json conclusion,status`. Then replace this paragraph with
-the run URL. Expect the first red to be one of the three `ci.yml` changes that had **never executed
-once** before this arc (the two backend legs, added 2026-07-16, and the resvg step, 2026-07-20) —
-those are five-week-old latent bugs surfacing, not regressions from this work.
+**✅ VERIFIED GREEN — the first successful CI run since 2026-06-24.**
+[Run 30510860301](https://github.com/chaim354/tinkerex/actions/runs/30510860301) on PR #102:
+**all 7 jobs `success` in 90 seconds**, none queued. `CI_RUNNERS` is set to `macos`.
+
+Three things that run proves, beyond "it went green":
+
+1. **The jobs are actually picked up**, not merely re-labelled — they started progressively (2/7 →
+   3/7 → 6/7) and the whole set finished in 90 s, against the ~30 s of real work measured locally.
+   The serialisation worry that kept these on `linux` is settled.
+2. **The preflight's outputs are real, not empty.** Its log shows `macos=true`, `linux=false`,
+   `windows=false`. That distinction matters: an empty output (a mistyped `steps.<id>.outputs`)
+   would ALSO make every gated job skip, so "the jobs skipped" alone would not have proved the gate
+   works. The emitted values do.
+3. **A gated job SKIPS instead of queueing.**
+   [Rust client run 30510860302](https://github.com/chaim354/tinkerex/actions/runs/30510860302) on the
+   same PR also finished **`success`**: `preflight`, `changes` and **`mac-tests` all green, with all 7
+   linux/windows jobs `skipped`** — the exact behaviour this arc exists to produce. `mac-tests`
+   passing is the second fix landing, and the more satisfying one: the hermetic Rust suite
+   (fs-provider, sync-client, fs-cfapi, fs-fskit, the windows-gnu FFI cross-check, the native macOS
+   build) had been dark for five weeks **solely because its gate job sat on a runner that does not
+   exist**, while the runner it needed was online and idle the whole time.
+
+**Note for the next arc:** the three `ci.yml` changes that had **never executed once** before this
+(the two backend legs, added 2026-07-16, and the resvg step, 2026-07-20) all passed on their first
+real run. They were unverified YAML, not broken YAML.
+
+**A trigger fact worth knowing, since it cost a cycle here:** `ci.yml` fires only on `pull_request`
+and on pushes to `main`. **Pushing a feature branch triggers nothing** — the branch push produced no
+run at all, and the green run above came from opening the PR. There is no `workflow_dispatch` on
+`ci.yml`, so there is no way to exercise it on a branch without a PR.
 
 ### What was wrong, and why it went unnoticed for five weeks
 
