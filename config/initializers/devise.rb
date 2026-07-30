@@ -189,7 +189,18 @@ Devise.setup do |config|
 
   # ==> Configuration for :validatable
   # Range for password length.
-  config.password_length = 6..128
+  # 10, not Devise's default 6. Six is below any current guidance.
+  #
+  # DELIBERATELY NOT PAIRED WITH COMPOSITION RULES (a symbol, a digit, mixed case): NIST
+  # deprecated those — they push users toward predictable substitutions while shrinking the
+  # practical keyspace. Length plus, eventually, a breached-password check is the current advice;
+  # the breach check is tracked in docs/OPEN-WORK.md rather than done here, because it introduces
+  # a network dependency on the signup path and that is a decision, not a detail.
+  #
+  # Pinned by devise_auth_flow_test's "sign up rejects a password below the length floor", which
+  # uses an 8-character password — over the old default, under the new floor — so a quiet revert
+  # to Devise's default fails it.
+  config.password_length = 10..128
 
   # Email regex used to validate email formats. It simply asserts that
   # one (and only one) @ exists in the given string. This is mainly

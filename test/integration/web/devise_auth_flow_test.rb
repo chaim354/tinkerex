@@ -53,6 +53,18 @@ module Web
       assert User.find_by(email: "valid@example.com").encrypted_password.present?
     end
 
+    test "sign up rejects a password below the length floor" do
+      # 8 characters: under the 10-char floor, but OVER Devise's old default of 6 — so this test
+      # fails if the floor is ever quietly reverted to the default rather than merely lowered.
+      short = "abc12345"
+      assert_no_difference "User.count" do
+        post user_registration_path, params: { user: {
+          email: "shortpw@example.com", password: short, password_confirmation: short
+        } }
+      end
+      assert_response :unprocessable_entity
+    end
+
     test "the blank-password guard does NOT break programmatic passwordless creates" do
       # OmniAuth seam + v1 bootstrap rely on passwordless User.create! — these must stay valid.
       assert_difference -> { User.count }, 1 do
