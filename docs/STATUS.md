@@ -202,16 +202,54 @@ to stop. The migration's own output settled it:
 - **Superseded-content rows: gone, and cannot come back.** Zero on every backend, and the unique
   index on `(user_id, node_id, kind)` is what keeps it that way. share dropped 1338 → 1267 rows and
   36.3 → 33.2 MB of blobs.
-- **Rows whose NODE no longer exists: 93 on share, 3 on chunk — untouched, and now the dominant
-  class.** The migration only collapses DUPLICATES within a `(user, node, kind)` group; a dead
-  node's row is the only row for that node, so the index has no opinion about it and nothing sweeps
+- ~~**Rows whose NODE no longer exists: 93 on share, 3 on chunk.**~~ **CLOSED — `DeadNodeReaper`,
+  below.** The migration only collapses DUPLICATES within a `(user, node, kind)` group; a dead
+  node's row is the only row for that node, so the index has no opinion about it and nothing swept
   it. **This is why 71 were collapsed and not the 160 the pre-deploy measurement counted** — 115 of
   that 160 were dead-node rows, and only the ~45 live-node duplicates were ever in scope.
-  **It is a bounded leak, and bounded differently from the one just fixed:** it grows when files are
-  DELETED, not when they are edited, so it tracks library churn rather than editing activity. And
-  it is not simply garbage — a share tombstone is revivable by path, and a file moved back returns
-  with the same `node_id`, at which point its row is live again if the content matches. A sweep
-  wants that argued, plus a grace period, before it deletes anything.
+
+### The dead-node reaper — the second orphan class, closed
+
+**Suite 1650 → 1660, identical on all three legs.** `Maker::Previews::DeadNodeReaper` +
+`Maker::DeadNodeReaperJob`, weekly in `recurring.yml`, plus `rake previews:reap_dead_nodes`
+(`DRY_RUN=1` to report only).
+
+**A JOB RATHER THAN A CONSTRAINT, because this leak is shaped differently from the one the index
+fixed.** It grows when files are DELETED, not when they are edited, so it tracks library churn
+instead of editing activity — and it cannot be prevented at write time: a node is deleted long
+after its preview was made, `Reconciler` **tombstones rather than destroys** (so no `dependent:`
+callback would ever fire), and wiring an association from `Node` to `Maker::Preview` would point
+the file layer at the maker layer, which is the coupling §12 step 10 exists to prevent.
+
+**THE WHOLE DESIGN QUESTION IS REVIVABILITY, and the two cases genuinely differ** — collapsing them
+is the mistake to avoid:
+- **No node row at all → reaped immediately.** Both ways back need the tombstone: the share
+  Reconciler's revive-by-path looks up `deleted: true` rows BY `storage_path`, and
+  `undelete`/`Sync::Trash.restore` reconstruct from the row. With no row that `node_id` can never
+  return, so there is nothing to protect.
+- **A tombstone → spared until the grace window closes.** A tombstone is a deletion that can be
+  TAKEN BACK, returning the same `node_id` — a file dragged out of a folder and back comes home with
+  its content unchanged, at which point the row would have been live again. Reaping inside the
+  window turns an undo into a re-render. **Dated from the NODE's `updated_at`** (when it was
+  tombstoned), not the preview's, which records the last render and can be months older than the
+  deletion.
+
+**`grace` is 30 days and deliberately NOT read from `LIBRARY_TRASH_DAYS`**, despite matching its
+default: that setting is share-only while this applies to all three backends, and it treats **0 as
+"keep forever"** — a meaning that would invert dangerously here, where 0 reads naturally as "no
+grace".
+
+Mutation-checked on all three load-bearing decisions: reaping live nodes, ignoring the grace
+window, and deleting the row without purging the blob each turn a test red.
+
+**A guard came out of it that had been missing all along.** `config/recurring.yml` is read by the
+Solid Queue **supervisor**, not by the Rails process the suite boots, so a typo in a class name or a
+`command:` that does not parse is invisible to every other test and surfaces as a job that silently
+never runs — in production, at 5am. `test/recurring_schedule_test.rb` now resolves every `class:` to
+a real ActiveJob, compiles every `command:` and checks the constants it names, and asserts each
+entry has exactly one of the two plus a schedule. Prompted by this being the first NAMESPACED entry
+(`Maker::DeadNodeReaperJob`) — the shape most likely to be mistyped and least likely to be noticed —
+and mutation-checked by misspelling it.
 
 The **`unsupported`-row sweep** left open by the audit-fix arc is a third, separate migration and is
 also still open — see that arc's own list below.
