@@ -287,6 +287,7 @@ class FilesController < ApplicationController
     info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
                                    name: upload.original_filename, io: upload)
     enqueue_preview(node_id: info.node_id, name: upload.original_filename)
+    intake_project_folder(info.node_id)
     # format.json for the importer (app/javascript/controllers/importer_controller.js via
     # lib/chunk_upload's uploadPortFile): it needs the new node_id to attach in the SAME request
     # that uploaded it. A followed redirect can't carry that back -- fetch() resolves to the
@@ -338,7 +339,10 @@ class FilesController < ApplicationController
     )
     LibraryChannel.broadcast_change(current_user, seq)
     node = current_user.nodes.find_by(node_id: version.node_id)
-    enqueue_preview(node_id: version.node_id, name: node&.name || version.node_id) if node
+    if node
+      enqueue_preview(node_id: version.node_id, name: node.name)
+      intake_project_folder(version.node_id)
+    end
     render json: { version_id: version.version_id, seq: }
   rescue Sync::Commit::ChunksMissing => e
     render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity
@@ -537,6 +541,37 @@ class FilesController < ApplicationController
     ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
   rescue FileLayer::NotFound, FileLayer::FetchError
     nil
+  end
+
+  # THE EAGER NUDGE (Task 11). A file uploaded into a project's folder attaches and files itself NOW
+  # rather than at the next sweep, which would read as broken — the same "the nudge is the fast path
+  # and the poll is the correctness fallback" shape the sync engine already uses (§12 step 1). The
+  # periodic Maker::ProjectIntake run is what makes it correct; this is what makes it feel instant.
+  #
+  # BEST-EFFORT, AND RESCUED AS WIDELY AS enqueue_preview ABOVE IS, FOR THE SAME REASON: the upload
+  # has ALREADY SUCCEEDED — the bytes are in the store and the node exists — so a failure here must
+  # never turn a successful upload into an error the user sees. StandardError IS RIGHT HERE, WHERE
+  # IT WOULD BE WRONG INSIDE THE SERVICE: this rescue exists to protect a response that has already
+  # succeeded, not to make a policy decision about what a failure means, and unlike
+  # Maker::ProjectIntake — which has already narrowed every condition it understands into named
+  # rescues (FileLayer::FetchError, FileLayer::NotFound, FileLayer::UnsupportedOperation,
+  # Maker::MoveNode::Collision/InvalidName) — a controller has no such catalog to narrow against. A
+  # bug here (a typo'd method, a nil that should not be nil) is exactly as unanticipated as a
+  # FileLayer outage, and both must fail the SAME way: log and let the upload the user actually
+  # asked for stand.
+  #
+  # `node&.file?` — NOT a bare truthiness check on `node` — because a node_id names a `file` for
+  # every caller today, but Maker::ProjectIntake sweeps directories via #subtree_files and would
+  # simply find nothing to do for one; the guard is here so a future caller of either upload door
+  # cannot turn this into a wasted (or surprising) sweep by handing it a directory's node_id.
+  # `current_user.nodes.present`, matching every other lookup in this controller, so a node
+  # tombstoned in the gap between the write and this call is treated as absent, not fed to the
+  # service.
+  def intake_project_folder(node_id)
+    node = current_user.nodes.present.find_by(node_id:)
+    Maker::ProjectIntake.for_node(user: current_user, node:) if node&.file?
+  rescue StandardError => e
+    Rails.logger.warn("files#intake_project_folder(#{node_id}): #{e.class}: #{e.message}")
   end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
