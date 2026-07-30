@@ -18,7 +18,11 @@ module Maker
     validates :node_id, presence: true
     validates :kind,    inclusion: { in: KINDS }
     validates :status,  inclusion: { in: STATUSES }
-    validates :node_id, uniqueness: { scope: %i[user_id version_id kind] }
+    # ONE ROW PER (user, node, kind) — see 20260730001500_one_preview_per_node_and_kind.rb. The
+    # scope used to include version_id, which is what made every save mint a row and strand its
+    # predecessor. `version_id` is now a MUTABLE column recording which content the attached asset
+    # was rendered from, and Enqueue repoints it.
+    validates :node_id, uniqueness: { scope: %i[user_id kind] }
 
     scope :ready,       -> { where(status: "ready") }
     scope :of_kind,     ->(k) { where(kind: k) if k.present? }

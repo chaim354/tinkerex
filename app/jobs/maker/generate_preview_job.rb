@@ -32,6 +32,14 @@ module Maker
       # while fetch/render errors below still mark the preview "failed".
       preview = Maker::Preview.find(preview_id)
 
+      # WHAT THIS RUN IS RENDERING, captured before any work. A preview row is now ONE PER
+      # (node, kind) and is REPOINTED as the file's content moves, so the row can change under a
+      # job that is already rendering — a slow render of v1 finishing after a fast render of v2
+      # would otherwise attach v1's bytes to a row that says v2 and mark it ready: a wrong image
+      # shown as current, silently. Under the old row-per-version key that was impossible by
+      # construction, and this guard is what buys the same immunity back.
+      target = preview.version_id
+
       begin
         preview.update!(status: "processing", error: nil)
 
@@ -52,27 +60,48 @@ module Maker
         bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
         result = render_with(renderer, bytes, ext:, kind: preview.kind)
 
-        preview.asset.attach(
-          io: StringIO.new(result[:bytes]),
-          filename: "#{preview.kind}-#{preview.id}#{asset_ext(result[:content_type])}",
-          content_type: result[:content_type]
-        )
-        preview.update!(status: "ready", width: result[:width], height: result[:height],
-                        metadata: result[:metadata], error: nil)
+        commit_if_current(preview, target) do
+          preview.asset.attach(
+            io: StringIO.new(result[:bytes]),
+            filename: "#{preview.kind}-#{preview.id}#{asset_ext(result[:content_type])}",
+            content_type: result[:content_type]
+          )
+          preview.update!(status: "ready", width: result[:width], height: result[:height],
+                          metadata: result[:metadata], error: nil)
+        end
       rescue Unsupported => e
         # Not an error — a deliberate terminal state. Don't re-raise (no retries).
-        preview.update!(status: "unsupported", error: e.message)
+        commit_if_current(preview, target) { preview.update!(status: "unsupported", error: e.message) }
       rescue Maker::FileBytes::FetchError => e
         # Transient (auth/network/5xx). Do NOT mark terminal — leave it "processing" and
         # re-raise so retry_on schedules a backed-off retry (or re-raises once exhausted).
-        preview.update!(error: "#{e.class}: #{e.message} (retrying)")
+        commit_if_current(preview, target) { preview.update!(error: "#{e.class}: #{e.message} (retrying)") }
         raise
       rescue StandardError => e
-        preview.update!(status: "failed", error: "#{e.class}: #{e.message}")
+        commit_if_current(preview, target) { preview.update!(status: "failed", error: "#{e.class}: #{e.message}") }
       end
     end
 
     private
+
+    # Write the outcome ONLY if the row still points at the content this run rendered.
+    #
+    # EVERY terminal write goes through here, not just the successful one, and that is the part
+    # most likely to be trimmed later: a stale `unsupported` or `failed` is as wrong as a stale
+    # image. A v1 render that fails must not mark a row that has already moved to v2 as failed —
+    # `Enqueue` treats `failed` as "retry me", so it would look repaired while describing content
+    # nobody asked about, and the genuine v2 result would be overwritten by an older verdict.
+    #
+    # Losing the write is the CORRECT outcome, not a dropped update: whoever repointed the row also
+    # enqueued a job for the new content, so the newer render is already coming.
+    def commit_if_current(preview, target)
+      preview.reload
+      return if preview.version_id != target
+
+      yield
+    rescue ActiveRecord::RecordNotFound
+      nil # the row was deleted mid-render; nothing to write and nothing wrong
+    end
 
     # Renderers share a `render(bytes, size:)` contract; some (e.g. Mesh/F3D) also accept
     # `ext:` (to pick the loader) and `kind:`. Accepting `kind:` is not a promise to produce
