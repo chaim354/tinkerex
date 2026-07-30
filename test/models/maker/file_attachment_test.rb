@@ -32,10 +32,13 @@ module Maker
       end
     end
 
-    test "laser and vector extensions derive the vector role" do
+    # lbrn2 moved to the laser role (see "lbrn2 is laser, not vector" below); svg/dxf stay vector.
+    # Kept as its own test for the coverage the newer, plainer tests don't have: case-insensitivity
+    # on the extension and a filename with a space.
+    test "vector and laser extensions derive their distinct roles" do
       assert_equal "vector", Maker::FileAttachment.role_for("panel.svg")
       assert_equal "vector", Maker::FileAttachment.role_for("Panel.DXF")
-      assert_equal "vector", Maker::FileAttachment.role_for("cut file.lbrn2")
+      assert_equal "laser", Maker::FileAttachment.role_for("cut file.lbrn2")
     end
 
     test "CAD source extensions derive the cad_source role" do
@@ -59,8 +62,8 @@ module Maker
     # Pinned independently of ROLE_LABELS on purpose. Asserting ROLES == ROLE_LABELS.keys is
     # tautological — ROLES is DEFINED as those keys — so it cannot catch a typo'd key like
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
-    test "the role vocabulary is exactly these nine values" do
-      assert_equal %w[cad_source document gcode image instructions model other source_archive vector],
+    test "the role vocabulary is exactly these ten values" do
+      assert_equal %w[cad_source document gcode image instructions laser model other source_archive vector],
                    Maker::FileAttachment::ROLES.sort
     end
 
@@ -90,6 +93,43 @@ module Maker
     # extraction. This test is the tripwire for that.
     test "pdf stays instructions, not document" do
       assert_equal "instructions", Maker::FileAttachment.role_for("manual.pdf")
+    end
+
+    # THE SPLIT THE FOLDER MAP NEEDS. svg/dxf/lbrn2 were all `vector`, so "laser" and "design" were
+    # not distinguishable in the one place the app defines file types.
+    test "lbrn2 is laser, not vector" do
+      assert_equal "laser", Maker::FileAttachment.role_for("box.lbrn2")
+    end
+
+    test "svg and dxf stay vector" do
+      assert_equal "vector", Maker::FileAttachment.role_for("panel.svg")
+      assert_equal "vector", Maker::FileAttachment.role_for("panel.dxf")
+    end
+
+    # These had NO role at all before — a CNC-heavy project was entirely "Other".
+    test "nc, tap and ngc are gcode" do
+      %w[nc tap ngc].each do |ext|
+        assert_equal "gcode", Maker::FileAttachment.role_for("part.#{ext}"), ext
+      end
+    end
+
+    test "laser is a real role, so the inclusion validation accepts it" do
+      assert_includes Maker::FileAttachment::ROLES, "laser"
+      assert_equal "Laser", Maker::FileAttachment::ROLE_LABELS["laser"]
+    end
+
+    # Every extension must satisfy FilesController::EXT_RE or it renders a filter chip that links and
+    # silently does nothing. The three new ones are short, but the rule is what matters.
+    test "every extension satisfies the Files-page filter regex" do
+      Maker::FileAttachment::ROLE_BY_EXT.each_key do |ext|
+        assert_match FilesController::EXT_RE, ext, ext
+      end
+    end
+
+    # pdf must NOT drift to `document`: Models::AttachmentsController dispatches
+    # ExtractPdfMetadataJob on this exact value, so the column is behavioural.
+    test "pdf is still instructions" do
+      assert_equal "instructions", Maker::FileAttachment.role_for("guide.pdf")
     end
   end
 end

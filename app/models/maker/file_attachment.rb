@@ -14,6 +14,7 @@ module Maker
       "instructions"   => "Instructions",
       "document"       => "Documents",
       "vector"         => "Vector",
+      "laser"          => "Laser",
       "cad_source"     => "CAD source",
       "gcode"          => "G-code",
       "source_archive" => "Archives",
@@ -31,9 +32,17 @@ module Maker
     ROLE_BY_EXT = {
       "stl" => "model", "3mf" => "model", "obj" => "model", "step" => "model", "stp" => "model",
       "png" => "image", "jpg" => "image", "jpeg" => "image", "gif" => "image", "webp" => "image", "bmp" => "image",
-      "pdf" => "instructions", "gcode" => "gcode", "gco" => "gcode", "zip" => "source_archive",
-      # Laser / 2D vector work. Without these a laser-heavy project is mostly "Other".
-      "svg" => "vector", "dxf" => "vector", "lbrn2" => "vector",
+      "pdf" => "instructions", "zip" => "source_archive",
+      # CNC. `nc`/`tap`/`ngc` are the router/mill dialects; without them a CNC-heavy project is
+      # entirely "Other". They join `gcode` rather than getting a role of their own because they
+      # ARE g-code — the folder split (cnc vs laser) is Maker::ProjectFolders' job, not a reason to
+      # fragment the vocabulary.
+      "gcode" => "gcode", "gco" => "gcode", "nc" => "gcode", "tap" => "gcode", "ngc" => "gcode",
+      # Laser / 2D vector work. `lbrn2` is LASER, not vector: a LightBurn document is a machine
+      # program, while svg/dxf are drawings you might cut on anything. That distinction is what
+      # lets Maker::ProjectFolders put them in different folders — and the ONE vocabulary is where
+      # it has to live, or the panel headings and the folders disagree.
+      "svg" => "vector", "dxf" => "vector", "lbrn2" => "laser",
       # Editable CAD sources, as opposed to the exported meshes above. SolidWorks sits with Fusion
       # here because CLAUDE.md §1 and docs/research-format-processing.md treat them as one category
       # — proprietary, no FOSS parser, you open them in the tool that made them.
