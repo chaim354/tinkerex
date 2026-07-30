@@ -163,12 +163,34 @@ module Maker
     # happened.
     #
     # FileLayer::FetchError IS RESCUED HERE, AROUND THE WHOLE LOOP — DELIBERATELY NOT INSIDE
-    # #place, which says so in its own comment. A FetchError means the LIBRARY is unreachable (an
-    # unmounted share, an unreachable bucket), not anything about the one file #place was looking
-    # at when it hit that wall, so every file still waiting would fail the exact same way. Catching
-    # it per file would produce N identical log lines and report each as its own independent skip —
-    # reading to an operator like a library full of individually-broken files rather than one
-    # unmounted NAS. Catching it once here turns that into one abort and one line.
+    # #place, which says so in its own comment. A FetchError USUALLY means the LIBRARY is
+    # unreachable (an unmounted share, an unreachable bucket) rather than anything about the one
+    # file #place was looking at, so treating it as "stop, the rest would fail the same way" is
+    # the right read most of the time. Catching it per file instead would produce N identical log
+    # lines and report each as its own independent skip — reading to an operator like a library
+    # full of individually-broken files rather than one unmounted NAS. Catching it once here turns
+    # that into one abort and one line.
+    #
+    # THE DELIBERATE TRADE-OFF, NAMED RATHER THAN ASSUMED: "usually" is not "always", and two real
+    # counterexamples exist today where a FetchError is about ONE file, not the library.
+    # FileLayer::S3#move sends copy_source_if_match, and a source object that changed since the
+    # scan indexed it raises Aws::S3::Errors::PreconditionFailed — an Aws::S3::Errors::ServiceError,
+    # caught by the same rescue that maps every other S3 failure to FetchError — which is a fact
+    # about that object, not the bucket (already pinned on the sibling #delete by
+    # test/services/file_layer/s3_test.rb's "a concurrent overwrite makes the trash copy refuse
+    # rather than trash the wrong bytes"). FileLayer::Share#move rescues EVERY SystemCallError into
+    # FetchError with no library_present? disambiguation — unlike #read, #download and #undelete,
+    # which all ask that question first — so an ENOENT on a file that vanished mid-sweep, or an
+    # EACCES on one destination subfolder's permissions, also surfaces as FetchError.
+    #
+    # So this abort can occasionally fire on a genuinely per-file condition and mark a file that
+    # would have succeeded :unavailable instead of moving it. THAT DOES NOT CHANGE THE DESIGN: the
+    # sweep is idempotent and :unavailable persists nothing, so the cost of an over-eager abort is
+    # a delayed retry on the NEXT sweep — not data loss, not a stuck file, nothing a user has to
+    # undo. That is far cheaper than the mistake this design exists to avoid (N identical log
+    # lines misreporting one unmounted NAS as N broken files), so accepting the rare false abort is
+    # the safe direction — the same shape as Share#read's own trade-off (FetchError over NotFound
+    # whenever a library looks unmounted).
     #
     # `processed` counts files #place has already returned an outcome for (moved OR skipped), so
     # `inbox[processed..]` is exactly "every file #place has not yet had a chance to answer for" —
@@ -195,9 +217,18 @@ module Maker
       Rails.logger.warn(
         "Maker::ProjectIntake: aborting sweep for #{@project.slug} — library unreachable " \
         "(#{e.class}: #{e.message}) — #{moved} #{'file'.pluralize(moved)} filed before it " \
-        "stopped, #{unreached.size} left unavailable"
+        "stopped, #{unreached.size} left unavailable#{unreached_note(unreached)}"
       )
       [ moved, skips.size, skips, plan ]
+    end
+
+    # A refusal should diagnose itself — Library::Reconciler#unreadable_note is the precedent this
+    # copies, same first-3-then-ellipsis shape. The count alone says THAT files did not move, not
+    # WHICH ones, and nothing reads Result.skips yet (Tasks 9-12 are the pending consumers), so
+    # until one exists this log line is an operator's only way to find them.
+    def unreached_note(unreached)
+      return "" if unreached.empty?
+      " (#{unreached.first(3).map { |n| n.name.inspect }.join(', ')}#{'...' if unreached.size > 3})"
     end
 
     # Move one file into its category folder. Answers the folder name, or the skip reason (a
@@ -210,20 +241,20 @@ module Maker
     # #relocate was added it called the move BELOW all three, and silently pulled one file out of a
     # model's bundle folder while reporting success. This is the third door.
     #
-    # FetchError IS DELIBERATELY NOT RESCUED HERE — it means the library is unreachable, so every
-    # remaining move would fail identically, and #file_all's caller turns it into one abort rather
-    # than N identical log lines. Adding it to this list would make an unmounted NAS log once per
-    # file and pretend each one was an independent skip.
+    # FetchError IS DELIBERATELY NOT RESCUED HERE — every file that hits it goes through
+    # #file_all's whole-loop abort instead of a per-file skip. #file_all's own comment has the
+    # full reasoning, including the two known cases where a FetchError is actually about one file
+    # rather than the library, and why the design accepts that cost. Adding it to this list would
+    # make an unmounted NAS log once per file and pretend each one was an independent skip.
     #
     # :not_found AND :unsupported STAY SPLIT, RATHER THAN COLLAPSING INTO ONE :unavailable THE WAY
     # AttachToProject#move DOES — and that is not an inconsistency between the two. #move collapses
     # FetchError/NotFound/UnsupportedOperation together because all three there mean "try again
     # later": it words a single sentence ("couldn't move it") for a flash message, and FetchError
-    # sits in that same bucket. #place never rescues FetchError at all (see above — Task 6 handles
-    # it one level up, aborting the whole sweep), so it has room to keep the other two apart, and
-    # the extra detail is worth it: :unsupported never succeeds on retry (a directory, or a name
-    # the backend refuses outright) while :not_found is a race or an out-of-band change that might.
-    # An operator reading `skips` benefits from that distinction; a flash message does not.
+    # sits in that same bucket. `skips` is not a flash message, and the extra detail is worth
+    # keeping there: :unsupported never succeeds on retry (a directory, or a name the backend
+    # refuses outright) while :not_found is a race or an out-of-band change that might. An operator
+    # reading `skips` benefits from that distinction; a flash message does not.
     #
     # InvalidName IS RESCUED, AND THE EARLIER VERSION OF THIS COMMENT SAYING IT HAD "no producer on
     # this path" WAS WRONG — reproduced (see project_intake_test.rb): `Node` validates only

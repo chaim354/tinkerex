@@ -406,13 +406,19 @@ module Maker
     # it already in the catalog, Maker::LibraryFolder#ensure_segment returns the existing node and
     # never reaches the port. Without that seeding the failure would be a NoMethodError on mkdir,
     # i.e. the test would pass for the wrong reason.
-    def with_broken_move(error_class)
+    #
+    # `fail_after:` lets a caller ask for N clean successes before the raising starts. The
+    # succeed-then-abort test below needs the FIRST file to move for real — #place's return value
+    # is the `dest` string regardless of what `move` answers, so a fake that always raises can never
+    # tell "moved/plan correctly kept" apart from "wrongly zeroed on abort". Default 0 keeps every
+    # existing caller's "raises from the very first attempt" behaviour unchanged.
+    def with_broken_move(error_class, fail_after: 0)
       attempts = 0
       broken = Object.new
       def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
       broken.define_singleton_method(:move) do |*|
         attempts += 1
-        raise(error_class, "the backend is having a bad day")
+        raise(error_class, "the backend is having a bad day") if attempts > fail_after
       end
       FileLayer.current = broken
       yield -> { attempts }
@@ -446,6 +452,31 @@ module Maker
       end
     end
 
+    # THE LOG NAMES THE FILES, not just the count — mirroring Library::Reconciler#unreadable_note's
+    # "a refusal should diagnose itself". Split from the behaviour test above the same way the
+    # :conflict case splits "a name already taken..." from "a skipped file logs a warning...":
+    # the counts/skips assertions already prove #file_all's bookkeeping; this proves the warn line
+    # itself carries the names, which is a separate fact a passing count could still get wrong.
+    test "the abort log names the unavailable files, not just the count" do
+      seed_folder("design")
+      file("a.svg")
+      file("b.svg")
+      file("c.svg")
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = Logger.new(log)
+      begin
+        with_broken_move(FileLayer::FetchError) { intake }
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_match @project.slug, log.string
+      assert_match "FileLayer::FetchError", log.string
+      %w[a.svg b.svg c.svg].each { |name| assert_match name, log.string }
+    end
+
     # The attach still happened — it is the durable half and it touches no bytes.
     test "an unreachable library still leaves the attachments behind" do
       seed_folder("design")
@@ -468,6 +499,32 @@ module Maker
         assert_equal 0, result.moved
         assert_equal 2, result.skipped
         assert_equal 2, attempts.call, "a per-file refusal must not stop the file after it"
+      end
+    end
+
+    # THE GAP A MUTATION FOUND: every FetchError test above has the FIRST file raise, so `moved`
+    # is 0 in every one of them — a rescue clause that discarded `moved` and `plan` entirely
+    # (returning `[0, skips.size, skips, []]` instead of the real values) would still pass all of
+    # them. This is the one that catches it: the fake succeeds ONCE before it raises, so a
+    # wrongly-zeroed `moved`/`plan` is the only way this test can fail. Order-independent on
+    # purpose — nothing here assumes which of the three files the DB hands back first, only that
+    # whichever one was processed before the abort keeps its result and the other two do not.
+    test "a move that succeeds once keeps its result when a later file aborts the sweep" do
+      seed_folder("design")
+      names = %w[a.svg b.svg c.svg]
+      names.each { |n| file(n) }
+
+      with_broken_move(FileLayer::FetchError, fail_after: 1) do |attempts|
+        result = intake
+        assert_equal 1, result.moved, "the abort must not zero out a move that already succeeded"
+        assert_equal 1, result.plan.size
+        assert_equal 2, result.skipped
+        assert_equal 2, attempts.call, "the third file must never be attempted once the abort fires"
+
+        moved_name = result.plan.first.first
+        assert_includes names, moved_name
+        assert_equal %i[unavailable unavailable], result.skips.map(&:last)
+        assert_equal (names - [ moved_name ]).sort, result.skips.map(&:first).sort
       end
     end
   end
