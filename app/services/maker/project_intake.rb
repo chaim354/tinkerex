@@ -115,6 +115,56 @@ module Maker
       RunResult.new(results:, status: refused ? :refused_too_many_moves : :ok, inbox_total:, cap:)
     end
 
+    # Intake for the project that owns ONE node — the eager nudge's entry point, so a web upload
+    # into a project folder attaches and files itself NOW rather than at the next sweep, which would
+    # read as broken. Answers nil when the node is not under any project folder.
+    #
+    # It sweeps the whole owning project rather than just this node. That is deliberate: the policy
+    # is identical, the work is bounded by one project's inbox, and a single-file path would be a
+    # second copy of the two steps — the thing this class exists to avoid having.
+    #
+    # IT APPLIES THE CAP, and that is not belt-and-braces. Without it, a run that REFUSED on the cap
+    # would be undone by uploads: each one would file that project's whole inbox, and the guard
+    # would guard nothing. Scoped to this project's inbox because that is the only count this entry
+    # point can honestly take.
+    def self.for_node(user:, node:)
+      project = owning_project(user, node)
+      return nil unless project
+
+      inbox = user.nodes.present.where(kind: "file", parent_node_id: project.folder_node_id).count
+      cap = max_moves
+      if inbox > cap
+        Rails.logger.warn("Maker::ProjectIntake: attaching but NOT filing #{project.slug} — " \
+                          "#{inbox} loose files is over the #{cap} cap. Run " \
+                          "`rake projects:organize` (it lifts the cap) or raise " \
+                          "PROJECT_ORGANIZE_MAX_MOVES.")
+      end
+      for_project(user:, project:, move: inbox <= cap)
+    end
+
+    # The project whose library folder is an ancestor of `node`, or nil.
+    #
+    # Walks UP, one query per level, bounded by MAX_DEPTH with a visited set for the same reason the
+    # subtree walk is: a cycle in `nodes` makes an unbounded walk spin, which is fatal on SQLite (no
+    # statement timeout). One pluck up front means the loop compares against a hash rather than
+    # querying maker_projects per level.
+    def self.owning_project(user, node)
+      by_folder = user.maker_projects.where.not(folder_node_id: nil)
+                      .pluck(:folder_node_id, :id).to_h
+      return nil if by_folder.empty?
+
+      current = node.parent_node_id
+      seen = Set.new
+      MAX_DEPTH.times do
+        return nil if current.blank?
+        id = by_folder[current]
+        return user.maker_projects.find_by(id:) if id
+        return nil unless seen.add?(current)
+        current = user.nodes.where(node_id: current).pick(:parent_node_id)
+      end
+      nil
+    end
+
     # READ PER CALL, never frozen into a constant at boot. The refusal's log line names this
     # variable as the operator's way out, and a value fixed at boot makes that advice false inside a
     # running process and unreachable from a test — which is how an escape hatch rots shut. That is

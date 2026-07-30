@@ -659,5 +659,63 @@ module Maker
       assert_equal 500, Maker::ProjectIntake::MAX_MOVES
       assert_equal 500, Maker::ProjectIntake.max_moves
     end
+
+    # --- for_node ----------------------------------------------------------------
+
+    test "for_node files a file dropped at a project root" do
+      node = file("panel.svg")
+      result = Maker::ProjectIntake.for_node(user: @user, node:)
+      assert_equal 1, result.moved
+      assert_equal "design", parent_name(node)
+    end
+
+    # The upload chooser can target a category subfolder directly, so the project is one hop up.
+    test "for_node resolves the project from inside a category subfolder" do
+      sub = dir("design")
+      node = file("panel.svg", parent: sub.node_id)
+      result = Maker::ProjectIntake.for_node(user: @user, node:)
+      assert_not_nil result
+      assert_equal 1, result.attached
+      assert_equal "design", parent_name(node), "already filed — it must not move again"
+    end
+
+    test "for_node answers nil for a file outside every project folder" do
+      node = file("stray.stl", parent: nil)
+      assert_nil Maker::ProjectIntake.for_node(user: @user, node:)
+    end
+
+    test "for_node answers nil when the user has no project folders" do
+      other = User.create!(email: "pin-#{SecureRandom.hex(4)}@example.com",
+                           confirmed_at: Time.current, omniauth_signup: true)
+      node = other.nodes.create!(node_id: SecureRandom.uuid, name: "a.svg", kind: "file")
+      assert_nil Maker::ProjectIntake.for_node(user: other, node:)
+    end
+
+    # THE HOLE THIS CLOSES: if the periodic run REFUSED on the cap, an uncapped for_node would file
+    # the library anyway, one upload at a time, and the guard would guard nothing.
+    test "for_node respects the cap, so a refused library stays refused" do
+      3.times { |i| file("p#{i}.svg") }
+      node = file("trigger.svg")
+      prior = ENV["PROJECT_ORGANIZE_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_MAX_MOVES"] = "2"
+      begin
+        result = Maker::ProjectIntake.for_node(user: @user, node:)
+        assert_equal 0, result.moved
+        assert_equal 4, result.attached, "the attach half still runs, as it does for a whole run"
+      ensure
+        ENV["PROJECT_ORGANIZE_MAX_MOVES"] = prior
+      end
+    end
+
+    # A cycle in `nodes` must terminate rather than spin — fatal on SQLite, which has no statement
+    # timeout. Reachable only via a crafted/corrupt tree, which is why it is a backstop and not a
+    # feature.
+    test "for_node terminates on a parent cycle" do
+      a = dir("a")
+      b = dir("b", parent: a.node_id)
+      a.update!(parent_node_id: b.node_id)
+      node = file("x.svg", parent: b.node_id)
+      assert_nil Maker::ProjectIntake.for_node(user: @user, node:)
+    end
   end
 end
