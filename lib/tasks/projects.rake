@@ -43,6 +43,9 @@ namespace :projects do
 
     puts "#{dry_run ? 'Would attach' : 'Attached'} #{totals[:attached]}, " \
          "#{dry_run ? 'would file' : 'filed'} #{totals[:moved]}, left #{totals[:skipped]} total."
-    puts "DRY RUN — nothing was written (no attachment rows, no folders created)." if dry_run
+    if dry_run
+      puts "DRY RUN — nothing was written (no attachment rows, no folders created)."
+      puts "Note: a dry run can't see name collisions — a real run may still skip a file shown above as filed."
+    end
   end
 end

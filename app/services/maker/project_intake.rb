@@ -18,10 +18,17 @@ module Maker
   # §10 BOUNDARY: maker-layer policy. It reaches bytes only through those two services, and nothing
   # here touches Sync::*, the changelog, conflicts, locks or the mounts.
   class ProjectIntake
-    # What one project's intake did. `plan` is filled only in a dry run — [name, folder] pairs, so
-    # the rake task can print source -> destination without a second traversal. `skips` is the
-    # SAME shape for the other outcome — [name, reason] pairs, one per file #file_all did not
-    # move — so Task 12's rake task can say which files and why, not just how many.
+    # What one project's intake did. `plan` is [name, folder] pairs, one per file #file_all moved
+    # or would move — so the rake task can print source -> destination without a second
+    # traversal. IT IS POPULATED IDENTICALLY ON A REAL RUN AND A DRY RUN, NOT GATED ON @dry_run
+    # (an earlier version of this comment claimed otherwise — corrected 2026-07-30, false as
+    # written: #place returns the destination string on both paths, before the move on a dry run
+    # and after it succeeds on a real one, so #file_all fills `plan` the same way either time). A
+    # REAL run's entries are moves that ALREADY HAPPENED; a DRY run's are moves that WOULD
+    # happen — same shape, different tense, and the caller has to already know which run it asked
+    # for to read them correctly. `skips` is the SAME shape for the other outcome — [name,
+    # reason] pairs, one per file #file_all did not move — so Task 12's rake task can say which
+    # files and why, not just how many.
     Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status)
 
     # What one USER's whole intake run did. The cap is a property of the RUN, so its refusal lives
@@ -576,8 +583,15 @@ module Maker
       return refusal if refusal
 
       dest = Maker::ProjectFolders.folder_for(node.name)
-      # Before ensure_path!, so a dry run creates no folder — the reason it is a `dry run` and not
-      # a `report`.
+      # Before ensure_path! and Maker::MoveNode.call, so a dry run creates no folder and writes
+      # nothing — the reason it is a `dry run` and not a `report`.
+      #
+      # THE COST OF THAT ORDERING: collision detection lives INSIDE Maker::MoveNode.call (its own
+      # `collision!` check), which a dry run never reaches. So a dry run cannot see a `:conflict`
+      # a real run would hit, and its "would file" answer for a file is OPTIMISTIC whenever the
+      # destination folder already holds a same-named file. Detecting that requires attempting
+      # the move, and attempting the move is precisely what a dry run exists to refuse to do —
+      # this is not a gap to close, it is what "writes nothing" costs.
       return dest if @dry_run
 
       target = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, dest ])
