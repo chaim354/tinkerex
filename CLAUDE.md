@@ -84,7 +84,7 @@ see `docs/STATUS.md` for the current per-suite counts.
 
 | Layer | Choice |
 |---|---|
-| Backend | **Rails 8** (Solid Queue/Cache/Cable) |
+| Backend | **Rails 8** (Solid Queue/Cache/Cable — **Cache was provisioned but NOT wired until 2026-07-30.** The gem, `config/cache.yml`, the `cache` role in `database.yml` and `db/cache_schema.rb` were all in place; `config.cache_store` was still the Rails scaffold comment, so production resolved to a `FileStore` in the container's `tmp/` — wiped by every deploy. Queue and Cable were wired deliberately; the third was missed and this row claimed all three. Rate limiting now counts in this store, so the distinction stopped being cosmetic.) |
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |

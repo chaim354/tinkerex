@@ -82,8 +82,15 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
 
-  # Replace the default in-process memory cache store with a durable alternative.
-  # config.cache_store = :mem_cache_store
+  # Solid Cache, backed by its own database (the `cache` entry in database.yml, schema in
+  # db/cache_schema.rb, tuning in config/cache.yml). Without this line Rails falls back to a
+  # FileStore in the container's tmp/ — wiped by every Kamal deploy and invisible to a second
+  # container. Solid Queue (above) and Solid Cable (config/cable.yml) were both wired; this was
+  # the third of the three that got missed, while CLAUDE.md §4 claimed all three.
+  #
+  # RATE LIMITING COUNTS IN THIS STORE (see the Users:: controllers), so it needs to be durable
+  # and shared rather than per-container and wiped on deploy.
+  config.cache_store = :solid_cache_store
 
   # Replace the default in-process and non-durable queuing backend for Active Job.
   # config.active_job.queue_adapter = :resque
