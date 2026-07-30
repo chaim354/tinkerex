@@ -1080,7 +1080,7 @@ gate is. `changes` is `git diff` plus bash; it has no Linux dependency.
 ```bash
 bin/rails test test/ci_hygiene_test.rb -n /preflight_gated/
 ```
-Expected: **FAIL** listing **21 jobs** — 12 linux and 9 windows across `rust-client.yml`,
+Expected: **FAIL** listing **22 jobs** — 11 linux and 11 windows across `rust-client.yml`,
 `nightly.yml` and `cross-os-e2e.yml`. This test stays red until Task 6 completes; that is why Tasks 5
 and 6 are one continuous stretch and the commit in Step 5 below notes it.
 
@@ -1135,7 +1135,7 @@ jobs:
     runs-on: [self-hosted, macos]
 ```
 
-Then, for **each** of the four linux jobs (`linux-build`, `engine-integration`,
+Then, for **each** of the three linux jobs (`linux-build`, `engine-integration`,
 `two-device-fuse-linux`) and the four windows jobs (`windows-build`, `windows-smoke`,
 `cfapi-conformance`, `two-device-cfapi-windows`), add `preflight` to `needs:` and the family
 condition to `if:`. Worked examples — apply the same shape to every one:
@@ -1208,7 +1208,7 @@ targets the one online runner — so a missing Linux box took down jobs that cou
 have run. changes is git diff plus bash and has no Linux dependency.
 
 The repo-wide gating assertion lands here and is RED until nightly.yml and
-cross-os-e2e.yml are converted in the next commit; it currently names 21 jobs."
+cross-os-e2e.yml are converted in the next commit; it currently names 22 jobs."
 ```
 
 ---
@@ -1252,10 +1252,10 @@ including `with: { clean: false }` on the checkout, which both workflows use thr
         run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
 ```
 
-- [ ] **Step 2: Gate `nightly.yml`'s 11 non-macos jobs**
+- [ ] **Step 2: Gate `nightly.yml`'s 10 non-macos jobs**
 
 Five linux (`e2e-linux`, `fuser-mount-smoke-linux`, `stress-load-and-multifiletype-linux`,
-`two-device-fuse-linux`, `mount-conformance`) and six windows (`windows-build`, `e2e-windows`,
+`two-device-fuse-linux`, `mount-conformance`) and five windows (`windows-build`, `e2e-windows`,
 `two-device-cfapi-windows`, `windows-smoke`, `cfapi-conformance`).
 
 For a job with **no** existing `needs:` or `if:` (e.g. `e2e-linux`), add both:
@@ -1363,7 +1363,7 @@ Expected: 1628+ runs, 0 failures, 0 errors.
 git add .github/workflows/nightly.yml .github/workflows/cross-os-e2e.yml
 git commit -m "ci: preflight-gate every linux and windows job
 
-Closes the queue-forever failure across all four automatic workflows: 21 jobs are
+Closes the queue-forever failure across all four automatic workflows: 20 jobs are
 now if-gated on a declared runner family, so a job whose runner is absent is never
 SCHEDULED and cannot queue. The nightly and cross-OS crons stop firing into a void
 — they complete in seconds and state which coverage they skipped.
@@ -2209,7 +2209,7 @@ task. §9 docs → Task 12. §8's out-of-scope items are not implemented, as int
 **Two known imperfections, stated rather than hidden.**
 
 1. **Task 5 commits with a red test**, which Task 6 turns green. The alternative — one giant commit
-   converting 21 jobs across three workflows — is worse to review and worse to bisect. The commit
+   converting 20 jobs across three workflows — is worse to review and worse to bisect. The commit
    message says so explicitly.
 2. **Task 11 is specified rather than fully written.** Its three behaviours, their assertions, the
    reason each assertion exists, and its mutation checks are all concrete, but the Capybara calls
