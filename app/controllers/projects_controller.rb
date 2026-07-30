@@ -37,7 +37,12 @@ class ProjectsController < ApplicationController
     att_ids = @attachments.map(&:node_id)
     @att_nodes = current_user.nodes.present.where(node_id: att_ids).index_by(&:node_id)
     @thumbs = Maker::Previews::ThumbnailMap.for(current_user, att_ids)
-    @entries = @project.build_log_entries.includes(:file_attachments).reorder(logged_at: :desc).to_a
+    # :rich_text_body is Action Text's association for `has_rich_text :body`. Without it, each
+    # entry's body is its own query — 15 entries cost 15 extra round-trips. Pinned by
+    # test/integration/web/page_query_budget_test.rb.
+    @entries = @project.build_log_entries
+                       .includes(:file_attachments, :rich_text_body)
+                       .reorder(logged_at: :desc).to_a
     entry_photo_ids = @entries.flat_map { |e| e.file_attachments.map(&:node_id) }
     @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
     @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
