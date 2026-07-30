@@ -155,9 +155,11 @@ test, not by reading it.**
 Neither is duplicated here — each already has its own home in this file, and a second copy is a
 second thing to go stale:
 
-- **No Linux runner is registered, so all 7 `ci.yml` jobs queue forever** — see "CI cannot run"
-  below. A separate agent owns CI and testing infrastructure; this arc corrected CLAUDE.md §15's
-  claim that all three runners exist and recorded how to verify locally.
+- ~~**No Linux runner is registered, so all 7 `ci.yml` jobs queue forever.**~~ **CLOSED 2026-07-29**
+  by the CI arc — `ci.yml` targets `macos` and every linux/windows job is gated so it cannot queue.
+  See "CI runs again, on the runner that exists" below (this bullet pointed at "CI cannot run", which
+  that section replaced). Still true and still worth knowing: **Linux and Windows coverage is skipped,
+  not passing**, and the two steps to restore it are recorded there.
 - **The OVH deployment inherits `ENABLE_TEST_SIGNUP`** through Kamal's `env.clear` deep-merge — see
   the bullet under "Still open after this arc". Left on knowingly, with the one-line fix recorded
   both there and at the edit site.
@@ -352,38 +354,144 @@ production eager-load check.
 re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
 the **entire suite green**, because every other test derives its expectation from one side only.
 
-## CI cannot run — no Linux runner is registered (2026-07-29)
+## CI runs again, on the runner that exists (2026-07-29)
 
-**Open, and assigned elsewhere: a separate agent owns fixing CI + testing infrastructure.** Recorded
-here so nobody re-diagnoses it.
+Design: `docs/superpowers/specs/2026-07-29-testing-and-ci-pipelines-design.md`.
+Plan: `docs/superpowers/plans/2026-07-29-testing-and-ci-pipelines.md`.
 
-All 7 jobs in `.github/workflows/ci.yml` declare `runs-on: [self-hosted, linux]`.
-`gh api repos/:owner/:repo/actions/runners` reports exactly one runner —
-`charless-MacBook-Pro-maker-mac`, macOS. So every job **queues forever** rather than failing: on PR #94
-they sat `pending` with **0 elapsed**, `mergeStateStatus` stayed UNSTABLE, and the merge needed
-`--admin`. CLAUDE.md §15 claimed all three runners were registered; corrected in the same commit.
+**⚠️ ONE STEP OUTSTANDING: the branch is not pushed, so no green run has been OBSERVED.** Every gate
+is measured green locally on the mac box and `actionlint` reports no findings, but "expected to go
+green" is not "went green". Whoever pushes must (1) `gh variable set CI_RUNNERS --body "macos"`
+**first** — without it the preflight defaults to macos-only anyway, but the declaration should be
+explicit — and (2) confirm the run by **status**, not wall-clock:
+`gh run list --workflow=ci.yml --limit 1 --json conclusion,status`. Then replace this paragraph with
+the run URL. Expect the first red to be one of the three `ci.yml` changes that had **never executed
+once** before this arc (the two backend legs, added 2026-07-16, and the resvg step, 2026-07-20) —
+those are five-week-old latent bugs surfacing, not regressions from this work.
 
-**The fix is NOT `ubuntu-latest`** — §15 forbids GitHub-hosted runners because they are the only billed
-ones. Either re-register a Linux runner, or retarget at the Mac, noting that `system-test` needs headless
-Chrome and `db:test:prepare` there and that the Mac then serialises every PR check.
+### What was wrong, and why it went unnoticed for five weeks
 
-**Until then, verify locally — this is exactly what those jobs run:**
+All 7 `ci.yml` jobs declared `runs-on: [self-hosted, linux]` while the only registered runner is
+`charless-MacBook-Pro-maker-mac` (macOS). **CI had produced no successful run since 2026-06-24** — of
+the last 300 runs, `CI` was 10 success (all ≤ Jun 24), 106 **cancelled**, 8 queued.
 
-    bin/rails test
-    LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
-    LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket LIBRARY_S3_REGION=us-east-1 \
-      LIBRARY_S3_ACCESS_KEY_ID=ci LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library \
-      bin/rails test
-    bin/rails db:test:prepare test:system
-    bin/rubocop
-    bin/brakeman --no-pager >/dev/null 2>&1; echo "brakeman=$?"   # must be 0
-    bin/bundler-audit        >/dev/null 2>&1; echo "audit=$?"     # must be 0
-    bin/importmap audit      >/dev/null 2>&1; echo "js=$?"        # must be 0
+The reason nobody noticed is a **second, separate bug**: a job whose labels match no online runner
+**does not fail**. It queues for 24 h at **0 elapsed** and GitHub then auto-cancels it, so
+`mergeStateStatus` stays UNSTABLE and the merge happens with `--admin` (PR #94 did exactly this).
+**`timeout-minutes` cannot help** — it starts counting when a job *starts*. There is no queue timeout.
+The only fix is to never schedule the job.
 
-**Read the last three by EXIT CODE, not by output.** Until 2026-07-29 `bin/brakeman` exited 3, and
-because `scan_ruby` runs it as step 1 and `bin/bundler-audit` as step 2, the audit gate had **never
-executed** — the job looked like two gates and was zero. That is how five gems drifted behind published
-advisories, one of them High on the always-on `/cable` path.
+A third, compounding shape: `rust-client.yml`'s `changes` gate job was itself linux, and **every**
+other job in that workflow `needs:` it — including `mac-tests`, which targets the runner that was
+online the whole time. One linux label took down jobs that could have run.
+
+### What now runs where
+
+- **`ci.yml`: all 7 jobs on `[self-hosted, macos]`**, each invoking exactly one `bin/ci <gate>`.
+  `scan_ruby`+`scan_js` collapsed into one `scan` job. **No `ruby/setup-ruby`** — it assumes the
+  GitHub-hosted `/Users/runner` layout this box lacks (`nightly.yml`'s `e2e-macos` already worked
+  around it); the runner's own service PATH carries mise **ruby 3.4.7**, exactly `.ruby-version`, so
+  `bundle install --quiet` is all a job needs. `test/ci_hygiene_test.rb` fails if the action returns.
+- **20 linux/windows jobs across all four automatic workflows are `if:`-gated** on a preflight, so
+  none can queue against an absent runner. `rust-client.yml`'s `changes` and `cross-os-e2e.yml`'s
+  `seed` moved to macos (neither has an OS dependency; both were blocking their whole workflow).
+- **The schedules stay armed.** `nightly` (08:00 UTC) and `cross-OS` (08:30) now complete in seconds
+  with a step-summary naming what they skipped, instead of queueing 24 h. Commenting out a cron would
+  stop the noise by making the loss silent.
+
+### Local verification is ONE command
+
+```sh
+bin/ci            # every gate;  bin/ci --list to see them;  bin/ci scan / test-share / … for one
+```
+
+`config/ci.rb` is the single definition of every gate and `ci.yml` invokes it **by name**, so the two
+cannot drift; `test/ci_hygiene_test.rb` asserts both directions. **The hand-copied 8-command checklist
+that used to live here is deleted** — it was a third list claiming to be "the gates", and a
+hand-copied checklist is exactly the artifact that let a non-gate pass as a gate.
+
+**Because it was one:** until 2026-07-29 `bin/brakeman` exited **3**, and because `scan_ruby` ran it
+as step 1 and `bin/bundler-audit` as step 2, **the audit gate had never once executed** — the job
+looked like two gates and was zero. That is how five gems drifted behind 18 published advisories, one
+High on the always-on `/cable` path. Read a scanner by **exit code**, never by output.
+
+**That failure is now structurally impossible, not merely fixed.** All three scanners sit in one gate
+and `ActiveSupport::ContinuousIntegration#step` records a result and **continues**, so each runs
+whatever the others do. Verified by breaking `bin/brakeman` deliberately and watching the other two
+still report. Do not split them back into separate gates.
+
+`config/ci.rb` also dropped the Rails scaffold's `Tests: Seeds` step: `db/seeds.rb` is comments only,
+so it asserts nothing, and `ci.yml` never ran it — keeping it would re-open the same drift in the
+other direction. If seeds ever gain content, add the gate **and** a job, together.
+
+### The fleet is DECLARED, not queried — do not "fix" this into a `gh api` call
+
+`ci/preflight.sh` reads the repo variable **`CI_RUNNERS`** (default, deliberately conservative:
+`macos` only). It does **not** ask GitHub, because it cannot: listing self-hosted runners requires the
+**`administration`** permission, which is **not among those a workflow `GITHUB_TOKEN` can be
+granted**, so `gh api repos/:owner/:repo/actions/runners` **403s from inside Actions**. It works in
+your shell only because a personal token carries admin scope — and `ci/runners/README.md` documents it
+that way, which is the trap. A stale declaration's failure mode is bounded and printed on every run;
+a 403 preflight is a broken gate.
+
+### Linux and Windows coverage is SKIPPED, not passing
+
+A green CI run today is green about **less** than a full run. Not running:
+
+- the **Linux FUSE mount path** (`fs-fuse` build, `fuser-mount-smoke-linux`)
+- **`engine-integration`** — the sync-engine HTTP wire contract against a real booted server
+- **`mount-conformance`** — rclone⇄WebDAV, fsx⇄FUSE, pjdfstest
+- the **two-device real-mount E2Es** on Linux and Windows
+- **every CfAPI job** — `windows-build`, the live smoke, `cfapi-conformance`
+- the **cross-OS convergence legs** (`win-push`, `linux-edit`, `win-pull-2`), and with them
+  `mac-pull-1`/`mac-pull-2`, which correctly cascade to skipped because there is nothing to read
+
+To restore Linux: register a runner on the **Unraid box** (`192.168.1.95` — up, SSH open, already a
+Docker host, deploy user `kamal1`) **and** add the family to the variable. Registering alone does
+nothing:
+
+```sh
+gh variable set CI_RUNNERS --body "macos,linux"
+```
+
+Note `ci/runners/setup-linux.sh` is Debian/apt-shaped and Unraid is not, so that path is a container
+or a VM. **CHAIMDESK (Windows) is reachable on the LAN but unregistered** — same two steps.
+
+### Two gaps left open deliberately
+
+- **`build-app.yml` and `install-app-on-runners.yml` are NOT preflight-gated**, and each still has a
+  linux `prepare` job. Both are `workflow_dispatch`-only and both take their runner from a dynamic
+  matrix (`[self-hosted, "${{ matrix.runner }}"]`) that no static check can resolve. The silent-rot
+  failure this arc fixed needs an *automatic* trigger; a human who pressed "Run workflow" is watching.
+  **Consequence: a manual run of either will hang until a Linux runner exists.**
+  `test/ci_hygiene_test.rb` allowlists them by name with that reason inline.
+- **`runs-on`'s map form (`{ group:, labels: }`) is not analysed** by the hygiene guard —
+  `Array(hash)` yields `[k,v]` pairs, so a map-form job always *fails* the check rather than passing.
+  That is the safe direction, and a correct reading is genuinely ambiguous (an org-level **hosted**
+  larger-runner group and a self-hosted group share the identical YAML shape). No workflow uses it.
+
+### The browser tier now exists
+
+`test/system` went from **2 files / 6 examples to 5 files / 11 examples**, with a harness
+(`test/system/support/web_helpers.rb`) and a written admission policy (`test/system/README.md`).
+
+The gap it addresses: 13 Stimulus controllers totalling **1,035 lines** had **3** covered, and all
+three got coverage only *after* a bug shipped — `tray_layout_test.rb` exists because
+`<input type=text>` silently strips newlines and broke five box generators, one of them silently. No
+request-level test could see it, and none did. New coverage: **`uploader`** (the chunk two-phase
+presigned upload — the main deployment's upload path, and the bytes really move, because
+`MemoryChunkStore` presigns to `/dev/blobs/*key` and a browser follows those relative URLs even though
+the Rust suites cannot), **`importer`** (in-browser JSZip unzip → upload → attach, closing a gap
+`models_import_test.rb` names in its own comment), and the **file-menu / attach-and-relocate** flow.
+
+**The policy is load-bearing:** a system example costs ~932 ms against ~3.2 ms for a unit test — a
+factor of **294** — so the tier admits only what is observable *only* in a browser. Without that
+rule it either stays at six tests or swallows the suite. Every test in it is **mutation-checked**, and
+`README.md` records two traps that cost real time: stale `tmp/dev-chunks*` blobs outlive
+`ChunkStore.reset!` and made one mutation read **green**, and a synthetic Selenium attach cannot read
+a fixture under a macOS TCC-protected directory.
+
+**Suite: 1640 runs / 0 failures / 0 errors / 11 skips**, plus 11 system examples (`bin/ci system`).
 
 ## Still open after this arc (small, deliberate)
 
@@ -555,7 +663,9 @@ was §6's claim, now tested rather than asserted.
 - **CI DID NOT RUN, AND CANNOT AS CONFIGURED.** Every job in `.github/workflows/ci.yml` is
   `runs-on: [self-hosted, linux]`, but the repo now has exactly **one** registered runner —
   `charless-MacBook-Pro-maker-mac`. The `flasher-maker-linux` runner CLAUDE.md §15 lists is gone, so
-  all seven jobs queue forever. **This affects every PR, not just this one.** Each job's actual
+  all seven jobs queue forever. **This affects every PR, not just this one.** *(Historical: fixed
+  2026-07-29 — see "CI runs again, on the runner that exists". Left as written because it is the dated
+  record of this arc, and it is also the third arc in a row that merged on locally-run gates.)* Each job's actual
   command was therefore run locally before merge: the three `LIBRARY_BACKEND` legs (1478 runs / 0
   failures / identical), `bin/rubocop`, `bin/brakeman`, `bin/bundler-audit`, `bin/importmap audit`.
   Three have findings and **all three are pre-existing on `main`** — this branch touches neither
