@@ -203,5 +203,122 @@ module Maker
       assert_match @project.slug, log.string
       assert_match "1 directory left unvisited", log.string
     end
+
+    # --- the filing step ---------------------------------------------------------
+
+    def parent_name(node) = @user.nodes.find_by(node_id: node.reload.parent_node_id)&.name
+
+    test "a loose file at the root is filed into its category folder" do
+      node = file("panel.svg")
+      result = intake
+      assert_equal 1, result.moved
+      assert_equal "design", parent_name(node)
+    end
+
+    test "each category gets its own folder, created only when needed" do
+      svg = file("panel.svg")
+      nc = file("pocket.nc")
+      intake
+      assert_equal "design", parent_name(svg)
+      assert_equal "cnc", parent_name(nc)
+      # LAZY: only the two folders that were needed exist, not all nine.
+      made = @user.nodes.present.where(parent_node_id: @folder.node_id, kind: "dir").pluck(:name)
+      assert_equal %w[cnc design], made.sort
+    end
+
+    # ROOT = INBOX. A file the user filed by hand — even "wrong" — is never touched again.
+    test "a file already in a subfolder is left exactly where it is" do
+      sub = dir("cnc")
+      node = file("panel.svg", parent: sub.node_id) # svg in cnc/ is "wrong", and that is allowed
+      result = intake
+      assert_equal 0, result.moved
+      assert_equal "cnc", parent_name(node)
+    end
+
+    test "filing is idempotent — a second run moves nothing" do
+      file("panel.svg")
+      assert_equal 1, intake.moved
+      assert_equal 0, intake.moved
+    end
+
+    test "the node_id survives the move, so attachments keep pointing at it" do
+      node = file("panel.svg")
+      intake
+      assert @project.file_attachments.exists?(node_id: node.node_id)
+      assert_equal node.node_id, @user.nodes.find_by(name: "panel.svg").node_id
+    end
+
+    test "a directory at the root is not moved" do
+      d = dir("loose")
+      assert_equal 0, intake.moved
+      assert_equal @folder.node_id, d.reload.parent_node_id
+    end
+
+    # THE THREE EXISTING RULES MUST NOT BE BYPASSED BY THIS THIRD DOOR. Maker::AttachToProject's
+    # header records #relocate being written below all of them and gutting a model bundle while
+    # reporting success.
+    test "a model's file is not filed — the bundle rule still applies" do
+      model = @user.maker_models.create!(title: "Widget")
+      node = file("widget.stl")
+      model.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
+      result = intake
+      assert_equal 0, result.moved
+      assert_equal @folder.node_id, node.reload.parent_node_id
+    end
+
+    test "a file another project claims is not filed" do
+      other = @user.maker_projects.create!(name: "Bench")
+      node = file("shared.stl")
+      other.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
+      assert_equal 0, intake.moved
+      assert_equal @folder.node_id, node.reload.parent_node_id
+    end
+
+    # A collision leaves the file at the root AND keeps the attachment — the attach is the durable
+    # half, the move is best-effort (Maker::AttachToProject's rule, applied here).
+    test "a name already taken in the destination leaves the file at the root, still attached" do
+      sub = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, "design" ])
+      file("panel.svg", parent: sub.node_id)
+      loose = file("panel.svg")
+      result = intake
+      assert_equal 0, result.moved
+      assert_equal 1, result.skipped
+      assert_equal @folder.node_id, loose.reload.parent_node_id
+      assert @project.file_attachments.exists?(node_id: loose.node_id),
+             "the attach is durable — a failed move must not cost the reference"
+    end
+
+    test "one collision does not stop the rest of the sweep" do
+      sub = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, "design" ])
+      file("panel.svg", parent: sub.node_id)
+      file("panel.svg")          # collides
+      ok = file("pocket.nc")     # must still be filed
+      result = intake
+      assert_equal 1, result.moved
+      assert_equal 1, result.skipped
+      assert_equal "cnc", parent_name(ok)
+    end
+
+    test "move: false attaches without filing anything" do
+      node = file("panel.svg")
+      result = Maker::ProjectIntake.for_project(user: @user, project: @project, move: false)
+      assert_equal 1, result.attached
+      assert_equal 0, result.moved
+      assert_equal @folder.node_id, node.reload.parent_node_id
+    end
+
+    # --- dry run -----------------------------------------------------------------
+
+    test "a dry run writes nothing at all — not even the attachment rows" do
+      node = file("panel.svg")
+      result = Maker::ProjectIntake.for_project(user: @user, project: @project, dry_run: true)
+      assert_equal 1, result.attached
+      assert_equal 1, result.moved
+      assert_equal [ [ "panel.svg", "design" ] ], result.plan
+      assert_equal 0, @project.file_attachments.count, "a dry run must write no attachment rows"
+      assert_equal @folder.node_id, node.reload.parent_node_id
+      assert_not @user.nodes.present.exists?(parent_node_id: @folder.node_id, kind: "dir"),
+                 "a dry run must not create the category folder either"
+    end
   end
 end
