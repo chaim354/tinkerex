@@ -68,3 +68,18 @@ production:
   library_trash_purge:
     command: "Library::TrashPurgeJob.purge_all!"
     schedule: every day at 3am
+
+  # Previews whose NODE no longer exists — the orphan class the (user, node, kind) unique index
+  # cannot reach. That index removed the other one by construction (a save repoints the single row
+  # rather than minting a second), but a dead node's row is the ONLY row for its node, so there is
+  # no duplicate group to collapse and nothing else sweeps it: 93 on the share library and 3 on
+  # chunk right after the collapse migration.
+  #
+  # WEEKLY because the reaper's own grace window is measured in DAYS (30 by default, protecting a
+  # tombstone that can still be undone) — running it more often reclaims nothing sooner. Unlike
+  # orphan_chunk_reaper the cadence is NOT about request billing; this one is DB-only. Backend-
+  # neutral, so no `command:` gate: a dead node's preview is dead on all three.
+  dead_node_preview_reaper:
+    class: Maker::DeadNodeReaperJob
+    queue: background
+    schedule: every saturday at 5am

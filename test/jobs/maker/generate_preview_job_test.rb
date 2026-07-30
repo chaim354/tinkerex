@@ -51,6 +51,39 @@ module Maker
       node
     end
 
+    # THE HAZARD THE ONE-ROW-PER-NODE SHAPE INTRODUCES, and the reason it needs a guard at all.
+    #
+    # With a row per VERSION, two quick saves made two rows and each job wrote its own — a wrong
+    # thumbnail was impossible BY CONSTRUCTION, and that immunity was exactly what the extra rows
+    # bought. With one row, a slow render of v1 can finish AFTER a fast render of v2 and attach
+    # v1's bytes into a row that now says v2: a wrong image displayed as current, silently, which
+    # is strictly worse than the leaked row this change removes.
+    #
+    # So the job compares-and-sets: it captures the version it is rendering and refuses to write
+    # if the row moved on underneath it. Simulated by moving the row mid-run, which is what a
+    # concurrent scan does.
+    test "a render whose version was superseded mid-flight does NOT overwrite the newer row" do
+      stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")
+
+      # The row moves to v2 while the job is between reading its target and writing its result.
+      superseded = false
+      hook = ->(*) { @user.maker_previews.find(preview.id).update_columns(version_id: "v2") unless superseded.tap { superseded = true } }
+      Maker::Previews::Svg.singleton_class.prepend(Module.new do
+        define_method(:render) { |*a, **k| hook.call; super(*a, **k) }
+      end)
+
+      forcing_available(Maker::Previews::Svg) do
+        assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "drawing.svg") }
+      end
+
+      preview.reload
+      assert_equal "v2", preview.version_id, "the newer version must survive the stale job"
+      assert_not_equal "ready", preview.status,
+                       "a v1 render must not mark the row ready — it would show v1's image as v2"
+      assert_not preview.asset.attached?, "v1's bytes must not be attached to a row claiming v2"
+    end
+
     test "renders SVG to a PNG when resvg is present; unsupported when absent" do
       stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
       preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")

@@ -50,7 +50,9 @@ module Web
       assert_select "th", text: "Spindle"
       assert_select "td", text: /1\.5 mm endmil/
       assert_select "td", text: /20000 rpm/
-      assert_select "dd", text: "100.0 × 60.0 mm"
+      # "100 × 60", not "100.0 × 60.0": a whole number's trailing zero is noise. The decimals a
+      # value actually HAS are preserved — pinned by the test below, which is the half that broke.
+      assert_select "dd", text: "100 × 60 mm"
       assert_select "h2", { text: "Laser settings", count: 0 }, "the laser panel must not render"
     end
 
@@ -66,6 +68,30 @@ module Web
       assert_select "h2", text: "Laser settings"
       assert_select "th", text: "Power"
       assert_select "h2", { text: "CNC settings", count: 0 }, "the CNC panel must not render"
+    end
+
+    # THE FRACTIONAL SETTING, driven through the page because that is the only place the bug
+    # lived — LbrnMetadata parsed 6.67 correctly all along and the view called `.to_i` on it.
+    #
+    # The metadata is written by hand rather than parsed from a fixture on purpose: every
+    # checked-in .lbrn2 uses whole speeds and powers, which is exactly why nothing caught this.
+    # 6.67 mm/s is a real value off `reference card.lbrn2` in the deployed share library, where a
+    # cut layer displayed as "6 mm/s" — truncated, not rounded, and wrong by 10 %.
+    test "a fractional speed or power keeps its decimals" do
+      user = sign_in("panel3@example.com")
+      meta = { "app_version" => "1.7.00",
+               "job" => { "width" => 292.1, "height" => 144.6 },
+               "layers" => [ { "index" => "0", "name" => "C00", "mode" => "Cut",
+                               "speed" => 6.67, "power_max" => 42.5, "power_min" => 12.25,
+                               "passes" => 1 } ] }
+      node = node_with_metadata(user, "fractional.lbrn2", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "td", text: "6.67 mm/s"
+      assert_select "td", text: /42\.5%/
+      assert_select "td", text: /12\.25%/
+      assert_select "dd", text: "292.1 × 144.6 mm"
     end
   end
 end
