@@ -1721,11 +1721,23 @@ class UploaderTest < ApplicationSystemTestCase
     # controller at all.
     assert_selector "[data-controller='uploader']"
 
+    # THE FIXTURE IS COPIED TO A TMPDIR BEFORE ATTACHING, and that is not incidental. On macOS this
+    # checkout may live under ~/Desktop, which is gated behind per-app TCC consent that a SYNTHETIC
+    # (non-Finder) Selenium attach never satisfies: Chrome accepts the attach, then `file.arrayBuffer()`
+    # inside chunk_upload.js throws `NotReadableError`. Verified by copying the identical bytes outside
+    # ~/Desktop, which fixed it with nothing else changed. Dir.mktmpdir is never TCC-protected, so the
+    # attach reads from there while every assertion below still reads the original fixture.
     file = Rails.root.join("test/fixtures/files/sample.txt")
-    # make_visible: the real input is `hidden` behind a styled label, so Capybara cannot attach to
-    # it as-is. This unhides it for the duration of the attach only, which is the narrowest change
-    # that lets a real file selection happen.
-    attach_file(file, make_visible: "[data-uploader-target='input']")
+    upload_path = File.join(Dir.mktmpdir, "sample.txt")
+    FileUtils.cp(file, upload_path)
+
+    # `make_visible: true`, NOT a selector string. Capybara's make_visible takes `true` or a style
+    # HASH; a String is fed into a `for (var prop in css)` style-patch, silently iterates the
+    # string's character indices, sets nothing, and raises "The style changes in :make_visible did
+    # not make the file input visible" (checked against capybara 3.40.0's source). The real input is
+    # `hidden` behind a styled label, and this branch of /files renders exactly one input[type=file],
+    # so no locator is needed.
+    attach_file(upload_path, make_visible: true)
 
     # The controller writes "Done." into its status target as the last thing it does before
     # navigating, so waiting on the NODE is what proves the whole chain finished rather than that
@@ -1788,19 +1800,36 @@ hypothetical:
 
 - [ ] **Step 3: Mutation-check it — this is required, per `test/system/README.md`**
 
-Break the flow in the browser and confirm the test catches it. In
-`app/javascript/lib/chunk_upload.js`, comment out the finalize call:
+**FIRST, clear the chunk store, or a broken mutation can look green.** `tmp/dev-chunks*` blobs
+outlive `Storage::ChunkStore.reset!`, and because storage is content-addressed while SQLite reuses
+rowids after a rolled-back transaction, a stale blob at the same `chunks/<user_id>/<hash>` key
+silently satisfies a mutated run. This was hit for real during implementation — mutation 2 showed
+green until the directory was cleared.
+
+```bash
+rm -rf tmp/dev-chunks*
+```
+
+**Mutation 1 — drop finalize.** In `app/javascript/lib/chunk_upload.js`, comment out:
 
 ```js
   // await postJSON(finalizeUrl, { commit_id: begin.commit_id })
 ```
 
-Run the test. Expected: **RED** at `assert_eventually` — the commit never finalizes, so no node
-appears. Restore the line, re-run, confirm green.
+Run the test. Expected: **RED at `assert_eventually`** ("the uploaded file never appeared in the
+library") — the commit never finalizes, so no node appears. Restore and confirm green.
 
-Then a second, sharper mutation: leave finalize in place but skip the chunk PUT loop. Expected:
-**RED at the bytes assertion**, not at the node lookup — which is the whole reason that assertion
-exists separately from the row check.
+**Mutation 2 — send the WRONG BYTES, not a skipped PUT.** In the same file, change the chunk upload
+body to `body: new Uint8Array([1, 2, 3])` instead of `body: bytes`. Expected: **RED at the bytes
+assertion** with the node assertion GREEN — which is the whole reason those two are separate.
+
+> **Do NOT use "skip the PUT loop entirely" as this mutation** — it cannot reach the bytes assertion
+> on this codebase, and finding out why cost real time. `FilesController#finalize_upload` calls
+> `Sync::Commit.finalize(verify: true)`, which checks every manifest chunk exists in storage and
+> raises `ChunksMissing` (422, caught client-side) **before** creating a version or node. So a
+> wholly-skipped upload collapses into mutation 1's failure — no node at all — rather than the
+> "node exists, bytes unreachable" state. That `verify: true` is a real safety net, not an obstacle;
+> the wrong-bytes mutation is what gets past it to exercise the assertion.
 
 ```bash
 git diff --stat   # must be empty before committing
