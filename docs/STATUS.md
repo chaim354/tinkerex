@@ -4,9 +4,27 @@
 
 ## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
 
-**Suite 1633 → 1671 runs / 5851 assertions / 0 failures / 0 errors / 11 skips on the chunk leg** — the
-default backend, measured by running `bin/rails test` once. Share and s3 are **not yet verified**;
-that is the remaining task, not done here.
+**Suite 1660 → 1671 runs / 5851 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files.
+
+**The baseline is 1660, and the plan's "1633" was wrong** — worth recording because the wrong number
+came from *this file*. The previous entry's `1628 → 1633` was copied forward as the starting point,
+but two entries further down claim `1633 → 1645` and `1645 → 1650`, so the figures in STATUS.md do not
+form a chain and cannot be used as a baseline. Measured instead: a throwaway worktree at the
+merge-base (`8dfbfde`) runs **1660**, and a static count of `test "` blocks is 1576 there vs 1587 here
+— **+11, exactly the 11 tests this branch adds** (7 endpoint + 4 show-page). Run count exceeds the
+static count because the shared adapter contracts are included into several test classes. **Take a
+suite baseline by running the merge-base, not by reading the last entry.**
+
+**THE SHARE LEG'S DOCUMENTED COMMAND IS INCOMPLETE, AND IT FAILS LOUDLY ENOUGH TO LOOK LIKE A
+CATASTROPHE.** `LIBRARY_BACKEND=share bin/rails test` — the form in CLAUDE.md §10 and the one this
+branch's plan copied — reports **1 failure / 202 errors**, because `LibraryBackendCheck` refuses to
+boot without `LIBRARY_PATH`. The correct invocation is CI's (`ci.yml`, `test-share-backend`):
+`LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`. With it, the leg is green. **The
+diagnosis that mattered was running the BASELINE the same wrong way** — 8dfbfde reports 202 errors
+too, which is what separated "we broke the share backend" from "the command is wrong" in one step
+rather than by reading 200 stack traces. The s3 leg needs its own five `LIBRARY_S3_*` stub knobs for
+the same reason; they point at nothing real on purpose.
 
 **The request was "store the boxes params in the DB instead of a separate file", and the params were
 already in the DB.** `Maker::AddonState#data` is a `json` column holding `{ generator:, params: }`,

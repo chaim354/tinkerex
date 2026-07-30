@@ -544,9 +544,15 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 storage 
       `docs/superpowers/plans/2026-07-14-file-layer-share-phase2a.md`. `LIBRARY_BACKEND=share`
       + `LIBRARY_PATH=/mnt/nas/models` now boots, indexes an existing NAS directory, and the
       maker layer browses/previews it with **attachments that survive a reorganization**.
-      Server suite **523 → 635**, green on *both* backends (`LIBRARY_BACKEND=share bin/rails
-      test` is a CI leg — it catches tests that silently depend on the ambient backend; the
-      shared contract is what stops the adapters diverging).
+      Server suite **523 → 635**, green on *both* backends (**`LIBRARY_PATH=$(mktemp -d)
+      LIBRARY_BACKEND=share bin/rails test`** is a CI leg — it catches tests that silently depend on
+      the ambient backend; the shared contract is what stops the adapters diverging). **`LIBRARY_PATH`
+      is NOT optional in that command, and leaving it off does not look like a missing env var** —
+      `LibraryBackendCheck` refuses to boot, so the leg reports **1 failure / 202 errors** and reads
+      exactly like a broken share backend (this line said `LIBRARY_BACKEND=share bin/rails test` until
+      2026-07-29, and a plan that copied it spent a diagnosis working that out). The s3 leg likewise
+      needs its five `LIBRARY_S3_*` stub knobs — see `ci.yml`'s `test-share-backend` /
+      `test-s3-backend` for both invocations verbatim.
     - **Phase 2b DONE** (2026-07-16, branch `worktree-file-layer-share-phase2b`) — **the write
       path + trash**, Share-only (a share library can now *grow*, not just be indexed). Suite
       **635 → 698**, still identical on both backends. The decisions a future reader must not
