@@ -18,10 +18,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Which runner families exist for this run. See ci/preflight.sh — a DECLARATION (the repo variable
+  # CI_RUNNERS), not an API call, because a workflow GITHUB_TOKEN cannot list runners.
+  #
+  # This matters most on a SCHEDULED workflow. Before the gate, the 08:00 and 08:30 crons fired daily
+  # into a void: every job queued, GitHub cancelled them 24h later, and the run history filled with
+  # `cancelled` at 24h0m0s. Now a scheduled run completes in seconds and says on its own page which
+  # coverage it could not run.
+  preflight:
+    runs-on: [self-hosted, macos]
+    outputs:
+      macos:   ${{ steps.p.outputs.macos }}
+      linux:   ${{ steps.p.outputs.linux }}
+      windows: ${{ steps.p.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v6
+        with: { clean: false }
+      - id: p
+        name: Resolve the declared runner fleet
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Report what is available, and what was therefore skipped
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
+
   windows-build:
     # Build the real Windows mount adapters (fs-cfapi + fs-winfsp) + their sync-engine wiring —
     # the only place winfsp-sys (msvc-only) and the cfg(windows) daemon code actually link.
     # LLVM + WinFsp are preinstalled by ci/runners/setup-windows.ps1.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     steps:
       - uses: actions/checkout@v6
@@ -50,6 +78,8 @@ jobs:
 
   e2e-linux:
     # Self-contained: boot STORAGE_BACKEND=local Rails (SQLite) here, like engine-integration.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v6
@@ -92,6 +122,8 @@ jobs:
   # daemon's instant-drop on our FuseAdapter/daemon; DROPPED pins it on the fuser crate vs kernel.
   # continue-on-error so a runner without /dev/fuse never reds the nightly.
   fuser-mount-smoke-linux:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
@@ -124,6 +156,8 @@ jobs:
   # continue-on-error: these are heavy/exploratory — a flake or a runner-resource limit must not
   # red the whole nightly. Scale knobs: LOAD_DEVICES / LOAD_FILES_PER_DEVICE / LOAD_READERS.
   stress-load-and-multifiletype-linux:
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
@@ -193,6 +227,8 @@ jobs:
   e2e-windows:
     # Windows client stack against the deployed server. Builds the cfg(windows) daemon path.
     # Same deployed-server target as the CfAPI conformance jobs; skips cleanly if unreachable.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     continue-on-error: true
     steps:
@@ -218,6 +254,8 @@ jobs:
     # The script self-detects a missing /dev/fuse / allow_other and exits 0 with a BLOCKED notice
     # rather than a false failure (an environment gap, documented in the script). continue-on-error
     # so a runner without /dev/fuse never reds the nightly.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
@@ -261,7 +299,8 @@ jobs:
     # through the mounts. Needs an INTERACTIVE login session (Session-0 service enumerates empty),
     # same caveat as the smoke/conformance — continue-on-error; passes only on the interactive
     # self-hosted Windows runner with the deployed server reachable.
-    needs: windows-build
+    needs: [preflight, windows-build]
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
@@ -280,7 +319,8 @@ jobs:
     # continue-on-error: CfAPI needs an INTERACTIVE session; the runner-as-service (Session 0)
     # enumerates empty. It passes only when the Windows runner runs in an interactive login
     # session. Informational until then; it gates Task B5 once it can pass.
-    needs: windows-build
+    needs: [preflight, windows-build]
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
@@ -299,7 +339,8 @@ jobs:
     # nested dirs, and create/edit/delete/rename churn — asserted BYTE-FOR-BYTE by hydrating every
     # file on a fresh device and comparing SHA-256s. Same interactive-session caveat as the smoke
     # (continue-on-error until the Windows runner runs in an interactive login session).
-    needs: windows-build
+    needs: [preflight, windows-build]
+    if: ${{ needs.preflight.outputs.windows == 'true' }}
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
@@ -315,6 +356,8 @@ jobs:
   mount-conformance:
     # External, battle-tested suites against the real FUSE/WebDAV mounts (what JuiceFS/CephFS
     # gate on). Slow (fsx 100k ops, pjdfstest) → nightly, not per-PR.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v6

@@ -53,7 +53,47 @@ duplicating.
 gh api repos/chaim354/tinkerex/actions/runners --jq '.runners[] | "\(.name)\t\(.status)\t\(.labels | map(.name) | join(","))"'
 ```
 
-All three should show `online`.
+**As of 2026-07-29 only `charless-MacBook-Pro-maker-mac` is registered** — not all three.
+
+> ⚠️ **This command works ONLY from a developer shell, never from inside a workflow.** Listing
+> self-hosted runners requires the `administration` permission, which is **not among the permissions a
+> workflow `GITHUB_TOKEN` can be granted** — a workflow calling it gets a **403**. It works here
+> because your personal token carries admin scope, and that asymmetry is a trap: the obvious
+> "preflight that checks which runners are online" cannot be built this way. `ci/preflight.sh` reads
+> the repo variable `CI_RUNNERS` instead, and its header explains why at length.
+
+## Registering a runner is only HALF the job
+
+CI gates every linux/windows job on the declared fleet, so a newly registered runner does **nothing**
+until it is declared:
+
+```sh
+gh variable set CI_RUNNERS --body "macos,linux"     # comma-separated; families are macos|linux|windows
+```
+
+Omit this and the jobs stay skipped with a green run — the step summary on every run says which
+families are absent, so check there first if a runner "isn't picking up work".
+
+## Adding a Linux runner on Unraid
+
+`192.168.1.95` is the intended home: up, SSH open, already a Docker host, deploy user `kamal1`.
+
+**`setup-linux.sh` will not run there as-is** — it is Debian/apt-shaped and Unraid is Slackware-based
+with a non-persistent root filesystem. Two workable paths:
+
+1. **A container** on the Unraid Docker host (`myoung34/github-runner` or a hand-rolled image),
+   with the runner's work dir on a persistent share. Needs `/dev/fuse` + `--cap-add SYS_ADMIN` if the
+   FUSE mount jobs are to work, since those are most of what a Linux runner buys.
+2. **An Unraid VM** running Debian, where `setup-linux.sh` applies unchanged.
+
+Either way, finish with the `gh variable set` above, then confirm a previously-skipped job actually
+runs — a registered-but-undeclared runner and a declared-but-offline runner look identical in the run
+list (everything skipped) and are fixed differently.
+
+**CHAIMDESK (Windows) is reachable on the LAN but unregistered.** Same two steps: `setup-windows.ps1`
+with a fresh token, then add `windows` to `CI_RUNNERS`. Note the CfAPI jobs additionally need an
+**interactive** login session — the runner-as-service runs in Session 0, where a Cloud Files mount
+enumerates empty (see the `windows-smoke` job's comment in `rust-client.yml`).
 
 ## Removing a runner
 

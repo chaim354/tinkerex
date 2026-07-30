@@ -1047,9 +1047,22 @@ Rails on the Unraid VM → content-addressed chunk in SeaweedFS, hash-matched on
   `runs-on: [self-hosted, linux|macos|windows]`. **Only ONE runner is registered today (2026-07-29):
   `charless-MacBook-Pro-maker-mac` (macOS). `flasher-maker-linux` and `CHAIMDESK-maker-windows` are
   NOT registered** — verify with `gh api repos/:owner/:repo/actions/runners` rather than trusting this
-  line. Consequence: all 7 `ci.yml` jobs target linux and **queue forever** rather than failing, so a
-  PR sits UNSTABLE at 0 elapsed and merging needs `--admin` (PR #94 did). Verify locally instead —
-  see `docs/STATUS.md`, "CI cannot run".
+  line, and note that command needs an **admin-scoped** token: `administration` is not among the
+  permissions a workflow `GITHUB_TOKEN` can be granted, so **it 403s from inside Actions** and only
+  works from a developer shell.
+  **`ci.yml`'s 7 jobs therefore target `macos`** (2026-07-29), and the linux/windows jobs in the other
+  three automatic workflows are `if:`-gated on the repo variable **`CI_RUNNERS`** via
+  `ci/preflight.sh`, so a job whose runner is absent is never *scheduled*. That gate is the fix for a
+  five-week outage: a job matching no online runner does **not** fail, it queues 24 h at 0 elapsed and
+  is auto-cancelled, which is why a PR sat UNSTABLE and merging needed `--admin` (PR #94 did).
+  Consequence to keep in mind: **Linux and Windows coverage is skipped, not passing** — see
+  `docs/STATUS.md`, "CI runs again", for exactly what is not running and the two steps to restore it.
+  **`ruby/setup-ruby` must NOT appear in a `macos` job** — it assumes a hosted `/Users/runner` layout
+  this box lacks; the runner's own PATH has mise ruby 3.4.7, matching `.ruby-version`, so
+  `bundle install --quiet` suffices. `test/ci_hygiene_test.rb` fails if it reappears, and guards four
+  other workflow invariants besides.
+  **Local gates are one command: `bin/ci`** (`bin/ci --list` for the gate names). `config/ci.rb` is the
+  single definition of each gate and `ci.yml` invokes it by name, so the two cannot drift.
   GitHub bills *only* hosted runners (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×),
   and self-hosted runners are **free** (confirmed against GitHub's billing docs, 2026-06-17).
   So **never add `*-latest` to a workflow** — any new job/workflow must target self-hosted.
