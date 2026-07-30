@@ -91,7 +91,36 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "(`bundle install --quiet`) instead:\n  #{offenders.join("\n  ")}"
   end
 
+  # The gates bin/ci must define. This list is the CONTRACT: ci.yml invokes these by name (Task 4
+  # pins that direction), and every one of them is a gate that has to run somewhere.
+  #
+  # `test-share` and `test-s3` are on this list because they were the drift. They were added to
+  # ci.yml on 2026-07-16 and never reached config/ci.rb, so `bin/ci` reported a green
+  # "Continuous Integration" while running two thirds of the backend matrix. `system` is here
+  # because the Rails scaffold ships it COMMENTED OUT, and this repo now has a browser tier.
+  REQUIRED_GATES = %w[style scan test test-share test-s3 system].freeze
+
+  test "bin/ci defines every gate CI depends on" do
+    missing = REQUIRED_GATES - bin_ci_gates
+    assert_empty missing,
+                 "config/ci.rb is missing gate(s) #{missing.inspect}. `bin/ci` printing " \
+                 "\"passed\" while omitting a gate ci.yml runs is the drift this list exists to " \
+                 "stop — see the comment above REQUIRED_GATES."
+  end
+
   private
+
+    # The real gate list, read by RUNNING bin/ci rather than by parsing config/ci.rb.
+    #
+    # Shelling out costs ~1s (it boots config/boot) and is worth it: a regex over the source would
+    # assert that the file LOOKS like it defines a gate, and this asserts that `bin/ci <gate>` will
+    # actually resolve. The repo has already been bitten once by a hermetic check that shared the
+    # code's misunderstanding (FakeS3 / CGI.escape) — assert the wire, not the round-trip.
+    def bin_ci_gates
+      out = IO.popen([ Rails.root.join("bin/ci").to_s, "--list" ], err: [ :child, :out ], &:read)
+      assert_equal 0, $?.exitstatus, "`bin/ci --list` failed:\n#{out}"
+      out.split("\n").map(&:strip).reject(&:empty?)
+    end
 
     # Yields [basename, job_name, job_hash] for every job in every workflow.
     #
