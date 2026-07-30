@@ -302,7 +302,7 @@ module Maker
       result = intake
       assert_equal 0, result.moved
       assert_equal 1, result.skipped
-      assert_equal [ [ "panel.svg", :collision ] ], result.skips
+      assert_equal [ [ "panel.svg", :conflict ] ], result.skips
       assert_equal @folder.node_id, loose.reload.parent_node_id
       assert @project.file_attachments.exists?(node_id: loose.node_id),
              "the attach is durable — a failed move must not cost the reference"
@@ -316,7 +316,7 @@ module Maker
       result = intake
       assert_equal 1, result.moved
       assert_equal 1, result.skipped
-      assert_equal [ [ "panel.svg", :collision ] ], result.skips
+      assert_equal [ [ "panel.svg", :conflict ] ], result.skips
       assert_equal "cnc", parent_name(ok)
     end
 
@@ -393,6 +393,82 @@ module Maker
       assert_equal @folder.node_id, node.reload.parent_node_id
       assert_not @user.nodes.present.exists?(parent_node_id: @folder.node_id, kind: "dir"),
                  "a dry run must not create the category folder either"
+    end
+
+    # --- an unreachable library --------------------------------------------------
+
+    # A backend whose `move` always raises, counting attempts. Hand-rolled rather than Object#stub:
+    # minitest 6 DROPPED minitest/mock, so `stub` does not exist in this suite (requiring it is a
+    # LoadError). Modelled on with_broken_move in attach_auto_move_test.rb.
+    #
+    # `port_writable? = true` sends Maker::MoveNode through the port door, straight into `move`. The
+    # fake defines NO mkdir — which is why every test below seeds the destination folder first: with
+    # it already in the catalog, Maker::LibraryFolder#ensure_segment returns the existing node and
+    # never reaches the port. Without that seeding the failure would be a NoMethodError on mkdir,
+    # i.e. the test would pass for the wrong reason.
+    def with_broken_move(error_class)
+      attempts = 0
+      broken = Object.new
+      def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      broken.define_singleton_method(:move) do |*|
+        attempts += 1
+        raise(error_class, "the backend is having a bad day")
+      end
+      FileLayer.current = broken
+      yield -> { attempts }
+    ensure
+      FileLayer.reset!
+    end
+
+    def seed_folder(name)
+      Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, name ])
+    end
+
+    # An unmounted NAS fails EVERY move identically, so the honest answer is one abort and one log
+    # line — not N skips pretending each was independent.
+    test "a FetchError aborts this project's sweep after one attempt, counting the rest skipped" do
+      seed_folder("design") # so ensure_path! never reaches the fake's absent mkdir
+      file("a.svg")
+      file("b.svg")
+      file("c.svg")
+
+      with_broken_move(FileLayer::FetchError) do |attempts|
+        result = intake
+        assert_equal 0, result.moved
+        assert_equal 3, result.skipped
+        assert_equal 1, attempts.call, "it must stop after the first FetchError, not try all three"
+        assert_equal :ok, result.status
+        # THE DETAIL MUST SURVIVE THE ABORT, and every unprocessed file is named — including the
+        # one that raised. A count alone would tell an operator three files did not move without
+        # telling them which, which is the gap `skips` was added to close.
+        assert_equal %i[unavailable unavailable unavailable], result.skips.map(&:last)
+        assert_equal %w[a.svg b.svg c.svg], result.skips.map(&:first).sort
+      end
+    end
+
+    # The attach still happened — it is the durable half and it touches no bytes.
+    test "an unreachable library still leaves the attachments behind" do
+      seed_folder("design")
+      file("a.svg")
+      with_broken_move(FileLayer::FetchError) do
+        assert_equal 1, intake.attached
+      end
+      assert_equal 1, @project.file_attachments.count
+    end
+
+    # CONTRAST, and it is what proves the two rescues are in different places: a per-file condition
+    # must NOT abort the sweep. Both files are attempted.
+    test "an UnsupportedOperation is per-file and does not abort the sweep" do
+      seed_folder("design")
+      file("a.svg")
+      file("b.svg")
+
+      with_broken_move(FileLayer::UnsupportedOperation) do |attempts|
+        result = intake
+        assert_equal 0, result.moved
+        assert_equal 2, result.skipped
+        assert_equal 2, attempts.call, "a per-file refusal must not stop the file after it"
+      end
     end
   end
 end

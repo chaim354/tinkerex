@@ -161,10 +161,23 @@ module Maker
     # folder-name strings and every reason below is a Symbol — so the dispatch here is a plain
     # `is_a?(Symbol)` rather than a second lookup that could disagree with #place about what
     # happened.
+    #
+    # FileLayer::FetchError IS RESCUED HERE, AROUND THE WHOLE LOOP — DELIBERATELY NOT INSIDE
+    # #place, which says so in its own comment. A FetchError means the LIBRARY is unreachable (an
+    # unmounted share, an unreachable bucket), not anything about the one file #place was looking
+    # at when it hit that wall, so every file still waiting would fail the exact same way. Catching
+    # it per file would produce N identical log lines and report each as its own independent skip —
+    # reading to an operator like a library full of individually-broken files rather than one
+    # unmounted NAS. Catching it once here turns that into one abort and one line.
+    #
+    # `processed` counts files #place has already returned an outcome for (moved OR skipped), so
+    # `inbox[processed..]` is exactly "every file #place has not yet had a chance to answer for" —
+    # and that INCLUDES the file that raised, since its outcome was never recorded.
     def file_all(inbox)
       moved = 0
       skips = []
       plan = []
+      processed = 0
       inbox.each do |node|
         outcome = place(node)
         if outcome.is_a?(Symbol)
@@ -173,7 +186,17 @@ module Maker
           moved += 1
           plan << [ node.name, outcome ]
         end
+        processed += 1
       end
+      [ moved, skips.size, skips, plan ]
+    rescue FileLayer::FetchError => e
+      unreached = inbox[processed..]
+      unreached.each { |node| skips << [ node.name, :unavailable ] }
+      Rails.logger.warn(
+        "Maker::ProjectIntake: aborting sweep for #{@project.slug} — library unreachable " \
+        "(#{e.class}: #{e.message}) — #{moved} #{'file'.pluralize(moved)} filed before it " \
+        "stopped, #{unreached.size} left unavailable"
+      )
       [ moved, skips.size, skips, plan ]
     end
 
@@ -191,6 +214,16 @@ module Maker
     # remaining move would fail identically, and #file_all's caller turns it into one abort rather
     # than N identical log lines. Adding it to this list would make an unmounted NAS log once per
     # file and pretend each one was an independent skip.
+    #
+    # :not_found AND :unsupported STAY SPLIT, RATHER THAN COLLAPSING INTO ONE :unavailable THE WAY
+    # AttachToProject#move DOES — and that is not an inconsistency between the two. #move collapses
+    # FetchError/NotFound/UnsupportedOperation together because all three there mean "try again
+    # later": it words a single sentence ("couldn't move it") for a flash message, and FetchError
+    # sits in that same bucket. #place never rescues FetchError at all (see above — Task 6 handles
+    # it one level up, aborting the whole sweep), so it has room to keep the other two apart, and
+    # the extra detail is worth it: :unsupported never succeeds on retry (a directory, or a name
+    # the backend refuses outright) while :not_found is a race or an out-of-band change that might.
+    # An operator reading `skips` benefits from that distinction; a flash message does not.
     #
     # InvalidName IS RESCUED, AND THE EARLIER VERSION OF THIS COMMENT SAYING IT HAD "no producer on
     # this path" WAS WRONG — reproduced (see project_intake_test.rb): `Node` validates only
@@ -226,7 +259,10 @@ module Maker
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
       dest
     rescue Maker::MoveNode::Collision => e
-      skip(node, :collision, e)
+      # :conflict, matching Maker::AttachToProject#move — one file away, rescuing the same
+      # exception for the same reason. Two names for one condition in sibling classes is
+      # exactly the drift this codebase works to avoid.
+      skip(node, :conflict, e)
     rescue FileLayer::NotFound => e
       skip(node, :not_found, e)
     rescue FileLayer::UnsupportedOperation => e
