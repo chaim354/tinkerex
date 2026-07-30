@@ -1,5 +1,3 @@
-require "json"
-
 module Tools
   # The params behind any addon state, as the download the `.params.json` library file used to be.
   # That file was removed 2026-07-29: nothing ever read it back, and `Maker::AddonState#data` is the
@@ -11,6 +9,8 @@ module Tools
   # self-describing; the show pages' list shows only `params` because they already print the
   # generator above it.
   class AddonParamsController < BaseController
+    # `current_user.maker_addon_states.find` (below) is the tenant scope: another user's id raises
+    # RecordNotFound -> 404, by construction rather than by a check someone can forget.
     def show
       state = current_user.maker_addon_states.find(params[:id])
       send_data JSON.pretty_generate(state.data),
@@ -18,9 +18,6 @@ module Tools
     end
 
     private
-
-    # `current_user.maker_addon_states.find` (above) is the tenant scope: another user's id raises
-    # RecordNotFound -> 404, by construction rather than by a check someone can forget.
 
     # Matches what the removed file was called. `name.parameterize` can come back BLANK (a name of
     # only emoji or punctuation), which would emit "-12.params.json" — hence the addon-key fallback.

@@ -57,6 +57,17 @@ module Tools
       assert_match "boxes-#{state.id}.params.json", response.headers["Content-Disposition"]
     end
 
+    test "a hostile name is sanitized in the filename, not passed through" do
+      # …and a hostile name is SANITIZED, not passed through. Defense in depth: `parameterize` keeps
+      # only [a-z0-9_-] and `ContentDisposition.format` escapes independently, so the realistic worst
+      # case of a regression here is an ugly filename rather than a header injection — but the line
+      # this pins is the only security-relevant one in the controller.
+      traversal = @user.maker_addon_states.create!(addon_key: "boxes", name: "../../etc/passwd", data: {})
+      get tools_addon_params_path(traversal)
+      assert_response :success
+      assert_match "etc-passwd-#{traversal.id}.params.json", response.headers["Content-Disposition"]
+    end
+
     test "serves any addon's state, not just boxes" do
       state = @user.maker_addon_states.create!(
         addon_key: "openscad", name: "Hex Plate",

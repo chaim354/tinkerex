@@ -178,8 +178,9 @@ Rails.application.routes.draw do
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
-  # Declared at top level rather than inside `namespace :tools` for the same reason the openscad
-  # routes above are — `as:` here is the whole helper name, so this reads like its siblings.
+  # Declared at top level so the helper reads like its sibling `tools_openscad_design_path`. The
+  # two inflector traps documented above do NOT apply here — `addon_state` inflects cleanly both
+  # ways; this is about the helper name matching, nothing more.
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
