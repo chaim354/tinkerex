@@ -1,11 +1,13 @@
 <section class="panel tasks-panel">
   <h2>Tasks</h2>
 
-  <%= form_with url: project_tasks_path(@project), method: :post, class: "task-form" do |f| %>
-    <%= f.fields_for :task do |t| %>
-      <%= t.text_field :title, placeholder: "Add a task…", required: true %>
-      <%= f.submit "Add", class: "btn small" %>
-    <% end %>
+  <%# `scope:` is what names the params, and it is not optional here: a model-less form_with has a
+      blank object_name, and `fields_for :task` on one emits name="[task][title]" — which Rack parses
+      to the literal key "[task]", so params.require(:task) 400s on every Add. Don't reintroduce
+      fields_for alongside scope either; that nests to task[task][title]. %>
+  <%= form_with url: project_tasks_path(@project), scope: :task, method: :post, class: "task-form" do |f| %>
+    <%= f.text_field :title, placeholder: "Add a task…", required: true %>
+    <%= f.submit "Add", class: "btn small" %>
   <% end %>
 
   <% Maker::Task::STATUSES.each do |status| %>

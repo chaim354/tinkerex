@@ -29,6 +29,36 @@ module Web
       assert_redirected_to project_path(project)
     end
 
+    # The two tests above/below POST `task: {...}` as a nested hash, which bypasses the form
+    # entirely — it cannot see a malformed `name` attribute, so it stays green while the panel's
+    # Add button is a hard 400. These two pin the WIRE FORMAT instead. Same shape as the PR #69
+    # `scope:` gotcha, one view over.
+    test "the add-task field is named for the key the controller requires" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      get project_path(project)
+      assert_select "form.task-form input[type=text][name=?]", "task[title]"
+    end
+
+    test "submitting the add-task form as a browser does creates the task" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      get project_path(project)
+
+      # Scrape the form's OWN field name and submit that, urlencoded, so this test follows the
+      # view rather than restating it — a name that stops matching the controller fails here.
+      field = css_select("form.task-form input[type=text]").first
+      assert field, "the add-task form should render a title field"
+
+      assert_difference -> { project.tasks.count }, 1 do
+        post project_tasks_path(project),
+             params: "#{CGI.escape(field["name"])}=Print+base&commit=Add",
+             headers: { "CONTENT_TYPE" => "application/x-www-form-urlencoded" }
+      end
+      assert_redirected_to project_path(project)
+      assert_equal "Print base", project.tasks.last.title
+    end
+
     test "tasks render grouped by status" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
