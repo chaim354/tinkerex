@@ -90,7 +90,16 @@ Devise.setup do |config|
   # It will change confirmation, password recovery and other workflows
   # to behave the same regardless if the e-mail provided was right or wrong.
   # Does not affect registerable.
-  # config.paranoid = true
+  # ON. The leak this closes is PASSWORD RESET, not login — measured rather than assumed:
+  # login already answers 422 + "Invalid email or password." for both an unknown address and a
+  # wrong password, so Devise is generic there by default. Reset was not — a known address got
+  # 303 (redirect) and an unknown one got 422 with "not found" in the body, while the flash
+  # notice was identical in both. So the oracle was the STATUS CODE and the body, which is the
+  # part a reader checking only the flash text would have missed.
+  #
+  # That makes reset the cheap oracle: no password guess, just POST an address and read the
+  # status. Pinned by test/integration/web/account_enumeration_test.rb.
+  config.paranoid = true
 
   # By default Devise will store the user in session. You can skip storage for
   # particular strategies by setting this option.
