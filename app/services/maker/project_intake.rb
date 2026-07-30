@@ -2,10 +2,10 @@ module Maker
   # Make the catalog agree with what is in a project's library folder: attach every file under it,
   # and file whatever is loose at its root into a category subfolder.
   #
-  # WHY A SWEEP RATHER THAN A HOOK ON EVERY WRITE. A file can reach `Projects/<slug>/` six ways —
+  # WHY A SWEEP RATHER THAN A HOOK ON EVERY WRITE. A file can reach `Projects/<slug>/` seven ways —
   # FilesController#create (share/s3), #finalize_upload (chunk), Library::Reconciler (the scan),
   # Sync::Commit#finalize (a device push), Maker::Addons::LibraryOutput, Maker::MoveNode, and a
-  # trash restore. There is no single funnel. Hooking each is six sites that must agree, and a
+  # trash restore. There is no single funnel. Hooking each is seven sites that must agree, and a
   # SEVENTH door silently skips the rule — the failure this repo has recorded more than once
   # (Maker::AttachToProject's header; the five port_writable? copies; the four instances of the
   # Scanner's skip-list blind spot, each found only after the previous explanation said it could not
@@ -25,6 +25,15 @@ module Maker
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
     # no statement timeout (the same hazard V1::NodesController#move spends would_create_cycle? on).
+    #
+    # THE TRADE-OFF: this bound cannot tell a cycle from a genuinely deep, cycle-free tree. A
+    # project folder is not expected to nest 32 levels — but if one somehow does, files past the
+    # cutoff go unattached, and `status` alone would still read `:ok`, indistinguishable from a
+    # complete sweep that simply found nothing more. Silence there is a promise made and not kept,
+    # the same shape this repo already refuses elsewhere (Library::Reconciler's `unreadable_dirs`,
+    # so it never tombstones what it could not see; S3Observer's once-per-scan warn, because a zero
+    # must not read as "moves are fine"). So when the bound runs out with directories still
+    # unexplored, #warn_if_truncated logs instead of letting the sweep look complete.
     MAX_DEPTH = 32
 
     def self.for_project(user:, project:, dry_run: false, move: true)
@@ -85,7 +94,20 @@ module Maker
           end
         end
       end
+      warn_if_truncated(frontier)
       files
+    end
+
+    # Fires ONLY when MAX_DEPTH ran out with directories still unexplored — a walk that simply
+    # finished leaves `frontier` empty (the loop `break`s) and has nothing to report. See
+    # MAX_DEPTH's comment for why a partial sweep must say so rather than reading as a complete one.
+    def warn_if_truncated(frontier)
+      return if frontier.empty?
+
+      Rails.logger.warn(
+        "project intake hit MAX_DEPTH=#{MAX_DEPTH} for project=#{@project.slug}: " \
+        "#{frontier.size} #{'directory'.pluralize(frontier.size)} left unvisited, sweep incomplete"
+      )
     end
 
     # Create the missing attachment rows in ONE statement.
