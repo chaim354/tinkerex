@@ -185,6 +185,56 @@ the place that distinction can live without drifting is here."
 - `up` must select **`where(role: "vector")`**, not `"other"`. Selecting `other` finds nothing and the migration silently succeeds having changed zero rows.
 - `down` must return laser rows to **`"vector"`**, not `"other"`. Sending them to `other` would leave them *worse off than before the migration ran*.
 
+**Task 1 left one test RED, on purpose, and closing it is this task's Step 0.** `test/models/maker/rederive_roles_migration_test.rb` has a tripwire — *"The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the two can silently drift. This is the only thing that would notice."* — asserting the 2026-07-28 migration's frozen `NEW_ROLE_BY_EXT` still agrees with the live model. Task 1 remapped `lbrn2`, so it fires with `migration maps lbrn2 to vector, model disagrees`.
+
+**That is the tripwire working, not a defect.** It exists to make someone stop and decide, and the decision is: the old migration's frozen copy stays frozen (rewriting a shipped migration's snapshot is what its own header forbids), and `RederiveLaserRoles` — created below — is what carries `lbrn2` forward. What must change is the *tripwire*, so it records the deliberate divergence without going blind to the next accidental one.
+
+- [ ] **Step 0: Narrow the tripwire to the one deliberate divergence**
+
+Replace the tripwire test at the end of `test/models/maker/rederive_roles_migration_test.rb`:
+
+```ruby
+  # The migration deliberately COPIES its extension list rather than referencing ROLE_BY_EXT, so the
+  # two can silently drift. This is the only thing that would notice.
+  #
+  # ONE EXTENSION IS ALLOWED TO DISAGREE, and it is listed rather than skipped. `lbrn2` was remapped
+  # `vector` -> `laser` when the laser role was added; this migration's snapshot stays frozen (its
+  # own header forbids rewriting it — it must run against whatever the code looks like months from
+  # now), and RederiveLaserRoles is what carries those rows forward instead.
+  #
+  # THE SECOND ASSERTION IS WHAT STOPS THE EXCEPTION OUTLIVING ITS CAUSE. Without it, an entry here
+  # would silently stay valid forever — including after someone remapped lbrn2 back — and the
+  # allowlist would quietly become the drift it exists to catch.
+  SUPERSEDED = { "lbrn2" => "laser" }.freeze
+
+  test "the migration's extension list still agrees with the model's" do
+    RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT.each do |ext, role|
+      next if SUPERSEDED.key?(ext)
+
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "migration maps #{ext} to #{role}, model disagrees"
+    end
+  end
+
+  test "every superseded extension really is superseded" do
+    SUPERSEDED.each do |ext, role|
+      assert_equal role, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "#{ext} is listed as superseded to #{role}, but the model says " \
+                   "#{Maker::FileAttachment::ROLE_BY_EXT[ext].inspect} — remove it from SUPERSEDED"
+      assert_not_equal role, RederiveVectorAndCadSourceRoles::NEW_ROLE_BY_EXT[ext],
+                       "#{ext} no longer disagrees with the old migration — remove it from SUPERSEDED"
+    end
+  end
+```
+
+Run it:
+
+```bash
+bin/rails test test/models/maker/rederive_roles_migration_test.rb
+```
+
+Expected: PASS. Then **mutation-check the allowlist**: temporarily add `"svg" => "vector"` to `SUPERSEDED` and re-run — expected FAIL on `every superseded extension really is superseded` (svg agrees with the old migration, so it is not superseded). **Remove the line** and confirm green again.
+
 - [ ] **Step 1: Generate the migration file**
 
 ```bash
