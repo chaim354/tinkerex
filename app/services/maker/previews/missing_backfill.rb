@@ -1,7 +1,12 @@
 module Maker
   module Previews
-    # One-off repair: enqueue a thumbnail for every live file whose CURRENT content has no preview
-    # row at all.
+    # One-off repair: enqueue a thumbnail for every live file whose CURRENT content has no preview.
+    #
+    # Since 20260730001500 there is ONE row per (node, kind), repointed as content moves, so "no
+    # preview for the current content" now means either no row at all or a row still pointing at
+    # superseded content. Both are handled the same way — `Enqueue` creates or repoints — and the
+    # `seen` check below is keyed on the (node_id, version_id) PAIR, which is what makes a stale
+    # row read as missing rather than as covered.
     #
     # WHY A SWEEP IS NEEDED AND A SCAN IS NOT ENOUGH. `Library::Reconciler` used to enqueue a
     # thumbnail only for files it had never seen; a file re-saved in place had its `content_hash`

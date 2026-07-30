@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_29_035422) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_30_001500) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -304,7 +304,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_29_035422) do
     t.integer "user_id", null: false
     t.string "version_id"
     t.integer "width"
-    t.index ["user_id", "node_id", "version_id", "kind"], name: "idx_maker_previews_unique", unique: true
+    t.index ["user_id", "node_id", "kind"], name: "idx_maker_previews_unique", unique: true
     t.index ["user_id", "status"], name: "index_maker_previews_on_user_id_and_status"
   end
 
