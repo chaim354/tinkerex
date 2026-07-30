@@ -2,6 +2,44 @@
 
 **Updated:** 2026-07-29 (**Addon params live in the DB, not in a library file — branch `claude/boxes-sidecar-params-db-1c508f`**)
 
+## What this file is
+
+The **canonical record**: every arc, newest first, with the numbers that were actually measured.
+Architecture and the invariants a future editor must not undo live in **CLAUDE.md** (§14) — not here.
+Narrate arcs here; put rules there.
+
+- **Still open (deliberate, carried forward)** — immediately below.
+- **Latest** — the most recent arc. Exactly one section is ever called that.
+- **Everything older** — `## <date>: <title>`, reverse-chronological.
+- **Origin (2026-06-11)** — the first session's plan, at the very bottom, **historical and superseded**.
+
+---
+
+## Still open (deliberate, carried forward)
+
+- **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
+  hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
+  broken:** the value never leaves the browser — only `node_id`/`cover` are POSTed and the server
+  re-derives authoritatively via `Maker::FileAttachment.role_for` — so the persisted role is
+  correct. Its only effect is the pre-upload summary, which has always lumped everything but
+  model/image/PDF into "other", so `.txt` behaves there exactly as `.svg` already did. Recorded
+  because "one vocabulary" is this arc's whole point and a third copy has now drifted twice; fixing
+  it means plumbing the Ruby vocabulary into JS, which is a real change and was out of scope here.
+- **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
+  too *high* fails nothing, because every other test derives its filler from the constant. Closed as
+  far as it can be by one test pinning the literal.
+- **`ENABLE_TEST_SIGNUP` is inherited by the OVH deployment, knowingly.** `config/deploy.yml:64` sets it
+  in the **base** env.clear, which Kamal deep-merges, so `-d ovh` gets it too — the base comment's
+  justification ("this Unraid instance is a NON-production test/dev deploy") covers the LAN box only.
+  `POST /v1/test/users` mints **confirmed accounts with no email verification**. Left ON deliberately:
+  OVH is a prod-*like* test box, and blanking it at the base would break
+  `client/test-conformance/two-device-cfapi.ps1`, which enrolls against the deployed Unraid server
+  through this seam. The fix, when this stops being acceptable, is one line —
+  `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
+  defeat exactly this deep-merge. Recorded at the edit site too.
+
+---
+
 ## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
 
 **Suite 1660 → 1678 runs / 5862 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
@@ -73,7 +111,7 @@ the params *file* back to assert `OpenscadParams` coercion round-trips (a form S
 recorded — so the assertion moved to `state.data`. Deleting it with the file it happened to live in
 would have dropped the only proof of coercion in the suite.
 
-## Earlier (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
+## 2026-07-29: saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
 
 **Suite 1628 → 1633 runs / 5694 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
 share and s3.** rubocop clean on the touched files.
@@ -325,7 +363,7 @@ and mutation-checked by misspelling it.
 The **`unsupported`-row sweep** left open by the audit-fix arc is a third, separate migration and is
 also still open — see that arc's own list below.
 
-## Previously (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
+## 2026-07-29: the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
 
 **Suite 1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
 and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
@@ -565,7 +603,7 @@ project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced ab
   the upstream project actually ships under — for boxes.py that is GPL-3.0 and was checked by hand
   here, but the guard would not catch a wrong file.
 
-## Earlier (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
+## 2026-07-29: the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
 
 **Suite 1625 runs / 5655 assertions / 0 failures / 0 errors / 14 skips — byte-identical on chunk,
 share and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
@@ -694,7 +732,7 @@ production eager-load check.
 re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
 the **entire suite green**, because every other test derives its expectation from one side only.
 
-## CI runs again, on the runner that exists (2026-07-29)
+## 2026-07-29: CI runs again, on the runner that exists
 
 Design: `docs/superpowers/specs/2026-07-29-testing-and-ci-pipelines-design.md`.
 Plan: `docs/superpowers/plans/2026-07-29-testing-and-ci-pipelines.md`.
@@ -864,30 +902,7 @@ a fixture under a macOS TCC-protected directory.
 
 **Suite: 1672 runs / 0 failures / 0 errors / 11 skips** on all three backends, plus 11 system examples (`bin/ci system`) — measured on the merged state.
 
-## Still open after this arc (small, deliberate)
-
-- **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
-  hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
-  broken:** the value never leaves the browser — only `node_id`/`cover` are POSTed and the server
-  re-derives authoritatively via `Maker::FileAttachment.role_for` — so the persisted role is
-  correct. Its only effect is the pre-upload summary, which has always lumped everything but
-  model/image/PDF into "other", so `.txt` behaves there exactly as `.svg` already did. Recorded
-  because "one vocabulary" is this arc's whole point and a third copy has now drifted twice; fixing
-  it means plumbing the Ruby vocabulary into JS, which is a real change and was out of scope here.
-- **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
-  too *high* fails nothing, because every other test derives its filler from the constant. Closed as
-  far as it can be by one test pinning the literal.
-- **`ENABLE_TEST_SIGNUP` is inherited by the OVH deployment, knowingly.** `config/deploy.yml:64` sets it
-  in the **base** env.clear, which Kamal deep-merges, so `-d ovh` gets it too — the base comment's
-  justification ("this Unraid instance is a NON-production test/dev deploy") covers the LAN box only.
-  `POST /v1/test/users` mints **confirmed accounts with no email verification**. Left ON deliberately:
-  OVH is a prod-*like* test box, and blanking it at the base would break
-  `client/test-conformance/two-device-cfapi.ps1`, which enrolls against the deployed Unraid server
-  through this seam. The fix, when this stops being acceptable, is one line —
-  `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
-  defeat exactly this deep-merge. Recorded at the edit site too.
-
-## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
+## 2026-07-28: project page overhaul (PR #91) — four features, one branch
 
 **Suite 1587 runs / 5482 assertions / 0 failures / 0 errors / 14 skips, byte-identical on chunk,
 share and s3.** `client/` has a zero-line diff.
@@ -915,7 +930,7 @@ share and s3.** `client/` has a zero-line diff.
    the grid resolves refs itself, expands ranges, and hands over a token→value map with
    **strings double-quoted**, which is the trap.
 
-## Earlier (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **MERGED (PR #87) + DEPLOYED**
+## 2026-07-27: OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **MERGED (PR #87) + DEPLOYED**
 
 > *Section header corrected 2026-07-28: it said "NOT deployed" while this file's own top line said
 > deployed. The top line was right — verified against the running containers on 192.168.1.95.*
@@ -1054,7 +1069,7 @@ was §6's claim, now tested rather than asserted.
   Expect a small conflict at the top of this file and in `CLAUDE.md` §12 step 9, where both sides
   added text.
 
-## (2026-07-27): file organization and views (branch `claude/file-organization-views-3d06f4`)
+## 2026-07-27: file organization and views (branch `claude/file-organization-views-3d06f4`)
 
 Six pieces on the web UI plus one new pair of maker services. Design/plan:
 `docs/superpowers/specs/2026-07-26-file-organization-and-views-design.md`,
@@ -1459,7 +1474,7 @@ Two entries in "Open, and shipped knowingly" (below) were amended rather than ap
 phase 4 follow-up's own finding that **a stale open-list is worse than none**: the intermittent is no
 longer "never captured", and `FilesController#index` is no longer unbounded in *every* mode.
 
-## Latest (2026-07-23): Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
+## 2026-07-23: Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
 
 - **Current Project (2026-07-23):** a session-scoped "current project" shown in the top-bar
   selector (set/clear there or from a project page). Tool saves (Box Generator, Generators) default
@@ -1476,7 +1491,7 @@ longer "never captured", and `FilesController#index` is no longer unbounded in *
     (otherwise it falls back to the project page). The project-page and build-log uploaders omit it
     and are unchanged. Still green on all three backends (1257 runs).
 
-## Latest (2026-07-23): Generators addon — Maker.js harness + Material Test Grid (branch `claude/addons-brainstorm-plan-04adb7`)
+## 2026-07-23: Generators addon — Maker.js harness + Material Test Grid (branch `claude/addons-brainstorm-plan-04adb7`)
 
 The **first client-only `/tools` addon** — a browser-side **generator harness** (Maker.js, Apache-2.0)
 whose Rails side is **generator-agnostic**, shipping with the **Material Test Grid** as its first
@@ -1510,7 +1525,7 @@ Design/plan: `docs/superpowers/specs/2026-07-22-makerjs-generator-harness-design
   new state (no in-place re-versioning); SVG output only (DXF is a near-free future add via
   `makerjs.exporter.toDXF`); no second generator (the harness exists to make them trivial).
 
-## Latest (2026-07-22): interactive 3D viewer (branch `claude/3d-viewer-models-18a424`)
+## 2026-07-22: interactive 3D viewer (branch `claude/3d-viewer-models-18a424`)
 
 Client-side WebGL viewer (rotate/zoom/pan) for the mesh formats a print library is made of —
 `.stl`, `.3mf`, `.obj` — on the file detail page (`/files/:id`, the link target from every model's
@@ -1534,7 +1549,7 @@ file tree). STEP/IGES/DXF keep their static thumbnails. Design/plan:
 - Suite **+3 tests**, identical on all three legs (chunk / `LIBRARY_BACKEND=share` / `=s3`), 0
   failures; production `assets:precompile` clean.
 
-## Latest (2026-07-20 PM): addon framework, Plan A (branch `addon-framework-plan-a`)
+## 2026-07-20 PM: addon framework, Plan A (branch `addon-framework-plan-a`)
 
 The reusable, backend-neutral **addon framework** + the **Box Generator addon UI** (against a
 **stubbed** `BoxesClient` — the Python sidecar is **Plan B**). Design/plans:
@@ -1574,9 +1589,7 @@ Python sidecar** (Kamal `boxes` accessory, internal-only container `tinkerex-box
   passes against one. Suite **1050 → 1052**.
 - **Both Plan A + Plan B are on `main` and deployed.** The addon framework is proven end-to-end.
 
-## Latest (2026-07-20): server-side thumbnail previews wired into the web UI
-
-## Latest (2026-07-20): eager PNG thumbnails for STL/3MF/SVG/DXF/LightBurn, shown in the web UI
+## 2026-07-20: eager PNG thumbnails for STL/3MF/SVG/DXF/LightBurn, shown in the web UI
 
 Branch `previews-server-side-thumbnails`. The existing `Maker::Previews` render engine (Registry →
 renderer → `GeneratePreviewJob` → `Maker::Preview` asset, served off Rails) is now **completed,
@@ -1607,9 +1620,7 @@ hardened, and connected to the browser**:
   `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`: 1023 / 3329 / 0 / 0 / 5). The preview layer touches
   no sync internals (§10 tripwire grep clean).
 
-## Latest (2026-07-17 PM): all three FileLayer backends deployed live, web UI usable
-
-## Latest (2026-07-17 PM): all three FileLayer backends deployed live, web UI usable
+## 2026-07-17 PM: all three FileLayer backends deployed live, web UI usable
 
 **The whole maker/file-layer split (phases 1–4 + follow-up) is on `main` and DEPLOYED.** Three
 containers run on the Unraid VM `192.168.1.95` from one image, one per `LIBRARY_BACKEND`,
@@ -1651,7 +1662,7 @@ field `password` (NOT the `gh` CLI token — no `packages` scope); chunk/s3-libr
 EMPTY** — nothing seeded yet. (3) Deploy: `bin/kamal deploy` (chunk builds+pushes), then
 `-d s3`, `-d share` (reuse the image). See `docs/DEPLOY.md` + the `deploy-build-workflow` handoff.
 
-## Latest (2026-07-17): the phase 4 follow-up — three items closed
+## 2026-07-17: the phase 4 follow-up — three items closed
 
 **Server suite 954 → 978, identical on all three legs** — `bin/rails test`,
 `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`, each **978 runs, 3029 assertions, 0 failures,
@@ -1705,7 +1716,7 @@ refuses without their env.)
   **controller**, not in either adapter — which is exactly why no adapter suite could have found
   it.
 
-## Previous (2026-07-17): phase 4 — the UI and the API stop lying
+## 2026-07-17: phase 4 — the UI and the API stop lying
 
 `LIBRARY_BACKEND=chunk|share|s3` all **boot, index, write, deliver, and tell the truth about
 themselves**. The maker/file-layer split is **complete**. (Suite **871 → 954** at the time; the
@@ -1889,7 +1900,7 @@ answers.
   2000` with an announced truncation — the first bound this page has ever had. The folder view is
   unchanged.)*
 
-## Previous (2026-07-17): phase 3 — point it at your own S3 bucket
+## 2026-07-17: phase 3 — point it at your own S3 bucket
 
 `LIBRARY_BACKEND=s3` + `LIBRARY_S3_*` boots, indexes an existing bucket, and reads/writes/
 deletes/moves through the port. **The third adapter, and the one the port was shaped for:** it
@@ -2103,7 +2114,7 @@ thing as). Phase 4 adds **`port_writable`**.
 serves bytes, and `port_writable` exists. This paragraph is a snapshot of phase 3; see the top of
 this file.)*
 
-## Previous (2026-07-16): the Reconciler scales, and its own comment was the problem
+## 2026-07-16: the Reconciler scales, and its own comment was the problem
 
 Both limitations 2a and 2b carried as "fix before a real 2TB NAS" are closed. They were fixed
 **before Phase 3 deliberately**: S3 is where someone actually points 2M objects at this, so the
@@ -2141,7 +2152,7 @@ so without it the probe would have been blind to half the change.
 deterministic tie-break has to compare the old path against every identical candidate, and
 removing it would trade the no-crash/no-lost-file guarantee for speed.
 
-## Previous (2026-07-16): phase 2b — the share library can now grow
+## 2026-07-16: phase 2b — the share library can now grow
 
 Phase 2a made a NAS directory *readable*. **2b makes it writable**: `write`/`delete`/`move`/
 `undelete` through the port, with a trash. **The write path is Share-only, and that is the
@@ -2236,7 +2247,7 @@ answers false the moment `FileLayer::S3` exists — the purge silently stops.
 *(Superseded 2026-07-17 — the trap was real and is **disarmed**: both gates now key on the
 `scannable` capability. This paragraph is a snapshot of 2b; see the top of this file.)*
 
-## Previous (2026-07-16): phase 2a — point it at a NAS and the attachments survive
+## 2026-07-16: phase 2a — point it at a NAS and the attachments survive
 
 `LIBRARY_BACKEND=share` + `LIBRARY_PATH=/mnt/nas/models` now **boots, indexes an existing
 directory, and serves it to the maker layer** (browse via the synthesized dir tree, attach,
@@ -2273,7 +2284,7 @@ and the worst were *cross-task* and invisible to per-task review:
 (~1M AR objects) — **fix before a real 2TB NAS**; `best_pairing` is O(n²) (~2s/10k renames).
 *(Superseded 2026-07-16 — both fixed; see the top of this file. The "~2s" measured at 9s.)*
 
-## Previous (2026-07-14): full-stack audit + the maker/file layer split begins
+## 2026-07-14: full-stack audit + the maker/file layer split begins
 
 **1. A full-stack audit (server + all Rust crates) found 7 criticals + ~20 majors — all fixed,
 merged (`217b5aa`), pushed.** Each with a regression test. The ones worth remembering:
@@ -2318,9 +2329,7 @@ step 10 for the full picture, the settled decisions, and the two deliberate inva
 **fresh instance with new S3 credentials** — 1Password item **`seaweednew`**, not `seaweedfs`.
 Open question: whether `my-bucket` on `.8` carries the old chunks, or only new writes work.
 
-## Previous (2026-06-16): file-layer hardening + prod-like infra wave
-
-## Latest (2026-06-16, later): file-layer hardening + prod-like infra
+## 2026-06-16, later: file-layer hardening + prod-like infra
 
 A large file-layer wave merged on top of the morning's G2/G4/G5 batch (full detail + the action
 items in `docs/HANDOFF.md` "File-layer hardening + prod-like infra wave"):
@@ -2337,7 +2346,7 @@ items in `docs/HANDOFF.md` "File-layer hardening + prod-like infra wave"):
   self-host options (#31). Ordering: auth → sharing → encryption.
 - **⚠️ Rotate** the exposed R2 token + ghcr PAT (see HANDOFF security action).
 
-## Latest (2026-06-16): git-on-mount investigation + symlink MVP
+## 2026-06-16: git-on-mount investigation + symlink MVP
 
 **Verdict:** a `git` repo **works inside the mounted sync filesystem** for the everyday loop
 (`init`/`add`/`commit`/`status`/`log`/`diff`/`branch`/`checkout`) — the model already supported
@@ -2359,7 +2368,7 @@ break was **symlinks** (the tree modeled only `File`/`Dir` → `EPERM`), now **f
   `clone --local`). Full writeup: `docs/git-on-mount.md`.
 
 
-## Latest (2026-06-16): managed-deploy hardening (G2/G4) + file-layer polish (G5/G8/G10) + R2 live (HEAD `94b7f02`)
+## 2026-06-16: managed-deploy hardening (G2/G4) + file-layer polish (G5/G8/G10) + R2 live (HEAD `94b7f02`)
 
 Three PRs landed on `main` on top of the cross-OS E2E state, plus R2 was validated end-to-end
 against a real bucket.
@@ -2394,7 +2403,7 @@ against a real bucket.
 - **Next:** the maker app layer (Projects→Inventory→BOM→preview); then the parity roadmap
   (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
 
-## Previous (2026-06-15): automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
+## 2026-06-15: automated cross-OS real-mount E2E + web UI MVP + real auth (HEAD `bab90bb`)
 
 A large batch landed on `main`, and a deep cross-OS debugging arc got **automated real-mount A↔B
 end-to-end green on all three OSes** (Linux FUSE, Windows CfAPI, macOS WebDAV) in `nightly.yml`.
@@ -2420,7 +2429,7 @@ end-to-end green on all three OSes** (Linux FUSE, Windows CfAPI, macOS WebDAV) i
 - **Next:** the maker app layer (Projects→Inventory→BOM→preview); then parity roadmap
   (OAuth/OIDC → sharing → encryption-last). See `docs/HANDOFF.md`.
 
-## Earlier (2026-06-14): `auth-caching-security` merged to main + file layer hardened to "rock-solid"
+## 2026-06-14: `auth-caching-security` merged to main + file layer hardened to "rock-solid"
 
 The big `auth-caching-security` arc landed on **`main`** (squash PR #8), and a hardening batch
 on top closed the remaining file-layer gaps. The headline: an adversarial fault-injection
@@ -2465,7 +2474,7 @@ harness was built and **found two real changelog ordering bugs**, both now fixed
 at-rest chunk encryption (#3). Both fit the existing chunk/manifest/changelog model. Next big
 arc: the **maker app layer** (projects/inventory/BOM/preview — §12 step 9).
 
-## Earlier (2026-06-12): Windows CfAPI mount — read+write loop live, offline-capable
+## 2026-06-12: Windows CfAPI mount — read+write loop live, offline-capable
 
 Building on the verified-live populate+hydrate (below), the CfAPI mount now runs the full
 read **and** write loop on real Windows 11, and behaves correctly offline. Detailed handoff
@@ -2489,7 +2498,7 @@ read **and** write loop on real Windows 11, and behaves correctly offline. Detai
   (empty-tree-at-mount + missing FETCH_PLACEHOLDERS → hang), always-answer FETCH_DATA, and a
   null-`FileIdentity` `from_raw_parts` panic on root enumeration. See the plan's "gotchas".
 
-## Earlier (2026-06-12): Windows CfAPI mount — **verified live** (populate + hydrate)
+## 2026-06-12: Windows CfAPI mount — **verified live** (populate + hydrate)
 
 The driverless CfAPI mount **runs on real Windows 11 hardware**: a sync root registers, Explorer
 enumerates it, and files hydrate on open (no GPL driver — the §9 win, on actual hardware). Three
@@ -2505,7 +2514,7 @@ Diagnostics added: `eprintln` in both callbacks + a layered **`doctor` example**
 storage reachability, no CfAPI) that isolated the failure to the CfAPI layer. Still to exercise
 live: remote-change invalidation + clean teardown. **Phase 2** = local-edit capture.
 
-## Earlier (2026-06-12): Windows CfAPI migration — Phase 1 (driverless mount)
+## 2026-06-12: Windows CfAPI migration — Phase 1 (driverless mount)
 
 `client/fs-cfapi` — the **driverless** Windows mount (Cloud Filter API; no GPL WinFsp driver,
 the OneDrive model: a registered sync-root folder with on-demand hydration + native Explorer
@@ -2529,7 +2538,7 @@ byte-for-byte conformance green** against the deployed server; WinFsp behind the
   us) via a USN-journal / `ReadDirectoryChangesW` watcher → `ingest_bytes` → push →
   `CfSetInSyncState`. Plan: `docs/plan-windows-cfapi-migration.md`.
 
-## Earlier (2026-06-12): real-mtime preservation + active cache invalidation (Option B)
+## 2026-06-12: real-mtime preservation + active cache invalidation (Option B)
 
 Replaces the `mtime = now`-on-pull freshness hack (which destroyed the true modification
 time — breaking `make`/`ninja`/`cargo` incremental builds) by splitting mtime's two jobs:
@@ -2561,7 +2570,7 @@ content-changing pull instead of relying on an mtime bump. Plan:
   **Invalidation itself can't be unit-tested** (needs a live FUSE kernel) — verified by the
   Linux CI `mount-conformance` path / manual smoke (edit on A, `cat` on B before/after).
 
-## Earlier (2026-06-12): file mode / executable-bit preservation
+## 2026-06-12: file mode / executable-bit preservation
 
 The one POSIX-fidelity gap that actually bites makers (scripts/binaries losing `+x` after
 sync — see the conformance dig): file mode is now preserved end-to-end.
@@ -2582,7 +2591,7 @@ meaningless across devices). **Symlinks are now supported** (see the git-on-moun
 below). Remaining POSIX gaps (hardlinks/special files, ctime/atime) are intentional
 non-goals for a personal sync drive.
 
-## Earlier (2026-06-12): best-effort cross-device lock
+## 2026-06-12: best-effort cross-device lock
 
 Layered on the local locks + conflict detection: a **best-effort advisory edit lock**
 across devices. On open-for-write the client (when connected) acquires a server lock so
@@ -2600,7 +2609,7 @@ reconnect. Advisory + TTL-based (a disconnected holder's lock auto-frees), never
   the Daemon. Integration test `best_effort_lock_coordinates_connected_devices` (live).
 - App: the file browser shows a 🔒 + holder name for files locked on another device.
 
-## Earlier (2026-06-12): file locking + conflict detection & resolution
+## 2026-06-12: file locking + conflict detection & resolution
 
 Local-first concurrency = local advisory locks + cross-device conflict detection (NOT
 distributed locks — can't hold a WAN lock offline; the synchronous model we rejected).
@@ -2624,7 +2633,7 @@ distributed locks — can't hold a WAN lock offline; the synchronous model we re
   fs-provider +7 lock tests. The old LWW integration test is replaced (concurrent edits now
   conflict by design).
 
-## Earlier (2026-06-12): auth, security, caching, freshness-on-access, file browser
+## 2026-06-12: auth, security, caching, freshness-on-access, file browser
 
 Branch `auth-caching-security`. Areas:
 
@@ -2673,7 +2682,7 @@ frontend rebuilt — status pill, "this is my device" vs "pair with a code" tabs
 "add a device" pairing-code panel, and a file tree that expands per-file version history
 with one-click restore.
 
-## Earlier (2026-06-11): external conformance suites
+## 2026-06-11: external conformance suites
 
 Added independent, battle-tested external tools pointed at our real mount surfaces — the
 same suites JuiceFS/CephFS gate on — so robustness isn't only self-authored tests.
@@ -2695,9 +2704,7 @@ same suites JuiceFS/CephFS gate on — so robustness isn't only self-authored te
 These cover the **mount**; distributed-sync convergence stays the job of the
 `fs-provider/tests/convergence.rs` FakeFolder harness (no external suite exists for that).
 
-## Earlier (2026-06-11): offline/reconnect hardening (§12.6)
-
-## Latest (2026-06-11): offline/reconnect hardening (§12.6)
+## 2026-06-11: offline/reconnect hardening (§12.6)
 
 Hardened the path real usage hits but the demos never did — a device going offline and
 reconnecting far behind. Found and fixed a concrete data-loss bug.
@@ -2724,9 +2731,7 @@ reconnecting far behind. Found and fixed a concrete data-loss bug.
 
 Tests: server 26→**30**, sync-engine integration 6→**9**. (~90 → ~94 total.)
 
-## Earlier (2026-06-11): comprehensive sync-foundation test suite
-
-## Latest (2026-06-11): comprehensive foundation test suite
+## 2026-06-11: comprehensive foundation test suite
 
 Paused feature work to harden the file-sync foundation with a real test suite, modeled on
 how production sync/chunking systems test: **rclone `fstests`** (one contract suite over a
@@ -2762,9 +2767,7 @@ Added `proptest` (dev-only) for property tests with shrinking.
    pulled-but-unhydrated placeholder failed with `ChunkMissing` — a routine mount op.
    Truncate-to-empty now short-circuits without touching the (absent) bytes.
 
-## Earlier (2026-06-11): §12.4 truncate gap closed
-
-## Latest (2026-06-11): §12.4 truncate gap closed
+## 2026-06-11: §12.4 truncate gap closed
 
 The `Provider` trait had **no truncate**, so overwriting a file with fewer bytes than
 before left the old manifest's trailing chunks past the new EOF — reads returned a stale
@@ -2792,9 +2795,7 @@ tail / wrong size (CLAUDE.md §12.4, a gap shared by all three mount adapters).
 - **Re-verified:** `(cd client/sync-engine && cargo run --example roundtrip)` against
   `STORAGE_BACKEND=memory` on `localhost:3001` — real bytes A→cloud→B, byte-for-byte.
 
-## Earlier (2026-06-11): daemon loop wired + live SeaweedFS round-trip
-
-## Live deployment (2026-06-11): full stack on an Unraid VM via Kamal
+## 2026-06-11: Live deployment — full stack on an Unraid VM via Kamal
 
 The Rails sync server is **deployed and verified** on an Ubuntu 26.04 Unraid VM
 (`192.168.1.95`) via Kamal 2.11, all-on-one-box: Docker + a local htpasswd registry on
@@ -2810,7 +2811,7 @@ committed: `config.solid_queue.connects_to` (Solid Queue was hitting the primary
 crash-looping Puma) and the single-host Kamal registry/builder config (127.0.0.1 + auth +
 `driver: docker` to avoid the localhost reverse-tunnel + isolated-buildkit traps).
 
-## Latest (2026-06-11, evening): §12 step 3 — delete/move propagation
+## 2026-06-11, evening: §12 step 3 — delete/move propagation
 
 Closed the correctness hole where the **delta pull dropped deletes** (`pull_changes`
 had a literal `NOTE: 'delete' tombstones are not yet applied locally`): a file deleted on
@@ -2837,7 +2838,7 @@ new path.
   backstop CLAUDE.md called for — it would have caught the dropped-delete/duplicated-move
   bugs. fs-provider is now **13 tests** green (15 after the truncate fix above).
 
-## Latest (2026-06-11, afternoon): §12 steps 1 & 2 landed
+## 2026-06-11, afternoon: §12 steps 1 & 2 landed
 
 - **Continuous sync loop wired.** `fs-provider` gained an `outbox` + `sync_state`
   (cursor) table; FUSE mutations (`flush`/`mkdir`/`unlink`/`rmdir`/`rename`) enqueue the
@@ -2949,7 +2950,16 @@ versions + per-user changelog); **chunks** live in R2/S3 and move **client ⇄ s
 directly via presigned URLs** (never through Rails). Devices stay consistent by
 pulling the changelog (`seq > cursor`); changes propagate via ActionCable.
 
-## What's NOT done yet (next session)
+## Origin (2026-06-11): the first session's plan and decisions — HISTORICAL
+
+> **Superseded. Do not read the two subsections below as current.** They record what the very
+> first session planned and decided, kept because that reasoning is sometimes useful. Every
+> numbered item in "What's NOT done yet" is **done** (daemon loop, live SeaweedFS bytes, the
+> Windows adapter — now CfAPI, not WinFsp — and Postgres), and "last-writer-wins" in the
+> decisions list was **reversed**: conflict detection with keep/split replaced it (CLAUDE.md §6).
+> For what is actually open, see **Still open** at the top of this file and CLAUDE.md §12.
+
+### What's NOT done yet (as of 2026-06-11 — ALL of this is now done)
 
 1. **The running daemon loop.** `SyncEngine` (`push`/`pull_snapshot`/`pull_changes`/
    `hydrate`/`sync_once`) is **built and verified end-to-end with real bytes**
@@ -2973,7 +2983,7 @@ pulling the changelog (`seq > cursor`); changes propagate via ActionCable.
    (placeholder device-token bootstrap today), N+1 preloading in `Sync::Changes`,
    chunk encryption, retention/GC policy job.
 
-## Decisions locked tonight (from your answers)
+### Decisions locked on 2026-06-11 (one since reversed — see the warning above)
 
 Tenant = user; full tree on every device; file-sync only; one protocol for managed
 (Postgres + R2) and self-host (SQLite + their S3); last-writer-wins (conflict-copies
