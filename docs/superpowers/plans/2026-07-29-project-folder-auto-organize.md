@@ -1199,6 +1199,11 @@ Append inside `class ProjectIntakeTest`:
         assert_equal 3, result.skipped
         assert_equal 1, attempts.call, "it must stop after the first FetchError, not try all three"
         assert_equal :ok, result.status
+        # THE DETAIL MUST SURVIVE THE ABORT, and every unprocessed file is named — including the
+        # one that raised. A count alone would tell an operator three files did not move without
+        # telling them which, which is the gap `skips` was added to close.
+        assert_equal %i[unavailable unavailable unavailable], result.skips.map(&:last)
+        assert_equal %w[a.svg b.svg c.svg], result.skips.map(&:first).sort
       end
     end
 
@@ -1238,41 +1243,26 @@ Expected: the two FetchError tests FAIL with `FileLayer::FetchError: the backend
 
 - [ ] **Step 3: Add the abort**
 
-In `app/services/maker/project_intake.rb`, replace `#file_all` with:
+**The `#file_all` code block below supersedes the one this plan originally carried.** Task 5's review
+added a `skips` member to `Result` (an array of `[name, reason]`, symmetric with `plan`), so
+`#file_all` now returns FOUR values — `[moved, skipped, skips, plan]` — and `#place` answers a
+folder-name String on success or a reason Symbol on failure. Write the abort against the CURRENT
+shape in the file, not the three-value one.
 
-```ruby
-    # File each loose file, counting outcomes. Returns [moved, skipped, plan].
-    #
-    # THE FetchError RESCUE IS HERE AND NOT IN #place, and the difference is the whole point. Every
-    # condition #place handles is about ONE FILE (this name is taken, this node vanished, this
-    # backend refuses this move) and the next file may well succeed. A FetchError is about the
-    # LIBRARY — the share is unmounted, the bucket is unreachable — so every remaining move fails
-    # identically. Rescuing it per file would produce one log line per file and report each as an
-    # independent skip, which reads like a library full of individually-broken files rather than one
-    # unmounted NAS.
-    def file_all(inbox)
-      moved = 0
-      skipped = 0
-      plan = []
-      begin
-        inbox.each do |node|
-          dest = place(node)
-          if dest
-            moved += 1
-            plan << [ node.name, dest ]
-          else
-            skipped += 1
-          end
-        end
-      rescue FileLayer::FetchError => e
-        Rails.logger.warn("Maker::ProjectIntake: aborting #{@project.slug} — the library is " \
-                          "unreachable (#{e.class}: #{e.message}). #{moved} filed before it; " \
-                          "the attachments stand.")
-        skipped = inbox.size - moved
-      end
-      [ moved, skipped, plan ]
-    end
-```
+Required behaviour, which the tests pin:
+
+- The rescue for `FileLayer::FetchError` wraps the whole loop, NOT each file. Every remaining move
+  would fail identically, so it is one abort and one log line, not N.
+- `moved`, `plan` and any `skips` already recorded before the failure are KEPT.
+- Every file not yet processed — **including the one that raised** — is appended to `skips` with the
+  reason **`:unavailable`**, matching `AttachToProject#move`'s existing vocabulary for "the library
+  is having a bad day, try later". Do not invent a second spelling.
+- `skipped` stays `skips.size`, so the count and the detail cannot disagree.
+- The log line is `warn`, names the project slug and the error class and message, and states how
+  many were filed before it stopped.
+
+Write it in whatever shape reads cleanest against the current method; the contract above and the
+tests are what must hold. Do not restructure `#place`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
