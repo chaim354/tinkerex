@@ -1664,7 +1664,36 @@ inbox, and the guard would guard nothing."
 
 ---
 
-## BLOCKER on Task 9, found during Task 4's review (2026-07-30)
+## RESOLVED BLOCKER on Task 9, found during Task 4's review (2026-07-30)
+
+**Closed by Task 9a** (`d9315ec` + `48853aa`), added during execution. A migration deduped
+`maker_file_attachments` (keeping the lowest id per group, the tie-break
+`AttachToProject#model_owning` already uses) and added a unique index on
+`(user_id, attachable_type, attachable_id, node_id)`; `ProjectIntake#attach` now passes
+`unique_by:`. Local dev and test databases held **zero** duplicates.
+
+**Two corrections came out of it, both worth keeping:**
+
+1. **Bare `insert_all(rows)` does NOT raise on conflict.** Rails hardcodes `on_duplicate: :skip`
+   and resolves an absent `unique_by:` to an untargeted `ON CONFLICT DO NOTHING`. So the INDEX
+   alone closed the race; `unique_by:` buys precision — it scopes the swallowed conflict to this
+   tuple, so a future unrelated unique constraint on the table is not silently absorbed too.
+2. **`find_or_create_by!` was never the 500 path it was reported to be.** In ActiveRecord 8.1.3
+   it is `find_by(attributes) || create_or_find_by!(attributes, &block)` — verified in the gem
+   source — so its fallback already went through a `RecordNotUnique` rescue. The real exposures
+   were the bare `create!` sites (`Models::AttachmentsController`, `Projects::EntryPhotosController`,
+   `CurrentProject#attach_addon_files_to_current_project`), where the index turned a silent
+   duplicate into an uncaught 500 — and, in `CurrentProject`'s case, into a silently abandoned
+   BATCH, since its loop runs in a transaction under a broad `rescue StandardError`.
+
+The original analysis is kept below because its reasoning about WHY a periodic writer changes the
+risk profile is still the argument for having done this at all.
+
+---
+
+## The original blocker note
+
+
 
 **A duplicate-attachment race must be resolved before the periodic job is wired.**
 
