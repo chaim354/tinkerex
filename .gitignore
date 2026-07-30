@@ -41,6 +41,11 @@
 *.dmg
 *.app.zip
 
-# Local agent tooling/plans
-.claude/
+# Local agent tooling/plans. Everything under .claude/ stays local EXCEPT commands/: those are
+# project workflow (they invoke bin/ci, kamal, and this repo's branch conventions), so they belong
+# to the repo. They also have to be TRACKED to exist in a git worktree at all — a worktree checks
+# out tracked files only, so an ignored .claude/commands/ is invisible from every worktree, which
+# is where most agent work on this repo actually happens.
+.claude/*
+!.claude/commands/
 .superpowers/
