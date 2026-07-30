@@ -33,6 +33,30 @@ you reverted. This repo has already been bitten by a hermetic fake that shared t
 misunderstanding and hid a silent data-loss bug behind 79/80 green tests. A test nobody has watched
 fail is a test nobody should trust.
 
+**Clear the chunk store first, or a broken mutation can read GREEN.** `tmp/dev-chunks*` blobs outlive
+`Storage::ChunkStore.reset!`, and because storage is content-addressed while SQLite reuses rowids
+after a rolled-back transaction, a stale blob at the same `chunks/<user_id>/<hash>` key silently
+satisfies a mutated run. This is not hypothetical — it made `uploader_test.rb`'s second mutation look
+green until the directory was cleared:
+
+```bash
+rm -rf tmp/dev-chunks*
+```
+
+## Two environment traps that cost real time
+
+**A Selenium file attach cannot read a fixture under a macOS-protected directory.** If the checkout
+lives under `~/Desktop` (or Documents/Downloads), TCC gates it behind a per-app consent a *synthetic*
+non-Finder attach never satisfies: Chrome accepts the attach, then `file.arrayBuffer()` throws
+`NotReadableError`. Copy the fixture to a `Dir.mktmpdir` for the attach and assert against the
+original. `uploader_test.rb` does this and explains it inline. It may not reproduce on the CI runner,
+whose work dir is not under a protected directory — do it anyway.
+
+**`attach_file`'s `make_visible:` takes `true` or a style Hash — never a selector String.** A String
+is fed into a `for (var prop in css)` style-patch, silently iterates the string's character indices,
+sets nothing, and then raises "The style changes in :make_visible did not make the file input
+visible". The error names the symptom, not the cause, so this reads as a broken page.
+
 ## Honest limits are better than false coverage
 
 `modelviewer_controller.js` renders into a `<canvas>`, which is opaque to Capybara. The right test
