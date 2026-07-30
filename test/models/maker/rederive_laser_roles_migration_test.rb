@@ -72,4 +72,18 @@ class RederiveLaserRolesMigrationTest < ActiveSupport::TestCase
     run_migration
     assert_equal "laser", att.reload.role
   end
+
+  # LASER_EXTS is a frozen COPY of what the model says — the migration's own comment names that
+  # cost and accepts it. This is the SAME TRIPWIRE the two predecessor migrations each carry for
+  # their own copied lists, and it is not decorative: predecessor 1's copy of this exact test is
+  # what fired the moment lbrn2 was remapped `vector` -> `laser`, which is the whole reason this
+  # migration and Step 0's SUPERSEDED allowlist exist. A frozen copy is only safe to keep BECAUSE
+  # something notices when it drifts — without this test, the next extension remapped into or out
+  # of `laser` would drift silently, the same way lbrn2 almost did.
+  test "the migration's extension list still agrees with the model's" do
+    RederiveLaserRoles::LASER_EXTS.each do |ext|
+      assert_equal RederiveLaserRoles::NEW_ROLE, Maker::FileAttachment::ROLE_BY_EXT[ext],
+                   "migration maps #{ext} to laser, model disagrees"
+    end
+  end
 end
