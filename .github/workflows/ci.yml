@@ -10,6 +10,7 @@ on:
       - 'lib/**'
       - 'test/**'
       - 'bin/**'
+      - 'ci/**'
       - 'Gemfile'
       - 'Gemfile.lock'
       - '.ruby-version'
@@ -17,58 +18,72 @@ on:
   push:
     branches: [ main ]
 
-# Serialize runs on the single self-hosted runners (a newer run cancels the older for the ref).
+# Serialize runs on the single self-hosted runner (a newer run cancels the older for the ref).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# EVERY JOB HERE RUNS ON macos, and that is a measurement rather than a preference. On the
+# maker-mac box (2026-07-29): the suite is 1628 runs / 0F / 0E in 5.2s on all THREE LIBRARY_BACKEND
+# values, test:system is 6/0/0 with headless Chrome, rubocop is clean over 435 files, and all three
+# scanners exit 0. The serialisation worry that kept these on `linux` is measured away — the whole
+# job set is ~30s of actual work, and wall-clock is dominated by checkout and bundle.
+#
+# NO `ruby/setup-ruby` ANYWHERE BELOW, deliberately: it assumes the GitHub-hosted /Users/runner
+# layout this self-hosted Mac does not have (nightly.yml's e2e-macos already works around it). The
+# runner's service PATH carries mise ruby 3.4.7 — exactly .ruby-version — so `bundle install` is
+# all a job needs. test/ci_hygiene_test.rb fails if the action reappears in a macos job.
+#
+# EVERY JOB INVOKES `bin/ci <gate>` and never a bare command. config/ci.rb is the single definition
+# of what each gate does; ci_hygiene_test asserts both directions of that contract.
 jobs:
-  scan_ruby:
-    runs-on: [self-hosted, linux]
-
+  # Which runner families exist for this run — see ci/preflight.sh for why this is a DECLARATION
+  # (the repo variable CI_RUNNERS) and not an API call.
+  #
+  # The jobs in THIS workflow are not gated on it: they all run on macos, and if the mac runner were
+  # absent this job could not start either, so gating them on it would be circular. The outputs are
+  # consumed by the linux/windows jobs in rust-client.yml, nightly.yml and cross-os-e2e.yml. What
+  # this job buys ci.yml is the SUMMARY — a run that states, on its own page, which coverage it did
+  # not run.
+  preflight:
+    runs-on: [self-hosted, macos]
+    outputs:
+      macos:   ${{ steps.p.outputs.macos }}
+      linux:   ${{ steps.p.outputs.linux }}
+      windows: ${{ steps.p.outputs.windows }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+      - id: p
+        name: Resolve the declared runner fleet
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Report what is available, and what was therefore skipped
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      - name: Scan for common Rails security vulnerabilities using static analysis
-        run: bin/brakeman --no-pager
-      
-      - name: Scan for known security vulnerabilities in gems used
-        run: bin/bundler-audit
-      
-  scan_js:
-    runs-on: [self-hosted, linux]
-
+  # All three security scanners in ONE job, because they are one gate. They used to be two jobs
+  # running brakeman then bundler-audit in sequence; brakeman exited 3 for weeks, so the job stopped
+  # at step 1 and the audit gate NEVER RAN. `bin/ci scan` uses CI.step, which records a result and
+  # continues, so all three report whatever any one of them does.
+  scan:
+    runs-on: [self-hosted, macos]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      - name: Scan for security vulnerabilities in JavaScript dependencies
-        run: bin/importmap audit
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Security scanners (gems, importmap, brakeman)
+        run: bin/ci scan
 
   lint:
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, macos]
     env:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
       - name: Prepare RuboCop cache
         uses: actions/cache@v5
         env:
@@ -78,45 +93,21 @@ jobs:
           key: rubocop-${{ runner.os }}-${{ env.DEPENDENCIES_HASH }}-${{ github.ref_name == github.event.repository.default_branch && github.run_id || 'default' }}
           restore-keys: |
             rubocop-${{ runner.os }}-${{ env.DEPENDENCIES_HASH }}-
-
       - name: Lint code for consistent style
-        run: bin/rubocop -f github
+        run: bin/ci style
 
   test:
-    runs-on: [self-hosted, linux]
-
-    # services:
-    #  redis:
-    #    image: valkey/valkey:8
-    #    ports:
-    #      - 6379:6379
-    #    options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    runs-on: [self-hosted, macos]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      # Idempotent + non-fatal: the runner is self-hosted/persistent, so skip when resvg is already
-      # present. The preview tests branch on Maker::Previews::SvgRasterizer.available?, so a box
-      # without resvg still passes (SVG/DXF/LightBurn just render `unsupported`); installing it here
-      # is what exercises the real PNG path. `|| true` so a runner without cargo never fails CI.
-      - name: Ensure resvg (SVG→PNG for preview tests)
-        run: |
-          if ! command -v resvg >/dev/null 2>&1; then
-            cargo install resvg --version 0.47.0 || true
-          fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Run tests
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Ensure resvg (SVG→PNG for the preview tests)
+        run: ci/ensure-resvg.sh
+      - name: Run the suite (chunk backend)
         env:
           RAILS_ENV: test
-          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
-          # REDIS_URL: redis://localhost:6379/0
-        run: bin/rails db:test:prepare test
+        run: bin/ci test
 
   # The whole suite, run again with the share backend selected.
   #
@@ -129,114 +120,54 @@ jobs:
   # tests, the maker file-bytes shim, and a previews API test), all building chunk-shaped fixtures
   # while taking their adapter from the environment, including one whose name claimed an adapter
   # it never pinned. Those are now pinned; this leg is what keeps the habit from creeping back.
-  #
-  # Cheap enough to justify running everything rather than a scoped subset: a tmpdir, no external
-  # services. A subset would be redundant with `test:` — the point is the ambient ENV, not the
-  # specific files.
   test-share-backend:
-    runs-on: [self-hosted, linux]
-
+    runs-on: [self-hosted, macos]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      - name: Ensure resvg (SVG→PNG for preview tests)
-        run: |
-          if ! command -v resvg >/dev/null 2>&1; then
-            cargo install resvg --version 0.47.0 || true
-          fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Run tests with LIBRARY_BACKEND=share
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Ensure resvg (SVG→PNG for the preview tests)
+        run: ci/ensure-resvg.sh
+      - name: Run the suite (share backend)
         env:
           RAILS_ENV: test
-          LIBRARY_BACKEND: share
-        run: |
-          export LIBRARY_PATH=$(mktemp -d)
-          bin/rails db:test:prepare test
+        run: bin/ci test-share
 
-  # The whole suite again with the s3 backend selected — the sibling of test-share-backend, and it
-  # buys the same narrow thing for the same reason: it catches tests that silently depend on the
-  # AMBIENT backend.
-  #
-  # This is NOT what stops the adapters diverging. Both shared contracts already do that, and they
-  # run against FileLayer::S3 in the `test:` job above (s3_test.rb includes FileLayerAdapterContract
-  # AND FileLayerWritableContract, constructing its adapter explicitly with an injected stub client,
-  # so it needs no ENV) — S3 inheriting the write contract is the whole point of Phase 3. The
-  # headline E2E (test/integration/library/s3_library_test.rb) likewise pins its own adapter.
+  # The sibling of test-share-backend, buying the same narrow thing for the same reason.
   #
   # HONEST RESULT, unlike the share leg's: this one found ZERO ambient-dependent tests on the way
-  # in — all three legs report an identical 870/2564/0. The share leg earned its place immediately
-  # by finding nine; this one is a regression guard from birth rather than a bug-finder, which is
-  # the outcome to expect once the habit it enforces is already established. It stays because the
-  # cost is a tmpdir-free run with no external services, and because "nothing depends on the
-  # ambient backend" is exactly the kind of claim that decays silently without a leg asserting it.
+  # in — all three legs report an identical count. The share leg earned its place immediately by
+  # finding nine; this one is a regression guard from birth, which is the outcome to expect once the
+  # habit it enforces is already established. It stays because it costs a tmpdir-free run with no
+  # external services, and because "nothing depends on the ambient backend" is exactly the kind of
+  # claim that decays silently without a leg asserting it.
   #
-  # NO EXTERNAL SERVICE, deliberately: spec §7 gives S3 a stubbed client, and LibraryBackendCheck's
-  # s3 leg is config-PRESENCE only and never touches the network (boot must not depend on a third
-  # party being reachable). So these knobs point at nothing real on purpose — the bucket does not
-  # exist and the credentials are not credentials. Any test that made a real S3 call would fail
-  # here, which is a feature.
+  # NO EXTERNAL SERVICE, deliberately — see the comment on the `test-s3` gate in config/ci.rb.
   test-s3-backend:
-    runs-on: [self-hosted, linux]
-
+    runs-on: [self-hosted, macos]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      - name: Ensure resvg (SVG→PNG for preview tests)
-        run: |
-          if ! command -v resvg >/dev/null 2>&1; then
-            cargo install resvg --version 0.47.0 || true
-          fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Run tests with LIBRARY_BACKEND=s3
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Ensure resvg (SVG→PNG for the preview tests)
+        run: ci/ensure-resvg.sh
+      - name: Run the suite (s3 backend)
         env:
           RAILS_ENV: test
-          LIBRARY_BACKEND: s3
-          LIBRARY_S3_BUCKET: ci-not-a-real-bucket
-          LIBRARY_S3_REGION: us-east-1
-          LIBRARY_S3_ACCESS_KEY_ID: ci
-          LIBRARY_S3_SECRET_ACCESS_KEY: ci
-          LIBRARY_S3_PREFIX: library
-        run: bin/rails db:test:prepare test
+        run: bin/ci test-s3
 
+  # The browser tier. Its own job so its cost stays visible as it grows, rather than inflating the
+  # unit-test job. See test/system/README.md for what earns a place in it.
   system-test:
-    runs-on: [self-hosted, linux]
-
-    # services:
-    #  redis:
-    #    image: valkey/valkey:8
-    #    ports:
-    #      - 6379:6379
-    #    options: --health-cmd "redis-cli ping" --health-interval 10s --health-timeout 5s --health-retries 5
+    runs-on: [self-hosted, macos]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          bundler-cache: true
-
-      - name: Run System Tests
+      - uses: actions/checkout@v6
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Run the system tests
         env:
           RAILS_ENV: test
-          # RAILS_MASTER_KEY: ${{ secrets.RAILS_MASTER_KEY }}
-          # REDIS_URL: redis://localhost:6379/0
-        run: bin/rails db:test:prepare test:system
-
+        run: bin/ci system
       - name: Keep screenshots from failed system tests
         uses: actions/upload-artifact@v7
         if: failure()

@@ -112,6 +112,29 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "stop — see the comment above REQUIRED_GATES."
   end
 
+  test "every ci.yml gate job invokes bin/ci with a gate that exists" do
+    # The other direction of the contract. Task 2's test proves bin/ci DEFINES the gates; this
+    # proves ci.yml USES them and does not hand-roll a command that can drift from the definition.
+    # Without this, ci.yml could keep its own `bin/rails test` line and the single-source property
+    # would quietly stop being true.
+    gates = bin_ci_gates
+    jobs  = YAML.load_file(WORKFLOW_DIR.join("ci.yml"), aliases: true).fetch("jobs")
+
+    gate_jobs = jobs.except("preflight")
+    assert gate_jobs.any?, "expected ci.yml to have gate jobs besides preflight"
+
+    gate_jobs.each do |name, job|
+      commands = Array(job["steps"]).filter_map { |s| s["run"] }
+      invocations = commands.flat_map { |c| c.scan(%r{\bbin/ci\s+([a-z0-9-]+)}) }.flatten
+      assert_equal 1, invocations.size,
+                   "ci.yml job `#{name}` must invoke `bin/ci <gate>` exactly once, found " \
+                   "#{invocations.inspect}"
+      assert_includes gates, invocations.first,
+                      "ci.yml job `#{name}` runs `bin/ci #{invocations.first}`, which config/ci.rb " \
+                      "does not define"
+    end
+  end
+
   private
 
     # The real gate list, read by RUNNING bin/ci rather than by parsing config/ci.rb.
