@@ -34,26 +34,21 @@ Sizes are rough: **S** ≈ under a day, **M** ≈ a few days, **L** ≈ a week o
 
 ## 1. From this audit
 
-Full evidence in `docs/AUDIT-2026-07-30.md`; the fix sequence is
-`docs/superpowers/plans/2026-07-30-audit-fixes-plan.md`.
+**Thirteen of the sixteen findings are CLOSED** (2026-07-30, branch
+`claude/todo-audit-tests-baf3f9`). Evidence and outcomes: `docs/AUDIT-2026-07-30.md`. Suite
+1690 → 1777, identical on all three backends, `bin/ci` green on all seven gates.
+
+Pruned to what is genuinely still open, per this document's own preamble — a stale open-list
+spends the next reader's attention on finished work.
 
 | # | Item | Class | Size |
 |---|---|---|---|
-| S1 | Enable `force_ssl` + `assume_ssl`, **env-gated** so the plain-HTTP LAN deploys survive | Blocking | S |
-| S9 | Switch on Solid Cache (`config.cache_store`) — provisioned, never wired; also a precondition for S3 | Blocking | S |
-| S3 | Rate-limit login / password-reset / confirmation-resend / signup. **Do after S9** | Blocking | S |
-| S2 | `config.paranoid = true` — closes user enumeration; changes flow copy, so tests move with it | Blocking | S |
-| S10 | Require the current password to delete an account (today one request destroys everything) | Blocking | S |
-| P1 | `projects#show` N+1: add `:rich_text_body` to the eager load | Blocking | S |
-| T3 | Query-count guards on the main web pages — the class of test that would have caught P1 | Next | S |
-| T1 | Tests for the 13 unexercised web actions (account deletion and update first) | Next | M |
-| T2 | Cross-user authorization test per mutating web action | Next | M |
-| S7 | Raise the password floor from 6 to 10–12; consider a breached-password check | Next | S |
-| S4 | Content-Security-Policy — report-only first, then enforce | Next | S |
-| S6 | Unique index on `maker_file_attachments`; needs a dedupe pass in the migration | Backlog | S |
-| P2 | Collapse the four redundant `Node Load`s on `projects#show` | Backlog | S |
-| S5 | Upload size cap + per-user quota — **needs a number from you**, and a wrong one rejects real CAD files | Decision | M |
-| P3 | Pagination for the `files#index` folder view — carried, a file-browser decision on its own merits | Decision | M |
+| S1-deploy | **`FORCE_SSL=1` is set in `config/deploy.ovh.yml` but has not been deployed.** The code fix is in; it takes effect on the next `kamal deploy -d ovh`. Verify afterwards: http→https 301, an HSTS header, a `Secure` session cookie, and `/up` still answering 200 (the `ssl_options` exclusion — if that breaks, kamal rolls the deploy back). | Blocking | S |
+| S4-enforce | **Flip the CSP from report-only to enforcing.** The policy is live and report-only; two defects in it were already caught by the browser and fixed (see the audit's S4-a/S4-b). Remaining: read the console for violations on the grid page, the rich-text editor, the file browser and all three `/tools` addons, then set `content_security_policy_report_only = false`. A test cannot tell you this — only a browser can. | Next | S |
+| S7-breach | Add a breached-password check at signup. The length floor is now 10; the breach check is the other half of current guidance and was left out because it puts a network dependency on the signup path — a decision, not a detail. | Backlog | M |
+| S5 | Upload size cap + per-user quota — **needs a number from you.** A wrong one rejects legitimate CAD files, which is why it was not guessed. Self-host it is the user's own disk; on the managed plan it is unbounded storage and egress with no ceiling and no way to express one. | Decision | M |
+| P2 | Collapse the four redundant `Node Load`s on `projects#show` — `@att_nodes`, `@entry_nodes` and `ThumbnailMap` each resolve nodes independently. **Constant, not N+1** (it does not grow with the page), so this is ~3 round-trips of latency, not a scaling bug. | Backlog | S |
+| P3 | Pagination for the `files#index` folder view — carried unchanged. ~160 ms of render at 2000 nodes, identical on all three backends, so the residual is HTML generation rather than query cost. A file-browser decision on its own merits. | Decision | M |
 
 ---
 
@@ -164,10 +159,10 @@ Small, but each one costs the next reader real time.
 
 | Item | Size |
 |---|---|
-| `CLAUDE.md` §4 claims the stack is "Solid Queue/Cache/Cable" — **Cache is not in effect** (audit S9). Correct it with the fix. | S |
+| ~~`CLAUDE.md` §4 claims the stack is "Solid Queue/Cache/Cable" — Cache is not in effect~~ **DONE 2026-07-30** — Solid Cache is wired and the row says what happened. | — |
 | A third copy of the file-type vocabulary lives in `importer_controller.js`'s `roleFor` and has drifted from `ROLE_BY_EXT`. Browser-only and the server re-derives authoritatively, so nothing is broken — but it is a live second source of truth. | S |
 | `docs/STATUS.md`'s suite-count entries **do not form a chain** and cannot be used as a baseline. Take a baseline by running the merge-base. Worth a one-line warning at the top of the file. | S |
-| `maker_file_attachments` uniqueness (audit S6) is noted in STATUS as open and is still open. | S |
+| ~~`maker_file_attachments` uniqueness (audit S6) is noted in STATUS as open and is still open.~~ **DONE 2026-07-30** — unique index on all four key columns, with a dedupe pass. STATUS's mention should be retracted next time that file is edited. | — |
 
 ---
 
@@ -187,7 +182,17 @@ Not restated here; these are already scoped elsewhere and none is blocking.
 
 ## The short answer
 
-If you only do one block: **§1's five Blocking items plus §2.1.** Four are one-line config
-changes, one is a one-line eager-load, and together they close every exposure this audit found
-that is exposed *now*. Everything else in this document is either a product decision, a
-deliberate deferral, or work that is genuinely large.
+**Updated 2026-07-30, after the remediation branch.** §1's blocking items are done in code; what
+is left there is a **deploy** (`kamal deploy -d ovh`, to make `FORCE_SSL` real) and a **browser
+pass** (to flip the CSP to enforcing).
+
+So the largest genuinely open things in this document are now, in order:
+
+1. **§2.1 — register the Linux and Windows CI runners.** Everything about the mount adapters, the
+   two-device E2E, and the external conformance suites is currently *skipped, not passing*. This
+   is the biggest gap between what CI appears to cover and what it covers.
+2. **§3 — Inventory and BOM have no web UI.** `CLAUDE.md` §1 names files, inventory and projects
+   as the three pillars; two of three have one.
+3. **§4.1 — OAuth/OIDC email verification**, the one unfinished step in `CLAUDE.md` §12.
+
+Everything else is a product decision, a deliberate deferral, or work that is genuinely large.
