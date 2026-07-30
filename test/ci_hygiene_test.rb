@@ -135,6 +135,34 @@ class CiHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  test "every linux or windows job is preflight-gated so it can never queue against a missing runner" do
+    # THE CORE INVARIANT. A job whose labels match no online runner does not fail — it queues for
+    # 24h at 0 elapsed and is then auto-cancelled, leaving mergeStateStatus UNSTABLE and the merge
+    # needing --admin. That is how CI went dark on 2026-06-24 and stayed dark for five weeks.
+    #
+    # macos jobs are exempt: the preflight job itself runs on macos, so if that family were absent
+    # the gate could not start either and gating a macos job on it would be circular.
+    ungated = []
+    each_static_job do |file, name, job|
+      families = Array(job["runs-on"]).map { |l| l.to_s.downcase } & FAMILIES
+      gated_families = families - [ "macos" ]
+      next if gated_families.empty?
+
+      needs = Array(job["needs"]).map(&:to_s)
+      condition = job["if"].to_s
+      gated_families.each do |family|
+        unless needs.include?("preflight") &&
+               condition.include?("needs.preflight.outputs.#{family}")
+          ungated << "#{file}: job `#{name}` (#{family})"
+        end
+      end
+    end
+    assert_empty ungated,
+                 "these jobs would QUEUE FOREVER if their runner family is absent — add " \
+                 "`needs: preflight` and `if: needs.preflight.outputs.<family> == 'true'`:\n  " \
+                 "#{ungated.join("\n  ")}"
+  end
+
   private
 
     # The real gate list, read by RUNNING bin/ci rather than by parsing config/ci.rb.
