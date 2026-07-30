@@ -368,8 +368,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   gap, it doesn't work, failing to exactly the 500 that was forbidden. A 501 from
   `Chunk#write` would also be *factually wrong* (the caller used the wrong door), and a
   controller rescue would launder an s3 **misconfiguration** into a routine response.
-  Keep `NotImplementedError` un-rescued and loud:
-  `grep -rn "rescue.*NotImplementedError" app lib | grep -v ':[0-9]*: *#'` returns nothing.
+  Keep `NotImplementedError` un-rescued and loud. **`test/architecture_invariants_test.rb`
+  enforces this** — it is no longer a grep you are trusted to remember to run.
 - **Ungated on purpose:** **`devices`** (gating it makes a share deployment's whole v1 API
   unauthenticatable, since a device token is the only credential the API accepts — and the
   plan's own test stayed green because it minted a token in Ruby instead of calling the
@@ -591,6 +591,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/ | grep -v ':[0-9]*: *#'`
   The `grep -v` is load-bearing, not noise — without it the check reports comments that
   *describe* the removed coupling. **A proof that cries wolf gets ignored.**
+  **`test/architecture_invariants_test.rb` now RUNS this**, asserting both the count *and* the
+  file, so the claim can no longer drift the way it did before (it read "no hits" for months
+  after the addon framework made the true answer one). Change the code and the test tells you;
+  change the exception on purpose and update the test and this bullet together.
 
 ### 14d. The maker web layer
 
@@ -605,10 +609,16 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   inline rather than a service**, and a verb more than one caller performs doesn't have one.
   (Excluded on purpose: `require_capability!` gates and views that pick an upload FORM —
   those select a UI, which is `port_writable`'s stated job.)
-- **Controllers call `Maker::MoveNode` / `Maker::AttachToProject` / `Maker::LibraryFolder` and
-  never reach into `Sync::` or the port themselves.** That seam is what keeps the split's
-  tripwire honest: **if work in the maker layer needs to touch sync, the changelog, conflicts,
-  locks, or the mounts, the boundary is wrong — stop.**
+- **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
+  `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
+  This is **not** "controllers never touch `Sync::`": they do, in ten places, and three of those
+  are the deliberate two-door branches listed above (`FilesController#destroy` →
+  `Sync::SubtreeDelete`, `TrashController#restore` → `Sync::Trash.restore`, plus
+  `FilesController`'s `Sync::Commit` upload flow). *(An earlier draft of this line did say
+  "never reach into `Sync::`". It was wrong on its own page — the five-times list two bullets up
+  names two of the exceptions — and a reader who believed it would "fix" working code.)* The
+  tripwire is about **new** work: **if a maker-layer change needs to touch sync, the changelog,
+  conflicts, locks, or the mounts, the boundary is wrong — stop.**
 - **ONE file-type vocabulary.** `FilesHelper::EXT_FAMILIES` is **derived** from `ROLE_BY_EXT`,
   grouped by role and labelled by `ROLE_LABELS`. Add an extension in **`ROLE_BY_EXT` only**.
   Two consequences: every extension must satisfy `FilesController::EXT_RE`
@@ -716,6 +726,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **Local-first**: metadata reads hit local SQLite, never the WAN.
 - Content-addressed chunks + immutable versions everywhere; **keep versions** for restore.
 - Adapter-agnostic server code (SQLite + Postgres) without perf compromise.
+- **MUTATION-CHECK EVERY GUARD YOU WRITE.** After a test that exists to *forbid* something goes
+  green, break the thing it guards and confirm it goes **RED** — then restore. A guard that has
+  never failed has not been shown to work. This is the cheapest defence against this repo's
+  dominant failure mode, **a green suite over something that never worked**: the `scope:` form bug
+  twice, the nine capability-gating tests that *could not fail for the reason they existed*,
+  `FakeS3`'s inverse encoding (79/80 green over silent data loss), and the sidecar-licence guard
+  whose discovery filter skipped the worse case. Every time someone did mutation-check, it paid
+  immediately. `bin/ci` is ~40 s, so there is no budget argument.
+  **Assert the narrowest true thing, then mutate to prove each assertion carries weight** — in
+  `ArchitectureInvariantsTest`, a mutation that keeps the count at 1 while *moving* the reference
+  is caught only by the second assertion; count alone would have passed.
 - Write tests; verify end-to-end against the live server when wiring sync. Prefer a **probe
   over an argument** — §14e.
 
