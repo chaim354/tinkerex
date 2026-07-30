@@ -248,4 +248,80 @@ module Library
       Rails.logger = prior
     end
   end
+
+  # The project-folder intake runs at the END of #perform. ORDER IS A CORRECTNESS CONSTRAINT, not
+  # tidiness — see Maker::ProjectIntake and the spec's §5.
+  #
+  # PROVED BY EFFECT, NOT BY CALL-ORDER RECORDING, and that is deliberate on two counts. `stub`
+  # does not exist in this suite (minitest 6 dropped minitest/mock — see
+  # test/jobs/maker/generate_preview_job_test.rb's forcing_available), and more importantly a
+  # recorded order would assert the implementation rather than the guarantee. Here the file
+  # exists ONLY on disk: the intake can only attach a node the reconcile has already created, so
+  # an attachment at the end of one #perform IS the proof that the reconcile ran first.
+  #
+  # A SIBLING OF ScanJobTest, NOT A SUBCLASS — deliberately, even though it wants that class's
+  # `user!` one-liner. Subclassing `< ScanJobTest` was tried first: Minitest registers every
+  # subclass of a TestCase as its own runnable, so it re-ran all 13 of the parent's tests a
+  # SECOND time under the child's name (28 runs instead of 15) — each preceded by this class's
+  # own setup building a Share root and a project folder that those inherited test bodies never
+  # look at. Harmless in outcome, pure waste in the suite, and not this codebase's idiom for
+  # sharing test logic: the adapter contracts (test/services/file_layer/adapter_contract.rb) do
+  # that with a MODULE included into each concrete test case, never by inheriting one concrete
+  # `*Test` class from another. So this repeats the one line of setup instead.
+  class IntakeOrderTest < ActiveSupport::TestCase
+    setup do
+      @root = Dir.mktmpdir
+      @user = User.create!(email: "job-#{SecureRandom.hex(6)}@example.com")
+      # A Share adapter rooted at @root, so ensure_library_folder! below goes through the PORT's
+      # mkdir (port_writable? true) and stamps a real storage_path under @root, AND so the intake's
+      # own file move (Maker::MoveNode -> FileLayer.current.move) lands on the same directory the
+      # scan just read. Chunk mode's mkdir never touches disk and leaves storage_path nil — the
+      # file below needs a real on-disk parent to be written into.
+      FileLayer.current = FileLayer::Share.new(root: @root)
+
+      @project = @user.maker_projects.create!(name: "Desk Lamp")
+      @folder = @project.ensure_library_folder!(@user)
+      # A file that exists on disk and in NO node row — "someone drops a file on the NAS in
+      # Finder". Path must match the folder's storage_path. The mkdir_p is usually a no-op (the
+      # port_mkdir above already created the directory); it is here so this setup does not depend
+      # on that and still reads correctly if the fixture's root is recreated.
+      FileUtils.mkdir_p(File.join(@root, @folder.storage_path))
+      File.binwrite(File.join(@root, @folder.storage_path, "panel.svg"), "<svg/>")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root && File.directory?(@root)
+    end
+
+    test "one perform indexes the file AND attaches and files it" do
+      Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+
+      att = @project.file_attachments.sole
+      node = @user.nodes.find_by!(node_id: att.node_id)
+      assert_equal "panel.svg", node.name
+      assert_equal "vector", att.role
+      assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name,
+                   "the intake ran after the reconcile — it filed a node the reconcile created"
+    end
+
+    # A scan that SUCCEEDED must not be reported as failed because the intake blew up. The
+    # reconcile is already committed (there is no transaction), so an operator reading a failed
+    # ScanJob would conclude the library did not index — which would be false.
+    #
+    # Hand-rolled override with an ensure-restore, the forcing_available idiom from
+    # generate_preview_job_test.rb. The ensure is load-bearing: a leaked override would make
+    # every later test in this process see a broken intake.
+    test "an intake failure does not fail a scan that already succeeded" do
+      original = Maker::ProjectIntake.method(:for_user)
+      Maker::ProjectIntake.define_singleton_method(:for_user) { |**| raise "intake exploded" }
+      begin
+        assert_nothing_raised { Library::ScanJob.perform_now(user_id: @user.id, root: @root) }
+        assert @user.nodes.present.exists?(name: "panel.svg"),
+               "the reconcile's work stands — it committed before the intake ran"
+      ensure
+        Maker::ProjectIntake.define_singleton_method(:for_user, original)
+      end
+    end
+  end
 end
