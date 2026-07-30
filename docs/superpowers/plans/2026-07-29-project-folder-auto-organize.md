@@ -1674,6 +1674,39 @@ inbox, and the guard would guard nothing."
 
 ---
 
+## BLOCKER on Task 9, found during Task 4's review (2026-07-30)
+
+**A duplicate-attachment race must be resolved before the periodic job is wired.**
+
+`ProjectIntake#attach` reads which node_ids are already attached, then `insert_all`s the rest —
+no transaction between the two, and `maker_file_attachments` has **no uniqueness index**. If any
+other writer attaches the same file inside that window, the sweep writes a second row and the
+project page renders the file twice, which is the exact failure `#attach`'s own comment names.
+
+**It is inherited, not introduced:** `AttachToProject#attach_bundle` has the identical
+dedupe-then-bulk-insert shape today. What changes at Task 9 is the *risk profile*. Every existing
+writer runs from a user action, so the window only opens on a rare double-submit. A periodic sweep
+has no user to serialize against: one ordinary concurrent attach landing in the window is enough,
+and it recurs every 15 minutes indefinitely.
+
+**CLAUDE.md's stated reason for having no index is stale.** It says the table has no uniqueness
+index because "this service is the only writer" — Task 4's review counted **five** writers:
+`AttachToProject#call`, `Projects::UploadsController#create!`, `Models::AttachmentsController#create!`,
+`CurrentProject#attach_addon_files_to_current_project`, and `Projects::EntryPhotosController#create!`.
+`ProjectIntake` is the sixth.
+
+**The fix is a unique index on `(user_id, attachable_type, attachable_id, node_id)` plus
+`insert_all(..., unique_by:)`** — which requires a backfill dedupe first, because duplicate rows
+may already exist in the three deployed libraries. That is a migration against production data and
+it was in neither the spec nor this plan.
+
+**Do not improvise this.** Before Task 9: measure how many duplicate rows exist on the deployed
+chunk / share / s3 libraries, then decide the dedupe with that number in hand. If the count is
+zero the index is cheap; if it is not, which row survives is a product decision (the oldest, by
+`AttachToProject#model_owning`'s `order(:id)` precedent) and the `position` column complicates it.
+
+---
+
 ## Task 9: The job and the chunk-mode schedule
 
 **Files:**
