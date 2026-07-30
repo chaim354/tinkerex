@@ -19,8 +19,10 @@ module Maker
   # here touches Sync::*, the changelog, conflicts, locks or the mounts.
   class ProjectIntake
     # What one project's intake did. `plan` is filled only in a dry run — [name, folder] pairs, so
-    # the rake task can print source -> destination without a second traversal.
-    Result = Data.define(:attached, :moved, :skipped, :plan, :status)
+    # the rake task can print source -> destination without a second traversal. `skips` is the
+    # SAME shape for the other outcome — [name, reason] pairs, one per file #file_all did not
+    # move — so Task 12's rake task can say which files and why, not just how many.
+    Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status)
 
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
@@ -49,7 +51,7 @@ module Maker
 
     def call
       folder = live_folder
-      return Result.new(attached: 0, moved: 0, skipped: 0, plan: [], status: :no_folder) unless folder
+      return Result.new(attached: 0, moved: 0, skipped: 0, skips: [], plan: [], status: :no_folder) unless folder
 
       files = subtree_files(folder)
       # ATTACH FIRST, AND THE ORDER IS LOAD-BEARING. It inherits Maker::AttachToProject's rule that
@@ -57,16 +59,16 @@ module Maker
       # must never cost the user a reference they asked for, and the reference is exactly as true
       # with the bytes still sitting at the root.
       attached = attach(files)
-      return Result.new(attached:, moved: 0, skipped: 0, plan: [], status: :ok) unless @move
+      return Result.new(attached:, moved: 0, skipped: 0, skips: [], plan: [], status: :ok) unless @move
 
       # THE INBOX IS THE ROOT, AND ONLY THE ROOT. Anything already in a subfolder is the user's
       # filing — including filing we would disagree with — and position is what records that, so
       # there is no state to keep. Re-filing a subfolder would fight the user every 15 minutes, and
       # on chunk each round of that fight is a changelog entry broadcast to every device.
       inbox = files.select { |n| n.parent_node_id == folder.node_id }
-      moved, skipped, plan = file_all(inbox)
+      moved, skipped, skips, plan = file_all(inbox)
 
-      Result.new(attached:, moved:, skipped:, plan:, status: :ok)
+      Result.new(attached:, moved:, skipped:, skips:, plan:, status: :ok)
     end
 
     private
@@ -152,24 +154,31 @@ module Maker
       rows.size
     end
 
-    # File each loose file, counting outcomes. Returns [moved, skipped, plan].
+    # File each loose file, counting outcomes. Returns [moved, skipped, skips, plan].
+    #
+    # #place ANSWERS A STRING (the destination folder) ON SUCCESS OR A SYMBOL (the skip reason) ON
+    # FAILURE — the two never collide, since Maker::ProjectFolders::ROLE_FOLDERS' values are all
+    # folder-name strings and every reason below is a Symbol — so the dispatch here is a plain
+    # `is_a?(Symbol)` rather than a second lookup that could disagree with #place about what
+    # happened.
     def file_all(inbox)
       moved = 0
-      skipped = 0
+      skips = []
       plan = []
       inbox.each do |node|
-        dest = place(node)
-        if dest
-          moved += 1
-          plan << [ node.name, dest ]
+        outcome = place(node)
+        if outcome.is_a?(Symbol)
+          skips << [ node.name, outcome ]
         else
-          skipped += 1
+          moved += 1
+          plan << [ node.name, outcome ]
         end
       end
-      [ moved, skipped, plan ]
+      [ moved, skips.size, skips, plan ]
     end
 
-    # Move one file into its category folder. Answers the folder name, or nil if it stayed put.
+    # Move one file into its category folder. Answers the folder name, or the skip reason (a
+    # Symbol) if it stayed put — see #file_all for why those two shapes never collide.
     #
     # IT ASKS Maker::AttachToProject#refusal_for FIRST, and that is this method's most important
     # line. Those three rules (:not_a_file, :model_bundle, :attached_elsewhere) are policy about
@@ -183,13 +192,30 @@ module Maker
     # than N identical log lines. Adding it to this list would make an unmounted NAS log once per
     # file and pretend each one was an independent skip.
     #
-    # InvalidName IS DELIBERATELY ABSENT TOO. The name comes from an existing `nodes` row, which
-    # #leaf! has already vetted — there is no producer on this path. Maker::AttachToProject#move
-    # records what a too-wide rescue costs: it caught bare ArgumentError until a review drove the
-    # consequence that arity drift, a kwarg rename, or a nil reaching File.extname all became a
-    # flash message with a green suite.
+    # InvalidName IS RESCUED, AND THE EARLIER VERSION OF THIS COMMENT SAYING IT HAD "no producer on
+    # this path" WAS WRONG — reproduced (see project_intake_test.rb): `Node` validates only
+    # presence (app/models/node.rb), so a name #leaf! would reject can already be sitting in
+    # `nodes` from a door that never ran #leaf! at all — Library::Reconciler#create_or_revive!
+    # writes File.basename(rel_path) verbatim, V1::CommitsController feeds params[:name] into
+    # Sync::Commit.begin unchecked, and FileLayer::Share#leaf! is looser (no length or backslash
+    # check) than MoveNode#leaf!. It is not adversarial input either: MoveNode::MAX_NAME_BYTES is
+    # 255 BYTES because NTFS counts UTF-16 units, so an ordinary CJK filename, legal on the Windows
+    # client that made it, is enough — and it arrives via a normal sync push. One unmovable name
+    # must not abort the sweep over the rest of the project's library, which is exactly what an
+    # uncaught InvalidName did. Rescuing it here is the intended use of the named subclass, not a
+    # widening of it: MoveNode's own header says InvalidName exists so "a caller that wants to
+    # answer 'that name is not allowed' can now do so WITHOUT also swallowing arity drift" — and
+    # AttachToProject#move, one file away, already treats it as an ordinary :bad_name outcome
+    # rather than letting it raise.
+    #
+    # BARE ArgumentError STAYS OUT, and that is a different rule, not a loosened version of this
+    # one. AttachToProject#move records what a too-wide rescue costs: it caught bare ArgumentError
+    # until a review drove the consequence that arity drift, a kwarg rename, or a nil reaching
+    # File.extname all became a flash message with a green suite. InvalidName is a NAMED subclass
+    # created for exactly this purpose; ArgumentError itself is not.
     def place(node)
-      return nil if attach_policy.refusal_for(node)
+      refusal = attach_policy.refusal_for(node)
+      return refusal if refusal
 
       dest = Maker::ProjectFolders.folder_for(node.name)
       # Before ensure_path!, so a dry run creates no folder — the reason it is a `dry run` and not
@@ -199,13 +225,29 @@ module Maker
       target = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, dest ])
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
       dest
-    rescue Maker::MoveNode::Collision, FileLayer::NotFound, FileLayer::UnsupportedOperation => e
-      # INFO, not warn: each of these is an ordinary thing that happens to a user's library, and the
-      # per-project summary line is where the operator-visible count lives. A warn per file would
-      # make a single permanently-colliding name noise every 15 minutes forever.
-      Rails.logger.info("Maker::ProjectIntake: left #{node.name.inspect} at the root of " \
-                        "#{@project.slug} — #{e.class}")
-      nil
+    rescue Maker::MoveNode::Collision => e
+      skip(node, :collision, e)
+    rescue FileLayer::NotFound => e
+      skip(node, :not_found, e)
+    rescue FileLayer::UnsupportedOperation => e
+      skip(node, :unsupported, e)
+    rescue Maker::MoveNode::InvalidName => e
+      skip(node, :bad_name, e)
+    end
+
+    # Log one skipped file and answer the reason, so #place can end every rescue clause with a
+    # single expression. WARN, not info: every other per-item skip in the library-scan family warns
+    # for exactly this shape — an ordinary, individually-unsurprising thing that recurs forever —
+    # Library::Scanner for an unreadable dir/file or an invalid-encoding name, S3Observer for a
+    # permanently un-indexable key, Reconciler when it cannot hash. There is no precedent in this
+    # codebase for logging nothing here, and this is not the genuinely-routine-OS-clutter case that
+    # would justify one. e.message is included, not just e.class: FileLayer::NotFound alone is
+    # raised with several different messages for different causes (AttachToProject#log_failure
+    # includes it for the same reason), and the class name alone cannot tell them apart later.
+    def skip(node, reason, error)
+      Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} at the root of " \
+                        "#{@project.slug} — #{error.class}: #{error.message}")
+      reason
     end
 
     # Memoized: #refusal_for runs per file and the object holds no per-file state.

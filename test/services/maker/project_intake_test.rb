@@ -226,6 +226,22 @@ module Maker
       assert_equal %w[cnc design], made.sort
     end
 
+    # COVERAGE, NOT A KNOWN BUG: LibraryFolder#ensure_segment find-or-creates each segment, so this
+    # is safe today. It is the case a future change to folder creation would break first — two
+    # files racing to create "design" in the same sweep must still land in ONE folder, not two
+    # identically-named ones.
+    test "two loose files that need the same new folder both land in the one folder" do
+      svg1 = file("panel.svg")
+      svg2 = file("plate.svg")
+      result = intake
+      assert_equal 2, result.moved
+      assert_equal "design", parent_name(svg1)
+      assert_equal "design", parent_name(svg2)
+      assert_equal svg1.reload.parent_node_id, svg2.reload.parent_node_id
+      made = @user.nodes.present.where(parent_node_id: @folder.node_id, kind: "dir").pluck(:name)
+      assert_equal %w[design], made
+    end
+
     # ROOT = INBOX. A file the user filed by hand — even "wrong" — is never touched again.
     test "a file already in a subfolder is left exactly where it is" do
       sub = dir("cnc")
@@ -263,6 +279,7 @@ module Maker
       model.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
       result = intake
       assert_equal 0, result.moved
+      assert_equal [ [ "widget.stl", :model_bundle ] ], result.skips
       assert_equal @folder.node_id, node.reload.parent_node_id
     end
 
@@ -270,7 +287,9 @@ module Maker
       other = @user.maker_projects.create!(name: "Bench")
       node = file("shared.stl")
       other.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
-      assert_equal 0, intake.moved
+      result = intake
+      assert_equal 0, result.moved
+      assert_equal [ [ "shared.stl", :attached_elsewhere ] ], result.skips
       assert_equal @folder.node_id, node.reload.parent_node_id
     end
 
@@ -283,6 +302,7 @@ module Maker
       result = intake
       assert_equal 0, result.moved
       assert_equal 1, result.skipped
+      assert_equal [ [ "panel.svg", :collision ] ], result.skips
       assert_equal @folder.node_id, loose.reload.parent_node_id
       assert @project.file_attachments.exists?(node_id: loose.node_id),
              "the attach is durable — a failed move must not cost the reference"
@@ -296,7 +316,61 @@ module Maker
       result = intake
       assert_equal 1, result.moved
       assert_equal 1, result.skipped
+      assert_equal [ [ "panel.svg", :collision ] ], result.skips
       assert_equal "cnc", parent_name(ok)
+    end
+
+    # THE LOG IS THE AUDIT TRAIL for a skip, same as it is for a MAX_DEPTH truncation above — a
+    # real Logger writing into a StringIO, not a mock (Object#stub does not exist in this suite).
+    # Pinned on #collision specifically so each rescue clause's route through #skip is verified on
+    # its own: the moved/skipped/skips counts above would already catch a clause that forgot to
+    # call #skip and returned something else, but only the log content proves the warn actually
+    # fires with the file, the project and the reason in it.
+    test "a skipped file logs a warning naming the file, the project and the reason" do
+      sub = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, "design" ])
+      file("panel.svg", parent: sub.node_id)
+      file("panel.svg") # collides
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = Logger.new(log)
+      begin
+        intake
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_match "panel.svg", log.string
+      assert_match @project.slug, log.string
+      assert_match "Maker::MoveNode::Collision", log.string
+    end
+
+    # REGRESSION GUARD. Maker::MoveNode::InvalidName is a real, reachable outcome on this path, not
+    # just adversarial input — before #place rescued it, this exact scenario raised out of
+    # Maker::ProjectIntake.for_project uncaught, aborting the whole project's sweep instead of
+    # returning a Result. `Node` validates only presence (see app/models/node.rb) — no length or
+    # shape check — so a name like this can already be sitting in `nodes` from a door that never
+    # runs MoveNode#leaf!, and an ordinary CJK filename from a Windows client is enough to trigger
+    # it (NTFS counts UTF-16 units; see MoveNode::MAX_NAME_BYTES's comment) — no adversary required.
+    test "a name too long to move is skipped, logged, and does not abort the rest of the sweep" do
+      bad = file(("a" * 300) + ".svg")
+      ok = file("pocket.nc")
+
+      log = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = Logger.new(log)
+      result = begin
+        intake
+      ensure
+        Rails.logger = original_logger
+      end
+
+      assert_equal 1, result.moved
+      assert_equal 1, result.skipped
+      assert_equal [ [ bad.name, :bad_name ] ], result.skips
+      assert_equal "cnc", parent_name(ok), "a bad name must not abort the rest of the sweep"
+      assert_match @project.slug, log.string
+      assert_match "not a valid file name", log.string
     end
 
     test "move: false attaches without filing anything" do
