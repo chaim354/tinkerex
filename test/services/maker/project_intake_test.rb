@@ -761,27 +761,30 @@ module Maker
       assert_equal 500, Maker::ProjectIntake.max_moves
     end
 
-    # --- the SYNC cap (Task 11 Part A) --------------------------------------------
+    # --- the EAGER cap (Task 11 Part A) --------------------------------------------
     #
     # A separate, much smaller cap for the ONE caller that runs INSIDE a web request (for_node,
-    # below) rather than an unattended background job (for_user/the periodic sweep, above). See
-    # SYNC_MAX_MOVES's comment in project_intake.rb for the full argument; these tests exist to
-    # PROVE the two never leak into each other, not just assert it in a comment.
+    # below) rather than an unattended background job (for_user/the periodic sweep, above). Named
+    # "eager" (the eager nudge FilesController drives), deliberately NOT "sync" -- this cap has
+    # nothing to do with Capabilities#syncable? (chunk vs. share/s3) and applies identically on all
+    # three backends. See EAGER_MAX_MOVES's comment in project_intake.rb for the full argument;
+    # these tests exist to PROVE the two caps never leak into each other, not just assert it in a
+    # comment.
 
-    test "PROJECT_ORGANIZE_SYNC_MAX_MOVES is honored per call" do
-      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
-      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "3"
+    test "PROJECT_ORGANIZE_EAGER_MAX_MOVES is honored per call" do
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "3"
       begin
-        assert_equal 3, Maker::ProjectIntake.sync_max_moves
+        assert_equal 3, Maker::ProjectIntake.eager_max_moves
       ensure
-        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
       end
     end
 
-    test "the default sync cap is a low-tens number, well under MAX_MOVES" do
-      assert_equal 25, Maker::ProjectIntake::SYNC_MAX_MOVES
-      assert_equal 25, Maker::ProjectIntake.sync_max_moves
-      assert_operator Maker::ProjectIntake::SYNC_MAX_MOVES, :<, Maker::ProjectIntake::MAX_MOVES
+    test "the default eager cap is a low-tens number, well under MAX_MOVES" do
+      assert_equal 25, Maker::ProjectIntake::EAGER_MAX_MOVES
+      assert_equal 25, Maker::ProjectIntake.eager_max_moves
+      assert_operator Maker::ProjectIntake::EAGER_MAX_MOVES, :<, Maker::ProjectIntake::MAX_MOVES
     end
 
     # --- for_node ----------------------------------------------------------------
@@ -815,40 +818,40 @@ module Maker
       assert_nil Maker::ProjectIntake.for_node(user: other, node:)
     end
 
-    # THE HOLE THIS CLOSES, UNCHANGED BY THE SYNC/PERIODIC SPLIT BELOW: without a cap-check of its
+    # THE HOLE THIS CLOSES, UNCHANGED BY THE EAGER/PERIODIC SPLIT BELOW: without a cap-check of its
     # own, for_node would file an over-cap project's backlog anyway, one eager upload at a time --
     # each individual call would see only the one new file it is attaching, never the pile already
     # sitting there, unless it re-counts the WHOLE inbox before moving anything. It does.
     #
-    # USES THE SYNC CAP, NOT THE PERIODIC ONE (Task 11 Part A) -- for_node is the entry point that
-    # runs INSIDE a web request, so PROJECT_ORGANIZE_SYNC_MAX_MOVES bounds it; PROJECT_ORGANIZE_
+    # USES THE EAGER CAP, NOT THE PERIODIC ONE (Task 11 Part A) -- for_node is the entry point that
+    # runs INSIDE a web request, so PROJECT_ORGANIZE_EAGER_MAX_MOVES bounds it; PROJECT_ORGANIZE_
     # MAX_MOVES (for_user's cap) has no effect on it at all. See the independence tests below for
     # proof, not just this comment's say-so.
-    test "for_node respects the sync cap, so a large backlog stays attach-only" do
+    test "for_node respects the eager cap, so a large backlog stays attach-only" do
       3.times { |i| file("p#{i}.svg") }
       node = file("trigger.svg")
-      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
-      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "2"
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "2"
       begin
         result = Maker::ProjectIntake.for_node(user: @user, node:)
         assert_equal 0, result.moved
         assert_equal 4, result.attached, "the attach half still runs, as it does for a whole run"
       ensure
-        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
       end
     end
 
-    test "under the sync cap, for_node both attaches and files" do
+    test "under the eager cap, for_node both attaches and files" do
       3.times { |i| file("p#{i}.svg") }
       node = file("trigger.svg")
-      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
-      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "10"
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "10"
       begin
         result = Maker::ProjectIntake.for_node(user: @user, node:)
         assert_equal 4, result.attached
         assert_equal 4, result.moved
       ensure
-        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
       end
     end
 
@@ -856,12 +859,13 @@ module Maker
     # landed in a project already holding 200 loose files paid for filing all 201 of them inline: a
     # `Maker::MoveNode` call per file, measured directly against this code at 2,425 queries and
     # ~340 ms on local SQLite with zero network latency (a runner script mirroring exactly this
-    # setup, before Part A existed). Over the sync cap, the whole file_all loop is skipped — the
-    # remaining cost is the two fixed-size steps: the inbox COUNT and the bulk attach (one pluck +
-    # one insert_all, never one query per file). The bound below is deliberately loose (real cost is
-    # under 10) so ordinary drift in the attach path cannot make this flaky; what it must catch is
-    # the shape coming back — a regression that lets filing run anyway would blow through 30 by two
-    # orders of magnitude, not by a little.
+    # setup, before Part A existed) -- CHUNK-MODE METADATA COST ONLY; see EAGER_MAX_MOVES's comment
+    # for why S3 and chunk-under-Postgres-contention are NOT covered by this number. Over the eager
+    # cap, the whole file_all loop is skipped — the remaining cost is the two fixed-size steps: the
+    # inbox COUNT and the bulk attach (one pluck + one insert_all, never one query per file). The
+    # bound below is deliberately loose (real cost is under 10) so ordinary drift in the attach path
+    # cannot make this flaky; what it must catch is the shape coming back — a regression that lets
+    # filing run anyway would blow through 30 by two orders of magnitude, not by a little.
     test "an over-cap upload costs a small, backlog-independent number of queries" do
       200.times { |i| file("loose#{i}.svg") }
       node = file("just_uploaded.svg")
@@ -869,7 +873,7 @@ module Maker
       n = count_queries { Maker::ProjectIntake.for_node(user: @user, node:) }
 
       assert_operator n, :<, 30,
-        "an over-the-sync-cap intake must not scale with backlog size (got #{n} queries for 201 " \
+        "an over-the-eager-cap intake must not scale with backlog size (got #{n} queries for 201 " \
         "loose files -- the pre-Part-A shape cost 2,425 for the same setup)"
     end
 
@@ -891,18 +895,18 @@ module Maker
       end
     end
 
-    test "the sync cap does not bound for_user" do
+    test "the eager cap does not bound for_user" do
       4.times { |i| file("p#{i}.svg") }
-      prior = ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"]
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
       # Far below the 4-file inbox -- if for_user read this variable at all, it would refuse the run.
-      ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = "1"
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "1"
       begin
         run = Maker::ProjectIntake.for_user(user: @user)
         assert_equal :ok, run.status
         assert_equal 4, run.results.sum { |_p, r| r.moved },
-                     "for_user must not be bounded by PROJECT_ORGANIZE_SYNC_MAX_MOVES"
+                     "for_user must not be bounded by PROJECT_ORGANIZE_EAGER_MAX_MOVES"
       ensure
-        ENV["PROJECT_ORGANIZE_SYNC_MAX_MOVES"] = prior
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
       end
     end
 

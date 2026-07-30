@@ -33,15 +33,17 @@ module Maker
     # sweep / a chunk deployment's Maker::ProjectIntakeJob, or Library::ScanJob's post-reconcile
     # call on share/s3). See .for_user for why it is an absolute count rather than a percentage.
     #
-    # NOT THE CAP A WEB REQUEST USES — see SYNC_MAX_MOVES just below. Two constants that both
+    # NOT THE CAP A WEB REQUEST USES — see EAGER_MAX_MOVES just below. Two constants that both
     # answer "how many files get filed" is exactly the shape a future reader collapses into one, so
     # the distinction is recorded at both definitions: this one bounds CHURN across a run nobody is
     # waiting on (SQLite has no statement timeout; a NAS or a bucket does not care how long a
-    # background job takes), SYNC_MAX_MOVES bounds LATENCY inside a request a browser IS waiting on.
-    # Measured, not assumed: 200 loose files already at a project root costs 2,425 queries and
-    # ~340 ms on local SQLite with zero network latency to file (see the query-count test below) —
-    # fine once every 15 minutes in a background job, not fine stacked onto the response time of
-    # every single upload into a project with any kind of backlog.
+    # background job takes), EAGER_MAX_MOVES bounds LATENCY inside a request a browser IS waiting
+    # on. Measured, not assumed, ON CHUNK MODE / LOCAL SQLITE: 200 loose files already at a project
+    # root costs 2,425 queries and ~340 ms to file with zero network latency (see the query-count
+    # test below) — fine once every 15 minutes in a background job, not fine stacked onto the
+    # response time of every single upload into a project with any kind of backlog. See
+    # EAGER_MAX_MOVES's comment for the SCOPE of that number: it is real, but it is one backend's
+    # metadata cost, not a bound on what this class costs everywhere.
     MAX_MOVES = 500
 
     # The ceiling .for_node uses INSTEAD OF MAX_MOVES — deliberately a different constant, a
@@ -51,18 +53,52 @@ module Maker
     # wait on the cost described in that constant's comment, and a 200-file backlog is not exotic —
     # the Printables zip importer drops a whole bundle into a project in one request.
     #
-    # A LOW-TENS DEFAULT keeps the synchronous path cheap: the attach half is always O(new files)
-    # regardless of this cap (see .call's ordering), and filing a couple dozen files is a couple
-    # dozen Maker::MoveNode calls, not a couple hundred — while staying large enough that the
-    # ordinary case, a handful of files dropped into a folder, files itself immediately without ever
-    # touching this ceiling.
+    # THE DEFAULT IS EVIDENCE-BASED BUT NOT EVENLY EVIDENCED ACROSS BACKENDS, and that is worth
+    # stating plainly rather than leaving implicit in a number. MAX_MOVES' comment's 2,425-queries/
+    # ~340ms figure is CHUNK-MODE METADATA COST ON LOCAL SQLITE WITH ZERO NETWORK LATENCY — real,
+    # and the evidence this default is an improvement over reusing MAX_MOVES, but it is the
+    # CHEAPEST of the three backends this cap governs, not a bound on what filing costs on the other
+    # two:
+    #
+    #   - S3: FileLayer::S3#move is THREE SEQUENTIAL, UNBATCHED NETWORK CALLS per file —
+    #     object_exists? (a HEAD), copy! (a COPY), then delete_object (a DELETE); verified by
+    #     reading the method, not assumed. At this cap's default that is 25 * 3 = 75 sequential S3
+    #     API calls inside one browser-facing request. docs/r2-migration.md / docs/STATUS.md
+    #     measured ~85–205 ms per comparable call against a real R2 bucket, so at the low end alone
+    #     that is several seconds an upload's response would sit waiting on.
+    #   - Chunk: filing N files fires N synchronous LibraryChannel.broadcast_change calls (one per
+    #     Sync::Mutation.apply inside MoveNode#chunk_move) PLUS one more per category subfolder
+    #     Maker::LibraryFolder.ensure_path! has to create along the way — verified directly: 25
+    #     same-category files (all .stl, one new folder) broadcast 26 times, 25 files split across
+    #     two categories (two new folders) broadcast 27, both measured at ~43–50 ms on local SQLite
+    #     with no contention. LibraryChannel's own header states the intent this pattern strains
+    #     under load: "Coarse (one event per commit) — never per-operation." Each broadcast's
+    #     Sync::Mutation.apply also takes the user-row lock in User#next_seq! (a Postgres FOR
+    #     UPDATE) inside its own transaction — a serialization point this local-SQLite-with-no-
+    #     contention number cannot speak to; it was never positioned to measure write contention on
+    #     managed Postgres, and does not claim to.
+    #
+    # THE DEFAULT STAYS 25 ANYWAY. It is a large, evidenced improvement over reusing MAX_MOVES (500)
+    # regardless of backend; it fails toward SLOW rather than WRONG on every one of the three (a
+    # project over the cap still attaches — always — and simply waits for the periodic sweep to
+    # file; see .for_node); and it is operator-tunable per deployment via
+    # PROJECT_ORGANIZE_EAGER_MAX_MOVES. An S3 deployment expecting large backlog uploads is the one
+    # where an operator should consider tuning it DOWN from 25, not up — the arithmetic above is
+    # the reason, left as arithmetic on purpose rather than a second, S3-specific constant this
+    # class does not have the evidence to pick a number for.
+    #
+    # A LOW-TENS DEFAULT keeps the synchronous path cheap on the backend it was measured against:
+    # the attach half is always O(new files) regardless of this cap (see .call's ordering), and
+    # filing a couple dozen files is a couple dozen Maker::MoveNode calls, not a couple hundred —
+    # while staying large enough that the ordinary case, a handful of files dropped into a folder,
+    # files itself immediately without ever touching this ceiling.
     #
     # OVER THIS CAP: attach still runs (always — see .for_node), filing does not, and the PERIODIC
     # sweep (MAX_MOVES' run) picks up the backlog on its own schedule. That is the SAME
     # durable-now/best-effort-later split .for_user already applies to MAX_MOVES; this constant does
     # not introduce a new policy, it gives the existing policy a cheaper threshold for the one caller
     # that cannot afford the expensive one.
-    SYNC_MAX_MOVES = 25
+    EAGER_MAX_MOVES = 25
 
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
@@ -160,18 +196,18 @@ module Maker
     # is identical, the work is bounded by one project's inbox, and a single-file path would be a
     # second copy of the two steps — the thing this class exists to avoid having.
     #
-    # IT APPLIES ITS OWN CAP — SYNC_MAX_MOVES / .sync_max_moves, NOT MAX_MOVES / .max_moves — SCOPED
-    # TO THIS PROJECT'S OWN INBOX, the only count this entry point can honestly take, since one node
-    # names one project and nothing here sees the rest of the user's library. See SYNC_MAX_MOVES's
-    # comment for why this entry point needs a cap of its own rather than reusing for_user's: this
-    # is the one caller that runs INSIDE a web request. What the scoping guarantees is unchanged by
-    # that split: a SINGLE project's inbox cannot be drained past the cap one upload at a time — each
-    # call re-checks that project's own count before moving anything, so a project already sitting
-    # over the cap stays refused across repeated uploads into it.
+    # IT APPLIES ITS OWN CAP — EAGER_MAX_MOVES / .eager_max_moves, NOT MAX_MOVES / .max_moves —
+    # SCOPED TO THIS PROJECT'S OWN INBOX, the only count this entry point can honestly take, since
+    # one node names one project and nothing here sees the rest of the user's library. See
+    # EAGER_MAX_MOVES's comment for why this entry point needs a cap of its own rather than reusing
+    # for_user's: this is the one caller that runs INSIDE a web request. What the scoping guarantees
+    # is unchanged by that split: a SINGLE project's inbox cannot be drained past the cap one upload
+    # at a time — each call re-checks that project's own count before moving anything, so a project
+    # already sitting over the cap stays refused across repeated uploads into it.
     #
     # WHAT IT DOES NOT GUARANTEE: for_user's run-level total — and splitting the two caps apart
     # (Task 11 Part A) makes that MORE true, not less. for_node checks ITS PROJECT'S inbox against
-    # SYNC_MAX_MOVES (a request-latency budget); for_user checks the WHOLE RUN's inbox against
+    # EAGER_MAX_MOVES (a request-latency budget); for_user checks the WHOLE RUN's inbox against
     # MAX_MOVES (a per-run churn budget). Different counts, against different numbers, for different
     # reasons — neither tells you anything about the other. A project sitting at, say, 30 loose
     # files is over for_node's own cap (an eager upload into it only attaches) while nowhere near
@@ -185,12 +221,12 @@ module Maker
       return nil unless project
 
       inbox = user.nodes.present.where(kind: "file", parent_node_id: project.folder_node_id).count
-      cap = sync_max_moves
+      cap = eager_max_moves
       if inbox > cap
         Rails.logger.warn("Maker::ProjectIntake: attaching but NOT filing #{project.slug} — " \
-                          "#{inbox} loose files is over the #{cap}-file synchronous cap. The " \
-                          "periodic sweep will file the rest on its own schedule; raise " \
-                          "PROJECT_ORGANIZE_SYNC_MAX_MOVES to file more inline.")
+                          "#{inbox} loose files is over the #{cap}-file eager cap. The periodic " \
+                          "sweep will file the rest on its own schedule; raise " \
+                          "PROJECT_ORGANIZE_EAGER_MAX_MOVES to file more inline.")
       end
       for_project(user:, project:, move: inbox <= cap)
     end
@@ -264,12 +300,19 @@ module Maker
     # applies to this method unchanged.
     #
     # WHAT IS DIFFERENT IS WHICH CALLER READS WHICH VARIABLE, AND THAT IS THE WHOLE POINT: .for_user
-    # (and .for_project) never read PROJECT_ORGANIZE_SYNC_MAX_MOVES, and .for_node never reads
-    # PROJECT_ORGANIZE_MAX_MOVES. See SYNC_MAX_MOVES's comment for why collapsing the two would be
+    # (and .for_project) never read PROJECT_ORGANIZE_EAGER_MAX_MOVES, and .for_node never reads
+    # PROJECT_ORGANIZE_MAX_MOVES. See EAGER_MAX_MOVES's comment for why collapsing the two would be
     # wrong, and project_intake_test.rb's independence tests for proof rather than assertion —
     # setting one variable and checking the OTHER method's behaviour is untouched.
-    def self.sync_max_moves
-      Integer(ENV.fetch("PROJECT_ORGANIZE_SYNC_MAX_MOVES", SYNC_MAX_MOVES.to_s))
+    #
+    # NAMED "eager", NOT "sync" — deliberately avoiding this codebase's other, precisely-defined
+    # sense of that word (Capabilities#syncable? — "this backend IS the chunk/sync engine"). This
+    # cap is orthogonal to that axis: it applies identically on all three backends and is gated only
+    # on which CONTROLLER ACTION runs it (the eager nudge vs. the periodic sweep), never on which
+    # backend is current. A reader primed by capabilities.rb could otherwise misread "sync" here as
+    # backend-specific, which it is not.
+    def self.eager_max_moves
+      Integer(ENV.fetch("PROJECT_ORGANIZE_EAGER_MAX_MOVES", EAGER_MAX_MOVES.to_s))
     end
 
     def initialize(user:, project:, dry_run: false, move: true)
