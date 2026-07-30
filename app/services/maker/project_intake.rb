@@ -24,6 +24,15 @@ module Maker
     # move — so Task 12's rake task can say which files and why, not just how many.
     Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status)
 
+    # What one USER's whole intake run did. The cap is a property of the RUN, so its refusal lives
+    # here rather than on Result: a single project cannot know whether the run as a whole is
+    # implausible.
+    RunResult = Data.define(:results, :status, :inbox_total, :cap)
+
+    # The default ceiling on files filed in one run. See .for_user for why it is an absolute count
+    # rather than a percentage.
+    MAX_MOVES = 500
+
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
     # no statement timeout (the same hazard V1::NodesController#move spends would_create_cycle? on).
@@ -40,6 +49,65 @@ module Maker
 
     def self.for_project(user:, project:, dry_run: false, move: true)
       new(user:, project:, dry_run:, move:).call
+    end
+
+    # Sweep every one of this user's projects that HAS a folder, under one shared cap.
+    #
+    # THE CAP IS ABSOLUTE, NOT A PERCENTAGE, and Library::Reconciler's mass-deletion guard is the
+    # wrong model here — which is worth saying because copying it looks like the safe choice. A
+    # percentage needs a denominator, and the only honest one is "files currently at project roots",
+    # of which the intended first run files 100%. A percentage would be guarding against SUCCESS.
+    # The diagnostic number is the raw count: 40 files at project roots is a few projects, 40,000 is
+    # a misconfiguration.
+    #
+    # IT IS PER RUN, NOT PER PROJECT. A per-project cap of 500 lets fifty projects move 25,000 files
+    # without ever tripping — it would bound the wrong thing, since the blast radius that matters is
+    # the churn ONE run produces on the NAS or on the changelog.
+    #
+    # OVER THE CAP, THE ATTACH STEP STILL RUNS. The two halves have different costs: an attach
+    # writes a row and moves no bytes, so there is nothing to be careful about, and withholding it
+    # would deny the harmless half of the feature out of concern for the other. That is the
+    # durable/best-effort split applied to the guard itself.
+    #
+    # IT ANSWERS A STATUS AND DOES NOT RAISE, unlike Library::Scanner::UnsafeScan, for two reasons —
+    # and the second is the load-bearing one. A cap trip on a big first run is an EXPECTED outcome,
+    # not a malfunction (Maker::AttachToProject's argument for every move outcome being a symbol:
+    # "each one is a normal thing that happens to a user's library"). And on share/s3 this is called
+    # at the END of Library::ScanJob#perform, where there is no transaction — so a raise would fail a
+    # job whose scan had ALREADY SUCCEEDED AND COMMITTED, telling an operator the library did not
+    # index when it did. A guard must not lie about which operation it stopped.
+    #
+    # WHAT IT DOES NOT PROTECT AGAINST, so it is not mistaken for covered: it bounds VOLUME, not
+    # correctness. There is no data loss to guard — node_id never changes (the port's stated
+    # promise), so every attachment, BOM link and tag survives a move, and the move is reversible by
+    # dragging the file back. That asymmetry is exactly why a count suffices here where a percentage
+    # of the library was necessary there.
+    def self.for_user(user:, dry_run: false, cap: nil)
+      projects = user.maker_projects.where.not(folder_node_id: nil).to_a
+      return RunResult.new(results: [], status: :ok, inbox_total: 0, cap: cap || max_moves) if projects.empty?
+
+      cap ||= max_moves
+      # ONE query for the whole run's inbox, and it is what makes "checked before the first move"
+      # true. An observer cannot decide this per project: the cap is a property of the run.
+      inbox_total = user.nodes.present
+                        .where(kind: "file", parent_node_id: projects.map(&:folder_node_id)).count
+
+      # A dry run never refuses — seeing this number is the entire reason to run one.
+      refused = !dry_run && inbox_total > cap
+      results = projects.map do |project|
+        [ project, for_project(user:, project:, dry_run:, move: !refused) ]
+      end
+
+      RunResult.new(results:, status: refused ? :refused_too_many_moves : :ok, inbox_total:, cap:)
+    end
+
+    # READ PER CALL, never frozen into a constant at boot. The refusal's log line names this
+    # variable as the operator's way out, and a value fixed at boot makes that advice false inside a
+    # running process and unreachable from a test — which is how an escape hatch rots shut. That is
+    # Library::Reconciler#max_delete_pct's recorded lesson, and it applies verbatim. One ENV fetch
+    # per run costs nothing.
+    def self.max_moves
+      Integer(ENV.fetch("PROJECT_ORGANIZE_MAX_MOVES", MAX_MOVES.to_s))
     end
 
     def initialize(user:, project:, dry_run: false, move: true)

@@ -527,5 +527,95 @@ module Maker
         assert_equal (names - [ moved_name ]).sort, result.skips.map(&:first).sort
       end
     end
+
+    # --- for_user and the run cap ------------------------------------------------
+
+    test "for_user sweeps every project that has a folder" do
+      bench = @user.maker_projects.create!(name: "Bench")
+      bench_folder = bench.ensure_library_folder!(@user)
+      file("panel.svg")
+      file("pocket.nc", parent: bench_folder.node_id)
+
+      run = Maker::ProjectIntake.for_user(user: @user)
+      assert_equal :ok, run.status
+      assert_equal 2, run.results.size
+      assert_equal 2, run.results.sum { |_p, r| r.moved }
+    end
+
+    test "for_user skips projects with no folder without creating one" do
+      @user.maker_projects.create!(name: "Nothing Yet")
+      run = Maker::ProjectIntake.for_user(user: @user)
+      assert_equal 1, run.results.size, "a folderless project is not even visited"
+    end
+
+    # THE CAP'S DESIGN, AND THE HALF A TEST THAT ONLY COUNTS MOVES WOULD MISS: over the cap,
+    # NOTHING MOVES AND EVERYTHING STILL ATTACHES.
+    test "over the cap nothing is filed but everything is still attached" do
+      3.times { |i| file("p#{i}.svg") }
+      run = Maker::ProjectIntake.for_user(user: @user, cap: 2)
+      assert_equal :refused_too_many_moves, run.status
+      assert_equal 3, run.inbox_total
+      assert_equal 2, run.cap
+      assert_equal 0, run.results.sum { |_p, r| r.moved }
+      assert_equal 3, run.results.sum { |_p, r| r.attached },
+                    "the attach step writes no bytes, so the cap has no reason to withhold it"
+      assert_equal 3, @project.file_attachments.count
+    end
+
+    # Checked BEFORE the first move, not enforced by stopping partway: a partial sweep would pace
+    # the work into batches and file the whole library anyway, 500 at a time, guarding nothing.
+    test "the cap moves nothing at all, rather than moving up to the cap" do
+      3.times { |i| file("p#{i}.svg") }
+      Maker::ProjectIntake.for_user(user: @user, cap: 2)
+      assert_equal 0, @user.nodes.present.where(parent_node_id: @folder.node_id, kind: "dir").count,
+                   "not one move happened, so not one category folder was created"
+    end
+
+    test "at exactly the cap it proceeds" do
+      2.times { |i| file("p#{i}.svg") }
+      run = Maker::ProjectIntake.for_user(user: @user, cap: 2)
+      assert_equal :ok, run.status
+      assert_equal 2, run.results.sum { |_p, r| r.moved }
+    end
+
+    # The cap counts across the RUN, not per project — a per-project cap would bound the wrong thing.
+    test "the cap sums every project's inbox" do
+      bench = @user.maker_projects.create!(name: "Bench")
+      bench_folder = bench.ensure_library_folder!(@user)
+      2.times { |i| file("a#{i}.svg") }
+      2.times { |i| file("b#{i}.svg", parent: bench_folder.node_id) }
+
+      run = Maker::ProjectIntake.for_user(user: @user, cap: 3)
+      assert_equal :refused_too_many_moves, run.status
+      assert_equal 4, run.inbox_total
+    end
+
+    # A dry run must never refuse: seeing the number is the entire reason to run one.
+    test "a dry run reports over the cap instead of refusing" do
+      3.times { |i| file("p#{i}.svg") }
+      run = Maker::ProjectIntake.for_user(user: @user, cap: 1, dry_run: true)
+      assert_equal :ok, run.status
+      assert_equal 3, run.results.sum { |_p, r| r.moved }
+    end
+
+    # READ PER CALL, never frozen at boot: the log line names this variable as the way out, and a
+    # boot-frozen value makes that advice false in a running process and unreachable from a test —
+    # which is how an escape hatch rots shut (Library::Reconciler#max_delete_pct's recorded lesson).
+    test "PROJECT_ORGANIZE_MAX_MOVES is honored per call" do
+      3.times { |i| file("p#{i}.svg") }
+      prior = ENV["PROJECT_ORGANIZE_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_MAX_MOVES"] = "1"
+      begin
+        assert_equal 1, Maker::ProjectIntake.max_moves
+        assert_equal :refused_too_many_moves, Maker::ProjectIntake.for_user(user: @user).status
+      ensure
+        ENV["PROJECT_ORGANIZE_MAX_MOVES"] = prior
+      end
+    end
+
+    test "the default cap is 500" do
+      assert_equal 500, Maker::ProjectIntake::MAX_MOVES
+      assert_equal 500, Maker::ProjectIntake.max_moves
+    end
   end
 end
