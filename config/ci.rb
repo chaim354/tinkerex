@@ -55,8 +55,20 @@ GATES = {
     # A fresh empty dir per run. LIBRARY_PATH must exist and be writable or the boot guard refuses
     # to start — it TOUCH-PROBES, because File.writable? reads POSIX mode bits rather than effective
     # access and is wrong under exactly the NFS/SMB ACLs this backend targets.
+    #
+    # AND IT CLEANS UP AFTER ITSELF, which the first version did not. Our runners are SELF-HOSTED and
+    # therefore PERSISTENT (§15) — nothing reclaims a stray tmpdir between runs the way a fresh
+    # hosted image would. A review of this file found 334 accumulated `tmp.*` directories on the mac
+    # runner, some holding real share-fixture bytes dated weeks back: kilobytes per run, but
+    # unbounded, and this codebase treats unbounded accumulation as a bug everywhere else it appears
+    # (Sync::ChunkReaper, Library::TrashPurgeJob).
+    #
+    # `trap ... EXIT` fires however the shell leaves — pass, fail, or interrupt — so a red run does
+    # not leak either. `${d:?}` is the guard that matters: if `mktemp -d` failed and `d` is empty, the
+    # trap aborts instead of handing `rm -rf` an empty argument.
     ci.step "Tests: Rails (share backend)",
-            'env LIBRARY_BACKEND=share LIBRARY_PATH="$(mktemp -d)" bin/rails db:test:prepare test'
+            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test'
   end,
 
   "test-s3" => ->(ci) do

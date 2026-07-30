@@ -98,6 +98,10 @@ class CiHygieneTest < ActiveSupport::TestCase
   # ci.yml on 2026-07-16 and never reached config/ci.rb, so `bin/ci` reported a green
   # "Continuous Integration" while running two thirds of the backend matrix. `system` is here
   # because the Rails scaffold ships it COMMENTED OUT, and this repo now has a browser tier.
+  #
+  # `setup` is deliberately NOT required: it is local convenience only (`bin/setup --skip-server`),
+  # and no ci.yml job invokes it — each job does its own `bundle install`. See config/ci.rb, where
+  # the gate says so at its definition. Requiring it here would assert a gate CI does not run.
   REQUIRED_GATES = %w[style scan test test-share test-s3 system].freeze
 
   test "bin/ci defines every gate CI depends on" do
