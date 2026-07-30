@@ -5,7 +5,7 @@
 > **One-liner:** a file that lands anywhere under `Projects/<slug>/` becomes an attachment
 > on that project automatically, and a file sitting at the folder's **root** is filed into
 > a category subfolder (`cnc`, `laser`, `design`, `models`, `cad`, `docs`, `images`,
-> `other`) — created lazily, on demand.
+> `archives`, `other`) — created lazily, on demand.
 
 ---
 
@@ -38,18 +38,18 @@ Each of these was a live choice; they are recorded so they are not silently reop
    a subfolder is never touched again, *including one filed "wrong" by hand.* Position is
    the marker, so there is no state to keep and no new column; dragging a file back to the
    root reads as an explicit "sort this again."
-3. **The first run is retroactive** — every file currently at a project root gets filed.
-   Mitigated by a dry-run task rather than by holding back (§7).
+3. **The first run is retroactive** — every file currently at a project root gets filed,
+   bounded by an absolute cap on moves per run and inspectable first via a dry-run task (§7).
 4. **Sweep + eager nudge**, not per-door hooks. §5 makes the argument.
 5. **The folder comes from the filename** (`Maker::FileAttachment.role_for`), never from the
    stored `role` column. A stale column would misfile; `role_for` is pure and current.
 6. **One vocabulary.** The role table is extended in place rather than a second
    extension→folder map being introduced beside it (§3).
 
-**Out of scope, deliberately:** a per-project toggle; UI for editing the folder map; a
-separate `archives` folder; re-organizing files already in subfolders; backfilling the stale
-`vector` role on existing `.lbrn2` attachment rows (a separate task — nothing here reads
-that column).
+**Out of scope, deliberately:** a per-project toggle; UI for editing the folder map;
+re-organizing files already in subfolders; surfacing a cap refusal anywhere but the log;
+backfilling the stale `vector` role on existing `.lbrn2` attachment rows (a separate task —
+nothing here reads that column).
 
 ---
 
@@ -99,7 +99,7 @@ ROLE_FOLDERS = {
   "instructions"   => "docs",
   "document"       => "docs",
   "image"          => "images",
-  "source_archive" => "other",
+  "source_archive" => "archives",
   "other"          => "other"
 }.freeze
 
@@ -116,8 +116,10 @@ not false, it is *you must say*" that `Capabilities#scannable` uses, and for the
 a role with no folder is a file that is never filed, with no error and no log. Mutation-check
 it by deleting a key and watching it go red.
 
-`source_archive → other` puts a project `.zip` in `other`. One line if that should become
-its own `archives` folder.
+**`source_archive → archives`**, its own folder rather than `other`. A project `.zip` is
+usually the thing a model was imported *from* — worth finding again, and worth not burying
+under the genuinely-uncategorized. Note this is the one folder whose name is not a category a
+maker would say out loud; it is the one place `ROLE_LABELS`' own wording ("Archives") won.
 
 ---
 
@@ -130,8 +132,8 @@ Two entry points, one policy:
 - `.for_project(user:, project:)` — the sweep. The job calls this.
 - `.for_node(user:, node:)` — one file, resolving its owning project by walking up the
   ancestor chain until a node matches some project's `folder_node_id`, or the library root is
-  reached. Bounded by a depth cap with a visited set, for the same reason the subtree walk is
-  (a cycle must not spin).
+  reached. Bounded by a maximum depth with a visited set, for the same reason the subtree walk
+  is (a cycle must not spin). Not to be confused with "the cap" in §7, which is about moves.
 
 **It READS `project.folder_node_id`; it never calls `ensure_library_folder!`.** A project whose
 folder is nil or tombstoned is skipped outright. This is not an optimization — calling the
@@ -168,8 +170,8 @@ being inline. This design needs none: `Maker::MoveNode` owns the move, and
 `Maker::LibraryFolder.ensure_path!` owns the mkdir. Both already branch correctly.
 
 **Category folders are created lazily** — `ensure_path!` runs only when a file needs that
-folder. Eager creation would put eight empty directories in every project (visible in Finder
-and on the NAS) and, in chunk mode, emit eight changelog entries per project broadcast to
+folder. Eager creation would put nine empty directories in every project (visible in Finder
+and on the NAS) and, in chunk mode, emit nine changelog entries per project broadcast to
 every device.
 
 **It asks `AttachToProject#refusal_for` before every move.** This is that class's own
@@ -248,18 +250,65 @@ Decision 3 is a bulk move: one changelog `move` per file broadcast to every devi
 mode, one rename per file on the live NAS in share mode. Bounded by the number of files
 currently at project roots, but real. The mitigations:
 
-- **`rake projects:organize:dry_run`** prints what would move, per project, so it can be
-  inspected before it happens. `rake projects:organize` does it.
+- **`rake projects:organize:dry_run`** prints, per project, what would attach and what would
+  move (with source → destination), and **writes nothing at all** — not the attachment rows
+  either, harmless though they are, because a task named "dry run" that writes anything is a
+  name that lies. `rake projects:organize` does it for real.
 - **Per-file rescue** — one collision cannot stop a sweep over the whole library.
 - **One summary line per project** (attached / moved / skipped). Nothing persists a marker,
   so the log *is* the audit trail — the same argument as `AttachToProject#log_failure`, and
   the counts are behaviour, not phrasing.
 
-**No percentage guard, unlike the Reconciler's mass-deletion guard, and this is argued rather
-than forgotten.** That guard exists because a tombstone propagates to every attachment, BOM
-link and tag. A move does the opposite: `node_id` never changes — the port's stated promise —
-so every reference survives, and the operation is reversible by dragging the file back. The
-dry-run task is the safety valve a percentage would otherwise be.
+### The cap
+
+**An absolute cap on moves per sweep run, checked before the first move**, defaulting to
+`500` and read per call from `PROJECT_ORGANIZE_MAX_MOVES`.
+
+**Absolute, NOT a percentage — and the Reconciler's guard is the wrong model here, which is
+worth stating because copying it looks like the safe choice.** A percentage needs a
+denominator, and the only honest one is "files currently at project roots" — of which the
+intended first run moves **100%**. A percentage guard would be guarding against success. The
+number that is actually diagnostic is the raw count: 40 files at project roots is a handful of
+projects, 40,000 is a misconfiguration.
+
+**Per sweep RUN (one user), not per project.** A per-project cap of 500 lets fifty projects
+move 25,000 files without ever tripping — it would bound the wrong thing, since the blast
+radius that matters is the churn a single run produces on the NAS or on the changelog.
+
+**Tripping it refuses the FILING step and leaves the ATTACH step alone.** The two halves have
+different costs: an attach writes a row and moves no bytes, so there is nothing to be careful
+about, and refusing it would withhold the harmless half of the feature over a concern about
+the other. This is §5's durable/best-effort split applied to the guard itself.
+
+**It is a `Result` status, not a raise, and this is the one place this design departs from
+`Scanner::UnsafeScan`.** Two reasons, and the second is the load-bearing one:
+
+- A cap trip on a big first run is an **expected** outcome, not a malfunction — the same
+  reasoning `AttachToProject` gives for every move outcome being a symbol ("each one is a
+  normal thing that happens to a user's library").
+- On share/s3 the sweep is called at the **end of `ScanJob#perform`**, so a raise would fail a
+  job whose scan had **already succeeded and committed** (there is no transaction). An operator
+  reading a failed `ScanJob` would conclude the library did not index, which is false. A guard
+  must not lie about which operation it stopped.
+
+So it returns `:refused_too_many_moves` with the count, and the caller logs one `warn` naming
+the count and the exact command to run. The refusal repeats every sweep until acted on, which
+is intended: the same "the schedule is itself the retry" property `ScanJob` relies on.
+
+**`rake projects:organize` lifts the cap.** That is the deliberate-action door — the operator
+is standing there, having just read the dry run — and it is why the cap can afford to be low
+enough to catch the first run rather than tuned to let it through. `PROJECT_ORGANIZE_MAX_MOVES`
+is read **per call, never frozen into a constant at boot**, because the log line names it as
+the way out and a boot-frozen value makes that advice false in a running process and
+unreachable from a test. That is the Reconciler's recorded lesson about escape hatches rotting
+shut, and it applies verbatim.
+
+**What the cap does NOT protect against, stated so it is not mistaken for covered:** it bounds
+*volume*, not correctness. It is not a data-loss guard, because there is no data loss to guard
+against — `node_id` never changes (the port's stated promise), so every attachment, BOM link
+and tag survives a move, and the operation is reversible by dragging the file back. That
+asymmetry with the Reconciler's guard is the whole reason a *count* is sufficient here where a
+*percentage of the library* was necessary there.
 
 ---
 
@@ -304,6 +353,14 @@ The suite runs on all three legs — `bin/rails test`, `LIBRARY_BACKEND=share`,
 - an archived project is swept
 - the scan-then-sweep order in `ScanJob#perform`, so the race in §5 cannot regress
 - `sweep_all!` no-ops on a scannable backend, so the two triggers cannot both fire
+- the cap: over it, **nothing moves and everything still attaches** — the split is the guard's
+  whole design, so a test that only counted moves would pass on a version that withheld both
+- the cap is checked **before the first move**, not enforced by stopping partway (assert zero
+  moves, not "at most 500")
+- `PROJECT_ORGANIZE_MAX_MOVES` is honored **per call**, so the documented escape hatch is
+  reachable from a test — which is what stops it rotting shut
+- `rake projects:organize` moves past the cap; `:dry_run` moves nothing at all and writes no
+  attachment rows either
 
 **CI cannot run this.** Only `charless-MacBook-Pro-maker-mac` is registered and all seven
 `ci.yml` jobs target linux, so they queue forever rather than failing (CLAUDE.md §15).
