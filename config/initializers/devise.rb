@@ -90,7 +90,16 @@ Devise.setup do |config|
   # It will change confirmation, password recovery and other workflows
   # to behave the same regardless if the e-mail provided was right or wrong.
   # Does not affect registerable.
-  # config.paranoid = true
+  # ON. The leak this closes is PASSWORD RESET, not login — measured rather than assumed:
+  # login already answers 422 + "Invalid email or password." for both an unknown address and a
+  # wrong password, so Devise is generic there by default. Reset was not — a known address got
+  # 303 (redirect) and an unknown one got 422 with "not found" in the body, while the flash
+  # notice was identical in both. So the oracle was the STATUS CODE and the body, which is the
+  # part a reader checking only the flash text would have missed.
+  #
+  # That makes reset the cheap oracle: no password guess, just POST an address and read the
+  # status. Pinned by test/integration/web/account_enumeration_test.rb.
+  config.paranoid = true
 
   # By default Devise will store the user in session. You can skip storage for
   # particular strategies by setting this option.
@@ -180,7 +189,18 @@ Devise.setup do |config|
 
   # ==> Configuration for :validatable
   # Range for password length.
-  config.password_length = 6..128
+  # 10, not Devise's default 6. Six is below any current guidance.
+  #
+  # DELIBERATELY NOT PAIRED WITH COMPOSITION RULES (a symbol, a digit, mixed case): NIST
+  # deprecated those — they push users toward predictable substitutions while shrinking the
+  # practical keyspace. Length plus, eventually, a breached-password check is the current advice;
+  # the breach check is tracked in docs/OPEN-WORK.md rather than done here, because it introduces
+  # a network dependency on the signup path and that is a decision, not a detail.
+  #
+  # Pinned by devise_auth_flow_test's "sign up rejects a password below the length floor", which
+  # uses an 8-character password — over the old default, under the new floor — so a quiet revert
+  # to Devise's default fails it.
+  config.password_length = 10..128
 
   # Email regex used to validate email formats. It simply asserts that
   # one (and only one) @ exists in the given string. This is mainly

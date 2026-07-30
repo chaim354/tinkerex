@@ -88,12 +88,27 @@ module Web
       assert_equal 3, @project.file_attachments.count
     end
 
-    # maker_file_attachments has no uniqueness index, so a model CAN hold two rows for one file.
-    # find_or_create_by! already stops the duplicate row here; what it does not stop is counting
-    # that file twice in the sentence the user reads.
-    test "a duplicate model attachment row does not inflate the count" do
-      @model.file_attachments.create!(user: @user, node_id: @hull.node_id, role: "model")
+    # THIS TEST'S PREMISE WAS RETIRED BY A CONSTRAINT (2026-07-30). It used to read: "no
+    # uniqueness index, so a model CAN hold two rows for one file" — and it built that state, then
+    # checked the flash count did not double-count it. `maker_file_attachments` now carries a
+    # unique index on (user_id, attachable_type, attachable_id, node_id), so the duplicate row
+    # cannot exist and the double-count it guarded against is impossible BY CONSTRUCTION rather
+    # than by the controller being careful.
+    #
+    # Kept, pointed at the new truth, rather than deleted: what the old test knew — that a second
+    # row for one file on one attachable is wrong — is exactly what the index now enforces, and a
+    # future migration that drops or narrows that index should fail here as well as in
+    # test/models/maker/file_attachment_uniqueness_test.rb.
+    test "the database refuses a second attachment row for the same file on the same model" do
+      assert_raises ActiveRecord::RecordNotUnique do
+        @model.file_attachments.create!(user: @user, node_id: @hull.node_id, role: "model")
+      end
+    end
 
+    test "attaching an already-bundled model file leaves the count correct" do
+      # The half of the retired test that is still reachable: attach the bundle twice and the
+      # project must not gain rows or miscount them.
+      post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
       post attachments_path, params: { project_id: @project.slug, node_id: @hull.node_id }
 
       assert_equal 3, @project.file_attachments.count

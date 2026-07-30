@@ -95,7 +95,7 @@ counts: `docs/STATUS.md`.
 
 | Layer | Choice |
 |---|---|
-| Backend | **Rails 8** (Solid Queue/Cache/Cable) |
+| Backend | **Rails 8** (Solid Queue/Cache/Cable — all three wired; see §14e for what that requires) |
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
@@ -668,6 +668,33 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **The suite being green is not evidence a guard works** if the guard's precondition is
   never established in test (see the `STORAGE_BACKEND` 500 in §14a, and the form `scope:` bug
   in §14d). Drive the real request.
+- **A SOLID STORE IS NOT WIRED UNTIL `config.<x>_store` SAYS SO.** Solid Cache shipped with its
+  gem, `config/cache.yml`, a `cache` role in `database.yml`, `db/cache_schema.rb` and a
+  persistent volume — and `config.cache_store` left at the Rails scaffold comment, so production
+  resolved to a `FileStore` in the container's `tmp/`, wiped every deploy. Queue and Cable were
+  wired; the third was missed while §4 claimed all three. **Resolve it by running
+  `Rails.application.config.cache_store`, not by reading the file.**
+- **RATE LIMITING COUNTS IN A CACHE, AND `NullStore#increment` RETURNS NIL.**
+  `ActionController`'s `rate_limiting` is `count = store.increment(...)` then
+  `if count && count > to`, so a throttle backed by the test env's default store fires **never**
+  — a rate-limit test then fails for the wrong reason, and a "normal requests still work" test
+  passes whether or not the throttle exists. `config.action_controller.cache_store` is the knob
+  (real store for limits, caching still off). **Counters key on `request.remote_ip`, which is
+  127.0.0.1 for every integration test**, so `test_helper.rb` clears them per test — without
+  that, one worker's budget is spent across its whole suite and unrelated tests fail as
+  `302 → /users/sign_in`.
+- **A CSP HEADER THAT PARSES IS NOT A CSP THAT WORKS — only a browser knows.** Two defects
+  shipped past every integration test and were caught by the system tests' SEVERE-console check:
+  an empty `'nonce-'` (`session.id` is nil before a session exists, so anonymous pages made
+  Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
+  the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
+  `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
+- **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
+  flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
+  — invisible to a green suite, while `models#show` carried the correct pattern the whole time.
+  Guards live in `test/integration/web/page_query_budget_test.rb` and assert **constancy in N**,
+  never a literal: the counts differ per `LIBRARY_BACKEND`, so a literal pins one leg and fails
+  the other two.
 
 ---
 

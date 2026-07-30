@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_07_30_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_07_30_123853) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -200,6 +200,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_30_010000) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.string "version_id"
+    t.index ["user_id", "attachable_type", "attachable_id", "node_id"], name: "index_maker_file_attachments_uniqueness", unique: true
     t.index ["user_id", "attachable_type", "attachable_id"], name: "index_maker_file_attachments_on_attachable"
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
   end

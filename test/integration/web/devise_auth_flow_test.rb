@@ -10,6 +10,8 @@ module Web
 
     PASSWORD = "correct horse battery staple".freeze
 
+    # The per-IP rate-limit counter is cleared globally in test_helper.rb — see the comment
+    # there for why every test needs that and not just this file's.
     setup { ActionMailer::Base.deliveries.clear }
 
     # --- sign up ----------------------------------------------------------------------
@@ -49,6 +51,18 @@ module Web
         } }
       end
       assert User.find_by(email: "valid@example.com").encrypted_password.present?
+    end
+
+    test "sign up rejects a password below the length floor" do
+      # 8 characters: under the 10-char floor, but OVER Devise's old default of 6 — so this test
+      # fails if the floor is ever quietly reverted to the default rather than merely lowered.
+      short = "abc12345"
+      assert_no_difference "User.count" do
+        post user_registration_path, params: { user: {
+          email: "shortpw@example.com", password: short, password_confirmation: short
+        } }
+      end
+      assert_response :unprocessable_entity
     end
 
     test "the blank-password guard does NOT break programmatic passwordless creates" do

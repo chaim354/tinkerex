@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**Addon params live in the DB, not in a library file — branch `claude/boxes-sidecar-params-db-1c508f`**)
+**Updated:** 2026-07-30 (**Performance + security audit, and its remediation — branch `claude/todo-audit-tests-baf3f9`**)
 
 ## What this file is
 
@@ -13,9 +13,17 @@ Narrate arcs here; put rules there.
 - **Everything older** — `## <date>: <title>`, reverse-chronological.
 - **Origin (2026-06-11)** — the first session's plan, at the very bottom, **historical and superseded**.
 
+**The per-entry suite counts here do NOT form a chain and cannot be used as a baseline.** The
+2026-07-29 entry documents the arithmetic. Take a baseline by *running the merge-base*, not by
+reading the last entry.
+
 ---
 
 ## Still open (deliberate, carried forward)
+
+> **The remaining-work list is `docs/OPEN-WORK.md`** (added 2026-07-30) — every item verified
+> against the code rather than copied forward. The bullets below are this file's own carried
+> caveats; that document is the one to read for what to do next.
 
 - **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
   hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
@@ -40,7 +48,113 @@ Narrate arcs here; put rules there.
 
 ---
 
-## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
+## Latest (2026-07-30): the audit, and the two defects only a browser could see (branch `claude/todo-audit-tests-baf3f9`)
+
+**Suite 1690 → 1777 runs / 6150 assertions / 0 failures / 0 errors / 11 skips — identical on
+chunk, share and s3.** `bin/ci` green on all seven gates. rubocop clean. brakeman still 0
+warnings.
+
+Deliverables: `docs/AUDIT-2026-07-30.md` (16 findings, evidence per finding),
+`docs/OPEN-WORK.md` (the remaining-work list), and
+`docs/superpowers/plans/2026-07-30-audit-fixes-plan.md` (the fix sequence). **Thirteen of the
+sixteen are closed**; the three that are not are a deploy, a browser pass, and one product
+decision.
+
+**THE HEADLINE IS NOT THE N+1 — IT IS THAT NOTHING MEASURED QUERY COUNTS.** `projects#show`
+cost 14 queries at 3 build-log entries and 26 at 15: one `ActionText::RichText` load per entry,
+because `has_rich_text :body` arrived with the project-page overhaul and `:rich_text_body` was
+never added to the eager load. The fix is one line and the page is now **flat at 12** — fewer
+than it cost at the *small* size before, since three per-entry queries collapse into one. What
+matters is that **`models#show` loads the same shape of data and was flat at 11 the whole time**,
+so the correct pattern was already in the codebase and this page silently diverged from it. The
+guard came first and was committed red; six pages are now pinned constant-in-N.
+
+**TWO CSP DEFECTS WERE CAUGHT BY THE SYSTEM TESTS' BROWSER CONSOLE, AND BOTH WERE IN THE POLICY
+I HAD JUST WRITTEN.** This is the entry's most useful finding, because both would have passed
+every integration test:
+- **`frame-ancestors 'none'` contradicted a shipped feature.** The app embeds its own PDF
+  previews in same-origin iframes, and Rails' default is already `X-Frame-Options: SAMEORIGIN` —
+  so `'none'` was stricter than the app's own behaviour and, enforced, would have refused to let
+  our page frame our blob endpoint. Every PDF preview blank. Now `'self'`.
+- **The nonce was EMPTY for anonymous visitors.** `session.id` is nil until a session exists, so
+  every sign-in / sign-up / reset page emitted `'nonce-'` — which Chrome calls an invalid source
+  and answers by **discarding the whole `script-src` directive**. Enforced, the policy would have
+  protected nothing on exactly the pages reachable without credentials, while the header looked
+  present and correct to any test that read it. Now falls back to `SecureRandom`.
+
+  **An integration test can confirm a header is well-formed by its own reading; only a browser
+  will tell you the header is being ignored.** Both are now pinned in
+  `content_security_policy_test.rb` so the next occurrence does not need a browser.
+
+**`NullStore#increment` RETURNS NIL, WHICH MAKES A RATE LIMIT A SILENT NO-OP.**
+`ActionController`'s `rate_limiting` is `count = store.increment(...)` then
+`if count && count > to`. The test env's `cache_store` is `:null_store`, so a throttle added
+there fires never — a throttle test would fail for the wrong reason and, worse, a "normal
+requests still work" test would pass whether or not the throttle existed.
+`config.action_controller.cache_store = :memory_store` is the precise knob: rate limiting gets a
+real store, general caching stays off.
+
+**AND THE THROTTLES ALONE PRODUCED 306 FAILURES / 20 ERRORS, none of which said "rate limited".**
+Counters key on `request.remote_ip` and every integration test is 127.0.0.1, so one counter is
+spent across a whole worker: the sign-in in each test's `setup` was throttled, and tests failed
+as `302 to /users/sign_in` or a missing `<h1>` in code with nothing to do with auth. Cleared per
+test in `test_helper.rb`. **The mutation check was then re-run**, because a global cache clear is
+exactly how a throttle test becomes vacuous — removing the throttle still turns it red.
+
+**SOLID CACHE WAS PROVISIONED AND ONE SCAFFOLD COMMENT SHORT OF BEING USED.** The gem,
+`config/cache.yml`, the `cache` role in `database.yml`, `db/cache_schema.rb`, and a persistent
+volume were all in place; `config.cache_store` was still `# :mem_cache_store`, so production
+resolved to `[:file_store, "tmp/cache/"]` — container-local, wiped by every Kamal deploy.
+Verified by *running* it, not by reading the file. Solid **Queue** and **Cable** were both wired
+deliberately; the third was missed, while `CLAUDE.md` §4 claimed all three. Now wired, and §4
+says what happened.
+
+**`DELETE /users` NEEDED NO PASSWORD.** One request carrying only a session cookie took
+`users=1 projects=1 nodes=1 tasks=1` to zero. The cascade is entirely correct — 31
+`dependent: :destroy` associations — and that is precisely what made the missing confirmation
+easy to miss. Now requires the current password, the same bar Devise already sets for merely
+*changing* one.
+
+**THE ENUMERATION FINDING WAS WRONG IN A USEFUL WAY.** The audit said login and reset both leaked.
+Login does not: an unknown address and a wrong password both answer `422` with the identical
+flash. Reset was the whole leak — **and not through the flash, which was already identical**.
+Known address: `303` redirect. Unknown: `422` with "not found" in the body. **The oracle was the
+status code**, so an audit that read only the flash copy would have called this fine.
+
+**COVERAGE WAS MEASURED, NOT ESTIMATED: 72/85 → 85/85.** A temporary
+`process_action.action_controller` subscriber recorded which `controller#action` each test
+actually drives. Reading the controllers would not have produced the list of thirteen — it
+included `registrations#destroy` (account deletion), `#update`, `confirmations#create`, and
+`projects/entry_photos#destroy`. The instrumentation is deleted; re-measuring is four lines and
+documented in the plan's Task 15.
+
+**THE CROSS-USER SWEEP PASSED 32/32 ON ITS FIRST RUN, WHICH IS THE POINT.** Every web controller
+already scopes through `current_user.*`, and only 8 of ~30 web test files asserted it — so
+swapping `current_user.maker_projects.find` for `Maker::Project.find` would have gone green
+across the whole suite. Mutation-checked on three controllers: dropping `current_user` turns 4
+cases red on projects, 3 on sheets, 1 on notes.
+
+**TWO OF MY OWN TESTS WERE VACUOUS AND THE MUTATION CHECK IS WHAT SAID SO.** (1) A "the delete
+form carries the password field" test scanned the whole page for a name containing
+`current_password` — the *update* form has one too, so it passed with the delete field renamed;
+now scoped to `div.account-delete`. (2) I generated `app/views/devise/registrations/` and edited
+that, because `app/views/devise/` did not exist — but this app has **scoped** views at
+`app/views/users/registrations/`, which is what Rails renders. The generated copy was dead code
+and the delete button would have kept posting no password. **Neither was visible by reading.**
+
+**One existing test's premise was retired by the new constraint**, and it was kept rather than
+deleted: `attach_model_bundle_test` had a case opening *"no uniqueness index, so a model CAN hold
+two rows for one file"*, which built exactly that state. The unique index makes it impossible, so
+the case now asserts the database refuses it and the still-reachable half — attach the bundle
+twice, count stays right — is its own test.
+
+**Also closed:** env-gated `force_ssl`/`assume_ssl` (`FORCE_SSL=1` in the OVH overlay, **not yet
+deployed**); `config.paranoid`; the password floor 6 → 10 (existing short passwords still
+authenticate — verified, since getting that wrong locks out every pre-existing account); a unique
+index on `maker_file_attachments` across all four key columns, dedupe-then-constrain; and
+`dev_blobs#show`, the last untested action.
+
+## 2026-07-29: addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
 
 **Suite 1660 → 1678 runs / 5862 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
 share and s3.** rubocop clean on the touched files. +18 = 7 endpoint, 4 show-page, 7 migration.

@@ -24,14 +24,25 @@ Rails.application.configure do
   # Store uploaded files on the local file system (see config/storage.yml for options).
   config.active_storage.service = :local
 
-  # Assume all access to the app is happening through a SSL-terminating reverse proxy.
-  # config.assume_ssl = true
-
-  # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  # config.force_ssl = true
-
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # HTTPS, opt-in per deployment via FORCE_SSL.
+  #
+  # WHY GATED AND NOT SIMPLY ON: this app runs in two shapes. The internet-facing host serves
+  # HTTPS behind a terminating proxy and wants all three effects — assume_ssl so Rails believes
+  # the proxy's X-Forwarded-Proto, force_ssl for the http->https redirect and HSTS, and (the one
+  # that matters most) the SECURE FLAG ON THE SESSION COOKIE, which is what force_ssl actually
+  # sets. The Unraid backends are reached by IP over plain HTTP on the LAN, and an unconditional
+  # force_ssl would redirect them somewhere nothing listens — all three down, from a change made
+  # to improve security. That is almost certainly why these lines sat commented rather than set.
+  #
+  # SET FORCE_SSL=1 ON ANY HOST REACHABLE FROM THE INTERNET. Without it the session cookie is
+  # sent on plain-HTTP requests to the same host. See docs/DEPLOY.md.
+  if ENV["FORCE_SSL"].present?
+    config.assume_ssl = true
+    config.force_ssl  = true
+    # kamal-proxy health-checks over plain HTTP inside the container network; redirecting /up to
+    # https would fail the check and roll the deploy back.
+    config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  end
 
   # Hand share-backed downloads off to a front proxy instead of streaming them through Puma.
   # COMMENTED BECAUSE THIS DEPLOYMENT IS kamal-proxy, NOT nginx OR Apache — and that is the
@@ -82,8 +93,15 @@ Rails.application.configure do
   config.active_job.queue_adapter = :solid_queue
   config.solid_queue.connects_to = { database: { writing: :queue } }
 
-  # Replace the default in-process memory cache store with a durable alternative.
-  # config.cache_store = :mem_cache_store
+  # Solid Cache, backed by its own database (the `cache` entry in database.yml, schema in
+  # db/cache_schema.rb, tuning in config/cache.yml). Without this line Rails falls back to a
+  # FileStore in the container's tmp/ — wiped by every Kamal deploy and invisible to a second
+  # container. Solid Queue (above) and Solid Cable (config/cable.yml) were both wired; this was
+  # the third of the three that got missed, while CLAUDE.md §4 claimed all three.
+  #
+  # RATE LIMITING COUNTS IN THIS STORE (see the Users:: controllers), so it needs to be durable
+  # and shared rather than per-container and wiped on deploy.
+  config.cache_store = :solid_cache_store
 
   # Replace the default in-process and non-durable queuing backend for Active Job.
   # config.active_job.queue_adapter = :resque

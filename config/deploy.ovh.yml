@@ -49,6 +49,25 @@ env:
     BOXES_SIDECAR_URL: ""
     OPENSCAD_SIDECAR_URL: ""
 
+    # THE ONE INTERNET-FACING BOX, SO THE ONE THAT NEEDS TLS ENFORCEMENT (2026-07-30).
+    #
+    # production.rb gates assume_ssl + force_ssl + the /up redirect exclusion behind this flag
+    # (see the audit's S1: before it, NEITHER was enabled anywhere, so this host had no HSTS and
+    # its session cookie was sent on plain-HTTP requests to the same host). The Unraid overlays
+    # deliberately leave it unset — they are reached by IP over plain HTTP on the LAN, where a
+    # force_ssl redirect points at nothing.
+    #
+    # assume_ssl AND force_ssl TOGETHER is the safe pairing, not force_ssl alone: assume_ssl makes
+    # Rails believe the terminating proxy's X-Forwarded-Proto, so it does not re-redirect a request
+    # that already arrived over HTTPS. force_ssl on its own behind a proxy is the redirect-loop
+    # configuration.
+    #
+    # VERIFY AFTER THE NEXT `kamal deploy -d ovh`: an http:// request should 301 to https, the
+    # response should carry Strict-Transport-Security, the session cookie should be marked Secure,
+    # and `kamal app exec 'curl -sS -o /dev/null -w "%{http_code}" http://localhost:3000/up'`
+    # should still answer 200 (that is what the ssl_options exclusion protects).
+    FORCE_SSL: "1"
+
     # ENABLE_TEST_SIGNUP IS INHERITED HERE, DELIBERATELY AND WITH EYES OPEN (2026-07-29).
     #
     # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true, and Kamal DEEP-MERGES env.clear — the same

@@ -36,8 +36,38 @@
   </div>
 <% end %>
 
-<h3>Cancel my account</h3>
+<h3>Delete this account</h3>
 
-<div>Unhappy? <%= button_to "Cancel my account", registration_path(resource_name), data: { confirm: "Are you sure?", turbo_confirm: "Are you sure?" }, method: :delete %></div>
+<%#
+  Devise's default here is a bare button_to with no password field.
+  Users::RegistrationsController#destroy now requires user[current_password], so without this
+  field deletion would be impossible through the UI. Pinned by account_settings_test's
+  "the rendered delete form carries the field the controller requires", which is scoped to
+  div.account-delete — the update form above ALSO has a current_password field, so an unscoped
+  assertion passes even when this one is renamed.
+%>
+<div class="account-delete">
+  <p>
+    This removes your account and everything in it — projects, the file catalog, tasks, the
+    build log, sheets, previews and paired devices. It cannot be undone.
+  </p>
+
+  <%= form_with url: registration_path(resource_name), method: :delete do |f| %>
+    <div class="field">
+      <%= f.label :current_password, "Confirm your password to delete this account" %><br />
+      <%# name: is explicit because this form has no model to scope from — form_with would
+          otherwise emit a bare `current_password`, which #destroy does not read. Passing the
+          symbol keeps the id as `current_password` so the label's `for` actually matches. %>
+      <%= f.password_field :current_password, name: "user[current_password]",
+                           autocomplete: "current-password", required: true %>
+    </div>
+    <div class="actions">
+      <%= f.submit "Delete my account", data: {
+            turbo_confirm: "Permanently delete your account and all of its data? " \
+                           "This cannot be undone."
+          } %>
+    </div>
+  <% end %>
+</div>
 
 <%= link_to "Back", :back %>

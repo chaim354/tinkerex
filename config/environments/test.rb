@@ -22,6 +22,18 @@ Rails.application.configure do
   config.consider_all_requests_local = true
   config.cache_store = :null_store
 
+  # Rate limiting counts in config.action_controller.cache_store, which DEFAULTS to
+  # config.cache_store — and NullStore#increment returns nil, which makes ActionController's
+  # `if count && count > to` silently never fire. A throttle test would then fail for the wrong
+  # reason and, worse, a "normal requests still work" test would pass whether or not the throttle
+  # exists at all. Give rate limiting a real store; leave general caching off, so no test can
+  # read a stale value.
+  #
+  # Counters are keyed by request.remote_ip, which is 127.0.0.1 for every integration test, so a
+  # test touching a throttled endpoint must call `ActionController::Base.cache_store.clear` in
+  # setup or it inherits the previous test's count.
+  config.action_controller.cache_store = :memory_store
+
   # Render exception templates for rescuable exceptions and raise for other exceptions.
   config.action_dispatch.show_exceptions = :rescuable
 
