@@ -347,8 +347,16 @@ This policy is written into `test/system/README.md` so it is where an author is 
    orchestration between them is not.
 2. **`importer`** (153) — client-side JSZip unzip → per-backend upload → attach. Notable because it
    depends on the hand-patched `buffer.js` vendoring, which re-running `bin/importmap pin` reverts.
-3. **`filemenu`** (97) — attach / move / rename, touching `Maker::MoveNode` and the collision-rename
-   prompt.
+3. **`filemenu`** (97) — the right-click popover on the Files page.
+   **CORRECTED 2026-07-29, after implementation read the file:** this row previously said "attach /
+   move / rename, touching `Maker::MoveNode` and the collision-rename prompt". That was wrong, and
+   wrong in a way only reading the controller could reveal — it is an "Add note" / "Open" popover and
+   touches neither. The attach-and-relocate flow it was confused with is a plain
+   `data: { turbo: false }` Rails form on `files/show.html.erb` driving
+   `Projects::AttachmentsController` → `Maker::AttachToProject`, and the collision "prompt" is a
+   static `<dialog open>` with an ordinary `button_to` — **there is no `window.prompt` anywhere in
+   `app/javascript`.** The behaviours are still worth pinning and `test/system/file_menu_test.rb`
+   pins all three; only the mechanism was misdescribed here.
 4. **`thumbs` + `thumbfallback`** (88) — grid tiles and the degrade path.
 5. Tool UIs — `boxfilter`, `boxpreview`, `textpreview`, `generator`.
 6. **`modelviewer`** (219) — last, and with a **stated limit rather than a pretence**: assert it

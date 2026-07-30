@@ -2042,8 +2042,15 @@ parent-folder assertion, which is why that one is written separately."
 
 ## Task 11: System test — the file menu (spec §5.4 priority 3)
 
-`filemenu_controller.js` (97 lines) drives attach/move/rename from the Files page and touches
-`Maker::MoveNode` and the collision-rename prompt. No browser coverage.
+**⚠️ THIS TASK'S PREMISE WAS WRONG, corrected 2026-07-29 after implementation.**
+`filemenu_controller.js` does NOT drive attach/move/rename — it is a right-click "Add note" / "Open"
+popover, and there is no `window.prompt` anywhere in `app/javascript`. The attach-and-relocate flow is
+a plain `data: { turbo: false }` Rails form on `files/show.html.erb` (a project `<select>` plus a
+submit) driving `Projects::AttachmentsController` → `Maker::AttachToProject`; the collision prompt is
+a static `<dialog open>` with an ordinary `button_to`. **The three behaviours below are still the
+right things to pin, and `test/system/file_menu_test.rb` pins them — but against those controls, not
+the ones this task imagined.** Step 1's read step is what caught it, which is the only reason this
+task was recoverable.
 
 **Files:**
 - Create: `test/system/file_menu_test.rb`
