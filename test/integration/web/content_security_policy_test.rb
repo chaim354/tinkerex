@@ -35,10 +35,39 @@ module Web
       csp = response.headers["Content-Security-Policy-Report-Only"]
 
       assert_match(/object-src 'none'/, csp, "object-src none blocks plugin embedding")
-      assert_match(/frame-ancestors 'none'/, csp, "frame-ancestors none blocks clickjacking")
       assert_match(/base-uri 'self'/, csp, "base-uri self blocks <base> href injection")
       assert_match(/form-action 'self'/, csp, "form-action self blocks form hijacking")
       assert_match(/script-src[^;]*'self'/, csp)
+    end
+
+    test "frame-ancestors is 'self', not 'none' — the app frames its own PDF previews" do
+      # files/show and models/show embed blob_file_path in a same-origin <iframe>. 'none' would
+      # refuse to let our own page frame our own endpoint, blanking every PDF preview the moment
+      # the policy is enforced. Rails' default X-Frame-Options is SAMEORIGIN, so 'self' is also
+      # the consistent answer.
+      get files_path
+      csp = response.headers["Content-Security-Policy-Report-Only"]
+
+      assert_match(/frame-ancestors 'self'/, csp)
+      assert_no_match(/frame-ancestors 'none'/, csp)
+    end
+
+    test "the nonce is never empty, including for an anonymous visitor" do
+      # session.id is nil until a session exists, so a nonce of `request.session.id.to_s` renders
+      # as `'nonce-'` on every sign-in / sign-up / reset page. Chrome calls that an invalid source
+      # and IGNORES THE ENTIRE script-src DIRECTIVE — a policy that protects nothing on exactly
+      # the pages reachable without credentials. Caught by the system tests' console-error check;
+      # pinned here so it does not need a browser next time.
+      reset!  # drop the signed-in session from setup
+
+      get new_user_session_path
+      assert_response :success
+      csp = response.headers["Content-Security-Policy-Report-Only"]
+
+      assert_no_match(/'nonce-'/, csp,
+                      "an empty nonce makes Chrome discard the whole script-src directive")
+      nonce = csp[/script-src[^;]*'nonce-([^']+)'/, 1]
+      assert nonce.present?, "an anonymous page must still carry a usable nonce"
     end
 
     test "the inline importmap is nonced, so the policy can be enforced later" do

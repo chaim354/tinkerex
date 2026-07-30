@@ -30,12 +30,27 @@ Rails.application.configure do
     policy.style_src   :self, :unsafe_inline
     policy.base_uri    :self
     policy.form_action :self
-    policy.frame_ancestors :none
+
+    # :self, NOT :none — and the browser is what settled this. The app embeds its own PDF previews
+    # in same-origin iframes (app/views/files/show.html.erb, app/views/models/show.html.erb), and
+    # Rails' own default is already X-Frame-Options: SAMEORIGIN. `frame-ancestors 'none'` is
+    # stricter than the app's own behaviour, so enforcing it would refuse to let OUR page frame OUR
+    # blob endpoint — PDF previews would go blank. The system tests logged the report-only
+    # violation on the first run; no integration test could have.
+    policy.frame_ancestors :self
   end
 
-  # The importmap tag is inline and needs the nonce. session.id is stable per session, which is
-  # what Rails' own generated template recommends.
-  config.content_security_policy_nonce_generator = ->(request) { request.session.id.to_s }
+  # The importmap tag is inline and needs a nonce.
+  #
+  # `.presence ||` IS LOAD-BEARING, and this is the second thing the browser caught. `session.id`
+  # is nil until a session exists, so an ANONYMOUS visitor — every sign-in, sign-up and reset page
+  # — got `'nonce-'`, which Chrome reports as "an invalid source" and then IGNORES THE WHOLE
+  # script-src DIRECTIVE. Report-only made that harmless; enforcing it would have shipped a policy
+  # that silently protects nothing on exactly the pages an attacker reaches without credentials.
+  # A random nonce is correct for those pages: it only has to match the tags in the same response.
+  config.content_security_policy_nonce_generator = lambda do |request|
+    request.session.id.to_s.presence || SecureRandom.base64(16)
+  end
   config.content_security_policy_nonce_directives = %w[script-src]
 
   # MEASURE, DO NOT ENFORCE. Flip this to false only after the violation list is empty across the
