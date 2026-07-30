@@ -29,5 +29,28 @@ module Users
 
       super
     end
+
+    # Devise's #destroy is a bare `resource.destroy` with no confirmation of any kind. Account
+    # deletion here cascades through 31 `dependent: :destroy` associations — the whole library
+    # catalog, projects, build log, sheets, previews, paired devices — and there is no undo.
+    # Measured before this guard: one request carrying only a session cookie took users=1
+    # projects=1 nodes=1 tasks=1 to zero.
+    #
+    # Require the current password, which is the same bar Devise already sets for merely
+    # CHANGING a password. Deleting everything should not be the cheaper operation.
+    #
+    # NOT a `before_action`: the failure has to re-render the settings page with the error
+    # attached to the resource, which needs the same resource that #edit renders.
+    def destroy
+      supplied = params.dig(:user, :current_password).to_s
+      if resource.valid_password?(supplied)
+        super
+      else
+        resource.errors.add(:current_password, supplied.blank? ? :blank : :invalid)
+        clean_up_passwords(resource)
+        set_minimum_password_length
+        respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
+      end
+    end
   end
 end
