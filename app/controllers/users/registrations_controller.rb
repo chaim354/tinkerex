@@ -2,6 +2,15 @@
 # unconfirmed and a confirmation email is sent; it cannot sign in until confirmed.
 module Users
   class RegistrationsController < Devise::RegistrationsController
+    # Bounds automated signup floods (each one also sends a confirmation email). Deliberately
+    # looser than the sign-in limit: a household or an office behind one NAT address may
+    # legitimately create several accounts in a sitting.
+    rate_limit to: 5, within: 15.minutes, only: :create,
+               with: -> {
+                 redirect_to new_user_registration_path,
+                             alert: "Too many sign-up attempts. Try again later."
+               }
+
     # A human web sign-up MUST supply a password. The model's `password_required?` returns
     # false whenever no password is set (so the OmniAuth seam + the device-token bootstrap can
     # create passwordless accounts), which means a blank-password web form would otherwise

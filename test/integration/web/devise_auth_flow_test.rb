@@ -10,6 +10,8 @@ module Web
 
     PASSWORD = "correct horse battery staple".freeze
 
+    # The per-IP rate-limit counter is cleared globally in test_helper.rb — see the comment
+    # there for why every test needs that and not just this file's.
     setup { ActionMailer::Base.deliveries.clear }
 
     # --- sign up ----------------------------------------------------------------------

@@ -43,6 +43,22 @@ module ActiveSupport
     # Setup all fixtures in test/fixtures/*.yml for all tests in alphabetical order.
     fixtures :all
 
+    # RESET THE RATE-LIMIT COUNTER BETWEEN TESTS.
+    #
+    # The auth throttles (Users::SessionsController and friends) key on `request.remote_ip`, and
+    # EVERY integration test in the suite is 127.0.0.1 — so without this, one shared counter is
+    # spent across an entire worker's tests and the sign-in in a later test's `setup` is
+    # throttled. That does not fail as "you have been rate limited": the test simply is not
+    # signed in, so it fails as `302 redirect to /users/sign_in`, or as a missing `<h1>`, in a
+    # test that has nothing to do with auth. Measured, adding the throttles without this:
+    # **306 failures / 20 errors** across the suite.
+    #
+    # This is test ISOLATION, not a weakened throttle. The limits stay live in the test env —
+    # `config.action_controller.cache_store` is a real MemoryStore precisely so they can fire —
+    # and auth_throttle_test drives each one past its limit inside a single test, which this
+    # per-test clear does not touch.
+    setup { ActionController::Base.cache_store.clear }
+
     # Pin the FileLayer backend for the duration of one test.
     #
     # A test whose FIXTURES are chunk-shaped (ManifestChunk rows, Storage::ChunkStore blobs) is a
