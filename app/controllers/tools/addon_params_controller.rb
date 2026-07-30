@@ -9,7 +9,7 @@ module Tools
   # self-describing; the show pages' list shows only `params` because they already print the
   # generator above it.
   class AddonParamsController < BaseController
-    # `current_user.maker_addon_states.find` (below) is the tenant scope: another user's id raises
+    # `current_user.maker_addon_states.find` is the tenant scope: another user's id raises
     # RecordNotFound -> 404, by construction rather than by a check someone can forget.
     def show
       state = current_user.maker_addon_states.find(params[:id])

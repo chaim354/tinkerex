@@ -43,7 +43,7 @@ module Tools
       render plain: e.message, status: :unprocessable_entity
     end
 
-    # POST /tools/openscad -> save the state + write the tied bundle (3mf output + params file).
+    # POST /tools/openscad -> save the state + write the tied bundle (3mf output).
     def create
       scad = source_text!
       p = scad_params(scad)

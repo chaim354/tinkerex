@@ -55,7 +55,7 @@ module Tools
       send_data bytes, type: "image/jpeg", disposition: "inline"
     end
 
-    # POST /tools/boxes -> save the state + write the tied bundle (svg output + params file).
+    # POST /tools/boxes -> save the state + write the tied bundle (svg output).
     def create
       generator = params.require(:generator)
       p = box_params

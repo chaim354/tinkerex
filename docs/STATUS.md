@@ -1,8 +1,51 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-29 (**A scanned library lost its preview on every save — branch `claude/lbrn2-mage-preview-save-bug-fe80d4`**)
+**Updated:** 2026-07-29 (**Addon params live in the DB, not in a library file — branch `claude/boxes-sidecar-params-db-1c508f`**)
 
-## Latest (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
+## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
+
+**Suite 1633 → 1671 runs / 5851 assertions / 0 failures / 0 errors / 11 skips on the chunk leg** — the
+default backend, measured by running `bin/rails test` once. Share and s3 are **not yet verified**;
+that is the remaining task, not done here.
+
+**The request was "store the boxes params in the DB instead of a separate file", and the params were
+already in the DB.** `Maker::AddonState#data` is a `json` column holding `{ generator:, params: }`,
+and every reader in the app already went there: the show pages' Generator/Source line, "Duplicate &
+tweak", and the prior rail on boxes' `new`. **Nothing read the file.** It was write-only. So the work
+was a removal plus a replacement for the one job the file did.
+
+**All three addons, not just boxes** — the three `LibraryOutput.write` calls were identical, and
+fixing one would have left three addons with different bundle shapes for no stated reason.
+
+**The replacement is ONE surface, because `AddonState` is addon-agnostic and so is the replacement:**
+`Tools::AddonParamsController#show` (one route, top-level to sidestep the two documented openscad
+inflector traps) serves `JSON.pretty_generate(state.data)` as a download, and
+`app/views/tools/shared/_params.html.erb` lists the params on all three show pages.
+
+**The download serves the WHOLE `data` hash, while the list shows only `data["params"]`.** Deliberate
+asymmetry: the download is byte-identical to the removed file, and `generator` is what made that file
+self-describing — without it the download is an anonymous bag of numbers. In the *display* it is
+redundant, since every show page prints it above the list.
+
+**Param values can be MULTILINE** (boxes' TrayLayout/FrontPanel/NightLightBox section params are
+newline-separated), so `.addon-params dd` carries `white-space: pre-wrap`. Worth knowing what the
+tests can prove: the newline sits in the HTML either way, so **no integration test can verify that
+CSS** — the test asserts the half that can be, that the view never squishes or truncates the value.
+
+**Files already written were LEFT IN PLACE; only their `AddonFile` join rows were dropped**
+(`20260730010000`, `def up` only, raw SQL so a migration does not depend on a model). They are
+ordinary library files a user may have renamed, organized, or attached to a project. Three things
+survive on purpose: a project attachment (a separate `Maker::FileAttachment` record) keeps the file
+visible in the project panel; its `Maker::Preview` rows stay valid because the node still exists; and
+the file name embeds the state id, so it is traceable by hand.
+
+**One test's coverage MOVED rather than being deleted.** `openscad_controller_test`'s bundle test read
+the params *file* back to assert `OpenscadParams` coercion round-trips (a form String becoming Integer
+`6` / Float `2.5`). That is the reason `OpenscadParams` exists, and `data` is now the only place it is
+recorded — so the assertion moved to `state.data`. Deleting it with the file it happened to live in
+would have dropped the only proof of coercion in the suite.
+
+## Earlier (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
 
 **Suite 1628 → 1633 runs / 5694 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
 share and s3.** rubocop clean on the touched files.
