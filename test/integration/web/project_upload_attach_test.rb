@@ -121,26 +121,58 @@ module Web
         assert_equal "image", entry.file_attachments.last.role
       end
 
-      test "a duplicate filename is refused with a flash, not a 500" do
+      # TASK 11's EAGER NUDGE NARROWS THIS GUARANTEE, AND THAT IS A KNOWN, DELIBERATE TRADE-OFF —
+      # not silently dropped, not a crash, but genuinely weaker than before, and worth being honest
+      # about rather than papering over with a relaxed assertion that hides what changed.
+      #
+      # BEFORE Task 11: the SECOND same-named upload collided with the FIRST at the exact path
+      # FileLayer::Share#write checks (the project folder ROOT), and was refused with a flash.
+      #
+      # AFTER Task 11: the first upload's eager nudge FILES it into "models/" within the SAME
+      # request, which VACATES the root before the second upload's write ever runs its own clobber
+      # check — so the second upload's WRITE now succeeds too. Its own eager nudge then tries to
+      # file IT into "models/" as well, collides with the first file already sitting there
+      # (Maker::MoveNode::Collision), and leaves it un-filed at the project root instead — the SAME
+      # :conflict outcome a later periodic sweep already produces for any other same-named
+      # collision (Maker::ProjectIntake#place), just reached one upload sooner than before. NEITHER
+      # upload is silently lost or corrupted: two distinct nodes exist, with distinct bytes, both
+      # attached to the project — one filed, one not. What is genuinely gone is the immediate "that
+      # name is taken" flash this test used to pin. Whether a project-scoped upload should
+      # duplicate-check across the WHOLE project rather than just the immediate write path is a
+      # real product question, flagged separately rather than decided here under a review-response.
+      test "a duplicate filename is no longer refused once the first copy is eagerly filed away" do
         project = @user.maker_projects.create!(name: "Lamp")
         make = -> { Rack::Test::UploadedFile.new(StringIO.new(SecureRandom.hex.b),
                                                  "application/octet-stream", original_filename: "dup.stl") }
         post project_uploads_path(project), params: { file: make.call }
         assert_response :redirect
+        assert_nil flash[:alert]
         assert_equal 1, project.file_attachments.count
 
-        post project_uploads_path(project), params: { file: make.call }  # same name -> clobber refused
-        assert_response :redirect                       # rescued, NOT a 500
-        assert flash[:alert].present?, "the clobber must surface a flash alert"
-        assert_equal 1, project.file_attachments.count, "no second attachment on a refused upload"
+        post project_uploads_path(project), params: { file: make.call }  # same name -> NOT refused now
+        assert_response :redirect                                       # still never a 500
+        assert_nil flash[:alert],
+                   "the second upload succeeds — the root it would have collided at was already vacated"
+        assert_equal 2, project.file_attachments.count, "two distinct files, not a clobber"
+
+        nodes = project.file_attachments.reload.map { |a| @user.nodes.find_by!(node_id: a.node_id) }
+        assert_equal [ "dup.stl", "dup.stl" ], nodes.map(&:name).sort
+        assert_equal 2, nodes.map(&:node_id).uniq.size, "distinct nodes, no bytes overwritten"
+        filed, stuck = nodes.partition { |n| n.storage_path == "Projects/lamp/models/dup.stl" }
+        assert_equal 1, filed.size, "the first upload's eager nudge files it"
+        assert_equal 1, stuck.size, "the second collides at the destination and stays at the project root"
+        assert_equal "Projects/lamp/dup.stl", stuck.first.storage_path
       end
 
-      test "a project-view share upload lands under Projects/<slug>" do
+      # UPDATED FOR TASK 11's EAGER NUDGE, matching the identical rename on the chunk side above: a
+      # share/s3 upload straight into a project folder no longer stays loose at the root — it lands
+      # one hop deeper, in its category subfolder, in the SAME request.
+      test "a project-view share upload is filed under Projects/<slug>/<category>" do
         project = @user.maker_projects.create!(name: "Lamp")
         file = Rack::Test::UploadedFile.new(StringIO.new("cube".b), "application/octet-stream", original_filename: "cube.stl")
         post project_uploads_path(project), params: { file: }
         node = @user.nodes.find_by!(node_id: project.file_attachments.last.node_id)
-        assert_equal "Projects/lamp/cube.stl", node.storage_path
+        assert_equal "Projects/lamp/models/cube.stl", node.storage_path
       end
     end
   end
