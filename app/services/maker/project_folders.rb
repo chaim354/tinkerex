@@ -11,18 +11,29 @@ module Maker
   # is a snapshot taken when the row was written; a file can be swept before any row exists, and a
   # stale row would misfile it. `role_for` is pure and current.
   #
-  # `fetch` WITH NO DEFAULT IS THE GUARD, and it is unreachable on purpose. `role_for` only ever
-  # answers a member of ROLES (it fetches with an "other" default), so a raise here cannot happen
-  # from real input — which is precisely why the totality test in
-  # test/services/maker/project_folders_test.rb is the only thing that can catch a role added
-  # without a folder. Silence is the failure mode being guarded: an unmapped role would be a file
-  # that is never filed, with no error, no log and no node moved. A `fetch(..., "other")` default
-  # would turn that into a wrong answer nobody could see.
+  # `fetch` WITH NO DEFAULT IS THE GUARD. It is LOUD if ever reached — an unmapped role raises
+  # KeyError, not a swallowed default. What makes the totality test in
+  # test/services/maker/project_folders_test.rb necessary is that the raise is normally
+  # UNREACHABLE: `role_for` can only return a role once some extension in ROLE_BY_EXT is wired to
+  # it, so a role added to ROLES without a folder decision can sit here completely unexercised —
+  # no test failure, no crash, nothing to notice — until the day an extension is wired to it and a
+  # real file finally reaches the fetch, at which point the loud raise becomes a production
+  # incident. The totality test is what catches the gap before that day arrives. The genuinely
+  # SILENT failure is the rejected alternative, `fetch(role, "other")`: it would misfile an
+  # unmapped role into "other" and never raise at all — a wrong answer nobody could see. Don't add
+  # it.
   #
-  # THE NAMES ARE LOWERCASE AND ARE NOT ROLE_LABELS. These strings become real directories in the
-  # user's Finder and on their NAS, where `cnc` reads better than `G-code`. ROLE_LABELS are UI
-  # headings; the one place they win here is `archives`, which has no better plain-language name.
+  # THE FOLDER NAMES ARE NOT ROLE_LABELS, even where five of the nine happen to match it
+  # lowercased (models, images, laser, archives, other) — that agreement is coincidental, not
+  # derived, and must stay that way: a UI wording tweak to ROLE_LABELS (capitalization, clarity)
+  # must never rename a directory on someone's NAS. The other four folder names are deliberate
+  # renames to plainer workflow words: `cnc` (not "G-code"), `design` (not "Vector"), `cad` (not
+  # "CAD source"), and `docs`, which uniquely folds two roles — `instructions` ("Instructions")
+  # and `document` ("Documents") — into one folder. These become real directories in the user's
+  # Finder and on their NAS, where `cnc` reads better than `G-code`.
   module ProjectFolders
+    module_function
+
     ROLE_FOLDERS = {
       "gcode"          => "cnc",
       "laser"          => "laser",
@@ -35,12 +46,6 @@ module Maker
       "source_archive" => "archives",
       "other"          => "other"
     }.freeze
-
-    # Every distinct folder name. `instructions` and `document` share `docs`, so this is shorter
-    # than ROLE_FOLDERS — the dedupe is the point, not an accident of the literal.
-    NAMES = ROLE_FOLDERS.values.uniq.freeze
-
-    module_function
 
     def folder_for(name)
       ROLE_FOLDERS.fetch(Maker::FileAttachment.role_for(name))

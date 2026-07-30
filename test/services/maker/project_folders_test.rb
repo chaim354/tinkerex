@@ -3,11 +3,14 @@ require "test_helper"
 module Maker
   # The folder map, and above all its TOTALITY.
   class ProjectFoldersTest < ActiveSupport::TestCase
-    # THE GUARD THIS FILE EXISTS FOR. `folder_for` uses `fetch` with no default, so a role with no
-    # folder raises — but role_for only ever answers a member of ROLES, so that raise is
-    # unreachable in practice and this test is the only thing that can catch the gap. A role added
-    # to the vocabulary without a folder decision is a file that is never filed: no error, no log,
-    # no node moved. Mutation-check it by deleting a key from ROLE_FOLDERS.
+    # THE GUARD THIS FILE EXISTS FOR. `folder_for` uses `fetch` with no default: reached with an
+    # unmapped role, it raises KeyError — LOUD, not silent. What makes this test necessary is that
+    # the raise is normally UNREACHABLE: role_for only returns a role once some extension is wired
+    # to it in ROLE_BY_EXT, so a role added to ROLES without a folder decision can sit here
+    # completely unexercised, with nothing to notice, until a real file of that new type is
+    # finally scanned and the raise becomes a production incident. This test is what catches the
+    # gap first. (The rejected `fetch(role, "other")` default is the genuinely silent failure — it
+    # would misfile instead of raising.) Mutation-check it by deleting a key from ROLE_FOLDERS.
     test "every role has a folder" do
       assert_equal Maker::FileAttachment::ROLES.to_set,
                    Maker::ProjectFolders::ROLE_FOLDERS.keys.to_set,
@@ -35,16 +38,10 @@ module Maker
       assert_equal "other", Maker::ProjectFolders.folder_for("README")
     end
 
-    test "NAMES is every distinct folder, deduped" do
-      assert_equal Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.sort,
-                   Maker::ProjectFolders::NAMES.sort
-      assert_equal 9, Maker::ProjectFolders::NAMES.size
-    end
-
     # The names are lowercase because they appear in Finder and on the NAS — deliberately NOT
     # ROLE_LABELS ("G-code", "CAD source"), which are UI headings.
     test "folder names are single lowercase path segments" do
-      Maker::ProjectFolders::NAMES.each do |name|
+      Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.each do |name|
         assert_match(/\A[a-z0-9]+\z/, name, name)
       end
     end
