@@ -46,6 +46,13 @@ env:
 jobs:
   # Which runner families exist for this run. See ci/preflight.sh — a DECLARATION (the repo variable
   # CI_RUNNERS), not an API call, because a workflow GITHUB_TOKEN cannot list runners.
+  # Which runner families exist for this run. See ci/preflight.sh — a DECLARATION (the repo variable
+  # CI_RUNNERS), not an API call, because a workflow GITHUB_TOKEN cannot list runners.
+  #
+  # This matters most on a SCHEDULED workflow, which this one is (08:30 UTC daily). Before the gate,
+  # the cron fired every day into a void: every leg queued, GitHub cancelled them 24h later, and the
+  # run history filled with `cancelled` at 24h0m0s. Now a scheduled run completes in seconds and says
+  # on its own page which coverage it could not run.
   preflight:
     runs-on: [self-hosted, macos]
     outputs:
@@ -97,7 +104,7 @@ jobs:
         run: |
           echo "server_url=$SERVER_URL" >> "$GITHUB_OUTPUT"
           if ! curl -sf --max-time 8 "$SERVER_URL/up" >/dev/null 2>&1; then
-            echo "BLOCKED: shared server $SERVER_URL is unreachable from the seed (linux) runner."
+            echo "BLOCKED: shared server $SERVER_URL is unreachable from the seed (macos) runner."
             echo "         Bring the deployed server up + ensure the runner can route to it, then re-run."
             exit 0
           fi
