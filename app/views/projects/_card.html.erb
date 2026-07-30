@@ -3,15 +3,19 @@
   data-node-id wiring lets the shared `thumbs` controller poll a pending cover to ready — but only
   when a cover node exists. No cover -> a neutral placeholder, never a forever-spinner.
 %>
-<%= link_to project_path(project), class: "project-card" do %>
-  <% if project.cover_node_id %>
-    <span class="thumb file-cell" data-thumbs-target="cell"
-          data-node-id="<%= project.cover_node_id %>" data-ext="">
-      <%= render "files/thumb", thumb:, ext_label: "" %>
-    </span>
-  <% else %>
-    <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
+<div class="project-tile">
+  <%= link_to project_path(project), class: "project-card" do %>
+    <% if project.cover_node_id %>
+      <span class="thumb file-cell" data-thumbs-target="cell"
+            data-node-id="<%= project.cover_node_id %>" data-ext="">
+        <%= render "files/thumb", thumb:, ext_label: "" %>
+      </span>
+    <% else %>
+      <span class="thumb project-thumb-empty" aria-hidden="true">📦</span>
+    <% end %>
+    <span class="project-name"><%= project.name %></span>
   <% end %>
-  <span class="project-name"><%= project.name %></span>
-  <span class="badge status-<%= project.status %>"><%= project.status %></span>
-<% end %>
+  <% if project.status == "archived" %>
+    <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
+  <% end %>
+</div>

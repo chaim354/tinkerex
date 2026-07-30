@@ -1,6 +1,1463 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-23 (**Current Project — session-scoped default for saves, attaches, and uploads**)
+**Updated:** 2026-07-29 (**Addon params live in the DB, not in a library file — branch `claude/boxes-sidecar-params-db-1c508f`**)
+
+## Latest (2026-07-29): addon params live in the DB, not in a library file (branch `claude/boxes-sidecar-params-db-1c508f`)
+
+**Suite 1660 → 1678 runs / 5862 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files. +18 = 7 endpoint, 4 show-page, 7 migration.
+
+**The baseline is 1660, and the plan's "1633" was wrong** — worth recording because the wrong number
+came from *this file*. The previous entry's `1628 → 1633` was copied forward as the starting point,
+but two entries further down claim `1633 → 1645` and `1645 → 1650`, so the figures in STATUS.md do not
+form a chain and cannot be used as a baseline. Measured instead: a throwaway worktree at the
+merge-base (`8dfbfde`) runs **1660**, and a static count of `test "` blocks is 1576 there vs 1594 here
+— **+18, exactly the tests this branch adds**. Run count exceeds the static count because the shared
+adapter contracts are included into several test classes. **Take a suite baseline by running the
+merge-base, not by reading the last entry.**
+
+**THE SHARE LEG'S DOCUMENTED COMMAND IS INCOMPLETE, AND IT FAILS LOUDLY ENOUGH TO LOOK LIKE A
+CATASTROPHE.** `LIBRARY_BACKEND=share bin/rails test` — the form in CLAUDE.md §10 and the one this
+branch's plan copied — reports **1 failure / 202 errors**, because `LibraryBackendCheck` refuses to
+boot without `LIBRARY_PATH`. The correct invocation is CI's (`ci.yml`, `test-share-backend`):
+`LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`. With it, the leg is green. **The
+diagnosis that mattered was running the BASELINE the same wrong way** — 8dfbfde reports 202 errors
+too, which is what separated "we broke the share backend" from "the command is wrong" in one step
+rather than by reading 200 stack traces. The s3 leg needs its own five `LIBRARY_S3_*` stub knobs for
+the same reason; they point at nothing real on purpose.
+
+**The request was "store the boxes params in the DB instead of a separate file", and the params were
+already in the DB.** `Maker::AddonState#data` is a `json` column holding `{ generator:, params: }`,
+and every reader in the app already went there: the show pages' Generator/Source line, "Duplicate &
+tweak", and the prior rail on boxes' `new`. **Nothing read the file.** It was write-only. So the work
+was a removal plus a replacement for the one job the file did.
+
+**All three addons, not just boxes** — the three `LibraryOutput.write` calls were identical, and
+fixing one would have left three addons with different bundle shapes for no stated reason.
+
+**The replacement is ONE surface, because `AddonState` is addon-agnostic and so is the replacement:**
+`Tools::AddonParamsController#show` (one route, top-level to sidestep the two documented openscad
+inflector traps) serves `JSON.pretty_generate(state.data)` as a download, and
+`app/views/tools/shared/_params.html.erb` lists the params on all three show pages.
+
+**The download serves the WHOLE `data` hash, while the list shows only `data["params"]`.** Deliberate
+asymmetry: the download is byte-identical to the removed file, and `generator` is what made that file
+self-describing — without it the download is an anonymous bag of numbers. In the *display* it is
+redundant, since every show page prints it above the list.
+
+**Param values can be MULTILINE** (boxes' TrayLayout/FrontPanel/NightLightBox section params are
+newline-separated), so `.addon-params dd` carries `white-space: pre-wrap`. Worth knowing what the
+tests can prove: the newline sits in the HTML either way, so **no integration test can verify that
+CSS** — the test asserts the half that can be, that the view never squishes or truncates the value.
+
+**Files already written were LEFT IN PLACE; only their `AddonFile` join rows were dropped**
+(`20260730010000`, `def up` only, raw SQL so a migration does not depend on a model). They are
+ordinary library files a user may have renamed, organized, or attached to a project. Three things
+survive on purpose: a project attachment (a separate `Maker::FileAttachment` record) keeps the file
+visible in the project panel; its `Maker::Preview` rows stay valid because the node still exists; and
+the file name embeds the state id, so it is traceable by hand.
+
+**"Rows go, bytes stay" is now PINNED, and it needed to be** — the plan specified only a manual
+`bin/rails runner` check, missing that this repo already has a convention for testing data migrations
+(four of them under `test/models/maker/*_migration_test.rb`, all `require Dir[...]` + `Migration.new.up`
+against seeded rows). `delete_addon_parameters_file_rows_migration_test.rb` follows it. **The
+load-bearing assertion is the negative one**: the library nodes must survive. It is invisible in the
+SQL — which names only `maker_addon_files` and so looks harmless either way — so the thing most likely
+to break it is a later "tidy up the orphaned files too" change, and nothing else would notice.
+Mutation-checked rather than trusted for passing first try: dropping the `WHERE` clause fails 2 tests,
+and adding a `DELETE FROM nodes` fails the node-survival test.
+
+**One test's coverage MOVED rather than being deleted.** `openscad_controller_test`'s bundle test read
+the params *file* back to assert `OpenscadParams` coercion round-trips (a form String becoming Integer
+`6` / Float `2.5`). That is the reason `OpenscadParams` exists, and `data` is now the only place it is
+recorded — so the assertion moved to `state.data`. Deleting it with the file it happened to live in
+would have dropped the only proof of coercion in the suite.
+
+## Earlier (2026-07-29): saving a file removed its preview, and the parser fixes were never the problem (branch `claude/lbrn2-mage-preview-save-bug-fe80d4`)
+
+**Suite 1628 → 1633 runs / 5694 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3.** rubocop clean on the touched files.
+
+**The report was "the lbrn2/mage preview fixes still don't work — check hex tiles and reference
+card", and the parser was not involved at all.** Both files render correctly on demand: fed the
+bytes the deployed share library holds right now, `Lbrn2` returns a 256×256 PNG and reports
+`hex tiles.lbrn2` at 408.7 × 538.7 mm / 1494 shapes and `reference card.lbrn2` at 292.1 × 144.6 mm
+/ 1254 shapes. **Nothing was ever asking it to.** Checked before proposing anything, which is what
+kept this out of `Lbrn2`/`Mage`, where the two preceding arcs had been and where it would have
+found nothing.
+
+**ROOT CAUSE — `Library::Reconciler` enqueued a thumbnail for a file it had never seen, and only
+for that.** The one `Maker::Previews::Enqueue` call sat in `#call`'s `leftovers` loop, which is
+reached by step 3/4 — create-or-revive. A file whose bytes CHANGE under a path the catalog already
+knows is claimed in step 1 by `#match_live_paths`, updated in place with
+`update!(size:, mtime:, content_hash:)`, and **returned without an enqueue**. Previews are keyed by
+`[node_id, content_token]` and share/s3 answer `content_token` with `content_hash`, so the instant a
+file is saved its existing row points at content that no longer exists and **every surface that
+resolves a preview by the current token — `FilesController#show` and `#thumbnails_for` — finds
+none.** The file goes blank and stays blank.
+
+**Not an lbrn2/mage bug: a SAVE bug, which is why it looked like one.** Format is irrelevant — what
+matters is whether a file is ever rewritten in place, and in a library that is a mounted NAS that is
+exactly LightBurn, MillMage and a slicer. Everything else in that library was written once and never
+noticed. Measured on the deployed share library, the files with no preview for their current bytes
+split cleanly: **10 per user carried a row for SUPERSEDED content** — `hex tiles.lbrn2`,
+`reference card.lbrn2`, `piecies card.lbrn2`, four more `.mage`, and `Catan prints.3mf` — and the
+rest (45, one user) had never had one at all and belong to the older `backfill_thumbnails` backlog.
+Nine of ten are `.lbrn2`/`.mage`/`.3mf`.
+
+**THE FINGERPRINT THAT NAMES THE MECHANISM: LightBurn's `_backup` twin had a preview and the real
+file did not.** Saving writes `<name>_backup.lbrn2` beside the file. That path is NEW to the scan, so
+it lands in `leftovers` and gets its thumbnail; the file the user actually opens takes the path-match
+branch and gets nothing. `hex tiles_backup.lbrn2` (since tombstoned) held previews rendered at 18:30
+and 19:00 on 2026-07-29 while `hex tiles.lbrn2`'s newest was from **07-28 03:19**, for content three
+saves gone. A preview beside a file that has none is not a coincidence — it is the two branches,
+photographed.
+
+**`FilesController#backfill_thumbnails` was masking it, partially, which is why it read as
+intermittent.** That pass DOES enqueue on a changed token, so browsing the folder listing healed
+whatever it reached — capped at `BACKFILL_LIMIT = 100`, in display order, and **only on `#index`**.
+Open the file's own page and nothing repairs it, ever.
+
+**The fix is one enqueue at the update site, sharing a seam with the one that already existed.**
+`#enqueue_thumbnail(node, hash)` carries the best-effort contract (a render enqueue must never fail a
+scan that is tombstoning the whole library) and both branches call it. Enqueuing inside step 1, ahead
+of `guard_mass_deletion!`, is safe on the guard's own stated terms: it writes only for paths this
+pass positively OBSERVED, and the case the guard exists for — an unmounted NAS — hands step 1 an
+empty list and enqueues nothing.
+
+**A SCAN CANNOT HEAL THE BACKLOG, and that is not a gap in the fix — it is `unchanged?` working.**
+Those files now record their current hash, mtime and size, so the next pass skips them WITHOUT
+re-reading them, which is the behaviour that keeps a 2TB archive cheap. Hence
+`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`), modelled on
+`LbrnBackfill`: enqueue a thumbnail for every live file whose current `content_token` has no row.
+Backend-neutral through `stat_all` — the port's bulk read, DB-only on all three — and idempotent,
+since the rows it creates are what the next run finds. **Deliberately NOT the `unsupported`-row
+sweep still open below:** a row saying `unsupported` for the current content is present and terminal,
+and this only ever looks for content with NO row, so the two migrations keep separate correctness
+arguments. Dry-run against the live share library: **65 enqueues across two users**, both named files
+among them.
+
+**Mutation-checked, and one of the checks came back wrong.** Reverting the Reconciler leaves the new
+test RED for the stated reason ("No jobs were enqueued"); dropping the sweep's already-has-a-row
+guard turns two of its four tests RED. But dropping the sweep's own `present` scope left the
+tombstone test **GREEN** — `stat_all` omits a deleted node as an absent key, so the port was the
+filter all along and the test never pinned the scope it appeared to. Said so at both sites rather
+than leaving a test whose name claims more than it checks.
+
+### Follow-up (same branch): a truncated setting, an unrendered photo, and a palette NOT shipped
+
+**Suite 1633 → 1645, identical on all three legs. Prompted by "did you base it off
+[jlucaso1/lbrn2-to-svg](https://github.com/jlucaso1/lbrn2-to-svg)?" — no, and reading it was still
+worth it.** It is MIT (so §9 would have allowed borrowing) and it independently arrived at the same
+dialect: `<XForm>` as a child element, `V<x> <y>c0x..` vert lists, `L`/`B` prims, `VertID`/`PrimID`
+instancing, `<Children>` groups, and the Text `BackupPath` replacing rather than composing with its
+Text. **Two implementations from different evidence agreeing is the strongest corroboration the
+dialect reading has.** Cross-checked ours against its six fixtures: bounds match all six within our
+1 dp rounding, and the drawn geometry is visually identical.
+
+**`.to_i` IN THE RECIPE PANELS TRUNCATED EVERY FRACTIONAL SETTING.** A layer cut at 6.67 mm/s
+rendered **"6 mm/s"** — not a rounding nit but a number the machine will not run, displayed as
+though it were the setting, and the same class of error as reading a MillMage `ToolDef` instead of
+its `Operation`. Live on `reference card.lbrn2`. **Invisible to the suite because every checked-in
+`.lbrn2` fixture uses whole speeds and powers** — the value that exposed it came off a real file.
+Now one `FilesHelper#recipe_num` for both panels: round (never truncate) to 3 dp — the precision
+`MageMetadata#num` already stores at — then drop a trailing zero that carries no information, so
+`50.0` prints `50` and `6.67` prints `6.67`. Mutation-checked: restoring truncation turns the new
+page-driven test red.
+
+**A placed photo previewed as an EMPTY BOX.** `emit_shape` routed `Bitmap` through the `Rect` arm —
+four corners, `fill="none"` — so a `.lbrn2` built around a traced or engraved image drew its bounding
+rectangle and nothing inside. Now emits `<image>` with the inlined PNG. Three refusals fall back to
+the old outline, each for its own reason: **not axis-aligned** (an `<image>` is upright; drawing a
+rotated one unrotated puts the photo where it is not — the call `Ellipse` already makes),
+**not base64** (`Data` is bytes from an uploaded file about to enter an SVG attribute, and a `"`
+would close it — the guard REQUIRES the alphabet rather than escaping after), and **not a PNG**
+(checked on the first 16 characters, because this attribute is routinely megabytes — it is why
+`parse_document` needs `huge`).
+
+**ORIENTATION WAS MEASURED, NOT REASONED, AND THE FIXTURE COULD NOT HAVE SETTLED IT.** `apply`
+negates y, so whether the raster needs flipping back is a real question — and the reference carries
+`-0.252` in its own image matrix, so neither implementation answers it by inspection. The reference's
+`image` fixture is a **symmetric grid**, which renders identically upside down. Pinned with an 8×8
+red-over-blue PNG built by hand in the test, rasterized, and pixel-sampled: red must land on top.
+Mutation-checked with the flip the reference's matrix form implies — it turns the test red.
+
+**THE PALETTE IS DELIBERATELY NOT SHIPPED, and the corpus is why.** The reference colours layers
+from a hard-coded 8-entry table indexed `cutIndex % 8`; `cut_colors`'s long-standing comment declines
+to guess ~30 colours LightBurn never writes into the file. Tested the guess against the 58-file
+corpus, using each file's embedded thumbnail — LightBurn's own render — as the oracle. On a tight
+saturation filter the single-layer files read **0 → black, 1 → blue, 2 → red, 6 → cyan**, against the
+reference's **1 → red, 2 → green**: **copying that table would have coloured two of the four
+checkable indices WRONG.** Widening the filter then showed the oracle is contaminated anyway —
+thumbnails carry placed photos and engraved raster, so one file yields several unrelated hues
+(`idx 2` reads red, orange and yellow at once). **The corpus does not determine the palette, so the
+existing decision stands** — and now rests on evidence rather than on caution.
+
+**Fills were reported as a gap and are NOT one, which is a correction to this arc's own earlier
+claim.** The filled `k.svg`/`crucifix.svg` in the reference's tree are **stale committed artifacts**;
+its live `styleUtils.ts` emits `fill:none` on every path, exactly as we do. Doing fills properly
+(mode-driven, `Scan`/Fill filled and `Cut` stroked) additionally needs one shape's subpaths emitted
+as a single `fill-rule="evenodd"` path or a letter's counter paints over — a change to the yield
+contract. **Measured payoff today: zero.** Only files with no embedded thumbnail reach this renderer
+— **200 of 217** live `.lbrn2`/`.mage` previews use LightBurn's own — and of the three that do
+fall back, two are `.mage` (operations, not Cut/Scan layers) and none contains a bitmap. Left alone
+on purpose.
+
+### Follow-up 2 (same branch): ONE PREVIEW ROW PER (node, kind) — the leak is gone at the source
+
+**Suite 1645 → 1650, identical on all three legs.** The open item below said "every save leaks a
+preview row and its blob" and proposed a reaper. **The reaper was the wrong answer, and the
+question that produced the right one was "why aren't we just updating them when the new one is
+created?"** — stop minting the rows rather than sweep them up.
+
+**Measured first, because it decides the shape.** On the deployed share library: 1334 rows, 1174
+current, **160 orphaned** (3.1 MB of blobs), growing **~17.6 rows/day** — and the orphans split
+into two unequal kinds, **115 whose node is gone** and **45 superseded-content-with-a-live-node**.
+Every web surface (`FilesController#show`, `#thumbnails_for`, `ThumbnailMap`) resolves by the
+node's CURRENT content token, so **nothing can see an orphan** — they were pure dead weight.
+
+**The mechanical fact that made it free:** attaching over a `has_one_attached` **enqueues
+`ActiveStorage::PurgeJob` for the replaced blob by itself** — verified by driving it, not assumed
+(the first probe showed the old blob row still present, which was only the test adapter not running
+the job). So repointing a row reclaims its old bytes with no code of ours.
+
+**The migration IS the cleanup.** The new unique index cannot be added while duplicates exist, so
+the collapse has to happen in `20260730001500_one_preview_per_node_and_kind.rb` — which is why this
+change removes a recurring job instead of adding one. It keeps the most recently updated row per
+group (the last render, which is the current content in every ordinary case, and self-healing where
+it is not, since `Enqueue` repoints any row whose version does not match). Self-contained per the
+house style, with one deliberate exception: `ActiveStorage::Attachment#purge` is **framework** API,
+and skipping it would have traded a database leak for a stored-file leak.
+
+**THE HAZARD THIS INTRODUCES, AND THE GUARD THAT PAYS FOR IT.** With a row per VERSION, two quick
+saves made two rows and each job wrote its own — **a wrong thumbnail was impossible by
+construction, and that immunity was exactly what the extra rows were buying.** With one row, a slow
+render of v1 finishing after a fast render of v2 attaches v1's bytes to a row that says v2 and marks
+it ready: **a wrong image shown as current, silently** — strictly worse than the leak being removed.
+`GeneratePreviewJob` now captures the version it is rendering and refuses to write if the row moved
+on (`#commit_if_current`). Written as a failing test first, which reproduced the wrong-image write
+exactly; mutation-checked by removing the guard.
+**EVERY terminal write goes through it, not just the successful one** — the part most likely to be
+trimmed later. A stale `unsupported` or `failed` is as wrong as a stale image, and worse in one way:
+`Enqueue` treats `failed` as "retry me", so an old verdict would look repaired while describing
+content nobody asked about. Losing the write is the CORRECT outcome — whoever repointed the row
+already enqueued a job for the new content.
+
+**The v1 API loses per-version previews, and says so rather than clobbering.** `POST
+/v1/maker/previews` was idempotent per `(node, version, kind)`; it is now per `(node, kind)`, so
+honouring a request for an old version would throw away the current render — and on share/s3, where
+there is no history, point it at bytes that do not exist, so the render would then fail and leave
+the node with **no** preview. It answers **422 `stale_version`** naming the current one. **Only when
+the port can adjudicate:** a node the backend cannot resolve (never synced, deleted, unmounted
+share) gives no basis to refuse, and rejecting anyway would break a client rendering a node it is
+about to create — which is what every other test in that file relies on.
+
+**Also deliberate:** a repoint sets `status = "pending"`, so the row still holds the previous render
+but `_thumb.html.erb` shows an image only when `ready` — the user sees a spinner, not last week's
+picture labelled as today's content. Identical to what they saw before, when the superseded row
+simply was not found.
+
+### Left open by this arc
+
+**The SAVE leak is closed by construction; a SECOND orphan class is not, and the deploy is what
+proved it.** An earlier revision of this line said "Nothing" — written after the code was green and
+before the migration had run against real data, which is exactly the kind of claim this file exists
+to stop. The migration's own output settled it:
+
+| backend | collapsed | rows after | pointing at superseded content | **node is gone** |
+|---|---|---|---|---|
+| chunk | 3 | 570 | 0 | **3** |
+| share | 71 | 1267 | 0 | **93** |
+| s3 | 0 | 0 | 0 | 0 |
+
+- **Superseded-content rows: gone, and cannot come back.** Zero on every backend, and the unique
+  index on `(user_id, node_id, kind)` is what keeps it that way. share dropped 1338 → 1267 rows and
+  36.3 → 33.2 MB of blobs.
+- ~~**Rows whose NODE no longer exists: 93 on share, 3 on chunk.**~~ **CLOSED — `DeadNodeReaper`,
+  below.** The migration only collapses DUPLICATES within a `(user, node, kind)` group; a dead
+  node's row is the only row for that node, so the index has no opinion about it and nothing swept
+  it. **This is why 71 were collapsed and not the 160 the pre-deploy measurement counted** — 115 of
+  that 160 were dead-node rows, and only the ~45 live-node duplicates were ever in scope.
+
+### The dead-node reaper — the second orphan class, closed
+
+**Suite 1650 → 1660, identical on all three legs.** `Maker::Previews::DeadNodeReaper` +
+`Maker::DeadNodeReaperJob`, weekly in `recurring.yml`, plus `rake previews:reap_dead_nodes`
+(`DRY_RUN=1` to report only).
+
+**A JOB RATHER THAN A CONSTRAINT, because this leak is shaped differently from the one the index
+fixed.** It grows when files are DELETED, not when they are edited, so it tracks library churn
+instead of editing activity — and it cannot be prevented at write time: a node is deleted long
+after its preview was made, `Reconciler` **tombstones rather than destroys** (so no `dependent:`
+callback would ever fire), and wiring an association from `Node` to `Maker::Preview` would point
+the file layer at the maker layer, which is the coupling §12 step 10 exists to prevent.
+
+**THE WHOLE DESIGN QUESTION IS REVIVABILITY, and the two cases genuinely differ** — collapsing them
+is the mistake to avoid:
+- **No node row at all → reaped immediately.** Both ways back need the tombstone: the share
+  Reconciler's revive-by-path looks up `deleted: true` rows BY `storage_path`, and
+  `undelete`/`Sync::Trash.restore` reconstruct from the row. With no row that `node_id` can never
+  return, so there is nothing to protect.
+- **A tombstone → spared until the grace window closes.** A tombstone is a deletion that can be
+  TAKEN BACK, returning the same `node_id` — a file dragged out of a folder and back comes home with
+  its content unchanged, at which point the row would have been live again. Reaping inside the
+  window turns an undo into a re-render. **Dated from the NODE's `updated_at`** (when it was
+  tombstoned), not the preview's, which records the last render and can be months older than the
+  deletion.
+
+**`grace` is 30 days and deliberately NOT read from `LIBRARY_TRASH_DAYS`**, despite matching its
+default: that setting is share-only while this applies to all three backends, and it treats **0 as
+"keep forever"** — a meaning that would invert dangerously here, where 0 reads naturally as "no
+grace".
+
+Mutation-checked on all three load-bearing decisions: reaping live nodes, ignoring the grace
+window, and deleting the row without purging the blob each turn a test red.
+
+**A guard came out of it that had been missing all along.** `config/recurring.yml` is read by the
+Solid Queue **supervisor**, not by the Rails process the suite boots, so a typo in a class name or a
+`command:` that does not parse is invisible to every other test and surfaces as a job that silently
+never runs — in production, at 5am. `test/recurring_schedule_test.rb` now resolves every `class:` to
+a real ActiveJob, compiles every `command:` and checks the constants it names, and asserts each
+entry has exactly one of the two plus a schedule. Prompted by this being the first NAMESPACED entry
+(`Maker::DeadNodeReaperJob`) — the shape most likely to be mistyped and least likely to be noticed —
+and mutation-checked by misspelling it.
+
+The **`unsupported`-row sweep** left open by the audit-fix arc is a third, separate migration and is
+also still open — see that arc's own list below.
+
+## Previously (2026-07-29): the audit-fix arc — two security gates that ran zero, and a preview path that could not have worked (branch `claude/handoff-audit-fixes-plan-d0f8b3`)
+
+**Suite 1628 runs / 5678 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
+and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
+offenses**. The three security gates green **by exit code**: `brakeman=0`, `audit=0`, `js=0`.
+`client/` has a zero-line diff, and all three standing tripwires still answer what CLAUDE.md §12
+step 10 says they should.
+
+**11 skips, where this file has recorded 14 since the previews arc — and the difference IS item 3.**
+F3D is installed on this build box now, so `Maker::Previews::Mesh`'s tests **run** instead of
+skipping. Measured both ways on the same tree: `F3D_BIN=/nonexistent/f3d bin/rails test` gives
+**1628 runs / 5667 assertions / 14 skips**. CI has no F3D and will see 14. A reader comparing skip
+counts across entries has to know which of the two numbers they are holding; neither is wrong.
+
+Plan: `docs/superpowers/plans/2026-07-29-handoff-audit-fixes.md`. Queue it came from:
+`docs/HANDOFF-AUDIT-FIXES.md`.
+
+### 1. `scan_ruby` was two gates running zero
+
+`bin/brakeman` exited **3** on a false positive — an argv-array `Open3.capture3` in
+`Maker::Previews::ImageThumb`, the same shell-free, no-shell-anywhere form already accepted at
+length for the sibling `mesh.rb` renderer. `scan_ruby` runs brakeman as step 1 and
+`bin/bundler-audit` as step 2, so **the audit gate had never executed**. The job looked like two
+gates and was zero.
+
+**The rule this arc exists to install: read a security gate by EXIT CODE, never by reading its
+output.** A gate that aborts before it runs is, in a log skim, indistinguishable from a gate that
+ran and found nothing — and because the two are chained, the *first* gate's false positive silently
+disarmed the *second* gate's real findings. That is how five gems drifted behind published
+advisories, one of them High, on a socket every device holds open. Both gates now exit 0, and the
+"CI cannot run" section below states the exit-code rule at the place someone will actually be
+standing when they need it.
+
+### 2. Five gems, eighteen advisories, one High on the always-on `/cable` path
+
+Measured against the pre-arc lockfile (`bin/bundler-audit check` on `4ed32fe`'s `Gemfile.lock`):
+**18 distinct advisories across 5 gems** — nokogiri 9, crass 4, loofah 3, rails-html-sanitizer 1,
+websocket-driver 1. One **High**, one Medium, one Low, 15 unrated by the DB.
+
+- **websocket-driver 0.8.1 → 0.8.2** — **CVE-2026-61666 / GHSA-2x63-gw47-w4mm, High: denial of
+  service via a malformed `Host` header.** This is `actioncable`'s own dependency, and §12 step 1
+  put an ActionCable socket on the **continuously-open** path: every device subscribes to
+  `LibraryChannel` for the `{head_seq}` nudge and holds it. The exposed surface is not an
+  occasional request — it is the one connection the sync loop depends on existing.
+- **loofah 2.25.1 → 2.25.2**, **rails-html-sanitizer 1.7.0 → 1.7.1**, **crass 1.0.6 → 1.0.7** — the
+  Action Text sanitizer path, which since the project-page overhaul renders **user-authored notes
+  and build-log entries**. Two of the loofah three are `allowed_uri?` failing to see a
+  `javascript:` URI split by character references; the crass four are parser DoS.
+- **nokogiri 1.19.3 → 1.19.4** — six of the nine are **use-after-free or out-of-bounds read in XML
+  parsing**, and this app parses **untrusted uploaded XML** on exactly that path:
+  `Maker::Previews::Lbrn2` reads user-supplied `.lbrn2`, and `Maker::Previews::ThreeMf` reads the
+  XML inside an uploaded `.3mf` zip. **`lbrn2.rb:70` does `Nokogiri::XML(bytes) { |c| c.recover.huge }`
+  — recover-past-malformed with libxml2's built-in limits LIFTED**. `huge` is **required, not a
+  tuning knob** (the reason is recorded at the method: LightBurn inlines a placed photo as base64 in
+  `Bitmap@Data`, libxml2 caps one attribute at 10 MB, and past that `recover` silently returns a
+  TRUNCATED tree — 2 of the 58 real files hit it). Both halves are correct and neither is being
+  undone here; the point is only that this parser is aimed at attacker-shaped input with its own
+  guardrails deliberately off, which is why keeping it patched is not routine hygiene. **All 7 platform lines moved** (`aarch64-linux-gnu/musl`,
+  `arm-linux-gnu/musl`, `arm64-darwin`, `x86_64-linux-gnu/musl`) — the deploy builds `linux/amd64`
+  while this box is `arm64-darwin`, so bumping only the line you can see locally leaves the
+  **shipped image** behind while the local suite goes green.
+
+**Lockfile-only, and each gem named explicitly rather than a bare `bundle update`** — which would
+have ridden in the deliberate exact `lexxy` pin along with everything else, turning a security fix
+into an unreviewed dependency sweep.
+
+**The count is a snapshot of a moving target, not a property of the code.** `bundler-audit` refreshes
+`ruby-advisory-db` on each run, so re-measuring the same lockfile later can legitimately report more
+advisories than it did an hour earlier — the plan for this arc recorded seven. Quote the exit code,
+which is stable; treat the count as the date-stamped reading it is.
+
+### 3. F3D installed — and installing it alone would have achieved NOTHING
+
+`Mesh.available?` shelled out to `f3d --version` and matched the literal lowercase `"f3d"`. **F3D
+3.x's banner is `F3D 3.5.0 / F3D - A fast and minimalist 3D viewer` — there is no lowercase spelling
+anywhere in it** (verified against the 3.5.0 binary). So the gate reported a working, installed
+binary as **absent**, and shipping the Dockerfile change without fixing the match would have added
+~526 MB to the image and changed nothing observable — the install alone achieves exactly nothing.
+
+**That dead gate is also why a second bug was invisible.** With `available?` permanently false the
+Mesh render path never ran and its tests could only ever **skip** — hiding that
+`render(kind: "model_glb")` returned **PNG bytes labelled `model/gltf-binary`**, attached as `.glb`
+and marked `"ready"`. F3D's `--output` is a raster screenshot and writes PNG whatever the extension
+says. `kind` is **client-supplied**, through `V1::Maker::PreviewsController`. Fixing `available?`
+would have made that path live, so **it is refused in the same change** — the two are one commit on
+purpose, and splitting them later would re-open the window.
+
+**State it plainly so nobody tries again: F3D cannot emit a GLB by any CLI route.** `--help` has no
+export option; `.glb` is an **input** format for F3D, not an output one. The refusal raises
+`GeneratePreviewJob::Unsupported`, which maps to the terminal **`unsupported`** status — deliberately
+not `failed`, which a re-POST re-enqueues, so a client asking for the impossible would retry forever.
+
+**⚠ DEPLOYING THIS DOES NOT MAKE EXISTING CAD FILES SPROUT THUMBNAILS, and that will look like the
+feature is broken.** `available?` going true is not retroactive. Every `.obj`/`.step`/`.stp`/`.iges`/
+`.igs` already seen on the deployed boxes carries `status: "unsupported"`, written by the job's own
+`renderer toolchain unavailable` gate — and **nothing re-enqueues an `unsupported` row**:
+`Maker::Previews::Enqueue` returns early unless the row is new or `failed`;
+`V1::Maker::PreviewsController` resets to `pending` on the same two conditions; and
+`FilesController#backfill_thumbnails` skips any node that already has a row for the current
+`content_token`, whatever that row's status. Driven, not read: calling `Enqueue.call` on an
+`unsupported` row leaves it `unsupported` and enqueues nothing. Registry has mapped these extensions
+to `Mesh` since 2026-07-20 and `backfill_thumbnails` walks every renderable file in a viewed folder,
+so those rows almost certainly exist on all three deployed backends already. **Consequence: the
+feature reaches only content that arrives after the deploy; every CAD file already in a library keeps
+its static "unsupported" badge until its bytes change.** A one-off sweep clearing `unsupported` rows
+whose extension now has an available renderer is what closes it — `app/services/maker/previews/lbrn_backfill.rb`
+is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
+migration-shaped operation, not an audit fix) and left as an open item below.
+
+**The image cost — SETTLED BY THE DEPLOY, after two local tools disagreed 4x.** On the Unraid box,
+which is the only measurement that decides anything: **887 MB → 1.57 GB, +683 MB (+77 %)**. Per-layer
+from `docker history` on the build host agrees: `COPY /opt/f3d` = **321 MB**, the Mesa/EGL apt layer =
+**205 MB**. **296 MB of the 307 MB `/opt/f3d` tree is `lib/`** — bundled VTK/OCCT/GDAL/USD that ships
+whether or not a deployment ever opens a STEP file.
+
+**An earlier revision of this paragraph said "roughly tripling", against a locally-built "before"
+image of 229.8 MB. That baseline was wrong** — the real predecessor on the box is 887 MB, so the local
+before-image was not the same artifact and the ratio taken from it meant nothing.
+**`docker image inspect --format '{{.Size}}'` reported 229.8 → 387.5 MB while `docker image ls`
+reported 230 MB → 1.57 GB** — a 4x disagreement between two commands that agreed *exactly* on the
+base, and **the deploy proved `ls` right**. The lesson is this arc's own in a new place: when two
+instruments disagree, do not average them and do not pick the reassuring one — **find the instrument
+that decides.** Here that was the machine the image actually lands on.
+
+**This is also what filled the box, and it is worth budgeting for.** The first deploy attempt failed
+with `mkdir: No space left on device` at 31 G / **100 %** full. Kamal aborted while acquiring its lock,
+**before touching the running container**, so the old version stayed up and serving — the failure mode
+is safe, and a retry costs nothing. Dangling images reclaimed only **144 MB** (they share layers with
+tagged ones, so the `docker system df` "reclaimable" figure badly overstated them); the real reclaim
+was **7.5 GB of Docker build cache**, which is pure dead weight on that host because images are
+cross-built on the Mac and the box only ever pulls. 99 % → **80 %**. All three destinations pull the
+same tag, so one image's growth is paid once — but two versions are retained for rollback, so the next
+image growth costs roughly double its own size.
+
+**The runtime package list is 4 packages and it is DERIVED, not guessed** —
+`libx11-6 libegl1 libegl-mesa0 libgl1-mesa-dri`. `readelf -d` across the binary and every bundled
+`.so` shows **libX11 as the only external NEEDED** beyond what `base` already has. The rest is the
+GL stack, and **the Mesa EGL driver is `dlopen`ed — invisible to `ldd`**, so the honest-looking
+minimal list (drop `libegl-mesa0`, since nothing links it) gives **SIGSEGV 139 at render time**.
+Only a real render settles this; static inspection cannot. Verified by rendering both `tetra.obj`
+and a real 4.7 MB STEP file to PNG inside the image.
+
+### 4. The GPL-3.0 boxes sidecar ships its own licence text
+
+`sidecar/boxes/Dockerfile` now does `COPY LICENSE README.md ./`, matching `sidecar/openscad`. We
+build these images and push them to a registry, which is **redistribution** — so under §9 the
+licence has to be **inside the image**, not merely committed beside the Dockerfile. The `LICENSE`
+had been in the repo since the addon landed and had simply never been copied in.
+
+**`test/deploy_hygiene_test.rb`'s new assertion is DIRECTORY-DRIVEN, so it closes the class rather
+than the instance:** it globs `sidecar/*/Dockerfile` and requires a `COPY … LICENSE` line in each,
+so a third sidecar is covered the day it appears rather than the day someone remembers. Every
+sidecar here is GPL by construction — that is *why* they are HTTP sidecars instead of linked
+libraries — so the glob needs no allow-list.
+
+**The second assertion exists because the first version was mutation-tested and failed.** Discovery
+originally filtered to sidecars that "have a LICENSE beside them", which conflates *"this licence
+needs copying into the image"* with *"this licence was ever committed at all"* — and so **silently
+skipped the worse case**: a future sidecar whose author never added a LICENSE passes with an
+unchanged assertion count, because the missing file is precisely what excluded it. A missing
+`LICENSE` is now checked **first and separately**, because the two failures want different fixes: no
+`COPY` line means the text is in the repo one line from being fixed; no `LICENSE` at all means the
+image is being built and pushed under GPL with nothing to point at anywhere. **Found by mutating the
+test, not by reading it.**
+
+### 5. Two findings documented rather than fixed, both deliberately
+
+Neither is duplicated here — each already has its own home in this file, and a second copy is a
+second thing to go stale:
+
+- ~~**No Linux runner is registered, so all 7 `ci.yml` jobs queue forever.**~~ **CLOSED 2026-07-29**
+  by the CI arc — `ci.yml` targets `macos` and every linux/windows job is gated so it cannot queue.
+  See "CI runs again, on the runner that exists" below (this bullet pointed at "CI cannot run", which
+  that section replaced). Still true and still worth knowing: **Linux and Windows coverage is skipped,
+  not passing**, and the two steps to restore it are recorded there.
+- **The OVH deployment inherits `ENABLE_TEST_SIGNUP`** through Kamal's `env.clear` deep-merge — see
+  the bullet under "Still open after this arc". Left on knowingly, with the one-line fix recorded
+  both there and at the edit site.
+
+### 6. The Rust counts CLAUDE.md now defers to this file
+
+CLAUDE.md carried **`53 tests`** for `fs-provider`. Measured: **192 passed across 20 test binaries,
+0 failed** (`cd client/fs-provider && cargo test`). **The stale number was DELETED, not updated** —
+that list's own header already defers per-suite counts here, so writing the number in two places is
+writing a number that will be wrong in one of them, and this one already was by 3.6x. A second count
+of the same class went with it: `sync-engine`'s **`14 tests`** for the server-backed integration
+suite, in the same list, for the same reason.
+
+**So the deferral has to land somewhere, and this is it:**
+
+- `client/fs-provider` — **192 / 0**, 20 binaries, hermetic (no server). Re-measured this arc.
+- `client/sync-engine` `tests/integration.rs` — **NOT re-measured here**; it needs a running server
+  and skips cleanly without one. Last recorded figure in this file is **19/0** (2026-06-14 entry).
+  Treat that as dated, not current.
+
+**A count in a file that is not the one that produces it is a count that rots.** Both of these are
+readings taken on a date, not properties of the code — which is the same lesson as the stale
+brakeman line below, and the same lesson as the advisory count above.
+
+### Left open by the audit-fix arc
+
+*(Distinct from the older `## Still open after this arc` section further down, which belongs to the
+project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced above lives.)*
+
+- **Existing CAD previews stay `unsupported` after the F3D deploy — a backfill sweep is needed.**
+  Detailed in item 3 above. Nothing re-enqueues an `unsupported` row, so every `.obj`/`.step`/`.iges`
+  already in a deployed library keeps its badge until its bytes change, and the shipped feature will
+  read as broken to anyone looking at files they already had. The fix is a one-off sweep clearing
+  `unsupported` rows whose extension now resolves to an available renderer, modelled on
+  `app/services/maker/previews/lbrn_backfill.rb`. Deliberately not done in an audit-fix branch: it is
+  a data migration over deployed rows, and it wants its own verification against a real library.
+
+- **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —
+  but the lesson is the one worth keeping.** All four entries were verified against brakeman's own
+  output at the end of the arc; two disagreed and were corrected (`mesh.rb` 74 → **88**,
+  `files_controller.rb` 728 → **729**, the latter pre-existing and not caused here). Fingerprints
+  byte-identical, `bin/brakeman` still exits 0.
+  **Measuring it requires re-running brakeman against an EMPTY ignore config** — that is the only
+  way to see the line of a warning you have already suppressed, and it is why the drift survived so
+  long unnoticed.
+  **The mechanism this arc established is confirmed:** brakeman reports the `Open3.capture3` **call**
+  line, not the line the argv array is built on. An earlier revision of the plan claimed the
+  opposite and was corrected.
+  **The lesson is the arc's own rule turned on itself.** The entry was fixed once mid-arc (59 → 74),
+  and then `72e4e3f` added the GLB refusal *above* the call, moving it to 88 — re-staling a number
+  that had been correct for three commits. A line number in a hand-maintained file is a
+  **measurement**, and it expires the moment anything above it moves. Re-measure in the same commit
+  that edits the file, or do not record it. Nothing about this ever threatened the gate — the
+  fingerprint does not hash the line — but that file's whole value is that a reader can check it
+  against the code.
+  **Considered and declined: a test asserting every recorded line matches brakeman's output.**
+  Brakeman runs in ~1 s, so cost is not the objection; the objection is that it would make the
+  default suite depend on the `brakeman` binary being installed, which no test does today, to guard
+  a field that is documentation rather than behaviour. Re-run the comparison by hand when editing a
+  file that has an entry — the two-line Python that does it is in this arc's history.
+- **`sidecar/boxes`'s licence obligation is closed; the wider one is not audited.** The test proves
+  each sidecar Dockerfile copies *a* LICENSE. It does not check that the text matches the licence
+  the upstream project actually ships under — for boxes.py that is GPL-3.0 and was checked by hand
+  here, but the guard would not catch a wrong file.
+
+## Earlier (2026-07-29): the four open items are CLOSED (branch `claude/status-md-open-issues-92c847`)
+
+**Suite 1625 runs / 5655 assertions / 0 failures / 0 errors / 14 skips — byte-identical on chunk,
+share and s3.** `bin/rails test:system` 6 runs / 28 assertions / 0 failures. rubocop **435 files, 0
+offenses** (the repo's one pre-existing offence was swept too). `client/` has a zero-line diff. Both
+standing tripwire greps still answer what CLAUDE.md §12 step 10 says they should.
+
+Design: `docs/superpowers/specs/2026-07-28-status-open-items-design.md`.
+Plan: `docs/superpowers/plans/2026-07-28-status-open-items.md`.
+
+### 1. `attachments="false"` — CLOSED, option (c): BOTH halves
+
+- **Server-side strip.** `Maker::TextOnlyRichText`, included by `Maker::Note` and
+  `Maker::BuildLogEntry`, removes every `<action-text-attachment>` element on `before_validation`.
+  It removes the ELEMENT rather than scrubbing attributes, so the guarantee survives whatever
+  attributes Action Text or Lexxy emit next. **Stronger than designed, verified by probe:** a Trix
+  `<figure data-trix-attachment='{"sgid":…}'>` posted by hand is *also* stripped, because Action
+  Text canonicalises it into `action-text-attachment` on assignment, before the hook reads the
+  fragment. Both wire formats an attacker could post are covered.
+- **The route is REMOVED, not authenticated.** `POST <ActiveStorage.routes_prefix>/direct_uploads`
+  is shadowed by an app-drawn 404. Confirmed the hole was real first: an unauthenticated POST
+  returned **200, minted a real `ActiveStorage::Blob`, and returned a signed upload URL**.
+
+**Three things about this that cost a review cycle each — do not rediscover them:**
+
+- **`recognize_path` IS THE WRONG INSTRUMENT and reports the opposite answer.** A `proc` route
+  carries no controller/action, so `recognize_path` skips it and names the *engine's* route. Only
+  driving a real request settles it. The app route wins because `Rails::Engine#add_routing_paths`
+  `unshift`s railtie route files while the app's own initializers run last — app route at index 9,
+  engine's at 232, stable across `reload_routes!` and `eager_load!`.
+- **THE SHADOW PATH MUST BE DERIVED, NEVER LITERAL.** The engine wraps its routes in
+  `scope ActiveStorage.routes_prefix`. A hard-coded `/rails/active_storage/...` silently stops
+  shadowing anything the moment that prefix is configured — **demonstrated**: with
+  `routes_prefix = "/attachments"` the live endpoint moved and an anonymous POST again returned 200
+  with a blob minted, while the suite went red on the *wrong* assertion carrying a *false* message.
+  Loud about the wrong thing is close to silent.
+- **`draw_routes = false` is ruled out** and must stay ruled out: `Maker::Preview` uses
+  `has_one_attached :asset` served via `url_for`, so the blob routes are load-bearing. Pinned by a
+  test, and verified end-to-end (real preview → `url_for` → 302 → 200 → bytes).
+
+**A caveat on the "deliberate consequence" this design recorded.** The claim was that stripping makes
+an attachment-only body fail `presence`. True only for a **captioned** attachment. An attachment
+whose `sgid` does not resolve has no plain-text representation, so `ActionText::RichText#blank?` is
+*already* true and the body was *already* invalid — a test using the bare form passes with or
+without the concern. The presence tests use `CAPTIONED_ATTACHMENT` for exactly this reason.
+
+### 2. Sheet `data` — CLOSED, bounded at 1 MB
+
+`Maker::Sheet::MAX_DATA_BYTES = 1_048_576`, validated on `data.to_json.bytesize`. Bytesize rather
+than row/column caps: one number, and it is the quantity that hurts — `projects/sheets/show.html.erb`
+embeds the whole blob into the page on every view, so the blob size IS the page size. Measured cost:
+`to_json` runs **once** per save, ~0.27 ms against a 13.4 ms save on a 272 KB blob.
+
+**THE PLAN'S PREMISE WAS WRONG, and the correction is worth keeping.** It said an unrescued
+`RecordInvalid` yields a **500**. It does not: `ActionDispatch::ExceptionWrapper.rescue_responses`
+maps `ActiveRecord::RecordInvalid` to `:unprocessable_content` **by Rails default**, in both
+`test` (`show_exceptions = :rescuable`) and production (`:all`). So the 422 was already free. What
+the rescue actually adds is the **JSON body** — without it the grid's `response.json()` rejects and
+the user is told to "check your connection" about a file that will never save. That made the
+originally-specified test vacuous (it asserted only the status), so it also asserts
+`response.media_type`.
+
+Two more the review caught, both demonstrated:
+
+- **`number_to_human_size` rounds both sides identically** → *"Data is too large (1 MB; limit 1 MB)"*
+  for the first ~5,242 bytes of overage. Since a sheet grows one keystroke at a time via debounced
+  autosave, **the first rejection a user ever sees is always that self-contradicting message**. Now
+  raw delimited bytes.
+- **The JS fallback had regressed the one case it exists for.** Sniffing `error.message` for an
+  `"HTTP "` prefix routed the server's refusals correctly but showed the *browser's* jargon
+  ("Failed to fetch" / "Load failed") for an actual outage. `save()` now handles `!response.ok`
+  inline and returns, so the `catch` means one thing: transport failure.
+
+### 3. Nothing executed JavaScript — CLOSED
+
+`test/system/sheet_grid_test.rb` — the repo's second system test and the first to cover the grid.
+Types a formula, asserts the **computed value**, then asserts the **raw formula persisted**.
+
+- **It reaches the page by a Turbo VISIT** (clicking through from the project page), never
+  `visit sheet_path`. A direct `visit` is a hard load — the one path where the `data-turbo-track`
+  bug does not reproduce. This is the single easiest line in the file to lose in a later edit.
+- **The obvious mutation is a FALSE NEGATIVE.** Removing `data-turbo-track` from the
+  `javascript_include_tag` alone leaves the test green, because the `stylesheet_link_tag` on the
+  same page is *also* tracked and Turbo hashes all tracked elements into one signature — it still
+  hard-reloads. The honest reproduction removes it from **both** tags, and then the test fails at
+  the missing `<td>`. Recorded in the test's own header so the next reader running the one-tag
+  version does not conclude the test is worthless. The async-workbook bug (bug #1) was also
+  reintroduced and also fails.
+- **Waits on the ROW, not the indicator.** `assert_text "Saved"` is **vacuous** here — the status
+  span ships from the server already reading `Saved`, so it passes before any save. Asserting the
+  intermediate `Saving…` only moves the race (it lives for one 1000 ms debounce window; a slow
+  round-trip on a loaded runner misses it). The test polls the record instead, then asserts the
+  indicator last, when it is deterministic. Five consecutive suite runs, no flake.
+- **No CI change was needed.** `.github/workflows/ci.yml` already runs `test:system` on a
+  self-hosted linux runner with failure-screenshot upload. `test/system` is simply excluded from
+  `bin/rails test`, which is exactly why the 1587 count never covered it.
+
+### 4. The two vocabularies — CLOSED, ONE vocabulary
+
+`FilesHelper::EXT_FAMILIES` is now **derived** from `Maker::FileAttachment::ROLE_BY_EXT`, grouped by
+role and labelled/ordered by `ROLE_LABELS`, with `other` dropping out on its own (it is the fallback
+for unrecognised extensions, so nothing maps to it). A new **`document`** role covers `txt`, `md`,
+`markdown`, `json`, `csv` — the union of what `Maker::Previews::Registry` already routed to
+`TextThumb` and what `EXT_FAMILIES` already grouped as "Documents", so the set is derived rather than
+invented. `pdf` **stays `instructions`**: `Models::AttachmentsController` dispatches
+`ExtractPdfMetadataJob` on that exact value, and a tripwire test now says so.
+
+Chip families went **5 → 8** (Models, Images, Instructions, Documents, Vector, CAD source, G-code,
+Archives) and extensions **19 → 28** — a strict superset, nothing lost. `.svg` now reads "Vector" on
+both pages, and the five `cad_source` extensions finally have a chip. `markdown` is exactly 8
+characters, the bound of `FilesController::EXT_RE`; the EXT_RE warning now lives at `ROLE_BY_EXT`
+itself, because that is where extensions get added and whoever adds a 9-character one has no reason
+to look in `files_helper.rb` to learn it renders a dead chip.
+
+**The chosen option's cost, accepted deliberately and recorded so it is not read later as an
+oversight:** `document` is an API-visible enum value whose only consumer is display, and it required
+a second data migration. The argued alternative — keep two vocabularies, since `role` is a persisted
+classification driving cover-pick/job-dispatch/API while `EXT_FAMILIES` is a display grouping — was
+raised and set aside.
+
+**Deriving at class-body evaluation time is correct, and the one real risk was tested rather than
+reasoned:** a frozen snapshot going stale across a development reload does **not** occur — Zeitwerk
+unloads `FilesHelper` along with the model, so the constant recomputes. Verified live, plus a
+production eager-load check.
+
+**The migration carries the predecessor's drift guard**, which it originally lacked. That matters:
+re-mapping `csv` in the model while leaving the migration's frozen copy alone was verified to leave
+the **entire suite green**, because every other test derives its expectation from one side only.
+
+## CI runs again, on the runner that exists (2026-07-29)
+
+Design: `docs/superpowers/specs/2026-07-29-testing-and-ci-pipelines-design.md`.
+Plan: `docs/superpowers/plans/2026-07-29-testing-and-ci-pipelines.md`.
+
+**✅ VERIFIED GREEN — the first successful CI runs since 2026-06-24.**
+[Run 30511303225](https://github.com/chaim354/tinkerex/actions/runs/30511303225) on PR #102, **against
+this branch MERGED WITH main**: all 7 jobs `success`, none queued. `CI_RUNNERS` is set to `macos`.
+
+**Read that "merged with" carefully — it is the distinction that nearly slipped through.** GitHub's
+`pull_request` runs here execute the **branch tip**, not a merge commit (`head_sha` has one parent),
+and `mergeStateStatus: CLEAN` only rules out a *textual* conflict. So the first green run
+([30510860301](https://github.com/chaim354/tinkerex/actions/runs/30510860301), 7/7 in **90 s**) proved
+the CI fix but said nothing about main's concurrent work — which by then included a migration changing
+`Maker::Preview` uniqueness, while this branch adds system tests touching the preview path. main was
+merged in and the gates re-run to close that: **1672 runs / 0 failures / 0 errors** on chunk, share
+and s3, plus 11 system examples. If you take one habit from this: a green PR check is not a green
+merge, and on this repo it never was.
+
+Three things that run proves, beyond "it went green":
+
+1. **The jobs are actually picked up**, not merely re-labelled — they started progressively (2/7 →
+   3/7 → 6/7) and the whole set finished in 90 s, against the ~30 s of real work measured locally.
+   The serialisation worry that kept these on `linux` is settled.
+2. **The preflight's outputs are real, not empty.** Its log shows `macos=true`, `linux=false`,
+   `windows=false`. That distinction matters: an empty output (a mistyped `steps.<id>.outputs`)
+   would ALSO make every gated job skip, so "the jobs skipped" alone would not have proved the gate
+   works. The emitted values do.
+3. **A gated job SKIPS instead of queueing.**
+   [Rust client run 30510860302](https://github.com/chaim354/tinkerex/actions/runs/30510860302) on the
+   same PR also finished **`success`**: `preflight`, `changes` and **`mac-tests` all green, with all 7
+   linux/windows jobs `skipped`** — the exact behaviour this arc exists to produce. `mac-tests`
+   passing is the second fix landing, and the more satisfying one: the hermetic Rust suite
+   (fs-provider, sync-client, fs-cfapi, fs-fskit, the windows-gnu FFI cross-check, the native macOS
+   build) had been dark for five weeks **solely because its gate job sat on a runner that does not
+   exist**, while the runner it needed was online and idle the whole time.
+
+**Note for the next arc:** the three `ci.yml` changes that had **never executed once** before this
+(the two backend legs, added 2026-07-16, and the resvg step, 2026-07-20) all passed on their first
+real run. They were unverified YAML, not broken YAML.
+
+**A trigger fact worth knowing, since it cost a cycle here:** `ci.yml` fires only on `pull_request`
+and on pushes to `main`. **Pushing a feature branch triggers nothing** — the branch push produced no
+run at all, and the green run above came from opening the PR. There is no `workflow_dispatch` on
+`ci.yml`, so there is no way to exercise it on a branch without a PR.
+
+### What was wrong, and why it went unnoticed for five weeks
+
+All 7 `ci.yml` jobs declared `runs-on: [self-hosted, linux]` while the only registered runner is
+`charless-MacBook-Pro-maker-mac` (macOS). **CI had produced no successful run since 2026-06-24** — of
+the last 300 runs, `CI` was 10 success (all ≤ Jun 24), 106 **cancelled**, 8 queued.
+
+The reason nobody noticed is a **second, separate bug**: a job whose labels match no online runner
+**does not fail**. It queues for 24 h at **0 elapsed** and GitHub then auto-cancels it, so
+`mergeStateStatus` stays UNSTABLE and the merge happens with `--admin` (PR #94 did exactly this).
+**`timeout-minutes` cannot help** — it starts counting when a job *starts*. There is no queue timeout.
+The only fix is to never schedule the job.
+
+A third, compounding shape: `rust-client.yml`'s `changes` gate job was itself linux, and **every**
+other job in that workflow `needs:` it — including `mac-tests`, which targets the runner that was
+online the whole time. One linux label took down jobs that could have run.
+
+### What now runs where
+
+- **`ci.yml`: all 7 jobs on `[self-hosted, macos]`**, each invoking exactly one `bin/ci <gate>`.
+  `scan_ruby`+`scan_js` collapsed into one `scan` job. **No `ruby/setup-ruby`** — it assumes the
+  GitHub-hosted `/Users/runner` layout this box lacks (`nightly.yml`'s `e2e-macos` already worked
+  around it); the runner's own service PATH carries mise **ruby 3.4.7**, exactly `.ruby-version`, so
+  `bundle install --quiet` is all a job needs. `test/ci_hygiene_test.rb` fails if the action returns.
+- **20 linux/windows jobs across all four automatic workflows are `if:`-gated** on a preflight, so
+  none can queue against an absent runner. `rust-client.yml`'s `changes` and `cross-os-e2e.yml`'s
+  `seed` moved to macos (neither has an OS dependency; both were blocking their whole workflow).
+- **The schedules stay armed.** `nightly` (08:00 UTC) and `cross-OS` (08:30) now complete in seconds
+  with a step-summary naming what they skipped, instead of queueing 24 h. Commenting out a cron would
+  stop the noise by making the loss silent.
+
+### Local verification is ONE command
+
+```sh
+bin/ci            # every gate;  bin/ci --list to see them;  bin/ci scan / test-share / … for one
+```
+
+`config/ci.rb` is the single definition of every gate and `ci.yml` invokes it **by name**, so the two
+cannot drift; `test/ci_hygiene_test.rb` asserts both directions. **The hand-copied 8-command checklist
+that used to live here is deleted** — it was a third list claiming to be "the gates", and a
+hand-copied checklist is exactly the artifact that let a non-gate pass as a gate.
+
+**Because it was one:** until 2026-07-29 `bin/brakeman` exited **3**, and because `scan_ruby` ran it
+as step 1 and `bin/bundler-audit` as step 2, **the audit gate had never once executed** — the job
+looked like two gates and was zero. That is how five gems drifted behind 18 published advisories, one
+High on the always-on `/cable` path. Read a scanner by **exit code**, never by output.
+
+**That failure is now structurally impossible, not merely fixed.** All three scanners sit in one gate
+and `ActiveSupport::ContinuousIntegration#step` records a result and **continues**, so each runs
+whatever the others do. Verified by breaking `bin/brakeman` deliberately and watching the other two
+still report. Do not split them back into separate gates.
+
+`config/ci.rb` also dropped the Rails scaffold's `Tests: Seeds` step: `db/seeds.rb` is comments only,
+so it asserts nothing, and `ci.yml` never ran it — keeping it would re-open the same drift in the
+other direction. If seeds ever gain content, add the gate **and** a job, together.
+
+### The fleet is DECLARED, not queried — do not "fix" this into a `gh api` call
+
+`ci/preflight.sh` reads the repo variable **`CI_RUNNERS`** (default, deliberately conservative:
+`macos` only). It does **not** ask GitHub, because it cannot: listing self-hosted runners requires the
+**`administration`** permission, which is **not among those a workflow `GITHUB_TOKEN` can be
+granted**, so `gh api repos/:owner/:repo/actions/runners` **403s from inside Actions**. It works in
+your shell only because a personal token carries admin scope — and `ci/runners/README.md` documents it
+that way, which is the trap. A stale declaration's failure mode is bounded and printed on every run;
+a 403 preflight is a broken gate.
+
+### Linux and Windows coverage is SKIPPED, not passing
+
+A green CI run today is green about **less** than a full run. Not running:
+
+- the **Linux FUSE mount path** (`fs-fuse` build, `fuser-mount-smoke-linux`)
+- **`engine-integration`** — the sync-engine HTTP wire contract against a real booted server
+- **`mount-conformance`** — rclone⇄WebDAV, fsx⇄FUSE, pjdfstest
+- the **two-device real-mount E2Es** on Linux and Windows
+- **every CfAPI job** — `windows-build`, the live smoke, `cfapi-conformance`
+- the **cross-OS convergence legs** (`win-push`, `linux-edit`, `win-pull-2`), and with them
+  `mac-pull-1`/`mac-pull-2`, which correctly cascade to skipped because there is nothing to read
+
+To restore Linux: register a runner on the **Unraid box** (`192.168.1.95` — up, SSH open, already a
+Docker host, deploy user `kamal1`) **and** add the family to the variable. Registering alone does
+nothing:
+
+```sh
+gh variable set CI_RUNNERS --body "macos,linux"
+```
+
+Note `ci/runners/setup-linux.sh` is Debian/apt-shaped and Unraid is not, so that path is a container
+or a VM. **CHAIMDESK (Windows) is reachable on the LAN but unregistered** — same two steps.
+
+### Two gaps left open deliberately
+
+- **`build-app.yml` and `install-app-on-runners.yml` are NOT preflight-gated**, and each still has a
+  linux `prepare` job. Both are `workflow_dispatch`-only and both take their runner from a dynamic
+  matrix (`[self-hosted, "${{ matrix.runner }}"]`) that no static check can resolve. The silent-rot
+  failure this arc fixed needs an *automatic* trigger; a human who pressed "Run workflow" is watching.
+  **Consequence: a manual run of either will hang until a Linux runner exists.**
+  `test/ci_hygiene_test.rb` allowlists them by name with that reason inline.
+- **`runs-on`'s map form (`{ group:, labels: }`) is not analysed** by the hygiene guard —
+  `Array(hash)` yields `[k,v]` pairs, so a map-form job always *fails* the check rather than passing.
+  That is the safe direction, and a correct reading is genuinely ambiguous (an org-level **hosted**
+  larger-runner group and a self-hosted group share the identical YAML shape). No workflow uses it.
+
+### The browser tier now exists
+
+`test/system` went from **2 files / 6 examples to 5 files / 11 examples**, with a harness
+(`test/system/support/web_helpers.rb`) and a written admission policy (`test/system/README.md`).
+
+The gap it addresses: 13 Stimulus controllers totalling **1,035 lines** had **3** covered, and all
+three got coverage only *after* a bug shipped — `tray_layout_test.rb` exists because
+`<input type=text>` silently strips newlines and broke five box generators, one of them silently. No
+request-level test could see it, and none did. New coverage: **`uploader`** (the chunk two-phase
+presigned upload — the main deployment's upload path, and the bytes really move, because
+`MemoryChunkStore` presigns to `/dev/blobs/*key` and a browser follows those relative URLs even though
+the Rust suites cannot), **`importer`** (in-browser JSZip unzip → upload → attach, closing a gap
+`models_import_test.rb` names in its own comment), and the **file-menu / attach-and-relocate** flow.
+
+**The policy is load-bearing:** a system example costs ~932 ms against ~3.2 ms for a unit test — a
+factor of **294** — so the tier admits only what is observable *only* in a browser. Without that
+rule it either stays at six tests or swallows the suite. Every test in it is **mutation-checked**, and
+`README.md` records two traps that cost real time: stale `tmp/dev-chunks*` blobs outlive
+`ChunkStore.reset!` and made one mutation read **green**, and a synthetic Selenium attach cannot read
+a fixture under a macOS TCC-protected directory.
+
+**Suite: 1672 runs / 0 failures / 0 errors / 11 skips** on all three backends, plus 11 system examples (`bin/ci system`) — measured on the merged state.
+
+## Still open after this arc (small, deliberate)
+
+- **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
+  hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
+  broken:** the value never leaves the browser — only `node_id`/`cover` are POSTed and the server
+  re-derives authoritatively via `Maker::FileAttachment.role_for` — so the persisted role is
+  correct. Its only effect is the pre-upload summary, which has always lumped everything but
+  model/image/PDF into "other", so `.txt` behaves there exactly as `.svg` already did. Recorded
+  because "one vocabulary" is this arc's whole point and a third copy has now drifted twice; fixing
+  it means plumbing the Ruby vocabulary into JS, which is a real change and was out of scope here.
+- **`MAX_DATA_BYTES` coverage is asymmetric by nature.** A limit set too *low* fails a test; one set
+  too *high* fails nothing, because every other test derives its filler from the constant. Closed as
+  far as it can be by one test pinning the literal.
+- **`ENABLE_TEST_SIGNUP` is inherited by the OVH deployment, knowingly.** `config/deploy.yml:64` sets it
+  in the **base** env.clear, which Kamal deep-merges, so `-d ovh` gets it too — the base comment's
+  justification ("this Unraid instance is a NON-production test/dev deploy") covers the LAN box only.
+  `POST /v1/test/users` mints **confirmed accounts with no email verification**. Left ON deliberately:
+  OVH is a prod-*like* test box, and blanking it at the base would break
+  `client/test-conformance/two-device-cfapi.ps1`, which enrolls against the deployed Unraid server
+  through this seam. The fix, when this stops being acceptable, is one line —
+  `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
+  defeat exactly this deep-merge. Recorded at the edit site too.
+
+## Latest (2026-07-28): project page overhaul (PR #91) — four features, one branch
+
+**Suite 1587 runs / 5482 assertions / 0 failures / 0 errors / 14 skips, byte-identical on chunk,
+share and s3.** `client/` has a zero-line diff.
+
+1. **Status pipeline hidden, not removed.** Flat project list, `?archived=1` view with Unarchive.
+   The column, `STATUSES`, the validation and the whole v1 API are **untouched on purpose**:
+   `client/sync-client/src/maker.rs` declares `pub status: String` with no `serde(default)`, so
+   dropping the field is a hard deserialize error for a shipped desktop client. Consequence: a
+   project set to `paused` from the desktop reads as an ordinary live project on the web.
+2. **Files grouped by type**, plus `vector` and `cad_source` roles and a self-contained migration
+   re-deriving rows marked `other`. `.sldprt`/`.sldasm` were nearly missed — the migration copies
+   its extension list rather than deriving it, so adding them later would have needed a *second*
+   migration.
+3. **Lexxy on build-log entries and file notes**, text-only. **Two irreversible migrations** —
+   both raise `ActiveRecord::IrreversibleMigration` by design, because `has_rich_text` reads
+   `rich_text_body || build_rich_text_body`: deleting the rich texts makes the model return a blank
+   that **shadows** any restored column, silently blanking every body. A pre-migration DB snapshot
+   is the only undo. v1 `body` still serves a plain `String`.
+4. **`Maker::Sheet`** — grid page, debounced autosave, CSV export, working formulas.
+   **The formula engine was swapped:** `jspreadsheet-ce` needs a second peer dep,
+   `@jspreadsheet/formula`, which publishes with **no licence grant at all** (no `license` field,
+   `/LICENSE` 404s, no banner) and whose README asks for a paid licence for redistribution/SaaS.
+   Under §9 it cannot ship. Replaced with `hot-formula-parser` 4.0.0 (MIT, MIT bundled deps) behind
+   the grid's own `window.formula` hook. The contract is documented in the design doc §9b.1 —
+   the grid resolves refs itself, expands ranges, and hands over a token→value map with
+   **strings double-quoted**, which is the trap.
+
+## Earlier (2026-07-27): OpenSCAD addon (branch `claude/opus-5-model-8b8462`) — **MERGED (PR #87) + DEPLOYED**
+
+> *Section header corrected 2026-07-28: it said "NOT deployed" while this file's own top line said
+> deployed. The top line was right — verified against the running containers on 192.168.1.95.*
+
+`/tools/openscad` — the **second server-sidecar addon** (after `sidecar/boxes`) and the **first that
+renders 3D**. A user picks a bundled generator or points the tool at their own `.scad` in the
+library, fills in a form derived from that file's **own** Customizer parameters, and gets a
+`3mf` + `params.json` bundle written through `Maker::Addons::LibraryOutput` with a grid thumbnail.
+Design/plan: `docs/superpowers/specs/2026-07-27-openscad-sidecar-addon-design.md`,
+`docs/superpowers/plans/2026-07-27-openscad-sidecar-addon.md`.
+
+**Spec §10 held**: nothing here touches `Sync::*`, the changelog, conflicts, locks or the mounts,
+and `LibraryOutput` / `AddonState` / `AddonFile` absorbed a brand-new addon **untouched** — which
+was §6's claim, now tested rather than asserted.
+
+- **Sidecar:** `sidecar/openscad` (GPL-2.0, internal-only, `tinkerex-openscad:8000`). Extracts the
+  official OpenSCAD **2026.07.26** AppImage, sha256-pinned. Content-addressed render cache on the
+  `openscad-cache` volume. Runs **non-root** (uid 10001) and carries its own `LICENSE`, `README.md`
+  and `catalog/NOTICE` **inside the image** — a GPL image we redistribute has to ship the licence
+  text and the third-party notices with the binary, not only in the repo.
+- **Env:** `OPENSCAD_SIDECAR_URL`. Unset or blank → `OpenscadClient.configured?` is false → the
+  `/tools` tile greys out. Set on the **three Unraid deployments only** (`deploy.yml`);
+  `deploy.ovh.yml` blanks it deliberately, because Kamal deep-merges `env.clear` and the overlay
+  would otherwise inherit a hostname that does not resolve on that box — an addon that reports
+  itself available and then fails every call, strictly worse than greying out.
+- **Catalog: THREE generators, not the four the plan listed** — `hex_cell_holder` (Unlicense),
+  `washer` (MIT), `probe_plate` (MIT, first-party). Vendored at pinned commits with
+  `catalog/NOTICE`. See the licence finding below for where the other two went.
+- **ONE render path, TWO sources** (spec §3.1): Rails resolves a catalog key to source text via the
+  sidecar's `GET /source/<key>` and then posts it to `/render` exactly as it posts a
+  bring-your-own file's bytes, so nothing downstream can tell them apart. Do **not** add a
+  `generator_key` fast path — that is two caches, two error surfaces, and a catalog free to drift
+  from BYO behaviour.
+
+**Things that will bite a future editor** (all observed, not reasoned):
+
+- **A GARBAGE PARAMETER VALUE RENDERS SUCCESSFULLY.** Observed against the real sidecar:
+  `{"cols": "))("}` comes back **200 with the DEFAULT geometry**, because OpenSCAD's parameterSet
+  silently ignores a value it cannot parse. So a user's typo would yield a default-sized model,
+  saved into their library, with no feedback anywhere. That is why **`app/services/openscad_params.rb`
+  exists** — a coercion layer the plan's file table does not have. It checks every submitted value
+  against its declared type and **raises rather than forwarding**, including for the cases that look
+  like over-engineering: a blank number field (falling back to the default is the failure mode, not
+  the fix), `1e400` (reaches OpenSCAD as the text "Infinity" and is ignored), a forged
+  `params[cols][]=1` array, and a one-element vector (which `render.py` only re-brackets when it
+  sees a comma, so `10` would arrive as a scalar and be type-mismatched away). Do not "simplify" it
+  back to a pass-through.
+- **`--appimage-extract` FAILS on the build Mac** (`Exec format error`, exit 126) — the AppImage
+  runtime is a static ELF and Docker Desktop's amd64 emulation refuses it. Since CLAUDE.md §13
+  cross-builds every image on the Mac, the Dockerfile computes the squashfs offset
+  (`e_shoff + e_shentsize*e_shnum`) and runs `unsquashfs`, **executing nothing**.
+- **Both required OpenSCAD capabilities are compile-time optional and fail INVISIBLY.** 3MF export
+  without lib3mf writes nothing and **exits 0**; a missing Manifold backend silently falls back to
+  CGAL (~20× slower on exactly the grid-shaped models this addon renders). `assert-capabilities.sh`
+  asserts **six** things at build time — and asserts them on *evidence*, not exit codes: non-empty
+  output starting with the `PK` zip magic, the literal string `(manifold)` in stdout, and separately
+  that a **bogus** `--backend` value is rejected (otherwise `--backend=manifold` proves nothing).
+  **Verified both ways**: they pass on a good build, and a shadowed script simulating a CGAL
+  fallback fails the build with a named error.
+- **`--export-format=param` has FIVE sharp edges, each of which silently produces a wrong form** —
+  they are numbered TRAP 1–5 in `sidecar/openscad/schema.py`, next to the code that handles them:
+  (1) a file with no parameters **omits the `parameters` key entirely** (`{"title":"empty"}`, not
+  `[]`), so `for p in data["parameters"]` raises; (2) every number is a **float** (`4.0`, never `4`),
+  so an int must be recognised by *value* or every count renders as "4.0"; (3) an enum is
+  `type: number/string` **plus** `options` — **branch on `options` before `type`**, and keep the
+  values apart from the labels, since `// [10:S,20:M]` gives a *numeric* value a human label;
+  (4) a vector reports `type: "number"` with a **list** `initial` — there is **no** `"vector"` type,
+  so branch on `isinstance(initial, list)`, never on `type`; (5) `caption` is present only when a
+  `//` comment precedes the assignment, so fall back to the name.
+- **OpenSCAD's 3MF output is NOT byte-reproducible** (F16) — three renders of the same file with the
+  same params gave 3096 / 3098 / 3099 bytes. **Never assert byte-equality across two fresh
+  renders.** A cache *hit* is fine: it replays stored bytes, which is exactly what the cache-hit
+  test asserts.
+- **`resources :openscad` is wrong TWICE over**, which is why the routes are top-level and explicit.
+  Rails derives the collection helper from `name.pluralize` and the member helper from
+  `name.singularize`, so `resources` leaves **`tools_openscad_path` meaning SHOW** — needing an id
+  the `/tools` gallery does not have. And `namespace :tools` **prefixes `as:`**, so `as: :new_openscad`
+  inside it yields `tools_new_openscad_path`, not `new_tools_openscad_path`.
+- **READ THE FILE HEADER, NOT JUST THE REPO LICENSE — this disqualified 50% of the audited set.**
+  The plan listed four generators to bundle, each with a licence taken from the repo's `LICENSE`
+  file (agreeing with GitHub's licence detector, which reads exactly that). On opening the actual
+  `.scad` files, **two of the four declared a *more restrictive* licence in their own header**:
+  `universal_stand` ships a stock MIT `LICENSE` while its header says **CC BY-NC-SA 4.0**
+  (NonCommercial *and* ShareAlike — the precise pair spec §2 was written about), and `vase_box`'s
+  `LICENSE.md` is the full CC BY 4.0 text while its header line 3 says **Attribution-ShareAlike**.
+  Both dropped. A repo-level LICENSE is not the licence of every file under it, and where the two
+  disagree the conflict is itself disqualifying for something we redistribute in a sold product.
+  Every rejection is recorded **with its reason** in `sidecar/openscad/catalog/NOTICE` so the audit
+  is not run twice.
+
+**Verification (this branch, measured — not "green"):**
+
+- Server suite **1311 runs / 4536 assertions / 0 failures / 0 errors / 14 skips**, **identical on
+  all three legs** (`bin/rails test`, `LIBRARY_BACKEND=share` with `LIBRARY_PATH` set,
+  `LIBRARY_BACKEND=s3` with the `LIBRARY_S3_*` knobs CI uses). The 14 skips are the usual
+  environment-gated ones (live sidecars, Postgres-only, uninstalled preview binaries).
+- In-image Python suite: **40 passed, 0 skipped** — 0 skipped is the point, since these run *inside*
+  the built image where the real OpenSCAD binary is present.
+- Live integration against a **real container**: **6 runs / 33 assertions / 0 failures**
+  (`test/integration/tools/openscad_live_test.rb`, skips cleanly with no sidecar).
+- `bin/rubocop`: 401 files, **1 offence — pre-existing on `main`** (`config/routes.rb:46`,
+  `Layout/SpaceBeforeFirstArg`, on a `notes#create` line this branch never touched). Left alone.
+
+**Open — read this before assuming the addon is finished:**
+
+- ~~**NOTHING IS DEPLOYED.**~~ **DEPLOYED 2026-07-27 (DoD #2 CLOSED).** Merged as PR #87
+  (`33bd2d4`), `ghcr.io/chaim354/openscad-sidecar:latest` pushed, `kamal accessory boot openscad`
+  run, and all **three** Unraid legs deployed (`bin/kamal deploy`, `-d s3`, `-d share`). **NOT
+  deployed to OVH** — and note `deploy.ovh.yml` deliberately blanks `OPENSCAD_SIDECAR_URL`, so if
+  OVH is ever deployed the addon greys out there rather than failing every call.
+  **Verified on the live stack, not assumed:** all three containers run image `33bd2d40c`;
+  `OpenscadClient.configured?` is true on each; each reaches the accessory and lists the real
+  catalog (`hex_cell_holder,washer,probe_plate`); and an end-to-end render of `washer` through the
+  deployed app returned a real 3MF (`PK`, 32,899 bytes), a **cache hit returning identical bytes in
+  53 ms** (DoD #6), and a thumbnail mesh that parsed to 128,084 STL bytes (DoD #4's preview path).
+- **CI DID NOT RUN, AND CANNOT AS CONFIGURED.** Every job in `.github/workflows/ci.yml` is
+  `runs-on: [self-hosted, linux]`, but the repo now has exactly **one** registered runner —
+  `charless-MacBook-Pro-maker-mac`. The `flasher-maker-linux` runner CLAUDE.md §15 lists is gone, so
+  all seven jobs queue forever. **This affects every PR, not just this one.** *(Historical: fixed
+  2026-07-29 — see "CI runs again, on the runner that exists". Left as written because it is the dated
+  record of this arc, and it is also the third arc in a row that merged on locally-run gates.)* Each job's actual
+  command was therefore run locally before merge: the three `LIBRARY_BACKEND` legs (1478 runs / 0
+  failures / identical), `bin/rubocop`, `bin/brakeman`, `bin/bundler-audit`, `bin/importmap audit`.
+  Three have findings and **all three are pre-existing on `main`** — this branch touches neither
+  `Gemfile.lock` nor `image_thumb.rb`, and brakeman reports 1 warning on both sides.
+- **DoD #5 — a real Multiboard `.scad` driven end-to-end in a browser — is OPEN**, and stays open
+  here by design: spec §2 forbids us obtaining or redistributing MultiBuild files. The BYO code
+  path itself is covered by the controller suite on all three backends and was driven against a
+  live sidecar with an equivalent `.scad`.
+- **The browser walkthrough (DoD #3, #4, #6 seen with human eyes) was NOT done.** Each of those
+  three is covered by an automated test — the tile greying out, the save-and-thumbnail on all three
+  backends, and a *measured* cache hit — but nobody has looked at the page.
+- **This branch is 26 commits behind `main`** (merge-base `efde37e`; the "file organization and
+  views" arc, PR #86, landed on `main` afterwards). `git diff main` therefore reads as if this
+  branch deletes that work — it does not; it simply predates it. Merge `main` in before the PR.
+  Expect a small conflict at the top of this file and in `CLAUDE.md` §12 step 9, where both sides
+  added text.
+
+## (2026-07-27): file organization and views (branch `claude/file-organization-views-3d06f4`)
+
+Six pieces on the web UI plus one new pair of maker services. Design/plan:
+`docs/superpowers/specs/2026-07-26-file-organization-and-views-design.md`,
+`docs/superpowers/plans/2026-07-26-file-organization-and-views.md`.
+
+**Suite 1277 → 1444**, identical on all three legs (`bin/rails test`, `LIBRARY_BACKEND=share`,
+`LIBRARY_BACKEND=s3`: each **1444 runs / 4939 assertions / 0 failures / 0 errors / 8 skips**). The
+last three came from the final review below: one pinning the free-text filter field, two pinning the
+symlink decision (its Type-sort grouping, and the flat filter's deliberate exclusion of it).
+**§10 held throughout** — nothing here touches sync, the changelog, conflicts, locks or the mounts.
+The controllers never reach into `Sync::` or the port; they call `Maker::MoveNode`, which owns the
+branch, exactly as `Maker::LibraryFolder` already does for `mkdir`.
+
+### `Maker::MoveNode` — the `port_writable` branch, written out once more, so it got a name
+
+`port_writable?` → `FileLayer.current.move`; else `Sync::Mutation.apply(op: "move")` +
+`LibraryChannel.broadcast_change`. **The node_id never changes**, which is the whole reason a move
+is safe to perform on a user's behalf — every attachment, BOM link and tag keeps pointing at the
+same file.
+
+**IT IS THE FIFTH APPEARANCE OF THAT BRANCH, NOT THE THIRD.** This heading and CLAUDE.md §12 step 9
+both said "the third" (after `Maker::LibraryFolder#mkdir` and `FilesController#destroy`) until a
+final whole-branch review counted them. The five: `Maker::LibraryFolder#mkdir`,
+`FilesController#destroy` (port `delete` vs `Sync::SubtreeDelete`), `TrashController#restore` (port
+`undelete` vs `Sync::Trash.restore`), `Maker::Addons::LibraryOutput.write` (port `write` vs a
+server-driven `Sync::Commit`), and this one. The undercount mattered because of what it was used to
+say — *"a fourth hand-rolled copy of the branch is the thing to refuse"* — which would have sent the
+next reader looking for a threshold that had already been passed twice. **Only two of the five are
+services; the other three are inline in the action that needs them**, so the real rule is that a new
+one needs an argument for being inline rather than named, and a verb more than one caller performs
+does not have one. Not counted: the `require_capability!` gates and the views that pick an upload
+*form* — those select a UI, which is `port_writable`'s stated one job.
+
+- **Collision is detected in the `nodes` catalog, BEFORE either door**, and that is not
+  belt-and-braces. `Share#move` refuses a taken name, but **chunk mode has no clobber guard of its
+  own** — `Sync::Mutation` would happily create two live siblings with one name. Checking the
+  catalog is the only check that is true on all three backends.
+- **The input guards are there because only ONE door has any.** The port resolves its own arguments
+  (`live_node!`, `parent_dir_rel!`), so share and s3 already refused a tombstoned source, a missing
+  parent, a parent naming a *file*, and another user's node. The chunk door is handed the object and
+  **succeeded at all four** — then broadcast a changelog `move` telling every device to reparent
+  under a node it does not have. A class whose whole job is to hide the difference between the doors
+  cannot let them disagree about what is valid.
+- **`#leaf!` is three separate lessons, each a real bad write.** A **non-String bypassed the check
+  entirely on chunk**: `new_name[]=a/b.stl` arrives as an Array, and `["a/b.stl"].include?("/")`
+  asks whether some *element* equals `"/"` — false, so the chunk door committed and broadcast a node
+  named `["a/b.stl"]`. `FileLayer::Share#leaf!` escaped only by calling `.to_s` first, so share and
+  s3 were safe and **chunk — the main deployment — was not**. **Refusing beats copying that `.to_s`,
+  and it was measured by mutating the line back**: the doors store the value they were *handed*, so
+  coercing here validates a String and then writes an Array. A ~4 KB name renamed the file and
+  appended the changelog entry **before** `CookieOverflow` 500'd the response → **`MAX_NAME_BYTES =
+  255`, bytes not characters** (ext4/APFS/NTFS all cap a component there). And **backslash joins
+  slash**, because the default Windows backend is CfAPI, where a name carrying `\` is a path.
+
+### Attach: a dropdown, chips, and the file moves in
+
+- **Attach dropdown + already-attached chips.** One `<select>` instead of a button per project, and
+  the projects a file is already in are finally visible, with a detach `×`. A **non-nested `POST
+  /attachments`** carries the project as a *body* param, because a `<select>` cannot set its form's
+  `action` and the nested route needs the project in the path; `#set_project` reads
+  `params[:project_id]`, which resolves a body param and a path segment identically, so this is the
+  **same action** with no second create path and no JS rewriting `action` on change.
+  **The explicit DOM id is load-bearing:** the layout's top-bar current-project switcher is *also*
+  named `project_id`, so a default-id `f.select` put a second `id="project_id"` on the page whenever
+  this control renders — i.e. whenever the user has a project. The label's `for` resolved to the
+  FIRST match, the top bar's, whose `onchange` fires `requestSubmit()`: clicking the words "Attach
+  to project:" focused the switcher, and one arrow key **silently changed the app's default save
+  destination**. Pinned by a test that also asserts the id is unique in the document.
+- **Attaching a file moves it into the project folder — on its FIRST project only.** A file another
+  project already claims stays put; a file should not be yanked out of the folder that project put
+  it in. **The attach is durable and the move is best-effort**: a collision or an unmounted NAS must
+  never lose a reference the user asked for, and the reference is exactly as true with the bytes in
+  the old folder. Every move outcome is a **symbol, not a raise**, because each one is an ordinary
+  thing that happens to a library and the caller words a different sentence for each — an exception
+  would make the happy path the only one written down.
+  **`FileLayer::NotFound` is in the best-effort bucket on the attach path** (unlike the explicit
+  relocate endpoint, where a caller error should 404): `#create` has already proved the node live and
+  ours and ensured the folder, so a `NotFound` from the move is a race or an out-of-band store
+  change — and **the attachment row is already committed**, so letting it escape would 500 a request
+  whose durable half succeeded.
+
+### A model's file brings the whole bundle — and moves NOTHING
+
+An imported model is a bundle: STL plus instructions plus cover plus source archive, curated into
+`Models/<slug>/` by the importer. Attaching any one of them attaches all of them and relocates
+nothing.
+
+- **The first instinct was to move the model's whole FOLDER into the project, and it is precluded.**
+  `FileLayer::S3#move` refuses directories outright (`movable_file!`) — S3 has no directory and no
+  rename, so a folder move is a **non-atomic cascade over every key with no undo for a half-finished
+  one**. **A rule that relocates ZERO bytes is identical on chunk, share and s3 by construction**,
+  rather than by three adapters happening to agree. That is why "moves nothing" is the rule and not
+  a limitation.
+- **Membership is the ATTACHMENT, not the folder.** A file can be moved out of `Models/<slug>/` and
+  still belong to the model, and a stray file can be dropped in and not belong, so the
+  `maker_file_attachments` row is what the rule asks. The lookup is **scoped to the user through
+  that table** — it keys files by a bare `node_id` string with no FK, so an unscoped lookup would
+  find another user's row pointing at the same id and attach that stranger's whole bundle.
+  `order(:id)` is the rule, not decoration: a bare `find_by` is `LIMIT 1` over an unordered set,
+  stable on SQLite by luck and plan-dependent on the managed Postgres.
+- **The bundle write is two queries, constant in N** (one `pluck` for what exists, one `insert_all`
+  for the rest). The loop it replaced cost 2 queries per file — **a 200-file model measured 407
+  queries / 113 ms** — inside a write transaction, so on the SQLite self-host the write lock was
+  taken at the first INSERT and held to COMMIT: **one bundle attach stalled every other writer in
+  the app**. It is the shape `stat_all` and the Reconciler already had to adopt. One statement is
+  also the whole atomicity story now, and a half-attached bundle is worse than none — it is the
+  gutted-folder failure wearing the attachment table.
+
+### `Maker::AttachToProject` — because the policy grew a second door
+
+🔴 **`#create` enforced three rules; `#relocate` called the move directly, below all of them, and
+inherited none.** Reproduced against a three-file model: `Models/widget/` was left holding two files
+while the flash said "Moved widget.stl into Desk Lamp." The same door also yanked files out of other
+projects' folders, and moved a file into a project it was **not attached to**, minting
+`Projects/<slug>` as a side effect of the POST. **Copy-pasting the guards into the second door would
+have left the trap set for the third**, so every rule is now a decision a door passes or opts out of
+**in writing**: `:not_a_file`, `:model_bundle`, `:attached_elsewhere`, the `find_or_create_by`, and
+the move all live in one object that both actions call.
+
+**`#refusal_for` is PUBLIC** for the same reason: the collision prompt has to ask the same question
+before *offering* a button. It was rendering a dialog wired to a move that gutted a folder.
+
+### The collision prompt — and the three ways a prompt can lie
+
+A name collision keeps the attachment and **asks**, instead of clobbering or silently doing nothing.
+The attachment id rides back as `?move_conflict=<id>` to whichever page the attach came from, which
+is why the resolution is a **concern** (`MoveConflicts`) and not two copies of an action.
+
+- **Ask the predicate the code raises on, not a proxy for it.** The prompt asked
+  `node.parent_node_id == project.folder_node_id` — *"did the move happen?"* — where its own sentence
+  claims *"a file with that name is already in the folder"*. It now calls
+  `Maker::MoveNode.collision?`, the exact predicate `#collision!` raises on, which **subsumes the old
+  check and stops three false renders** (an empty project folder, a colliding sibling deleted out of
+  band, a tombstoned project folder), **one of them reachable with no URL editing**.
+- **The param outlives the conflict.** `#relocate` lands on the project page, so a browser Back
+  re-GETs the file page with the id still in the URL — the prompt would then state something false
+  ("it was left where it is") and offer to move the file in as `bracket (2) (2).stl`.
+- **A resubmitted relocate is a no-op, not a second move.** The button is a POST, so a resubmit sends
+  the name the first one already applied, and the short-circuit only knew the `new_name.nil?`
+  spelling of "same name". The second submit was a **real move to where the file already was**,
+  appending a redundant changelog `move` on chunk and broadcasting it to every device. *"Nothing to
+  move — the sync engine must not be told otherwise"* is an invariant the suite already pinned for
+  `#create`.
+- **`#relocate` filters to `kind: "file"`, and that is a GUARD, not a filter.** Both ids come from
+  the request there and `Maker::MoveNode` deliberately has **no cycle check**, so a crafted `node_id`
+  naming a directory would move a dir under its own descendant — and a cycle in `nodes` makes
+  `Sync::Search`'s `WITH RECURSIVE` walk spin unboundedly, **fatal on SQLite, which has no statement
+  timeout**. A project folder only ever holds files, so refusing is cheaper than detecting.
+- 🟠 **The rescue was wide enough to hide bugs, with a green suite.** `rescue ArgumentError` wrapped
+  the whole method body, so arity drift in a port adapter's `#move`, a kwarg rename in `MoveNode`, or
+  a nil reaching `File.extname` all became a 302 and a "couldn't move it" flash. Now
+  `MoveNode::InvalidName` — an `ArgumentError` **subclass**, so existing rescues keep working — and
+  bare `ArgumentError` is a programming error again and stays a 500. `ActiveRecord::RecordInvalid`
+  was **dropped** from the list: no producer was found on the path, and an unjustified class there is
+  the same bug-hiding shape. This matters most in the rename prompt, the first caller that routes a
+  **user-typed name** through the mapping.
+
+### Sortable Name / Type / Modified — two ordering authorities, one per mode
+
+- **The folder view sorts in Ruby, and that is a decision (spec §5.2).** "Type" means the file's
+  **extension**, and there is no expression for it portable across SQLite (self-host) and Postgres
+  (managed) — `substr`/`instr` vs `substring`/`position`. The denormalized `ext` column that would
+  fix it has to be **written by `Sync::Commit` and `Sync::Mutation`**: writing to the sync layer to
+  serve a web view, **which is the §10 tripwire**. So all three keys sort the same way, uniformly,
+  and none is more exact than another.
+- **In FLAT mode the ORDER BY did move into SQL, and that is not a contradiction of §5.2.** There the
+  ORDER BY is what the **LIMIT selects with**, so SQL has to be the authority. It is sound precisely
+  because flat mode **already knows every extension a matching row can have** (at most `MAX_EXTS`),
+  so ranking them is a `CASE` over the same LIKE patterns the WHERE already uses — ordinary ANSI SQL,
+  no portable "extension" expression required. The folder view has no such list (its extensions are
+  whatever is on disk), which is why it keeps `sort_nodes`. **A test asks for the same files both
+  ways and compares the two orders**, which is the promise that actually has to hold. The tail is
+  `name, node_id`: `name` so the two views break ties alike, `node_id` so the truncation boundary is
+  total instead of the planner's choice.
+- **There is no Size sort, and the reason is the port** (spec §5.3): size is the one column whose
+  value is **not read from `nodes` on every backend** — `Chunk#stat_all` reads it from the `versions`
+  row, `Share#stat_all` straight off the node. It would be the only inexact key, and an inexact sort
+  in a column of exact-looking numbers is worse than no sort.
+- **"Kind" became "Type" and now renders the extension.** Making the old column sortable without that
+  would have left a header naming something it does not show: every value the word "file", while the
+  rows around it reorder. A **symlink says "Symlink"** rather than borrowing the extension of
+  whatever it is named after — and symlinks now group **with** files, where the `kind: :desc`
+  ordering this replaced put them above every real file purely because "symlink" > "file"
+  alphabetically.
+- **The comparator negates instead of reversing.** `sort ascending then reverse!` flips the **ties**
+  too, so "Type descending" reordered files *within* one extension for no reason the user asked for
+  — and it made the folder view disagree with the flat view, whose SQL breaks ties ascending.
+
+### A flat by-extension filter across the whole library
+
+`?ext=stl,3mf` lists every matching file at any depth, with a **Folder column** so the result is
+navigable and doubles as a way to find things. `?folder=` is **ignored outright** rather than
+intersected: "show me every .stl" that quietly meant "in this folder" would be the wrong answer to
+the only question the chips can ask. Extensions are whitelisted to `[a-z0-9]{1,8}`, which is what
+bounds the OR-ed LIKE, and the chip row is a **fixed shelf, not real facet counts** — counting
+"you have 214 .stl files" means plucking every filename in the library on every Files page load,
+including plain folder browsing that never looks at the chips.
+
+  *(Amended 2026-07-29: this said "**curated** shelf" and the curation half is no longer true.
+  `EXT_FAMILIES` is now DERIVED from `Maker::FileAttachment::ROLE_BY_EXT` — see the 2026-07-29 entry
+  at the top — so the row is whatever the role vocabulary contains, not a hand-picked list. The
+  argument the sentence exists for is untouched: it is still a fixed shelf rather than counted
+  facets, and the cost argument against real counts still stands.)*
+
+- **`LOWER(name) LIKE`, not a bare LIKE:** SQLite's LIKE is ASCII-case-insensitive and Postgres' is
+  **not**, so the bare form answers differently on self-host and managed. **No test leg can see that**
+  — all three run SQLite — so it is pinned by reading the SQL. Same shape for **`ESCAPE '\'`**:
+  Postgres treats backslash as LIKE's escape character by default and **SQLite has none at all**, so
+  without it `sanitize_sql_like` is a **no-op on half the deployments** (verified on this repo's
+  connection: `'x.st\l' LIKE '%.st\_'` → 1, with `ESCAPE '\'` → 0). `EXT_RE` makes both unreachable
+  today, but "fails closed by accident on one database" is not defense in depth.
+- **`FLAT_LIMIT = 2000` is the first bound this page has ever had.** The folder view is still
+  **unbounded** — a folder is self-limiting, a whole-library type view is not — and the cut is
+  **announced** ("Showing the first N of M matching files"), because a silent one reads as "that's
+  all your STLs", the same class of lie as a paginated listing mistaken for a snapshot.
+- 🔴 **And the first implementation of that bound showed the WRONG ROWS.** The page query was
+  `.order(:name).limit(FLAT_LIMIT)` and `sort_nodes` then reordered the slice, so **selection was
+  always alphabetical while display followed the user**. Measured: 30 `.stl` files, `FLAT_LIMIT` 5,
+  `?ext=stl&sort=modified&dir=asc` rendered the five **newest** under a banner reading "the first 5".
+  **That is the exact class of lie the announcement exists to prevent** — phase 3's partial-listing
+  landmine wearing a web page. Found by measurement, not by reading.
+- 🔴 **The flat view also turned the per-row thumbnail backfill into a library-sized burst.** The
+  lazy backfill was written for a *folder*; in flat mode it walks the whole library. Measured on a
+  2500-file library, chunk and share alike: one `GET /files?ext=stl` ran **6008 queries, inserted
+  2000 `maker_previews` rows, enqueued 2000 jobs, ~1.4 s in one request**. Now `BACKFILL_LIMIT = 100`
+  per request: **308 queries, ~0.4 s**. **A budget, not a correctness limit** — it walks in display
+  order, so the budget is spent on what the user is most likely looking at, and the backlog still
+  drains because each visit takes the next slice. **The cap is uniform, not flat-mode-only**: the
+  hazard is not the mode, it is a page whose row count is not user-shaped, and a 2000-child folder is
+  rarer but identical in shape once you are in it.
+- 🟠 **The test that should have caught that burst could not see it.** "Does not add a query per row"
+  had fixtures with **no content token**, so the backfill skipped every row and the assertion was
+  measuring nothing. With production-shaped rows the same assertion read few=17, many=44.
+
+### The intermittent — captured for the first time, and the explanation offered with it is WRONG
+
+The undiagnosed `1 errors` recorded in the "Open, and shipped knowingly" section below (and in
+`CLAUDE.md` §12 step 10) — seen once each by several sessions across hundreds of runs, **never
+captured by anyone** — was **captured this session**:
+
+```
+Tools::GeneratorsControllerTest#test_create_rejects_an_over-cap_svg_with_422:
+ActiveRecord::StatementTimeout: SQLite3::BusyException: database is locked
+    test/controllers/tools/generators_controller_test.rb:9:in 'block in <class:GeneratorsControllerTest>'
+```
+
+Line 9 is the `User.create!` in `setup`, with a **hard-coded** `gen@example.com`.
+
+**The cause offered alongside the capture was: "parallel workers share one SQLite file, so every
+worker running this class contends on the same row." That is disproved, and recording the
+disproof is the point.** It rested on the comment at `test/test_helper.rb:27` — *"Each parallel
+worker shares one DB"* — **which is itself false**, and has now been corrected in place. `ls
+storage/` shows `test.sqlite3_0` … `test.sqlite3_9`: Rails'
+`parallelize(workers: :number_of_processors)` really does give each worker **its own SQLite file**,
+exactly as the *other* comment in the same file (lines 16–20) already said. Two workers therefore
+cannot contend on that row, the hard-coded email carries no cross-worker weight, and **the whole
+cross-worker story cannot be the cause**.
+
+**So: symptom captured for the first time; the offered cause disproved; the real cause OPEN but far
+better scoped.** It is a `BusyException` on a **per-worker** database, which means whatever held the
+write lock was **inside that worker** — a second connection out of that worker's own pool
+(`max_connections` defaults to 5 in `config/database.yml`) or a background thread — not another
+worker. The scale is worth stating: `timeout: 5000` in the same file, so the blocked statement
+waited a **full five seconds** for a lock, in a suite whose entire run finishes in ~4.2 s.
+The earlier data point fits the same shape: one sighting had exactly **12 fewer assertions** than a
+steady run, i.e. the aborted test contributes 12 assertions and died at or very near its start —
+which `setup` is.
+
+*(The 12-assertion figure is carried forward from the earlier sighting's report, not re-measured
+here.)*
+
+### The final whole-branch review — no blocking issues, five cleanups applied
+
+The review found the branch mergeable. Five cheap corrections landed on top of it, and the shape of
+the set is worth reading before the items: **three of the five were comments alone** — the code was
+right and the specification beside it was not, which in this repo is the same class of defect — **a
+fourth was an invariant a comment STATED and the code two lines below it broke**, and **only one is
+something a user would actually have hit.**
+
+- 🟡 **THE ONLY ONE A USER WOULD HAVE HIT: the "or an extension…" field silently did nothing once
+  eight types were active.** `resolve_exts` keeps `.first(MAX_EXTS)`, so
+  `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2` came back with the same eight chips and no
+  `.lbrn2` — **two inches from a `.lbrn2` CHIP correctly rendered inert** with "Turn one off first".
+  That is verbatim the condition `ext_slots_left?` exists to prevent ("a control that renders, links,
+  and silently does nothing"): **fixed for the chips, missed for the escape hatch beside them.** The
+  field and its button now go `disabled` on the same predicate, carrying the same sentence from the
+  same string (`ext_limit_title` — two controls answering one condition is exactly how they drifted).
+  **Disabled before the submit rather than explained after it**: the only thing a user can do is turn
+  one off, and saying so up front costs no round-trip. A hand-edited URL is still dropped silently,
+  deliberately — that is `EXT_RE`'s standing rule for anything arriving in a URL, and this finding is
+  about a control, not about input.
+- 🟡 **SYMLINKS: three features disagreed, and the disagreement was silent.** `file_type_label`
+  states an invariant — the Type column "MUST AGREE WITH WHAT THE 'Type' HEADER SORTS BY" — and then
+  **contradicted it two lines below itself**, rendering `Symlink` while `sort_key` keyed the row on
+  its extension. Reproduced with `aaa.stl`, `bbb.stl`, `ccc.3mf` and a symlink `mid.stl` under
+  `?sort=type&dir=asc`: cells read `["3MF", "Symlink", "STL", "STL"]` — a row labelled Symlink
+  sitting inside the STL block. Meanwhile the flat filter's `.where(kind: "file")` **excluded** a
+  symlink named `alias.stl` that the folder view happily lists; the sorting task had reasoned
+  symlinks "are usually symlinks TO files" and grouped them with files, and the filter task
+  disagreed with no note. **The decision, now written down in all three places: a symlink is its own
+  type, consistently.** `sort_key` answers the literal `"symlink"` — the column's own label,
+  downcased, so the group lands where the word "Symlink" falls among the other labels rather than at
+  an end somebody has to justify. The flat filter keeps excluding them, and now says why: a type
+  filter asks "show me my STLs" and a symlink named `alias.stl` is not one — its content is a path.
+  **The divergence from the folder view is deliberate and recorded as such** (a folder view shows
+  what is really there; a type view shows what you asked for). Spec §6.3 argued only the *directory*
+  case, which is why the symlink half had no sentence to inherit. **`sort_nodes`' partition is a
+  separate question, still answered the same way** — a symlink is not a folder, so it stays in the
+  file block; its type key decides where inside it. Pinned by a test using **two symlinks with
+  different extensions** (one alone is trivially "grouped", two sharing an extension pass with the
+  old key), asserted in both directions; mutation-checked by reverting the branch.
+  **`files_sort_test.rb`'s existing symlink test structurally could not see this** — it asserts under
+  the default *name* sort, where the type branch is never called.
+- **The `MoveConflicts` writer audit named the wrong writers.** It enumerated every writer of
+  `maker_file_attachments` and was last touched *before* the attach policy was extracted:
+  `Projects::AttachmentsController` has written no row since (it only reads), and the list omitted
+  **`Maker::AttachToProject`**, which is the writer for both doors and holds the only `insert_all` —
+  the one place `user_id`/`attachable_*` are set as **columns** rather than through the association,
+  which is precisely what an audit about scoping should name. The safety *claim* held throughout; the
+  enumeration a future auditor would have trusted did not.
+- **`attach_bundle`'s ordering claim was not enforced by the query, and could not be.** The line
+  claimed `&` "keeps the MODEL's order, so the project lists the bundle the way the model does".
+  `insert_all` omits `position`, so every row takes the default 0 — as does **every row this table
+  has ever held**, since no writer anywhere sets it — and `has_many -> { order(:position) }`
+  degenerates to a total tie that survives only as SQLite rowid order, the exact reliance
+  `#model_owning` three methods above says must not be trusted on managed Postgres. **Setting
+  `position` was rejected rather than skipped, and the reason is the source, not the destination:**
+  `node_ids` is read from `model.file_attachments.pluck(:node_id)`, which is *the same* all-zero
+  `ORDER BY position ASC` (verified), so stamping positions would faithfully preserve an order that
+  was already a guess — while making this the one writer in the app with a position convention, so a
+  later ordinary attach lands at 0 and leapfrogs the bundle. Enforcing bundle order is a change to
+  the **column's meaning across all six writers**, not to this line. The claim is gone; the dedupe
+  half, which is sound and load-bearing, stays.
+- **The `port_writable` branch count was wrong in both documents** — see the `Maker::MoveNode`
+  section above. Five, not three.
+
+### Deferred deliberately — so none of these reads as an oversight
+
+- **`folder_paths_for` recurses, and depth is unguarded.** Its `"…"` marker is a correct **cycle**
+  guard (a corrupt parent chain returns the marker instead of descending again), but nothing bounds
+  a legitimately deep chain: a probe of the same lambda shape overflowed between **8,187 and 8,218**
+  nested directories in a bare Ruby process, so a library with ~8k levels of nesting would raise
+  `SystemStackError`. Stack-size dependent, so treat it as an order of magnitude rather than a
+  threshold — and it is only reachable in flat mode, which is the only view that builds paths.
+- **The Folder column does not truncate.** A very deep path renders in full and will stretch the
+  cell.
+- **`maker_file_attachments` still has no uniqueness index** on `(user_id, node_id, attachable)` —
+  `find_or_create_by` and the bundle path's `members = node_ids & names.keys` are the only guards. A
+  unique index would need a backfill dedupe, and this service is the sole writer. **What bundle
+  attach changed is the blast radius: N rows rather than 1.**
+
+**Found by the final review, each one DEMONSTRATED, none fixed here.** They are follow-up material
+rather than blockers, and the branch should not pretend they do not exist. Four of them are one
+shape — **a rule the code enforces correctly and the UI never mentions** — and the remaining two are
+navigational (a missing affordance, a redirect that drops the user's place).
+
+- 🟠 **AN ARCHIVED PROJECT'S CLAIM BLOCKS THE AUTO-MOVE INVISIBLY, and this is the one worth doing
+  first.** `AttachToProject#attached_elsewhere?` does not exclude archived projects, while **both**
+  halves of the file page's attach control do (`FilesController#show` filters the chips on
+  `status != "archived"` and the dropdown on `where.not(status: "archived")`). Driven end to end:
+  attach `c.stl` to "Old Rig" → archive Old Rig → **the file page shows no mention of Old Rig
+  anywhere** → attaching to "Desk Lamp" flashes "Attached c.stl." and the file stays in
+  `Projects/old-rig/`. `#relocate` on the same file then says *"belongs to another project"*, naming
+  a project the page refuses to show. Either the policy should skip archived claims or the page
+  should keep showing them; it must not be both.
+- **`#create` is silent where `#relocate` has a sentence** — one policy, two doors, two answers.
+  `#relocate` words `:attached_elsewhere`, `:not_a_file` and `:model_bundle` individually; `#create`
+  collapses the two it can reach to the bare "Attached bracket.stl." (measured: "Attached
+  elsewhere.stl." and "Attached adir."). *One correction to the review's wording:* **`:model_bundle`
+  never reaches `#create`'s refusal at all** — `#call` intercepts it before `#refusal_for` and takes
+  the bundle path, which says "Attached 2 files from Widget." So it is two of the three, and the
+  bundle case is the next item rather than this one.
+- **A model-bundle file's attach control gives no warning.** The branch's most surprising rule — one
+  file brings the whole bundle, and moves nothing — is invisible on the file page until the flash
+  reads "Attached 3 files from Widget." (verified: nothing in `files/show.html.erb`'s attach control
+  mentions models).
+- **Detach is not the inverse of attach.** Attach moves the bytes into `Projects/<slug>/`; detach
+  removes only the row and flashes "Detached.", leaving the file in the folder of a project it no
+  longer belongs to (driven: parent unchanged after the DELETE). Deliberate as far as it goes — a
+  move back has nowhere obvious to go — but it is unwritten and it surprises.
+- **The flat GRID has no location affordance.** The flat *list* gained a Folder column because "a
+  flat list of 200 STLs with no location is unnavigable"; `_grid.html.erb` renders the same flat set
+  as bare tiles, so two `bracket.stl` in different folders are visually identical.
+- **`FilesController#destroy` redirects to bare `files_path`**, so deleting a row from `?ext=stl`
+  drops the user at the unfiltered root (driven: `302 → /files`). **The one in-page path
+  `files_query_base` did not reach** — `#rescan` right below it already carries the filter through
+  its redirect, which is the shape to copy.
+- **Pre-existing, not this branch, but now known: CLAUDE.md §12 step 10's proof-grep no longer
+  returns nothing.** That step calls
+  `grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/ | grep -v ':[0-9]*: *#'`
+  "the proof, not the test suite" that the maker layer no longer references chunks. Run today it
+  returns one hit: `app/services/maker/addons/library_output.rb:47`
+  (`Storage::ChunkStore.current.put`), from the addon framework's server-driven chunk write. The
+  *code* is defensible — it is one of the five `port_writable` two-door branches, and the chunk door
+  has to put the bytes somewhere — but **the CLAIM is now false**, and step 10's own argument is that
+  a proof which cries wolf gets ignored. Recorded as a discrepancy in the claim; this branch neither
+  introduced it nor is the place to resolve it.
+
+### Housekeeping
+
+Two entries in "Open, and shipped knowingly" (below) were amended rather than appended to, per the
+phase 4 follow-up's own finding that **a stale open-list is worse than none**: the intermittent is no
+longer "never captured", and `FilesController#index` is no longer unbounded in *every* mode.
 
 ## Latest (2026-07-23): Current Project — session-scoped default for saves, attaches, and uploads (branch `claude/current-project-concept-efcbf6`)
 
@@ -142,6 +1599,10 @@ hardened, and connected to the browser**:
 - **Deploy.** `resvg` is added to the Dockerfile (build stage verified in `rust:1-slim`) and to CI's
   three test legs (idempotent, non-fatal). **STEP/OBJ/IGES stay `unsupported` in-deploy** — F3D is
   still not shipped in the image (deliberate; `Mesh` stays registered so a box with F3D renders them).
+  *(Superseded 2026-07-29 — **F3D is installed**: STEP/IGES/OBJ now render on the deployed image, via
+  the `Dockerfile`'s `f3d` stage. The more surprising half: `model_glb` is now refused outright, not
+  rendered — F3D's `--output` renders a raster and cannot emit a GLB by any CLI route, so a GLB was
+  never obtainable this way.)*
 - Suite **978 → 1023** runs, **identical on all three backend legs** (`bin/rails test`,
   `LIBRARY_BACKEND=share`, `LIBRARY_BACKEND=s3`: 1023 / 3329 / 0 / 0 / 5). The preview layer touches
   no sync internals (§10 tripwire grep clean).
@@ -412,16 +1873,21 @@ open-list is worse than no open-list** — it spends the next reader's attention
 already done, and it is exactly the failure mode of asserting a fact in prose that the code
 answers.
 
-- **An unexplained intermittent.** Two different agents each saw a single `1 errors` run that
+- ~~**An unexplained intermittent.** Two different agents each saw a single `1 errors` run that
   **never reproduced** (~73 and ~15+ subsequent full runs respectively, including cold-bootsnap
-  and targeted-seed loops). Neither captured the message. **Recorded as unexplained** — not fixed,
-  not established as pre-existing. **Not seen again** across the follow-up's full-suite runs
-  (3 × 978 sequential legs + many targeted runs), which is not evidence it is gone.
-- **`FilesController#index` is still unpaginated / O(n) rows**, and that is a decision rather than
-  a leftover: it has never paginated, and the N+1 fix below did not change it. What remains at
-  2000 nodes is **~160 ms of render**, now **identical on all three backends** — which is the
-  evidence that the port's cost is gone and the residual is HTML. Pagination is a file-browser
-  decision on its own merits; it is not this regression's fix and never was.
+  and targeted-seed loops). Neither captured the message.~~ **CAPTURED 2026-07-27** — see "The
+  intermittent" at the top of this file. It is a `SQLite3::BusyException` in
+  `Tools::GeneratorsControllerTest`'s `setup`. **Still unexplained, but no longer unobserved**, and
+  the cross-worker explanation offered with the capture is **disproved**: each parallel worker has
+  its own SQLite file, so the lock holder is inside the failing worker.
+- **`FilesController#index`'s FOLDER view is still unpaginated / O(n) rows**, and that is a decision
+  rather than a leftover: it has never paginated, and the N+1 fix below did not change it. What
+  remains at 2000 nodes is **~160 ms of render**, now **identical on all three backends** — which is
+  the evidence that the port's cost is gone and the residual is HTML. Pagination is a file-browser
+  decision on its own merits; it is not this regression's fix and never was. *(Amended 2026-07-27:
+  the **flat** `?ext=` mode added in the file-organization branch **is** bounded, at `FLAT_LIMIT =
+  2000` with an announced truncation — the first bound this page has ever had. The folder view is
+  unchanged.)*
 
 ## Previous (2026-07-17): phase 3 — point it at your own S3 bucket
 

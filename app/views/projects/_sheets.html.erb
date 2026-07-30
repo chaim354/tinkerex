@@ -1,0 +1,26 @@
+<%#
+  Named spreadsheets on this project. The grid itself lives on its own full-width page — a real
+  grid inside a panel this size is unusable — so this panel is a list plus a create form.
+%>
+<section class="panel sheets-panel">
+  <div class="panel-head">
+    <h2>Sheets</h2>
+    <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads
+        params.dig(:sheet, :name), so the field needs that exact nested name. %>
+    <%= form_with url: project_sheets_path(@project), method: :post, class: "sheet-new-form" do %>
+      <%= text_field_tag "sheet[name]", nil, placeholder: "New sheet…" %>
+      <%= submit_tag "Add", class: "btn small" %>
+    <% end %>
+  </div>
+
+  <% if @sheets.empty? %>
+    <p class="muted">No sheets yet. Cut lists, cost math, measurements.</p>
+  <% else %>
+    <% @sheets.each do |sheet| %>
+      <div class="sheet-row">
+        <%= link_to sheet.name, sheet_path(sheet) %>
+        <span class="muted"><%= sheet.cells.size %> rows</span>
+      </div>
+    <% end %>
+  <% end %>
+</section>

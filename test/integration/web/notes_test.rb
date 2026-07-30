@@ -23,7 +23,7 @@ module Web
         post file_notes_path("f-1"), params: { note: { body: "print at 0.2mm" } }
       end
       assert_redirected_to file_path("f-1")
-      assert_equal "print at 0.2mm", user.maker_notes.last.body
+      assert_equal "print at 0.2mm", user.maker_notes.last.body.to_plain_text
     end
 
     test "create a note via JSON returns the new count" do
@@ -69,6 +69,24 @@ module Web
       delete note_path(note)
       assert_response :not_found
       assert Maker::Note.exists?(note.id), "another user's note must survive"
+    end
+
+    test "the note form renders a Lexxy editor with attachments disabled" do
+      user = sign_in
+      node = user.nodes.create!(node_id: "n-1", name: "bracket.stl", kind: "file")
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "lexxy-editor[attachments=?]", "false"
+      assert_select "textarea[name=?]", "note[body]", count: 0
+    end
+
+    test "a rich note body renders as markup" do
+      user = sign_in
+      node = user.nodes.create!(node_id: "n-2", name: "bracket.stl", kind: "file")
+      post file_notes_path(node.node_id),
+           params: { note: { body: "<p>Print at <strong>0.2mm</strong></p>" } }
+      follow_redirect!
+      assert_select ".note-body strong", text: "0.2mm"
     end
   end
 end

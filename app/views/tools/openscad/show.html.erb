@@ -1,0 +1,26 @@
+<% content_for :title, "#{@state.name} — OpenSCAD" %>
+
+<div class="page-head">
+  <h1><%= @state.name %></h1>
+  <%= link_to "Back", tools_openscad_path, class: "btn ghost" %>
+</div>
+
+<dl class="meta">
+  <dt>Source</dt><dd><%= @state.data["generator"] || "your .scad" %></dd>
+  <dt>Saved</dt><dd><%= @state.created_at.strftime("%Y-%m-%d %H:%M") %></dd>
+</dl>
+
+<h2>Bundle</h2>
+<%# The tied files: the 3MF output. The parameters that made it are below, from the DB. %>
+<ul class="bundle-files">
+  <% @state.files.each do |af| %>
+    <li><%= link_to af.role, file_path(af.node_id) %>
+        <span class="muted mono"><%= af.content_type %></span></li>
+  <% end %>
+</ul>
+
+<%= render "tools/shared/params", state: @state %>
+
+<%= link_to "Duplicate & tweak",
+      openscad_prefill_path(openscad_source_key(@state), @state.data["params"]),
+      class: "btn ghost" %>

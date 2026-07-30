@@ -60,5 +60,17 @@ module Maker
       other.maker_projects.create!(name: "theirs")
       assert_equal [ "mine" ], @user.maker_projects.pluck(:name)
     end
+
+    test "archive! then unarchive! round-trips the lifecycle state" do
+      project = @user.maker_projects.create!(name: "Old Rig")
+
+      project.archive!
+      assert_equal "archived", project.status
+      assert_not_nil project.archived_at
+
+      project.unarchive!
+      assert_equal "active", project.status
+      assert_nil project.archived_at
+    end
   end
 end

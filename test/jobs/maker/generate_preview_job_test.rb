@@ -15,6 +15,20 @@ module Maker
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
     end
 
+    # Run the block with `renderer.available?` forced true. Hand-rolled rather than Object#stub:
+    # minitest 6 DROPPED minitest/mock, so `stub` does not exist in this suite (requiring it is a
+    # LoadError, not a missing-gem warning). `module_function` copies available? onto the singleton,
+    # so capture-and-redefine is the restore — removing it would leave the module with no method at
+    # all. The ensure is load-bearing: a leaked override would make later tests in this process
+    # believe an absent toolchain is present.
+    def forcing_available(renderer)
+      original = renderer.method(:available?)
+      renderer.define_singleton_method(:available?) { true }
+      yield
+    ensure
+      renderer.define_singleton_method(:available?, original)
+    end
+
     # `name:` is the file's real name on the Node row, which the job resolves when no filename
     # arg is given; it defaults to node_id because most tests here use a node_id that already
     # looks like a filename.
@@ -35,6 +49,39 @@ module Maker
       node.update!(name: name || node_id, kind: "file", deleted: false,
                    current_version_id: version_id)
       node
+    end
+
+    # THE HAZARD THE ONE-ROW-PER-NODE SHAPE INTRODUCES, and the reason it needs a guard at all.
+    #
+    # With a row per VERSION, two quick saves made two rows and each job wrote its own — a wrong
+    # thumbnail was impossible BY CONSTRUCTION, and that immunity was exactly what the extra rows
+    # bought. With one row, a slow render of v1 can finish AFTER a fast render of v2 and attach
+    # v1's bytes into a row that now says v2: a wrong image displayed as current, silently, which
+    # is strictly worse than the leaked row this change removes.
+    #
+    # So the job compares-and-sets: it captures the version it is rendering and refuses to write
+    # if the row moved on underneath it. Simulated by moving the row mid-run, which is what a
+    # concurrent scan does.
+    test "a render whose version was superseded mid-flight does NOT overwrite the newer row" do
+      stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")
+
+      # The row moves to v2 while the job is between reading its target and writing its result.
+      superseded = false
+      hook = ->(*) { @user.maker_previews.find(preview.id).update_columns(version_id: "v2") unless superseded.tap { superseded = true } }
+      Maker::Previews::Svg.singleton_class.prepend(Module.new do
+        define_method(:render) { |*a, **k| hook.call; super(*a, **k) }
+      end)
+
+      forcing_available(Maker::Previews::Svg) do
+        assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "drawing.svg") }
+      end
+
+      preview.reload
+      assert_equal "v2", preview.version_id, "the newer version must survive the stale job"
+      assert_not_equal "ready", preview.status,
+                       "a v1 render must not mark the row ready — it would show v1's image as v2"
+      assert_not preview.asset.attached?, "v1's bytes must not be attached to a row claiming v2"
     end
 
     test "renders SVG to a PNG when resvg is present; unsupported when absent" do
@@ -200,6 +247,32 @@ module Maker
       end
     end
 
+    test "persists parsed metadata for a LightBurn file" do
+      skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+      lbrn2 = File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
+      stage_version(node_id: "design.lbrn2", version_id: "vmeta", bytes: lbrn2)
+      preview = @user.maker_previews.create!(node_id: "design.lbrn2", version_id: "vmeta", kind: "thumbnail")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "design.lbrn2")
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert preview.metadata.present?, "metadata stored"
+      assert_equal "Fill", preview.metadata["layers"].last["mode"]
+    end
+
+    test "leaves metadata null for a non-LightBurn file" do
+      # Reuses @svg (setup) under a different node_id/filename — same bytes as the
+      # file's other plain-SVG tests, just staged as "logo.svg" for this assertion.
+      stage_version(node_id: "logo.svg", version_id: "vlogo", bytes: @svg)
+      preview = @user.maker_previews.create!(node_id: "logo.svg", version_id: "vlogo")
+
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "logo.svg")
+
+      preview.reload
+      assert_nil preview.metadata
+    end
+
     test "renders a DXF to PNG when resvg is present; unsupported when absent" do
       dxf = File.binread(Rails.root.join("test/fixtures/files/sample.dxf"))
       stage_version(node_id: "plate.dxf", version_id: "vdxf", bytes: dxf)
@@ -235,6 +308,32 @@ module Maker
         assert preview.error.present?
         assert_not preview.asset.attached?
       end
+    end
+
+    # The reason Mesh raises GeneratePreviewJob::Unsupported rather than its own RenderError:
+    # `failed` is the state PreviewsController#create RE-ENQUEUES on a re-POST, so a client could
+    # re-request forever a preview that can never succeed. This drives the real job to prove the
+    # renderer-raised Unsupported reaches the terminal status — the claim in Mesh#render's comment.
+    #
+    # `available?` is stubbed true so this does NOT depend on f3d, which CI does not install. That
+    # matters for a second reason: with f3d absent the job raises its OWN Unsupported at the
+    # availability gate, so an unstubbed test would land on "unsupported" WITHOUT EVER REACHING the
+    # refusal and pass for entirely the wrong reason. The error-message assertion is what pins which
+    # of the two raised — the availability gate says "renderer toolchain unavailable".
+    test "a renderer that refuses a kind lands in unsupported, not failed" do
+      obj = File.binread(Rails.root.join("test/fixtures/files/tetra.obj"))
+      stage_version(node_id: "n-glb", version_id: "vglb", bytes: obj, name: "part.obj")
+      preview = @user.maker_previews.create!(node_id: "n-glb", version_id: "vglb", kind: "model_glb")
+
+      forcing_available(Maker::Previews::Mesh) do
+        assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "part.obj") }
+      end
+
+      preview.reload
+      assert_equal "unsupported", preview.status, "a kind the renderer cannot produce is not a failure"
+      assert_match(/cannot export GLB/, preview.error,
+                   "must be Mesh's refusal, not the job's toolchain-availability gate")
+      assert_not preview.asset.attached?, "nothing may be attached for a refused kind"
     end
 
     test "a real fetch/render error flips status to failed with the error message" do

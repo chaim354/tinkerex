@@ -24,7 +24,7 @@ module Web
       assert_redirected_to new_user_session_path
     end
 
-    test "index lists the user's projects grouped by status, empty state otherwise" do
+    test "index lists live projects in one flat list, empty state otherwise" do
       user = sign_in
       get projects_path
       assert_response :success
@@ -32,10 +32,17 @@ module Web
       assert_select ".projects-empty"
 
       user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Bench Jig", status: "paused")
       user.maker_projects.create!(name: "Old Rig", status: "archived")
       get projects_path
+
+      # One grid, no per-status sections.
+      assert_select ".projects-grid", count: 1
+      # A non-archived status is no longer a heading and no longer a badge.
+      assert_select ".project-card .badge", count: 0
       assert_select ".project-card .project-name", text: "Desk Lamp"
-      # Archived projects are not in the default (non-archived) listing.
+      assert_select ".project-card .project-name", text: "Bench Jig"
+      # Archived projects stay out of the default listing.
       assert_select ".project-card .project-name", text: "Old Rig", count: 0
     end
 
@@ -75,7 +82,6 @@ module Web
       get new_project_path
       assert_response :success
       assert_select "form input[name=?]", "project[name]"
-      assert_select "form select[name=?]", "project[status]"
       assert_select "form input[name=?]", "maker_project[name]", count: 0
     end
 
@@ -123,14 +129,13 @@ module Web
 
     # --- detail + lifecycle ----------------------------------------------------
 
-    test "show renders the project header, status, and description" do
+    test "show renders the project header and description" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp", status: "active",
                                             description: "A nice lamp")
       get project_path(project)
       assert_response :success
       assert_select "h1", text: /Desk Lamp/
-      assert_select ".project-status", text: /active/i
       assert_select ".project-description", text: /A nice lamp/
     end
 
@@ -189,6 +194,187 @@ module Web
 
       get projects_path
       assert_select ".project-card .file-cell[data-node-id=?]", "c1"
+    end
+
+    # --- archived view + unarchive ----------------------------------------------
+
+    test "the archived view lists archived projects and links back" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get projects_path(archived: 1)
+      assert_response :success
+      assert_select "h1", "Archived projects"
+      assert_select ".project-card .project-name", text: "Old Rig"
+      assert_select ".project-card .project-name", text: "Desk Lamp", count: 0
+    end
+
+    # The Unarchive button must live INSIDE its own card's container, never as a bare sibling of
+    # the card. `.projects-grid` is `display: grid`, and every DIRECT child of a grid container
+    # becomes its own independent grid item — a bare sibling button is a SECOND grid item per
+    # archived project, so auto-placement has no idea it belongs with the card next to it. With
+    # 2+ archived projects the button can visually land next to a different project entirely
+    # (most visibly once the grid wraps a row). Text-content assertions like the ones above can't
+    # see this; only checking the actual container structure can.
+    test "each archived card owns its own unarchive button" do
+      user = sign_in
+      old_rig = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      older_rig = user.maker_projects.create!(name: "Older Rig", status: "archived")
+
+      get projects_path(archived: 1)
+
+      # One grid item per project, each a `.project-tile` — never a bare card or a bare button
+      # sitting loose as its own grid item.
+      tiles = css_select(".projects-grid > .project-tile")
+      assert_equal 2, tiles.size, "expected one .project-tile per archived project"
+      assert_select ".projects-grid > form", count: 0
+      assert_select ".projects-grid > a.project-card", count: 0
+
+      [ old_rig, older_rig ].each do |project|
+        tile = tiles.find { |t| t.at_css(".project-name")&.text&.strip == project.name }
+        assert tile, "no .project-tile found for #{project.name}"
+        # Scoped to THIS tile: the unarchive form for THIS project must be nested inside the same
+        # container as its own card, not merely present somewhere on the page.
+        assert_select tile, "form[action=?] button", unarchive_project_path(project), text: "Unarchive"
+      end
+    end
+
+    test "the default index links to the archived view when there are archived projects" do
+      user = sign_in
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+      get projects_path
+      assert_select ".archived-note a", text: "1 archived project"
+
+      user.maker_projects.create!(name: "Older Rig", status: "archived")
+      get projects_path
+      assert_select ".archived-note a", text: "2 archived projects"
+    end
+
+    # Step 0(b): with nothing archived there is nothing to say, so the note must not render at all.
+    test "the archived note is absent when nothing is archived" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      get projects_path
+      assert_select ".archived-note", count: 0
+    end
+
+    # Step 0(a): `.present?` would have made "0" truthy and served the ARCHIVED view here.
+    test "archived=0 shows the live list, not the archive" do
+      user = sign_in
+      user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get projects_path(archived: 0)
+      assert_select "h1", "Projects"
+      assert_select ".project-card .project-name", text: "Desk Lamp"
+      assert_select ".project-card .project-name", text: "Old Rig", count: 0
+    end
+
+    test "unarchive returns a project to the live list" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived",
+                                            archived_at: Time.current)
+
+      patch unarchive_project_path(project)
+      assert_redirected_to projects_path
+
+      project.reload
+      assert_equal "active", project.status
+      assert_nil project.archived_at
+
+      get projects_path
+      assert_select ".project-card .project-name", text: "Old Rig"
+    end
+
+    # `config.action_dispatch.show_exceptions = :rescuable` in the test env, so a RecordNotFound
+    # from the current_user scoping arrives as a 404 RESPONSE rather than a raised exception —
+    # which is why every cross-user test in this suite asserts the status, not an exception.
+    test "unarchive cannot reach another user's project" do
+      sign_in("a@example.com")
+      other = User.create!(email: "b@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_projects.create!(name: "Theirs", status: "archived")
+
+      patch unarchive_project_path(theirs)
+      assert_response :not_found
+      assert_equal "archived", theirs.reload.status
+    end
+
+    # --- status badge/select removal --------------------------------------------
+
+    test "the detail page shows no status badge for a live project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "paused")
+      get project_path(project)
+      assert_response :success
+      assert_select "h1", "Desk Lamp"
+      assert_select ".badge.status-archived", count: 0
+    end
+
+    test "the detail page badges an archived project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      get project_path(project)
+      assert_select ".badge.status-archived", text: "Archived"
+    end
+
+    test "the project form offers no status select" do
+      sign_in
+      get new_project_path
+      assert_response :success
+      assert_select "select[name=?]", "project[status]", count: 0
+    end
+
+    # --- the detail page's action bar tracks the archived state ---
+
+    test "an archived project's detail page offers unarchive, not archive" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived")
+
+      get project_path(project)
+      assert_response :success
+      assert_select "form[action=?]", unarchive_project_path(project)
+      # The Archive button posts DELETE to the project itself; it must not render here.
+      assert_select "form[action=?][method=?]", project_path(project), "post", count: 0
+    end
+
+    test "a live project's detail page offers archive, not unarchive" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp", status: "active")
+
+      get project_path(project)
+      assert_select "form[action=?]", project_path(project)
+      assert_select "form[action=?]", unarchive_project_path(project), count: 0
+    end
+
+    test "an archived project cannot be set as the current project from its detail page" do
+      user = sign_in
+      archived = user.maker_projects.create!(name: "Old Rig", status: "archived")
+      live = user.maker_projects.create!(name: "Desk Lamp", status: "active")
+
+      # Scoped to `.head-actions` (the detail page's own action bar): the top bar in
+      # app/views/layouts/application.html.erb also renders a `form_with url: current_project_path`
+      # whenever the user has ANY live project (`current_project_choices.any?`) — which `live` makes
+      # true here regardless of which project's page we're on. An unscoped selector would find that
+      # unrelated form and fail for the wrong reason.
+      get project_path(archived)
+      assert_select ".head-actions form[action=?]", current_project_path, count: 0
+
+      # The control is offered for a live project — proving the assertion above discriminates on
+      # status rather than passing because the selector never matches anything.
+      get project_path(live)
+      assert_select ".head-actions form[action=?]", current_project_path
+    end
+
+    test "unarchiving from the detail page restores the project" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Old Rig", status: "archived",
+                                            archived_at: Time.current)
+
+      get project_path(project)
+      patch unarchive_project_path(project)
+      assert_redirected_to projects_path
+      assert_equal "active", project.reload.status
     end
   end
 end

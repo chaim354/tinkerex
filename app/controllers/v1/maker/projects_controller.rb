@@ -47,8 +47,9 @@ module V1
         )
       end
 
+      # See V1::Maker::BuildLogEntriesController#entry_json — `body` is a plain String on the wire.
       def build_log_entry_json(entry)
-        { id: entry.id, body: entry.body, entry_type: entry.entry_type, logged_at: entry.logged_at }
+        { id: entry.id, body: entry.body.to_plain_text, entry_type: entry.entry_type, logged_at: entry.logged_at }
       end
 
       def attachment_json(att)

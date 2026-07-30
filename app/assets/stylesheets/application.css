@@ -176,6 +176,10 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 }
 .addon-card[hidden], .box-group[hidden] { display: none; }
 
+/* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
+   so the value cell must not collapse it into one line. */
+.addon-params dd { white-space: pre-wrap; }
+
 .saved-boxes {
   list-style: none; padding: 0; margin: 0;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;
@@ -197,6 +201,16 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   font-size: 14px; background: var(--bg); color: var(--fg);
 }
 .box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
+/* A layout is column-aligned ASCII art (walls line up over the size markers), so it is only
+   editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
+   190px auto-fill column. */
+.box-field-multiline { grid-column: 1 / -1; }
+.box-field textarea {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
+}
 .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
 .box-side .box-preview { padding: 12px; }
 .box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }
@@ -256,3 +270,53 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
 .param-group-adv > summary { cursor: pointer; }
 .param-group-adv[open] > summary { margin-bottom: 10px; }
+
+/* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
+.preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.preview-row.has-settings > .preview { flex: 1 1 46%; min-width: 240px; }
+.preview-row.has-settings > .lbrn-settings { flex: 1 1 46%; min-width: 260px; }
+.lbrn-settings { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.lbrn-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 10px; }
+.lbrn-head h2 { margin: 0; font-size: 16px; }
+.lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lbrn-layers th { text-align: left; color: var(--muted); font-weight: 600; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.lbrn-layers td { padding: 5px 6px; border-bottom: 1px solid var(--soft); }
+.lbrn-layers .num { text-align: right; font-variant-numeric: tabular-nums; }
+.lbrn-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
+.lbrn-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
+.lbrn-summary dt { color: var(--muted); }
+.lbrn-summary dd { margin: 0; font-weight: 600; }
+.lbrn-text { font-size: 12px; margin: 10px 0 0; }
+
+/* --- The attach collision prompt (?move_conflict=): a <dialog open> rendered in the flow --- */
+/* `position: static` + `display: block` keep it OUT of the top layer, so it reads as an inline
+   banner on the file/project page with no JS and no backdrop to dismiss. */
+dialog.move-conflict { display: block; position: static; width: 100%; max-width: none;
+  margin: 0 0 16px; padding: 14px 16px; border: 1px solid var(--line); border-left: 4px solid var(--accent);
+  border-radius: 8px; background: var(--soft); color: var(--fg); }
+dialog.move-conflict p { margin: 0 0 10px; }
+dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+dialog.move-conflict form { display: inline; }
+
+/* --- Sortable column headers + the grid's equivalent select pair --- */
+table.files th.sorted a { color: var(--fg); font-weight: 700; }
+table.files th a { color: inherit; }
+table.files th a:hover { text-decoration: underline; }
+.sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+
+/* --- The flat by-extension filter: a chip row + a free-text escape hatch + the bound notice --- */
+.ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
+.ext-family { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ext-family .family-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
+  font-size: 13px; color: var(--muted); }
+.ext-filter .chip:hover { text-decoration: none; background: var(--soft); color: var(--fg); }
+.ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ext-other { display: inline-flex; gap: 4px; align-items: center; }
+.ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
+/* The full-set state, matching .chip.disabled below — the two controls answer one condition. */
+.ext-other input:disabled, .ext-other button:disabled { opacity: .45; cursor: not-allowed; }
+.truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
+  background: var(--soft); color: var(--muted); font-size: 13px; }
+.ext-filter .chip.disabled { opacity: .45; cursor: not-allowed; }

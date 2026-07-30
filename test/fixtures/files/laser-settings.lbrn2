@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="1.7.00" FormatVersion="1" DeviceName="Ortur LM2" MaterialHeight="3">
+  <CutSetting type="Cut">
+    <index Value="0"/>
+    <name Value="C00"/>
+    <speed Value="15"/>
+    <maxPower Value="85"/>
+    <minPower Value="85"/>
+    <numPasses Value="2"/>
+    <color Value="255"/>
+  </CutSetting>
+  <CutSetting type="Scan">
+    <index Value="1"/>
+    <name Value="C01"/>
+    <speed Value="200"/>
+    <maxPower Value="30"/>
+    <minPower Value="30"/>
+    <numPasses Value="1"/>
+    <color Value="65280"/>
+  </CutSetting>
+  <CutSetting type="Cut">
+    <index Value="2"/>
+    <name Value="C02"/>
+    <speed Value="100"/>
+    <maxPower Value="50"/>
+    <color Value="16711680"/>
+  </CutSetting>
+  <Shape Type="Rect" CutIndex="0" W="40" H="20" XForm="1 0 0 1 50 30"/>
+  <Shape Type="Ellipse" CutIndex="1" Rx="10" Ry="10" XForm="1 0 0 1 50 30"/>
+  <Shape Type="Text" CutIndex="0" Str="MAKER" XForm="1 0 0 1 0 0"/>
+</LightBurnProject>

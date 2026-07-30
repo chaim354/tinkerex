@@ -1,0 +1,45 @@
+<%#
+  The collision prompt: the attach already happened, the move did not. Rendered on BOTH the file
+  page and the project page, because an attach can come from either — @move_conflict is set by the
+  MoveConflicts concern, so a page that does not include it renders nothing here.
+
+  IT LIVES UNDER projects/ RATHER THAN A shared/ FOLDER, matching how this app already shares a
+  partial across controllers: the owning concept keeps it and the other side names the prefix
+  (files/index.html.erb renders "projects/upload_control"; projects/_attachments.html.erb renders
+  "files/thumb"). This prompt is project-shaped — it is about a project's folder, and its button
+  posts to a project-scoped route.
+
+  `open` on a plain <dialog> renders it in the document flow (not the top layer) — no JS, and it
+  degrades to an ordinary panel everywhere. It is not modal and traps no focus, so aria-labelledby
+  is what gives it an accessible name; without one a screen reader announces an unnamed dialog.
+
+  "Leave it where it is" links to request.path, which is this same page WITHOUT the query string:
+  the dismissal is just the URL without the param, and building it that way avoids
+  url_for(params:) — which this codebase has been bitten by before. It drops EVERY query param,
+  not just move_conflict; neither page carries state in the query string today, so keep it that
+  way or this link starts eating it.
+
+  The button is conditional because Maker::MoveNode.available_name answers nil once every suffix up
+  to HIGHEST_SUFFIX is taken — or once they would all exceed MAX_NAME_BYTES. The prompt still has
+  something to say in that case — the file was attached and stayed where it was — so it renders
+  minus the offer.
+%>
+<% if @move_conflict %>
+  <dialog class="move-conflict" open aria-labelledby="move-conflict-message">
+    <p id="move-conflict-message">
+      <strong><%= @move_conflict.node.name %></strong> is attached to
+      <%= link_to @move_conflict.project.name, project_path(@move_conflict.project) %>,
+      but a file with that name is already in the project's folder — so it was left where it is.
+    </p>
+    <div class="dialog-actions">
+      <% if @move_conflict.suggested_name %>
+        <%= button_to "Move it in as “#{@move_conflict.suggested_name}”",
+                      relocate_project_attachments_path(@move_conflict.project),
+                      params: { node_id: @move_conflict.node.node_id,
+                                new_name: @move_conflict.suggested_name },
+                      class: "btn" %>
+      <% end %>
+      <%= link_to "Leave it where it is", request.path, class: "btn ghost" %>
+    </div>
+  </dialog>
+<% end %>

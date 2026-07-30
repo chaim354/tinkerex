@@ -1,0 +1,11 @@
+# Minimal tetrahedron for Maker::Previews::Mesh's OBJ path.
+# OBJ face indices are 1-based. Four vertices, four triangular faces, no normals or materials —
+# the renderer only needs geometry, and a materials reference would need a second file.
+v 0.0 0.0 0.0
+v 1.0 0.0 0.0
+v 0.0 1.0 0.0
+v 0.0 0.0 1.0
+f 1 3 2
+f 1 2 4
+f 1 4 3
+f 2 3 4

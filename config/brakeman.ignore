@@ -30,7 +30,7 @@
       "check_name": "Execute",
       "message": "Possible command injection",
       "file": "app/services/maker/previews/mesh.rb",
-      "line": 59,
+      "line": 88,
       "link": "https://brakemanscanner.org/docs/warning_types/command_injection/",
       "code": "Open3.capture3(F3D, Tempfile.new.path, \"--output\", \"#{Tempfile.new.path}#{out_ext}\", \"--resolution\", \"#{size},#{size}\")",
       "render_path": null,
@@ -45,6 +45,52 @@
         77
       ],
       "note": "False positive. `Open3.capture3(*args)` is invoked with an ARGV ARRAY, so Ruby execs the binary directly with NO shell \u2014 there is no shell-injection vector. `F3D` is an operator-controlled constant (ENV['F3D_BIN'] default 'f3d'); the input/output paths are Tempfile-generated, not user-supplied; and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make f3d error out, which is handled). No user input reaches a shell."
+    },
+    {
+      "warning_type": "SQL Injection",
+      "warning_code": 0,
+      "fingerprint": "d4c8c4fadffc854fc3c0a1032120053eff5ff0a382d6f0ff962109e6a97ad790",
+      "check_name": "SQL",
+      "message": "Possible SQL injection",
+      "file": "app/controllers/files_controller.rb",
+      "line": 729,
+      "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+      "code": "current_user.nodes.present.where(:kind => \"file\").where(\"#{exts.size} OR LOWER(name) LIKE ? ESCAPE '\\\\'\", *exts.map do\n like_pattern(e)\n end)",
+      "render_path": null,
+      "location": {
+        "type": "method",
+        "class": "FilesController",
+        "method": "flat_ext_scope"
+      },
+      "user_input": "exts.size",
+      "confidence": "Weak",
+      "cwe_id": [
+        89
+      ],
+      "note": "False positive, and Brakeman's own `user_input` field says so: the flagged interpolation is `exts.size`, an INTEGER COUNT, not a value. The clause is `Array.new(exts.size, LIKE_EXT).join(\" OR \")` where LIKE_EXT is a frozen constant, so what varies with user input is only HOW MANY TIMES a fixed string is repeated -- Brakeman renders that join as `#{exts.size}` and flags the interpolation. Every extension travels as a BOUND parameter (`*exts.map { like_pattern(e) }`), never into the SQL text. Two independent layers stand behind that anyway: `resolve_exts` drops anything not matching /\\A[a-z0-9]{1,8}\\z/ and caps the list at MAX_EXTS (so `exts.size` is 1..8 and every element is alphanumeric), and `like_pattern` runs `sanitize_sql_like` with an explicit ESCAPE clause. Driven directly with `%`, `_`, `../`, over-length and array-shaped params -- all dropped before the query is built."
+    },
+    {
+      "warning_type": "Command Injection",
+      "warning_code": 14,
+      "fingerprint": "8c103396fda65cd51507f38aaa29004f32f6ff5823fd2695ac5515c334d51d19",
+      "check_name": "Execute",
+      "message": "Possible command injection",
+      "file": "app/services/maker/previews/image_thumb.rb",
+      "line": 45,
+      "link": "https://brakemanscanner.org/docs/warning_types/command_injection/",
+      "code": "Open3.capture3(BIN, Tempfile.new.path, \"--size\", \"#{size}x#{size}\", \"-o\", \"#{Tempfile.new.path}.thumb.png\")",
+      "render_path": null,
+      "location": {
+        "type": "method",
+        "class": "Maker::Previews::ImageThumb",
+        "method": "render"
+      },
+      "user_input": "size",
+      "confidence": "Medium",
+      "cwe_id": [
+        77
+      ],
+      "note": "False positive, same argument as the mesh.rb entry above. `Open3.capture3` is called here with `BIN` and each flag and path as its own separate positional string — the same multi-arg, no-shell form as the splatted `*args` in the mesh.rb entry above — so Ruby execs the binary directly with NO shell; there is no shell-injection vector. `BIN` is an operator-controlled constant (ENV['VIPSTHUMBNAIL_BIN'] default 'vipsthumbnail'); both the input and output paths are Tempfile-generated, not user-supplied (`out_path` is the tempfile's own path plus a fixed '.thumb.png' suffix); and `size` is an integer preview dimension passed as its own argv element (a malformed value would just make vipsthumbnail error out, which is handled and raised as RenderError). No user input reaches a shell. An argv-array capture3 is the deliberate pattern every renderer in Maker::Previews::* uses."
     }
   ],
   "brakeman_version": "8.0.5"

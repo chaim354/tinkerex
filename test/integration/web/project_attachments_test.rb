@@ -31,7 +31,6 @@ module Web
       assert_response :success
       assert_select ".attachments-panel .attachment-tile", 1
       assert_select ".attachment-tile a[href=?]", file_path("n-1")
-      assert_select ".attachment-tile .badge", text: /model/
     end
 
     test "a missing/deleted attached node degrades to an unavailable placeholder, never a 500" do
@@ -109,6 +108,76 @@ module Web
       assert_response :success
       assert_select "form.picker-search input[name=entry_id][value=?]", entry.id.to_s
       assert_select ".picker-result form[action=?]", entry_photos_path(entry)
+    end
+
+    test "the files panel groups attachments by type and omits empty categories" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      attach_node(user, project, name: "bracket.stl", node_id: "n-1", role: "model")
+      attach_node(user, project, name: "shade.stl",   node_id: "n-2", role: "model")
+      attach_node(user, project, name: "photo.jpg",   node_id: "n-3", role: "image")
+      attach_node(user, project, name: "panel.dxf",   node_id: "n-4", role: "vector")
+
+      get project_path(project)
+      assert_response :success
+
+      # One section per non-empty role, in ROLE_LABELS order.
+      assert_select ".attachment-group", count: 3
+      assert_select ".attachment-group-head", text: /Models/
+      assert_select ".attachment-group-head", text: /Images/
+      assert_select ".attachment-group-head", text: /Vector/
+      # Empty categories are not rendered at all.
+      assert_select ".attachment-group-head", text: /G-code/, count: 0
+      assert_select ".attachment-group-head", text: /Archives/, count: 0
+
+      # Headings carry the count, and the per-tile role badge is gone.
+      assert_select ".attachment-group-head", text: /Models \(2\)/
+      assert_select ".attachment-tile .badge", count: 0
+    end
+
+    test "an attachment whose node is gone still renders in its category" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      project.file_attachments.create!(user:, node_id: "vanished", role: "model",
+                                       label: "bracket.stl")
+
+      get project_path(project)
+      assert_select ".attachment-group-head", text: /Models \(1\)/
+      assert_select ".attachment-tile.unavailable .grid-name", text: "bracket.stl"
+    end
+
+    # The view iterates ROLE_LABELS, so a role outside that vocabulary would render nowhere at all —
+    # a file silently missing from the user's own project. Nothing can write such a value today
+    # (role_for is total, the model validates), so this has to bypass validation to set one up.
+    test "an attachment with an off-vocabulary role still renders, under Other" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      att = attach_node(user, project, name: "mystery.xyz", node_id: "n-x", role: "other")
+      att.update_column(:role, "bogus_role")
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Other \(1\)/
+      assert_select ".attachment-tile .grid-name", text: "mystery.xyz"
+    end
+
+    # THE COMPLAINT THIS ITEM STARTED FROM, asserted on both surfaces at once: a .csv is filed under
+    # "Documents" in the project panel AND the Files page offers a chip in a family of that same
+    # name. Before this the two pages named overlapping files differently, and .csv had no role at
+    # all. This fails if either surface drifts, which is what "one vocabulary" has to mean.
+    test "a document is filed under Documents and the chips agree" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      attach_node(user, project, name: "cutlist.csv", node_id: "n-doc",
+                  role: Maker::FileAttachment.role_for("cutlist.csv"))
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachment-group-head", text: /Documents/
+
+      assert_includes FilesHelper::EXT_FAMILIES.keys, "Documents"
+      assert_includes FilesHelper::EXT_FAMILIES["Documents"], "csv"
     end
   end
 end

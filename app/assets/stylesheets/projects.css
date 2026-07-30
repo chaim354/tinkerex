@@ -11,15 +11,19 @@
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
          font-weight: 600; text-transform: capitalize; background: var(--soft); color: var(--muted); }
-.badge.status-active { background: #ecfdf5; color: #065f46; }
-.badge.status-planning { background: #eff6ff; color: #1e40af; }
-.badge.status-paused { background: #fffbeb; color: #92400e; }
-.badge.status-done { background: #f3f4f6; color: #374151; }
 .badge.status-archived { background: #f3f4f6; color: #9ca3af; }
 
 .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px; }
-.project-group { margin-bottom: 28px; }
-.group-head { font-size: 15px; margin: 0 0 12px; }
+/* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
+   with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
+   width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
+   the thumb's own content size (measured: a 161.5px tile shrank the thumb to ~50px). Leaving
+   `align-items` at its flex default (`stretch`) keeps `.project-card` — and so its `.thumb` — at
+   the tile's full width, exactly as the plain-block wrapper this replaces did. The Unarchive
+   button is centered instead by scoping `text-align: center` to the form alone, which centers its
+   inline-block `<button>` without touching `.project-card`'s box model at all. */
+.project-tile { display: flex; flex-direction: column; gap: 6px; }
+.project-tile form { text-align: center; }
 .project-card { display: flex; flex-direction: column; gap: 8px; align-items: center; color: var(--fg); }
 .project-card:hover { text-decoration: none; }
 .project-card:hover .thumb { border-color: var(--accent); }
@@ -46,8 +50,13 @@
 .attachment-tile { display: flex; flex-direction: column; gap: 6px; }
 .attachment-tile .thumb { width: 100%; height: 110px; }
 .attachment-tile.unavailable .thumb { font-size: 28px; color: var(--muted); }
-.tile-meta { display: flex; align-items: center; justify-content: space-between; }
+.tile-meta { display: flex; align-items: center; justify-content: center; }
 .entry-photo .thumb { width: 100%; height: 90px; }
+
+.attachment-group { margin-bottom: 20px; }
+.attachment-group:last-child { margin-bottom: 0; }
+.attachment-group-head { font-size: 12px; font-weight: 700; color: var(--muted);
+                         text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px; }
 
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
@@ -56,12 +65,16 @@
 .form-actions { display: flex; gap: 12px; align-items: center; }
 .form-errors { border-radius: 6px; margin-bottom: 14px; }
 
-.log-form textarea, .task-form input { width: 100%; max-width: 480px; padding: 8px;
+.task-form input { width: 100%; max-width: 480px; padding: 8px;
   border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }
 .log-timeline { list-style: none; padding: 0; margin: 12px 0 0; }
 .log-entry { border-left: 2px solid var(--line); padding: 0 0 16px 14px; position: relative; }
 .entry-head { display: flex; justify-content: space-between; align-items: center; }
-.entry-body { white-space: pre-wrap; margin: 4px 0; }
+/* No `white-space: pre-wrap` here any more. It was right when .entry-body held a raw plain-text
+   body — it is what made manual newlines visible. Since the Action Text move the element wraps real
+   HTML with its own <br>s, and because white-space INHERITS, pre-wrap stopped collapsing the
+   whitespace node the content partial emits and put a ~45px blank gap above every entry. */
+.entry-body { margin: 4px 0; }
 
 .tasks-group { margin-top: 12px; }
 .tasks-group h3 { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
@@ -76,3 +89,24 @@
 .picker-search input { flex: 1; max-width: 480px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
 
 .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+.attach-form { display: inline-flex; align-items: center; gap: 8px; }
+.attach-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
+  border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+.project-chip form { display: inline; }
+.chip-x { background: none; border: 0; cursor: pointer; color: var(--muted);
+  font-size: 15px; line-height: 1; padding: 0 4px; }
+.chip-x:hover { color: var(--fg); }
+
+.sheet-head { align-items: flex-start; }
+.sheet-head h1 { margin: 0 0 6px; }
+.sheet-rename { display: inline-flex; gap: 6px; }
+/* The GRID scrolls sideways, not the whole page container — the page head sits in the same
+   element (it holds the Stimulus targets) and must stay put. */
+.sheet-grid { overflow-x: auto; }
+.sheet-status { font-size: 12px; }
+.sheet-status-error { color: var(--danger); }
+
+.sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between;
+                           padding: 6px 0; border-bottom: 1px solid var(--line); }
+.sheets-panel .sheet-row:last-child { border-bottom: 0; }

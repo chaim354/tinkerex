@@ -20,9 +20,13 @@ module Maker
         Maker::Previews::Stl     => "tetra.stl",
         Maker::Previews::ImageThumb => "sample.png", # libvips downscale
         Maker::Previews::Pdf     => "sample.pdf",    # pdfium page-1 render (PDFIUM_BIN in dev/CI)
-        Maker::Previews::TextThumb => "sample.txt"   # first-lines "document" PNG via resvg
-        # Mesh (obj/step/iges) intentionally omitted: F3D is not on this box, so it is checked
-        # structurally only. Add a fixture here if/when F3D lands in the test env.
+        Maker::Previews::TextThumb => "sample.txt",  # first-lines "document" PNG via resvg
+        # Mesh covers obj/step/stp/iges/igs. OBJ is the fixture because it is the one extension
+        # Mesh owns that needs no CAD kernel. F3D ships in the deploy image but is not a test-env
+        # dependency, so `next unless renderer.available?` below is what keeps this graceful on a
+        # box without it — the entry is exercised wherever f3d exists and skipped silently where
+        # it does not.
+        Maker::Previews::Mesh    => "tetra.obj"
       }.freeze
 
       # Raster types the web grid can inline safely (FilesController::SAFE_INLINE_TYPES minus svg).

@@ -24,8 +24,12 @@ module V1
         params.require(:build_log_entry).permit(:body, :entry_type, :logged_at)
       end
 
+      # `body` stays a plain String on the wire in both directions. client/sync-client's
+      # BuildLogEntry declares `pub body: String` with no serde(default), so anything else is a
+      # hard deserialize error for a shipped desktop client. Rich formatting is web-only
+      # (spec decision #4).
       def entry_json(entry)
-        { id: entry.id, project_id: entry.project_id, body: entry.body,
+        { id: entry.id, project_id: entry.project_id, body: entry.body.to_plain_text,
           entry_type: entry.entry_type, logged_at: entry.logged_at,
           created_at: entry.created_at, updated_at: entry.updated_at }
       end

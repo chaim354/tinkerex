@@ -83,6 +83,52 @@ module Tools
       assert_select "input[name=?]", "params[y]"
     end
 
+    # TrayLayout's `layout` is column-aligned ASCII art. An <input type="text"> runs HTML's value
+    # sanitization algorithm, which STRIPS line breaks — so the art reached the sidecar as one line
+    # and boxes.py answered "traylayout requires --layout, --input, or implementation of
+    # generate_layout". A textarea is the only control that carries the newlines.
+    test "a multiline param renders as a textarea, never a line-stripping text input" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      assert_select "textarea[name=?]", "params[layout]"
+      assert_select "input[type=text][name=?]", "params[layout]", count: 0
+      # its non-multiline siblings are untouched
+      assert_select "input[type=text][name=?]", "params[sx]"
+    end
+
+    test "the layout textarea carries the seeded art with its line breaks intact" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      art = css_select("textarea[name='params[layout]']").first.text
+      # Assert the WIRE, not the parsed round-trip — Nokogiri does not model the HTML parser's
+      # "swallow one newline after <textarea>" rule, so a round-trip assertion passes whether the
+      # spare newline is there, missing, or doubled (all three verified by mutation).
+      # EXACTLY one: none eats the first line of any layout that opens on a blank one (FrontPanel's
+      # default does), and two leaves one behind, growing a stray blank first line on every field.
+      assert_match %r{<textarea[^>]*name="params\[layout\]"[^>]*>\n(?!\n)}, response.body,
+                   "the textarea must open with exactly one spare newline for the parser to eat"
+      assert_equal FakeBoxes::TRAY_LAYOUT, art.delete_prefix("\n")
+      assert_operator art.lines.size, :>, 4, "the art collapsed to a single line"
+      assert_includes art, "+-+-+-+"
+    end
+
+    test "a layout loaded from a saved box is flagged so the sync controller leaves it alone" do
+      mine = FakeBoxes::TRAY_LAYOUT.sub("| | | | 50.0mm", "| |   | 50.0mm") # a wall removed by hand
+      get new_tools_box_path(generator: "TrayLayout", params: { params: { layout: mine } })
+      assert_response :success
+      assert_select "textarea[name='params[layout]'][data-prefilled=?]", "true"
+      assert_equal mine, css_select("textarea[name='params[layout]']").first.text.delete_prefix("\n")
+
+      get new_tools_box_path(generator: "TrayLayout") # unprefilled -> the flag is absent
+      assert_select "textarea[name='params[layout]'][data-prefilled]", count: 0
+    end
+
+    test "the editor form drives the layout/sx/sy sync controller" do
+      get new_tools_box_path(generator: "TrayLayout")
+      assert_response :success
+      assert_select "form[data-controller~=traylayout] textarea[name=?]", "params[layout]"
+    end
+
     test "new renders the two-column editor with a params grid and a preview column" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
@@ -96,13 +142,21 @@ module Tools
       assert_equal "image/png", response.media_type if Maker::Previews::SvgRasterizer.available?
     end
 
-    test "create saves the state + a tied bundle (svg output + params file)" do
+    test "create saves the state + a tied bundle of ONE file — the params live in the DB" do
       assert_difference("Maker::AddonState.count", 1) do
         post tools_boxes_path, params: { name: "My Box", generator: "ABox", params: { x: 120, y: 60 } }
       end
       state = @user.maker_addon_states.for_addon("boxes").order(:id).last
-      assert_equal %w[output parameters], state.files.map(&:role)
+      assert_equal %w[output], state.files.map(&:role)
       state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id) }
+
+      # Asserted at the LIBRARY level, not just on the join rows: the FILE is what was removed, and a
+      # `.params.json` written as an untied node would still pass the roles check above.
+      assert_empty @user.nodes.present.where("name LIKE ?", "%.params.json"),
+                   "no .params.json may be written into the library"
+
+      # …and the params really are recorded, in the DB.
+      assert_equal({ "generator" => "ABox", "params" => { "x" => "120", "y" => "60" } }, state.data)
       assert_redirected_to tools_box_path(state)
     end
 
@@ -158,6 +212,24 @@ module Tools
       get tools_box_path(state)
       assert_response :success
       assert_select "*", text: /Reopen Me/
+    end
+
+    test "show lists the params and offers the JSON download (they are not a file any more)" do
+      state = @user.maker_addon_states.create!(
+        addon_key: "boxes", name: "Multi Tray",
+        # A MULTILINE value: boxes' TrayLayout/FrontPanel/NightLightBox section params are
+        # newline-separated, and they are why the value cell must not collapse whitespace.
+        data: { "generator" => "ABox", "params" => { "x" => "120", "sx" => "50 60\n70 80" } }
+      )
+      get tools_box_path(state)
+      assert_response :success
+      assert_select "section.addon-params dl.meta dt", text: "x"
+      assert_select "section.addon-params dl.meta dd", text: "120"
+      assert_select "section.addon-params a[href=?]", tools_addon_params_path(state)
+      # The newline must survive into the markup. The `white-space: pre-wrap` that makes it RENDER as
+      # two lines is CSS and cannot be asserted here; this guards the half that can be — that the
+      # view never squishes or truncates the value.
+      assert_includes response.body, "50 60\n70 80"
     end
 
     test "new lists prior boxes for this generator only, newest first" do
@@ -224,21 +296,21 @@ module Tools
       assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
     end
 
-    test "create attaches both output files to the current project" do
+    test "create attaches the output file to the current project" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       folder = project.ensure_library_folder!(@user)
       patch current_project_path, params: { project_id: project.id }
-      assert_difference "project.file_attachments.count", 2 do
+      assert_difference "project.file_attachments.count", 1 do
         post tools_boxes_path, params: { name: "Cur Box", generator: "ABox", params: { x: 1, y: 2 },
                                          parent_node_id: folder.node_id }
       end
-      # both attached nodes live under the project folder
+      # the attached node lives under the project folder
       project.file_attachments.each do |att|
         assert_equal folder.node_id, @user.nodes.find_by(node_id: att.node_id).parent_node_id
       end
       state = @user.maker_addon_states.for_addon("boxes").order(:id).last
       assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
-                   "both output files (svg + params.json) must be the attached nodes"
+                   "the one output file (svg) must be the attached node"
     end
 
     test "create attaches nothing when no project is current" do

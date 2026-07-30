@@ -1,6 +1,38 @@
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
 
+  # Active Storage's direct-upload endpoint, REMOVED. ActiveStorage::DirectUploadsController
+  # descends from ActiveStorage::BaseController — not this app's ApplicationController — so it
+  # shipped live and UNAUTHENTICATED: an anonymous POST minted a real Blob and returned a signed
+  # upload URL. That is an anonymous write surface into storage through Rails (CLAUDE.md §15).
+  #
+  # REMOVED rather than authenticated: `direct_upload` appears nowhere in app/, config/ or lib/, and
+  # both Lexxy editors run attachments-off, so nothing in this app calls it. Re-enabling it should
+  # be a deliberate act.
+  #
+  # DRAWN HERE, NOT VIA draw_routes = false: Maker::Preview uses has_one_attached :asset served with
+  # url_for, so the blob routes must survive. An app-drawn route DOES win over the engine's — this
+  # was verified by driving a real request, because `recognize_path` reports the engine's route for
+  # a proc endpoint (it carries no controller/action) and is the wrong instrument for the check.
+  #
+  # THE PATH MUST BE DERIVED, NEVER A LITERAL. The engine wraps its own direct_uploads route (and
+  # every other Active Storage route) in `scope ActiveStorage.routes_prefix` (activestorage's own
+  # config/routes.rb), not a hard-coded "/rails/active_storage" — that's only the DEFAULT. Reconfigure
+  # config.active_storage.routes_prefix and a literal shadow here silently guards nothing: the old
+  # path 404s (nothing left to hit), the engine's route reappears live at the NEW prefix, and an
+  # anonymous POST there mints a real Blob again — the original hole, reopened by a one-line config
+  # change nobody would think to connect to this file. `ActiveStorage.routes_prefix` is assigned by
+  # the engine's own `active_storage.configs` initializer, which runs during app boot strictly before
+  # routes are ever drawn or reloaded — so reading it here, at draw time, is safe.
+  #
+  # `bin/rails routes` still lists the engine's own direct_uploads entry further down the table
+  # (routes are tried in declaration order, and ours is declared first) — that is expected and
+  # correct. It is SHADOWED, not removed from the table; an auditor grepping the route list will
+  # still see it and should not read its presence there as the hole being open.
+  post "#{ActiveStorage.routes_prefix}/direct_uploads", to: proc { |_env|
+    [ 404, { "content-type" => "text/plain" }, [ "Not Found" ] ]
+  }
+
   # --- Web UI (server-rendered file browser) ---
   root to: redirect("/files")
 
@@ -42,20 +74,43 @@ Rails.application.routes.draw do
     end
   end
 
-  # --- Per-file notes (markdown; keyed by node_id, session auth) ---
-  post   "files/:node_id/notes", to: "notes#create", as: :file_notes
+  # --- Per-file notes (keyed by node_id, session auth) ---
+  post "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]
 
   # --- Maker: Projects (server-rendered web UI, session auth) ---
   # The maker product hub. Uses Maker::* models directly (NOT the device-token /v1/maker API).
   resources :projects do
-    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true
+    # Return an archived project to the live list. A member PATCH rather than an update to a
+    # `status` field: the web form no longer exposes status at all (spec decision #1).
+    patch :unarchive, on: :member
+    resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
+      # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
+      # DELIBERATELY SCOPED TO THE PROJECT rather than a general POST /files/:id/move — the
+      # conflict flow needs a move endpoint either way, and this one can only ever move a file
+      # into the named project's own folder. A general move is a larger web surface than any
+      # feature here wants. `on: :collection` keeps it nested despite `shallow: true`.
+      post :relocate, on: :collection
+    end
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
+    # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
+    # project, the grid page and its autosave/CSV live at /sheets/:id.
+    resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true
     # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
     # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
     resources :uploads, only: :create, module: :projects
   end
+
+  # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot
+  # set its form's action — the nested route needs the project in the PATH. Rather than add JS to
+  # rewrite `action` on change, the project rides as a body param here.
+  # Projects::AttachmentsController#set_project reads params[:project_id], which resolves a body
+  # param and a path segment identically, so this reaches the SAME action with no controller
+  # change and no second create path. (`attachments_path` is free: the shallow `resources
+  # :attachments` under :projects claims only project_attachments_path and the singular
+  # attachment_path.)
+  post "attachments", to: "projects/attachments#create", as: :attachments
 
   # Session-scoped "current project" (the top-bar default destination). Singular resource: no id in
   # the URL — the id rides in params[:project_id] so a blank one can clear it. `controller:` is
@@ -100,6 +155,33 @@ Rails.application.routes.draw do
     end
     resources :generators, only: %i[index create show]
   end
+
+  # OpenSCAD addon. TWO naming traps here, both about the inflector, and the routes are written out
+  # by hand to dodge both.
+  #
+  # 1. NOT `resources :openscad`. Rails derives the collection helper from name.pluralize
+  #    ("openscads") and the member helper from name.singularize ("openscad"), so `resources` would
+  #    leave tools_openscad_path meaning SHOW — which requires an id. The /tools gallery calls
+  #    send("tools_#{addon.key}_path") with NO arguments, so /tools would raise UrlGenerationError
+  #    for every user the moment this addon is registered. (Guarded by a test.)
+  # 2. NOT inside `namespace :tools`. A namespace prefixes `as:`, so `as: :new_openscad` in there
+  #    yields tools_new_openscad_path — while `resources` inside the same namespace yields
+  #    new_tools_box_path for the sibling addon. Declared at top level, `as:` is the whole helper
+  #    name, so these read the same way the other addons' do.
+  #
+  # `new` and `preview` precede `:id` so neither is swallowed as an id.
+  get  "tools/openscad",         to: "tools/openscad#index",   as: :tools_openscad
+  get  "tools/openscad/new",     to: "tools/openscad#new",     as: :new_tools_openscad
+  post "tools/openscad/preview", to: "tools/openscad#preview", as: :preview_tools_openscad
+  post "tools/openscad",         to: "tools/openscad#create"
+  get  "tools/openscad/:id",     to: "tools/openscad#show",    as: :tools_openscad_design
+
+  # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
+  # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
+  # Declared at top level so the helper reads like its sibling `tools_openscad_design_path`. The
+  # two inflector traps documented above do NOT apply here — `addon_state` inflects cleanly both
+  # ways; this is about the helper name matching, nothing more.
+  get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).

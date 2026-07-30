@@ -30,12 +30,29 @@ module Maker
         end
       end
 
-      test "a new version is a new preview row + a new job (supersede)" do
-        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "ready")
+      # A NEW VERSION REPOINTS THE ONE ROW; it does not mint a second. The old shape keyed rows by
+      # (node, VERSION, kind), so every save stranded its predecessor — nothing reads a superseded
+      # preview (every surface resolves by the node's current content_token) and nothing deleted
+      # one either. 160 of 1334 rows on the deployed share library were orphans that way.
+      test "a new version REPOINTS the single row rather than minting a second" do
+        p = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "ready")
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v2")
         end
-        assert @user.maker_previews.exists?(node_id: "n1", version_id: "v2", kind: "thumbnail")
+        assert_equal 1, @user.maker_previews.where(node_id: "n1", kind: "thumbnail").count,
+                     "one row per (node, kind) — a save must not leak its predecessor"
+        p.reload
+        assert_equal "v2", p.version_id
+        assert_equal "pending", p.status, "the stale render must not read as ready for the new content"
+      end
+
+      # Different KINDS still coexist: the key is (node, kind), and `model_glb` is a different
+      # artefact from `thumbnail`, not a newer one.
+      test "a second kind gets its own row" do
+        Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1",
+                                      kind: "model_glb")
+        assert_equal 2, @user.maker_previews.where(node_id: "n1").count
       end
 
       test "does nothing for a name with no registered renderer" do

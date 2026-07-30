@@ -63,11 +63,46 @@ env:
     APP_DOMAIN: tinkerex.com
     FORCE_SSL: "true"
 
+    # Sidecar accessories run on the UNRAID host (see `accessories:` in deploy.yml, whose `host:` is
+    # 192.168.1.95), so `tinkerex-boxes` / `tinkerex-openscad` do not resolve on this box. Kamal
+    # DEEP-MERGES env.clear, so without these explicit blanks the overlay inherits the Unraid
+    # hostnames, each addon reports configured? == true, and every call fails — strictly worse than
+    # the addon greying out. Blank -> `configured?` is false -> "Unavailable here". Set these to a
+    # real URL if a sidecar is ever booted on OVH.
+    #
+    # These blanks and the `accessories:` override at the bottom of this file are NOT in tension,
+    # though they read that way: the blank says "Rails must not believe a sidecar is reachable",
+    # the override says "IF you boot one with `-d ovh`, boot it HERE and not on Unraid". Booting a
+    # sidecar on this box is therefore a two-line change — boot the accessory, then set its URL.
+    BOXES_SIDECAR_URL: ""
+    OPENSCAD_SIDECAR_URL: ""
+
+    # ENABLE_TEST_SIGNUP IS INHERITED HERE, DELIBERATELY AND WITH EYES OPEN (2026-07-29).
+    #
+    # deploy.yml's env.clear sets ENABLE_TEST_SIGNUP: true, and Kamal DEEP-MERGES env.clear — the same
+    # mechanism the two blank lines above exist to defeat. So this box, unlike the LAN-only Unraid one
+    # the base comment justifies, serves POST /v1/test/users: an unverified signup that mints CONFIRMED
+    # accounts, reachable by anyone who can reach the host.
+    #
+    # Accepted for now because this is a prod-LIKE TEST box, not the managed SaaS. Blanking it is one
+    # line (`ENABLE_TEST_SIGNUP: ""`) beside the sidecar blanks above, and that is the fix the day this
+    # box holds anything real. The boot warning fires either way
+    # (config/initializers/test_signup_warning.rb).
+    #
+    # NOT blanked at the base instead, because the Unraid box needs it:
+    # client/test-conformance/two-device-cfapi.ps1 enrolls against http://192.168.1.95 through this
+    # seam. The other harnesses boot their own server and set the var themselves.
+
 # Fix the inherited boxes accessory. The base (deploy.yml) pins `host: 192.168.1.95` (the Unraid
 # box); for -d ovh that must be the OVH box, or `kamal accessory boot boxes -d ovh` / `kamal setup
 # -d ovh` try to reach ubuntu@192.168.1.95 (wrong host AND wrong ssh user). This deep-merges over
 # the base accessory, so the image + network name (tinkerex-boxes, used by BOXES_SIDECAR_URL) are
 # inherited; only the host changes. Boot it with `kamal accessory boot boxes -d ovh`.
+#
+# NOT YET DONE for the `openscad` accessory, which deploy.yml added (2026-07-27) after this
+# override was written and likewise pins it to 192.168.1.95 — so `kamal setup -d ovh` still tries
+# to boot THAT one on the Unraid host. Pre-existing on main, not introduced by this merge, and
+# left alone here on purpose: adding it changes what `-d ovh` boots, which wants its own decision.
 accessories:
   boxes:
     host: 15.204.216.249

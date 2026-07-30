@@ -91,6 +91,13 @@ env:
     # the addon shows as unavailable (graceful). All three app deployments share the one accessory.
     BOXES_SIDECAR_URL: http://tinkerex-boxes:8000
 
+    # The OpenSCAD addon's sidecar (the `openscad` accessory below). Internal-only; never published.
+    # Unset or blank -> the addon shows as unavailable (graceful). All three app deployments share
+    # the one accessory. NOTE: deploy.ovh.yml must blank this — Kamal deep-merges env.clear, so the
+    # OVH box would otherwise inherit a hostname that does not resolve there and every call would
+    # fail instead of the addon greying out (spec §8.1; guarded by test/deploy_hygiene_test.rb).
+    OPENSCAD_SIDECAR_URL: http://tinkerex-openscad:8000
+
     # Set number of processes dedicated to Solid Queue (default: 1)
     # JOB_CONCURRENCY: 3
 
@@ -154,6 +161,17 @@ accessories:
   boxes:
     image: ghcr.io/chaim354/boxes-sidecar:latest
     host: 192.168.1.95
+
+  # The OpenSCAD addon's sidecar (sidecar/openscad) — a SEPARATE GPL-2.0 image, built + pushed with
+  # bin/build-openscad-sidecar. NO `port:` -> internal-only, reachable on the kamal network as
+  # `tinkerex-openscad`. One accessory serves all three app deployments on this host.
+  openscad:
+    image: ghcr.io/chaim354/openscad-sidecar:latest
+    host: 192.168.1.95
+    volumes:
+      # The content-addressed render cache. On a volume so it survives an accessory reboot —
+      # a cold cache just means the first render of each design pays full price.
+      - openscad-cache:/cache
 
 # Example accessory (reference):
 # accessories:

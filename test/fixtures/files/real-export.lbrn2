@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A LightBurn export in the dialect the application ACTUALLY writes (verified against 58
+     real .lbrn2 files, LightBurn 1.4.04 -> 1.7.08). Differs from sample.lbrn2 — which is
+     hand-authored and uses a form LightBurn has never emitted — in four ways, each of which
+     silently dropped geometry before this fixture existed:
+       1. <XForm> is a CHILD ELEMENT, never an attribute (0 attrs vs 9,517 elements observed).
+       2. <VertList> is "V<x> <y>c0x..c0y..c1x..c1y.." — NOT "V0x0y0".
+       3. <PrimList> carries connectivity: "L<a> <b>" / "B<a> <b>" / "LineClosed".
+       4. A Shape with VertID but no VertList INSTANCES the geometry of the shape that defined
+          that VertID, placed by its own XForm.
+     Plus <Children> groups, whose XForm places the children.
+
+     Geometry is chosen so the bounding box is exactly 110 x 110 mm:
+       Rect      x 30..70,   y 20..40
+       Path #7   x 0..10,    y 0..5
+       instance  x 100..110, y 0..5
+       group     x 0..10,    y 100..110  (local 0..5 scaled x2, then translated +100 in y)
+-->
+<LightBurnProject AppVersion="1.6.00" FormatVersion="1" MaterialHeight="0">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <color Value="255"/>
+        <speed Value="20"/>
+        <maxPower Value="80"/>
+    </CutSetting>
+    <CutSetting type="Cut">
+        <index Value="1"/>
+        <name Value="C01"/>
+        <color Value="65280"/>
+        <speed Value="30"/>
+        <maxPower Value="40"/>
+    </CutSetting>
+    <Shape Type="Rect" CutIndex="0" W="40" H="20" Cr="0">
+        <XForm>1 0 0 1 50 30</XForm>
+    </Shape>
+    <Shape Type="Path" CutIndex="1" VertID="7" PrimID="3">
+        <XForm>1 0 0 1 0 0</XForm>
+        <VertList>V0 0c0x1c1x1V10 0c0x1c1x1V10 5c0x1c1x1</VertList>
+        <PrimList>L0 1L1 2</PrimList>
+    </Shape>
+    <Shape Type="Path" CutIndex="1" VertID="7" PrimID="3">
+        <XForm>1 0 0 1 100 0</XForm>
+    </Shape>
+    <Shape Type="Group" CutIndex="0">
+        <XForm>2 0 0 2 0 100</XForm>
+        <Children>
+            <Shape Type="Path" CutIndex="0" VertID="9" PrimID="4">
+                <XForm>1 0 0 1 0 0</XForm>
+                <VertList>V0 0c0x1c1x1V5 0c0x1c1x1V5 5c0x1c1x1V0 5c0x1c1x1</VertList>
+                <PrimList>LineClosed</PrimList>
+            </Shape>
+        </Children>
+    </Shape>
+</LightBurnProject>
