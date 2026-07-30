@@ -710,12 +710,54 @@ module Maker
     # A cycle in `nodes` must terminate rather than spin — fatal on SQLite, which has no statement
     # timeout. Reachable only via a crafted/corrupt tree, which is why it is a backstop and not a
     # feature.
+    #
+    # WHAT THIS TEST DOES NOT PROVE, RECORDED SO IT ISN'T RE-DISCOVERED THE HARD WAY: a 2-node cycle
+    # is bounded fast by EITHER guard alone — MAX_DEPTH.times caps it at 32 quick iterations even
+    # with no visited set, and the visited set alone catches the repeat at iteration 3 even with no
+    # MAX_DEPTH. Verified by temporarily removing each guard in turn and re-running this test: both
+    # variants still passed, in well under a second. Removing BOTH (a bare `loop do` with no set)
+    # made it spin for real — the worker pegged at 100% CPU and had to be killed; it never returned.
+    # So this test's genuine job is "terminates at all, however it does it" — not "MAX_DEPTH
+    # specifically". The next test below is the one that isolates MAX_DEPTH.
     test "for_node terminates on a parent cycle" do
       a = dir("a")
       b = dir("b", parent: a.node_id)
       a.update!(parent_node_id: b.node_id)
       node = file("x.svg", parent: b.node_id)
       assert_nil Maker::ProjectIntake.for_node(user: @user, node:)
+    end
+
+    # THE DISCRIMINATING TEST the one above cannot be: a genuinely deep, NON-cyclic chain, longer
+    # than MAX_DEPTH. The visited set never fires here — nothing repeats — so only the depth bound
+    # can stop this walk short of `far_folder`. Mutation-verified: dropping `MAX_DEPTH.times` for a
+    # bare `loop do` (keeping the visited set) makes this walk keep climbing past the bound, reach
+    # far_folder, and resolve the project — this assertion flips from finding nil to finding a
+    # Result, a genuine kill, not merely a slower pass.
+    test "for_node does not resolve a project whose folder is more than MAX_DEPTH hops up" do
+      far = @user.maker_projects.create!(name: "Far Away")
+      far_folder = far.ensure_library_folder!(@user)
+      deepest = (Maker::ProjectIntake::MAX_DEPTH + 4).times.inject(far_folder.node_id) do |parent, i|
+        dir("level#{i}", parent:).node_id
+      end
+      node = file("buried.svg", parent: deepest)
+
+      assert_nil Maker::ProjectIntake.for_node(user: @user, node:),
+                 "far_folder is #{Maker::ProjectIntake::MAX_DEPTH + 4} hops up -- past MAX_DEPTH"
+    end
+
+    # for_node's THIRD return shape, distinct from both a Result and nil's usual two: a Result with
+    # status: :no_folder when the resolved project's folder has been tombstoned. Inherited from
+    # for_project/live_folder (see "a project whose folder was deleted is skipped..." above), but a
+    # caller at THIS entry point that only checks `result.nil?` would read a dead folder as "nothing
+    # to do" rather than a Result it still needs to inspect — which is exactly the mistake the
+    # docstring now warns against.
+    test "for_node answers a :no_folder Result, not nil, when the resolved project's folder was deleted" do
+      node = file("panel.svg")
+      @folder.update!(deleted: true)
+      result = Maker::ProjectIntake.for_node(user: @user, node:)
+      assert_not_nil result
+      assert_equal :no_folder, result.status
+      assert_equal 0, result.attached
     end
   end
 end

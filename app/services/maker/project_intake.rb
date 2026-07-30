@@ -119,14 +119,27 @@ module Maker
     # into a project folder attaches and files itself NOW rather than at the next sweep, which would
     # read as broken. Answers nil when the node is not under any project folder.
     #
+    # A THIRD RETURN SHAPE, EASY TO MISS: if the node resolves to a project whose folder has since
+    # been tombstoned, this answers a Result with status: :no_folder — NOT nil. Inherited from
+    # for_project/live_folder rather than new here, but undocumented at this entry point until now.
+    # A caller that only checks `result.nil?` would read a dead folder as "nothing to do" instead of
+    # a Result it still needs to inspect.
+    #
     # It sweeps the whole owning project rather than just this node. That is deliberate: the policy
     # is identical, the work is bounded by one project's inbox, and a single-file path would be a
     # second copy of the two steps — the thing this class exists to avoid having.
     #
-    # IT APPLIES THE CAP, and that is not belt-and-braces. Without it, a run that REFUSED on the cap
-    # would be undone by uploads: each one would file that project's whole inbox, and the guard
-    # would guard nothing. Scoped to this project's inbox because that is the only count this entry
-    # point can honestly take.
+    # IT APPLIES THE CAP, SCOPED TO THIS PROJECT'S OWN INBOX — the only count this entry point can
+    # honestly take, since one node names one project and nothing here sees the rest of the user's
+    # library. What that guarantees: a SINGLE project's inbox cannot be drained past the cap one
+    # upload at a time — each call re-checks that project's own count before moving anything, so a
+    # project already sitting over the cap stays refused across repeated uploads into it.
+    #
+    # WHAT IT DOES NOT GUARANTEE: for_user's run-level total. Two projects at 300 loose files each
+    # sum to 600 — over the default 500 cap, so for_user refuses the whole run — but a for_node call
+    # into EITHER project alone sees only that project's own 301, under the cap, and files all of
+    # it. That is not a bug to fix here: reproducing the whole-run total would mean scanning every
+    # other project on every single upload, a cost this eager path is not meant to pay.
     def self.for_node(user:, node:)
       project = owning_project(user, node)
       return nil unless project
@@ -144,10 +157,28 @@ module Maker
 
     # The project whose library folder is an ancestor of `node`, or nil.
     #
-    # Walks UP, one query per level, bounded by MAX_DEPTH with a visited set for the same reason the
-    # subtree walk is: a cycle in `nodes` makes an unbounded walk spin, which is fatal on SQLite (no
-    # statement timeout). One pluck up front means the loop compares against a hash rather than
-    # querying maker_projects per level.
+    # Walks UP, one query per level. MAX_DEPTH IS WHAT MAKES TERMINATION CORRECT: it bounds the
+    # iteration count, so a cycle in `nodes` cannot spin forever — fatal on SQLite, which has no
+    # statement timeout.
+    #
+    # THE VISITED SET HERE IS A COST GUARD, NOT A CORRECTNESS ONE — and that is a narrower claim
+    # than #subtree_files can make for its own visited set, worth stating precisely rather than
+    # copying that comment over. `by_folder[current]` is checked BEFORE `seen.add?(current)` on
+    # every iteration, so up to the first repeat both versions run identically — and a cycle only
+    # ever re-presents a node already checked, so revisiting it can never surface a match that was
+    # not already there. Given MAX_DEPTH already bounds the loop, the set cannot change the return
+    # value for ANY input; what it changes is how many iterations a cycle costs before MAX_DEPTH
+    # would have caught it anyway — measured at 3 queries with it against 33 without, on a 2-node
+    # cycle. Worth keeping for that; not what stops the spin.
+    #
+    # CONTRAST #subtree_files, where its visited set DOES change the answer: without it, a file
+    # reachable by two paths would be collected twice, and since maker_file_attachments has no
+    # uniqueness index, that would write two rows for one file. There is no equivalent double-count
+    # to prevent here — this walk stops at the first match, so the two methods' visited sets are not
+    # doing the same job even though they look like the same idiom.
+    #
+    # One pluck up front means the loop compares against a hash rather than querying maker_projects
+    # per level.
     def self.owning_project(user, node)
       by_folder = user.maker_projects.where.not(folder_node_id: nil)
                       .pluck(:folder_node_id, :id).to_h
