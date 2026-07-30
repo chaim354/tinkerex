@@ -135,8 +135,20 @@ Solid Cable for the nudge) and survives redeploys.
   (SeaweedFS: the bucket CORS API / `s3.configure`; R2/S3: the bucket's CORS config.) Without it,
   affected files **degrade to the static thumbnail** — nothing breaks. The **share** backend and
   multi-chunk files on the **chunk** backend are same-origin and need no CORS.
-- **HTTP, no TLS** on these LAN/test boxes (`assume_ssl`/`force_ssl` off). The ActionCable nudge
-  works because request-forgery protection is disabled (token-authed cable, not cookies).
+- **TLS is opt-in per host via `FORCE_SSL` (2026-07-30).** Set it to any non-empty value on a host
+  reachable **from the internet**. It turns on `assume_ssl` (trust the terminating proxy's
+  `X-Forwarded-Proto`), `force_ssl` (http→https redirect, HSTS, and — the one that matters —
+  **the `Secure` flag on the session cookie**), plus an exclusion so kamal-proxy's plain-HTTP
+  `/up` health check still passes (without it the check fails and the deploy rolls back).
+
+  **Leave `FORCE_SSL` unset on the Unraid backends.** They are reached by IP over plain HTTP on
+  the LAN; with it set they would redirect every request to a URL nothing serves. That asymmetry
+  is why this is an env gate rather than a line in `production.rb` — before this, neither setting
+  was enabled anywhere, so the internet-facing host had no HSTS and its session cookie was sent
+  on plain-HTTP requests to the same host.
+
+  The ActionCable nudge is unaffected either way: it works because request-forgery protection is
+  disabled (token-authed cable, not cookies).
 - **Control-plane-only smoke test:** set `STORAGE_BACKEND: memory` (drop the `CHUNK_*`) to test
   tree/changelog/nudge without a chunk store.
 - **Persistence:** the SQLite DBs live on the `tinkerex_storage` volume and survive redeploys —
