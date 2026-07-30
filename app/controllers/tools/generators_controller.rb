@@ -1,8 +1,6 @@
-require "json"
-
 module Tools
   # The Generators addon — a client-only Maker.js harness. Generator-AGNOSTIC: it persists a
-  # Maker::AddonState and writes a [svg, params.json] bundle via LibraryOutput. All generator schema
+  # Maker::AddonState and writes an [svg] bundle via LibraryOutput. All generator schema
   # + geometry live in JS (app/javascript/generators/*). No sidecar, no per-generator branching.
   class GeneratorsController < BaseController
     include Tools::LibraryFolders
@@ -27,12 +25,12 @@ module Tools
         data: { generator:, params: addon_params }
       )
       base = state.name.parameterize.presence || "drawing"
+      # ONE file. The params are NOT written beside it: `state.data` above is the record, and
+      # `Tools::AddonParamsController` serves it as a download.
       addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
-          { name: "#{base}-#{state.id}.svg", bytes:, content_type: "image/svg+xml", role: "output" },
-          { name: "#{base}-#{state.id}.params.json",
-            bytes: JSON.pretty_generate(state.data), content_type: "application/json", role: "parameters" }
+          { name: "#{base}-#{state.id}.svg", bytes:, content_type: "image/svg+xml", role: "output" }
         ]
       )
       attach_addon_files_to_current_project(addon_files)

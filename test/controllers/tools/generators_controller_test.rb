@@ -79,24 +79,27 @@ module Tools
       state = @user.maker_addon_states.for_addon("generators").order(:id).last
       assert_equal "material-test-grid", state.data["generator"]
       assert_equal({ "cols" => "3", "rows" => "3", "cell" => "10" }, state.data["params"])
-      assert_equal %w[output parameters], state.files.map(&:role)
+      assert_equal %w[output], state.files.map(&:role) # params live in `data`, not in a second file
       state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id) }
       assert_redirected_to tools_generator_path(state)
     end
 
-    test "create writes an svg output node and a json parameters node into the library" do
+    test "create writes ONLY the svg output node into the library — no params file" do
       post tools_generators_path, params: {
         name: "Bundle", generator: "material-test-grid", params: { cols: 2 }, svg: SVG_FIXTURE
       }
       state = @user.maker_addon_states.for_addon("generators").order(:id).last
-      out = state.files.find { |f| f.role == "output" }
-      par = state.files.find { |f| f.role == "parameters" }
-      assert_equal "image/svg+xml", out.content_type
-      assert_equal "application/json", par.content_type
+      assert_equal [ "image/svg+xml" ], state.files.map(&:content_type)
+
+      # Asserted at the LIBRARY level, not just on the join rows: an untied `.params.json` would
+      # still pass a join-row check.
+      assert_empty @user.nodes.present.where("name LIKE ?", "%.params.json"),
+                   "no .params.json may be written into the library"
+      assert_equal({ "cols" => "2" }, state.data["params"], "the params are recorded in the DB")
     end
 
-    test "create enqueues a preview for each written node" do
-      assert_enqueued_jobs 2, only: Maker::GeneratePreviewJob do
+    test "create enqueues a preview for the one written node" do
+      assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
         post tools_generators_path, params: {
           name: "Preview Me", generator: "material-test-grid", params: { cols: 2 }, svg: SVG_FIXTURE
         }
@@ -211,11 +214,11 @@ module Tools
       assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
     end
 
-    test "create attaches both output files to the current project" do
+    test "create attaches the output file to the current project" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       folder = project.ensure_library_folder!(@user)
       patch current_project_path, params: { project_id: project.id }
-      assert_difference "project.file_attachments.count", 2 do
+      assert_difference "project.file_attachments.count", 1 do
         post tools_generators_path, params: {
           name: "Cur Grid", generator: "material-test-grid", params: { cols: 2 },
           svg: SVG_FIXTURE, parent_node_id: folder.node_id
@@ -226,7 +229,7 @@ module Tools
       end
       state = @user.maker_addon_states.for_addon("generators").order(:id).last
       assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
-                   "both output files (svg + params.json) must be the attached nodes"
+                   "the one output file (svg) must be the attached node"
     end
 
     test "create attaches nothing when no project is current" do
