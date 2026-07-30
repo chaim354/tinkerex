@@ -47,6 +47,18 @@ module CurrentProject
   # failed attach must never turn a successful save into an error (mirrors enqueue_preview). Atomic,
   # so a mid-loop failure leaves no partial set. `addon_files` is what LibraryOutput.write returns;
   # roles map from the node name via FileAttachment.role_for.
+  #
+  # create_or_find_by!, NOT create! (Task 9a's follow-up) — and specifically NOT a rescue added
+  # around the loop, which would have been the wrong-shaped fix. Before this, a race on ANY ONE
+  # output file raised ActiveRecord::RecordNotUnique from create!, and because the loop runs inside
+  # ONE transaction (deliberately, so a mid-loop failure leaves no PARTIAL set — untouched by this
+  # fix), that single raise rolled back every OTHER file this same tool save had already attached
+  # in the same loop. The outer rescue StandardError then swallowed it, so "one file raced, the
+  # rest were fine" silently became "none of them attached" — worse than the 500s the other three
+  # call sites got, because there is no error page and the addon's OUTPUT already saved
+  # successfully, so nothing else signals that anything went wrong. create_or_find_by! absorbs a
+  # race on ONE file inside its OWN savepoint (transaction(requires_new: true) — nests correctly
+  # inside the transaction above), so the other files in the same loop are unaffected either way.
   def attach_addon_files_to_current_project(addon_files)
     project = current_project
     return unless project && addon_files.present?
@@ -55,8 +67,9 @@ module CurrentProject
       addon_files.each do |af|
         name = names[af.node_id]
         next unless name
-        project.file_attachments.create!(user: current_user, node_id: af.node_id,
-                                         role: Maker::FileAttachment.role_for(name))
+        project.file_attachments.create_or_find_by!(user: current_user, node_id: af.node_id) do |a|
+          a.role = Maker::FileAttachment.role_for(name)
+        end
       end
     end
   rescue StandardError => e

@@ -87,6 +87,80 @@ module ActiveSupport
       end
     end
 
+    # Simulates a genuinely CONCURRENT writer landing the identical (user, attachable_type,
+    # attachable_id, node_id) row an instant before this block's own create_or_find_by! attempts
+    # to insert it — the race Task 9a's follow-up (RecordNotUnique -> "treat it as already
+    # attached") closes on AttachToProject#call, Models::AttachmentsController#create,
+    # Projects::EntryPhotosController#create and
+    # CurrentProject#attach_addon_files_to_current_project. Shared here rather than duplicated
+    # per file (unlike e.g. project_intake_test.rb's with_broken_move) because it is genuinely easy
+    # to get subtly wrong, and it very nearly was — see below.
+    #
+    # TAKES NO user:/attachable:/node_id: — it does not need to be TOLD the tuple, it READS it off
+    # the intercepted call. `create!(attributes.merge(role:))`, called on `self` (the SAME
+    # association-scoped relation create_or_find_by! was itself called on, e.g.
+    # @project.file_attachments), inherits that association's attachable_type/attachable_id scope
+    # exactly the way an ordinary create! on it would — and `attributes` already carries `user:`
+    # and `node_id:`, since those are literally what the real call passed. This is WHY it can also
+    # cover CurrentProject#attach_addon_files_to_current_project's multi-file loop with no changes:
+    # that method calls create_or_find_by! once per output file with a node_id chosen at RUNTIME
+    # (the addon's generated files), which a hook parameterized with one fixed node_id up front
+    # could not have raced against without first knowing which id to name.
+    #
+    # HOOKS ActiveRecord::Relation#create_or_find_by! ITSELF, ONE CALL FRAME OUTSIDE it — NOT
+    # Maker::FileAttachment#save!, which was tried first and is WRONG for this specific method, in
+    # a way worth recording so nobody reaches for it again. create_or_find_by! wraps its own create
+    # attempt in `transaction(requires_new: true)` — a SAVEPOINT — so a write performed from
+    # INSIDE that call frame (which is all a #save! hook can reach, since save! only runs once
+    # create_or_find_by! has already opened its savepoint) is rolled back TOGETHER WITH the failed
+    # insert the instant it conflicts, and never survives to be found. The symptom was
+    # ActiveRecord::RecordNotFound out of create_or_find_by!'s own rescue: the "concurrent" row
+    # really was inserted, then vanished in the very same rollback as the row that lost the race,
+    # because both were inside the identical savepoint — a race test that looked like it was
+    # reproducing the bug and was actually just breaking the fix's own rescue path. Hooking the
+    # CALLER's call to create_or_find_by! avoids this: the injected row lands in whatever
+    # transaction is ALREADY open when this runs (the wrapping test transaction here; a real
+    # request's ambient transaction, if any, in production) — one level UP from the savepoint
+    # create_or_find_by! is about to open — so it is untouched when that savepoint rolls back.
+    #
+    # GATED ON `klass == Maker::FileAttachment` because Relation#create_or_find_by! is shared by
+    # EVERY model in the app (Devise's own queries included) — patched globally for the duration of
+    # the block, but inert everywhere else. GATED ON firing ONCE so create_or_find_by!'s OWN
+    # internal create attempt (a DIFFERENT method, create!, so it does not re-enter this hook
+    # anyway) cannot retrigger it, and so a caller that legitimately calls create_or_find_by! more
+    # than once inside the block only races the first.
+    #
+    # RESTORED VIA define_method(:create_or_find_by!, original), NOT remove_method — a second
+    # subtlety that cost as much debugging as the first. create_or_find_by! is defined DIRECTLY on
+    # Relation (verified: Relation.instance_method(:create_or_find_by!).owner ==
+    # ActiveRecord::Relation), not inherited from an included module, so remove_method does not
+    # "uncover" an ancestor implementation the way it would for e.g. Maker::FileAttachment#save!
+    # (see project_intake_test.rb's race test) — it deletes the method OUTRIGHT. The very next
+    # unrelated create_or_find_by! call anywhere in the process then hit Ruby's method_missing on
+    # Relation, which delegates to the model class, which (Querying) delegates back to `all.
+    # create_or_find_by!` — a FRESH Relation, ALSO missing the method — forever: SystemStackError,
+    # and it surfaced on the NEXT test in the file, not this one, because the corruption outlives
+    # a single test's `ensure` block once it happens. `original` is an UnboundMethod, and
+    # `define_method` accepts one directly in place of a block — reinstalling the exact original
+    # implementation rather than merely hoping something else is underneath it.
+    #
+    # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist in
+    # this suite (requiring it is a LoadError).
+    def with_concurrent_file_attachment(role: "other")
+      raced = false
+      original = ActiveRecord::Relation.instance_method(:create_or_find_by!)
+      ActiveRecord::Relation.define_method(:create_or_find_by!) do |attributes, &block|
+        if !raced && klass == Maker::FileAttachment
+          raced = true
+          create!(attributes.merge(role:))
+        end
+        original.bind(self).call(attributes, &block)
+      end
+      yield
+    ensure
+      ActiveRecord::Relation.define_method(:create_or_find_by!, original)
+    end
+
     # Add more helper methods to be used by all tests here...
   end
 end

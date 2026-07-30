@@ -44,7 +44,7 @@ module MoveConflicts
     # Projects::AttachmentsController, which has not written a row since the attach policy was
     # extracted, and omitted the service that took those writes over):
     #
-    #   Maker::AttachToProject                — BOTH of its writes. #call's find_or_create_by! goes
+    #   Maker::AttachToProject                — BOTH of its writes. #call's create_or_find_by! goes
     #     through @project.file_attachments, and #attach_bundle's insert_all is the only BULK write
     #     of this table anywhere: it sets user_id and attachable_type/attachable_id as COLUMNS
     #     rather than through the association, which is the one place the scoping is spelled by
