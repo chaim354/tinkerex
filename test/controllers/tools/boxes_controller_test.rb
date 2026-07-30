@@ -142,13 +142,21 @@ module Tools
       assert_equal "image/png", response.media_type if Maker::Previews::SvgRasterizer.available?
     end
 
-    test "create saves the state + a tied bundle (svg output + params file)" do
+    test "create saves the state + a tied bundle of ONE file — the params live in the DB" do
       assert_difference("Maker::AddonState.count", 1) do
         post tools_boxes_path, params: { name: "My Box", generator: "ABox", params: { x: 120, y: 60 } }
       end
       state = @user.maker_addon_states.for_addon("boxes").order(:id).last
-      assert_equal %w[output parameters], state.files.map(&:role)
+      assert_equal %w[output], state.files.map(&:role)
       state.files.each { |af| assert @user.nodes.exists?(node_id: af.node_id) }
+
+      # Asserted at the LIBRARY level, not just on the join rows: the FILE is what was removed, and a
+      # `.params.json` written as an untied node would still pass the roles check above.
+      assert_empty @user.nodes.present.where("name LIKE ?", "%.params.json"),
+                   "no .params.json may be written into the library"
+
+      # …and the params really are recorded, in the DB.
+      assert_equal({ "generator" => "ABox", "params" => { "x" => "120", "y" => "60" } }, state.data)
       assert_redirected_to tools_box_path(state)
     end
 
@@ -288,21 +296,21 @@ module Tools
       assert_select "select[name='parent_node_id'] option[selected='selected'][value=?]", folder.node_id
     end
 
-    test "create attaches both output files to the current project" do
+    test "create attaches the output file to the current project" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       folder = project.ensure_library_folder!(@user)
       patch current_project_path, params: { project_id: project.id }
-      assert_difference "project.file_attachments.count", 2 do
+      assert_difference "project.file_attachments.count", 1 do
         post tools_boxes_path, params: { name: "Cur Box", generator: "ABox", params: { x: 1, y: 2 },
                                          parent_node_id: folder.node_id }
       end
-      # both attached nodes live under the project folder
+      # the attached node lives under the project folder
       project.file_attachments.each do |att|
         assert_equal folder.node_id, @user.nodes.find_by(node_id: att.node_id).parent_node_id
       end
       state = @user.maker_addon_states.for_addon("boxes").order(:id).last
       assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
-                   "both output files (svg + params.json) must be the attached nodes"
+                   "the one output file (svg) must be the attached node"
     end
 
     test "create attaches nothing when no project is current" do

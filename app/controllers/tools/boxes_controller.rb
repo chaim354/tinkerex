@@ -1,5 +1,3 @@
-require "json"
-
 module Tools
   # The Box Generator addon. Rails owns the UI, param handling, and save-to-library; the sidecar
   # (via BoxesClient) only generates. Preview rasterizes the generated SVG to PNG (resvg) rather
@@ -67,14 +65,14 @@ module Tools
         addon_key: "boxes", name: params.require(:name), data: { generator:, params: p }
       )
       base = state.name.parameterize.presence || "box"
+      # ONE file. The params are NOT written beside it: `state.data` above is the record, every
+      # reader in the app already goes there, and the file was write-only. `Tools::AddonParamsController`
+      # serves them as a download for anyone who wants them outside the app.
       addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: [
           { name: "#{base}-#{state.id}.svg", bytes: svg,
-            content_type: "image/svg+xml", role: "output" },
-          { name: "#{base}-#{state.id}.params.json",
-            bytes: JSON.pretty_generate({ generator:, params: p }),
-            content_type: "application/json", role: "parameters" }
+            content_type: "image/svg+xml", role: "output" }
         ]
       )
       attach_addon_files_to_current_project(addon_files)
