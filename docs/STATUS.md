@@ -628,9 +628,19 @@ the **entire suite green**, because every other test derives its expectation fro
 Design: `docs/superpowers/specs/2026-07-29-testing-and-ci-pipelines-design.md`.
 Plan: `docs/superpowers/plans/2026-07-29-testing-and-ci-pipelines.md`.
 
-**✅ VERIFIED GREEN — the first successful CI run since 2026-06-24.**
-[Run 30510860301](https://github.com/chaim354/tinkerex/actions/runs/30510860301) on PR #102:
-**all 7 jobs `success` in 90 seconds**, none queued. `CI_RUNNERS` is set to `macos`.
+**✅ VERIFIED GREEN — the first successful CI runs since 2026-06-24.**
+[Run 30511303225](https://github.com/chaim354/tinkerex/actions/runs/30511303225) on PR #102, **against
+this branch MERGED WITH main**: all 7 jobs `success`, none queued. `CI_RUNNERS` is set to `macos`.
+
+**Read that "merged with" carefully — it is the distinction that nearly slipped through.** GitHub's
+`pull_request` runs here execute the **branch tip**, not a merge commit (`head_sha` has one parent),
+and `mergeStateStatus: CLEAN` only rules out a *textual* conflict. So the first green run
+([30510860301](https://github.com/chaim354/tinkerex/actions/runs/30510860301), 7/7 in **90 s**) proved
+the CI fix but said nothing about main's concurrent work — which by then included a migration changing
+`Maker::Preview` uniqueness, while this branch adds system tests touching the preview path. main was
+merged in and the gates re-run to close that: **1672 runs / 0 failures / 0 errors** on chunk, share
+and s3, plus 11 system examples. If you take one habit from this: a green PR check is not a green
+merge, and on this repo it never was.
 
 Three things that run proves, beyond "it went green":
 
@@ -781,7 +791,7 @@ rule it either stays at six tests or swallows the suite. Every test in it is **m
 `ChunkStore.reset!` and made one mutation read **green**, and a synthetic Selenium attach cannot read
 a fixture under a macOS TCC-protected directory.
 
-**Suite: 1640 runs / 0 failures / 0 errors / 11 skips**, plus 11 system examples (`bin/ci system`).
+**Suite: 1672 runs / 0 failures / 0 errors / 11 skips** on all three backends, plus 11 system examples (`bin/ci system`) — measured on the merged state.
 
 ## Still open after this arc (small, deliberate)
 
