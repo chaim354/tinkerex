@@ -33,13 +33,26 @@ module Web
       end
 
       # `parent:` defaults to the project folder; pass nil to upload to the library root.
+      #
+      # BUILT FROM A StringIO, NOT A FILE ON DISK, and that is a fix rather than a style choice.
+      # This helper used to write `File.join(Dir.tmpdir, name)` and `rm_f` it in an `ensure` — a
+      # FIXED path, shared by every parallel worker, for a name several tests here reuse
+      # ("panel.svg"). Under the suite's 10 workers two of them raced: one finished and deleted the
+      # file while another was still opening it, and Rack::Test raised
+      # `RuntimeError: /var/folders/.../panel.svg file does not exist`. It passed locally and failed
+      # on CI — a timing-dependent flake, not a backend difference, which is why the share leg was
+      # the one that happened to catch it.
+      #
+      # A StringIO has no path to collide on, so the race cannot be reconstructed, and
+      # `original_filename:` still carries the name the app derives its role and folder from — the
+      # only thing these tests actually need from the fixture. Same shape
+      # project_upload_attach_test.rb already uses.
       def upload(name, content = "x", parent: @folder.node_id)
-        path = File.join(Dir.tmpdir, name)
-        File.binwrite(path, content)
-        post files_path, params: { parent_node_id: parent,
-                                   file: Rack::Test::UploadedFile.new(path, "application/octet-stream") }
-      ensure
-        FileUtils.rm_f(path)
+        post files_path,
+             params: { parent_node_id: parent,
+                       file: Rack::Test::UploadedFile.new(StringIO.new(content.b),
+                                                          "application/octet-stream",
+                                                          original_filename: name) }
       end
 
       test "a file uploaded into the project folder is attached and filed in the same request" do
