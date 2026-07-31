@@ -66,8 +66,8 @@ content-addressed manifest sharing chunks).
 
 ## 3. Components (what's built)
 
-Roles only. The **invariants** for the file layer, the scan, and the addons are in
-**§14** — that is where a "don't undo this" belongs, not in a table cell.
+Roles only. The **invariants** for the file layer, the scan, the addons, and project
+intake are in **§14** — that is where a "don't undo this" belongs, not in a table cell.
 
 | Component | Path | Role |
 |---|---|---|
@@ -82,6 +82,7 @@ Roles only. The **invariants** for the file layer, the scan, and the addons are 
 | **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk\|share\|s3`. All three boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
 | **Addons (Tools)** | `app/services/maker/addons/`, `app/controllers/tools/`, `sidecar/` | The `/tools` gallery + per-addon UI; output lands via one path (`Maker::Addons::LibraryOutput`). Two GPL sidecars, HTTP-only. Invariants: **§14c**. |
+| **Project intake** | `app/services/maker/project_intake.rb` | A project's library folder files itself: everything under `Projects/<slug>/` attaches to the project, whatever is loose at the root gets filed into a category subfolder. Invariants: **§14f**. |
 | maker-app-core, juicefs-backend | `client/…` | Leftovers from the abandoned mount path; reference only. |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
@@ -255,6 +256,17 @@ Genuinely open:
    backends (the port's N+1 is closed; the residual is HTML). Pagination never existed.
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the
    models and v1 API exist. Obvious next slices.
+10. **A chunk-mode device push through the mount gets no eager nudge for project-folder
+    filing.** `Sync::Commit#finalize` never calls it — only the three web upload doors do
+    — so a file arriving via the mount waits for the 15-minute sweep like everything
+    else. Wiring it in would be worse, not better: `#finalize` runs once per file, so a
+    500-file device sync would become 500 synchronous full-project sweeps.
+11. **Whether a project-scoped upload should duplicate-check across the whole project,
+    not just its immediate destination, is an open product question.** Today two files
+    can both be named `dup.stl` under one project — the first filed into its category
+    subfolder, the second left at the root — because the only collision checks are the
+    port's own write-time clobber and `Maker::MoveNode`'s destination-folder collision,
+    both scoped to one path, not a project-wide name scan.
 
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
@@ -705,6 +717,73 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Guards live in `test/integration/web/page_query_budget_test.rb` and assert **constancy in N**,
   never a literal: the counts differ per `LIBRARY_BACKEND`, so a literal pins one leg and fails
   the other two.
+
+### 14f. Project-folder intake
+
+- **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
+  folder's own root are ever filed; anything already in a subfolder — including one filed
+  "wrong" by hand — is never revisited, and no column records that a file was "handled."
+  Position is the marker. Re-filing a subfolder would fight the user every 15 minutes, and
+  on chunk each round of that fight is a changelog entry broadcast to every device.
+- **A SWEEP OVER `nodes`, NOT A HOOK PER DOOR — because there are SEVEN doors and no
+  funnel.** `FilesController#create` (share/s3), `#finalize_upload` (chunk),
+  `Library::Reconciler` (the scan), `Sync::Commit#finalize` (a device push),
+  `Maker::Addons::LibraryOutput`, `Maker::MoveNode`, and a trash restore can all land a
+  file under `Projects/<slug>/`. Hooking each is seven sites that must agree, and an
+  EIGHTH would silently skip the rule — this repo's recorded failure shape (the five
+  `port_writable?` copies, the Scanner's skip-list blind spot). Reading `nodes` — the
+  catalog all three backends populate — covers every door, present and future, without
+  touching any of them.
+- **ADDS NO NEW COPY OF THE `port_writable?` BRANCH — the count named in §14d stays
+  five.** Moves run through `Maker::MoveNode`, mkdirs through `Maker::LibraryFolder`; both
+  already branch correctly for the deployment, so `ProjectIntake` itself never asks the
+  question.
+- **READS `folder_node_id`, NEVER CALLS `Project#ensure_library_folder!`.** Calling the
+  ensure would make a sweep CREATE `Projects/<slug>` for every project that never had one,
+  as a side effect of merely looking — the same bug
+  `Projects::AttachmentsController#relocate` once shipped, now at library-sweep scale. A
+  project with no folder is simply not swept (`status: :no_folder`).
+- **ASKS `Maker::AttachToProject#refusal_for` BEFORE EVERY MOVE — which is why that
+  method is public.** Its three rules (`:not_a_file`, `:model_bundle`,
+  `:attached_elsewhere`) are policy about where a file may go, not a suggestion; skipping
+  them is exactly how `#relocate` once silently pulled a file out of a model's bundle
+  folder while reporting success. `ProjectIntake#place` is a third door onto that one
+  policy, not a second copy of it.
+- **THE SCANJOB ORDERING — INTAKE STRICTLY AFTER THE RECONCILE, SAME JOB — IS A
+  CORRECTNESS CONSTRAINT, NOT A CONVENIENCE.** A move made after the Scanner has captured
+  its observations gets paired back by `(content_hash, size)` — `best_pairing` working
+  exactly as designed — which re-points the node to its OLD path while the bytes sit at
+  the new one. In that window a download does NOT get the retryable 503 (`library_present?`
+  still reads true): `Share#download`'s `ENOENT` maps to `NotFound`, and `FilesController`
+  renders that as a TERMINAL 404. Running the intake inline in `Library::ScanJob`, right
+  after `observer.call`, makes the overlap impossible instead of merely unlikely — the
+  reason `Maker::ProjectIntakeJob`'s own schedule declines on scannable backends (next
+  bullet).
+- **TWO CAPS, DELIBERATELY NOT ONE.** `MAX_MOVES` (500) bounds an unattended run's CHURN
+  and is absolute, not a percentage — the only honest denominator is "files currently at
+  project roots," of which the intended first run files 100%, so a percentage would be
+  guarding against SUCCESS. `EAGER_MAX_MOVES` (25) bounds request LATENCY for `.for_node`,
+  the one entry point that runs inside a browser-facing request (the eager nudge) rather
+  than an unattended job. Collapsing them would let one upload's response wait on the cost
+  `MAX_MOVES` is willing to accept for a background job.
+- **`EAGER_MAX_MOVES = 25` WAS MEASURED ON CHUNK / LOCAL SQLITE ONLY — NOT AN EVEN BOUND
+  ACROSS BACKENDS.** On S3, `FileLayer::S3#move` is three sequential, unbatched network
+  calls per file (a HEAD, a COPY, a DELETE), so the default is 25 × 3 = 75 sequential S3
+  calls inside one browser-facing request. It stays 25 anyway — it fails toward SLOW, not
+  WRONG, on every backend, and is operator-tunable via `PROJECT_ORGANIZE_EAGER_MAX_MOVES`
+  — but an S3 deployment expecting large backlog uploads is the one where an operator
+  should consider tuning it DOWN, not up.
+- **A CALLER MUST READ `intake_project_folder`'S RETURN VALUE, NOT JUST TRIGGER ITS SIDE
+  EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose
+  eager nudge lost a collision at its destination folder went from a refused write with a
+  flash (before the eager nudge existed) to a silent "Uploaded x." with no sign the file
+  stayed at the project root (after it, before this fix).
+  `ProjectFolderIntake#left_unfiled_by_conflict?` / `#project_intake_notice` read the
+  `:conflict` entry out of `Result#skips` for exactly this — but only in the two doors
+  whose response a user actually sees (`FilesController#create`'s HTML branch,
+  `Projects::UploadsController#create`); the JSON-only branches still run the intake and
+  still file what they can, they just don't surface the fact, because nothing downstream
+  reads that response key today.
 
 ---
 

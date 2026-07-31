@@ -10,6 +10,11 @@ module Projects
     before_action :authenticate_user!
     before_action :require_port_writable!
 
+    # The eager nudge (Task 11) — #intake_project_folder, called from #create below. Shared with
+    # FilesController, the other two upload doors; see the concern's header for why a shared module
+    # rather than a second copy.
+    include ProjectFolderIntake
+
     # The port's write can refuse (UnsupportedOperation — e.g. a name already at the library root,
     # a current-state-only clobber) or be temporarily unreachable (FetchError — unmounted NAS,
     # bucket blip). FilesController maps these on its write path; this parallel path must too, or an
@@ -31,7 +36,24 @@ module Projects
       enqueue_preview(node_id: info.node_id, name: file.original_filename)
       target.file_attachments.create!(user: current_user, node_id: info.node_id,
                                       role: role_for(file.original_filename, target))
-      redirect_to after_upload_url(target), notice: "Uploaded #{file.original_filename}."
+      # AFTER the create! above, NOT BEFORE — the order is load-bearing, and backwards it 500s.
+      # For a PROJECT target this file just landed at that SAME project's folder root, so
+      # Maker::ProjectIntake.for_node resolves the SAME project and its own #attach step would try
+      # to insert the IDENTICAL (user, "Maker::Project", project.id, node_id) tuple the line above
+      # just inserted. insert_all's unique_by: makes THAT collision a silent skip -- but only
+      # because it runs SECOND and finds the row already there. Reversed, the bare `create!` above
+      # would be the one landing second, hit index_maker_file_attachments_uniqueness the ORDINARY way (a
+      # bang method on a real duplicate), and raise ActiveRecord::RecordNotUnique, uncaught, on
+      # every single project upload through this door. A build-log-entry TARGET never collides
+      # either way -- #upload_parent sends it to the library root, not a project folder, so
+      # for_node's owning_project resolves nil and #attach never runs for it -- but the ordering
+      # requirement is about the PROJECT case, so it is written as an invariant, not "usually fine".
+      #
+      # THE RETURN VALUE IS NOW READ, NOT DISCARDED (see ProjectFolderIntake's header) -- so a
+      # same-named upload whose eager nudge lost a collision at its destination folder says so in
+      # the flash below (#project_intake_notice), instead of a bare "Uploaded" that hid it.
+      intake_result = intake_project_folder(info.node_id)
+      redirect_to after_upload_url(target), notice: project_intake_notice(intake_result, file.original_filename)
     end
 
     private

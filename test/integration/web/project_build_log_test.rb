@@ -74,6 +74,27 @@ module Web
       assert_select ".log-entry .entry-photo[data-node-id=?]", "img-1"
     end
 
+    # THE RACE TASK 9a's FOLLOW-UP CLOSES HERE, GENUINELY (Maker::AttachToProject#call's own
+    # comment records the one place in this arc that turned out to already be safe — this is not
+    # that case). Projects::EntryPhotosController#create called a BARE create!, with no find-first
+    # step, so a concurrent request attaching the same photo raised ActiveRecord::RecordNotUnique
+    # straight through to an uncaught 500 the moment the table gained its unique index. Drives the
+    # REAL HTTP path (JSON, matching the chunk inline-upload flow this action also serves) under a
+    # deterministically-injected race (with_concurrent_file_attachment, test_helper.rb).
+    test "attaching a photo a concurrent request just attached answers 200, not a 500" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      entry = project.build_log_entries.create!(user:, body: "glued it")
+      user.nodes.create!(node_id: "img-raced", name: "clamp.png", kind: "file")
+
+      with_concurrent_file_attachment(role: "image") do
+        post entry_photos_path(entry), params: { node_id: "img-raced" }, as: :json
+      end
+
+      assert_response :ok
+      assert_equal 1, entry.file_attachments.where(node_id: "img-raced").count
+    end
+
     test "attaching a photo refuses a node the user does not own" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")

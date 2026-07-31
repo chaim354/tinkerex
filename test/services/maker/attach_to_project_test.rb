@@ -172,6 +172,49 @@ module Maker
       assert_equal 1, @lamp.file_attachments.count
     end
 
+    # THE RACE TASK 9a's FOLLOW-UP CLOSES, ON THIS METHOD SPECIFICALLY — NOT A BUG FIX, and that
+    # correction is the point of this comment. The test above covers the ORDINARY already-attached
+    # case: a row that existed before #call's find step ran. This one covers the case that shape
+    # cannot, by construction: a second writer landing the identical
+    # (user, attachable_type, attachable_id, node_id) tuple in the gap between #call's find step
+    # finding nothing and its own create actually running. THE FIRST DRAFT OF THIS TASK ASSUMED
+    # find_or_create_by! was find_by || create! — the naive shape with no protection for that gap
+    # — and reported #call as newly exposed to an uncaught RecordNotUnique the moment Task 9a's
+    # unique index existed, the same way Models::AttachmentsController#create and
+    # Projects::EntryPhotosController#create genuinely are (both call bare create!, verified
+    # separately to still raise). THAT WAS WRONG, caught only by driving this test against the
+    # UNCHANGED method and watching it pass: in this Rails version (8.1.3),
+    # `find_or_create_by!(attrs, &block) = find_by(attrs) || create_or_find_by!(attrs, &block)` —
+    # source-checked directly (ActiveRecord::Relation.instance_method(:find_or_create_by!)
+    # .source_location) — so the "not found" fallback ALREADY goes through create_or_find_by!'s
+    # own savepoint-and-rescue. #call was never actually broken here. This test pins that fact
+    # rather than proving a fix, which is worth keeping precisely because it is not obvious from
+    # reading the call site — a future Rails upgrade that reverted find_or_create_by! to its older,
+    # naive shape would regress this silently otherwise. The service now spells create_or_find_by!
+    # explicitly anyway (see #call's comment for why: one fewer query in the common non-racing
+    # case, and the safety no longer depends on unstated Rails-version behavior a reader would have
+    # to go and check, the same way this test just had to).
+    #
+    # with_concurrent_file_attachment (test_helper.rb) is the shared simulation for this and its
+    # three siblings (Models::AttachmentsController#create, Projects::EntryPhotosController#create,
+    # CurrentProject#attach_addon_files_to_current_project) — see its own comment for why the
+    # obvious #save!-hook approach is wrong here specifically.
+    test "#call is safe under a concurrent attach of the same file" do
+      result = nil
+      assert_nothing_raised do
+        with_concurrent_file_attachment do
+          result = service.call(@node)
+        end
+      end
+
+      assert_equal 1, @lamp.file_attachments.where(node_id: "f-1").count,
+                   "exactly one row must survive the race — not two, and not zero"
+      assert_not result.created,
+                 "this request lost the race — it must not claim to have created the row"
+      assert_equal "other", result.attachments.first.role,
+                   "the returned row must be the WINNER's — the race's own row, not ours"
+    end
+
     # Models::AttachmentsController does not filter by kind, so a dir CAN belong to a model — and
     # #attach_bundle keeps live FILES only, so the triggering node was absent from its own result:
     # "Attached 0 files from Widget." on the HTML door and `undefined method 'node_id' for nil` on

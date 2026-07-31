@@ -1,0 +1,133 @@
+# THE EAGER NUDGE (Task 11). A file uploaded into a project's folder attaches and files itself NOW
+# rather than at the next sweep, which would read as broken — the same "the nudge is the fast path
+# and the poll is the correctness fallback" shape the sync engine already uses (§12 step 1). The
+# periodic Maker::ProjectIntake run is what makes it correct; this is what makes it feel instant.
+#
+# A CONCERN, NOT A THIRD COPY, and that is a decision worth recording rather than defaulting to —
+# CLAUDE.md's own tally of the port_writable? branch is the precedent this follows: "a NEW [inline
+# copy] needs an argument for being inline rather than a service, and a verb that more than one
+# caller performs does not have one." Two upload doors already needed this exact rescue-and-call
+# (FilesController#create/#finalize_upload); wiring in a THIRD (Projects::UploadsController#create,
+# the project page's own inline share/s3 uploader) is the second caller crossing into "more than
+# one" territory a second time, and copy-pasting the block below into a second controller — all of
+# it, including the reasoning for why StandardError is right here and wrong in the service — is
+# exactly the kind of drift this codebase keeps paying for and keeps writing down when it finds it
+# again. (FilesController#enqueue_preview has a near-duplicate in Projects::UploadsController today
+# — that pre-existing four-line, one-rescue duplication is a SMALLER trade this concern does not
+# try to retroactively fix; it is not a precedent for adding a THIRD copy of this longer one.)
+#
+# BEST-EFFORT, AND RESCUED WIDELY — StandardError, not a named list — FOR THE SAME REASON in every
+# controller that includes this: the write it follows has ALREADY SUCCEEDED (bytes in the store,
+# node exists), so a failure here must never turn a successful upload into an error the user sees.
+# StandardError IS RIGHT HERE, WHERE IT WOULD BE WRONG INSIDE THE SERVICE: this rescue exists to
+# protect a response that has already succeeded, not to make a policy decision about what a failure
+# means, and unlike Maker::ProjectIntake — which has already narrowed every condition it
+# understands into named rescues (FileLayer::FetchError, FileLayer::NotFound,
+# FileLayer::UnsupportedOperation, Maker::MoveNode::Collision/InvalidName) — a controller has no
+# such catalog to narrow against. A bug here (a typo'd method, a nil that should not be nil) is
+# exactly as unanticipated as a FileLayer outage, and both must fail the SAME way: log and let the
+# upload the user actually asked for stand.
+#
+# CALL-SITE ORDERING, WHERE THIS CONCERN IS INCLUDED, IS NOT THIS FILE'S CALL — but it is worth a
+# pointer here because it is easy to get backwards. Where a controller ALSO makes its own explicit
+# `file_attachments.create!` for the same upload (Projects::UploadsController does; FilesController
+# does not), that create! MUST run before this call, not after — see that controller for why.
+#
+# THE RETURN VALUE USED TO BE THROWN AWAY BY EVERY CALLER, AND THAT WAS A REAL REGRESSION, NOT A
+# HARMLESS ONE. #intake_project_folder answers exactly what Maker::ProjectIntake.for_node answers —
+# nil (the node is not under any project folder this user owns) or a Result (see
+# Maker::ProjectIntake::Result) — with ONE addition: a rescued failure ALSO answers nil, explicitly,
+# so "something went wrong in here" reads to a caller exactly like "there was nothing to report",
+# never like a Result it could misread. That nil-or-Result contract is what makes
+# #left_unfiled_by_conflict? below safe to call on whatever this method hands back, unconditionally.
+# Before this fix, every caller called this only for its side effect (the actual filing) and
+# discarded what it returned — which is how a same-named upload's eager nudge losing a collision at
+# its destination folder went from "the write itself was refused, with a flash" (before the eager
+# nudge existed) to "the write quietly succeeds, the file quietly stays at the project root, and the
+# user sees a plain 'Uploaded x.' with no sign anything unusual happened" (after the eager nudge,
+# before this fix) — the SAME outcome (two distinct files, nothing lost), MISSING feedback. See
+# #left_unfiled_by_conflict? and #project_intake_notice below, and
+# project_upload_attach_test.rb's long-standing "duplicate filename" test for the full accounting of
+# the mechanism this restores feedback for, without changing it.
+module ProjectFolderIntake
+  extend ActiveSupport::Concern
+
+  private
+
+  # `node&.file?` — NOT a bare truthiness check on `node` — because a node_id names a `file` for
+  # every caller today, but Maker::ProjectIntake sweeps directories via #subtree_files and would
+  # simply find nothing to do for one; the guard is here so a future caller of any upload door
+  # cannot turn this into a wasted (or surprising) sweep by handing it a directory's node_id.
+  # `current_user.nodes.present`, matching every other lookup in these controllers, so a node
+  # tombstoned in the gap between the write and this call is treated as absent, not fed to the
+  # service.
+  #
+  # `self.class.name` IN THE LOG LINE, NOT A HARD-CODED CONTROLLER NAME — this runs from more than
+  # one controller now, and a literal name here would be quietly wrong in every caller but the one
+  # it was written for, which is exactly the kind of small lie a shared concern must not tell.
+  #
+  # RETURNS nil OR A Maker::ProjectIntake::Result — NEVER ANYTHING ELSE. The `if node&.file?` guard
+  # already answers nil when there is no node to sweep; the explicit `nil` in the rescue clause is
+  # what keeps a rescued failure in that same, safe shape. Without it this method would return
+  # whatever Rails.logger.warn happens to return (Ruby's Logger#add always answers `true`, so
+  # #left_unfiled_by_conflict? below would still read it as "nothing to report" today) — but
+  # spelling it out means that safety does not quietly depend on Logger's own return value forever.
+  def intake_project_folder(node_id)
+    node = current_user.nodes.present.find_by(node_id:)
+    Maker::ProjectIntake.for_node(user: current_user, node:) if node&.file?
+  rescue StandardError => e
+    Rails.logger.warn("#{self.class.name}#intake_project_folder(#{node_id}): #{e.class}: #{e.message}")
+    nil
+  end
+
+  # Did THIS upload's own file get left at the project root because a file already occupied its
+  # destination category folder — #intake_project_folder's Result carrying a `[name, :conflict]`
+  # entry in `skips` for exactly this file? The one question a caller has once the nudge has run
+  # (see the header above for why that question used to go unanswered).
+  #
+  # MATCHES ON NAME, BECAUSE NAME IS ALL Result#skips HAS. Maker::ProjectIntake#file_all records
+  # `[node.name, reason]` (see #skip in app/services/maker/project_intake.rb) — never a node_id —
+  # so a caller here is asking the most precise question this data can honestly answer, not an
+  # approximation of a more precise one that exists somewhere and was left out.
+  #
+  # THE HONEST LIMIT, NAMED RATHER THAN GUESSED PAST: two DIFFERENT loose files that happen to
+  # share this node's exact name, both skipped with :conflict in the SAME sweep, cannot be told
+  # apart by name alone — "was MY upload the one that collided" cannot always be answered with
+  # certainty from outside #file_all's own loop. This is not a gap introduced here: it is the same
+  # ambiguity #file_all's own skip-logging already lives with (its log line names the file by
+  # `node.name`, not by which upload triggered the sweep). In practice #for_node sweeps ONE
+  # project's OWN root, triggered by ONE fresh upload, so the ordinary case has at most one
+  # same-named collision to report and the answer is exactly right; the rare case where it is not (a
+  # second, unrelated same-named file already sitting loose in that same project) still reports
+  # something TRUE about the project — a file by this name did fail to file — not something false.
+  def left_unfiled_by_conflict?(intake_result, name)
+    return false unless intake_result.is_a?(Maker::ProjectIntake::Result)
+
+    intake_result.skips.any? { |skipped_name, reason| reason == :conflict && skipped_name == name }
+  end
+
+  # The "Uploaded <name>." notice every flash-producing door here already wanted, with the missing
+  # half restored: when #left_unfiled_by_conflict? is true, it says WHERE the collision left the
+  # file instead of staying silent about it. ONE wording, shared, so a caller in FilesController and
+  # a caller in Projects::UploadsController cannot drift apart on how they phrase the identical fact
+  # (CLAUDE.md's rule for a verb more than one caller performs, applied to a sentence here rather
+  # than to a branch).
+  #
+  # `Maker::ProjectFolders.folder_for(name)` — NOT A FIELD ON THE Result, WHICH DOESN'T CARRY ONE —
+  # recomputes the destination category folder from the name alone. That is safe, not a guess:
+  # #place (app/services/maker/project_intake.rb) computes that exact same `dest` from that exact
+  # same name, via that exact same pure function, before the collision it hit ever entered the
+  # picture — so asking again here, after the fact, cannot disagree with what #place already knew.
+  #
+  # WORDED AS SUCCESS, NOT AS A FAILURE — because it is one: the file WAS uploaded and IS attached
+  # to the project, exactly as durable as the file that DID get filed (Maker::AttachToProject's
+  # rule: attach is durable, filing is best-effort). "but" introduces where it landed, not an
+  # apology for what went wrong.
+  def project_intake_notice(intake_result, filename)
+    base = "Uploaded #{filename}."
+    return base unless left_unfiled_by_conflict?(intake_result, filename)
+
+    "Uploaded #{filename}, but a file of that name is already in " \
+      "#{Maker::ProjectFolders.folder_for(filename)}/, so this one stayed at the project root."
+  end
+end

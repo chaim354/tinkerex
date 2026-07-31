@@ -69,11 +69,51 @@ module Maker
       # arrived", and asking first is what keeps that true however the query is later written.
       refusal = refusal_for(node)
 
-      # find_or_create_by, not create!: maker_file_attachments has no uniqueness index (a unique
-      # one would need a backfill dedupe, and this service is the only writer), so a double-submit
-      # or a second attach from the dropdown would otherwise make a duplicate row — and the file
-      # page would then render the same project chip twice.
-      att = @project.file_attachments.find_or_create_by!(user: @user, node_id: node.node_id) do |a|
+      # create_or_find_by!, not find_or_create_by! or create! (Task 9a's follow-up) — and NOT
+      # because find_or_create_by! was broken here. Correcting a real mistake in this task's first
+      # pass: find_or_create_by! LOOKS like find_by(attrs) || create!(attrs) — the naive shape,
+      # with no protection for a writer landing the identical
+      # (user, attachable_type, attachable_id, node_id) tuple in the gap between the two — and a
+      # first draft of this comment said exactly that, reporting #call as newly exposed to an
+      # uncaught ActiveRecord::RecordNotUnique the moment the table gained a unique index. THAT WAS
+      # WRONG: in this Rails version, find_or_create_by!(attrs, &block) is actually
+      # find_by(attrs) || create_or_find_by!(attrs, &block) (source-checked, and pinned by this
+      # method's own race test) — so the fallback ALREADY went through create_or_find_by!'s
+      # savepoint-and-rescue, and a race here was already survived before this line ever changed.
+      # find_or_create_by! did the wrong thing for the WRONG diagnosis to look right — bare
+      # create!/save! really do raise uncaught under this exact race, which is genuinely why
+      # Models::AttachmentsController#create and Projects::EntryPhotosController#create needed
+      # fixing, and it is tempting to assume every writer of this table shared that exposure.
+      #
+      # SPELLED OUT EXPLICITLY ANYWAY, for two reasons that hold regardless of the correction
+      # above: it costs one fewer query in the ordinary (non-racing, genuinely new attachment)
+      # case — create_or_find_by! attempts the INSERT first and only falls back to a SELECT on
+      # conflict, where find_or_create_by! always pays for the SELECT up front — and it makes the
+      # race-safety a fact ABOUT THIS LINE rather than an inherited property of Rails' internals
+      # that a future reader has no reason to go and check (as this task's first pass did not).
+      # `previously_new_record?`, read a few lines down for `Result#created`, needed no change for
+      # this: it is false for a record loaded by create_or_find_by!'s own rescue find, exactly as
+      # it already was for the ordinary already-attached case. THE ATTRIBUTES ON THE RETURNED ROW
+      # ARE THE WINNER'S, NOT OURS, on that path — `att.role` can be whatever the other request
+      # set, not role_for(node.name) as computed below — correct, since "already attached" means
+      # deferring to the row that is actually there.
+      #
+      # THE RESIDUAL RACE, NAMED RATHER THAN LEFT FOR SOMEONE TO REDISCOVER: create_or_find_by!'s
+      # own rescue does find_by!(attrs), which raises ActiveRecord::RecordNotFound if the row that
+      # won the race is gone again by the time this reads it (detached microseconds after being
+      # attached). That window is narrower than the one this closes — a row has to be created AND
+      # deleted inside this one request's create-then-find gap — and it is NOT special-cased: it
+      # propagates uncaught, the same as any other "the thing I was just told exists no longer
+      # does" failure this codebase leaves loud (LibraryCapabilities' argument for un-rescued
+      # NotImplementedError makes the same call). Deliberately not silently swallowed.
+      #
+      # THIS SERVICE IS NOT THE ONLY WRITER, EITHER — CLAUDE.md counts six others
+      # (Projects::UploadsController, Models::AttachmentsController,
+      # CurrentProject#attach_addon_files_to_current_project, Projects::EntryPhotosController,
+      # V1::Maker::FileAttachmentsController, and #attach_bundle below), which is why a
+      # database-level constraint, not merely this method's own care, is what makes "no duplicate
+      # row" actually true.
+      att = @project.file_attachments.create_or_find_by!(user: @user, node_id: node.node_id) do |a|
         a.role = Maker::FileAttachment.role_for(node.name)
       end
 
@@ -182,14 +222,24 @@ module Maker
       #     leapfrogs the bundle. Enforcing bundle order is a change to the COLUMN's meaning across
       #     all six writers of this table, not a change to this line.
       #
-      # THE DEDUPE IS THE LOAD-BEARING HALF, AND IT IS THE ONLY THING THAT DOES IT. Two attachment
-      # rows for one node is storable here too (no uniqueness index — see #call), and a duplicate
-      # member would otherwise make the notice say "4 files" for a three-file model AND insert that
-      # row twice. Nothing downstream saves it: Array#- (below) removes matching elements but does
-      # NOT dedupe its receiver — measured, after a comment here claimed it did. So `#select` is
-      # not a refactor of this line, and the duplicate-member test is what says so. The blast
-      # radius of that missing index is now N rather than 1 — the price of N attaches in one
-      # request.
+      # THE DEDUPE WAS THE LOAD-BEARING HALF UNTIL TASK 9a, AND WHAT REMAINS IS NARROWER, NOT
+      # GONE. Before that migration's unique index, two attachment rows for the SAME user on one
+      # node were storable on the model side too, so a duplicate member would make the notice say
+      # "4 files" for a three-file model AND insert that row twice — exactly what
+      # test/integration/web/attach_model_bundle_test.rb used to construct on purpose, until the
+      # index made the setup itself raise (see that test's own comment for the full story). `&`'s
+      # FILTER half — keeping only ids that are ALSO live files in `names` — is unaffected and
+      # still does real work regardless: node_ids and names come from two SEPARATE queries, not
+      # one join, so a member whose node was deleted or is a directory still has to be dropped
+      # here. `&`'s DEDUPE half is not entirely vestigial either, even for same-VALUE duplicates:
+      # the unique index is scoped by the ATTACHING user, not by the model's owner, and
+      # `model.file_attachments` carries no user_id scope of its own — so node_ids could still
+      # repeat a value if two DIFFERENT users each hold a row naming this model and the same
+      # node_id (not proven reachable through any controller today; not foreclosed by the schema
+      # either). Nothing downstream saves it in that case: Array#- (below) removes matching
+      # elements but does NOT dedupe its receiver — measured, after a comment here once claimed it
+      # did. So `#select` still is not a safe refactor of this line, even though the scenario it
+      # was ORIGINALLY written for is gone.
       members = node_ids & names.keys
 
       # FIVE QUERIES, CONSTANT IN N — deliberately not one SELECT + one INSERT per member. That
@@ -215,7 +265,18 @@ module Maker
       # the attachment table instead of the library — and a single INSERT cannot half-apply, so the
       # transaction that used to say this is gone rather than merely unnecessary. (A bundle is tens
       # of files; nothing here is sized for a bind-parameter limit.)
-      Maker::FileAttachment.insert_all(rows) if rows.any?
+      #
+      # unique_by:, MATCHING Maker::ProjectIntake#attach's insert_all (Task 9a) — see that method's
+      # comment for the full argument; the short version is precision, not a fix. Bare insert_all
+      # here was never at risk of RAISING or DUPLICATING under a race: it defaults to
+      # on_duplicate: :skip, and an absent unique_by: resolves to an untargeted ON CONFLICT DO
+      # NOTHING that already tolerated a conflict on this table's one unique index (verified
+      # against the emitted SQL, the same way ProjectIntake#attach's was). Naming the index is
+      # still the right call for the identical reason it was there: an untargeted skip silently
+      # absorbs a violation of ANY unique constraint this table ever gains, not only this one.
+      # Sibling method, identical shape, one spelling — leaving the two written differently is
+      # exactly the drift this codebase keeps paying to correct.
+      Maker::FileAttachment.insert_all(rows, unique_by: :index_maker_file_attachments_uniqueness) if rows.any?
 
       Result.new(attachments: @project.file_attachments.where(node_id: members).to_a,
                  relocation: :model_bundle, created: rows.any?, model:)

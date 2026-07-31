@@ -319,5 +319,41 @@ module Tools
         post tools_boxes_path, params: { name: "Loose Box", generator: "ABox", params: { x: 1, y: 2 } }
       end
     end
+
+    # THE RACE TASK 9a's FOLLOW-UP CLOSES HERE TOO, AND THE FAILURE SHAPE IS DIFFERENT FROM ITS
+    # THREE SIBLINGS (Maker::AttachToProject#call, Models::AttachmentsController#create,
+    # Projects::EntryPhotosController#create). CurrentProject#attach_addon_files_to_current_project
+    # already wraps its per-file loop in ActiveRecord::Base.transaction — deliberately, so a
+    # mid-loop failure leaves no PARTIAL set, and this fix does not remove that — and the whole
+    # method in a broad `rescue StandardError` (best-effort: the tool's OUTPUT is already saved, so
+    # a failed attach must never turn a successful save into an error). Before this fix, a race on
+    # ANY ONE of the addon's output files raised ActiveRecord::RecordNotUnique from a bare create!,
+    # which the transaction turned into "roll back EVERY file in this batch" and the outer rescue
+    # turned into "log a warning and attach nothing" — converting "one file raced, the rest are
+    # fine" into "none of them attached", SILENTLY, which is the failure shape this codebase most
+    # dislikes (no error page, and the addon's own save already succeeded, so nothing else signals
+    # it either). Fixed the same way as the other three: create_or_find_by! per file, so a race on
+    # one file is absorbed inside its OWN savepoint without taking the surrounding transaction — or
+    # the other files from the same save — down with it.
+    #
+    # with_concurrent_file_attachment races whichever file create_or_find_by! is called on FIRST —
+    # this test does not know or care which of the two output files that is, only that BOTH must
+    # still be attached afterward.
+    test "a race on one output file does not lose the other from the same save" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = project.ensure_library_folder!(@user)
+      patch current_project_path, params: { project_id: project.id }
+
+      with_concurrent_file_attachment do
+        assert_nothing_raised do
+          post tools_boxes_path, params: { name: "Raced Box", generator: "ABox", params: { x: 1, y: 2 },
+                                           parent_node_id: folder.node_id }
+        end
+      end
+
+      state = @user.maker_addon_states.for_addon("boxes").order(:id).last
+      assert_equal state.files.map(&:node_id).sort, project.file_attachments.pluck(:node_id).sort,
+                   "BOTH output files must be attached — a race on one must not cost the other"
+    end
   end
 end

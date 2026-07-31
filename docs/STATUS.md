@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-30 (**Performance + security audit, and its remediation — branch `claude/todo-audit-tests-baf3f9`**)
+**Updated:** 2026-07-31 (**A project folder that files itself, rebased onto main's own unique index — branch `claude/auto-add-project-files-050360`**)
 
 ## What this file is
 
@@ -45,10 +45,116 @@ reading the last entry.
   through this seam. The fix, when this stops being acceptable, is one line —
   `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
   defeat exactly this deep-merge. Recorded at the edit site too.
+- **A chunk-mode device push has no fast path into project-folder filing.**
+  `Maker::ProjectIntake`'s eager nudge (`ProjectFolderIntake`) covers only the three web
+  upload doors — `Sync::Commit#finalize`, the device-sync write path, never calls it — so a
+  file arriving through the mount waits for `Maker::ProjectIntakeJob`'s 15-minute schedule
+  like everything else. Deliberate, not an oversight: `#finalize` runs once per file, so
+  wiring the nudge into it would turn one 500-file device sync into 500 synchronous
+  full-project sweeps.
+- **A `projects:organize` dry run cannot see a name collision a real run would hit.**
+  Collision detection lives inside `Maker::MoveNode.call`, which a dry run never reaches —
+  it writes nothing, on purpose — so its "would file" answer is optimistic whenever the
+  destination folder already holds a same-named file. Not a gap to close; it is what
+  "writes nothing" costs.
 
 ---
 
-## Latest (2026-07-30): the audit, and the two defects only a browser could see (branch `claude/todo-audit-tests-baf3f9`)
+## Latest (2026-07-31): a project folder that files itself, rebased onto main's own unique index (branch `claude/auto-add-project-files-050360`)
+
+**1886 runs / 6565 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
+share and s3, verified by running all three legs directly in the worktree** (`bin/rails
+test`; `LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`; the
+`LIBRARY_BACKEND=s3` leg with `config/ci.rb`'s five stub `LIBRARY_S3_*` knobs). **PR #110
+shows no CI checks reported** — the one registered runner (`charless-MacBook-Pro-maker-mac`,
+confirmed live via the runners API) is online and `ci.yml`'s jobs already target it, but
+nothing has triggered a run against this branch, so the three local legs above are the only
+verification this entry can claim.
+
+**WHAT SHIPPED.** A file that lands anywhere under a project's `Projects/<slug>/` folder is
+attached to that project; one sitting loose at the folder's root is filed into a
+lazily-created category subfolder (`cnc`, `laser`, `design`, `models`, `cad`, `docs`,
+`images`, `archives`, `other` — `Maker::ProjectFolders`, derived from the one file-type
+vocabulary, not a second table). `Maker::ProjectIntake` is the sweep (`.for_project` /
+`.for_user` / `.for_node`); the eager nudge (`ProjectFolderIntake`, a controller concern)
+makes a web upload into a project folder attach and file itself in the SAME request instead
+of waiting for the periodic sweep. Wired in three places: `Maker::ProjectIntakeJob` on a
+15-minute schedule for chunk deployments, `Library::ScanJob` calling it inline right after
+its own reconcile for share/s3, and `rake projects:organize` (`DRY_RUN=1` to preview) for an
+operator running it by hand. The decisions most likely to get undone are recorded as
+invariants at **CLAUDE.md §14f**, not narrated again here — root-as-inbox statelessness, the
+sweep-not-hooks shape (seven doors, an eighth would silently skip the rule), the two
+separately-capped entry points, and the `ScanJob` ordering constraint chief among them.
+
+**THE REBASE MET MAIN'S OWN INDEX HEAD-ON, AND BOTH SIDES HAD BUILT THE SAME THING.** While
+this branch was in flight, main's own audit arc (PR #108, previous entry below) landed
+`AddUniqueIndexToMakerFileAttachments` (`20260730123853`) for the identical reason this
+branch needed one: `Maker::ProjectIntake#attach`'s periodic, unserialized sweep turns an
+ordinary concurrent attach into a race with no user on the other end to make it rare. Both
+migrations built the SAME unique index on `(user_id, attachable_type, attachable_id,
+node_id)`, deduping first and keeping the SAME lowest-id survivor (`MIN(id)` /
+`order(:id).first`), in the SAME dedupe-then-constrain order. This branch's own migration
+(`20260730170000`) was DROPPED on rebase rather than kept — keeping both would not have been
+belt-and-braces, it would have been a second, redundant index: `if_not_exists:` checks the
+NAME, and the two migrations named their index differently, so the second one to run would
+have ADDED an index rather than no-opping.
+
+**WHAT THIS BRANCH KEEPS IS THE HALF MAIN'S AUDIT DID NOT DO: auditing the table's OTHER
+writers.** The index turns a bare `create!` into an uncaught `ActiveRecord::RecordNotUnique`
+on an ordinary double-submit — a double-click, a retried `fetch()` — and main's migration
+shipped with three such call sites still bare (verified directly against `origin/main`:
+`Models::AttachmentsController`, `Projects::EntryPhotosController` and
+`Projects::UploadsController` all still read a bare `.create!` there today). This branch's
+own Task 9a found the same exposure independently — its risk profile is worse here, since a
+periodic sweep has no user to serialize against — and fixed THREE real sites:
+`Models::AttachmentsController#create`, `Projects::EntryPhotosController#create`, and
+`CurrentProject#attach_addon_files_to_current_project` (the worst-shaped of the three — a
+bare `create!` inside a loop wrapped in one transaction, so a race on ONE addon-output file
+used to silently roll back and drop every OTHER file from the same tool save), all converted
+to `create_or_find_by!`. **`Projects::UploadsController#create` is deliberately NOT among
+them and still holds a bare `create!` on both main and this branch** — it was in the
+original, broader writer count this task's review started from, and dropped once the
+mechanism was understood: every call attaches a node_id freshly minted by that same
+request's own `FileLayer.current.write`, so a double-submit cannot land the identical
+`(attachable, node_id)` tuple twice the way it can for a door that attaches an existing,
+caller-supplied node_id instead. No comment in the codebase states that reasoning
+explicitly; it is recorded here because the omission from the fixed list is easy to misread
+as unfinished work rather than a considered exclusion.
+
+**A CORRECTION WORTH KEEPING: `find_or_create_by!` was never the 500 path it was first
+reported to be.** The first pass through this exposure assumed it was the naive `find_by ||
+create!` shape — no protection for the read-then-write gap — and flagged
+`Maker::AttachToProject#call` (which uses it) as exposed the same way the bare `create!`
+sites are. Driving the race test against the UNCHANGED method proved it already passed.
+Verified directly against the installed gem (ActiveRecord 8.1.3,
+`lib/active_record/relation.rb`): `find_or_create_by!(attributes, &block)` is
+`find_by(attributes) || create_or_find_by!(attributes, &block)`, and `create_or_find_by!`
+already wraps its own `create!` in `transaction(requires_new: true)` and rescues
+`ActiveRecord::RecordNotUnique` with a `find_by!`. The fallback was never a raw `create!`.
+`#call` now spells `create_or_find_by!` explicitly anyway — one fewer query in the common
+case, and the safety no longer depends on unstated Rails-version behavior a future reader
+would have no reason to check — but that is precision, not a bug fix.
+
+**KNOWN LIMITS, CARRIED FORWARD** (also recorded under "Still open" above). A chunk-mode
+device push through the mount (`Sync::Commit#finalize`) has no fast path at all — the eager
+nudge covers only the three web upload doors, never the sync engine, so a device syncing a
+large batch waits for the 15-minute sweep like everything else; wiring it in would turn a
+500-file sync into 500 synchronous full-project sweeps, since `#finalize` runs once per
+file. `EAGER_MAX_MOVES`'s default (25) is measured on chunk / local SQLite only — on S3,
+`FileLayer::S3#move` is three sequential network calls (a HEAD, a COPY, a DELETE), so the
+same default is 75 S3 calls inside one browser-facing request. A `projects:organize` dry run
+cannot see a name collision a real run would hit — detecting one means attempting the move,
+which is exactly what a dry run exists to refuse to do. And a same-named second upload into
+a project is no longer refused, and where the result reaches a screen
+(`FilesController#create`'s HTML branch, `Projects::UploadsController#create`) it is no
+longer silent either — the flash now names where the second copy landed by reading the
+`:conflict` entry out of `Result#skips` — but the two JSON-only branches (`#create`'s json
+format, `#finalize_upload`) still run the intake and still file what they can without
+surfacing the fact, because nothing downstream reads that response key today.
+
+---
+
+## 2026-07-30: the audit, and the two defects only a browser could see (branch `claude/todo-audit-tests-baf3f9`)
 
 **Suite 1690 → 1777 runs / 6150 assertions / 0 failures / 0 errors / 11 skips — identical on
 chunk, share and s3.** `bin/ci` green on all seven gates. rubocop clean. brakeman still 0

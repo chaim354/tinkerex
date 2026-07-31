@@ -100,5 +100,34 @@ module Web
              headers: { "CONTENT_TYPE" => "application/json" }
       end
     end
+
+    # THE RACE TASK 9a's FOLLOW-UP CLOSES HERE, GENUINELY (unlike Maker::AttachToProject#call —
+    # see that method's own comment for the correction). Models::AttachmentsController#create
+    # calls a BARE create!, with no find-first step of any kind, so a concurrent request landing
+    # the identical (user, attachable_type, attachable_id, node_id) tuple raised
+    # ActiveRecord::RecordNotUnique straight through to a 500 the moment the table gained a unique
+    # index — verified directly (bin/rails runner) before this fix existed. "Already attached" is
+    # this request's intent already satisfied by someone else, not an error, so the fix is
+    # create_or_find_by! (see the controller's own comment) and this drives the REAL HTTP path
+    # under a deterministically-injected race (with_concurrent_file_attachment, test_helper.rb) to
+    # prove it: no 500, a 200 rather than a false 201, exactly one row, and no double-dispatched
+    # extraction job for a row this request did not actually create.
+    test "attaching a file that a concurrent request just attached answers 200, not a 500" do
+      user = sign_in
+      post models_path(format: :json), params: { title: "Raced", dirs: [] }.to_json,
+           headers: { "CONTENT_TYPE" => "application/json" }
+      model = user.maker_models.find_by!(slug: JSON.parse(response.body)["slug"])
+      user.nodes.create!(node_id: "racedpdf", name: "guide.pdf", kind: "file")
+
+      assert_no_enqueued_jobs only: Maker::ExtractPdfMetadataJob do
+        with_concurrent_file_attachment(role: "instructions") do
+          post model_attachments_path(model, format: :json), params: { node_id: "racedpdf" }.to_json,
+               headers: { "CONTENT_TYPE" => "application/json" }
+        end
+      end
+
+      assert_response :ok
+      assert_equal 1, model.file_attachments.where(node_id: "racedpdf").count
+    end
   end
 end

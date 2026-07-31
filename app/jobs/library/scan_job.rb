@@ -65,6 +65,7 @@ module Library
       observer = root ? Library::Scanner.new(user, root:) : observer_for(user)
       observer.call
       warn_unreadable(observer, user)
+      intake_project_folders(user)
     end
 
     # recurring.yml has no per-user fan-out pattern (every existing entry is an all-users sweep),
@@ -163,6 +164,57 @@ module Library
         "(#{dirs.first(3).map(&:inspect).join(', ')}#{'...' if dirs.size > 3}). " \
         "Is the share fully mounted?"
       )
+    end
+
+    # THE PROJECT-FOLDER INTAKE RUNS HERE, INLINE AND STRICTLY AFTER THE RECONCILE, and the
+    # placement is a correctness constraint rather than a convenience.
+    #
+    # If the intake moves a file after the Scanner has captured its observations, the Reconciler
+    # sees the node at its NEW path unobserved and the observation at the OLD path unclaimed, pairs
+    # them by (content_hash, size) — best_pairing working exactly as designed — and re-points the
+    # node BACK to the old path while the bytes sit at the new one. It self-heals on the next pass,
+    # but in the window the node's storage_path has no bytes behind it — and a download of it does
+    # NOT get the retryable 503: library_present? still reads true (the share root itself is fine),
+    # so Share#download's ENOENT maps to NotFound, and FilesController renders that as 404, "File
+    # not found." That is the TERMINAL answer, the one Share's own comments say must never be said
+    # about a file that is not actually gone (the same reasoning that makes undelete raise
+    # FetchError rather than NotFound on an unmounted share). It is that terminal reading — not
+    # merely an extra retry — that makes this ordering worth GUARANTEEING rather than merely
+    # preferring. Running here, in the same job, after observer.call, makes the overlap impossible
+    # instead of merely unlikely. Maker::ProjectIntakeJob's own schedule declines on scannable
+    # backends for the other half of this reason.
+    #
+    # A JOB ORCHESTRATING A MAKER SERVICE IS NOT the inversion .observer_for refuses. That objection
+    # is about a FileLayer ADAPTER reaching up into the catalog layer; a job is the top level, and
+    # this one already owns "what happens on a scan".
+    #
+    # CALLS THE JOB, NOT Maker::ProjectIntake DIRECTLY — Maker::ProjectIntakeJob.perform_now(user_id:)
+    # rather than Maker::ProjectIntake.for_user(user:) — so a share/s3 deployment gets the SAME
+    # operator-visible reporting a chunk deployment gets from the scheduled sweep, not less of it.
+    # An earlier version of this method called the service directly and threw its RunResult away:
+    # reproduced by forcing PROJECT_ORGANIZE_MAX_MOVES=1 against two loose files and finding NO
+    # match for /cap/i, /refus/i or /attached/i anywhere in the log, while the identical trip on a
+    # chunk deployment logs a WARN naming the count and `rake projects:organize`
+    # (ProjectIntakeJob#report — its own header calls this "THE ENTIRE AUDIT TRAIL", since nothing
+    # persists a marker of what a sweep did). So the deployment this integration exists for was
+    # getting LESS visibility than the one it was not primarily built for. #perform is deliberately
+    # ungated (the job's own header explains why), so calling it here costs one extra User.find and
+    # ActiveJob's own Performing/Performed log lines — cheaper than a second copy of #report's
+    # wording, which is the whole point of going through the job instead.
+    #
+    # RESCUED, AND NARROWLY SCOPED TO THIS CALL. The reconcile above is already committed — there is
+    # no transaction (see Library::Reconciler's header) — so letting an intake bug fail this job
+    # would tell an operator reading the failed-jobs table that the library did not index, when it
+    # did. The rescue must NOT wrap observer.call: Scanner::UnsafeScan is the reconcile refusing, and
+    # that failed-jobs row is the only way the refusal reaches anyone. perform_now still raises
+    # through to here for anything ProjectIntakeJob does not itself swallow (only its own
+    # discard_on ActiveRecord::RecordNotFound does), so this rescue is exercised exactly as it was
+    # when this method called the service directly.
+    def intake_project_folders(user)
+      Maker::ProjectIntakeJob.perform_now(user_id: user.id)
+    rescue StandardError => e
+      Rails.logger.error("Library::ScanJob: the reconcile SUCCEEDED but the project-folder " \
+                         "intake failed for user #{user.id}: #{e.class}: #{e.message}")
     end
   end
 end
