@@ -177,7 +177,7 @@ module Maker
                      "exactly one row must survive the race — not two, and not zero"
         assert_equal 1, result.attached,
                      "the sweep still reports its own attempt; the race is invisible to this count"
-        assert_equal :idx_maker_file_attachments_unique, captured_kwargs[:unique_by],
+        assert_equal :index_maker_file_attachments_uniqueness, captured_kwargs[:unique_by],
                      "#attach must name the index explicitly, not lean on insert_all's untargeted " \
                      "default — see this test's own comment for why that is not merely cosmetic"
       ensure

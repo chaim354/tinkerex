@@ -42,7 +42,7 @@ module Projects
       # to insert the IDENTICAL (user, "Maker::Project", project.id, node_id) tuple the line above
       # just inserted. insert_all's unique_by: makes THAT collision a silent skip -- but only
       # because it runs SECOND and finds the row already there. Reversed, the bare `create!` above
-      # would be the one landing second, hit idx_maker_file_attachments_unique the ORDINARY way (a
+      # would be the one landing second, hit index_maker_file_attachments_uniqueness the ORDINARY way (a
       # bang method on a real duplicate), and raise ActiveRecord::RecordNotUnique, uncaught, on
       # every single project upload through this door. A build-log-entry TARGET never collides
       # either way -- #upload_parent sends it to the library root, not a project folder, so

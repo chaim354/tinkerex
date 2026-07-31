@@ -276,7 +276,7 @@ module Maker
       # absorbs a violation of ANY unique constraint this table ever gains, not only this one.
       # Sibling method, identical shape, one spelling — leaving the two written differently is
       # exactly the drift this codebase keeps paying to correct.
-      Maker::FileAttachment.insert_all(rows, unique_by: :idx_maker_file_attachments_unique) if rows.any?
+      Maker::FileAttachment.insert_all(rows, unique_by: :index_maker_file_attachments_uniqueness) if rows.any?
 
       Result.new(attachments: @project.file_attachments.where(node_id: members).to_a,
                  relocation: :model_bundle, created: rows.any?, model:)

@@ -260,7 +260,7 @@ module Maker
     # into the SAME insert_all call. Before Task 9a's unique index that meant two stored rows for
     # one file; today insert_all's `unique_by:` skips the intra-batch duplicate the same way it
     # skips a genuinely concurrent one (verified directly: `insert_all([row, row], unique_by:
-    # idx_maker_file_attachments_unique)` inserts one and silently skips the other) — so the
+    # index_maker_file_attachments_uniqueness)` inserts one and silently skips the other) — so the
     # failure mode moved from a duplicated row to a merely-wasted collection pass. Still worth
     # preventing at the source rather than leaning on that. There is no equivalent double-count to
     # prevent here in #owning_project, either way: this walk stops at the first match, so the two
@@ -426,13 +426,21 @@ module Maker
     #      later by a write, with nothing atomic tying the two together, cannot be one — any writer
     #      that attaches the same tuple in the gap between them still gets through.
     #
-    #   2. `unique_by:`, naming the unique index the DedupeAndIndexMakerFileAttachments migration
-    #      added on (user_id, attachable_type, attachable_id, node_id). THIS is what makes the
-    #      write correct when a second writer lands that exact tuple in the gap #1 cannot close —
-    #      the gap a PERIODIC, unserialized sweep (Task 9 wires this class into one) opens up in a
+    #   2. `unique_by:`, naming `index_maker_file_attachments_uniqueness` — the unique index
+    #      AddUniqueIndexToMakerFileAttachments added on (user_id, attachable_type, attachable_id,
+    #      node_id). THIS is what makes the write correct when a second writer lands that exact
+    #      tuple in the gap #1 cannot close — the gap a PERIODIC, unserialized sweep opens up in a
     #      way every earlier, user-triggered writer of this table never had to survive; see that
-    #      migration's own header for why the index has to exist before this can work at all, and
-    #      CLAUDE.md's count of this table's other five writers for who else can land in the gap.
+    #      migration's own header for why the index has to exist before this can work at all.
+    #
+    #      THIS BRANCH ORIGINALLY SHIPPED ITS OWN DEDUPE+INDEX MIGRATION, and it was dropped on
+    #      rebase rather than kept: main's landed first (2026-07-30) with the same four columns,
+    #      the same lowest-id tie-break, and the same dedupe-before-constrain ordering. Two
+    #      migrations building two identically-shaped unique indexes under different names is
+    #      redundancy, not defence — `if_not_exists:` checks the NAME, so ours would have added a
+    #      SECOND index rather than no-opping. What this branch keeps is the half main did not do:
+    #      auditing the table's other writers for the bare `create!` that the index newly turns
+    #      into an uncaught RecordNotUnique.
     #      The conflicting row is skipped BY THE DATABASE rather than raising or duplicating.
     #      Naming the index explicitly — rather than leaving `unique_by:` unset — is not cosmetic:
     #      omitted, insert_all still defaults to `on_duplicate: :skip`, but resolves to a bare,
@@ -451,7 +459,7 @@ module Maker
       end
       return rows.size if rows.empty? || @dry_run
 
-      Maker::FileAttachment.insert_all(rows, unique_by: :idx_maker_file_attachments_unique)
+      Maker::FileAttachment.insert_all(rows, unique_by: :index_maker_file_attachments_uniqueness)
       rows.size
     end
 
