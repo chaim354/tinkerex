@@ -109,6 +109,8 @@ module Web
         assert_equal "model", att.role
         assert FileLayer.current.stat(@user, node_id: att.node_id).present?, "bytes must land in the share"
         assert_redirected_to project_path(project)
+        assert_equal "Uploaded cube.stl.", flash[:notice],
+                     "a non-colliding upload gets a clean message, nothing appended"
       end
 
       test "multipart photo upload writes and attaches to the entry as image" do
@@ -121,38 +123,58 @@ module Web
         assert_equal "image", entry.file_attachments.last.role
       end
 
-      # TASK 11's EAGER NUDGE NARROWS THIS GUARANTEE, AND THAT IS A KNOWN, DELIBERATE TRADE-OFF —
-      # not silently dropped, not a crash, but genuinely weaker than before, and worth being honest
-      # about rather than papering over with a relaxed assertion that hides what changed.
+      # TASK 11's EAGER NUDGE NARROWED THIS GUARANTEE, AND THAT WAS A KNOWN, DELIBERATE TRADE-OFF —
+      # not silently dropped, not a crash, but genuinely weaker than before. FOR A WHILE, THOUGH, IT
+      # WAS ALSO A REGRESSION THIS TEST DID NOT CATCH: the mechanism below is unchanged (still worth
+      # recording precisely, since the fix does not touch it) but the FEEDBACK it left behind briefly
+      # went missing, and this test's old `assert_nil flash[:alert]` for the second upload could not
+      # tell "no error, and the user was told what happened" apart from "no error, and the user was
+      # told NOTHING unusual happened" — both make that assertion pass.
       #
       # BEFORE Task 11: the SECOND same-named upload collided with the FIRST at the exact path
       # FileLayer::Share#write checks (the project folder ROOT), and was refused with a flash.
       #
-      # AFTER Task 11: the first upload's eager nudge FILES it into "models/" within the SAME
-      # request, which VACATES the root before the second upload's write ever runs its own clobber
-      # check — so the second upload's WRITE now succeeds too. Its own eager nudge then tries to
-      # file IT into "models/" as well, collides with the first file already sitting there
+      # AFTER Task 11, BEFORE THIS FIX: the first upload's eager nudge FILES it into "models/" within
+      # the SAME request, which VACATES the root before the second upload's write ever runs its own
+      # clobber check — so the second upload's WRITE now succeeds too. Its own eager nudge then tries
+      # to file IT into "models/" as well, collides with the first file already sitting there
       # (Maker::MoveNode::Collision), and leaves it un-filed at the project root instead — the SAME
-      # :conflict outcome a later periodic sweep already produces for any other same-named
-      # collision (Maker::ProjectIntake#place), just reached one upload sooner than before. NEITHER
-      # upload is silently lost or corrupted: two distinct nodes exist, with distinct bytes, both
-      # attached to the project — one filed, one not. What is genuinely gone is the immediate "that
-      # name is taken" flash this test used to pin. Whether a project-scoped upload should
-      # duplicate-check across the WHOLE project rather than just the immediate write path is a
-      # real product question, flagged separately rather than decided here under a review-response.
-      test "a duplicate filename is no longer refused once the first copy is eagerly filed away" do
+      # :conflict outcome a later periodic sweep already produces for any other same-named collision
+      # (Maker::ProjectIntake#place), just reached one upload sooner than before. NEITHER upload was
+      # ever silently lost or corrupted: two distinct nodes exist, with distinct bytes, both attached
+      # to the project — one filed, one not. What WAS genuinely gone was the immediate "that name is
+      # taken" flash this test used to pin: Projects::UploadsController called
+      # Maker::ProjectIntake.for_node (via #intake_project_folder) purely for its side effect and
+      # threw away what it answered, so the user saw a bare "Uploaded dup.stl." and had no sign two
+      # files now shared a name until they went looking.
+      #
+      # THIS FIX RESTORES THE FEEDBACK WITHOUT TOUCHING ANY OF THE MECHANISM ABOVE. No project-wide
+      # pre-write duplicate check was added; FileLayer#write, Maker::MoveNode and
+      # Maker::ProjectIntake#place are all untouched; the second upload still succeeds and both nodes
+      # still exist. ProjectFolderIntake#left_unfiled_by_conflict? reads the SAME
+      # Maker::ProjectIntake::Result#skips the service already produced and matches this upload's own
+      # filename against a `:conflict` entry; #project_intake_notice turns a true match into a flash
+      # that says what actually happened instead of staying silent about it. Whether a project-scoped
+      # upload should duplicate-check across the WHOLE project rather than just the immediate write
+      # path is still a real product question, and still not decided here — only the feedback gap is
+      # closed.
+      test "a duplicate filename is no longer refused, and the flash now says where the second copy landed" do
         project = @user.maker_projects.create!(name: "Lamp")
         make = -> { Rack::Test::UploadedFile.new(StringIO.new(SecureRandom.hex.b),
                                                  "application/octet-stream", original_filename: "dup.stl") }
         post project_uploads_path(project), params: { file: make.call }
         assert_response :redirect
         assert_nil flash[:alert]
+        assert_equal "Uploaded dup.stl.", flash[:notice], "the ordinary, non-colliding case is unchanged"
         assert_equal 1, project.file_attachments.count
 
         post project_uploads_path(project), params: { file: make.call }  # same name -> NOT refused now
         assert_response :redirect                                       # still never a 500
         assert_nil flash[:alert],
-                   "the second upload succeeds — the root it would have collided at was already vacated"
+                   "this is not an error — the upload succeeded and the file IS attached"
+        assert_equal "Uploaded dup.stl, but a file of that name is already in models/, " \
+                     "so this one stayed at the project root.", flash[:notice],
+                     "the restored feedback: what happened, not just that nothing crashed"
         assert_equal 2, project.file_attachments.count, "two distinct files, not a clobber"
 
         nodes = project.file_attachments.reload.map { |a| @user.nodes.find_by!(node_id: a.node_id) }

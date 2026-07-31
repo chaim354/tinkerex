@@ -48,8 +48,12 @@ module Projects
       # either way -- #upload_parent sends it to the library root, not a project folder, so
       # for_node's owning_project resolves nil and #attach never runs for it -- but the ordering
       # requirement is about the PROJECT case, so it is written as an invariant, not "usually fine".
-      intake_project_folder(info.node_id)
-      redirect_to after_upload_url(target), notice: "Uploaded #{file.original_filename}."
+      #
+      # THE RETURN VALUE IS NOW READ, NOT DISCARDED (see ProjectFolderIntake's header) -- so a
+      # same-named upload whose eager nudge lost a collision at its destination folder says so in
+      # the flash below (#project_intake_notice), instead of a bare "Uploaded" that hid it.
+      intake_result = intake_project_folder(info.node_id)
+      redirect_to after_upload_url(target), notice: project_intake_notice(intake_result, file.original_filename)
     end
 
     private

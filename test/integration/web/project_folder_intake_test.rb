@@ -50,27 +50,67 @@ module Web
         node = @user.nodes.find_by!(node_id: att.node_id)
         assert_equal "vector", att.role
         assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
+        assert_equal "Uploaded panel.svg.", flash[:notice],
+                     "a non-colliding upload gets a clean message, nothing appended"
       end
 
       test "a file uploaded to the library root is untouched" do
         upload("loose.svg", "<svg/>", parent: nil)
         assert_response :redirect
         assert_equal 0, @project.file_attachments.count
+        assert_equal "Uploaded loose.svg.", flash[:notice],
+                     "no owning project -> #intake_project_folder answers nil -> a clean message"
+      end
+
+      # THE SHARE DOOR'S OWN COPY OF project_upload_attach_test.rb's "duplicate filename" scenario —
+      # same underlying mechanism (FileLayer::Share#write's clobber guard only sees a vacated project
+      # root because the FIRST upload's own eager nudge already moved it out of the way before the
+      # SECOND upload's write ever runs), a different controller. See that file's test for the full
+      # accounting of the mechanism and why it is not this fix's concern; this test exists because
+      # FilesController#create had NO coverage of this scenario at all before this fix — restoring
+      # the feedback here was otherwise unverified on this door.
+      test "a duplicate filename via the Files-page uploader is filed apart, and the flash says where the second copy landed" do
+        upload("dup.stl")
+        assert_response :redirect
+        assert_equal "Uploaded dup.stl.", flash[:notice]
+
+        upload("dup.stl")  # same name -> the first upload's own nudge already vacated the root
+        assert_response :redirect
+        assert_nil flash[:alert], "this is not an error — the upload succeeded and IS attached"
+        assert_equal "Uploaded dup.stl, but a file of that name is already in models/, " \
+                     "so this one stayed at the project root.", flash[:notice]
+
+        nodes = @user.nodes.present.where(name: "dup.stl").to_a
+        assert_equal 2, nodes.size, "distinct nodes, no bytes overwritten"
+        filed, stuck = nodes.partition { |n| @user.nodes.find_by(node_id: n.parent_node_id)&.name == "models" }
+        assert_equal 1, filed.size, "the first upload's eager nudge files it into models/"
+        assert_equal 1, stuck.size, "the second collides at the destination and stays at the project root"
+        assert_equal @folder.node_id, stuck.first.parent_node_id
+        # FilesController#create has no explicit `file_attachments.create!` of its own (unlike
+        # Projects::UploadsController) -- BOTH rows here exist only because #intake_project_folder's
+        # own #attach step made them, and attach is the durable half regardless of whether filing
+        # succeeded (Maker::AttachToProject's rule, applied by Maker::ProjectIntake#call).
+        assert_equal 2, @project.file_attachments.count
       end
 
       # BEST-EFFORT: the upload already succeeded, so a failing intake must not turn it into an
-      # error (the same rule enqueue_preview follows immediately above it).
+      # error (the same rule enqueue_preview follows immediately above it) -- AND it must not turn
+      # into a misleading flash either: a rescued failure has nothing true to report about a
+      # conflict, so the message must read exactly like the ordinary, nothing-unusual-happened case.
       #
       # Hand-rolled override — `stub` does not exist in this suite (minitest 6 dropped
       # minitest/mock). The ensure-restore is load-bearing: a leak would break every later test in
       # this process.
-      test "an intake failure does not fail the upload" do
+      test "an intake failure does not fail the upload, and the flash stays clean" do
         original = Maker::ProjectIntake.method(:for_node)
         Maker::ProjectIntake.define_singleton_method(:for_node) { |**| raise "intake exploded" }
         begin
           upload("panel.svg", "<svg/>")
           assert_response :redirect
           assert @user.nodes.present.exists?(name: "panel.svg"), "the file is uploaded either way"
+          assert_nil flash[:alert], "a rescued failure here must never surface as an error"
+          assert_equal "Uploaded panel.svg.", flash[:notice],
+                       "a rescued failure must read exactly like the ordinary, no-conflict case"
         ensure
           Maker::ProjectIntake.define_singleton_method(:for_node, original)
         end
@@ -104,10 +144,53 @@ module Web
 
         post finalize_upload_files_path, as: :json, params: { commit_id: }
         assert_response :success
+        assert_equal %w[seq version_id], response.parsed_body.keys.sort,
+                     "the ordinary, non-colliding case's JSON shape, pinned so the collision test " \
+                     "below has a known-good baseline to diverge from"
 
         att = @project.file_attachments.sole
         node = @user.nodes.find_by!(node_id: att.node_id)
         assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
+      end
+
+      # THE CHUNK DOOR'S OWN COPY OF THE SAME COLLISION SCENARIO — proves the mechanism ITSELF
+      # (two commits landing the same name at the project root, the first's nudge vacating it before
+      # the second's finalize runs) is not share/s3-specific: chunk mode's `nodes` table has no
+      # uniqueness constraint on (parent_node_id, name) (see app/models/node.rb — only `node_id` is
+      # unique), so two SEPARATE Sync::Commit.finalize calls for the same name under the same parent
+      # both succeed regardless of order, exactly like two devices independently syncing a same-named
+      # file. What this test actually pins is the DECISION recorded in FilesController#finalize_upload
+      # -- that its JSON response gains NO new key for this fact, because its only caller
+      # (lib/chunk_upload.js's uploadChunkFile) discards the finalize response body entirely. If that
+      # ever changes, this is the test that must change with it.
+      test "a two-phase upload that collides at its destination still finalizes, and the JSON body gains no new key" do
+        upload_svg = lambda do |content|
+          hash = Digest::SHA256.hexdigest(content)
+          post begin_upload_files_path, as: :json, params: {
+            name: "panel.svg", size: content.bytesize, parent_node_id: @folder.node_id,
+            manifest: [ { hash:, offset: 0, length: content.bytesize } ]
+          }
+          assert_response :success
+          commit_id = response.parsed_body["commit_id"]
+          Storage::ChunkStore.current.put(@user.id, hash, content)
+          post finalize_upload_files_path, as: :json, params: { commit_id: }
+          assert_response :success
+          response.parsed_body
+        end
+
+        first = upload_svg.call("<svg>one</svg>")
+        second = upload_svg.call("<svg>two</svg>") # same name -> the first's nudge vacated the root
+
+        assert_equal %w[seq version_id], first.keys.sort
+        assert_equal %w[seq version_id], second.keys.sort,
+                     "no conflict key was added here -- see FilesController#finalize_upload for why"
+
+        nodes = @project.file_attachments.reload.map { |a| @user.nodes.find_by!(node_id: a.node_id) }
+        assert_equal 2, nodes.size, "both commits attach -- attach is durable regardless of filing"
+        filed, stuck = nodes.partition { |n| @user.nodes.find_by(node_id: n.parent_node_id)&.name == "design" }
+        assert_equal 1, filed.size
+        assert_equal 1, stuck.size
+        assert_equal @folder.node_id, stuck.first.parent_node_id
       end
     end
 
@@ -125,7 +208,8 @@ module Web
     # never did. See project_upload_attach_test.rb for the full behavioral suite on this controller
     # (roles, redirect targets, the FetchError/UnsupportedOperation rescues) — including the one
     # trade-off this door's nudge introduces (a same-named second upload is no longer refused once
-    # the first is filed away; see that file's "no longer refused" test for the full accounting).
+    # the first is filed away, and what the flash now says about it — see that file's "no longer
+    # refused" test for the full accounting).
     class ProjectPageUploadTest < ProjectFolderIntakeTest
       setup do
         @root = Dir.mktmpdir("pfi-project-page")
@@ -151,6 +235,8 @@ module Web
         node = @user.nodes.find_by!(node_id: att.node_id)
         assert_equal "vector", att.role
         assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id).name
+        assert_equal "Uploaded panel.svg.", flash[:notice],
+                     "a non-colliding upload gets a clean message, nothing appended"
       end
 
       # A build-log-entry upload through this SAME controller lands at the library ROOT

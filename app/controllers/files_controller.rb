@@ -293,7 +293,7 @@ class FilesController < ApplicationController
     info = FileLayer.current.write(current_user, parent_node_id: params[:parent_node_id],
                                    name: upload.original_filename, io: upload)
     enqueue_preview(node_id: info.node_id, name: upload.original_filename)
-    intake_project_folder(info.node_id)
+    intake_result = intake_project_folder(info.node_id)
     # format.json for the importer (app/javascript/controllers/importer_controller.js via
     # lib/chunk_upload's uploadPortFile): it needs the new node_id to attach in the SAME request
     # that uploaded it. A followed redirect can't carry that back -- fetch() resolves to the
@@ -303,8 +303,19 @@ class FilesController < ApplicationController
     # JSON responder, so a followed redirect carrying Accept: application/json 406'd on every
     # single port upload -- this format.json branch is what makes the request succeed WITHOUT
     # ever reaching #show.
+    #
+    # THE CONFLICT FACT (ProjectFolderIntake#left_unfiled_by_conflict?) IS NOT THREADED INTO THIS
+    # JSON BRANCH, and that is a considered omission, not an oversight: uploadPortFile reads only
+    # `data.node_id` from the response (see lib/chunk_upload.js), and its one caller
+    # (importer_controller.js) always targets a MODEL's bundle folder, never a PROJECT's -- so
+    # #intake_project_folder answers nil on this path today regardless, and the fact this comment
+    # is about cannot arise for it. The HTML branch below is the one door here that a project-folder
+    # upload actually reaches (see project_folder_intake_test.rb's ShareTest), and it is the one
+    # that gets the restored notice.
     respond_to do |format|
-      format.html { redirect_to file_path(info.node_id), notice: "Uploaded #{upload.original_filename}." }
+      format.html do
+        redirect_to file_path(info.node_id), notice: project_intake_notice(intake_result, upload.original_filename)
+      end
       format.json { render json: { node_id: info.node_id }, status: :created }
     end
   end
@@ -347,6 +358,17 @@ class FilesController < ApplicationController
     node = current_user.nodes.find_by(node_id: version.node_id)
     if node
       enqueue_preview(node_id: version.node_id, name: node.name)
+      # THE SAME CONFLICT FACT AS THE OTHER TWO DOORS (ProjectFolderIntake#left_unfiled_by_conflict?)
+      # IS DELIBERATELY NOT SURFACED IN THE JSON BELOW, checked rather than assumed. This endpoint's
+      # only caller, lib/chunk_upload.js's uploadChunkFile, awaits this POST purely for its side
+      # effect and never reads a single key from its response body -- not even version_id or seq,
+      # which have been here all along (see that function: the result of
+      # `await postJSON(finalizeUrl, ...)` is never assigned to anything). Adding a THIRD key next to
+      # two nobody reads would be inventing a key nobody reads, not restoring feedback anyone would
+      # see -- so #intake_project_folder still runs and still files what it can, but nothing here
+      # asks #left_unfiled_by_conflict? about the result. If a JSON consumer of this endpoint ever
+      # needs the fact, #left_unfiled_by_conflict?/#project_intake_notice already exist for it --
+      # wire it in here rather than reinventing the check.
       intake_project_folder(version.node_id)
     end
     render json: { version_id: version.version_id, seq: }
