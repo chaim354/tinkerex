@@ -20,7 +20,8 @@ module Maker
       return true if Gem::Requirement.new(requirement).satisfied_by?(Gem::Version.new(SDK_VERSION))
 
       raise IncompatibleSDK,
-            "addon requires Maker::Addons SDK #{requirement}, host provides #{SDK_VERSION}"
+            "addon requires Maker::Addons SDK #{requirement}, host provides #{SDK_VERSION} — " \
+            "upgrade the host or pin an older addon release"
     end
   end
 end
