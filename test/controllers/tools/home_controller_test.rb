@@ -18,6 +18,24 @@ module Tools
       @snapshot.each { |attrs| Maker::Addons::Registry.register(**attrs) }
     end
 
+    # Same save/restore-in-teardown shape as Tools::OpenscadControllerTest's setup: `configured?` for
+    # both sidecar-backed host addons is a bare ENV presence check (no network probe), so a bogus URL
+    # is enough to flip them from "greys out" to "available" without either sidecar ever being called
+    # from this file. Needed so "renders a working link for every available addon" actually exercises
+    # all three host addons rather than only whichever one needs no configuration (`generators`) —
+    # otherwise its loop body runs once, over the one addon whose key was never at risk.
+    setup do
+      @prior_boxes_url = ENV["BOXES_SIDECAR_URL"]
+      @prior_openscad_url = ENV["OPENSCAD_SIDECAR_URL"]
+      ENV["BOXES_SIDECAR_URL"] = "http://boxes.invalid"
+      ENV["OPENSCAD_SIDECAR_URL"] = "http://openscad.invalid"
+    end
+
+    teardown do
+      ENV["BOXES_SIDECAR_URL"] = @prior_boxes_url
+      ENV["OPENSCAD_SIDECAR_URL"] = @prior_openscad_url
+    end
+
     test "requires login" do
       reset!
       get tools_path
@@ -45,9 +63,19 @@ module Tools
     end
 
     test "renders a working link for every available addon" do
-      # Characterization, not a driver: asserts the RENDERED href against each addon's own declared
-      # path, so a registration whose path proc drifts from its routes fails here rather than 500ing
-      # for a user.
+      # NOT a regression guard for the inflector bug — that claim does not survive mutation
+      # (verified: reverting the view to send("tools_#{addon.key}_path") leaves this test GREEN).
+      # All three HOST addons (boxes, generators, openscad) keep keys that inflect cleanly to their
+      # own route helper — that is exactly why the old send(...) mechanism worked fine for them, and
+      # no amount of forcing them "available" changes that. The driver test above, with its
+      # deliberately non-inflecting synthetic key, is what actually pins the fix.
+      #
+      # What this test DOES check, honestly: with all three host addons forced available (below),
+      # the rendered gallery HTML contains a working anchor at each addon's own declared href — an
+      # end-to-end smoke test of registration -> controller -> view for the addons this deployment
+      # actually ships. That is distinct from test/services/maker/addons/registry_test.rb, which
+      # resolves path_for for every REGISTERED addon regardless of availability, but never renders
+      # HTML.
       get tools_path
       assert_response :success
       helpers = Rails.application.routes.url_helpers

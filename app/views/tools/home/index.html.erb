@@ -5,6 +5,9 @@
 <div class="tools-grid">
   <% @addons.each do |addon| %>
     <% if addon.available? %>
+      <%# `self` here is the view context, not Rails.application.routes.url_helpers — it carries
+          request-scoped defaults (host, protocol), so an addon's path proc can call a `_url` helper
+          without passing host: itself. %>
       <%= link_to addon.path_for(self), class: "addon-card" do %>
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>

@@ -162,8 +162,8 @@ Rails.application.routes.draw do
   # 1. NOT `resources :openscad`. Rails derives the collection helper from name.pluralize
   #    ("openscads") and the member helper from name.singularize ("openscad"), so `resources` would
   #    leave tools_openscad_path meaning SHOW — which requires an id. The gallery renders each
-  #    addon's OWN declared `path:` proc (Maker::Addons::Registry), and this addon's names
-  #    tools_openscad_path, so `resources` here would make /tools raise UrlGenerationError for
+  #    addon's OWN declared `path:` proc (Maker::Addons::Registry), and this addon's `path:` proc
+  #    names tools_openscad_path, so `resources` here would make /tools raise UrlGenerationError for
   #    every user. Guarded generically by test/services/maker/addons/registry_test.rb — "every
   #    registered addon's path resolves with no arguments".
   # 2. NOT inside `namespace :tools`. A namespace prefixes `as:`, so `as: :new_openscad` in there
