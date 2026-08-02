@@ -4,8 +4,10 @@ module Maker
   module Addons
     class RegistryTest < ActiveSupport::TestCase
       # The registry is process-global and populated at to_prepare. Snapshot and restore it so these
-      # tests can register throwaway addons without leaking into the rest of the suite.
-      setup { @snapshot = Registry.entries.values.map(&:to_h) }
+      # tests can register throwaway addons without leaking into the rest of the suite. `entries` is
+      # not part of the SDK surface (private), so the snapshot goes through `all` instead — ordering
+      # doesn't matter for a snapshot/restore.
+      setup { @snapshot = Registry.all.map(&:to_h) }
 
       teardown do
         Registry.reset!
