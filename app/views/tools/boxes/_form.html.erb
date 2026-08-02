@@ -1,24 +1,27 @@
 <%#
-  Grouped param form, mirroring boxes.py's own web UI. Each group from the sidecar becomes a section:
-  the generator's own settings and "Default Settings" are open <fieldset>s; the advanced
-  "Settings for <edge/part>" groups (Finger Joints, Lid, …) collapse into <details> so the common
-  dimensions stay front and centre. Advanced fields are still in the DOM, so they're always submitted.
+  Grouped param form, mirroring boxes.py's own web UI. EVERY group is a <details> — the generator's
+  own settings and "Default Settings" start open, the advanced "Settings for <edge/part>" groups
+  (Finger Joints, Lid, …) start closed — so any section can be folded away once you're done with it,
+  not just the advanced ones. Advanced fields are still in the DOM either way, so they're always
+  submitted. The fields themselves are untouched: this is about the sections, not the inputs.
   Locals: generator (BoxesClient::Generator), values (Hash, optional prefill).
 %>
+<div class="param-groups-head">
+  <span class="param-groups-title">Settings</span>
+  <button type="button" class="box-toc-all" data-boxsections-target="toggleAll"
+          data-action="boxsections#toggleAll">Collapse all</button>
+</div>
+
 <% generator.param_groups.each do |grp| %>
-  <% if grp["advanced"] %>
-    <details class="param-group param-group-adv">
-      <summary><%= grp["title"] %></summary>
-      <div class="box-params">
-        <% grp["params"].each do |param| %><%= render "field", param: param, values: values %><% end %>
-      </div>
-    </details>
-  <% else %>
-    <fieldset class="param-group">
-      <legend><%= grp["title"] %></legend>
-      <div class="box-params">
-        <% grp["params"].each do |param| %><%= render "field", param: param, values: values %><% end %>
-      </div>
-    </fieldset>
-  <% end %>
+  <details class="param-group <%= "param-group-adv" if grp["advanced"] %>"
+           id="<%= box_section_id(grp["title"], prefix: 'param-group') %>"
+           data-boxsections-target="section" <%= "open" unless grp["advanced"] %>>
+    <summary class="param-group-summary">
+      <span class="param-group-title"><%= grp["title"] %></span>
+      <span class="box-group-count"><%= grp["params"].size %></span>
+    </summary>
+    <div class="box-params">
+      <% grp["params"].each do |param| %><%= render "field", param: param, values: values %><% end %>
+    </div>
+  </details>
 <% end %>

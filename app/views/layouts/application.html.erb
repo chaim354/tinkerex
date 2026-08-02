@@ -58,7 +58,10 @@
     <% if flash[:notice] %><div class="flash flash-notice"><%= flash[:notice] %></div><% end %>
     <% if flash[:alert]  %><div class="flash flash-alert"><%= flash[:alert] %></div><% end %>
 
-    <main class="container">
+    <%# Pages that genuinely need more than the 920px reading measure opt in with
+        `content_for :container_class, "container-wide"` — three-column layouts, mainly. Inert
+        everywhere else, so the default stays the narrow container. %>
+    <main class="container <%= content_for(:container_class) %>">
       <%= yield %>
     </main>
   </body>

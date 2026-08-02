@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-07-31 (**A project folder that files itself, rebased onto main's own unique index — branch `claude/auto-add-project-files-050360`**)
+**Updated:** 2026-08-02 (**The Box Generator folds up: collapsible sections, a section index, and a preview that starts itself — branch `claude/boxes-tool-ux-b871bf`**)
 
 ## What this file is
 
@@ -60,7 +60,76 @@ reading the last entry.
 
 ---
 
-## Latest (2026-07-31): a project folder that files itself, rebased onto main's own unique index (branch `claude/auto-add-project-files-050360`)
+## Latest (2026-08-02): the Box Generator folds up — collapsible sections, a section index, and a preview that starts itself (branch `claude/boxes-tool-ux-b871bf`)
+
+**1891 runs / 6608 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
+and s3**, plus **16 system examples / 100 assertions** (was 11). Whole gate: `bin/ci` green in
+~40 s. Baseline was taken by running the merge-base, not by reading the entry above.
+
+**WHAT SHIPPED.** Three things, all UI, none of them touching the fields themselves.
+
+- **The index is three columns**: a sticky section index (left), the generator gallery
+  (middle), the saved-box rail (right). Every gallery section is a `<details>`; the rail nests
+  `<details>` twice — section, then box type — and both levels ship closed. 185 generators
+  across 10 `ui_group`s is what makes this worth doing: `Misc` alone is 56.
+- **The editor previews the generator's defaults on `connect()`**, with nothing clicked, then
+  re-renders on a 600 ms debounce after any `params[...]` field settles. Name, destination and
+  both buttons moved into a sticky bar **above** the params — `TypeTray` is 95 fields across 14
+  groups, so "Save" used to be a long scroll from whatever you were editing.
+- **Every param group folds now, not just the advanced ones** (they were open `<fieldset>`s),
+  with one collapse-all/expand-all control. The inputs inside are byte-for-byte unchanged.
+
+**PERSISTENCE HANGS OFF A SUMMARY CLICK, NOT THE `toggle` EVENT — and that is the whole design.**
+`boxfilter` opens matching sections by assigning `.open`, which fires `toggle` too, so storing on
+`toggle` would let a search silently rewrite the layout you had arranged. A summary click can only
+come from the user (keyboard activation dispatches one as well). It reads the state in a
+`setTimeout`, **not** a microtask: the flip is the click's *default action* and has not happened
+while listeners and microtasks run, so a microtask stores the OLD value.
+
+**THE FIRST DRAFT OF THAT TEST PROVED NOTHING, AND ONLY THE MUTATION SHOWED IT.** Moving
+persistence back onto `toggle` left the suite **green** — because `boxfilter` restores the prior
+state when the query is cleared, so storage lands on the right value anyway. The bug only exists
+for someone who **leaves the page mid-search**, so the test now reloads while the filter is still
+applied. Recorded because it is this repo's dominant failure mode (§15) caught in the act: the
+assertion was true, it just could not fail for the reason it existed.
+
+**A SHARED-HELPER BUG THE NEW TESTS EXPOSED: the browser log buffer outlives a test.** Selenium
+reuses one Chrome per file and `logs.get(:browser)` is a *drain*, so a test that never calls
+`assert_no_console_errors` — or fails before reaching it — hands its entries to whichever test runs
+next. Observed for real: `box_sections_test`'s deliberate sample-photo 404s failed
+`importer_test`. `ApplicationSystemTestCase` now drains in `setup`, which makes the guard sharper,
+not weaker. `assert_no_console_errors` also gained `ignoring:` for failures a page is *designed* to
+produce (the sample-photo 404 that triggers `thumbfallback`).
+
+**`container-wide` is a new, opt-in layout mechanism.** `<main class="container">` is a 920 px
+reading measure; a nav rail on one side and a list on the other both come out of the middle column,
+and at 920 px the gallery dropped to **one card per row** (measured: `172px 388px 264px`). Pages
+opt in with `content_for :container_class, "container-wide"` (1360 px). Inert everywhere else.
+
+**FOUND, NOT FIXED — 3 of 185 generators cannot render at all, and never could.** Auto-preview made
+a pre-existing silent failure visible: the old controller did `if (!res.ok) return`. Measured by
+posting every generator's own schema defaults to the sidecar — 182 render, 3 return 422, for **two
+different reasons**. `CompartmentBox`: `app.py`'s `_param_groups_for` advertises `margin_vertical`
+and `margin_side`, which the generator's argparse rejects as *unrecognized* — the schema and the
+parser disagree. `TypeTray` / `TrayLayoutFile`: an argparse `FileType` whose default is `""`, so
+argparse opens `''` and exits — **not fixable from Rails**, since omitting the param still
+type-converts the default. Both live in the GPL sidecar (§9, §14c), so both are out of this
+branch's reach. `app.py` also collapses every argparse failure into `{"error": "invalid
+parameters"}`, discarding the stderr that names the offending param.
+
+**VERIFIED IN A REAL BROWSER, against the real sidecar** — a local venv running the pinned
+`florianfesti/boxes @ 836f5f7`, all 185 generators, not `FakeBoxes`. Confirmed live: the section
+index jumps into a *collapsed* section; collapse-all flips its own label; filtering for `shelf`
+leaves exactly the two sections that match (Box 1 card, Shelf 11), prunes the index to those two,
+and clearing puts the previous open/closed state back unchanged; a no-match query shows the empty
+line. Sticky action bar measured pinned at `top: 0` under scroll.
+
+**MUTATION-CHECKED, 14 IN TOTAL** — 8 request-level, 6 browser-level, each reverted, watched go
+red, restored. Named inline in `test/system/box_sections_test.rb` and in the request tests.
+
+---
+
+## 2026-07-31: a project folder that files itself, rebased onto main's own unique index (branch `claude/auto-add-project-files-050360`)
 
 **1886 runs / 6565 assertions / 0 failures / 0 errors / 11 skips — identical on chunk,
 share and s3, verified by running all three legs directly in the worktree** (`bin/rails

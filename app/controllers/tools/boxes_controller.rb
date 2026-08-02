@@ -8,7 +8,9 @@ module Tools
 
     def index
       @generators = client.generators
-      @saved = current_user.maker_addon_states.for_addon("boxes").order(updated_at: :desc)
+      @sections = @generators.group_by { |g| g.group.presence || "Other" }.sort_by { |group, _| group }
+      @saved = current_user.maker_addon_states.for_addon("boxes").order(updated_at: :desc, id: :desc)
+      @saved_tree = saved_tree(@saved)
     end
 
     def new
@@ -88,6 +90,19 @@ module Tools
     private
 
     def client = BoxesClient.current
+
+    # The saved-box rail: section (the generator's boxes.py ui_group) -> box type (the generator key)
+    # -> that type's saved boxes, newest first. Grouped in Ruby for the same reason `new` filters in
+    # Ruby: `data` is a JSON column, and `data->>'generator'` is Postgres-only (§14e, adapter-agnostic).
+    #
+    # A saved box whose generator the sidecar no longer offers still has to appear — the user's file is
+    # in their library either way — so an unknown key files under "Other" rather than vanishing.
+    def saved_tree(saved)
+      section_of = @generators.to_h { |g| [ g.key, g.group.presence || "Other" ] }
+      saved.group_by { |s| section_of.fetch(s.data["generator"].to_s, "Other") }
+           .sort_by { |section, _| section }
+           .map { |section, states| [ section, states.group_by { |s| s.data["generator"].to_s.presence || "Unknown" }.sort ] }
+    end
 
     # Available when a sidecar is configured, or when a test has injected a stub.
     def require_boxes!

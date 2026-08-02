@@ -33,6 +33,10 @@ a:hover { text-decoration: underline; }
 .topbar-right { display: flex; align-items: center; gap: 12px; }
 
 .container { max-width: 920px; margin: 0 auto; padding: 24px 20px 64px; }
+/* Opt-in, per page, via `content_for :container_class`. 920px is a reading measure; a page with a
+   nav rail on one side and a list on the other has to pay for both out of the middle column, and at
+   920px the gallery in the middle drops to a single card per row. */
+.container-wide { max-width: 1360px; }
 
 .flash { padding: 10px 20px; font-size: 14px; }
 .flash-notice { background: #ecfdf5; color: #065f46; }
@@ -169,24 +173,72 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   border: 1px solid var(--line); border-radius: 8px;
   font-size: 15px; background: var(--bg); color: var(--fg);
 }
-.box-group { margin-bottom: 22px; }
-.box-group-title {
-  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); margin: 0 0 10px;
+/* Index: table of contents | generator gallery | saved-box rail. */
+.box-index { display: grid; grid-template-columns: 172px minmax(0, 1fr) 264px; gap: 28px; align-items: start; }
+.box-index > section, .box-index > aside { min-width: 0; }
+.box-index h2 { margin-top: 0; }
+
+.box-toc { position: sticky; top: 16px; }
+.box-toc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.box-toc-title, .box-group-title, .box-saved-name {
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
 }
+.box-toc-all {
+  border: none; background: none; padding: 0; cursor: pointer;
+  font-size: 12px; color: var(--muted); text-decoration: underline;
+}
+.box-toc-all:hover { color: var(--accent); }
+.box-toc-list { list-style: none; padding: 0; margin: 0; }
+.box-toc-list li[hidden] { display: none; }
+.box-toc-list a {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
+}
+.box-toc-list a:hover { background: var(--soft); text-decoration: none; }
+.box-toc-list li.is-active a { background: var(--soft); color: var(--accent); font-weight: 600; }
+.box-toc-count, .box-group-count {
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+
+/* Every section folds. The <details> does the folding; the marker is replaced by a chevron that
+   turns, because the UA triangle sits at a different baseline in every browser. */
+.box-group { margin-bottom: 18px; scroll-margin-top: 16px; }
+.box-group-summary, .box-saved-summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 0; list-style: none;
+}
+.box-group-summary::-webkit-details-marker, .box-saved-summary::-webkit-details-marker { display: none; }
+.box-group-summary::before, .box-saved-summary::before {
+  content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg); transition: transform 120ms ease;
+}
+details[open] > .box-group-summary::before, details[open] > .box-saved-summary::before { transform: rotate(45deg); }
+.box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--accent); }
+.box-group > .tools-grid { margin-top: 10px; }
 .addon-card[hidden], .box-group[hidden] { display: none; }
+
+/* The saved rail: section, then box type, both closed until asked for. */
+.box-saved-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
+.box-saved-count { font-size: 13px; margin: -6px 0 10px; }
+.box-saved-section { border-bottom: 1px solid var(--line); }
+.box-saved-type { margin-left: 14px; }
+.box-saved-type .box-saved-name { text-transform: none; font-weight: 600; font-size: 13px; color: var(--fg); }
+.box-saved-link { font-size: 13px; }
 
 /* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
    so the value cell must not collapse it into one line. */
 .addon-params dd { white-space: pre-wrap; }
 
-.saved-boxes {
-  list-style: none; padding: 0; margin: 0;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px;
-}
-.saved-boxes li { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-.saved-boxes li > div { font-size: 13px; margin-top: 2px; }
+.saved-boxes { list-style: none; padding: 0 0 8px 14px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.saved-boxes li > div { font-size: 12px; margin-top: 1px; }
 .box-noresults { margin: 6px 0; }
+
+@media (max-width: 1080px) {
+  .box-index { grid-template-columns: 1fr; }
+  .box-toc, .box-saved-rail { position: static; max-height: none; }
+  .box-toc-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .box-toc-list a { border: 1px solid var(--line); }
+}
 
 .box-editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
 .box-editor > form { min-width: 0; }
@@ -211,9 +263,24 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
 }
+/* Name + destination + both buttons, pinned above a form that can run to sixty fields. */
+.box-actions {
+  position: sticky; top: 0; z-index: 2;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px 14px; align-items: end;
+  padding: 12px 0 14px; margin-bottom: 4px;
+  background: var(--bg); border-bottom: 1px solid var(--line);
+}
+.box-actions .page-actions { margin: 0; display: flex; gap: 8px; }
+@media (max-width: 720px) { .box-actions { grid-template-columns: 1fr; } }
+
 .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
 .box-side .box-preview { padding: 12px; }
 .box-preview .preview-image { width: 100%; background: #fff; border-radius: 6px; }
+/* Until the first render lands the <img> has no src, so give it a placeholder box rather than
+   letting the panel collapse to nothing under the "Rendering…" line. */
+.box-preview .preview-image:not([src]) { min-height: 180px; }
+.box-preview-status { font-size: 12px; color: var(--muted); margin: 8px 0 0; white-space: pre-wrap; }
+.box-preview-status.is-error { color: var(--danger); }
 
 @media (max-width: 720px) {
   .box-editor { grid-template-columns: 1fr; }
@@ -262,14 +329,30 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 }
 .box-help:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
 
-.param-group { border: none; padding: 0; margin: 0 0 18px; min-width: 0; }
-.param-group > legend { padding: 0; margin-bottom: 8px; }
-.param-group > legend, .param-group-adv > summary {
+/* EVERY param group folds, not just the advanced ones — same <details>/<summary> pattern as the
+   index's sections, so both pages fold the same way. The fields inside are unchanged. */
+.param-groups-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  margin: 14px 0 6px;
+}
+.param-groups-title, .param-group-title {
   font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
 }
-.param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
-.param-group-adv > summary { cursor: pointer; }
-.param-group-adv[open] > summary { margin-bottom: 10px; }
+.param-group { border: none; padding: 0; margin: 0 0 6px; min-width: 0; }
+.param-group-summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 7px 0; list-style: none;
+}
+.param-group-summary::-webkit-details-marker { display: none; }
+.param-group-summary::before {
+  content: ""; flex: 0 0 auto; width: 6px; height: 6px; margin-right: 2px;
+  border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg); transition: transform 120ms ease;
+}
+.param-group[open] > .param-group-summary::before { transform: rotate(45deg); }
+.param-group-summary:hover .param-group-title { color: var(--accent); }
+/* The advanced groups keep their boxed-off look, so "these are the fiddly ones" survives the change. */
+.param-group-adv { border: 1px solid var(--line); border-radius: 8px; padding: 2px 12px 4px; margin: 0 0 10px; }
+.param-group > .box-params { margin-top: 6px; }
 
 /* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
 .preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }

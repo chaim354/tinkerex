@@ -33,5 +33,13 @@ module Tools
     def box_thumb_url(key)
       thumb_tools_boxes_path(key)
     end
+
+    # Stable DOM id for a section, so the table of contents can link to it and the collapse controller
+    # can remember whether it was left open. `parameterize` returns "" for a heading that is all
+    # punctuation, and a bare "box-section-" would then collide across every such heading — hence the
+    # fallback.
+    def box_section_id(section, prefix: "box-section")
+      "#{prefix}-#{section.to_s.parameterize.presence || 'other'}"
+    end
   end
 end

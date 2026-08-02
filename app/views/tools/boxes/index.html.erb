@@ -1,42 +1,93 @@
 <% content_for :title, "Box Generator — Tinkerex" %>
+<% content_for :container_class, "container-wide" %>
 
 <div class="page-head"><h1>📦 Box Generator</h1></div>
 
-<section class="box-generators" data-controller="boxfilter">
-  <h2>New box</h2>
-  <input type="search" class="box-search" placeholder="Filter generators…"
-         aria-label="Filter generators"
-         data-boxfilter-target="query" data-action="input->boxfilter#filter">
-
-  <% @generators.group_by(&:group).sort_by { |group, _| group.to_s }.each do |group, gens| %>
-    <div class="box-group" data-boxfilter-target="group">
-      <h3 class="box-group-title"><%= group.presence || "Other" %></h3>
-      <div class="tools-grid">
-        <% gens.each do |g| %>
-          <%= link_to new_tools_box_path(generator: g.key), class: "addon-card",
-                      data: { boxfilter_target: "card",
-                              terms: "#{g.title} #{g.key} #{g.group}".downcase } do %>
-            <img class="addon-thumb" src="<%= box_thumb_url(g.key) %>" alt="" loading="lazy"
-                 data-controller="thumbfallback" data-action="error->thumbfallback#hide">
-            <span class="addon-title"><%= g.key %></span>
-          <% end %>
-        <% end %>
-      </div>
+<%#
+  Three columns: the section table of contents, the generator gallery, and the saved-box rail.
+  Every section is a <details>, so "collapsible" is the browser's job and the page still works with
+  JS off — `boxsections` only adds remembering, jumping and scroll-spy on top of that.
+%>
+<div class="box-index" data-controller="boxfilter boxsections">
+  <nav class="box-toc" aria-label="Generator sections">
+    <div class="box-toc-head">
+      <span class="box-toc-title">Sections</span>
+      <button type="button" class="box-toc-all" data-boxsections-target="toggleAll"
+              data-action="boxsections#toggleAll">Collapse all</button>
     </div>
-  <% end %>
-  <p class="box-noresults muted" data-boxfilter-target="empty" hidden>No generators match your filter.</p>
-</section>
+    <ul class="box-toc-list">
+      <% @sections.each do |section, gens| %>
+        <li data-boxfilter-target="tocitem" data-section="<%= box_section_id(section) %>">
+          <a href="#<%= box_section_id(section) %>" data-boxsections-target="link"
+             data-action="boxsections#jump"><%= section %><span class="box-toc-count"><%= gens.size %></span></a>
+        </li>
+      <% end %>
+    </ul>
+  </nav>
 
-<h2>Saved boxes</h2>
-<% if @saved.empty? %>
-  <p class="muted">No saved boxes yet.</p>
-<% else %>
-  <ul class="saved-boxes">
-    <% @saved.each do |s| %>
-      <li>
-        <%= link_to s.name, tools_box_path(s) %>
-        <div class="muted"><%= s.data["generator"] %> · <%= s.updated_at.strftime("%Y-%m-%d") %></div>
-      </li>
+  <section class="box-generators">
+    <h2>New box</h2>
+    <input type="search" class="box-search" placeholder="Filter generators…"
+           aria-label="Filter generators"
+           data-boxfilter-target="query" data-action="input->boxfilter#filter">
+
+    <% @sections.each do |section, gens| %>
+      <details class="box-group" id="<%= box_section_id(section) %>" open
+               data-boxfilter-target="group" data-boxsections-target="section">
+        <summary class="box-group-summary">
+          <span class="box-group-title"><%= section %></span>
+          <span class="box-group-count"><%= gens.size %></span>
+        </summary>
+        <div class="tools-grid">
+          <% gens.each do |g| %>
+            <%= link_to new_tools_box_path(generator: g.key), class: "addon-card",
+                        data: { boxfilter_target: "card",
+                                terms: "#{g.title} #{g.key} #{g.group}".downcase } do %>
+              <img class="addon-thumb" src="<%= box_thumb_url(g.key) %>" alt="" loading="lazy"
+                   data-controller="thumbfallback" data-action="error->thumbfallback#hide">
+              <span class="addon-title"><%= g.key %></span>
+            <% end %>
+          <% end %>
+        </div>
+      </details>
     <% end %>
-  </ul>
-<% end %>
+    <p class="box-noresults muted" data-boxfilter-target="empty" hidden>No generators match your filter.</p>
+  </section>
+
+  <aside class="box-saved-rail">
+    <h2>Saved boxes</h2>
+    <% if @saved.empty? %>
+      <p class="muted">No saved boxes yet.</p>
+    <% else %>
+      <p class="box-saved-count muted"><%= pluralize(@saved.size, "saved box") %></p>
+      <% @saved_tree.each do |section, types| %>
+        <%# Closed by default, both levels: the rail is a reference you open when you want it, not a
+            list you scroll past on the way to the generator you came for. %>
+        <details class="box-saved-section" id="<%= box_section_id(section, prefix: 'saved-section') %>"
+                 data-boxsections-target="section">
+          <summary class="box-saved-summary">
+            <span class="box-saved-name"><%= section %></span>
+            <span class="box-toc-count"><%= types.sum { |_, states| states.size } %></span>
+          </summary>
+          <% types.each do |type, states| %>
+            <details class="box-saved-type" id="<%= box_section_id("#{section}-#{type}", prefix: 'saved-type') %>"
+                     data-boxsections-target="section">
+              <summary class="box-saved-summary">
+                <span class="box-saved-name"><%= type %></span>
+                <span class="box-toc-count"><%= states.size %></span>
+              </summary>
+              <ul class="saved-boxes">
+                <% states.each do |s| %>
+                  <li>
+                    <%= link_to s.name, tools_box_path(s), class: "box-saved-link" %>
+                    <div class="muted"><%= s.updated_at.strftime("%Y-%m-%d") %></div>
+                  </li>
+                <% end %>
+              </ul>
+            </details>
+          <% end %>
+        </details>
+      <% end %>
+    <% end %>
+  </aside>
+</div>
