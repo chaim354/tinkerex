@@ -26,7 +26,7 @@
     <input type="hidden" name="params[<%= pname %>]" value="false">
     <input type="checkbox" name="params[<%= pname %>]" value="true" <%= "checked" if val.to_s == "true" %>>
   <% elsif param["type"] == "vector" %>
-    <%# A vector is edited as comma-separated text. OpenscadParams turns it into the OpenSCAD
+    <%# A vector is edited as comma-separated text. Tools::OpenscadParams turns it into the OpenSCAD
         literal "[a,b,c]" on the way out, so a saved design prefills as "[10,20,30]" while a fresh
         one shows schema.py's bare "10,20,30" — both are accepted back. %>
     <input type="text" name="params[<%= pname %>]" value="<%= val %>" placeholder="10,20,30">

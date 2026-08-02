@@ -1,6 +1,6 @@
 module Tools
   # The Box Generator addon. Rails owns the UI, param handling, and save-to-library; the sidecar
-  # (via BoxesClient) only generates. Preview rasterizes the generated SVG to PNG (resvg) rather
+  # (via Tools::BoxesClient) only generates. Preview rasterizes the generated SVG to PNG (resvg) rather
   # than inlining untrusted SVG, matching the web layer's no-inline-SVG posture.
   class BoxesController < BaseController
     include Tools::LibraryFolders
@@ -42,7 +42,7 @@ module Tools
         # resvg absent (dev box): hand back the raw SVG so preview still works locally.
         send_data svg, type: "image/svg+xml", disposition: "inline"
       end
-    rescue BoxesClient::Error => e
+    rescue Tools::BoxesClient::Error => e
       render plain: e.message, status: :unprocessable_entity
     end
 
@@ -79,7 +79,7 @@ module Tools
       )
       attach_addon_files_to_current_project(addon_files)
       redirect_to tools_box_path(state), notice: "Saved “#{state.name}”."
-    rescue BoxesClient::Error => e
+    rescue Tools::BoxesClient::Error => e
       redirect_to tools_boxes_path, alert: "Generation failed: #{e.message}"
     end
 
@@ -89,7 +89,7 @@ module Tools
 
     private
 
-    def client = BoxesClient.current
+    def client = Tools::BoxesClient.current
 
     # The saved-box rail: section (the generator's boxes.py ui_group) -> box type (the generator key)
     # -> that type's saved boxes, newest first. Grouped in Ruby for the same reason `new` filters in
@@ -106,7 +106,7 @@ module Tools
 
     # Available when a sidecar is configured, or when a test has injected a stub.
     def require_boxes!
-      return if BoxesClient.configured? || BoxesClient.stubbed?
+      return if Tools::BoxesClient.configured? || Tools::BoxesClient.stubbed?
 
       redirect_to tools_path, alert: "Box generator isn't configured on this deployment."
     end

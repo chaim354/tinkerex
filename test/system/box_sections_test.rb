@@ -22,11 +22,11 @@ class BoxSectionsTest < ApplicationSystemTestCase
   SAMPLE_404 = %r{/tools/boxes/thumb/\w+ - Failed to load resource.+404}
 
   setup do
-    BoxesClient.stub = FakeBoxes.new
+    Tools::BoxesClient.stub = FakeBoxes.new
     sign_in_as "sections@example.com"
   end
 
-  teardown { BoxesClient.reset! }
+  teardown { Tools::BoxesClient.reset! }
 
   # Capybara's matchers wait on the DOM; an <img> swapping its src is a property read, so poll it.
   def wait_until(timeout: 5, message: "condition never became true")

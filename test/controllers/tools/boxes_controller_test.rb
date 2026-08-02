@@ -9,7 +9,7 @@ module Tools
     setup do
       @user = User.create!(email: "boxes@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-      BoxesClient.stub = FakeBoxes.new
+      Tools::BoxesClient.stub = FakeBoxes.new
       Storage::ChunkStore.reset!
       if ENV["LIBRARY_BACKEND"] == "s3"
         require_relative "../../support/fake_s3"
@@ -20,7 +20,7 @@ module Tools
       end
     end
     teardown do
-      BoxesClient.reset!
+      Tools::BoxesClient.reset!
       FileLayer.reset!
     end
 

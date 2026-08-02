@@ -1,5 +1,5 @@
-# In-memory stand-in for the OpenSCAD sidecar, injected via OpenscadClient.stub in tests. Mirrors
-# the OpenscadClient API shape so the whole addon is exercisable without the Python sidecar.
+# In-memory stand-in for the OpenSCAD sidecar, injected via Tools::OpenscadClient.stub in tests. Mirrors
+# the Tools::OpenscadClient API shape so the whole addon is exercisable without the Python sidecar.
 #
 # The param shapes below are the NORMALIZED output of sidecar/openscad/schema.py, whose own tests
 # use OpenSCAD's real --export-format=param output as fixtures. Keeping this fake downstream of that
@@ -64,7 +64,7 @@ class FakeOpenscad
 
   def generators
     [ HEX, TRAY ].map do |g|
-      OpenscadClient::Generator.new(
+      Tools::OpenscadClient::Generator.new(
         key: g["key"], title: g["title"], description: g["description"], license: g["license"],
         attribution: g["attribution"], source_url: g["source_url"],
         params: g["param_groups"].flat_map { |grp| grp["params"] },
@@ -76,7 +76,7 @@ class FakeOpenscad
   # The sidecar answers an unknown key with a 404 whose body is {"error": "unknown generator"}, and
   # the client unwraps that into exactly this message.
   def source(key)
-    raise OpenscadClient::Error, "unknown generator" unless [ "hex_plate", "divider_tray" ].include?(key)
+    raise Tools::OpenscadClient::Error, "unknown generator" unless [ "hex_plate", "divider_tray" ].include?(key)
 
     "/* [Grid] */\n// number of columns\ncols = 4;\nwall = 1.6;\ncube([cols, wall, 1]);\n"
   end

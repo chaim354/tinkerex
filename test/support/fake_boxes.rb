@@ -1,5 +1,5 @@
-# In-memory stand-in for the boxes sidecar, injected via BoxesClient.stub in tests. Mirrors the
-# BoxesClient API shape (generators -> [Generator with param_groups], generate -> SVG bytes) so the
+# In-memory stand-in for the boxes sidecar, injected via Tools::BoxesClient.stub in tests. Mirrors the
+# Tools::BoxesClient API shape (generators -> [Generator with param_groups], generate -> SVG bytes) so the
 # whole Boxes addon is exercisable without the Python sidecar (which is Plan B).
 class FakeBoxes
   # Exactly the shape TrayLayoutFile emits for sx="50*3" sy="50*2": a size marker per column, then a
@@ -27,7 +27,7 @@ class FakeBoxes
   DSL
 
   def generators
-    [ BoxesClient::Generator.new(
+    [ Tools::BoxesClient::Generator.new(
         key: "ABox", title: "Simple box", group: "Box",
         param_groups: [
           { "title" => "ABox Settings", "advanced" => false, "params" => [
@@ -39,7 +39,7 @@ class FakeBoxes
                 "choices" => %w[rectangular springs barbs snap], "help" => "style of the fingers" } ] } ]),
       # sx/sy WITHOUT a `layout`, which is the real TypeTray's shape (upstream: "allows only
       # continuous walls") and the case the top view has to build a grid for by itself.
-      BoxesClient::Generator.new(
+      Tools::BoxesClient::Generator.new(
         key: "TypeTray", title: "Divider tray", group: "Tray",
         param_groups: [
           { "title" => "TypeTray Settings", "advanced" => false, "params" => [
@@ -51,7 +51,7 @@ class FakeBoxes
       # A TrayLayout-shaped generator: sx/sy sizes plus a MULTILINE `layout` — ASCII art that boxes.py
       # parses the compartments back out of. The real sidecar seeds that default (via boxes.py's own
       # TrayLayoutFile) precisely because the raw upstream default is "\n", which does not render.
-      BoxesClient::Generator.new(
+      Tools::BoxesClient::Generator.new(
         key: "TrayLayout", title: "Generate a typetray from a layout file", group: "Tray",
         param_groups: [
           { "title" => "TrayLayout Settings", "advanced" => false, "params" => [
@@ -61,7 +61,7 @@ class FakeBoxes
                 "help" => "Set **sx** and **sy** before editing this!" },
               { "name" => "thickness", "type" => "float", "default" => 3.0,
                 "help" => "thickness of the material (in mm)" } ] } ]),
-      BoxesClient::Generator.new(
+      Tools::BoxesClient::Generator.new(
         key: "FrontPanel", title: "Front panel with holes", group: "Holes",
         param_groups: [
           { "title" => "FrontPanel Settings", "advanced" => false, "params" => [

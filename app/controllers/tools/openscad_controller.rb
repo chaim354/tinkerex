@@ -1,6 +1,6 @@
 module Tools
   # The OpenSCAD addon. Rails owns the UI, param handling, auth and save-to-library; the sidecar
-  # (via OpenscadClient) only renders.
+  # (via Tools::OpenscadClient) only renders.
   #
   # THE CENTRAL DESIGN POINT (spec §3.1): there is ONE render path and TWO sources of .scad. Every
   # action resolves its source to TEXT first — a catalog key via the sidecar's /source, a
@@ -25,7 +25,7 @@ module Tools
 
     def new
       redirect_to(tools_openscad_path, alert: "Unknown generator.") if load_editor!.nil?
-    rescue OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
+    rescue Tools::OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
       redirect_to tools_openscad_path, alert: "Couldn't read that generator: #{e.message}"
     end
 
@@ -38,7 +38,7 @@ module Tools
       bytes = client.render(scad:, params: scad_params(scad))
       png = rasterize(bytes)
       send_data png[:bytes], type: png[:content_type], disposition: "inline"
-    rescue OpenscadParams::Invalid, OpenscadClient::Error, PreviewUnavailable,
+    rescue Tools::OpenscadParams::Invalid, Tools::OpenscadClient::Error, PreviewUnavailable,
            FileLayer::NotFound, FileLayer::FetchError => e
       render plain: e.message, status: :unprocessable_entity
     end
@@ -70,14 +70,14 @@ module Tools
       )
       attach_addon_files_to_current_project(addon_files)
       redirect_to tools_openscad_design_path(state), notice: "Saved “#{state.name}”."
-    rescue OpenscadParams::Invalid => e
+    rescue Tools::OpenscadParams::Invalid => e
       # A REJECTED VALUE IS SOMETHING TO FIX, so hand the editor straight back with the user's own
       # values still in it. Bouncing to the index would make the check cost them the whole form,
       # which is how a correctness guard turns into something people route around. `flash.now` +
       # render rather than a redirect: submitted values can be long, and a redirect would have to
       # carry every one of them in the query string.
       editor_again(e.message)
-    rescue OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
+    rescue Tools::OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
       redirect_to tools_openscad_path, alert: "Generation failed: #{e.message}"
     end
 
@@ -87,10 +87,10 @@ module Tools
 
     private
 
-    def client = OpenscadClient.current
+    def client = Tools::OpenscadClient.current
 
     def require_openscad!
-      return if OpenscadClient.configured? || OpenscadClient.stubbed?
+      return if Tools::OpenscadClient.configured? || Tools::OpenscadClient.stubbed?
 
       redirect_to tools_path, alert: "OpenSCAD isn't configured on this deployment."
     end
@@ -134,7 +134,7 @@ module Tools
       return redirect_to(tools_openscad_path, alert: message) if load_editor!.nil?
 
       render :new, status: :unprocessable_entity
-    rescue OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
+    rescue Tools::OpenscadClient::Error, FileLayer::NotFound, FileLayer::FetchError => e
       redirect_to tools_openscad_path, alert: "#{message} (#{e.message})"
     end
 
@@ -198,10 +198,10 @@ module Tools
 
     # The submitted fields, COERCED against the declared schema — NOT a pass-through. A value
     # OpenSCAD cannot parse is silently IGNORED by its parameterSet, so passing text through means a
-    # typo renders the default geometry with no feedback at all. See OpenscadParams for the whole
+    # typo renders the default geometry with no feedback at all. See Tools::OpenscadParams for the whole
     # argument; it raises Invalid, which both callers turn into a 422 / a form-level alert.
     def scad_params(scad)
-      OpenscadParams.coerce(params[:params]&.to_unsafe_h || {}, declared_param_groups(scad))
+      Tools::OpenscadParams.coerce(params[:params]&.to_unsafe_h || {}, declared_param_groups(scad))
     end
 
     # THE SAME DECLARATION THE FORM WAS RENDERED FROM — the two branches mirror `resolve_source`'s
@@ -210,7 +210,7 @@ module Tools
     # derived from its own source text (the sidecar memoizes that by text, so the /render call right
     # behind this one reuses it). Both are the sidecar's one derivation, so this is not a second
     # render path — only a second way of asking for a schema we were already given.
-    # nil when it can't be had at all; OpenscadParams then refuses rather than forwarding unchecked.
+    # nil when it can't be had at all; Tools::OpenscadParams then refuses rather than forwarding unchecked.
     def declared_param_groups(scad)
       if params[:node_id].present?
         client.params_for(scad)["param_groups"]

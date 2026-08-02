@@ -14,10 +14,10 @@ module Tools
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       # The gallery GREYS OUT an addon whose sidecar isn't configured, so a test that asserts the
       # LINK renders has to look like a deployment that has one. The stub still answers every call:
-      # OpenscadClient.current prefers @stub over the URL, so nothing here reaches the network.
+      # Tools::OpenscadClient.current prefers @stub over the URL, so nothing here reaches the network.
       @prior_sidecar_url = ENV["OPENSCAD_SIDECAR_URL"]
       ENV["OPENSCAD_SIDECAR_URL"] = "http://openscad.invalid"
-      OpenscadClient.stub = FakeOpenscad.new
+      Tools::OpenscadClient.stub = FakeOpenscad.new
       Storage::ChunkStore.reset!
       if ENV["LIBRARY_BACKEND"] == "s3"
         require_relative "../../support/fake_s3"
@@ -29,7 +29,7 @@ module Tools
     end
     teardown do
       ENV["OPENSCAD_SIDECAR_URL"] = @prior_sidecar_url
-      OpenscadClient.reset!
+      Tools::OpenscadClient.reset!
       FileLayer.reset!
     end
 
@@ -63,7 +63,7 @@ module Tools
       assert_response(Maker::Previews::Stl.available? ? :success : :unprocessable_entity)
       assert_equal({ "cols" => 6, "wall" => 2.5, "rounded" => true, "label" => "hi",
                      "span" => "[10,20,30]", "mode" => 2 },
-                   OpenscadClient.current.rendered[:params])
+                   Tools::OpenscadClient.current.rendered[:params])
     end
 
     test "a value that will not coerce is REFUSED, not handed to OpenSCAD to ignore" do
@@ -80,11 +80,11 @@ module Tools
         [ "span",    "10,,30" ], # a hole in the vector
         [ "mode",    "3" ]      # not one of the declared choices
       ].each do |name, bad|
-        OpenscadClient.stub = FakeOpenscad.new # a fresh recorder per case
+        Tools::OpenscadClient.stub = FakeOpenscad.new # a fresh recorder per case
         post preview_tools_openscad_path, params: { generator: "hex_plate", params: { name => bad } }
         assert_response :unprocessable_entity, "#{name}=#{bad.inspect} should be refused"
         assert_match(/#{name}/, response.body, "the message should name the parameter")
-        assert_nil OpenscadClient.current.rendered, "#{name}=#{bad.inspect} must never reach the sidecar"
+        assert_nil Tools::OpenscadClient.current.rendered, "#{name}=#{bad.inspect} must never reach the sidecar"
       end
     end
 
@@ -92,7 +92,7 @@ module Tools
       post preview_tools_openscad_path, params: { generator: "hex_plate", params: { colz: "9" } }
       assert_response :unprocessable_entity
       assert_match(/colz/, response.body)
-      assert_nil OpenscadClient.current.rendered
+      assert_nil Tools::OpenscadClient.current.rendered
     end
 
     test "a rejected value hands the EDITOR back with the user's own form still in it" do
@@ -140,7 +140,7 @@ module Tools
 
       post preview_tools_openscad_path, params: { node_id: stranger_node, params: { cols: "4" } }
       assert_response :unprocessable_entity
-      assert_nil OpenscadClient.current.rendered, "a foreign node must never reach the render path"
+      assert_nil Tools::OpenscadClient.current.rendered, "a foreign node must never reach the render path"
       # ASSERT THE MECHANISM, NOT JUST THE OUTCOME. FileLayer#read is user-scoped too, so it refuses
       # a foreign node on its own — dropping `current_user` from own_scad_node_id! leaves every
       # assertion above GREEN (verified by mutation), and the test that was meant to pin the guard
@@ -155,7 +155,7 @@ module Tools
         post tools_openscad_path, params: { name: "OS Nope", node_id: stranger_node }
       end
       assert_redirected_to tools_openscad_path
-      assert_nil OpenscadClient.current.rendered, "a foreign node must never reach the render path"
+      assert_nil Tools::OpenscadClient.current.rendered, "a foreign node must never reach the render path"
       # OUR guard's message again, for the same reason as the test above: the redirect alone stays
       # green with `current_user` dropped from own_scad_node_id!, because FileLayer#read refuses a
       # foreign node downstream anyway.
@@ -233,9 +233,9 @@ module Tools
       end
       # True on either branch, and the half that is about THIS addon: the model itself rendered,
       # from the catalog source, as a 3MF, with the coerced value.
-      assert_equal "3mf", OpenscadClient.current.rendered[:format]
-      assert_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
-      assert_equal 6, OpenscadClient.current.rendered[:params]["cols"]
+      assert_equal "3mf", Tools::OpenscadClient.current.rendered[:format]
+      assert_equal FakeOpenscad.new.source("hex_plate"), Tools::OpenscadClient.current.rendered[:scad]
+      assert_equal 6, Tools::OpenscadClient.current.rendered[:params]["cols"]
     end
 
     test "preview of a library file renders the user's OWN bytes, not the catalog's" do
@@ -245,13 +245,13 @@ module Tools
       # ONE RENDER PATH (spec §3.1): both sources resolve to TEXT, and this pins that the BYO branch
       # resolves to the bytes actually in the library — read back through whichever FileLayer
       # backend this leg runs, which is what makes it mean something on share and s3 too.
-      assert_equal SCAD_FIXTURE, OpenscadClient.current.rendered[:scad]
-      refute_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
+      assert_equal SCAD_FIXTURE, Tools::OpenscadClient.current.rendered[:scad]
+      refute_equal FakeOpenscad.new.source("hex_plate"), Tools::OpenscadClient.current.rendered[:scad]
     end
 
     test "a sidecar error is a 422 on preview and an alert on create — never a 500, never a half-save" do
-      OpenscadClient.stub = Class.new(FakeOpenscad) do
-        def render(**) = raise(OpenscadClient::Error, "Parser error: syntax error in line 3")
+      Tools::OpenscadClient.stub = Class.new(FakeOpenscad) do
+        def render(**) = raise(Tools::OpenscadClient::Error, "Parser error: syntax error in line 3")
       end.new
 
       post preview_tools_openscad_path, params: { generator: "hex_plate", params: { cols: "4" } }
@@ -305,7 +305,7 @@ module Tools
 
       # The DB records what was rendered — COERCED, so the design reproduces exactly. This assertion
       # used to read the params FILE; it MOVED to `data` rather than being deleted, because the
-      # coercion it pins (a form String becoming an Integer/Float) is the reason OpenscadParams
+      # coercion it pins (a form String becoming an Integer/Float) is the reason Tools::OpenscadParams
       # exists, and `data` is now the only place it is recorded.
       assert_equal "hex_plate", state.data["generator"]
       assert_equal 6, state.data["params"]["cols"], "cols should be the coerced Integer, not the string"
@@ -407,7 +407,7 @@ module Tools
     # --- graceful degradation --------------------------------------------------------------------
 
     test "the addon greys out on a deployment with no sidecar" do
-      OpenscadClient.reset!                  # no stub…
+      Tools::OpenscadClient.reset!                  # no stub…
       ENV.delete("OPENSCAD_SIDECAR_URL")     # …and no URL: teardown restores both
 
       get tools_path

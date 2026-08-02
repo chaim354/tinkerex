@@ -26,11 +26,11 @@ class TrayTopViewTest < ApplicationSystemTestCase
   ART
 
   setup do
-    BoxesClient.stub = FakeBoxes.new
+    Tools::BoxesClient.stub = FakeBoxes.new
     sign_in_as "topview@example.com"
   end
 
-  teardown { BoxesClient.reset! }
+  teardown { Tools::BoxesClient.reset! }
 
   def summary = find("[data-topview-target='summary']")
 

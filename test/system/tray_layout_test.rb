@@ -20,7 +20,7 @@ class TrayLayoutTest < ApplicationSystemTestCase
   setup do
     @user = User.create!(email: "tray@example.com", password: PASSWORD, confirmed_at: Time.current)
     @boxes = FakeBoxes.new
-    BoxesClient.stub = @boxes
+    Tools::BoxesClient.stub = @boxes
     visit new_user_session_path
     fill_in "user[email]", with: @user.email
     fill_in "user[password]", with: PASSWORD
@@ -31,7 +31,7 @@ class TrayLayoutTest < ApplicationSystemTestCase
     assert_current_path "/files"
   end
 
-  teardown { BoxesClient.reset! }
+  teardown { Tools::BoxesClient.reset! }
 
   test "the layout arrives as editable multi-line art, not a one-line text field" do
     visit new_tools_box_path(generator: "TrayLayout")
@@ -84,7 +84,7 @@ class TrayLayoutTest < ApplicationSystemTestCase
     assert_includes find("textarea[name='params[layout]']").value, "60.0mm"
   end
 
-  # The end of the path the bug lived on: browser control -> real submit -> what BoxesClient hands the
+  # The end of the path the bug lived on: browser control -> real submit -> what Tools::BoxesClient hands the
   # sidecar. Everything upstream of here can look right while the value still arrives flattened.
   test "the layout reaches the client with its lines intact after a real submit" do
     visit new_tools_box_path(generator: "TrayLayout")

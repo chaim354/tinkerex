@@ -2,8 +2,8 @@ require "test_helper"
 
 class BoxesClientTest < ActiveSupport::TestCase
   test "configured? reflects BOXES_SIDECAR_URL" do
-    with_env("BOXES_SIDECAR_URL" => nil) { assert_not BoxesClient.configured? }
-    with_env("BOXES_SIDECAR_URL" => "http://boxes:8000") { assert BoxesClient.configured? }
+    with_env("BOXES_SIDECAR_URL" => nil) { assert_not Tools::BoxesClient.configured? }
+    with_env("BOXES_SIDECAR_URL" => "http://boxes:8000") { assert Tools::BoxesClient.configured? }
   end
 
   private

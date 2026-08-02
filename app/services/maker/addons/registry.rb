@@ -14,7 +14,7 @@ module Maker
         "boxes" => Addon.new(
           key: "boxes", title: "Box Generator", icon: "📦",
           description: "Parametric laser-cut / CNC boxes",
-          available: -> { BoxesClient.configured? }
+          available: -> { Tools::BoxesClient.configured? }
         ),
         "generators" => Addon.new(
           key: "generators", title: "Generators", icon: "✏️",
@@ -24,7 +24,7 @@ module Maker
         "openscad" => Addon.new(
           key: "openscad", title: "OpenSCAD", icon: "🧊",
           description: "Parametric .scad + params → 3MF",
-          available: -> { OpenscadClient.configured? }
+          available: -> { Tools::OpenscadClient.configured? }
         )
       }.freeze
 
