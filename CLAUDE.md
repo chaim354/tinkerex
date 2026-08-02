@@ -587,8 +587,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   filter silently skipped the **worse** case: a sidecar whose author never committed a
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
-- **`Registry` declares each addon with its own `available:` lambda**, so an addon whose
-  backing service is unconfigured greys out rather than 500ing.
+- **`Registry` is a REGISTRATION API, not a list** — an addon calls
+  `Maker::Addons::Registry.register` (the host's three from `config/initializers/addons.rb`, inside
+  **`to_prepare`** because app constants are not autoloadable while initializers run — §14a; moving
+  those calls to initializer top level crashes the boot with `uninitialized constant Maker`, verified
+  by mutation, not assumed). Two things there are load-bearing: `available:` stays a **lambda**, so an
+  addon whose backing service is unconfigured greys out rather than 500ing; and `path:` is a **proc
+  the addon declares**, not a `send("tools_#{key}_path")` naming convention. That convention was the
+  sole reason the two inflector traps in `config/routes.rb` could take **/tools down for every user**
+  — the guard is now generic ("every registered addon's path resolves with no arguments",
+  `test/services/maker/addons/registry_test.rb`) and covers addons in gems this repo has never seen.
+  `Registry.all` sorts by **`[title, key]`** — `sort_by` is not stable, so the key is the tiebreaker;
+  gem load order must never be user-visible. `Registry.entries` is **private**: `Registry` is an SDK
+  surface, so anything public on it becomes contract a gem may depend on.
+- **`Maker::Addons::SDK_VERSION` + `require_sdk!` fail the BOOT**, not the first click, when an addon
+  gem needs a newer host. The six SDK surfaces are enumerated in
+  `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md` §3. **The bump policy is a
+  CONVENTION, not enforcement** — nothing ties a change in one of those six surfaces back to this
+  constant, so a future editor who changes `Tools::LibraryFolders` gets no reminder. Say so rather
+  than implying the contract is mechanical.
 - **Each save writes ONE file — its output.** The `.params.json` beside it is gone: it was
   **write-only** (`Maker::AddonState#data` already recorded the params and every reader went
   there). Params are now served by `Tools::AddonParamsController` — **one** route for all

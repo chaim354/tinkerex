@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-02 (**The Box Generator folds up: collapsible sections, a section index, and a preview that starts itself — branch `claude/boxes-tool-ux-b871bf`**)
+**Updated:** 2026-08-02 (**Addon SDK, step one: a registration API, a version gate, and a GO on the asset spike — branch `claude/tools-addons-separate-repo-d44dc8`**)
 
 ## What this file is
 
@@ -60,7 +60,86 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-02): a top view for the tray generators, drawn in the browser (branch `claude/tray-top-view`)
+## Latest (2026-08-02): the addon SDK, step one — a registration API, a version gate, and a GO on the asset spike (branch `claude/tools-addons-separate-repo-d44dc8`)
+
+Design spec: `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md`. Plan:
+`docs/superpowers/plans/2026-08-02-addon-sdk-host-prep.md`. This is **step 1 of the spec's own
+5-step sequence (§9)** for pulling the three `/tools` addons + both GPL sidecars into their own
+`maker-addons` repo, delivered as a non-isolated Rails engine gem. Everything below lands in
+**this** repo — there is no `maker-addons` repo yet, and nothing here is deployed differently.
+
+**Suite 1891 → 1902 runs, 6612 → 6638 assertions — `1902 runs / 6638 assertions / 0 failures /
+0 errors / 11 skips`, identical on chunk, share and s3** (plus 21 system tests, 128 assertions,
+unchanged). `bin/ci` green end to end.
+
+### What landed
+
+- **The three addon clients moved under `Tools::`** — `BoxesClient`, `OpenscadClient`,
+  `OpenscadParams` were the only top-level constants a gem contributing to the same `Tools::`
+  namespace could collide with. 19 files touched, pure rename, no behaviour change.
+- **`Maker::Addons::Registry` stopped being a frozen hash.** `Registry.register(...)` replaces
+  it; the host's own three addons register from `config/initializers/addons.rb`, inside
+  `to_prepare`. `Registry.all` sorts by `[title, key]`; `Registry.entries` is now private.
+- **Each addon declares its own `path:` proc**, and the gallery renders `addon.path_for(self)`
+  instead of inflecting `send("tools_#{key}_path")`. The OpenSCAD-only inflector guard is
+  replaced by a generic one that resolves every registered addon's path with no arguments —
+  it now covers addons this repo has never seen, not just the three shipped today.
+- **`Maker::Addons::SDK_VERSION` + `require_sdk!`** — a boot-time gate: an addon gem declares
+  the SDK version it needs, and the host raises at boot if it's older, rather than a
+  `NoMethodError` on the first user click (§15's dominant failure shape, closed for this seam
+  before it can happen).
+
+### The asset spike (Task 0) — outcome GO
+
+Before writing a second plan for the actual extraction, one question needed a real answer:
+does a **non-isolated** Rails engine's JS resolve in a real browser here — importmap pins and
+an eager-loaded Stimulus controller, not just a config that parses? A throwaway engine (never
+committed, built and torn down entirely inside the scratchpad) proved **yes**: a bare `pin` of
+an engine-vendored ESM module and a `pin_all_from` over an engine directory (absolute path, not
+Rails-root-relative) both resolved in a Capybara+Chrome system test, and the engine's own
+`config/importmap.rb` ordered ahead of the host's via an initializer with `before: "importmap"`.
+Steps 2–5 of the spec proceed as specced, not the reduced Ruby/ERB-only fallback.
+
+### Three traps found doing this, each worth recording because each would recur
+
+1. **`pin_all_from` expands lazily — a boot-time inspection reports a false NO-GO.** It only
+   records a *directory* in `Importmap::Map#@directories`; the file-by-file expansion into
+   named pins happens inside `to_json`, which dups `@packages` and merges the directories in
+   at render/resolve time. Read `Rails.application.importmap.instance_variable_get(:@packages)`
+   right after boot and it shows **zero** `controllers/*` entries — true of the host's own
+   long-standing pins too, not just the spike's. Only a render or a real browser proves
+   importmap wiring; a config inspection cannot.
+2. **`assert_select`'s three-argument form silently eats the message as a content match.**
+   `assert_select "sel[attr=?]", value, "a message"` shifts one value off for the `?`
+   substitution, then shifts the *next* remaining value as the equality comparator — so a bare
+   trailing string is read as a required text-content match, not a failure message. A test
+   written that way fails against correct markup (or passes for the wrong reason). The fix is
+   an explicit `nil` (or a real comparator hash) in that slot. Confirmed against the
+   `rails-dom-testing` source and reproduced live. One prior instance already had it right
+   (`test/integration/web/content_security_policy_test.rb:82`); the rest of the repo did not
+   have this shape.
+3. **A gallery test that loops over `available?` addons exercises ONE addon in the test env,
+   and forcing all three available still doesn't make it pin the fix.** `boxes` and `openscad`
+   gate on `*_SIDECAR_URL`, which nothing sets by default — so the loop's body ran once. Even
+   with all three forced available, all three real keys (`boxes`, `generators`, `openscad`)
+   happen to inflect cleanly to their own route helper, which is exactly why the old
+   `send("tools_#{key}_path")` mechanism worked fine for them for as long as it did. Reverting
+   the view to that old mechanism leaves the all-addons loop green. The test that actually pins
+   the fix registers a deliberately non-inflecting key (`"weird.key"`) and asserts its link
+   renders; the all-addons loop is left as an end-to-end smoke check, and its comment now says
+   only that (`test/controllers/tools/home_controller_test.rb`).
+
+### Left open by this arc
+
+Steps 2–5 of the spec: create the `maker-addons` repo, then move `generators`, then `openscad`,
+then `boxes`, then the two sidecars plus their Kamal deploy and the three-way guard split
+(spec §7). Those get their own plan, written fresh rather than padded onto this one — the same
+reasoning Task 0 was sequenced first for: don't plan the move in detail until the asset question
+has an answer.
+
+---
+
+## 2026-08-02: a top view for the tray generators, drawn in the browser (branch `claude/tray-top-view`)
 
 **1891 runs / 6612 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
 s3 — plus 21 system tests.** Five new system tests, **all six guards mutation-checked**.

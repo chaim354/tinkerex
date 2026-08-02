@@ -10,6 +10,39 @@
 
 ---
 
+## Corrections found during execution
+
+Recorded here, not silently fixed in place, so a future re-derivation from this plan doesn't
+reproduce the same three defects. All three were found by running the plan, not by reading it.
+
+1. **Task 1 Step 4's `sed -i '' -E` command does not work on macOS.** BSD sed's extended regex
+   has no `\b`; the command exits 0 and reports success while changing nothing. Reproduced live
+   on the build Mac. Use `perl -pi -e 's/(^|[^:\w])(BoxesClient|OpenscadClient|OpenscadParams)\b/\1Tools::\2/g'`
+   instead — `\w`/`\b` are supported in Perl regex, and `(^|[^:\w])` still guards against
+   double-prefixing an already-qualified `Tools::BoxesClient`. Caught only because the
+   implementer diffed the files rather than trusting the exit code.
+2. **Task 4 Step 1's `assert_select` three-argument form is wrong.** As written,
+   `assert_select "a.addon-card[href=?]", addon.path_for(helpers), "no gallery link for #{addon.key}"`
+   consumes the message string as the equality comparator (`assert_select` shifts one value per
+   `?` for substitution, then shifts the next remaining value as the comparator) — so it
+   silently asserts the card's text content equals that message, not that a matching link
+   exists. Needs an explicit `nil` in the comparator slot before the message:
+   `assert_select "a.addon-card[href=?]", addon.path_for(helpers), nil, "no gallery link for #{addon.key}"`.
+3. **Task 4's "renders a working link for every available addon" test does not pin the fix, and
+   cannot be made to.** It loops over `Registry.all.select(&:available?)`; in the test env that
+   is one addon (`generators`) unless the sidecar env vars are forced, and even with all three
+   forced available, all three real keys inflect cleanly to their own route helper — so the old
+   `send("tools_#{key}_path")` code and the new `path_for` code produce identical output for
+   every addon this repo ships. Only a test with a deliberately non-inflecting key (`"weird.key"`)
+   pins the change; the all-addons loop is an end-to-end smoke test and should be labeled as one,
+   not as a regression guard.
+
+Also, **Task 2 Step 4's expected output is wrong**: it reads `3 runs, 4 assertions, 0 failures,
+0 errors, 0 skips`. The true count, reproduced by running the test, is **`3 runs, 5 assertions,
+0 failures, 0 errors, 0 skips`**.
+
+---
+
 ## Scope
 
 This plan covers **steps 0 and 1** of `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md` §9 only.
