@@ -588,24 +588,26 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
 - **`Registry` is a REGISTRATION API, not a list** — an addon calls
-  `Maker::Addons::Registry.register` (the host's three from `config/initializers/addons.rb`, inside
-  **`to_prepare`** because app constants are not autoloadable while initializers run — §14a; moving
-  those calls to initializer top level crashes the boot with `uninitialized constant Maker`, verified
-  by mutation, not assumed). Two things there are load-bearing: `available:` stays a **lambda**, so an
-  addon whose backing service is unconfigured greys out rather than 500ing; and `path:` is a **proc
-  the addon declares**, not a `send("tools_#{key}_path")` naming convention. That convention was the
-  sole reason the two inflector traps in `config/routes.rb` could take **/tools down for every user**
-  — the guard is now generic ("every registered addon's path resolves with no arguments",
-  `test/services/maker/addons/registry_test.rb`) and covers addons in gems this repo has never seen.
-  `Registry.all` sorts by **`[title, key]`** — `sort_by` is not stable, so the key is the tiebreaker;
-  gem load order must never be user-visible. `Registry.entries` is **private**: `Registry` is an SDK
-  surface, so anything public on it becomes contract a gem may depend on.
-- **`Maker::Addons::SDK_VERSION` + `require_sdk!` fail the BOOT**, not the first click, when an addon
-  gem needs a newer host. The six SDK surfaces are enumerated in
-  `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md` §3. **The bump policy is a
-  CONVENTION, not enforcement** — nothing ties a change in one of those six surfaces back to this
-  constant, so a future editor who changes `Tools::LibraryFolders` gets no reminder. Say so rather
-  than implying the contract is mechanical.
+  `Maker::Addons::Registry.register` (the host's three from
+  `config/initializers/addons.rb`, inside **`to_prepare`** because app constants are not
+  autoloadable while initializers run — §14a; moving those calls to initializer top level
+  crashes the boot with `uninitialized constant Maker`, verified by mutation, not
+  assumed). Two things there are load-bearing: `available:` stays a **lambda**, so an
+  addon whose backing service is unconfigured greys out rather than 500ing; and `path:` is
+  a **proc the addon declares**, not a `send("tools_#{key}_path")` naming convention. That
+  convention was the sole reason the two inflector traps in `config/routes.rb` could take
+  **/tools down for every user** — the guard is now generic ("every registered addon's
+  path resolves with no arguments", `test/services/maker/addons/registry_test.rb`) and
+  covers addons in gems this repo has never seen. `Registry.all` sorts by
+  **`[title, key]`** — `sort_by` is not stable, so the key is the tiebreaker; gem load
+  order must never be user-visible. `Registry.entries` is **private**: `Registry` is an
+  SDK surface, so anything public on it becomes contract a gem may depend on.
+- **`Maker::Addons::SDK_VERSION` + `require_sdk!` fail the BOOT**, not the first click,
+  when an addon gem needs a newer host. The six SDK surfaces are enumerated in
+  `docs/superpowers/specs/2026-08-02-tools-addons-separate-repo-design.md` §3. **The bump
+  policy is a CONVENTION, not enforcement** — nothing ties a change in one of those six
+  surfaces back to this constant, so a future editor who changes `Tools::LibraryFolders`
+  gets no reminder. Say so rather than implying the contract is mechanical.
 - **Each save writes ONE file — its output.** The `.params.json` beside it is gone: it was
   **write-only** (`Maker::AddonState#data` already recorded the params and every reader went
   there). Params are now served by `Tools::AddonParamsController` — **one** route for all
@@ -707,6 +709,14 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **The suite being green is not evidence a guard works** if the guard's precondition is
   never established in test (see the `STORAGE_BACKEND` 500 in §14a, and the form `scope:` bug
   in §14d). Drive the real request.
+- **`assert_select "sel[attr=?]", value, "message"` SILENTLY EATS THE MESSAGE.**
+  rails-dom-testing shifts one value per `?` for substitution, then shifts **the next**
+  value as the *equality comparator* — so a bare trailing string becomes a required
+  TEXT-CONTENT match, and the assertion fails against correct markup (or passes for the
+  wrong reason). Pass an explicit `nil`, or a real comparator hash, in the third slot. A
+  repo sweep found one prior instance already working around it silently
+  (`content_security_policy_test.rb`, which passes `{ count: 1 }`). Story: STATUS.md
+  2026-08-02.
 - **A SOLID STORE IS NOT WIRED UNTIL `config.<x>_store` SAYS SO.** Solid Cache shipped with its
   gem, `config/cache.yml`, a `cache` role in `database.yml`, `db/cache_schema.rb` and a
   persistent volume — and `config.cache_store` left at the Rails scaffold comment, so production
@@ -727,7 +737,12 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   an empty `'nonce-'` (`session.id` is nil before a session exists, so anonymous pages made
   Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
   the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
-  `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
+  `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`). The same
+  lesson, a second instance (STATUS.md 2026-08-02): **`pin_all_from` records only a
+  DIRECTORY at draw time** and expands to named pins lazily inside `to_json`, so
+  inspecting `importmap`'s `@packages` after boot shows **zero** `controllers/*` entries —
+  including for the host's own long-standing pins. A config-inspection check reports a
+  false negative; only a render or a browser proves importmap wiring.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.
