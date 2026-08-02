@@ -134,9 +134,10 @@ ever advertised; the schema was right and the argv was wrong.
   redirecting the process's stderr (which swaps a global and would interleave on threaded workers),
   which also drops the usage dump and the program name — a gunicorn path — from the response.
 
-**184 of 185 generators now render a complete, non-empty SVG from their own advertised defaults**
-(the 185th is TrayLayoutFile, deliberately not offered); the same holds when every field is posted
-the way the form posts it, blanks included.
+**All 181 offered generators render a complete, non-empty SVG from their own advertised defaults**
+— 185 exist, and the four upstream marks `webinterface = False` are not offered; the same holds
+when every field is posted the way the form posts it, blanks included. **Confirmed against the
+deployed sidecar** (see below), not only locally.
 
 ### Left open by this arc
 
@@ -145,9 +146,22 @@ the way the form posts it, blanks included.
   runs them by hand. That is the "a guard that never runs is not a guard" shape this repo keeps
   recording; wiring it means Python plus a git install of boxes.py on the one registered (macOS)
   runner, which is a CI-infrastructure change and was not made here.
-- **Not deployed and not browser-verified.** The fix is in the GPL sidecar image, so it needs
-  `sidecar/boxes` rebuilt and pushed and the Unraid accessory redeployed before any of this reaches a
-  user. Everything above was verified against the pinned boxes.py through the Flask test client.
+- **DEPLOYED to Unraid 2026-08-02, from the UNMERGED branch.** `bin/build-boxes-sidecar` pushed
+  `ghcr.io/chaim354/boxes-sidecar:latest` at `sha256:1a095650` (was `sha256:1f9d9eec`) and
+  `kamal accessory reboot boxes` rolled the single shared accessory on 192.168.1.95 — one accessory
+  serves all three app legs, so there is no per-backend sidecar deploy. **The tag is mutable
+  `:latest` and PR #112 is still open**, so the box is running sidecar code that is NOT on main;
+  rebuilding from main would silently revert it. Verified on the box, before → after: CompartmentBox
+  422 → 200, TypeTray 422 → 200, the advertised list 185 → 181 with all four `webinterface = False`
+  generators gone, and the 422 body `{"error":"invalid parameters"}` →
+  `{"error":"argument --x: invalid float value: 'not-a-number'"}`. A full sweep run from inside an
+  app container against the live sidecar renders **181/181**.
+- **Still not browser-verified.** Everything above is API-level; nobody has driven `/tools/boxes` in
+  a browser against the new sidecar.
+- **A number in this entry was wrong before it was corrected.** It read "184 of 185 generators now
+  render", written while only TrayLayoutFile was hidden and never updated when the rule moved to
+  upstream's `webinterface` flag (four hidden). Recorded because the count is exactly the kind of
+  claim that gets copied forward unchecked.
 
 ---
 
