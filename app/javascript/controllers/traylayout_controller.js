@@ -1,4 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
+import { sections, buildArt } from "lib/tray_layout"
 
 // Keeps a TrayLayout's `layout` ASCII art in sync with its sx/sy compartment sizes — the same job
 // boxes.py's own web UI does in static/self.js (TrayLayoutInit).
@@ -51,40 +52,10 @@ export default class extends Controller {
     this.layout.rows = Math.min(24, art.split("\n").length + 1)
   }
 
-  // Mirrors TrayLayoutFile.__str__ byte-for-byte (walls and floors all present), so what the browser
-  // writes is what the sidecar would have seeded. Every wall is on; the user removes them by hand,
-  // replacing "-"/"|" with a space, or a floor with an "x".
+  // Every wall is on; the user removes them by hand, replacing "-"/"|" with a space, or a floor with
+  // an "x". `buildArt` and `sections` live in lib/tray_layout because the top view reads the same
+  // grammar this writes — one definition, so the writer and the reader cannot disagree.
   build() {
-    const sx = this.sections(this.sx.value)
-    const sy = this.sections(this.sy.value)
-    if (!sx || !sy) return null
-
-    let art = sx.map((v, i) => `${" |".repeat(i)} ,> ${v.toFixed(1)}mm\n`).join("")
-    for (const v of sy) {
-      art += `${"+-".repeat(sx.length)}+\n`
-      art += `${"| ".repeat(sx.length)}| ${v.toFixed(1)}mm\n`
-    }
-    return `${art + "+-".repeat(sx.length)}+\n`
-  }
-
-  // Port of boxes.py's argparseSections: "50*3" -> three 50s, "100/4" -> four 25s, "30:40" -> 30,40.
-  // Deliberately stricter than the Python original, which accepts anything float() does — returning
-  // null on anything unfamiliar (or half-typed) just means the art is left alone, and the server
-  // still parses whatever the user actually typed.
-  sections(s) {
-    const out = []
-    for (const part of s.split(/[\s:]/)) {
-      const repeat = part.match(/^(\d+(?:\.\d+)?)([*/])(\d+)$/)
-      if (repeat) {
-        const n = Number(repeat[3])
-        if (!n || n > 100) return null // 100 compartments is already far past a usable tray
-        out.push(...Array(n).fill(repeat[2] === "/" ? Number(repeat[1]) / n : Number(repeat[1])))
-      } else if (/^\d+(?:\.\d+)?$/.test(part)) {
-        out.push(Number(part))
-      } else {
-        return null
-      }
-    }
-    return out.length && out.every((v) => v > 0) ? out : null
+    return buildArt(sections(this.sx.value), sections(this.sy.value))
   }
 }

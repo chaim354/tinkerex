@@ -8,10 +8,11 @@
   <%= link_to "Back", tools_boxes_path, class: "btn ghost" %>
 </div>
 
-<div class="box-editor" data-controller="boxpreview boxsections"
+<div class="box-editor" data-controller="boxpreview boxsections topview"
      data-boxpreview-url-value="<%= preview_tools_boxes_path %>">
   <%= form_with url: tools_boxes_path, method: :post,
-                data: { boxpreview_target: "form", controller: "traylayout" } do %>
+                data: { boxpreview_target: "form", topview_target: "form",
+                        controller: "traylayout" } do %>
     <input type="hidden" name="generator" value="<%= @generator.key %>">
 
     <%# Name, destination and both buttons ride at the top and stay there: on a generator with sixty
@@ -38,6 +39,19 @@
     <div class="preview box-preview">
       <img data-boxpreview-target="image" alt="Box preview" class="preview-image">
       <p class="box-preview-status" data-boxpreview-target="status" role="status" aria-live="polite" hidden></p>
+    </div>
+
+    <%# A plan of the compartments, drawn in the browser from sx/sy or the layout art. Ships HIDDEN
+        and is either revealed or removed by the controller, because whether this generator has any
+        compartments at all is a question about its params, not about the page. %>
+    <div class="box-topview" data-topview-target="panel" hidden>
+      <h3>
+        Top view
+        <span class="box-topview-summary muted" data-topview-target="summary"
+              role="status" aria-live="polite"></span>
+      </h3>
+      <div class="box-topview-canvas" data-topview-target="canvas"></div>
+      <p class="box-topview-hint muted">Compartments only — joinery is on the cut sheet above.</p>
     </div>
 
     <% if @prior.any? %>
