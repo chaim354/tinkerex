@@ -112,6 +112,36 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
   code lands from it"). Note: it parallels `client/fs-fuse`, not `fs-cfapi` (full mount, not
   placeholders).
 
+## 8. Addons delivered as a Rails engine gem — ABANDONED after the host-side prep was built
+
+- **Considered:** extract the three `/tools` addons + both GPL sidecars into a `maker-addons`
+  repo, delivered back to the host as a **non-isolated Rails engine gem** that registers its
+  addons from its own engine. Host keeps a six-surface SDK (`LibraryOutput`, `BaseController`,
+  `LibraryFolders`, the current-project hooks, `AddonState`, `Registry.register`).
+- **Why rejected:** it cannot deliver **independent deploy of an addon's UI**, which turned out to
+  be the goal that mattered. An engine gem lives *inside the Rails image*, so changing a Box
+  Generator view still means a gem bump and a full Rails redeploy. The original design scored this
+  🟡 and said so plainly; the pivot came when independent deploy was named as the actual
+  requirement rather than a nice-to-have. Two further costs made it worse: engine assets through
+  importmap/propshaft needed a spike to de-risk, and the addon's tests would have lived in a
+  different repo from the code they prove, because an engine dummy app would have had to
+  reimplement the server (users, auth, `nodes`, a configured `FileLayer`) to test a form.
+- **What was actually built, then abandoned:** `Tools::` namespacing of the three addon clients,
+  `Maker::Addons::SDK_VERSION` + `require_sdk!` (a boot-time gem/host skew gate),
+  `Registry.register` with per-addon `path:` procs, and the gallery rendering `addon.path_for`.
+  **PR #115** — green on all gates, deliberately left **open and unmerged** as reference. Its spec
+  and plan are on branch `claude/tools-addons-separate-repo-d44dc8`.
+- **What survived the pivot:** almost none of the above. The `path:` procs in particular solved
+  per-addon route-helper variation, which the current approach removes entirely by collapsing to
+  one generic route. Two *unrelated* findings from that work were worth keeping and are now §14e
+  invariants: the `assert_select` message-vs-comparator footgun, and `pin_all_from`'s lazy
+  expansion making importmap wiring unverifiable by config inspection.
+- **Current approach:** addons as **runtime-loaded manifest + plain-ESM bundles**, served by a
+  permissive static container and proxied same-origin by one generic `Tools::AddonsController` —
+  `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`. Republishing a bundle *is*
+  the deploy. Same-origin proxying is **forced** by the sidecars being internal-only (no `port:`)
+  plus `script_src :self`, and it happens to remove the need for any addon token or write-back API.
+
 ---
 
 ## Active decisions (do NOT confuse with the above — these are CURRENT, not abandoned)
