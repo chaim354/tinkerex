@@ -59,7 +59,7 @@ simple enough to compute in JS (no sidecar):
 ## Server add-ons (grouped by engine)
 
 ### Engine ① — OpenSCAD sidecar (GPL-isolated) · `.scad` + params → 3MF ✅ **BUILT** (2026-07-27)
-Shipped as the `/tools/openscad` addon: `sidecar/openscad` + `OpenscadClient`, bundled permissive
+Shipped as the `/tools/openscad` addon: `sidecar/openscad` + `Tools::OpenscadClient`, bundled permissive
 catalog **and** bring-your-own `.scad` from the library, content-addressed render cache, 3MF output
 with a grid thumbnail. Spec: `docs/superpowers/specs/2026-07-27-openscad-sidecar-addon-design.md`.
 **Multiboard is NOT and will not be in the bundled catalog** — its generated models are CC

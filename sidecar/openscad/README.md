@@ -1,7 +1,7 @@
 # openscad-sidecar
 
 A small, **GPL-2.0** service that wraps the OpenSCAD binary and exposes a JSON API the Tinkerex
-app's `OpenscadClient` speaks:
+app's `Tools::OpenscadClient` speaks:
 
 - `GET /generators` — the bundled catalog + each generator's derived Customizer schema.
 - `GET /source/<key>` — the raw `.scad` for a bundled generator.

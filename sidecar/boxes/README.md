@@ -1,7 +1,7 @@
 # boxes-sidecar
 
 A small, **GPL-3.0** service that wraps a (forkable) [boxes.py](https://github.com/florianfesti/boxes)
-install and exposes a JSON API the Tinkerex app's `BoxesClient` speaks:
+install and exposes a JSON API the Tinkerex app's `Tools::BoxesClient` speaks:
 
 - `GET /generators` — every generator + its typed parameter schema.
 - `POST /generate` `{generator, params}` — render a generator to **SVG** bytes.

@@ -407,7 +407,7 @@ module Tools
     # --- graceful degradation --------------------------------------------------------------------
 
     test "the addon greys out on a deployment with no sidecar" do
-      Tools::OpenscadClient.reset!                  # no stub…
+      Tools::OpenscadClient.reset!           # no stub…
       ENV.delete("OPENSCAD_SIDECAR_URL")     # …and no URL: teardown restores both
 
       get tools_path
