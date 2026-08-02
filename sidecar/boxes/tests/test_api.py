@@ -1,3 +1,6 @@
+import re
+
+import app as appmod
 from app import app
 
 
@@ -99,6 +102,143 @@ def test_seeding_does_not_break_a_generator_that_falls_back_on_an_empty_layout()
     # must not take that path away, or a user who clears the box gets an error instead of a default.
     r = client().post("/generate", json={"generator": "GridfinityTrayLayout", "params": {"layout": ""}})
     assert r.status_code == 200 and r.mimetype == "image/svg+xml"
+
+
+def test_every_generator_renders_with_its_own_advertised_defaults():
+    """Hand /generators' own answer straight back to /generate and require SVG from every one.
+
+    THE FAILURE THIS EXISTS FOR: three generators 422'd for every user, forever, because the argv we
+    built did not match the argparser we built the schema FROM. A per-generator test would never have
+    found it — the broken ones were CompartmentBox, TypeTray and TrayLayoutFile, none of which anyone
+    would have thought to single out. The only honest check is all of them.
+    """
+    c = client()
+    gens = c.get("/generators").get_json()
+    assert len(gens) > 150, "the whole point is breadth; a truncated list makes this vacuous"
+    broken = []
+    for g in gens:
+        params = {p["name"]: p["default"] for grp in g["param_groups"] for p in grp["params"]
+                  if p["default"] is not None}
+        r = c.post("/generate", json={"generator": g["key"], "params": params})
+        body = r.data
+        # A COMPLETE drawing, not merely a 200. Checking status+mimetype alone passed `Edges`, which
+        # answered 200 image/svg+xml with a ZERO-BYTE body (its render() only prints to stdout) —
+        # which would have put an empty .svg in the user's library on save.
+        if not (r.status_code == 200 and r.mimetype == "image/svg+xml" and len(body) > 500
+                and (body[:5] == b"<?xml" or b"<svg" in body[:600]) and b"</svg>" in body[-400:]):
+            broken.append((g["key"], r.status_code, len(body), str(r.get_json())[:120]))
+    assert not broken, f"{len(broken)} generator(s) cannot render their own defaults: {broken}"
+
+
+def test_a_param_whose_dest_differs_from_its_flag_reaches_the_generator():
+    """FlexBox3 declares `--c` with dest `d`. Building the flag as "--" + dest sent `--d`, which
+    argparse ABBREVIATION-matched to the only `--d*` option it has — `--debug` — so the user's value
+    was swallowed by a plumbing flag and the box rendered at the default.
+
+    This one returned 200 the whole time. It is the reason the fix is "use the option string argparse
+    registered", not "special-case the two generators that 422'd".
+    """
+    c = client()
+    a = c.post("/generate", json={"generator": "FlexBox3", "params": {"d": 1.0}})
+    b = c.post("/generate", json={"generator": "FlexBox3", "params": {"d": 6.0}})
+    assert a.status_code == 200 and b.status_code == 200, (a.get_json(), b.get_json())
+
+    # COMPARE THE DRAWING, NOT THE PAYLOAD. boxes.py records the argv it was handed into the SVG
+    # (`<dc:source>boxes FlexBox3 --format svg --d 6.0` and a "Command line:" comment), so the raw
+    # bytes differ even when the value changed nothing at all. Asserting `a.data != b.data` PASSES
+    # against the bug — verified: with --d swallowed by --debug the two renders were byte-identical
+    # in length (45429) and differed on exactly those two metadata lines.
+    geometry = lambda svg: re.sub(rb"boxes FlexBox3[^<\n]*", b"", svg)  # noqa: E731
+    assert geometry(a.data) != geometry(b.data), (
+        "d=1 and d=6 drew the same box -> the value never reached the generator"
+    )
+
+
+def test_argv_emits_the_option_string_argparse_registered_not_the_dest():
+    """The wire format, asserted directly — the round-trip above can only see a value that CHANGES
+    the drawing, and 'silently sent the wrong flag' is precisely the bug that hides from that.
+
+    boxes.py declares these five params with a dest that is not its option string; every other param
+    across the 185 generators has dest == flag, which is why "--" + dest looked right.
+    """
+    cases = {
+        "FlexBox3": {"d": "--c"},
+        "CompartmentBox": {"margin_vertical": "--margin_t", "margin_side": "--margin_s"},
+        "TypeTray": {"gh": "--gripheight", "gw": "--gripwidth"},
+    }
+    for generator, expected in cases.items():
+        box = appmod._all_generators()[generator]()
+        argv = appmod._argv(box, {dest: 1 for dest in expected})
+        for dest, flag in expected.items():
+            assert flag in argv, f"{generator}.{dest} should be sent as {flag}; got {argv}"
+            assert f"--{dest}" not in argv, f"{generator} still sends --{dest}; got {argv}"
+
+
+def test_format_svg_is_only_sent_to_a_parser_that_has_it():
+    """`--format svg` was prepended unconditionally. TrayLayoutFile is the one generator whose parser
+    is just [-h] [--sx] [--sy] [--output], so it 422'd on an argument the sidecar itself added."""
+    box = appmod._all_generators()["TrayLayoutFile"]()
+    assert "--format" not in appmod._argv(box, {"sx": "50*3"})
+    assert "--format" in appmod._argv(appmod._all_generators()["ABox"](), {"x": 60})
+
+
+def test_file_params_are_not_advertised_as_form_fields():
+    """A FileType param names a path on the SIDECAR's filesystem, which a browser client can never
+    put a file at. Rendering it as a text input gives the user a field that cannot work and hands
+    them a server-side open() primitive. Mirror the RULE (drop FileType) rather than naming the param,
+    the same way `_multiline` mirrors boxes.py's textarea rule.
+
+    In this pinned boxes.py the one instance is upstream-broken anyway: typetray.py:119 declares
+    `type=argparse.FileType('r')` (argparse hands the generator an open file) and :247 does
+    `Path(self.label_file).open()` (which needs a path), so ANY non-empty value raises TypeError and
+    the empty default makes argparse try to open ''.
+    """
+    assert "label_file" not in _params("TypeTray")
+
+
+def test_generators_upstream_marks_as_not_for_a_web_ui_are_not_offered():
+    """boxes.py sets `webinterface = False` on the generators its OWN web UI excludes. Mirror that
+    rule rather than keeping a list of names, exactly as `_multiline` mirrors its textarea rule — a
+    boxes.py bump then can't silently outgrow us, which is the drift that caused this whole bug.
+
+    All four are wrong here for reasons independently confirmed:
+      * Edges          — render() only prints to stdout; answered 200 with a ZERO-BYTE body.
+      * TrayLayoutFile — emits an ASCII layout ('+-+-+-+'), not SVG; its parser has no --format at
+        all. It is step 1 of the two-step CLI flow, and this sidecar already runs it INTERNALLY to
+        seed TrayLayout's textarea, so a user gains nothing from it.
+      * JigsawPuzzle   — upstream's own docstring says "Still alpha".
+      * Lamp           — no docstring (the tile would be titled from the bare key), 484 KB render.
+
+    Hidden at the API boundary ONLY: `_all_generators()` still returns them, which is what the
+    seeding depends on — `test_blank_layout_default_is_seeded...` is what proves that still works.
+    """
+    c = client()
+    offered = {g["key"] for g in c.get("/generators").get_json()}
+    for key in ("Edges", "TrayLayoutFile", "JigsawPuzzle", "Lamp"):
+        assert key not in offered, f"{key} is marked webinterface=False upstream"
+        assert c.post("/generate", json={"generator": key, "params": {}}).status_code == 404, key
+    assert "ABox" in offered, "the rule must not hide ordinary generators"
+
+
+def test_invalid_parameters_422_names_the_offending_parameter():
+    """`except SystemExit` used to collapse every argparse failure into "invalid parameters",
+    discarding the one line that says which param and why. Rails passes the sidecar's message
+    straight to the UI, so that discarded line is the difference between a diagnosable error and a
+    shrug. The usage dump and the program name (a gunicorn path) stay out of it.
+    """
+    r = client().post("/generate", json={"generator": "ABox", "params": {"x": "not-a-number"}})
+    assert r.status_code == 422
+    msg = r.get_json()["error"]
+    assert "x" in msg and "not-a-number" in msg, msg
+    assert "usage:" not in msg, f"the usage dump is noise, not a message: {msg}"
+
+
+def test_an_unknown_parameter_is_refused_by_name():
+    """Silently dropping a param the parser does not have is how a boxes.py upgrade would quietly
+    change everyone's saved boxes. Refuse it, and say which one."""
+    r = client().post("/generate", json={"generator": "ABox", "params": {"nonesuch": 1}})
+    assert r.status_code == 422
+    assert "nonesuch" in r.get_json()["error"]
 
 
 def test_sample_serves_a_thumbnail_and_guards_the_name(tmp_path):
