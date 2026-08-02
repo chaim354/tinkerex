@@ -40,6 +40,50 @@ module Tools
       assert_select "input.box-search"
     end
 
+    test "every index section is a collapsible details the table of contents can link to" do
+      get tools_boxes_path
+      assert_response :success
+      # The folding is markup, not script: a <details> per section, so the page collapses with JS off.
+      assert_select "details.box-group[id='box-section-box'] > summary .box-group-title", text: "Box"
+      assert_select "details.box-group[id='box-section-tray'] > summary .box-group-title", text: "Tray"
+      # …and every TOC entry points at a section id that EXISTS. A href naming a missing id is a dead
+      # link that still looks fine in the markup, which is precisely what a count-only assertion misses.
+      links = css_select("nav.box-toc a[data-boxsections-target='link']").map { |a| a["href"] }
+      assert_equal %w[#box-section-box #box-section-tray], links.sort
+      ids = css_select("details.box-group").map { |d| d["id"] }
+      links.each { |href| assert_includes ids, href.delete_prefix("#"), "TOC links to a section that isn't on the page" }
+    end
+
+    test "the saved rail groups boxes by section then by box type, both folded shut" do
+      @user.maker_addon_states.create!(addon_key: "boxes", name: "Deep Box",
+                                       data: { "generator" => "ABox", "params" => {} })
+      @user.maker_addon_states.create!(addon_key: "boxes", name: "Parts Tray",
+                                       data: { "generator" => "TypeTray", "params" => {} })
+
+      get tools_boxes_path
+      assert_response :success
+      section = css_select("aside.box-saved-rail details.box-saved-section#saved-section-box").first
+      assert section, "expected a Box section in the saved rail"
+      assert_nil section["open"], "the saved rail's sections must start collapsed"
+      type = css_select("aside.box-saved-rail details.box-saved-type#saved-type-box-abox").first
+      assert type, "expected the ABox type to nest inside the Box section"
+      assert_nil type["open"], "the saved rail's box types must start collapsed"
+      # nesting is the point — the type sits INSIDE its section, not beside it
+      assert_select "details.box-saved-section#saved-section-box details.box-saved-type .box-saved-link",
+                    text: "Deep Box"
+      assert_select "details.box-saved-section#saved-section-tray .box-saved-link", text: "Parts Tray"
+    end
+
+    # A saved box outlives the sidecar's generator list (a fork bump can drop a generator). Its file is
+    # still in the user's library, so the rail must still show it — filed under "Other", not dropped.
+    test "a saved box whose generator the sidecar no longer offers still appears, under Other" do
+      @user.maker_addon_states.create!(addon_key: "boxes", name: "Ghost Box",
+                                       data: { "generator" => "RetiredBox", "params" => {} })
+      get tools_boxes_path
+      assert_response :success
+      assert_select "details.box-saved-section#saved-section-other .box-saved-link", text: "Ghost Box"
+    end
+
     test "index tiles show the generator's sample photo via the internal proxy (JS fallback on 404)" do
       get tools_boxes_path
       assert_response :success
@@ -58,15 +102,25 @@ module Tools
       assert_response :not_found
     end
 
-    test "the param form groups fields: open sections for basics, collapsed details for advanced" do
+    test "EVERY param group folds: basics open, advanced closed, all of them collapsible" do
       get new_tools_box_path(generator: "ABox")
       assert_response :success
-      # a basic group -> open <fieldset> with a <legend>, fields directly usable
-      assert_select "fieldset.param-group > legend", text: "ABox Settings"
-      assert_select "fieldset.param-group input[name=?]", "params[x]"
-      # an advanced group -> collapsed <details>; its fields are still in the DOM (so still submitted)
-      assert_select "details.param-group-adv > summary", text: "Settings for Finger Joints"
+      basic = css_select("details.param-group#param-group-abox-settings").first
+      assert basic, "a basic group must be a <details> too, so it can be folded away once it's set"
+      assert_not_nil basic["open"], "a basic group starts open"
+      assert_select "details.param-group#param-group-abox-settings > summary .param-group-title",
+                    text: "ABox Settings"
+      assert_select "details.param-group input[name=?]", "params[x]"
+
+      advanced = css_select("details.param-group-adv#param-group-settings-for-finger-joints").first
+      assert advanced, "an advanced group keeps its own boxed-off look"
+      assert_nil advanced["open"], "an advanced group starts collapsed"
+      assert_select "details.param-group-adv > summary .param-group-title", text: "Settings for Finger Joints"
+      # Collapsed or not, the fields stay in the DOM — that is what keeps them submitted.
       assert_select "details.param-group-adv select[name=?]", "params[FingerJoint_style]"
+
+      # …and the collapse-all control drives the same controller the sections are targets of.
+      assert_select ".box-editor[data-controller~='boxsections'] button[data-action='boxsections#toggleAll']"
     end
 
     test "new headings the generator's short name (key) with its title as a description" do
@@ -134,6 +188,31 @@ module Tools
       assert_response :success
       assert_select ".box-editor > form .box-params input[name=?]", "params[x]"
       assert_select ".box-editor > aside.box-side .box-preview img[data-boxpreview-target='image']"
+    end
+
+    test "Preview and Save ride ABOVE the params, not below sixty fields of them" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      assert_select ".box-actions button[data-action='boxpreview#preview']"
+      assert_select ".box-actions button[type=submit]", text: "Save to library"
+      # DOM ORDER is the whole claim, and it is the half a plain "the button exists" assertion can't
+      # see: both buttons existed before this change, parked under the form.
+      kids = css_select(".box-editor > form").first.element_children.map { |e| e["class"].to_s }
+      actions = kids.index { |c| c.include?("box-actions") }
+      first_group = kids.index { |c| c.include?("param-group") }
+      assert actions && first_group, "expected an actions block and at least one param group"
+      assert_operator actions, :<, first_group, "the actions block must precede the param groups"
+    end
+
+    test "the preview panel renders the defaults on load and has somewhere to report a failure" do
+      get new_tools_box_path(generator: "ABox")
+      assert_response :success
+      # No `data-action` wires the first render: the controller fires it on connect, which is what
+      # makes an untouched generator show its default box instead of an empty panel.
+      assert_select ".box-editor[data-controller~='boxpreview'][data-boxpreview-url-value=?]",
+                    preview_tools_boxes_path
+      assert_select "form[data-boxpreview-target='form']"
+      assert_select ".box-preview [data-boxpreview-target='status'][aria-live='polite']"
     end
 
     test "preview returns a rasterized PNG of the generated SVG" do

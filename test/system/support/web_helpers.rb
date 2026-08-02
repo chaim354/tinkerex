@@ -51,8 +51,14 @@ module WebHelpers
   # real uncaught error in the page: logs.get(:browser) returned one entry, level "SEVERE", message
   # "Uncaught ReferenceError: nonExistentFunctionCall is not defined". No extra `goog:loggingPrefs`
   # capability is needed.
-  def assert_no_console_errors
+  # `ignoring:` takes Regexps for failures the page is DESIGNED to produce, and is meant to stay
+  # rare — every pattern added here is a hole in the guard. The one real case so far: the generator
+  # gallery asks the sidecar proxy for a sample photo that most generators don't have, and the 404
+  # is what triggers the thumbfallback controller. Chrome logs a failed subresource at SEVERE, so
+  # without this the expected 404 masks any genuine error logged alongside it.
+  def assert_no_console_errors(ignoring: [])
     logs = page.driver.browser.logs.get(:browser).select { |l| l.level == "SEVERE" }
-    assert_empty logs.map(&:message), "the browser logged errors"
+    messages = logs.map(&:message).reject { |m| ignoring.any? { |pattern| m.match?(pattern) } }
+    assert_empty messages, "the browser logged errors"
   end
 end
