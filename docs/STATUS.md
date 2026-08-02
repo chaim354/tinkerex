@@ -60,7 +60,112 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-02): the Box Generator folds up — collapsible sections, a section index, and a preview that starts itself (branch `claude/boxes-tool-ux-b871bf`)
+## Latest (2026-08-02): three generators 422'd, a fourth lied, and `dest` was never the flag (branch `claude/goofy-hodgkin-82e11d`)
+
+**Sidecar suite: 18 passed** (`sidecar/boxes`, pytest, against the pinned
+`florianfesti/boxes@836f5f72`) — 10 pre-existing, 8 new. Rails is untouched by this arc: the
+whole fix is `sidecar/boxes/app.py`. **All six guards were mutation-checked** — each broken in
+turn, confirmed RED, restored (§15).
+
+**The handoff report named three failures and two causes. Both causes were wrong, and the count
+was low.** Probing found ONE root cause behind all three 422s, plus a fourth generator that had
+been returning **200 with the wrong drawing** the entire time.
+
+### The root cause: a `dest` is not a flag
+
+`_argv` built each argument as `"--" + dest`. That is right for every param across the 185
+generators **except five**, where boxes.py declares an option string that differs from its dest:
+
+| Generator | dest | actual flag |
+|---|---|---|
+| CompartmentBox | `margin_vertical`, `margin_side` | `--margin_t`, `--margin_s` |
+| TypeTray | `gh`, `gw` | `--gripheight`, `--gripwidth` |
+| FlexBox3 | `d` | `--c` |
+
+That failed two ways, and **the quiet one is worse**:
+
+- **No such option** → argparse `unrecognized arguments` → CompartmentBox and TypeTray 422'd on
+  every render for every user.
+- **The invented flag is a unique PREFIX of a real one** → argparse **abbreviation-matched it**.
+  FlexBox3's `--d` resolved to `--debug`, so the user's `d` vanished into a plumbing flag and the
+  box came back **200, drawn at the default**. No error, anywhere, ever. `--d 1.0` and `--d 6.0`
+  produced byte-identical geometry (45429 bytes both), differing only in the CLI string boxes.py
+  records into the SVG metadata — which is exactly why an `a.data != b.data` assertion **passes
+  against this bug**. The test compares the drawing with that metadata stripped.
+
+**The report's hypothesis — that `_param_groups_for` walks a different source than `parseArgs`
+registers — is disproved:** `advertised - registered` is empty for all three. Nothing phantom was
+ever advertised; the schema was right and the argv was wrong.
+
+### The other three findings, none as reported
+
+- **TrayLayoutFile** did not fail on a `label_file` FileType (it has none). `_argv` prepended
+  `--format svg` **unconditionally**, and TrayLayoutFile is the one generator whose parser lacks it
+  (`[-h] [--sx] [--sy] [--output]`). It also emits an **ASCII layout, not SVG** — it is step 1 of
+  boxes.py's two-step CLI flow, and this sidecar **already runs it internally** to seed TrayLayout's
+  textarea.
+- **`label_file`'s default is `None`, not `""`.** So the report's "argparse type-converts its own
+  default" is not what happened — omitting it parses fine. The empty string came from the **rendered
+  form**. It is moot either way: the param is **upstream-broken**, `typetray.py:119` has argparse
+  open it while `:247` does `Path(self.label_file).open()`, so any real path raises `TypeError`.
+- **`Edges` answered 200 `image/svg+xml` with a ZERO-BYTE body** — nobody had noticed, because a
+  status-plus-mimetype check passes it. Its `render()` only prints the edge catalogue to stdout and
+  draws nothing. Saving it would have written an **empty `.svg` into the library**.
+
+### What changed
+
+- **`_actions`/`_flag`** — every argument is now built from the option string argparse **registered**.
+  Neither failure mode can recur.
+- **`_exposed`** — ONE definition of "which params we advertise AND accept", consumed by
+  `/generators` and `/generate` alike. The entire bug lived in the gap between those two being
+  derived separately. It drops FileType params **by rule, not by name** (they name a path on the
+  sidecar's own filesystem, which a browser client can never place a file at — a field that cannot
+  work, and a needless server-side `open()` primitive), mirroring how `_multiline` mirrors boxes.py's
+  textarea rule.
+- **`_offered`** — mirrors boxes.py's **own `webinterface = False`** flag instead of a hand-kept
+  name list, so a boxes.py bump cannot silently outgrow it. It hides four: `Edges`, `TrayLayoutFile`,
+  `JigsawPuzzle` ("Still alpha" upstream) and `Lamp` (no docstring, 484 KB render). Gated at the API
+  boundary only — `_all_generators()` still returns them, which is what the textarea seeding needs.
+- **`--format svg` only where the parser has it.**
+- **An unknown param is refused BY NAME**; one we deliberately un-advertise is dropped quietly, so a
+  state saved with `label_file: ""` still re-renders.
+- **The 422 now carries argparse's own message.** `except SystemExit` discarded the one line naming
+  the param and the reason. Captured by replacing the parser **instance's** `error` hook rather than
+  redirecting the process's stderr (which swaps a global and would interleave on threaded workers),
+  which also drops the usage dump and the program name — a gunicorn path — from the response.
+
+**All 181 offered generators render a complete, non-empty SVG from their own advertised defaults**
+— 185 exist, and the four upstream marks `webinterface = False` are not offered; the same holds
+when every field is posted the way the form posts it, blanks included. **Confirmed against the
+deployed sidecar** (see below), not only locally.
+
+### Left open by this arc
+
+- **NOTHING RUNS THE SIDECAR SUITE.** `sidecar/boxes/tests/` is not in `config/ci.rb`'s gates and no
+  workflow invokes pytest — these 18 tests, including the 185-generator sweep, run only when someone
+  runs them by hand. That is the "a guard that never runs is not a guard" shape this repo keeps
+  recording; wiring it means Python plus a git install of boxes.py on the one registered (macOS)
+  runner, which is a CI-infrastructure change and was not made here.
+- **DEPLOYED to Unraid 2026-08-02, from the UNMERGED branch.** `bin/build-boxes-sidecar` pushed
+  `ghcr.io/chaim354/boxes-sidecar:latest` at `sha256:1a095650` (was `sha256:1f9d9eec`) and
+  `kamal accessory reboot boxes` rolled the single shared accessory on 192.168.1.95 — one accessory
+  serves all three app legs, so there is no per-backend sidecar deploy. **The tag is mutable
+  `:latest` and PR #112 is still open**, so the box is running sidecar code that is NOT on main;
+  rebuilding from main would silently revert it. Verified on the box, before → after: CompartmentBox
+  422 → 200, TypeTray 422 → 200, the advertised list 185 → 181 with all four `webinterface = False`
+  generators gone, and the 422 body `{"error":"invalid parameters"}` →
+  `{"error":"argument --x: invalid float value: 'not-a-number'"}`. A full sweep run from inside an
+  app container against the live sidecar renders **181/181**.
+- **Still not browser-verified.** Everything above is API-level; nobody has driven `/tools/boxes` in
+  a browser against the new sidecar.
+- **A number in this entry was wrong before it was corrected.** It read "184 of 185 generators now
+  render", written while only TrayLayoutFile was hidden and never updated when the rule moved to
+  upstream's `webinterface` flag (four hidden). Recorded because the count is exactly the kind of
+  claim that gets copied forward unchecked.
+
+---
+
+## 2026-08-02: the Box Generator folds up — collapsible sections, a section index, and a preview that starts itself (branch `claude/boxes-tool-ux-b871bf`)
 
 **1891 runs / 6608 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share
 and s3**, plus **16 system examples / 100 assertions** (was 11). Whole gate: `bin/ci` green in

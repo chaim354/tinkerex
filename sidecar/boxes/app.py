@@ -25,9 +25,81 @@ SKIP = {"help", "format", "output", "input", "quiet", "debug"}
 ADVANCED = re.compile(r"^[A-Z][A-Za-z0-9]*_")
 
 
+class ParamError(Exception):
+    """A parameter this API will not forward, or one argparse rejected -> a 422 that NAMES it."""
+
+
+def _offered(cls):
+    """Does this API offer `cls` at all? Mirrors boxes.py's OWN `webinterface` flag.
+
+    Upstream sets `webinterface = False` on the generators its own web UI excludes, and mirroring
+    that RULE (rather than keeping our own list of names) is the same move `_multiline` makes for the
+    textarea rule: a boxes.py bump cannot silently outgrow it. It marks four here, each independently
+    confirmed wrong for this surface:
+
+      * Edges          — render() only PRINTS the edge catalogue to stdout and draws nothing, so it
+                         answered 200 image/svg+xml with a ZERO-BYTE body. Saving that writes an
+                         empty .svg into the user's library.
+      * TrayLayoutFile — emits an ASCII layout ("+-+-+-+"), not SVG, and its parser has no --format
+                         at all. It is step 1 of boxes.py's two-step CLI flow, and this sidecar
+                         already runs it INTERNALLY to seed TrayLayout's textarea.
+      * JigsawPuzzle   — upstream's own docstring says "Still alpha".
+      * Lamp           — no docstring (the tile would be titled from the bare key) and a 484 KB render.
+
+    This gates the API BOUNDARY only. `_all_generators()` still returns them, which is exactly what
+    `_seeded_default` relies on when it drives TrayLayoutFile to build TrayLayout's starting layout.
+    """
+    return getattr(cls, "webinterface", True)
+
+
 def _all_generators():
     # {"ABox": <class>, ...} — boxes keys by full module path; we expose the class name.
     return {full.split(".")[-1]: cls for full, cls in boxes.generators.getAllBoxGenerators().items()}
+
+
+def _actions(box):
+    """Every option this generator's argparser REGISTERED, keyed by dest.
+
+    A `dest` IS NOT A FLAG. boxes.py declares five params whose dest differs from their option
+    string — FlexBox3 `--c`/dest `d`, CompartmentBox `--margin_t`/`margin_vertical` and
+    `--margin_s`/`margin_side`, TypeTray `--gripheight`/`gh` and `--gripwidth`/`gw` — so an argv
+    built as "--" + dest names a DIFFERENT argument. That failed two ways, and the quiet one is worse:
+
+      * no such option -> argparse "unrecognized arguments" -> the generator 422'd for every user on
+        every render (CompartmentBox, TypeTray);
+      * the invented flag is a unique PREFIX of a real one, so argparse ABBREVIATION-matched it —
+        FlexBox3's `--d` resolved to `--debug`, the user's value disappeared into a plumbing flag,
+        and the box came back 200 drawn at the default. No error, anywhere, ever.
+
+    Everything that goes out on the wire is built from this map, so neither can recur.
+    """
+    return {a.dest: a
+            for g in box.argparser._action_groups
+            for a in g._group_actions
+            if not isinstance(a, argparse._HelpAction)}
+
+
+def _exposed(box):
+    """The params we advertise in /generators AND accept in /generate — ONE definition for both.
+
+    The entire bug above lived in the gap between "what the form renders" and "what we then send", so
+    those two must not be derived separately.
+
+    FileType params are dropped by RULE rather than by name (as `_multiline` mirrors boxes.py's
+    textarea rule): such a param names a path on THIS container's filesystem, which a browser client
+    can never place a file at — a field that cannot work, and a server-side open() primitive with no
+    reason to exist. The only instance here, TypeTray's `label_file`, is upstream-broken anyway:
+    typetray.py:119 has argparse open it while :247 does `Path(self.label_file).open()`, so any real
+    path raises TypeError and its empty default makes argparse try to open ''.
+    """
+    return {d: a for d, a in _actions(box).items()
+            if d not in SKIP and a.option_strings and not isinstance(a.type, argparse.FileType)}
+
+
+def _flag(action):
+    # The option string argparse actually registered — never "--" + dest. See _actions().
+    longs = [o for o in action.option_strings if o.startswith("--")]
+    return longs[0] if longs else action.option_strings[0]
 
 
 def _param_type(action):
@@ -118,12 +190,10 @@ def _param_groups_for(cls):
     # "Default Settings", then one "Settings for <edge/part>" group per used edge (Finger Joints, Lid,
     # …). Preserve that grouping so the UI can render sections like boxes.py's own web form.
     box = cls()  # instantiating builds its argparser
+    exposed = _exposed(box)  # the SAME set /generate will accept — see _exposed()
     groups = []
     for g in box.argparser._action_groups:
-        params = [
-            _param(a, box) for a in g._group_actions
-            if not isinstance(a, argparse._HelpAction) and a.dest not in SKIP
-        ]
+        params = [_param(a, box) for a in g._group_actions if a.dest in exposed]
         if not params:
             continue
         groups.append({
@@ -152,31 +222,63 @@ def sample(name):
     return send_file(path, mimetype="image/jpeg", max_age=2592000)
 
 
-def _argv(params):
-    argv = ["--format", "svg"]
+def _argv(box, params):
+    exposed = _exposed(box)
+    known = _actions(box)
+    # `--format svg` ONLY where the parser has it. It was prepended unconditionally, which is an
+    # argument the sidecar itself invented for TrayLayoutFile, whose parser is just
+    # [-h] [--sx] [--sy] [--output]. Kept even though /generate no longer offers that generator:
+    # the condition is a property of the PARSER, not of who we happen to expose today, and
+    # `_seeded_default` drives TrayLayoutFile internally.
+    argv = ["--format", "svg"] if "format" in known else []
     for k, v in (params or {}).items():
+        action = exposed.get(k)
+        if action is None:
+            # Deliberately un-advertised (SKIP / FileType): drop it quietly — a state saved before
+            # this change can still carry `label_file: ""`, and refusing would break re-rendering it.
+            if k in known:
+                continue
+            # Genuinely not a param of this generator: refuse BY NAME. Silently dropping it is how a
+            # future boxes.py bump would quietly redraw everyone's saved boxes with no way to tell.
+            raise ParamError(f"unknown parameter: {k}")
+        if v is None:
+            continue
         if isinstance(v, bool):
             v = "true" if v else "false"
-        argv += [f"--{k}", str(v)]
+        argv += [_flag(action), str(v)]
     return argv
+
+
+def _raise_param_error(message):
+    raise ParamError(message)
 
 
 @app.post("/generate")
 def generate():
     body = request.get_json(force=True, silent=True) or {}
     cls = _all_generators().get(body.get("generator"))
-    if cls is None:
+    if cls is None or not _offered(cls):
+        # Not offered == not generatable. Gating BOTH endpoints on one rule is what stops a hidden
+        # generator staying reachable by a direct POST (and answering ASCII as image/svg+xml).
         return jsonify({"error": "unknown generator"}), 404
     try:
         box = cls()
-        # argparse calls sys.exit() on a bad value -> SystemExit; turn that into a 422 instead of
-        # killing the worker. `close()` returns a BytesIO in this boxes version.
-        box.parseArgs(_argv(body.get("params")))
+        # argparse writes its message to stderr and calls sys.exit(). Capture the MESSAGE instead by
+        # replacing this parser instance's error hook: it names the exact param and reason, and Rails
+        # passes the sidecar's body straight to the UI, so this is the difference between a
+        # diagnosable error and "invalid parameters". Per-instance rather than redirecting the
+        # process's stderr — that swaps a global, which would interleave on threaded workers — and it
+        # drops argparse's usage dump and the program name (a gunicorn path) on the floor.
+        box.argparser.error = _raise_param_error
+        box.parseArgs(_argv(box, body.get("params")))
         box.open()
         box.render()
         raw = box.close()
         svg = raw.getvalue() if hasattr(raw, "getvalue") else raw
+    except ParamError as e:
+        return jsonify({"error": str(e)}), 422
     except SystemExit:
+        # Belt-and-braces: any exit path that did NOT come through argparser.error.
         return jsonify({"error": "invalid parameters"}), 422
     except Exception as e:  # generator-internal error (impossible geometry, etc.) -> 422, not 500
         return jsonify({"error": f"generation failed: {e}"}), 422
@@ -187,6 +289,8 @@ def generate():
 def generators():
     out = []
     for key, cls in sorted(_all_generators().items()):
+        if not _offered(cls):
+            continue
         try:
             grps = _param_groups_for(cls)
             out.append({
