@@ -146,12 +146,16 @@ deployed sidecar** (see below), not only locally.
   runs them by hand. That is the "a guard that never runs is not a guard" shape this repo keeps
   recording; wiring it means Python plus a git install of boxes.py on the one registered (macOS)
   runner, which is a CI-infrastructure change and was not made here.
-- **DEPLOYED to Unraid 2026-08-02, from the UNMERGED branch.** `bin/build-boxes-sidecar` pushed
+- **DEPLOYED to Unraid 2026-08-02.** `bin/build-boxes-sidecar` pushed
   `ghcr.io/chaim354/boxes-sidecar:latest` at `sha256:1a095650` (was `sha256:1f9d9eec`) and
-  `kamal accessory reboot boxes` rolled the single shared accessory on 192.168.1.95 — one accessory
-  serves all three app legs, so there is no per-backend sidecar deploy. **The tag is mutable
-  `:latest` and PR #112 is still open**, so the box is running sidecar code that is NOT on main;
-  rebuilding from main would silently revert it. Verified on the box, before → after: CompartmentBox
+  `kamal accessory reboot boxes` rolled the single shared accessory on 192.168.1.95 — **one accessory
+  serves all three app legs, so there is no per-backend sidecar deploy.** It shipped from the branch
+  *before* PR #112 merged, and the merge (`a3a8a03`) has since made main's `sidecar/boxes` tree
+  byte-identical to the tree the running image was built from (both `3fd108a2`) — **the box and main
+  now agree.** The hazard that created is worth keeping in mind for the next sidecar deploy:
+  `bin/build-boxes-sidecar` pushes a **mutable `:latest` with no SHA in the tag**, so nothing about a
+  running accessory tells you which source built it, and a rebuild from a tree missing the fix would
+  revert it silently. Verified on the box, before → after: CompartmentBox
   422 → 200, TypeTray 422 → 200, the advertised list 185 → 181 with all four `webinterface = False`
   generators gone, and the 422 body `{"error":"invalid parameters"}` →
   `{"error":"argument --x: invalid float value: 'not-a-number'"}`. A full sweep run from inside an
