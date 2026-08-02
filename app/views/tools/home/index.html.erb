@@ -5,7 +5,7 @@
 <div class="tools-grid">
   <% @addons.each do |addon| %>
     <% if addon.available? %>
-      <%= link_to send("tools_#{addon.key}_path"), class: "addon-card" do %>
+      <%= link_to addon.path_for(self), class: "addon-card" do %>
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>
         <span class="addon-desc muted"><%= addon.description %></span>

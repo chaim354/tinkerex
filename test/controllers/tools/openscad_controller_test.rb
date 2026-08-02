@@ -35,8 +35,9 @@ module Tools
 
     test "the /tools gallery links the addon without raising on the helper" do
       # REGRESSION GUARD: `resources :openscad` would make tools_openscad_path the SHOW helper, which
-      # needs an id — and the gallery calls send("tools_#{key}_path") with no args, so /tools itself
-      # would 500 for every user the moment this addon is registered.
+      # needs an id — and this addon registers that helper as its `path:` proc, so /tools itself would
+      # 500 for every user. The generic version of this guard, covering every registered addon
+      # including gem-supplied ones, is in test/services/maker/addons/registry_test.rb.
       get tools_path
       assert_response :success
       assert_select "a.addon-card[href=?]", "/tools/openscad"
