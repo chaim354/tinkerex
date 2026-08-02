@@ -46,10 +46,11 @@ module Tools
       # The folding is markup, not script: a <details> per section, so the page collapses with JS off.
       assert_select "details.box-group[id='box-section-box'] > summary .box-group-title", text: "Box"
       assert_select "details.box-group[id='box-section-tray'] > summary .box-group-title", text: "Tray"
+      assert_select "details.box-group[id='box-section-holes'] > summary .box-group-title", text: "Holes"
       # …and every TOC entry points at a section id that EXISTS. A href naming a missing id is a dead
       # link that still looks fine in the markup, which is precisely what a count-only assertion misses.
       links = css_select("nav.box-toc a[data-boxsections-target='link']").map { |a| a["href"] }
-      assert_equal %w[#box-section-box #box-section-tray], links.sort
+      assert_equal %w[#box-section-box #box-section-holes #box-section-tray], links.sort
       ids = css_select("details.box-group").map { |d| d["id"] }
       links.each { |href| assert_includes ids, href.delete_prefix("#"), "TOC links to a section that isn't on the page" }
     end

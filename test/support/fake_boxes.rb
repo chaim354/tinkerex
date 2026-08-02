@@ -17,6 +17,15 @@ class FakeBoxes
     +-+-+-+
   ART
 
+  # FrontPanel's `layout` is a DIFFERENT DSL — outline/rect/circle/text, nothing to do with the tray
+  # grid above. It is the reason "has a layout param" is not the same question as "has compartments",
+  # and it is multiline, so it renders as the same <textarea>.
+  FRONT_PANEL_LAYOUT = <<~DSL
+    outline 100 100
+    rect 50 60 80 30 3 True False
+    circle 10 45 3.5
+  DSL
+
   def generators
     [ BoxesClient::Generator.new(
         key: "ABox", title: "Simple box", group: "Box",
@@ -28,11 +37,17 @@ class FakeBoxes
           { "title" => "Settings for Finger Joints", "advanced" => true, "params" => [
               { "name" => "FingerJoint_style", "type" => "enum", "default" => "rectangular",
                 "choices" => %w[rectangular springs barbs snap], "help" => "style of the fingers" } ] } ]),
+      # sx/sy WITHOUT a `layout`, which is the real TypeTray's shape (upstream: "allows only
+      # continuous walls") and the case the top view has to build a grid for by itself.
       BoxesClient::Generator.new(
         key: "TypeTray", title: "Divider tray", group: "Tray",
         param_groups: [
           { "title" => "TypeTray Settings", "advanced" => false, "params" => [
-              { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" } ] } ]),
+              { "name" => "x", "type" => "float", "default" => 100, "help" => "width (mm)" },
+              { "name" => "sx", "type" => "str", "default" => "50*3", "help" => "sections in x" },
+              { "name" => "sy", "type" => "str", "default" => "50*2", "help" => "sections in y" },
+              { "name" => "thickness", "type" => "float", "default" => 3.0,
+                "help" => "thickness of the material (in mm)" } ] } ]),
       # A TrayLayout-shaped generator: sx/sy sizes plus a MULTILINE `layout` — ASCII art that boxes.py
       # parses the compartments back out of. The real sidecar seeds that default (via boxes.py's own
       # TrayLayoutFile) precisely because the raw upstream default is "\n", which does not render.
@@ -43,7 +58,15 @@ class FakeBoxes
               { "name" => "sx", "type" => "str", "default" => "50*3", "help" => "sections in x" },
               { "name" => "sy", "type" => "str", "default" => "50*2", "help" => "sections in y" },
               { "name" => "layout", "type" => "str", "multiline" => true, "default" => TRAY_LAYOUT,
-                "help" => "Set **sx** and **sy** before editing this!" } ] } ]) ]
+                "help" => "Set **sx** and **sy** before editing this!" },
+              { "name" => "thickness", "type" => "float", "default" => 3.0,
+                "help" => "thickness of the material (in mm)" } ] } ]),
+      BoxesClient::Generator.new(
+        key: "FrontPanel", title: "Front panel with holes", group: "Holes",
+        param_groups: [
+          { "title" => "FrontPanel Settings", "advanced" => false, "params" => [
+              { "name" => "layout", "type" => "str", "multiline" => true,
+                "default" => FRONT_PANEL_LAYOUT, "help" => "the panel's elements" } ] } ]) ]
   end
 
   # The params of the last generate call, so a test can assert what actually reached the client —

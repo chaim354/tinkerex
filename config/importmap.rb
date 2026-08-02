@@ -28,6 +28,9 @@ pin "process" # @2.1.0
 pin "jszip-buffer-chunk" # jspm.io internal chunk for @jspm/core@2.1.0's browser buffer shim
 
 pin "lib/chunk_upload", to: "lib/chunk_upload.js"
+# The tray layout vocabulary (boxes.py's section syntax, its ASCII art, and the parse back out of
+# it), shared by the traylayout controller that WRITES the art and the topview one that READS it.
+pin "lib/tray_layout", to: "lib/tray_layout.js"
 
 # Maker.js 0.19.2 — Apache-2.0 — https://maker.js.org — the client-side geometry engine for the
 # Generators addon (Tools::GeneratorsController; app/javascript/generators/*). Vendored as the jspm

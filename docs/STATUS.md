@@ -60,7 +60,65 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-02): three generators 422'd, a fourth lied, and `dest` was never the flag (branch `claude/goofy-hodgkin-82e11d`)
+## Latest (2026-08-02): a top view for the tray generators, drawn in the browser (branch `claude/tray-top-view`)
+
+**1891 runs / 6612 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
+s3 — plus 21 system tests.** Five new system tests, **all six guards mutation-checked**.
+
+The Box Generator's only view of a tray was the cut sheet: parts nested for the laser, correct and
+unreadable as a plan. `/tools/boxes` now draws a **top view** beside it — the compartments, their
+sizes, and which ones a layout has merged.
+
+### It costs no sidecar call, and that is the whole design
+
+A tray's compartments are fully determined by `sx`/`sy` (or the layout art) plus `thickness`, and
+all three are already in the DOM. So the view is built in the browser: it redraws on the keystroke
+rather than on a debounce, needs no round trip, and **cannot drift from the cut sheet**, because it
+reads the very values the generator is about to be handed. `topview_controller.js` is ~120 lines.
+
+### Three things that are not what they look like
+
+- **A `layout` param is NOT proof of a tray layout.** `FrontPanel` has one too, and it is a
+  different DSL entirely — `outline`/`rect`/`circle`/`text`. Gating on "the field exists" ships a
+  Top view panel that is **blank forever** on that generator. The gate is therefore whether the
+  first read yields an actual grid, not whether the field is present.
+- **`layout` beats `sx`/`sy` wherever both exist**, because that is the order boxes.py resolves them
+  in — it reads the compartment sizes back out of the art, so once a layout is present the size
+  fields no longer describe the tray. Drawing from `sx`/`sy` there shows a tray nobody is getting.
+- **A merged compartment is WIDER than its cells added together.** The grid is rigid, so a removed
+  wall does not move anything — it donates its own thickness to the opening. Two 50 mm cells at
+  t=3 merge to **103 mm**, not 100.
+
+### One vocabulary, not a third copy
+
+`sections()` (boxes.py's `"50*3"` syntax) and the layout grammar now live once, in
+`app/javascript/lib/tray_layout.js`, imported by the controller that **writes** the art
+(`traylayout`) and the one that **reads** it (`topview`). A second copy of a parser is this repo's
+recorded failure shape — `importer_controller.js`'s `roleFor` is a third copy of the extension
+vocabulary and has drifted twice.
+
+### Verified against the real generators, not only the fake
+
+`FakeBoxes` is an approximation, so the shipped parser was also run against the **real** sidecar's
+advertised defaults: it reads all **14** real tray generators (including `GridfinityTrayLayout`,
+whose rows carry no space before `mm`) and rejects `FrontPanel` — the one it must. Rendering was
+checked in a real browser, not just asserted.
+
+### Left open by this arc
+
+- **Trays only — 13 of 181 generators.** 49 have `x/y/h` and could get an approximate 3D assembly;
+  120 have neither and no generic shape to draw. A general assembled view remains **not feasible**:
+  boxes.py has no assembly graph at all (`rectangularWall`'s `move` positions a part *on the cutting
+  sheet*), so it would mean re-deriving mating edges for 181 generators against a pinned upstream.
+- **It draws the design, not the joinery** — no finger tabs, no half-lap slots. Deliberate for a
+  plan view, but it means the view will happily draw a wall segment ending in mid-air, which is
+  unsupported once a layout removes the floor. Flagging those is a natural next step; the region
+  data already knows which walls touch what.
+- **Not deployed.** Rails-side only, so it ships with the next app deploy — no sidecar rebuild.
+
+---
+
+## 2026-08-02: three generators 422'd, a fourth lied, and `dest` was never the flag (branch `claude/goofy-hodgkin-82e11d`)
 
 **Sidecar suite: 18 passed** (`sidecar/boxes`, pytest, against the pinned
 `florianfesti/boxes@836f5f72`) — 10 pre-existing, 8 new. Rails is untouched by this arc: the
