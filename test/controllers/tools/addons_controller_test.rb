@@ -27,7 +27,10 @@ module Tools
     setup do
       @prior_cache = Rails.cache
       Rails.cache = ActiveSupport::Cache::MemoryStore.new
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST ],
+        assets: { "widgetkit/generators.js" => "export default { mount() {} }" }
+      )
       @user = User.create!(email: "addons@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
     end
@@ -60,6 +63,25 @@ module Tools
       get tools_addon_path("widgetkit")
       assert_response :success
       assert_includes response.body, tools_addon_asset_path("widgetkit", "makerjs.js")
+    end
+
+    test "serves an addon asset as JavaScript" do
+      get tools_addon_asset_path("widgetkit", "generators.js")
+      assert_response :success
+      assert_equal "text/javascript", response.media_type
+      assert_equal "export default { mount() {} }", response.body
+    end
+
+    test "a missing asset is a 404, not a 500" do
+      get tools_addon_asset_path("widgetkit", "nope.js")
+      assert_response :not_found
+    end
+
+    test "a traversing asset path is refused" do
+      # Belt and braces: Source#asset_path! refuses it too, but the controller is the door an
+      # attacker actually knocks on, and a 404 here must not depend on the layer below.
+      get "/tools/widgetkit/asset/../../secret"
+      assert_response :not_found
     end
   end
 end
