@@ -102,6 +102,20 @@ module Tools
       head :not_found
     end
 
+    # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
+    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
+    # by addon_key AND by current_user, in that order below — because a bundle is browser code and
+    # this scoping is the only thing standing between one addon's saves and another's, or one user's
+    # and a stranger's.
+    def states
+      states = current_user.maker_addon_states.for_addon(@addon.key)
+                            .includes(:files).order(updated_at: :desc, id: :desc)
+      render json: states.map { |s|
+        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at,
+          files: s.files.map { |f| { node_id: f.node_id, role: f.role } } }
+      }
+    end
+
     # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
     # the request — bounded here, because a client-supplied body is not a trusted size.
     def create

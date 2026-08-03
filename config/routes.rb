@@ -207,6 +207,13 @@ Rails.application.routes.draw do
   match "tools/:key/service/:service/*path", to: "tools/addons#service",
         via: %i[get post], as: :tools_addon_service, format: false
 
+  # An addon's own saved states (Maker::AddonState rows), as JSON — a bundle has no database access
+  # of its own, so this is how it lists a user's prior saves. Scoped BOTH by addon_key and by
+  # current_user in the controller; that scoping is the only thing between one addon and another's
+  # (or another user's) saved work, so it lives above the tools/:key wildcard for the same reason
+  # the service route does.
+  get "tools/:key/states", to: "tools/addons#states", as: :tools_addon_states
+
   # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
   get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
   post "tools/:key",             to: "tools/addons#create"

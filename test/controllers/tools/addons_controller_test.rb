@@ -196,5 +196,72 @@ module Tools
     ensure
       ENV.delete("FIXTURE_SVC_SIDECAR_URL")
     end
+
+    test "states lists only this addon's states, for this user only" do
+      mine = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "Mine", data: { "g" => "x" })
+      @user.maker_addon_states.create!(addon_key: "other-addon", name: "Other addon", data: {})
+      stranger = User.create!(email: "stranger@example.com", password: PASSWORD, confirmed_at: Time.current)
+      stranger.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "Theirs", data: {})
+
+      get tools_addon_states_path(FIXTURE_KEY)
+
+      assert_response :success
+      names = JSON.parse(response.body).map { |s| s["name"] }
+      assert_equal [ "Mine" ], names
+      assert_equal mine.id, JSON.parse(response.body).first["id"]
+    end
+
+    test "states includes each state's files so a bundle can relink its output" do
+      state = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "With files", data: {})
+      state.files.create!(node_id: "n-1", role: "output", content_type: "image/svg+xml", position: 0)
+
+      get tools_addon_states_path(FIXTURE_KEY)
+
+      files = JSON.parse(response.body).first["files"]
+      assert_equal [ { "node_id" => "n-1", "role" => "output" } ], files
+    end
+
+    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb
+    # (the counts differ per LIBRARY_BACKEND, so a literal would pin one leg and fail the other two).
+    # `includes(:files)` is what this guards: drop it and #states goes from a flat query count to one
+    # extra SELECT per saved state, invisible to every other test here because none of them save more
+    # than one or two states.
+    test "states query count does not grow with the number of saved states or their files" do
+      seed = lambda do |prefix, count|
+        count.times do |i|
+          state = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "#{prefix}#{i}", data: {})
+          state.files.create!(node_id: "#{prefix}#{i}-file", role: "output")
+        end
+      end
+
+      seed.call("s", 3)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_response :success
+      small = count_queries { get tools_addon_states_path(FIXTURE_KEY) }
+
+      seed.call("l", 12)
+      large = count_queries { get tools_addon_states_path(FIXTURE_KEY) }
+
+      assert_equal small, large,
+                   "states issued #{small} queries at 3 saved states and #{large} at 15 — " \
+                   "it grows with the data. Check the :files eager load."
+    end
+
+    private
+
+    # Mirrors test/integration/web/page_query_budget_test.rb's own helper. SCHEMA/TRANSACTION and
+    # PRAGMA are excluded as artifacts of connection setup, not of the request being measured.
+    def count_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          n += 1
+        end
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
   end
 end
