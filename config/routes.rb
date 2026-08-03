@@ -183,18 +183,20 @@ Rails.application.routes.draw do
   # ways; this is about the helper name matching, nothing more.
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
-  # The generic addon surface — ONE shell, asset proxy and save door for every manifest-driven addon.
+  # DECLARED LAST, AND THAT IS LOAD-BEARING. `tools/:key` matches any TWO-segment /tools/* path, so
+  # it collides with the sibling addon routes above it (`tools/boxes`, `tools/generators`,
+  # `tools/openscad`) — route recognition is first-match-wins by declaration order, regardless of
+  # which named helper built the URL. Mutation-checked by moving these three routes above
+  # `resources :boxes`/`:generators`: `bin/rails test test/controllers/tools/boxes_controller_test.rb`
+  # went from green to 12 failures + 2 errors, all 404s/UrlGenerationErrors where `/tools/boxes` and
+  # `/tools/boxes/:id` used to resolve — because `tools/:key` (key="boxes") beat `resources :boxes`'s
+  # own index route to the match. Restoring this order fixed it.
   #
-  # DECLARED LAST, AS DEFENSIVE PRACTICE: `tools/:key` is a wildcard, so every more-specific
-  # /tools/* route belongs above it. NOTE — mutation-checked (§15) 2026-08-02: moving `tools/:key`
-  # above `tools/addon_states/:id/params` does NOT currently swallow it and the suite stays green,
-  # because that route has FOUR fixed/dynamic path segments (tools/addon_states/:id/params) while
-  # `tools/:key` matches EXACTLY TWO — Rails requires the segment count to match, so there is no
-  # overlap today. (A bare, hypothetical "/tools/addon_states" with no suffix WOULD collide —
-  # confirmed via `Rails.application.routes.recognize_path("/tools/addon_states", method: :get)`
-  # => key="addon_states" — but nothing constructs that URL.) The ordering is kept anyway as the
-  # correct general rule for any future two-segment /tools/* route; do not treat this note as
-  # license to relax it.
+  # It does NOT collide with `tools/addon_states/:id/params`: that path has four segments
+  # (tools/addon_states/:id/params) and Rails requires a segment-count match, so no ordering hazard
+  # exists between them — moving `tools/:key` above that one specific route left
+  # `addon_params_controller_test.rb` green. (An earlier draft of this comment claimed the opposite;
+  # verified false with `Rails.application.routes.recognize_path`.)
   #
   # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
   get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
