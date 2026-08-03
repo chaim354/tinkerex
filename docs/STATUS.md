@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-02 (**The Box Generator folds up: collapsible sections, a section index, and a preview that starts itself — branch `claude/boxes-tool-ux-b871bf`**)
+**Updated:** 2026-08-02 (**An addon becomes a manifest + a bundle: the generic `/tools` host surface, and `generators`' migration off it — branch `claude/addons-runtime-bundles`**)
 
 ## What this file is
 
@@ -60,7 +60,104 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-02): a top view for the tray generators, drawn in the browser (branch `claude/tray-top-view`)
+## Latest (2026-08-02): an addon becomes a manifest + a bundle — the generic `/tools` host surface, and `generators`' migration off it (branch `claude/addons-runtime-bundles`)
+
+**1905 runs / 6602 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
+s3 — plus 22 system tests / 133 assertions.** Design: `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`.
+Plan: `docs/superpowers/plans/2026-08-02-addon-host-surface-and-generators.md` (now carrying its
+own "Corrections found during execution" section). Invariants: CLAUDE.md §14c, §14e.
+
+### What landed
+
+An addon is now a **manifest + a plain-ESM bundle**, fetched at runtime and proxied same-origin by
+one generic `Tools::AddonsController` (shell / asset proxy / save), instead of its own Rails
+controller, views and Stimulus controller. `Maker::Addons::Registry` builds the gallery from
+manifests `Maker::Addons::Source` fetches, cached 5 minutes, degrading to an empty gallery (never a
+500) on a source outage. `generators` is the first migration: its Ruby is deleted, and it now ships
+as `public/addons/generators/{manifests.json,generators.js,material_test_grid.js}` plus the five
+vendored Maker.js deps, read by `Source::Local` in dev/test. `boxes` and `openscad` have **not**
+migrated — they keep their own controllers, routes and sidecar clients unchanged, and the gallery
+carries a **temporary** hand-written block for both (`app/views/tools/home/index.html.erb`) that
+disappears the day each migrates.
+
+**Phase B — the addons repo and its static container, the point at which independent deploy of an
+addon actually turns on — has not started.** `public/addons` is explicitly transitional: bundles
+still ship inside this repo's own image and deploy with the next Rails release, same as before.
+`ADDON_SOURCE_URL` (the real, separate-host mode) is exercised only by `Source`'s own unit tests in
+this phase.
+
+### Task 0's spike: GO
+
+The plan's one falsifiable question — can a page render an importmap merged from the host's own
+pins plus an addon's, such that a proxied ES module resolves, including bare specifiers imported
+*by* that module — came back GO. Confirmed two ways, not just asserted: the addon's pin
+(`tools_addon_asset_path`, a route-helper-built **root-relative** path) renders into the page's
+importmap **unchanged**, character for character
+(`test/controllers/tools/addons_controller_test.rb`'s "pins are merged into the page importmap"),
+and a real browser resolves the whole chain — `generators.js` importing `makerjs.js` importing its
+own four bare-specifier deps (`bezier-js`, `clone`, `graham_scan`, `kdbush`) — end to end
+(`test/system/addon_bundle_test.rb`). The spike itself was torn down per the plan (nothing from it
+is committed); this is the mechanism it cleared working in the real Tasks 1-6 build.
+
+### The self-fetch reentrancy finding
+
+The plan's own baseline assumption — serve addon bundles over `ADDON_SOURCE_URL` pointed at this
+same Rails app, since Phase B's separate static container doesn't exist yet — turned out to
+deadlock. Pointing an `HTTP` `Source` at the process handling the outer request turns every asset
+fetch into a **synchronous nested call competing for a thread in the same Puma pool the outer
+request's own thread is already occupying**: reentrancy, not just extra load. Measured directly,
+not theorized (commit `0ce6f7f`): against a stock 3-4-thread dev/Capybara Puma pool, the
+`generators` bundle's own module graph (2 sequential fetches, then 4 of makerjs's bare-specifier
+deps fetched at once by the browser) stalled most requests **14-24 seconds**, and several outright
+**404'd** — `Net::HTTP`'s own read timeout firing before a thread ever freed. Fixed by adding a
+second `Source` mode, `Source::Local` (`ADDON_SOURCE_PATH`), which reads `public/addons` straight
+off disk — now the dev/test default (`config/environments/development.rb`). `ADDON_SOURCE_URL`
+stays for Phase B's genuinely separate host, which has its own pool and is structurally immune.
+Cost: the HTTP fetch path itself has no end-to-end coverage in this phase, only `Source`'s own unit
+tests. A related, smaller finding from manual browser verification (`eb6dfcf`): even `Source::Local`
+under a **real** `bin/rails server` intermittently 404'd concurrent asset fetches on Puma's stock
+`threads 3, 3`, because `config.enable_reloading = true`'s per-request interlock adds overhead a
+page firing several near-simultaneous requests can expose; `RAILS_MAX_THREADS=16` made it reliable.
+Production (eager-loaded) and the test env (`enable_reloading = false`) don't carry that overhead.
+Both findings are recorded at CLAUDE.md §14e as a general "don't point a synchronous HTTP client at
+yourself" lesson — it isn't addon-specific.
+
+### Three things that cost real time and would recur
+
+- **`Object#stub` does not exist in this suite.** Minitest 6 dropped `minitest/mock`; `require
+  "minitest/mock"` is a `LoadError`, verified directly. Task 1's first test draft used
+  `source.stub(:get, ...)`, per the plan as written, and had to be rewritten with
+  `define_singleton_method` instead. Already noted at `test/test_helper.rb:147` (a hand-rolled
+  method-swap helper carries the same warning); now also here so the next plan doesn't rediscover
+  it as a Rails/minitest-version mystery.
+- **`MAX_FILE_BYTES` above Rack's own 4 MiB query-parser limit makes the app-level guard dead
+  code.** The plan's Task 5 specified `5_000_000`; Rack's `QueryParser` (`Rack::Utils.default_query_parser`)
+  hard-caps a url-encoded POST body at 4 MiB (`4_194_304`) and 400s in `QueryLimitError` before the
+  action ever runs, so a cap set at or above that ceiling never fires for that request shape.
+  Shipped at `4_000_000` — real headroom under the Rack ceiling, not just numerically less.
+- **`:null_store` makes a cache-behavior guard unobservable, not merely untested.** The suite's
+  default test cache (`config/environments/test.rb`) is `:null_store`, whose `#fetch` always calls
+  the block and caches nothing — so `Registry`'s "a failed fetch is NOT cached" guard passed whether
+  or not the underlying code was correct, until the test swapped in a real
+  `ActiveSupport::Cache::MemoryStore` for just that file. Same shape as §14e's rate-limiting note;
+  worth flagging on its own because it is now the second time this exact class of false-green has
+  shown up.
+
+### Left open by this arc
+
+- **`boxes` and `openscad` are unmigrated.** Their own plans get written once this pattern has a
+  second addon proving it, per the design doc's own migration order (spec §7).
+- **The asset proxy is uncached, deliberately** (spec §8 risk 3: a stale cached bundle reads as "my
+  fix didn't deploy," worse than a slow one). Caching gets designed against a working pipeline with
+  a real content hash once Phase B exists.
+- **`skip_forgery_protection only: :asset` leaves a residual login-state / addon-inventory oracle**
+  (CLAUDE.md §14c) — a cross-origin `<script src>` can observe 200-vs-404 for a signed-in visitor
+  via `onload`/`onerror`, no response bytes leak. Flagged for reviewer judgment on the PR, not
+  closed here.
+
+---
+
+## 2026-08-02: a top view for the tray generators, drawn in the browser (branch `claude/tray-top-view`)
 
 **1891 runs / 6612 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
 s3 — plus 21 system tests.** Five new system tests, **all six guards mutation-checked**.

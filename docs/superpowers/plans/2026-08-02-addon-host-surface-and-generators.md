@@ -10,6 +10,58 @@
 
 ---
 
+## Corrections found during execution
+
+A terse record for the next reader, not a narrative — the full account of each is in the commit
+that made the fix and in `docs/STATUS.md`'s 2026-08-02 "an addon becomes a manifest + a bundle" entry.
+
+1. **Task 1's test used `Object#stub`, which doesn't exist here.** Minitest 6 dropped
+   `minitest/mock`; rewritten with `define_singleton_method` instead.
+2. **Task 1's `Source#get` rescue omitted `OpenSSL::SSL::SSLError`.** Not reachable in Phase A
+   (`http://127.0.0.1`), but Phase B's real HTTPS source would let a TLS failure escape
+   `Source::Error` and slip past `Registry`'s degrade-to-empty rescue. Added in a follow-up commit.
+3. **Task 2 made `boxes`, `openscad`, and `generators` vanish from the gallery**, breaking their
+   own controller tests, the moment `Registry` stopped hardcoding three entries. The
+   temporary-gallery-cards fix specified for Task 7 had to move into Task 2 itself so those suites
+   stayed green in the meantime.
+4. **Task 3's route-ordering mutation check was toothless.** Moving `tools/:key` above
+   `tools/addon_states/:id/params` never collides — that route has four path segments and `tools/:key`
+   matches exactly two, so the suite stayed green whether or not the ordering held. Replaced with a
+   check against a route `tools/:key` actually collides with: moving it above `resources :boxes`
+   (and, at the time, `resources :generators`) sent `boxes_controller_test.rb` from green to 12
+   failures + 2 errors.
+5. **`/tools/generators` resolved to the legacy `Tools::GeneratorsController`, not the new generic
+   surface, for as long as `resources :generators` stayed declared above the wildcard route.** Task
+   3's test fixture had to use a synthetic key (`widgetkit`) instead of `generators` so it tested the
+   new controller rather than silently re-testing the old one. Consequence: `generators`' Ruby could
+   not be deleted a task early — Task 7's route deletion (and the rest of its Ruby deletion) had to
+   merge into Task 6, landing atomically with the bundle, because `/tools/generators` cannot reach
+   the generic shell while the old route still wins.
+6. **Task 4's controller traversal test passed under mutation for the wrong reason.**
+   `FakeAddonSource#asset` raises the same `Source::Error` for "path refused" and "path not in the
+   fixture hash," so an unguarded `asset_path!` still 404'd coincidentally. Fixed by seeding the fake
+   with a file a traversal would actually reach (`widgetkit/../../secret` => `"PWNED"`) and asserting
+   the body was never served. The same false-green shape recurred one layer down in Task 6, for
+   `Source::Local`: `Pathname#join` doesn't sanitize `..` the way a URL does, so a made-up escape
+   target simply not existing on disk raised `Errno::ENOENT` (also rescued into `Source::Error`)
+   whether or not the guard ran. Fixed by planting a real file outside the source root.
+7. **Task 5's `MAX_FILE_BYTES = 5_000_000` exceeded Rack's own 4 MiB (`4_194_304`) query-parser
+   limit**, making the app-level size guard dead code for a plain url-encoded POST above that
+   ceiling (Rack 400s in `QueryLimitError` before the action runs). Shipped at `4_000_000` instead —
+   real headroom under the Rack ceiling, not just numerically less.
+8. **Task 5's test needed the `FakeS3` stub the sibling `boxes`/`generators` controller tests use**,
+   or an unstubbed save 403s against CI's non-existent stub bucket on the s3 leg.
+9. **Task 6's plan-specified approach — `ADDON_SOURCE_URL` (HTTP) pointed at this same Rails
+   process — deadlocks.** It turns every addon asset fetch into a synchronous nested call
+   competing for a thread in the same Puma pool the outer request is already occupying. Replaced
+   with `ADDON_SOURCE_PATH` (`Source::Local`, reads `public/addons` off disk) as the dev/test
+   default; full account and measured numbers in CLAUDE.md §14e and `docs/STATUS.md`.
+10. **The asset endpoint needed `skip_forgery_protection only: :asset`**, not anticipated by the
+    plan at all. Required because `verify_same_origin_request` fires unconditionally on any
+    non-XHR JS response, which is exactly what a `<script type="module" src>` load looks like.
+
+---
+
 ## Scope
 
 Phase A of `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`: the host surface (§3.1-3.3) plus migration step 1 (`generators`, spec §7).
