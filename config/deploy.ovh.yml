@@ -49,6 +49,13 @@ env:
     BOXES_SIDECAR_URL: ""
     OPENSCAD_SIDECAR_URL: ""
 
+    # The addons accessory runs on the Unraid host too, so `tinkerex-addons` does not resolve here.
+    # Blank -> the Rails app falls back to production.rb's ADDON_SOURCE_PATH default, which points at
+    # public/addons — a directory Task 3 removes from the image. So OVH renders an EMPTY tools
+    # gallery until it gets its own addons accessory. That degrades gracefully (Registry rescues to
+    # []), it is not a 500, and it is the honest state: OVH has no addon host.
+    ADDON_SOURCE_URL: ""
+
     # THE ONE INTERNET-FACING BOX, SO THE ONE THAT NEEDS TLS ENFORCEMENT (2026-07-30).
     #
     # production.rb gates assume_ssl + force_ssl + the /up redirect exclusion behind this flag

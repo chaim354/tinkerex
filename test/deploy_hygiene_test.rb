@@ -13,17 +13,23 @@ class DeployHygieneTest < ActiveSupport::TestCase
                     "add `/sidecar/` to .dockerignore — `COPY . .` ships the GPL sidecars otherwise"
   end
 
-  test "the OVH overlay clears every sidecar URL it cannot reach" do
-    # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's sidecar hostnames.
+  test "the OVH overlay clears every Unraid-host-only service URL it cannot reach" do
+    # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's accessory hostnames.
     # Those resolve only on the Unraid host, where the accessories actually run. Inheriting one makes
     # `configured?` true and every call fail — worse than the addon showing as unavailable.
     base    = YAML.load_file(ROOT.join("config/deploy.yml"),     aliases: true)
     overlay = YAML.load_file(ROOT.join("config/deploy.ovh.yml"), aliases: true)
-    sidecar_url_keys = base.dig("env", "clear").to_h.keys.grep(/_SIDECAR_URL\z/)
-    assert sidecar_url_keys.any?, "expected deploy.yml to define at least one *_SIDECAR_URL"
+    # Every env var naming a service that runs as an accessory on the UNRAID host. `_SIDECAR_URL` was
+    # the original pattern; ADDON_SOURCE_URL joined it in Phase B and does NOT match that suffix, so
+    # it was silently unguarded until this line was widened. Any future accessory URL must be added
+    # here — the failure mode is identical for all of them: OVH deep-merges the Unraid hostname, the
+    # service reports configured, and every call fails.
+    host_only_url_keys = base.dig("env", "clear").to_h.keys.grep(/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/)
+    assert_equal 3, host_only_url_keys.size,
+                 "expected BOXES_SIDECAR_URL, OPENSCAD_SIDECAR_URL and ADDON_SOURCE_URL in deploy.yml"
 
     cleared = overlay.dig("env", "clear").to_h
-    sidecar_url_keys.each do |key|
+    host_only_url_keys.each do |key|
       assert cleared.key?(key), "deploy.ovh.yml must explicitly clear #{key} (it deep-merges otherwise)"
       # `.to_s.blank?`, NOT `.blank?`: ActiveSupport says `false.blank? == true`, but Kamal's
       # `Utils.argumentize` special-cases a YAML `false` into the literal docker arg `KEY=false` —

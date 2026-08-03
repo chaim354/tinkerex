@@ -98,6 +98,12 @@ env:
     # fail instead of the addon greying out (spec §8.1; guarded by test/deploy_hygiene_test.rb).
     OPENSCAD_SIDECAR_URL: http://tinkerex-openscad:8000
 
+    # The addon bundle host (the `addons` accessory below, repo chaim354/tinkerex-addons). Takes
+    # precedence over ADDON_SOURCE_PATH's on-disk fallback (config/environments/production.rb).
+    # Internal-only; never published. NOTE: deploy.ovh.yml must blank this — same deep-merge trap as
+    # the two sidecar URLs above (guarded by test/deploy_hygiene_test.rb).
+    ADDON_SOURCE_URL: http://tinkerex-addons
+
     # Set number of processes dedicated to Solid Queue (default: 1)
     # JOB_CONCURRENCY: 3
 
@@ -172,6 +178,14 @@ accessories:
       # The content-addressed render cache. On a volume so it survives an accessory reboot —
       # a cold cache just means the first render of each design pays full price.
       - openscad-cache:/cache
+
+  # The addon bundle host (repo: chaim354/tinkerex-addons) — a tiny nginx image serving each addon's
+  # manifest + plain-ESM bundle. NO `port:` -> internal-only, reachable on the Kamal network as
+  # `tinkerex-addons`, exactly like the two sidecars. THIS ACCESSORY IS WHY ADDON CHANGES DO NOT NEED
+  # A RAILS DEPLOY: rebuild + push from that repo, `kamal accessory reboot addons`, done.
+  addons:
+    image: ghcr.io/chaim354/tinkerex-addons:latest
+    host: 192.168.1.95
 
 # Example accessory (reference):
 # accessories:
