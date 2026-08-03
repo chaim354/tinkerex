@@ -302,7 +302,9 @@ details[open] > .box-group-summary::before, details[open] > .box-saved-summary::
   .box-side { position: static; }
 }
 
-/* Generators addon (Tools::GeneratorsController) — controls left, live preview right. */
+/* Generators addon (public/addons/generators/generators.js, mounted by Tools::AddonsController) —
+   controls left, live preview right. .generator-saved-list/.generator-saved are unused since the
+   migration: the generic host surface has no per-saved-state show route (spec §3.1) to link to. */
 .generator-editor { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
 .generator-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .generator-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; margin: 6px 0; }

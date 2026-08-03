@@ -5,19 +5,13 @@ module Tools
   class AddonsControllerTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
-    # KEY IS DELIBERATELY NOT "generators", EVEN THOUGH title/entry mirror the real Generators
-    # addon Task 6 will register under that name. `/tools/generators` is still claimed by the OLD
-    # Tools::GeneratorsController (kept live on purpose — see the routes.rb comment on the generic
-    # addon routes, and test/controllers/tools/generators_controller_test.rb, which still drives
-    # that exact URL). Rails route recognition is first-match-wins by DECLARATION ORDER, not by
-    # which named helper built the request string, and `resources :generators` is declared above
-    # the generic `tools/:key` routes — so a request to "/tools/generators" resolves to
-    # `tools/generators#index` regardless of what `tools_addon_path("generators")` looks like.
-    # Verified: `Rails.application.routes.recognize_path("/tools/generators", method: :get)` =>
-    # {controller: "tools/generators", action: "index"}. Using a key none of the three legacy
-    # addons (boxes/openscad/generators) claim lets this suite actually exercise
-    # Tools::AddonsController rather than silently re-testing the old one. The real "generators"
-    # key only routes here once Task 7 removes the legacy routes.
+    # KEY IS DELIBERATELY NOT "generators", even though title/entry mirror the real Generators
+    # addon. `/tools/generators` now DOES resolve to this generic controller (the legacy
+    # `resources :generators` route and Tools::GeneratorsController are gone — the real bundle
+    # lives at public/addons/generators, exercised end-to-end by
+    # test/system/addon_bundle_test.rb, not here). A synthetic key keeps THIS suite — which stubs
+    # Maker::Addons::Source with fakes — decoupled from that real bundle's fixtures, so a change to
+    # one cannot silently paper over a break in the other.
     MANIFEST = {
       "key" => "widgetkit", "title" => "Generators", "icon" => "✏️",
       "description" => "Parametric 2D drawings", "api_version" => "1",
