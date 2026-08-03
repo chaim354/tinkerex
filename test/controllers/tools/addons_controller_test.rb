@@ -7,11 +7,11 @@ module Tools
 
     # KEY IS DELIBERATELY NOT "generators", even though title/entry mirror the real Generators
     # addon. `/tools/generators` now DOES resolve to this generic controller (the legacy
-    # `resources :generators` route and Tools::GeneratorsController are gone — the real bundle
-    # lives at public/addons/generators, exercised end-to-end by
-    # test/system/addon_bundle_test.rb, not here). A synthetic key keeps THIS suite — which stubs
-    # Maker::Addons::Source with fakes — decoupled from that real bundle's fixtures, so a change to
-    # one cannot silently paper over a break in the other.
+    # `resources :generators` route and Tools::GeneratorsController are gone — the real bundle is
+    # served by the `addons` Kamal accessory from the chaim354/tinkerex-addons repo in production,
+    # and by test/system/addon_bundle_test.rb's own hermetic fixture in CI, not by anything here). A
+    # synthetic key keeps THIS suite — which stubs Maker::Addons::Source with fakes — decoupled from
+    # either of those, so a change to one cannot silently paper over a break in the other.
     MANIFEST = {
       "key" => "widgetkit", "title" => "Generators", "icon" => "✏️",
       "description" => "Parametric 2D drawings", "api_version" => "1",

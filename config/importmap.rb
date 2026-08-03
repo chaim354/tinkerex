@@ -15,11 +15,12 @@ pin_all_from "app/javascript/controllers", under: "controllers"
 # two small shims). Renamed to the bare "jszip" specifier/"jszip.js" filename post-download so
 # `import JSZip from "jszip"` resolves; the vendored bytes themselves are untouched.
 pin "jszip", to: "jszip.js" # @3.10.1
-# ALSO a transitive dependency of the `generators` addon bundle's `clone` pin (public/addons/
-# generators/clone.js bare-imports "buffer"), which resolves through this HOST pin — the merged
-# per-addon importmap (Tools::AddonsController#merged_importmap) draws every host pin before adding
-# the addon's own, so an addon never has to re-pin something the host already provides. Removing
-# this pin would break `generators`' save flow with no local error pointing here.
+# ALSO a transitive dependency of the `generators` addon bundle's `clone` pin (clone.js
+# bare-imports "buffer" — the bundle itself now lives in the chaim354/tinkerex-addons repo, served
+# by the `addons` Kamal accessory in production, Phase B), which resolves through this HOST pin —
+# the merged per-addon importmap (Tools::AddonsController#merged_importmap) draws every host pin
+# before adding the addon's own, so an addon never has to re-pin something the host already
+# provides. Removing this pin would break `generators`' save flow with no local error pointing here.
 pin "buffer" # @2.1.0
 pin "process" # @2.1.0
 # buffer.js (above) ships a relative import, `../../_/C7GZrc4O.js`, to an internal jspm shared
