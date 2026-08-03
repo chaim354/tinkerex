@@ -78,4 +78,97 @@ class DeployHygieneTest < ActiveSupport::TestCase
              "which is redistribution (CLAUDE.md §9). sidecar/openscad is the pattern to copy."
     end
   end
+
+  # ── .kamal/secrets* ────────────────────────────────────────────────────────────────────────
+  # Kamal reads [secrets-common, secrets.<destination>] and NEVER executes these files in the
+  # Rails process, so nothing else in the suite can see a mistake in them. All three tests below
+  # are STATIC — they read the files as text and never run a `$(…)`, so they need no unlocked
+  # vault and pass on a runner with no 1Password at all.
+
+  # nil is the base destination (`kamal deploy` with no -d), whose file is plain `.kamal/secrets`.
+  SECRETS_FILES = { nil => "secrets", "s3" => "secrets.s3", "share" => "secrets.share",
+                    "ovh" => "secrets.ovh" }.freeze
+
+  # Key/value pairs a secrets file DEFINES, parsed without executing anything.
+  def secret_definitions(name)
+    path = ROOT.join(".kamal", name)
+    return {} unless path.exist?
+
+    path.read.lines.filter_map { |line|
+      stripped = line.strip
+      next if stripped.empty? || stripped.start_with?("#")
+
+      key, separator, value = stripped.partition("=")
+      next if separator.empty? || !key.match?(/\A[A-Z_][A-Z0-9_]*\z/)
+
+      [ key, value ]
+    }.to_h
+  end
+
+  # Straight from the MERGED deploy config, so this cannot drift from what kamal will look up.
+  # env.secret is an array and kamal REPLACES arrays on merge (it unions hashes only) — reading
+  # the merged config means that replacement is reflected rather than re-implemented here.
+  def required_secret_keys(destination)
+    require "kamal"
+    config = Kamal::Configuration.create_from(
+      config_file: ROOT.join("config/deploy.yml"), destination: destination
+    )
+    raw = config.raw_config
+    # STRING keys, and that is not interchangeable with symbols here: raw_config is an
+    # ActiveSupport::InheritableOptions whose `dig(:env, :secret)` returns nil while
+    # `dig("env", "secret")` returns the list. A symbol-keyed version of this method returns [] for
+    # every destination, which makes both tests below pass while asserting NOTHING — caught only
+    # because minitest reported "Test is missing assertions" on the first one.
+    keys = Array(raw.dig("env", "secret")) + Array(raw.dig("registry", "password"))
+    raise "no secret keys resolved for #{destination || 'base'} — raw_config shape changed?" if keys.empty?
+
+    keys.uniq
+  end
+
+  test "every secret a destination declares is defined in a file that destination actually reads" do
+    SECRETS_FILES.each do |destination, filename|
+      available = secret_definitions("secrets-common").keys | secret_definitions(filename).keys
+
+      required_secret_keys(destination).each do |key|
+        assert_includes available, key,
+                        "#{destination || 'base'} declares #{key} in its deploy config but no " \
+                        "secrets file it reads defines it. Kamal reads ONLY " \
+                        "[.kamal/secrets-common, .kamal/#{filename}] for this destination — in " \
+                        "particular `.kamal/secrets` is NOT read when -d is passed."
+      end
+    end
+  end
+
+  test "secrets-common defines only keys that EVERY destination needs" do
+    # Not tidiness — a correctness rule. Kamal expands secrets with ::Dotenv.parse, and
+    # Kamal::Secrets::Dotenv::InlineCommandSubstitution runs every `$(…)` in a parsed file
+    # EAGERLY rather than lazily per key fetched. secrets-common is read by every destination, so
+    # a destination-specific credential parked here makes `kamal deploy -d share` shell out for a
+    # credential a share container never holds — a pointless vault hit that can prompt, hang, or
+    # fail for something the deploy does not even use. Put it in the destination's own file.
+    universal = SECRETS_FILES.keys.map { |d| required_secret_keys(d) }.reduce(:&)
+
+    secret_definitions("secrets-common").each_key do |key|
+      assert_includes universal, key,
+                      "#{key} is defined in .kamal/secrets-common but is not required by every " \
+                      "destination (#{universal.sort.join(', ')} are). Move it to the .kamal/" \
+                      "secrets.<destination> file(s) that need it — every destination parses and " \
+                      "EXECUTES everything in secrets-common."
+    end
+  end
+
+  test "no .kamal secrets file contains a literal credential" do
+    # These files are committed, so "safe for git" has to be enforced rather than asserted in a
+    # comment at the top of each one. Every value must be a shell expansion — `$(bin/secret …)`,
+    # `$(cat …)` or `$VAR` — which is exactly the property that keeps the credential itself out of
+    # the repo while the reference to it stays readable.
+    ([ "secrets-common" ] + SECRETS_FILES.values).each do |filename|
+      secret_definitions(filename).each do |key, value|
+        assert_match(/\A\$[({A-Z_]/, value,
+                     "#{key} in .kamal/#{filename} looks like a literal value. Secrets files are " \
+                     "committed to git — use $(bin/secret #{key} 'op://Vault/Item/field') so the " \
+                     "reference is tracked and the credential is not.")
+      end
+    end
+  end
 end
