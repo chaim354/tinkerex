@@ -5,10 +5,19 @@
 </div>
 
 <%# The whole addon UI mounts here. Every value the addon needs from the host arrives as a data
-    attribute, so the bundle never has to know a Rails route or guess at context. %>
+    attribute, so the bundle never has to know a Rails route or guess at context.
+
+    `service-url` is a BASE, not a full URL to one endpoint: a bundle that talks to a sidecar (its
+    manifest's own `services` entry, e.g. "boxes") builds each call as
+    `${ctx.serviceUrl}${service}/${path}` — e.g. `${ctx.serviceUrl}boxes/generate`. It ends in "/"
+    for exactly that reason (see `service_base_url` in Tools::AddonsController, which derives it from
+    the real route rather than a hand-duplicated literal). `states-url` is a complete URL on its own
+    (GET it directly) — it has no per-call path to append, unlike `service-url`. %>
 <div data-controller="addon"
      data-addon-entry-value="<%= tools_addon_asset_path(@addon.key, @addon.entry) %>"
      data-addon-save-url-value="<%= tools_addon_path(@addon.key) %>"
+     data-addon-service-url-value="<%= @service_url %>"
+     data-addon-states-url-value="<%= tools_addon_states_path(@addon.key) %>"
      data-addon-folders-value="<%= @folders.to_json %>"
      data-addon-default-folder-value="<%= @default_parent_node_id %>">
   <div data-addon-target="mount"></div>

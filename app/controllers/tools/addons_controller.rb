@@ -62,6 +62,7 @@ module Tools
       @importmap = merged_importmap
       @default_parent_node_id = current_project_folder_node_id
       @folders = folder_options
+      @service_url = service_base_url
     end
 
     # Same-origin proxy for the addon's bundle and its pinned modules. Same-origin is not a
@@ -77,6 +78,43 @@ module Tools
       send_data body, type: content_type_for(params[:path]), disposition: "inline"
     rescue Maker::Addons::Source::Error
       head :not_found
+    end
+
+    # Proxy one request to a sidecar the addon's manifest declares. THREE refusals, each 404:
+    # a service the manifest does not name, a service the host has no URL for, and a traversing path.
+    # The URL never comes from the addon — only from ENV — which is what keeps this from being an
+    # SSRF primitive (spec §4.1).
+    def service
+      url = sidecar_url_for(params[:service])
+      return head(:not_found) if url.nil?
+
+      path = Maker::Addons::Source.new(url).asset_path!(params[:path])
+      # `request.get?` is false for a HEAD request even though the route (`via: %i[get post]`) routes
+      # HEAD to this same action like any other GET route does by default — Brakeman's VerbConfusion
+      # check catches exactly this shape. `head?` is checked alongside it so a HEAD request is
+      # forwarded (and its params read) the same way a GET is, not silently treated as a POST.
+      get_like = request.get? || request.head?
+      res = Maker::Addons::ServiceProxy.current.call(
+        method: get_like ? :get : :post, url: url, path: path,
+        params: get_like ? request.query_parameters : request.request_parameters
+      )
+      send_data res.body, type: res.content_type, disposition: "inline", status: res.status
+    rescue Maker::Addons::Source::Error, Maker::Addons::ServiceProxy::Error
+      head :not_found
+    end
+
+    # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
+    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
+    # by addon_key AND by current_user, in that order below — because a bundle is browser code and
+    # this scoping is the only thing standing between one addon's saves and another's, or one user's
+    # and a stranger's.
+    def states
+      states = current_user.maker_addon_states.for_addon(@addon.key)
+                            .includes(:files).order(updated_at: :desc, id: :desc)
+      render json: states.map { |s|
+        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at,
+          files: s.files.map { |f| { node_id: f.node_id, role: f.role } } }
+      }
     end
 
     # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
@@ -101,6 +139,27 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # The base URL a bundle can reach its sidecar(s) through: append `service_name/path` and fetch.
+    # Computed from the ACTUAL route (via placeholder substitution) rather than hand-duplicating its
+    # pattern as a literal string, so a future change to the service route's shape cannot silently
+    # desync this — the same reasoning as `merged_importmap` re-drawing from config rather than
+    # mutating a shared map. A bundle names its own service (from its manifest) and appends it, so it
+    # never has to know Rails' route shape at all, only string concatenation.
+    #
+    # The placeholders are synthetic and `delete_suffix` matches literally (not a regex), so this is
+    # correct even in the degenerate case where an addon's own key collides with a placeholder.
+    def service_base_url
+      tools_addon_service_path(@addon.key, "__SERVICE__", "__PATH__").delete_suffix("__SERVICE__/__PATH__")
+    end
+
+    # The manifest must DECLARE the service, and the host must have a URL for it. Both, not either —
+    # an addon naming a service the host never configured must not fall back to a guess.
+    def sidecar_url_for(name)
+      return nil unless @addon.services.include?(name.to_s)
+
+      ENV["#{name.to_s.upcase.tr('-', '_')}_SIDECAR_URL"].presence
     end
 
     # Returns nil (-> 422) rather than raising, so a malformed or oversized payload is a routine

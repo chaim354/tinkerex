@@ -1,5 +1,6 @@
 require "test_helper"
 require_relative "../../support/fake_addon_source"
+require_relative "../../support/fake_service_proxy"
 
 module Tools
   class AddonsControllerTest < ActionDispatch::IntegrationTest
@@ -15,8 +16,10 @@ module Tools
     MANIFEST = {
       "key" => "widgetkit", "title" => "Generators", "icon" => "✏️",
       "description" => "Parametric 2D drawings", "api_version" => "1",
-      "entry" => "generators.js", "pins" => { "makerjs" => "makerjs.js" }
+      "entry" => "generators.js", "pins" => { "makerjs" => "makerjs.js" },
+      "services" => [ "fixture-svc" ]
     }.freeze
+    FIXTURE_KEY = MANIFEST["key"]
 
     setup do
       @prior_cache = Rails.cache
@@ -49,8 +52,18 @@ module Tools
 
     teardown do
       Maker::Addons::Source.reset!
+      Maker::Addons::ServiceProxy.reset!
       Rails.cache = @prior_cache
       FileLayer.reset!
+    end
+
+    # Registers a canned response for one full sidecar URL (base + path), via the ServiceProxy seam
+    # — never Net::HTTP itself (this repo has no `Object#stub`; see the require at the top of this
+    # file for why). Reused across the service tests below.
+    def stub_http_ok(full_url, body:, content_type:)
+      @fake_service_proxy ||= FakeServiceProxy.new
+      Maker::Addons::ServiceProxy.stub = @fake_service_proxy
+      @fake_service_proxy.ok(full_url, body: body, content_type: content_type)
     end
 
     test "requires login" do
@@ -65,6 +78,27 @@ module Tools
       assert_select "[data-controller=addon][data-addon-entry-value=?]",
                     tools_addon_asset_path("widgetkit", "generators.js")
       assert_select "[data-addon-save-url-value=?]", tools_addon_path("widgetkit")
+    end
+
+    # The bundle needs these two URLs at mount time — it never guesses at Rails routing, so the shell
+    # is the only place they can come from. Asserting the RENDERED attribute, not a Ruby value: this
+    # repo has shipped two form bugs where a test asserted a Ruby hash and the real markup was broken
+    # (§14d), so a test here has to look at what actually reaches the page.
+    test "the shell passes a service base URL and a states URL a bundle can use directly" do
+      get tools_addon_path("widgetkit")
+      assert_response :success
+
+      # PINS THE WIRE SHAPE: a bundle builds each sidecar call as
+      # `${ctx.serviceUrl}${service}/${path}` (e.g. "boxes/generate") by plain string
+      # concatenation — it has no route helper of its own — so the base must end in "/" and must
+      # not itself already contain "service/<something>". This is the literal contract, not a
+      # round-trip through the same helper that built it (§14e: assert the wire format).
+      assert_select "[data-addon-service-url-value=?]", "/tools/widgetkit/service/"
+      # Also derived from the real route, so a future change to the route's shape fails this test
+      # instead of silently drifting from the literal above.
+      assert_select "[data-addon-service-url-value=?]",
+                    tools_addon_service_path("widgetkit", "S", "P").delete_suffix("S/P")
+      assert_select "[data-addon-states-url-value=?]", tools_addon_states_path("widgetkit")
     end
 
     test "an unknown addon key is a 404, not a 500" do
@@ -135,6 +169,120 @@ module Tools
     test "save refuses malformed files JSON rather than 500ing" do
       post tools_addon_path("widgetkit"), params: { name: "bad", data: "{}", files: "not json" }
       assert_response :unprocessable_entity
+    end
+
+    test "service proxies to the sidecar URL the HOST configures" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "SIDECAR-BODY", content_type: "image/svg+xml")
+
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render"), params: { a: "1" }
+
+      assert_response :success
+      assert_equal "SIDECAR-BODY", response.body
+      assert_equal "image/svg+xml", response.media_type
+    ensure
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+    end
+
+    test "a service the manifest does not declare is refused" do
+      # The manifest names WHICH services an addon may reach; the host says WHERE each lives. An
+      # addon that could name an arbitrary service — or an arbitrary URL — would be an SSRF
+      # primitive pointed at the internal network (spec §4.1).
+      ENV["OTHER_SIDECAR_URL"] = "http://other.test"
+      # Stubbed so a real answer is a REACHABLE outcome. Without this, a broken guard would still
+      # 404 here for an unrelated reason — Net::HTTP failing to resolve "other.test" — which would
+      # make the assertion below pass by coincidence rather than by the guard actually firing. The
+      # mutation check in step 7 depends on this distinction (§15).
+      stub_http_ok("http://other.test/render", body: "SHOULD-NOT-BE-REACHABLE", content_type: "text/plain")
+
+      post tools_addon_service_path(FIXTURE_KEY, "other", "render")
+      assert_response :not_found
+    ensure
+      ENV.delete("OTHER_SIDECAR_URL")
+    end
+
+    test "a declared service with no configured URL is refused, not guessed at" do
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+      assert_response :not_found
+    end
+
+    test "a traversing service path is refused" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      # Stubbed at the WOULD-BE traversal target so a bypassed guard gets a reachable answer instead
+      # of a coincidental 404 from Net::HTTP failing on a malformed URL (§15 mutation-check note).
+      stub_http_ok("http://sidecar.test/../../admin", body: "SHOULD-NOT-BE-REACHABLE", content_type: "text/plain")
+
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "../../admin")
+      assert_response :not_found
+    ensure
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+    end
+
+    test "states lists only this addon's states, for this user only" do
+      mine = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "Mine", data: { "g" => "x" })
+      @user.maker_addon_states.create!(addon_key: "other-addon", name: "Other addon", data: {})
+      stranger = User.create!(email: "stranger@example.com", password: PASSWORD, confirmed_at: Time.current)
+      stranger.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "Theirs", data: {})
+
+      get tools_addon_states_path(FIXTURE_KEY)
+
+      assert_response :success
+      names = JSON.parse(response.body).map { |s| s["name"] }
+      assert_equal [ "Mine" ], names
+      assert_equal mine.id, JSON.parse(response.body).first["id"]
+    end
+
+    test "states includes each state's files so a bundle can relink its output" do
+      state = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "With files", data: {})
+      state.files.create!(node_id: "n-1", role: "output", content_type: "image/svg+xml", position: 0)
+
+      get tools_addon_states_path(FIXTURE_KEY)
+
+      files = JSON.parse(response.body).first["files"]
+      assert_equal [ { "node_id" => "n-1", "role" => "output" } ], files
+    end
+
+    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb
+    # (the counts differ per LIBRARY_BACKEND, so a literal would pin one leg and fail the other two).
+    # `includes(:files)` is what this guards: drop it and #states goes from a flat query count to one
+    # extra SELECT per saved state, invisible to every other test here because none of them save more
+    # than one or two states.
+    test "states query count does not grow with the number of saved states or their files" do
+      seed = lambda do |prefix, count|
+        count.times do |i|
+          state = @user.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "#{prefix}#{i}", data: {})
+          state.files.create!(node_id: "#{prefix}#{i}-file", role: "output")
+        end
+      end
+
+      seed.call("s", 3)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_response :success
+      small = count_queries { get tools_addon_states_path(FIXTURE_KEY) }
+
+      seed.call("l", 12)
+      large = count_queries { get tools_addon_states_path(FIXTURE_KEY) }
+
+      assert_equal small, large,
+                   "states issued #{small} queries at 3 saved states and #{large} at 15 — " \
+                   "it grows with the data. Check the :files eager load."
+    end
+
+    private
+
+    # Mirrors test/integration/web/page_query_budget_test.rb's own helper. SCHEMA/TRANSACTION and
+    # PRAGMA are excluded as artifacts of connection setup, not of the request being measured.
+    def count_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          n += 1
+        end
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
     end
   end
 end
