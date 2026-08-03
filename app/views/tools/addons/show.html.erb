@@ -1,0 +1,15 @@
+<% content_for :title, "#{@addon.title} — Tinkerex" %>
+
+<div class="page-head"><h1><%= @addon.icon %> <%= @addon.title %></h1>
+  <p class="page-subtitle muted"><%= @addon.description %></p>
+</div>
+
+<%# The whole addon UI mounts here. Every value the addon needs from the host arrives as a data
+    attribute, so the bundle never has to know a Rails route or guess at context. %>
+<div data-controller="addon"
+     data-addon-entry-value="<%= tools_addon_asset_path(@addon.key, @addon.entry) %>"
+     data-addon-save-url-value="<%= tools_addon_path(@addon.key) %>"
+     data-addon-folders-value="<%= @folders.to_json %>"
+     data-addon-default-folder-value="<%= @default_parent_node_id %>">
+  <div data-addon-target="mount"></div>
+</div>

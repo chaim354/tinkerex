@@ -183,6 +183,24 @@ Rails.application.routes.draw do
   # ways; this is about the helper name matching, nothing more.
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
+  # The generic addon surface — ONE shell, asset proxy and save door for every manifest-driven addon.
+  #
+  # DECLARED LAST, AS DEFENSIVE PRACTICE: `tools/:key` is a wildcard, so every more-specific
+  # /tools/* route belongs above it. NOTE — mutation-checked (§15) 2026-08-02: moving `tools/:key`
+  # above `tools/addon_states/:id/params` does NOT currently swallow it and the suite stays green,
+  # because that route has FOUR fixed/dynamic path segments (tools/addon_states/:id/params) while
+  # `tools/:key` matches EXACTLY TWO — Rails requires the segment count to match, so there is no
+  # overlap today. (A bare, hypothetical "/tools/addon_states" with no suffix WOULD collide —
+  # confirmed via `Rails.application.routes.recognize_path("/tools/addon_states", method: :get)`
+  # => key="addon_states" — but nothing constructs that URL.) The ordering is kept anyway as the
+  # correct general rule for any future two-segment /tools/* route; do not treat this note as
+  # license to relax it.
+  #
+  # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
+  get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
+  post "tools/:key",             to: "tools/addons#create"
+  get  "tools/:key",             to: "tools/addons#show",  as: :tools_addon
+
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
   unless Rails.env.production?
