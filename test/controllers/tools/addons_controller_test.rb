@@ -296,6 +296,64 @@ module Tools
                    "it grows with the data. Check the :files eager load."
     end
 
+    # states_key ----------------------------------------------------------------------------------
+    # Modeled on the real boxes / boxes-next situation this field exists for: a second addon with
+    # its OWN routing key ("widgetkit-next") declares `states_key: "widgetkit"`, so its saves land in
+    # — and its listing reads from — the FIRST addon's saved-state rows, not its own. FIXTURE_KEY
+    # ("widgetkit") itself declares no states_key anywhere in this suite, so every test elsewhere in
+    # this file that uses FIXTURE_KEY is already the "no states_key" regression guard: it asserts
+    # `state.addon_key == "widgetkit"` (the routing key) on both the read and the write path.
+    STATES_KEY_MANIFEST = MANIFEST.merge("key" => "widgetkit-next", "states_key" => "widgetkit").freeze
+
+    test "an addon declaring states_key reads states stored under that key, not its own routing key" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      under_declared_key = @user.maker_addon_states.create!(
+        addon_key: "widgetkit", name: "Under widgetkit", data: {}
+      )
+      @user.maker_addon_states.create!(addon_key: "widgetkit-next", name: "Under widgetkit-next", data: {})
+
+      get tools_addon_states_path("widgetkit-next")
+
+      assert_response :success
+      body = JSON.parse(response.body)
+      assert_equal [ "Under widgetkit" ], body.map { |s| s["name"] }
+      assert_equal under_declared_key.id, body.first["id"]
+    end
+
+    test "a save from an addon declaring states_key creates a state under the declared key, not its routing key" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+
+      # A filename NOT reused from any other test in this file: LibraryOutput writes flat to the
+      # library root with no clobber-dedup, and on the share backend that write is a REAL filesystem
+      # side effect that a test's DB-transaction rollback does not undo — reusing "grid.svg" from
+      # "save writes the file to the library..." above collided on that backend (UnsupportedOperation:
+      # "grid.svg" already exists), a mistake made once while writing this test and worth the note.
+      post tools_addon_path("widgetkit-next"), params: {
+        name: "Saved from the trial",
+        data: { generator: "material-test-grid" }.to_json,
+        files: [ { name: "states-key-trial.svg", content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+
+      # The redirect stays on the addon's own ROUTING key — states_key is a data scope, not a route.
+      assert_redirected_to tools_addon_path("widgetkit-next")
+      state = @user.maker_addon_states.find_by!(name: "Saved from the trial")
+      assert_equal "widgetkit", state.addon_key
+    end
+
+    test "states_key does not widen access to another user's rows" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      mine = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "Mine", data: {})
+      stranger = User.create!(email: "states-key-stranger@example.com", password: PASSWORD, confirmed_at: Time.current)
+      stranger.maker_addon_states.create!(addon_key: "widgetkit", name: "Theirs", data: {})
+
+      get tools_addon_states_path("widgetkit-next")
+
+      assert_response :success
+      body = JSON.parse(response.body)
+      assert_equal [ "Mine" ], body.map { |s| s["name"] }
+      assert_equal mine.id, body.first["id"]
+    end
+
     private
 
     # Mirrors test/integration/web/page_query_budget_test.rb's own helper. SCHEMA/TRANSACTION and

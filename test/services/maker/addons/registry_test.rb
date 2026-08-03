@@ -72,6 +72,28 @@ module Maker
         assert_nil addon.layout
       end
 
+      test "states_key defaults to the addon's own key when the manifest omits it" do
+        addon = Registry.find("generators")
+        assert_equal "generators", addon.states_key
+      end
+
+      test "a manifest's declared states_key carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "legacy-generators") ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_equal "legacy-generators", addon.states_key
+      end
+
+      # A blank string is not "absent" at the JSON layer the way a missing key is, so this has to be
+      # checked separately from the omitted-key case above — `.presence` is what makes both collapse
+      # to the same default.
+      test "a blank states_key in the manifest falls back to the addon's own key" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "") ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_equal "generators", addon.states_key
+      end
+
       test "all is ordered by [title, key], not source order" do
         Source.stub = FakeAddonSource.new(manifests: [
           MANIFEST.merge("key" => "z", "title" => "Zebra"),

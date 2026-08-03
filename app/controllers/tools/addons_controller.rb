@@ -107,9 +107,11 @@ module Tools
     # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
     # by addon_key AND by current_user, in that order below — because a bundle is browser code and
     # this scoping is the only thing standing between one addon's saves and another's, or one user's
-    # and a stranger's.
+    # and a stranger's. Scoped by `states_key`, not `key`: they're the same value unless the manifest
+    # says otherwise (Maker::Addons::Registry#build), which is how one addon can read another's saves
+    # (see the `states_key` comment there for what that widens and why it's fine here).
     def states
-      states = current_user.maker_addon_states.for_addon(@addon.key)
+      states = current_user.maker_addon_states.for_addon(@addon.states_key)
                             .includes(:files).order(updated_at: :desc, id: :desc)
       render json: states.map { |s|
         { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at,
@@ -124,13 +126,16 @@ module Tools
       return head(:unprocessable_entity) if files.nil?
 
       state = current_user.maker_addon_states.create!(
-        addon_key: @addon.key, name: params.require(:name), data: parse_data
+        addon_key: @addon.states_key, name: params.require(:name), data: parse_data
       )
       addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
         files: files.map { |f| { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" } }
       )
       attach_addon_files_to_current_project(addon_files)
+      # @addon.key here, NOT states_key — this builds a ROUTE (back to this addon's own page), not a
+      # data scope. The state was just filed under states_key above; conflating the two here would
+      # send the user to the wrong addon's page after a states_key-diverging save.
       redirect_to tools_addon_path(@addon.key), notice: "Saved “#{state.name}”."
     end
 
