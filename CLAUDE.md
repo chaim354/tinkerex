@@ -587,8 +587,41 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   filter silently skipped the **worse** case: a sidecar whose author never committed a
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
-- **`Registry` declares each addon with its own `available:` lambda**, so an addon whose
-  backing service is unconfigured greys out rather than 500ing.
+- **Addons are manifest-driven, not listed in this repo.** `Maker::Addons::Registry` builds
+  `Addon`s from manifests fetched by `Maker::Addons::Source` and caches the index (`CACHE_KEY`,
+  5-minute `TTL`) — republishing a bundle *is* the deploy. Three refusals matter: a manifest
+  missing a `REQUIRED` key or declaring an `api_version` other than `Registry::API_VERSION` is
+  **skipped, not raised on** — one bad addon must never take `/tools` down (the `api_version` arm
+  is mutation-checked); and a source outage returns `[]` for **that request only**, because the
+  `rescue` sits **outside** `Rails.cache.fetch` — inside, a two-second blip greys every addon out
+  for the whole TTL (also mutation-checked, and only against a real `MemoryStore`: the suite's
+  default `:null_store` can't observe caching at all — same shape as §14e's rate-limiting note).
+- **ONE generic surface serves every addon** — `Tools::AddonsController` (shell / same-origin
+  asset proxy / save), which is why a new addon needs no Rails redeploy. **Route order is
+  load-bearing**: `tools/:key` matches any two-segment `/tools/*` path and collides with the
+  sibling addon routes above it, mutation-checked by moving it above `resources :boxes` and
+  watching `boxes_controller_test.rb` go from green to 12 failures + 2 errors. It does **not**
+  collide with `tools/addon_states/:id/params` (four segments; Rails requires a segment-count
+  match) — an earlier draft of the routes comment claimed it did and was verified false via
+  `Rails.application.routes.recognize_path`.
+- **Asset paths are REJECTED, never normalized** (§14a's `key_for` rule) — one guard,
+  `Source.validate_asset_path!`, shared by the HTTP and local (`Source::Local`, dev/test)
+  backends. The controller-level traversal test passed under mutation until the fake was seeded
+  with a file the traversal would actually *reach*: asserting only a 404 proved nothing, because
+  "refused" and "not found" both produce one. `Source::Local`'s own test had the same false-green
+  shape one layer down — `Pathname#join` doesn't sanitize `..` the way a URL does, so a made-up
+  escape target just happened not to exist on disk; the fix plants a real file outside the source
+  root and proves it unreachable, not coincidentally missing.
+- **`skip_forgery_protection only: :asset`** — needed because `verify_same_origin_request`
+  (an `append_after_action`, not skipped by this) fires unconditionally on any non-XHR JS
+  response, which is exactly what a `<script type="module" src>` load looks like; skipping the
+  `verify_authenticity_token` before_action is what stops the request from ever being marked for
+  that check, since marking only happens there. On a GET-only action the CSRF-token check itself
+  was already a no-op (GET is exempt), so the skip's sole practical effect is disabling that
+  cross-origin-JS guard. Residual, stated plainly: the endpoint stays behind `authenticate_user!`,
+  so a cross-origin `<script src>` remains a login-state / addon-inventory oracle (200 vs 404 via
+  `onload`/`onerror`, no response bytes leak). Whether to close that residual is a product
+  decision, not one this comment makes.
 - **Each save writes ONE file — its output.** The `.params.json` beside it is gone: it was
   **write-only** (`Maker::AddonState#data` already recorded the params and every reader went
   there). Params are now served by `Tools::AddonParamsController` — **one** route for all
@@ -717,6 +750,20 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Guards live in `test/integration/web/page_query_budget_test.rb` and assert **constancy in N**,
   never a literal: the counts differ per `LIBRARY_BACKEND`, so a literal pins one leg and fails
   the other two.
+- **AN APP MUST NOT POINT A SYNCHRONOUS HTTP CLIENT AT ITSELF.** Serving addon bundles from this
+  app's own `public/` over `ADDON_SOURCE_URL` made every asset fetch a **nested** request into the
+  same Puma pool already servicing the outer one — reentrancy, not just extra load. Measured, not
+  theorized: the `generators` bundle's own module graph (2 sequential fetches, then 4 of makerjs's
+  bare-specifier deps fetched at once by the browser) against a stock 3-4-thread dev/Capybara Puma
+  pool stalled most requests **14-24 seconds**, and several outright **404'd** — `Net::HTTP`'s own
+  read timeout firing before a thread ever freed up. Fixed by `ADDON_SOURCE_PATH`
+  (`Maker::Addons::Source::Local`), which reads `public/addons` straight off disk in dev/test;
+  `ADDON_SOURCE_URL` (HTTP) stays for Phase B's genuinely separate static container, which has its
+  own pool and is structurally immune to this. A second, smaller effect in the same area: even
+  `Source::Local` needs more than Puma's stock `threads 3, 3` in a real `bin/rails server`, because
+  `config.enable_reloading = true`'s per-request interlock adds overhead a page firing several
+  near-simultaneous asset requests can expose — `RAILS_MAX_THREADS=16` fixed it; production
+  (eager-loaded) and the test env (`enable_reloading = false`) don't carry that overhead.
 
 ### 14f. Project-folder intake
 

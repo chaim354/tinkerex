@@ -145,6 +145,9 @@ Rails.application.routes.draw do
   end
 
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
+  # `generators` has migrated to the generic manifest-driven surface (Tools::AddonsController,
+  # `tools/:key` below) — it has no controller/routes of its own any more. Boxes and OpenSCAD have
+  # not migrated yet and keep their own controllers.
   get "tools", to: "tools/home#index", as: :tools
   namespace :tools do
     resources :boxes, only: %i[index new show create] do
@@ -153,7 +156,6 @@ Rails.application.routes.draw do
       # sidecar (which bundles boxes.py's GPL thumbnails) so the browser never hits an external host.
       get "thumb/:key", to: "boxes#thumb", on: :collection, as: :thumb, constraints: { key: /[A-Za-z0-9]+/ }
     end
-    resources :generators, only: %i[index create show]
   end
 
   # OpenSCAD addon. TWO naming traps here, both about the inflector, and the routes are written out
@@ -182,6 +184,28 @@ Rails.application.routes.draw do
   # two inflector traps documented above do NOT apply here — `addon_state` inflects cleanly both
   # ways; this is about the helper name matching, nothing more.
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
+
+  # DECLARED LAST, AND THAT IS LOAD-BEARING. `tools/:key` matches any TWO-segment /tools/* path, so
+  # it collides with the sibling addon routes above it (`tools/boxes`, `tools/openscad`) — route
+  # recognition is first-match-wins by declaration order, regardless of which named helper built the
+  # URL. Mutation-checked by moving these routes above `resources :boxes`:
+  # `bin/rails test test/controllers/tools/boxes_controller_test.rb`
+  # went from green to 12 failures + 2 errors, all 404s/UrlGenerationErrors where `/tools/boxes` and
+  # `/tools/boxes/:id` used to resolve — because `tools/:key` (key="boxes") beat `resources :boxes`'s
+  # own index route to the match. Restoring this order fixed it. (`generators` used to be a third
+  # sibling here, guarded by the same hazard; it migrated to the generic `tools/:key` surface itself,
+  # so there is nothing left for it to collide with.)
+  #
+  # It does NOT collide with `tools/addon_states/:id/params`: that path has four segments
+  # (tools/addon_states/:id/params) and Rails requires a segment-count match, so no ordering hazard
+  # exists between them — moving `tools/:key` above that one specific route left
+  # `addon_params_controller_test.rb` green. (An earlier draft of this comment claimed the opposite;
+  # verified false with `Rails.application.routes.recognize_path`.)
+  #
+  # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
+  get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
+  post "tools/:key",             to: "tools/addons#create"
+  get  "tools/:key",             to: "tools/addons#show",  as: :tools_addon
 
   # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
   # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).

@@ -5,7 +5,7 @@
 <div class="tools-grid">
   <% @addons.each do |addon| %>
     <% if addon.available? %>
-      <%= link_to send("tools_#{addon.key}_path"), class: "addon-card" do %>
+      <%= link_to tools_addon_path(addon.key), class: "addon-card" do %>
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>
         <span class="addon-desc muted"><%= addon.description %></span>
@@ -17,5 +17,36 @@
         <span class="addon-desc muted">Unavailable here</span>
       </div>
     <% end %>
+  <% end %>
+
+  <%# TEMPORARY — boxes and openscad still have their own controllers and are not yet
+      manifest-driven. Each block disappears when that addon migrates to a bundle. `generators`
+      migrated (this is now served by the @addons loop above); availability still keys on the
+      sidecar env var, exactly as the old Registry entries did. %>
+  <% if BoxesClient.configured? %>
+    <%= link_to tools_boxes_path, class: "addon-card" do %>
+      <span class="addon-icon">📦</span>
+      <span class="addon-title">Box Generator</span>
+      <span class="addon-desc muted">Parametric laser-cut / CNC boxes</span>
+    <% end %>
+  <% else %>
+    <div class="addon-card disabled" title="Not configured on this deployment">
+      <span class="addon-icon">📦</span>
+      <span class="addon-title">Box Generator</span>
+      <span class="addon-desc muted">Unavailable here</span>
+    </div>
+  <% end %>
+  <% if OpenscadClient.configured? %>
+    <%= link_to tools_openscad_path, class: "addon-card" do %>
+      <span class="addon-icon">🧊</span>
+      <span class="addon-title">OpenSCAD</span>
+      <span class="addon-desc muted">Parametric .scad + params → 3MF</span>
+    <% end %>
+  <% else %>
+    <div class="addon-card disabled" title="Not configured on this deployment">
+      <span class="addon-icon">🧊</span>
+      <span class="addon-title">OpenSCAD</span>
+      <span class="addon-desc muted">Unavailable here</span>
+    </div>
   <% end %>
 </div>

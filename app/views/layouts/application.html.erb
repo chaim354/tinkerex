@@ -24,7 +24,7 @@
     <%= stylesheet_link_tag "notes", "data-turbo-track": "reload" %>
     <%= stylesheet_link_tag "models", "data-turbo-track": "reload" %>
     <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
-    <%= javascript_importmap_tags %>
+    <%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>
   </head>
 
   <body>
