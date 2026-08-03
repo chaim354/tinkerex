@@ -40,11 +40,23 @@ module Tools
       )
       @user = User.create!(email: "addons@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      Storage::ChunkStore.reset!
+      # Mirrors GeneratorsControllerTest/BoxesControllerTest: on the s3 CI leg, FileLayer.current
+      # otherwise resolves to a REAL FileLayer::S3 pointed at CI's stub (non-existent) bucket
+      # creds, so an unstubbed save 403s against actual AWS instead of exercising the save path.
+      if ENV["LIBRARY_BACKEND"] == "s3"
+        require_relative "../../support/fake_s3"
+        @fake = FakeS3.new
+        FileLayer.current = FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                                              secret_access_key: "sk", prefix: "library",
+                                              client: @fake.client)
+      end
     end
 
     teardown do
       Maker::Addons::Source.reset!
       Rails.cache = @prior_cache
+      FileLayer.reset!
     end
 
     test "requires login" do
@@ -90,6 +102,45 @@ module Tools
       get "/tools/widgetkit/asset/../../secret"
       assert_response :not_found
       assert_no_match(/PWNED/, response.body)
+    end
+
+    test "save writes the file to the library and records an AddonState" do
+      assert_difference -> { @user.maker_addon_states.count } => 1 do
+        post tools_addon_path("widgetkit"), params: {
+          name: "3mm birch test",
+          data: { generator: "material-test-grid", params: { cols: "5" } }.to_json,
+          files: [ { name: "grid.svg", content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+        }
+      end
+      assert_redirected_to tools_addon_path("widgetkit")
+
+      state = @user.maker_addon_states.last
+      assert_equal "widgetkit", state.addon_key
+      assert_equal "3mm birch test", state.name
+      assert_equal "material-test-grid", state.data["generator"]
+      assert_equal 1, state.files.count
+    end
+
+    test "save refuses a payload over the size cap" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "huge", data: "{}",
+        files: [ { name: "big.svg", content_type: "image/svg+xml",
+                   body: "x" * (Tools::AddonsController::MAX_FILE_BYTES + 1) } ].to_json
+      }
+      assert_response :unprocessable_entity
+    end
+
+    test "save refuses a file count over the cap" do
+      files = Array.new(Tools::AddonsController::MAX_FILES + 1) do |i|
+        { name: "f#{i}.svg", content_type: "image/svg+xml", body: "<svg/>" }
+      end
+      post tools_addon_path("widgetkit"), params: { name: "many", data: "{}", files: files.to_json }
+      assert_response :unprocessable_entity
+    end
+
+    test "save refuses malformed files JSON rather than 500ing" do
+      post tools_addon_path("widgetkit"), params: { name: "bad", data: "{}", files: "not json" }
+      assert_response :unprocessable_entity
     end
   end
 end

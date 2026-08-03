@@ -4,6 +4,17 @@ module Tools
   class AddonsController < BaseController
     include Tools::LibraryFolders
 
+    MAX_FILES = 8
+    # Kept below Rack::QueryParser's own bytesize_limit (4_194_304 = 4 MiB, Rack's hard ceiling on
+    # a url-encoded request body — see Rack::Utils.default_query_parser). Anything at or above that
+    # never reaches this action at all: Rack raises QueryLimitError -> ActionController::BadRequest
+    # (400) while parsing params, before load_addon or create ever runs. Setting this cap ABOVE the
+    # Rack ceiling would make it dead code for that request shape (a real multipart FormData upload
+    # from the addon's own JS isn't bound by this same Rack limit, but a plain url-encoded POST is,
+    # and this app-level check exists precisely to give a routine 422 instead of a bare 400 either
+    # way). Leave real headroom under 4_194_304, not just less-than.
+    MAX_FILE_BYTES = 4_000_000
+
     before_action :load_addon
 
     # `skip_forgery_protection` only does `skip_before_action :verify_authenticity_token`
@@ -68,11 +79,48 @@ module Tools
       head :not_found
     end
 
+    # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
+    # the request — bounded here, because a client-supplied body is not a trusted size.
+    def create
+      files = parse_files
+      return head(:unprocessable_entity) if files.nil?
+
+      state = current_user.maker_addon_states.create!(
+        addon_key: @addon.key, name: params.require(:name), data: parse_data
+      )
+      addon_files = Maker::Addons::LibraryOutput.write(
+        user: current_user, state:, parent_node_id: chosen_parent_node_id,
+        files: files.map { |f| { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" } }
+      )
+      attach_addon_files_to_current_project(addon_files)
+      redirect_to tools_addon_path(@addon.key), notice: "Saved “#{state.name}”."
+    end
+
     private
 
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # Returns nil (-> 422) rather than raising, so a malformed or oversized payload is a routine
+    # refusal instead of a 500.
+    def parse_files
+      parsed = JSON.parse(params[:files].to_s)
+      return nil unless parsed.is_a?(Array) && parsed.any? && parsed.size <= MAX_FILES
+      return nil unless parsed.all? { |f| f.is_a?(Hash) && f["name"].present? && f["body"].is_a?(String) }
+      return nil if parsed.sum { |f| f["body"].bytesize } > MAX_FILE_BYTES
+
+      parsed
+    rescue JSON::ParserError
+      nil
+    end
+
+    def parse_data
+      parsed = JSON.parse(params[:data].to_s)
+      parsed.is_a?(Hash) ? parsed : {}
+    rescue JSON::ParserError
+      {}
     end
 
     def content_type_for(path)
