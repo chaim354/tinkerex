@@ -202,6 +202,11 @@ Rails.application.routes.draw do
   # `addon_params_controller_test.rb` green. (An earlier draft of this comment claimed the opposite;
   # verified false with `Rails.application.routes.recognize_path`.)
   #
+  # An addon reaching its sidecar. The manifest names WHICH service; the host's own env says WHERE —
+  # a manifest-supplied URL would be an SSRF primitive aimed at the internal network (spec §4.1).
+  match "tools/:key/service/:service/*path", to: "tools/addons#service",
+        via: %i[get post], as: :tools_addon_service, format: false
+
   # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
   get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
   post "tools/:key",             to: "tools/addons#create"

@@ -30,7 +30,22 @@ module Maker
         assert_equal "Generators", addon.title
         assert_equal "generators.js", addon.entry
         assert_equal({ "makerjs" => "makerjs.js" }, addon.pins)
+        assert_equal [], addon.services
         assert addon.available?
+      end
+
+      test "services defaults to [] when the manifest omits it, exactly as pins does" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.except("pins") ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_equal [], addon.services
+      end
+
+      test "a manifest's declared services are carried onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("services" => [ "boxes" ]) ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_equal [ "boxes" ], addon.services
       end
 
       test "all is ordered by [title, key], not source order" do

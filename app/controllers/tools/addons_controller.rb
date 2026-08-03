@@ -79,6 +79,29 @@ module Tools
       head :not_found
     end
 
+    # Proxy one request to a sidecar the addon's manifest declares. THREE refusals, each 404:
+    # a service the manifest does not name, a service the host has no URL for, and a traversing path.
+    # The URL never comes from the addon — only from ENV — which is what keeps this from being an
+    # SSRF primitive (spec §4.1).
+    def service
+      url = sidecar_url_for(params[:service])
+      return head(:not_found) if url.nil?
+
+      path = Maker::Addons::Source.new(url).asset_path!(params[:path])
+      # `request.get?` is false for a HEAD request even though the route (`via: %i[get post]`) routes
+      # HEAD to this same action like any other GET route does by default — Brakeman's VerbConfusion
+      # check catches exactly this shape. `head?` is checked alongside it so a HEAD request is
+      # forwarded (and its params read) the same way a GET is, not silently treated as a POST.
+      get_like = request.get? || request.head?
+      res = Maker::Addons::ServiceProxy.current.call(
+        method: get_like ? :get : :post, url: url, path: path,
+        params: get_like ? request.query_parameters : request.request_parameters
+      )
+      send_data res.body, type: res.content_type, disposition: "inline", status: res.status
+    rescue Maker::Addons::Source::Error, Maker::Addons::ServiceProxy::Error
+      head :not_found
+    end
+
     # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
     # the request — bounded here, because a client-supplied body is not a trusted size.
     def create
@@ -101,6 +124,14 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # The manifest must DECLARE the service, and the host must have a URL for it. Both, not either —
+    # an addon naming a service the host never configured must not fall back to a guess.
+    def sidecar_url_for(name)
+      return nil unless @addon.services.include?(name.to_s)
+
+      ENV["#{name.to_s.upcase.tr('-', '_')}_SIDECAR_URL"].presence
     end
 
     # Returns nil (-> 422) rather than raising, so a malformed or oversized payload is a routine

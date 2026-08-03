@@ -1,5 +1,6 @@
 require "test_helper"
 require_relative "../../support/fake_addon_source"
+require_relative "../../support/fake_service_proxy"
 
 module Tools
   class AddonsControllerTest < ActionDispatch::IntegrationTest
@@ -15,8 +16,10 @@ module Tools
     MANIFEST = {
       "key" => "widgetkit", "title" => "Generators", "icon" => "✏️",
       "description" => "Parametric 2D drawings", "api_version" => "1",
-      "entry" => "generators.js", "pins" => { "makerjs" => "makerjs.js" }
+      "entry" => "generators.js", "pins" => { "makerjs" => "makerjs.js" },
+      "services" => [ "fixture-svc" ]
     }.freeze
+    FIXTURE_KEY = MANIFEST["key"]
 
     setup do
       @prior_cache = Rails.cache
@@ -49,8 +52,18 @@ module Tools
 
     teardown do
       Maker::Addons::Source.reset!
+      Maker::Addons::ServiceProxy.reset!
       Rails.cache = @prior_cache
       FileLayer.reset!
+    end
+
+    # Registers a canned response for one full sidecar URL (base + path), via the ServiceProxy seam
+    # — never Net::HTTP itself (this repo has no `Object#stub`; see the require at the top of this
+    # file for why). Reused across the service tests below.
+    def stub_http_ok(full_url, body:, content_type:)
+      @fake_service_proxy ||= FakeServiceProxy.new
+      Maker::Addons::ServiceProxy.stub = @fake_service_proxy
+      @fake_service_proxy.ok(full_url, body: body, content_type: content_type)
     end
 
     test "requires login" do
@@ -135,6 +148,53 @@ module Tools
     test "save refuses malformed files JSON rather than 500ing" do
       post tools_addon_path("widgetkit"), params: { name: "bad", data: "{}", files: "not json" }
       assert_response :unprocessable_entity
+    end
+
+    test "service proxies to the sidecar URL the HOST configures" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "SIDECAR-BODY", content_type: "image/svg+xml")
+
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render"), params: { a: "1" }
+
+      assert_response :success
+      assert_equal "SIDECAR-BODY", response.body
+      assert_equal "image/svg+xml", response.media_type
+    ensure
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+    end
+
+    test "a service the manifest does not declare is refused" do
+      # The manifest names WHICH services an addon may reach; the host says WHERE each lives. An
+      # addon that could name an arbitrary service — or an arbitrary URL — would be an SSRF
+      # primitive pointed at the internal network (spec §4.1).
+      ENV["OTHER_SIDECAR_URL"] = "http://other.test"
+      # Stubbed so a real answer is a REACHABLE outcome. Without this, a broken guard would still
+      # 404 here for an unrelated reason — Net::HTTP failing to resolve "other.test" — which would
+      # make the assertion below pass by coincidence rather than by the guard actually firing. The
+      # mutation check in step 7 depends on this distinction (§15).
+      stub_http_ok("http://other.test/render", body: "SHOULD-NOT-BE-REACHABLE", content_type: "text/plain")
+
+      post tools_addon_service_path(FIXTURE_KEY, "other", "render")
+      assert_response :not_found
+    ensure
+      ENV.delete("OTHER_SIDECAR_URL")
+    end
+
+    test "a declared service with no configured URL is refused, not guessed at" do
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+      assert_response :not_found
+    end
+
+    test "a traversing service path is refused" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      # Stubbed at the WOULD-BE traversal target so a bypassed guard gets a reachable answer instead
+      # of a coincidental 404 from Net::HTTP failing on a malformed URL (§15 mutation-check note).
+      stub_http_ok("http://sidecar.test/../../admin", body: "SHOULD-NOT-BE-REACHABLE", content_type: "text/plain")
+
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "../../admin")
+      assert_response :not_found
+    ensure
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
     end
   end
 end

@@ -8,6 +8,7 @@
     "entry": "fixture.js",
     "pins": {
       "fixture-dep": "dep.js"
-    }
+    },
+    "services": [ "fixture-svc" ]
   }
 ]
