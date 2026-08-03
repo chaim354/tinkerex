@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-02 (**An addon becomes a manifest + a bundle: the generic `/tools` host surface, and `generators`' migration off it — branch `claude/addons-runtime-bundles`**)
+**Updated:** 2026-08-03 (**Secrets resolve from 1Password per destination, with a preflight — PR #122 + the `tinkerex` vault split**)
 
 ## What this file is
 
@@ -60,7 +60,76 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-02): an addon becomes a manifest + a bundle — the generic `/tools` host surface, and `generators`' migration off it (branch `claude/addons-runtime-bundles`)
+## Latest (2026-08-03): secrets resolve from 1Password per destination, with a preflight (PR #122, branch `claude/1password-persistent-access-13fe8f`; vault split on `claude/1password-vault-scope`)
+
+Deploys required `export CHUNK_SECRET_ACCESS_KEY=… KAMAL_REGISTRY_PASSWORD=…` before every run,
+even though `docs/DEPLOY.md` already used `op read` for the sidecar builds. `bin/secret VAR
+op://Vault/Item/field` is now the one definition of where a credential comes from — exported shell
+value wins, else 1Password — used by every `.kamal/secrets*` and both sidecar builds. **PR #122
+merged as `456f683` with all seven CI checks green.**
+
+**Secrets are per-destination now.** Kamal reads `[secrets-common, secrets.<dest>]`, so
+`.kamal/secrets` is the *base* file and is **not read under `-d`**; added `.kamal/secrets.s3`,
+`.secrets.share`, `.secrets.ovh`. The split is required, not tidiness, for two measured reasons:
+`CHUNK_SECRET_ACCESS_KEY` resolves to **42 bytes (SeaweedFS) on Unraid and 64 bytes (R2) on OVH** —
+one variable name, two credentials, which `secrets-common` cannot tell apart; and
+`InlineCommandSubstitution` runs every `$(…)` in a parsed file **eagerly**, so a credential parked
+in `secrets-common` makes `-d share` shell out for something a share container never holds.
+
+**Why `bin/secrets-preflight` exists — kamal cannot notice an unreadable secret.** It expands
+`$(…)` through Ruby **backticks, which discard exit status**, so a locked vault yields `""` and
+`Kamal::Secrets#[]` returns that empty string **without raising**. Verified against kamal 2.11: a
+deliberately-failing substitution parsed to `{"EMPTY" => ""}`, `key?` said false while `[]` said
+`""`, and kamal reads `[]`. A *missing* key raises; an *empty* one does not. That is the recorded
+failure where an empty `KAMAL_REGISTRY_PASSWORD` reached `docker login` and was reported as exit 0.
+The preflight resolves every key the merged config declares through the real `Kamal::Secrets` and
+prints names + byte lengths only, never values.
+
+**Three traps found by probing, each of which would have shipped as a green-but-wrong guard:**
+1. **`${VAR:-default}` is broken in kamal's dotenv** — it renders `":-default}"` (and
+   `"from_shell:-default}"` when set), because Dotenv's Variable substitution consumes `${VAR` and
+   leaves the remainder literal. The shell-default idiom cannot be used in these files; hence a
+   helper script.
+2. **`Kamal::Configuration#raw_config` is an `ActiveSupport::InheritableOptions` with STRING keys.**
+   `dig(:env, :secret)` returns nil while `dig("env","secret")` returns the list. The first version
+   of the guard test used symbols, so it returned `[]` for every destination and **passed while
+   asserting nothing** — caught only by minitest's "Test is missing assertions". Assertions went
+   **27 → 53** on the fix.
+3. **OVH could not load its config at all.** `CHUNK_ACCESS_KEY_ID` was `<%= ENV[…] %>`, and kamal
+   secrets feed `env.secret` lookups — they are never exported into the ENV that ERB reads. Unset,
+   the ERB rendered empty, YAML parsed `nil`, and the destination died with
+   `env/clear/CHUNK_ACCESS_KEY_ID: should be a string`. It is an `env.secret` entry now, with
+   `env.secret` re-declared in full (kamal replaces arrays on merge).
+
+**Guards:** three tests in `test/deploy_hygiene_test.rb`, each **mutation-checked** (broken → seen
+RED → restored byte-identical): required keys are defined in a file the destination actually reads;
+`secrets-common` holds only universally-required keys; no secrets file holds a literal. All three
+are **static** — they never execute a `$(…)`, so they need no vault and pass on a runner with no
+1Password installed.
+
+**The `tinkerex` vault split (2026-08-03, follow-up).** All references moved from
+`op://Personal/…` to `op://tinkerex/…`. Forced by a constraint from 1Password's own CLI: **a
+service account cannot be granted access to a Personal or Private vault**, so leaving the items in
+`Personal` makes unattended runs impossible rather than merely broad. It also bounds what anything
+running `op` on this machine — a coding agent included — can read, from the entire personal vault
+down to five project items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`, `tinkerex-origin`). Confirmed
+by probe: every `op://Personal/…` reference now **fails** and every `op://tinkerex/…` one resolves.
+`tinkerex-origin` (OVH's Cloudflare Origin cert, `{certificate, private key}`) is referenced by no
+code — it is used by hand — but it moved too, because a service account cannot read `Personal` and
+an unattended OVH TLS step would otherwise fail.
+**Service accounts ARE available on a personal (Individual/Families) plan** — an earlier claim in
+this session that they were Business/Teams-only was wrong; the published rate limits list
+"1Password and 1Password Families" as its own tier at 1,000 reads/day, versus ~8 reads for a full
+`bin/secrets-preflight --all`. Only the Private-vault restriction applies.
+
+**Verified:** `bin/ci` green, three backend legs identical at **1924 runs, 6683 assertions, 0
+failures, 0 errors, 11 skips**; system tests 22/132; style 485 files clean. All four destinations
+resolved live against 1Password, before and after the vault move.
+**Not verified: no deploy was run.** The preflight proves credentials *resolve*, not that one
+reaches a running container — and the OVH fix is argued from the config error above, since OVH
+deploys only on explicit request (CLAUDE.md §7). The three Unraid legs still run the pre-#122 image.
+
+## 2026-08-02: an addon becomes a manifest + a bundle — the generic `/tools` host surface, and `generators`' migration off it (branch `claude/addons-runtime-bundles`)
 
 **1905 runs / 6602 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
 s3 — plus 22 system tests / 133 assertions.** Design: `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`.
@@ -2211,7 +2280,9 @@ host-routed through one shared kamal-proxy — verified each booted into its own
 item get` then HANG; the deploy secret-guard aborts cleanly *before* touching anything, so a failed
 deploy is safe to retry once the vault is reopened. Registry token = 1Password item `ghcr.io`
 field `password` (NOT the `gh` CLI token — no `packages` scope); chunk/s3-library secret =
-`op://Personal/seaweednew/secret key`. (2) The **s3 library is up but its `library/` prefix is
+`op://tinkerex/seaweednew/secret key` (**vault corrected 2026-08-03** — these items moved out of
+`Personal`, which a service account cannot read; `op://Personal/…` now fails). (2) The **s3 library
+is up but its `library/` prefix is
 EMPTY** — nothing seeded yet. (3) Deploy: `bin/kamal deploy` (chunk builds+pushes), then
 `-d s3`, `-d share` (reuse the image). See `docs/DEPLOY.md` + the `deploy-build-workflow` handoff.
 

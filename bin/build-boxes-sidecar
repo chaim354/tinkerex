@@ -8,7 +8,7 @@
 # Then boot/update the accessory on the box:  bin/kamal accessory reboot boxes
 set -euo pipefail
 
-KAMAL_REGISTRY_PASSWORD="$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://Personal/ghcr.io/password')"
+KAMAL_REGISTRY_PASSWORD="$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://tinkerex/ghcr.io/password')"
 IMAGE="ghcr.io/chaim354/boxes-sidecar:latest"
 
 echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-stdin
