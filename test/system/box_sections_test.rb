@@ -1,32 +1,64 @@
 require "application_system_test_case"
-require_relative "../support/fake_boxes"
+require_relative "../support/fake_boxes_sidecar"
 
 # The Box Generator's collapsible sections, its table of contents, and the editor's self-starting
-# preview. Every one of these is browser-only in the sense test/system/README.md asks for:
+# preview. The Box Generator itself is now a runtime-loaded ESM bundle (chaim354/tinkerex-addons,
+# addons/boxes/*.js), not server-rendered ERB + Stimulus — Tools::BoxesController and its five
+# Stimulus controllers are gone. This file exercises a SNAPSHOT of that bundle, copied verbatim into
+# test/fixtures/addons/boxes/ and served through the exact same host pipeline production uses
+# (Tools::AddonsController#show/#asset, Maker::Addons::Source::Local reading ADDON_SOURCE_PATH off
+# disk) with the sidecar itself stubbed at the Maker::Addons::ServiceProxy seam (FakeBoxesSidecar) —
+# there is no real boxes.py here, same as there was no real one behind the old BoxesClient.stub.
+#
+# THE HERMETIC-SNAPSHOT TRADE-OFF, stated plainly: this fixture can drift from the real bundle in
+# ~/Desktop/tinkerex-addons. Nothing in this repo's CI catches that drift automatically — a change
+# to the real bundle's sections/filter/preview logic that isn't mirrored into the snapshot here
+# would leave these tests green while the shipped addon broke. This is the SAME mechanism (and the
+# same accepted risk) test/system/addon_bundle_test.rb already established for its own minimal
+# fixture; the difference is that fixture was purpose-built as a minimal host-pipeline probe, while
+# this one is a full copy of the real feature. The alternative — pointing these tests at the sibling
+# tinkerex-addons checkout and skipping when it's absent — was rejected because it gives ZERO
+# coverage on a fresh clone (this repo's CI runner has no reason to have that sibling repo checked
+# out beside it), and a skip that always skips is indistinguishable from no test at all. A snapshot
+# that sometimes goes stale beats a test that never runs.
+#
+# Every one of these behaviours is browser-only in the sense test/system/README.md asks for:
 #
 #   1. `<details>` open/closed is a DOM property the user toggles — a request test can assert the
-#      SHIPPED state (and boxes_controller_test does), never what happens after a click.
+#      SHIPPED state, never what happens after a click.
 #   2. The layout the user leaves behind lives in localStorage, so "still collapsed next visit"
 #      needs a real second page load in a real browser.
-#   3. The editor's first render fires from `connect()`, with nothing clicked. There is no request
-#      to assert and no attribute that proves it — only an <img> that acquires a src on its own.
-#   4. Filtering must REVEAL a match hidden inside a collapsed section, and must then put the
-#      layout back. That interaction is two Stimulus controllers on one element agreeing about who
-#      owns `open`, which is exactly the seam a server-side test cannot see.
+#   3. The editor's first render fires from `mount()`, with nothing clicked. There is no request to
+#      assert and no attribute that proves it — only an <img> that acquires a src on its own.
+#   4. Filtering must REVEAL a match hidden inside a collapsed section, and must then put the layout
+#      back. That interaction is two modules (sections.js/filter.js) on one element agreeing about
+#      who owns `open`, which is exactly the seam a server-side test cannot see.
 #
-# MUTATION-CHECKED (2026-08-02) — each reverted, watched go red, restored. Named per test below.
+# MUTATION-CHECKED (2026-08-03, against the snapshot in test/fixtures/addons/boxes/) — each reverted,
+# watched go red, restored. Named per test below.
 class BoxSectionsTest < ApplicationSystemTestCase
-  # FakeBoxes gives ABox a sample photo and the other two none, so the gallery's <img> 404s on
-  # purpose and the thumbfallback controller hides it. Chrome logs that at SEVERE. See
+  # ABox has a sample photo in FakeBoxesSidecar; the other three don't, so the gallery's <img> 404s
+  # on purpose (through the NEW service-proxy path, not the old /tools/boxes/thumb/:key route) and
+  # the bundle's own onerror handler hides it. Chrome logs that at SEVERE. See
   # `assert_no_console_errors(ignoring:)`.
-  SAMPLE_404 = %r{/tools/boxes/thumb/\w+ - Failed to load resource.+404}
+  SAMPLE_404 = %r{/tools/boxes/service/boxes/sample/\w+ - Failed to load resource.+404}
 
   setup do
-    BoxesClient.stub = FakeBoxes.new
+    # Hermetic fixture, not the real bundle — see the file header. Mirrors
+    # test/system/addon_bundle_test.rb's own ADDON_SOURCE_PATH dance exactly (ADDON_SOURCE_PATH,
+    # not ADDON_SOURCE_URL: pointing this at ourselves over HTTP would be a synchronous nested
+    # request into the same small Puma pool this test's own request is running on — see
+    # Maker::Addons::Source::Local's comment for the measured stall this caused).
+    @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
+    ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+    @proxy = FakeBoxesSidecar.install!
     sign_in_as "sections@example.com"
   end
 
-  teardown { BoxesClient.reset! }
+  teardown do
+    FakeBoxesSidecar.uninstall!
+    ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
+  end
 
   # Capybara's matchers wait on the DOM; an <img> swapping its src is a property read, so poll it.
   def wait_until(timeout: 5, message: "condition never became true")
@@ -37,7 +69,19 @@ class BoxSectionsTest < ApplicationSystemTestCase
 
   # Capybara's `assert_no_selector` takes no failure message, and these negatives are the whole
   # point of most of these tests — "it was still open" needs to say WHICH claim broke.
+  #
+  # THE PLAIN `has_no_selector?("#{selector}[open]")` FORM IS A RACE, and it is a race this bundle's
+  # own async mount introduces where the old server-rendered markup had none: `has_no_selector?`
+  # returns true the instant nothing matches, and "the element doesn't exist YET because mount()
+  # hasn't finished fetching/rendering" matches that just as well as "it exists and is closed" does.
+  # The old ERB page had every `<details>` present in the FIRST response body, so that ambiguity
+  # could not arise; this bundle builds the DOM after an async fetch, so a check made too early
+  # would silently confirm "closed" for a section that is actually just not there yet. Waiting for
+  # the plain selector to exist first collapses that race: only then does the negative check mean
+  # what it says. Caught by mutation-checking this file — see the header note before assuming this
+  # line is decorative.
   def assert_closed(selector, message)
+    assert_selector selector
     assert page.has_no_selector?("#{selector}[open]"), message
   end
 
@@ -46,7 +90,7 @@ class BoxSectionsTest < ApplicationSystemTestCase
   end
 
   # Typed, never `set`. Selenium's `set` is clear()-then-send_keys, and clear() does not reliably
-  # fire `input` — which is the event boxfilter listens to. That makes `set("")` a no-op for the
+  # fire `input` — which is the event filter.js listens to. That makes `set("")` a no-op for the
   # filter, and "clearing the box puts the layout back" is precisely what this file has to prove.
   def search_for(text)
     field = find("input.box-search")
@@ -55,10 +99,14 @@ class BoxSectionsTest < ApplicationSystemTestCase
     field.send_keys(text) unless text.empty?
   end
 
+  def open_generator(key)
+    find(".addon-card", text: key).click
+  end
+
   # MUTATION: made `jump` fall through to the browser's default #hash navigation (dropped the
-  # preventDefault + `section.open = true`) — red, the section stayed shut.
+  # preventDefault + `section.open = true` in sections.js) — red, the section stayed shut.
   test "a table-of-contents entry opens the section it points at, even when that section is shut" do
-    visit tools_boxes_path
+    visit tools_addon_path("boxes")
     find("#box-section-tray > summary").click
     assert_closed "#box-section-tray", "clicking the summary should have folded it"
 
@@ -68,14 +116,16 @@ class BoxSectionsTest < ApplicationSystemTestCase
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 
-  # MUTATION: dropped the localStorage write in `#persist` — red, the section came back open.
+  # MUTATION: dropped the localStorage write in sections.js's `persist` — red, the section came
+  # back open. This is the test with a known flake (see the plan/CLAUDE.md) — if it still flakes
+  # after this rewrite, that is reported rather than hidden.
   test "what you fold away stays folded on the next visit" do
-    visit tools_boxes_path
+    visit tools_addon_path("boxes")
     assert_selector "#box-section-box[open]"
     find("#box-section-box > summary").click
     assert_closed "#box-section-box", "clicking the summary should have folded it"
 
-    visit tools_boxes_path
+    visit tools_addon_path("boxes")
     assert_closed "#box-section-box", "the collapsed section was not remembered"
     assert_open "#box-section-tray", "an untouched section must keep its shipped state"
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
@@ -85,15 +135,15 @@ class BoxSectionsTest < ApplicationSystemTestCase
   # opens sections by assigning `.open`, which fires `toggle` too. Storing that would mean a search
   # silently rewrote the layout you had arranged.
   #
-  # THE DEPARTURE MID-SEARCH IS THE LOAD-BEARING STEP, and the first draft of this test did not have
-  # it. Persisting on `toggle` passed everything else, because boxfilter puts the prior state back
-  # when the query is cleared — so storage lands on the right value anyway. The bug only exists for
-  # someone who LEAVES while a filter is still applied, which is why the reload happens there.
+  # THE DEPARTURE MID-SEARCH IS THE LOAD-BEARING STEP. Persisting on `toggle` passes everything else,
+  # because filter.js puts the prior state back when the query is cleared — so storage lands on the
+  # right value anyway. The bug only exists for someone who LEAVES while a filter is still applied,
+  # which is why the reload happens there.
   #
-  # MUTATION: moved persistence onto the `toggle` event (`#onToggle` also calling `#persist`) — green
-  # against the first draft, RED here at "a search must not persist as a choice".
+  # MUTATION: moved persistence onto the `toggle` event (sections.js's `onToggle` also calling
+  # `persist`) — green against the first draft, RED here at "a search must not persist as a choice".
   test "a search reveals matches inside collapsed sections without rewriting your layout" do
-    visit tools_boxes_path
+    visit tools_addon_path("boxes")
     find("#box-section-tray > summary").click
     assert_closed "#box-section-tray", "clicking the summary should have folded it"
 
@@ -103,7 +153,7 @@ class BoxSectionsTest < ApplicationSystemTestCase
     assert_no_selector "nav.box-toc a[href='#box-section-box']", visible: true
 
     # Walk away with the filter still on: nothing the search opened may have been banked.
-    visit tools_boxes_path
+    visit tools_addon_path("boxes")
     assert_closed "#box-section-tray", "a search must not persist as a choice"
 
     # And clearing the box in place puts the borrowed layout back.
@@ -114,23 +164,40 @@ class BoxSectionsTest < ApplicationSystemTestCase
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 
-  # MUTATION: removed the `this.preview()` call from `connect()` — red, the <img> never got a src.
+  # MUTATION: removed preview.js's self-invoking `preview()` call at the end of `mountPreview` —
+  # red, the <img> never got a src.
   test "the editor renders the generator's defaults with nothing clicked, then follows an edit" do
-    visit new_tools_box_path(generator: "ABox")
-    img = find("[data-boxpreview-target='image']", visible: :all)
-    wait_until(message: "the default box was never previewed") { img[:src].to_s.start_with?("blob:") }
+    visit tools_addon_path("boxes")
+    open_generator("ABox")
 
-    first = img[:src]
-    fill_in "params[x]", with: "222"
-    # MUTATION: removed the debounced #onEdit listener — red here, the src never changed.
-    wait_until(message: "editing a param did not refresh the preview") { img[:src] != first }
+    img = find('[data-role="preview-image"]', visible: :all)
+    wait_until(message: "the default box was never previewed") do
+      img[:src].to_s.start_with?("data:image/svg+xml")
+    end
+
+    before = @proxy.calls.count { |c| c.path == "generate" }
+    find('[data-param="x"]').set("222")
+    # MUTATION: removed the debounced input/change listener in preview.js's `mountPreview` — red
+    # here, no second call was ever recorded.
+    #
+    # Asserted via the RECORDED SIDECAR CALL, not a changed <img> src: FakeBoxesSidecar returns the
+    # identical canned SVG on every call, so the src can't distinguish "re-rendered" from "never
+    # re-rendered" on its own — asserting the actual params a fresh call carried is the direct proof
+    # the debounced listener fired with the edited value (assert the wire format, CLAUDE.md §14e).
+    wait_until(message: "editing a param did not trigger a fresh sidecar render") do
+      @proxy.calls.count { |c| c.path == "generate" } > before
+    end
+    sent = @proxy.calls.select { |c| c.path == "generate" }.last.params
+    assert_equal "222", sent.dig("params", "x")
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 
-  # MUTATION: reverted _form.html.erb's basic groups to plain <fieldset> — red, the summary click
-  # found no element to fold.
+  # MUTATION: reverted fields.js's basic groups to a plain, non-<details> wrapper — red, the summary
+  # click found no element to fold.
   test "every param group folds, and collapse-all folds them together" do
-    visit new_tools_box_path(generator: "ABox")
+    visit tools_addon_path("boxes")
+    open_generator("ABox")
+
     assert_selector "#param-group-abox-settings[open]"
     assert_closed "#param-group-settings-for-finger-joints", "an advanced group starts folded"
 
@@ -146,7 +213,7 @@ class BoxSectionsTest < ApplicationSystemTestCase
     assert_closed "#param-group-settings-for-finger-joints", "collapse-all left an advanced group open"
 
     # Folded or not, the fields stay in the DOM, so they are still submitted.
-    assert_selector "select[name='params[FingerJoint_style]']", visible: :all
+    assert_selector '[data-param="FingerJoint_style"]', visible: :all
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 end

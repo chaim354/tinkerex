@@ -10,5 +10,14 @@
       "fixture-dep": "dep.js"
     },
     "services": [ "fixture-svc" ]
+  },
+  {
+    "key": "boxes",
+    "title": "Box Generator",
+    "icon": "📦",
+    "description": "A SNAPSHOT of the real chaim354/tinkerex-addons boxes bundle, copied in verbatim, exercised here by test/system/{box_sections,tray_layout,tray_top_view}_test.rb through the real host pipeline (shell, service proxy, states endpoint) with the sidecar itself stubbed via Maker::Addons::ServiceProxy.stub=. See those files' headers for the drift trade-off this snapshot accepts.",
+    "api_version": "1",
+    "entry": "boxes.js",
+    "services": [ "boxes" ]
   }
 ]
