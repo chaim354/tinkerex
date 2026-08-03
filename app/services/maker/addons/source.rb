@@ -62,7 +62,11 @@ module Maker
         raise Error, "#{path} -> HTTP #{res.code}" unless res.is_a?(Net::HTTPSuccess)
 
         res.body
-      rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError => e
+      # SSLError is in this list for the HTTPS source Phase B introduces, not for today's
+      # http://127.0.0.1 — without it a TLS failure escapes Source::Error, and Registry's
+      # degrade-to-no-addons rescue would miss it and 500 instead.
+      rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError,
+             OpenSSL::SSL::SSLError => e
         raise Error, "#{path} -> #{e.class}: #{e.message}"
       end
     end
