@@ -1,0 +1,13 @@
+[
+  {
+    "key": "fixture",
+    "title": "Fixture Addon",
+    "icon": "🧪",
+    "description": "Hermetic test fixture exercising the addon bundle host pipeline (shell, proxy, merged importmap, mount) — owned by test/system/addon_bundle_test.rb, independent of both the tinkerex-addons repo and the live accessory.",
+    "api_version": "1",
+    "entry": "fixture.js",
+    "pins": {
+      "fixture-dep": "dep.js"
+    }
+  }
+]

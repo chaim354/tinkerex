@@ -141,17 +141,23 @@ Rails.application.configure do
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 
-  # Phase A (addons-runtime-bundle-design spec): addon bundles ship inside THIS image at
-  # public/addons (committed to the repo), so production reads them off disk like dev does.
-  # Neither ADDON_SOURCE_PATH nor ADDON_SOURCE_URL is set by deploy.yml today — without this
-  # default, Maker::Addons::Source.current falls through to the HTTP branch and
-  # ENV.fetch("ADDON_SOURCE_URL") raises KeyError, which Registry#manifests rescues to [],
-  # silently emptying the /tools gallery (Generators included) on every deployed backend.
+  # Phase B: addon bundles no longer ship inside this image. They're served by the `addons` Kamal
+  # accessory (repo: chaim354/tinkerex-addons) and reached via ADDON_SOURCE_URL, which deploy.yml
+  # sets in production. This PATH default is now a FALLBACK ONLY, kept for the case where
+  # ADDON_SOURCE_URL is unset (e.g. the OVH overlay, which blanks it deliberately — see
+  # deploy.ovh.yml) — and it points at a directory (public/addons) THAT DOES NOT EXIST IN THIS
+  # IMAGE ANYMORE. Local.new(path).manifests then raises Errno::ENOENT wrapped as Source::Error,
+  # which Registry#manifests rescues to [] — an empty /tools gallery, not a 500. That degrade path
+  # is the whole reason to keep this line rather than delete it: removing it would leave
+  # Source.current falling through to the HTTP branch instead, where ENV.fetch("ADDON_SOURCE_URL")
+  # raises KeyError — a different exception, still rescued to [], so the user-visible outcome is
+  # identical either way. Keeping PATH set is what makes THAT the failure mode instead of some
+  # other one if a future change reorders Source's branches.
   #
   # NOT unconditional: Source gives ADDON_SOURCE_PATH precedence over ADDON_SOURCE_URL, so
-  # defaulting PATH regardless would make Phase B's cutover to the addons repo's separate static
-  # container silently inert — ADDON_SOURCE_URL would be set and ignored while this still reads a
-  # public/addons directory Phase B deletes. Yielding to an explicit URL is what makes that
-  # cutover a config change instead of a redeploy-and-debug.
+  # defaulting PATH regardless of ADDON_SOURCE_URL would make production's own accessory silently
+  # inert — the URL would be set and ignored while this still pointed at a directory that isn't
+  # there. Yielding to an explicit URL is what makes the accessory the thing that actually serves
+  # the gallery.
   ENV["ADDON_SOURCE_PATH"] ||= Rails.public_path.join("addons").to_s if ENV["ADDON_SOURCE_URL"].blank?
 end
