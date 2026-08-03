@@ -48,6 +48,30 @@ module Maker
         assert_equal [ "boxes" ], addon.services
       end
 
+      test "layout defaults to nil when the manifest omits it, exactly as pins/services do" do
+        addon = Registry.find("generators")
+        assert_nil addon.layout
+      end
+
+      test "a manifest declaring layout: wide carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("layout" => "wide") ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_equal "wide", addon.layout
+      end
+
+      # Only "wide" is meaningful today. A manifest is fetched from a source this process does not
+      # control, so a value it doesn't recognize — a typo, or a value a newer addon invents for a
+      # host version we haven't shipped yet — must degrade to the same default as "absent", never
+      # raise. (The rendered consequence — the container class this does or doesn't produce — is
+      # covered by test/controllers/tools/addons_controller_test.rb.)
+      test "an unrecognized layout value degrades to the default rather than erroring" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("layout" => "extra-wide") ])
+        Rails.cache.clear
+        addon = Registry.find("generators")
+        assert_nil addon.layout
+      end
+
       test "all is ordered by [title, key], not source order" do
         Source.stub = FakeAddonSource.new(manifests: [
           MANIFEST.merge("key" => "z", "title" => "Zebra"),

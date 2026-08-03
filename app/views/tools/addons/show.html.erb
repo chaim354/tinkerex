@@ -1,5 +1,14 @@
 <% content_for :title, "#{@addon.title} — Tinkerex" %>
 
+<%# A migrated addon carries its markup and CSS classes across the port from its old per-addon
+    controller/view into this generic shell, but the wide container was never part of the view
+    BODY — the legacy Tools::BoxesController's own view opted in with this exact content_for line,
+    sitting outside anything a manifest-driven port copies. Silently dropping it doesn't error: the
+    page still renders, just 440px narrower, with a multi-column addon UI (a 3-column grid, a tile
+    gallery) squeezed into a single column. The manifest is the one place left for an addon to ask
+    for this, since the host — not the addon bundle — owns the page chrome. %>
+<% content_for :container_class, "container-wide" if @addon.layout == "wide" %>
+
 <div class="page-head"><h1><%= @addon.icon %> <%= @addon.title %></h1>
   <p class="page-subtitle muted"><%= @addon.description %></p>
 </div>
