@@ -104,6 +104,18 @@ module Maker
       # entirely rather than papering over it with a bigger thread count (which does not scale with a
       # future addon's dependency count, and still leaves an ordinary `bin/rails server` dev session
       # exposed).
+      #
+      # LOCAL STILL BENEFITS FROM A FEW Puma THREADS in `bin/rails server`'s DEVELOPMENT mode
+      # specifically — a second, smaller effect worth naming so it isn't rediscovered as "the fix
+      # didn't work." `config.enable_reloading = true` wraps every request in the dependencies
+      # interlock/reloader, adding per-request overhead that the plain `threads 3, 3` in
+      # `config/puma.rb` can make visible when a page fires several near-simultaneous asset
+      # requests, as an addon page does. Observed directly: the stock 3-thread pool intermittently
+      # 404'd `generators`' own concurrent asset fetches in a real browser against a real
+      # `bin/rails server`; `RAILS_MAX_THREADS=16` made it reliable. Production (`enable_reloading =
+      # false`, eager-loaded) and the test env (`enable_reloading = false`, which is what
+      # test/system/addon_bundle_test.rb runs under) do not carry this overhead and are unaffected —
+      # this is a `bin/rails server`-in-development tuning note, not a correctness bug in this class.
       class Local
         def initialize(root) = @root = Pathname.new(root.to_s)
 
