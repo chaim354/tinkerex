@@ -140,4 +140,18 @@ Rails.application.configure do
   #
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
+
+  # Phase A (addons-runtime-bundle-design spec): addon bundles ship inside THIS image at
+  # public/addons (committed to the repo), so production reads them off disk like dev does.
+  # Neither ADDON_SOURCE_PATH nor ADDON_SOURCE_URL is set by deploy.yml today — without this
+  # default, Maker::Addons::Source.current falls through to the HTTP branch and
+  # ENV.fetch("ADDON_SOURCE_URL") raises KeyError, which Registry#manifests rescues to [],
+  # silently emptying the /tools gallery (Generators included) on every deployed backend.
+  #
+  # NOT unconditional: Source gives ADDON_SOURCE_PATH precedence over ADDON_SOURCE_URL, so
+  # defaulting PATH regardless would make Phase B's cutover to the addons repo's separate static
+  # container silently inert — ADDON_SOURCE_URL would be set and ignored while this still reads a
+  # public/addons directory Phase B deletes. Yielding to an explicit URL is what makes that
+  # cutover a config change instead of a redeploy-and-debug.
+  ENV["ADDON_SOURCE_PATH"] ||= Rails.public_path.join("addons").to_s if ENV["ADDON_SOURCE_URL"].blank?
 end

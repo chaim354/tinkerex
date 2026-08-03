@@ -89,5 +89,11 @@ Rails.application.configure do
   # Maker::Addons::Source::Local's comment for the full account). Phase B's real, separate static
   # container has its own pool and is reached over real HTTP via ADDON_SOURCE_URL in production; this
   # local mode is dev/test-only, and not something a developer needs to opt into — it's the default.
-  ENV["ADDON_SOURCE_PATH"] ||= Rails.public_path.join("addons").to_s
+  #
+  # NOT unconditional: Source gives ADDON_SOURCE_PATH precedence over ADDON_SOURCE_URL (see
+  # Source.current), so defaulting PATH regardless would make it impossible for a developer to
+  # point their own dev server at a real ADDON_SOURCE_URL (e.g. to test against Phase B's static
+  # container before it's the production default) — the URL would be set and silently ignored in
+  # favor of this default. Yielding to an explicit URL keeps that override live.
+  ENV["ADDON_SOURCE_PATH"] ||= Rails.public_path.join("addons").to_s if ENV["ADDON_SOURCE_URL"].blank?
 end
