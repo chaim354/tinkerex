@@ -112,8 +112,11 @@ are **static** — they never execute a `$(…)`, so they need no vault and pass
 service account cannot be granted access to a Personal or Private vault**, so leaving the items in
 `Personal` makes unattended runs impossible rather than merely broad. It also bounds what anything
 running `op` on this machine — a coding agent included — can read, from the entire personal vault
-down to four project items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`). Confirmed by probe: every
-`op://Personal/…` reference now **fails** and every `op://tinkerex/…` one resolves.
+down to five project items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`, `tinkerex-origin`). Confirmed
+by probe: every `op://Personal/…` reference now **fails** and every `op://tinkerex/…` one resolves.
+`tinkerex-origin` (OVH's Cloudflare Origin cert, `{certificate, private key}`) is referenced by no
+code — it is used by hand — but it moved too, because a service account cannot read `Personal` and
+an unattended OVH TLS step would otherwise fail.
 **Service accounts ARE available on a personal (Individual/Families) plan** — an earlier claim in
 this session that they were Business/Teams-only was wrong; the published rate limits list
 "1Password and 1Password Families" as its own tier at 1,000 reads/day, versus ~8 reads for a full

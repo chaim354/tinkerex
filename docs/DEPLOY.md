@@ -132,7 +132,8 @@ desktop app to approve a read: the desktop integration re-locks on its own timeo
 authorization looks like `error initializing client: authorization timeout`.
 
 **The vault split is already done.** Every reference is `op://tinkerex/…`, a vault holding only
-this project's items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`). Two reasons it is not `Personal`:
+this project's items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`, `tinkerex-origin`). Two reasons it
+is not `Personal`:
 
 - **A service account CANNOT be granted access to a Personal or Private vault** — 1Password's own
   CLI refuses it (`op service-account create --help`). Leaving the items in `Personal` makes the
