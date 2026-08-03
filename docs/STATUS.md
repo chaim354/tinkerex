@@ -129,6 +129,102 @@ resolved live against 1Password, before and after the vault move.
 reaches a running container — and the OVH fix is argued from the config error above, since OVH
 deploys only on explicit request (CLAUDE.md §7). The three Unraid legs still run the pre-#122 image.
 
+---
+
+## 2026-08-03: Phase B — addon bundles move to their own repo, and republishing one now deploys an addon without redeploying Rails (branch `claude/addons-repo-phase-b`, PR #117; finishes the arc PR #116 started)
+
+**1905 runs / 6604 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and
+s3 — plus 22 system tests / 132 assertions.** Design:
+`docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`. Plan:
+`docs/superpowers/plans/2026-08-03-addons-repo-phase-b.md`. Invariants: CLAUDE.md §14c.
+
+### What landed
+
+Two PRs finish the arc the design doc set out to reach: **an addon change ships without a Rails
+redeploy.** **#116** (`3e2c07e`) built the generic addon host surface —
+`Tools::AddonsController` (shell / same-origin asset proxy / save) reading manifests off
+`Maker::Addons::Registry`/`Maker::Addons::Source` — and migrated `generators` onto it as the
+first manifest + plain-ESM bundle; `boxes` and `openscad` stayed on their own controllers with a
+temporary hand-written gallery block. **#117** (`00f8a34`) is Phase B: the bundles move out of
+the Rails image entirely, into a new private repo, `chaim354/tinkerex-addons` — a `Dockerfile`, a
+tiny `nginx.conf`, `bin/build-push`, an MIT `LICENSE`, a README, and
+`test/no_gpl_in_bundle_image_test.sh` (a mutation-checked §9 guard that no GPL ever enters the
+permissive bundle image, directory-driven so a future sidecar migration is covered automatically)
+— served by a static nginx container. That container boots on the Unraid host as the Kamal
+accessory `addons`, no `port:`, internal-only, reachable on the `kamal` network as
+`tinkerex-addons`, exactly like the two GPL sidecars. `deploy.yml` sets
+`ADDON_SOURCE_URL: http://tinkerex-addons`; `deploy.ovh.yml` blanks it. `public/addons` is gone
+from both the Rails image and git.
+
+Verified live on all three Unraid backends, running Rails image `00f8a34`:
+```
+["URL",    "http://tinkerex-addons"]
+["PATH",   nil]
+["source", "Maker::Addons::Source"]      # the HTTP backend, not Source::Local
+["addons", ["generators"]]
+```
+
+### The acceptance proof
+
+This is the headline the whole arc was chasing: **does republishing a bundle deploy an addon
+change without touching Rails?** Measured, not asserted. In `tinkerex-addons`, the Generators
+addon's `description` in `addons/manifests.json` was changed (commit `1964370`, "test: prove
+independent deploy"), then `bin/build-push`, then `kamal accessory reboot addons` on the Unraid
+host — **Rails was touched not at all.** Observed:
+
+- The accessory served the new description over the `kamal` network.
+- All three `tinkerex-web-*` containers stayed on image `00f8a34` throughout, with uptimes of
+  2-4 minutes, while `tinkerex-addons` showed **9 seconds** — the web containers were never
+  restarted; only the accessory was.
+- After evicting `Maker::Addons::Registry::CACHE_KEY`, Rails returned the new description. The
+  registry caches manifests for 5 minutes, so *without* that eviction the gallery would have
+  lagged by up to the TTL — but the **served bytes** changed the instant the accessory rebooted;
+  only the **cached gallery read** needed the manual nudge to catch up early.
+- The change was then reverted (commit `9add63b`, "Revert 'test: prove independent deploy'") and
+  republished the same way; the original description was live again, Rails still on `00f8a34`
+  throughout.
+
+### Consequence for OVH
+
+`deploy.ovh.yml` blanks `ADDON_SOURCE_URL` for the identical deep-merge reason it already blanks
+the two sidecar URLs (CLAUDE.md §14c) — `tinkerex-addons` doesn't resolve off the Unraid host.
+Combined with `public/addons` no longer shipping in the image, **OVH renders an empty tools
+gallery** until it gets its own addons accessory. That is `Registry`'s rescue-to-`[]` degrade
+path, not a 500 — and OVH is not currently deployed, so this is a recorded consequence, not a
+live outage.
+
+### Three findings that cost real time
+
+- **Pointing `ADDON_SOURCE_URL` at the app's own process deadlocks.** Already recorded at
+  CLAUDE.md §14e ("an app must not point a synchronous HTTP client at itself") from the #116 arc
+  — nested synchronous HTTP into the same Puma pool measured 14-24s stalls and outright 404s at
+  3-4 threads. That finding is *why* `Source::Local`/`ADDON_SOURCE_PATH` exists at all, and it is
+  what makes Phase B's genuinely separate container (its own pool) the actual fix rather than a
+  bigger thread count.
+- **`kamal config` does not serialize `env:`.** Verifying an accessory's env vars through its CLI
+  output silently matches nothing — the keys are simply absent from what it prints, not merely
+  hard to grep for. Build `Kamal::Configuration.create_from` directly and inspect the resulting
+  object instead of parsing CLI text.
+- **A guard keyed on a naming convention silently fails to cover a differently-named sibling.**
+  `test/deploy_hygiene_test.rb`'s OVH-blank guard grepped `/_SIDECAR_URL\z/`; `ADDON_SOURCE_URL`
+  doesn't match that suffix and was unguarded until the pattern was widened to
+  `/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/` (recorded at CLAUDE.md §14c) — any future accessory URL
+  needs the same manual addition, because the guard covers a naming convention, not a category.
+
+### Left open by this arc
+
+- **`boxes` and `openscad` are unmigrated.** They keep their own controllers, routes and sidecar
+  clients unchanged, and the gallery still carries #116's temporary hand-written block for both.
+  Their GPL sidecars stay in *this* repo (`sidecar/boxes`, `sidecar/openscad`) until those addons
+  migrate to the bundle pipeline — the permissive `tinkerex-addons` image must never gain a GPL
+  sidecar, guarded by that repo's own `test/no_gpl_in_bundle_image_test.sh`.
+- **OVH has no addons accessory** — see above; the tools gallery there is empty until one is
+  booted.
+- **The asset proxy is still uncached**, carried forward from #116 — a stale cached bundle would
+  read as "my fix didn't deploy," worse than a slow one. Unchanged by Phase B.
+
+---
+
 ## 2026-08-02: an addon becomes a manifest + a bundle — the generic `/tools` host surface, and `generators`' migration off it (branch `claude/addons-runtime-bundles`)
 
 **1905 runs / 6602 assertions / 0 failures / 0 errors / 11 skips — identical on chunk, share and

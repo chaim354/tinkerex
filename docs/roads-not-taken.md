@@ -141,6 +141,10 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
   `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`. Republishing a bundle *is*
   the deploy. Same-origin proxying is **forced** by the sidecars being internal-only (no `port:`)
   plus `script_src :self`, and it happens to remove the need for any addon token or write-back API.
+- **Note for a future reader:** the repo actually built for that current approach is
+  `chaim354/tinkerex-addons`, not the `maker-addons` name this abandoned engine-gem plan proposed
+  above — don't go looking for a repo by that name. See CLAUDE.md §14c for the invariants and
+  `docs/STATUS.md`'s 2026-08-03 entry for the arc.
 
 ---
 

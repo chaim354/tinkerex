@@ -640,6 +640,38 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   file, so the claim can no longer drift the way it did before (it read "no hits" for months
   after the addon framework made the true answer one). Change the code and the test tells you;
   change the exception on purpose and update the test and this bullet together.
+- **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
+  shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
+  never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
+  precedence carefully, because the obvious story is backwards: `Source.current` gives
+  **`ADDON_SOURCE_PATH` precedence over `ADDON_SOURCE_URL`** when both are set (the safer
+  failure mode — a stray URL left in a dev/test env can never make a local run hit the network
+  by surprise). What actually turns production onto the accessory is that **the PATH default
+  itself is conditional**: both `production.rb` and `development.rb` only default
+  `ADDON_SOURCE_PATH` `if ADDON_SOURCE_URL.blank?`, so PATH is never set alongside a real URL.
+  An *unconditional* PATH default would leave PATH always set in production too — and since PATH
+  wins whenever both are present, the accessory would run and answer requests while Rails
+  silently never called it. That conditional default, not a URL-beats-PATH rule, is the whole
+  cutover.
+- **`ADDON_SOURCE_URL` MUST be blanked in `deploy.ovh.yml`** — same rule, same reason, as the two
+  sidecar URLs above: Kamal deep-merges `env.clear`, so OVH would otherwise inherit the
+  Unraid-only `tinkerex-addons` hostname, `Source.configured?` would read true, and every fetch
+  would fail instead of the gallery merely greying out. It does **not** match the `_SIDECAR_URL`
+  suffix the guard originally grepped for, and was silently unguarded until
+  `test/deploy_hygiene_test.rb`'s pattern was widened to `/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/`
+  — **any future accessory URL needs the same manual addition**, because the guard covers a
+  naming convention, not a category. Consequence for OVH today: an **empty tools gallery**,
+  degrading through `Registry`'s rescue rather than 500ing, until OVH gets its own addons
+  accessory.
+- **The addon system test is hermetic by fixture, deliberately.**
+  `test/system/addon_bundle_test.rb` reads `test/fixtures/addons/`, never the real bundle —
+  pointing it at the `tinkerex-addons` repo's working copy (the dev-default assumption: checked
+  out as a sibling) would make CI depend on a repo a fresh clone never has. The fixture's entry
+  module imports from a **pinned bare specifier** (`fixture-dep`, declared in its own manifest's
+  `pins`) and renders that module's exported value into the DOM, so a pass proves the
+  **merged importmap** actually resolved a bare specifier through the proxy — not merely that
+  the entry module itself loaded. Mutation-checked: blanking `pins` in the fixture manifest
+  turns it red.
 
 ### 14d. The maker web layer
 
