@@ -10,14 +10,19 @@ module Maker
         "entry" => "generators.js", "pins" => { "makerjs" => "makerjs.js" }
       }.freeze
 
+      # THE GLOBAL TEST CACHE IS :null_store (config/environments/test.rb), whose #fetch always calls
+      # the block and stores nothing — so "a failed fetch is NOT cached" is unobservable under it and
+      # the guard passes whether or not it works. That is the §14e rate-limiting bug's exact shape.
+      # A per-test MemoryStore makes the caching real HERE without changing the global default.
       setup do
-        Rails.cache.clear
+        @prior_cache = Rails.cache
+        Rails.cache = ActiveSupport::Cache::MemoryStore.new
         Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
       end
 
       teardown do
+        Rails.cache = @prior_cache
         Source.reset!
-        Rails.cache.clear
       end
 
       test "builds addons from the source's manifests" do
