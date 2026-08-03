@@ -1,10 +1,12 @@
 // The tray layout vocabulary, in ONE place: boxes.py's section syntax ("50*3"), the ASCII art it
 // seeds a TrayLayout with, and the parse of that art back into walls and floors.
 //
-// It lives here rather than inside a controller because two of them need it — traylayout (which
-// WRITES the art) and topview (which READS it) — and a second copy of a parser is this repo's
-// recorded failure shape: `importer_controller.js`'s `roleFor` is a third copy of the extension
-// vocabulary and has now drifted twice. One definition, imported twice, cannot disagree with itself.
+// Ported byte-for-byte from the tinkerex repo's app/javascript/lib/tray_layout.js (pre-migration) —
+// this file is pure and has no Rails/Stimulus dependency, so nothing about it needed to change. It
+// lives in its own module because two others need it — tray_sync.js (which WRITES the art) and
+// top_view.js (which READS it) — and a second copy of a parser is that repo's recorded failure
+// shape: `importer_controller.js`'s `roleFor` is a third copy of an unrelated vocabulary (file
+// extensions) and has drifted twice. One definition, imported twice, cannot disagree with itself.
 //
 // THE GRAMMAR, exactly as boxes.py's `TrayLayout.parse` reads it (traylayout.py):
 //   " | ,> 50.0mm"  one header line per column, prefixed by one more " |" each time, giving its width

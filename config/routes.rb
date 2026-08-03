@@ -145,18 +145,10 @@ Rails.application.routes.draw do
   end
 
   # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
-  # `generators` has migrated to the generic manifest-driven surface (Tools::AddonsController,
-  # `tools/:key` below) — it has no controller/routes of its own any more. Boxes and OpenSCAD have
-  # not migrated yet and keep their own controllers.
+  # `generators` and `boxes` have both migrated to the generic manifest-driven surface
+  # (Tools::AddonsController, `tools/:key` below) — neither has a controller/routes of its own any
+  # more. OpenSCAD has not migrated yet and keeps its own controller.
   get "tools", to: "tools/home#index", as: :tools
-  namespace :tools do
-    resources :boxes, only: %i[index new show create] do
-      post :preview, on: :collection
-      # Self-hosted proxy for a generator's sample photo: Rails fetches it from the internal-only
-      # sidecar (which bundles boxes.py's GPL thumbnails) so the browser never hits an external host.
-      get "thumb/:key", to: "boxes#thumb", on: :collection, as: :thumb, constraints: { key: /[A-Za-z0-9]+/ }
-    end
-  end
 
   # OpenSCAD addon. TWO naming traps here, both about the inflector, and the routes are written out
   # by hand to dodge both.
@@ -186,15 +178,16 @@ Rails.application.routes.draw do
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
   # DECLARED LAST, AND THAT IS LOAD-BEARING. `tools/:key` matches any TWO-segment /tools/* path, so
-  # it collides with the sibling addon routes above it (`tools/boxes`, `tools/openscad`) — route
-  # recognition is first-match-wins by declaration order, regardless of which named helper built the
-  # URL. Mutation-checked by moving these routes above `resources :boxes`:
-  # `bin/rails test test/controllers/tools/boxes_controller_test.rb`
-  # went from green to 12 failures + 2 errors, all 404s/UrlGenerationErrors where `/tools/boxes` and
-  # `/tools/boxes/:id` used to resolve — because `tools/:key` (key="boxes") beat `resources :boxes`'s
-  # own index route to the match. Restoring this order fixed it. (`generators` used to be a third
-  # sibling here, guarded by the same hazard; it migrated to the generic `tools/:key` surface itself,
-  # so there is nothing left for it to collide with.)
+  # it collides with the sibling addon routes above it (`tools/openscad`) — route recognition is
+  # first-match-wins by declaration order, regardless of which named helper built the URL.
+  # Mutation-checked once for real, against `boxes` while it still had its own `resources :boxes`
+  # block here: moving `tools/:key` above it turned `bin/rails test
+  # test/controllers/tools/boxes_controller_test.rb` from green to 12 failures + 2 errors, all
+  # 404s/UrlGenerationErrors where `/tools/boxes` and `/tools/boxes/:id` used to resolve — because
+  # `tools/:key` (key="boxes") beat `resources :boxes`'s own index route to the match. Restoring
+  # this order fixed it. (Both `generators` and `boxes` have since migrated to the generic
+  # `tools/:key` surface itself — `tools/:key` matching `key="boxes"` is now the CORRECT resolution,
+  # not a collision — so `tools/openscad` is the one sibling left for this ordering to protect.)
   #
   # It does NOT collide with `tools/addon_states/:id/params`: that path has four segments
   # (tools/addon_states/:id/params) and Rails requires a segment-count match, so no ordering hazard

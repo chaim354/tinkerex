@@ -1,12 +1,32 @@
 require "test_helper"
+require_relative "../../support/fake_addon_source"
 
 module Tools
   class HomeControllerTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # Was `assert_select ".addon-card", text: /Box Generator/`, which passed against the TEMPORARY
+    # hardcoded boxes card regardless of whether Registry had anything real in it — both the
+    # "available" and "disabled" branches of that block rendered the title text. Boxes has since
+    # migrated onto the generic manifest-driven surface (Tools::AddonsController), so "lists
+    # registered addons" now has to mean what it says: stub Maker::Addons::Source, the same door
+    # `boxes` itself goes through in production, and assert the @addons loop actually renders it.
+    MANIFEST = {
+      "key" => "widgetkit", "title" => "Generators", "icon" => "✏️",
+      "description" => "Parametric 2D drawings", "api_version" => "1", "entry" => "generators.js"
+    }.freeze
+
     setup do
       @user = User.create!(email: "tools@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      @prior_cache = Rails.cache
+      Rails.cache = ActiveSupport::Cache::MemoryStore.new
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
+    end
+
+    teardown do
+      Rails.cache = @prior_cache
+      Maker::Addons::Source.reset!
     end
 
     test "requires login" do
@@ -18,7 +38,8 @@ module Tools
     test "lists registered addons" do
       get tools_path
       assert_response :success
-      assert_select ".addon-card", text: /Box Generator/
+      assert_select ".addon-card", text: /Generators/ # from the registry-driven @addons loop
+      assert_select ".addon-card", text: /OpenSCAD/    # openscad's own hardcoded card, untouched
     end
   end
 end
