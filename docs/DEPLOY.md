@@ -31,12 +31,15 @@ Docker build, no repo checkout, and no source transfer to either server.
 - **Kamal** — `kamal version` (2.11+).
 - **SSH key access** to both servers as the deploy user (`kamal1@…`, `ubuntu@…`). Test:
   `ssh kamal1@192.168.1.95 true && ssh ubuntu@15.204.216.249 true`.
-- Secrets in your shell before any deploy (sourced via `.kamal/secrets*`, never committed):
+- **Secrets — no exports needed.** `.kamal/secrets*` resolve them from 1Password via `bin/secret`.
+  Check before deploying (this is the only reliable check — see below):
   ```sh
-  export KAMAL_REGISTRY_PASSWORD=<ghcr PAT: write:packages to push, read:packages to pull>
-  export CHUNK_SECRET_ACCESS_KEY=<SeaweedFS secret (Unraid) | R2 secret (OVH)>
-  # OVH only — R2 Access Key ID (the secret stays in CHUNK_SECRET_ACCESS_KEY):
-  export CHUNK_ACCESS_KEY_ID=<R2 token Access Key ID>
+  bin/secrets-preflight          # base (chunk);  or: s3 | share | ovh | --all
+  ```
+  An exported shell value still WINS over 1Password, so a one-off deploy can point at a different
+  credential without editing a tracked file:
+  ```sh
+  export CHUNK_SECRET_ACCESS_KEY=<some other secret>   # optional override
   ```
 
 ### On each server (one time)
@@ -57,18 +60,93 @@ that, `deploy`.
 
 ```sh
 cd /Users/charlesschwartz/Desktop/tinkerex   # the git tree must be committed/clean
-export KAMAL_REGISTRY_PASSWORD=... CHUNK_SECRET_ACCESS_KEY=...
+bin/secrets-preflight --all                  # unlock 1Password if this reports EMPTY
 
 # Unraid (SeaweedFS):
 kamal setup            # first time on this box;  later: kamal deploy
 
-# OVH (R2) — also export CHUNK_ACCESS_KEY_ID first:
+# OVH (R2) — credentials come from .kamal/secrets.ovh, no export needed:
 kamal setup -d ovh     # first time;  later: kamal deploy -d ovh
 ```
 
 Kamal builds the amd64 image on the Mac **once per deploy**, pushes it to ghcr, then each target
 pulls and boots it. (To push once and deploy to both without rebuilding: `kamal build push`
 then `kamal deploy --skip-push` / `kamal deploy -d ovh --skip-push`.)
+
+## 2b. How secrets resolve
+
+Every credential goes through **`bin/secret VAR op://Vault/Item/field`**: an exported shell value
+wins, otherwise it reads 1Password. One definition, used by `.kamal/secrets*` and both sidecar
+builds.
+
+**Which file feeds which destination.** Kamal reads exactly
+`[.kamal/secrets-common, .kamal/secrets.<destination>]` — so **`.kamal/secrets` is NOT read when
+`-d` is passed**; it is the *base* (chunk) destination's own file, not a shared one.
+
+| destination | files read | credential |
+|---|---|---|
+| base (chunk, Unraid) | `secrets-common` + `secrets` | `CHUNK_SECRET_ACCESS_KEY` ← SeaweedFS `seaweednew` |
+| `-d s3` | `secrets-common` + `secrets.s3` | `LIBRARY_S3_SECRET_ACCESS_KEY` ← same `seaweednew` |
+| `-d share` | `secrets-common` + `secrets.share` | none — a share container holds no storage credential |
+| `-d ovh` | `secrets-common` + `secrets.ovh` | `CHUNK_SECRET_ACCESS_KEY` ← **Cloudflare R2**, plus `CHUNK_ACCESS_KEY_ID` |
+
+`CHUNK_SECRET_ACCESS_KEY` names a **different credential** on Unraid than on OVH. That is the
+whole reason these are per-destination files: `secrets-common` cannot tell the two apart, and
+whichever one it hardcoded would be pushed to the other box.
+
+**Only truly-common keys may go in `secrets-common`, and that is correctness, not tidiness.**
+Kamal expands secrets with `::Dotenv.parse`, and `InlineCommandSubstitution` runs every `$(…)` in
+a parsed file **eagerly** — not lazily per key. `secrets-common` is read by every destination, so
+a credential parked there makes `kamal deploy -d share` shell out for something a share container
+never holds. `test/deploy_hygiene_test.rb` enforces this.
+
+### ⚠️ Always preflight — kamal cannot notice an unreadable secret
+
+Kamal expands `$(…)` through Ruby **backticks, which discard exit status**. A locked vault makes
+`bin/secret` exit 1, the substitution yields `""`, and `Kamal::Secrets#[]` hands that empty string
+to the deploy **without raising** (a *missing* key raises; an *empty* one does not). An empty
+`KAMAL_REGISTRY_PASSWORD` then surfaces as a confusing `docker login` failure.
+
+```sh
+bin/secrets-preflight --all
+```
+
+It resolves every key the merged deploy config declares, through the real `Kamal::Secrets`, and
+fails loudly on anything empty. It prints names and byte lengths only, never values.
+
+Two things it catches that nothing else does:
+
+- **A worktree has no `config/master.key`** (gitignored + untracked), so `RAILS_MASTER_KEY`
+  resolves empty, the container boots to `Missing secret_key_base`, the health check fails and
+  kamal keeps the old container. Fix: `cp <main-checkout>/config/master.key config/master.key`.
+- **`op whoami` is not a readiness check.** The desktop integration authorizes *per read*, so
+  `op whoami` reports "account is not signed in" on a perfectly usable vault. Only an `op read`
+  exit code means anything.
+
+### Unattended runs (CI, cron, background agents)
+
+`op read` uses **`OP_SERVICE_ACCOUNT_TOKEN`** when it is in the env and falls back to
+desktop-app/biometric auth when it is not — **same command, no second code path**, so nothing in
+`.kamal/secrets*` changes. A service account is what you want anywhere there is no unlocked
+desktop app to approve a read: the desktop integration re-locks on its own timeout, and a hung
+authorization looks like `error initializing client: authorization timeout`.
+
+To set one up (all of this is done by you in 1Password — the token is a bearer credential and is
+never committed):
+
+1. Create a vault holding **only** this project's items (`ghcr.io`, `seaweednew`, `R2`,
+   `tinkerex-origin`). Scope matters: today's desktop integration exposes the whole `Personal`
+   vault to anything that can run `op`.
+2. 1Password → Developer → **Service Accounts** → create one, grant it **read-only** on that
+   vault, copy the token once.
+3. Update the `op://Personal/…` references in `.kamal/secrets*` to the new vault name.
+4. Provide the token to the runner as a secret env var, then verify with
+   `OP_SERVICE_ACCOUNT_TOKEN=… bin/secrets-preflight --all` — it prints which auth path it used.
+
+**There is no CI consumer today.** All six workflows in `.github/workflows/` reference zero
+GitHub secrets (`grep -c '${{ secrets\.'` → 0 in each): the test gates run on SQLite with stub
+env, and `cross-os-e2e.yml` uses a fixed test account. So a service account is currently only
+worth minting for unattended *deploys* — wire it into CI when a job first needs a real credential.
 
 ## 3. Verify
 
@@ -163,7 +241,7 @@ the forked `boxes.py`). It is internal-only (never published) and the Rails app 
 the kamal network via `BOXES_SIDECAR_URL` (declared in `config/deploy*.yml`). Build/push + boot:
 
 ```sh
-KAMAL_REGISTRY_PASSWORD="$(op read 'op://Personal/ghcr.io/password')" bin/build-boxes-sidecar
+bin/build-boxes-sidecar        # the ghcr token comes from 1Password via bin/secret
 bin/kamal accessory boot boxes        # first time; later: bin/kamal accessory reboot boxes
 ```
 

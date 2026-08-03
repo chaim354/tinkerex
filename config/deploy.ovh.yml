@@ -6,12 +6,11 @@
 # instead of the Unraid SeaweedFS box). Bytes still move client <-> R2 via presigned URLs;
 # the Rails box only signs, so it needn't reach R2.
 #
-# BOTH R2 credentials (Access Key ID + Secret) are kept OUT of git — sourced from the
-# shell via .kamal/secrets-common, never committed. Only the non-secret endpoint/bucket/
-# region are in clear. Before deploying:
-#   export CHUNK_ACCESS_KEY_ID=<R2 token Access Key ID>
-#   export CHUNK_SECRET_ACCESS_KEY=<R2 token Secret Access Key>
-#   export KAMAL_REGISTRY_PASSWORD=<github packages token>
+# BOTH R2 credentials (Access Key ID + Secret) are kept OUT of git — resolved from 1Password by
+# .kamal/secrets.ovh, which is this destination's own secrets file. Only the non-secret
+# endpoint/bucket/region are in clear. No exports are needed any more; verify with
+#   bin/secrets-preflight ovh
+# An exported value still wins if you want to point a one-off deploy at a different R2 token.
 
 servers:
   web:
@@ -27,18 +26,29 @@ ssh:
 # `builder: { remote: ssh://ubuntu@15.204.216.249, arch: amd64 }` here.)
 
 env:
-  # No env.secret block here on purpose: a destination overlay REPLACES (not unions) the
-  # base env.secret list, so re-declaring it risks dropping RAILS_MASTER_KEY /
-  # CHUNK_SECRET_ACCESS_KEY and breaking boot ("Missing secret_key_base"). We inherit the
-  # base secrets and override only the chunk-store CLEAR vars. The R2 Access Key ID is
-  # pulled from the shell via ERB (no literal credential in git); the real secret
-  # (CHUNK_SECRET_ACCESS_KEY) stays in the inherited base env.secret, also shell-sourced.
+  # env.secret is an ARRAY, and kamal REPLACES arrays on merge (deep_merge unions hashes only).
+  # So this list is the WHOLE list for this destination — RAILS_MASTER_KEY must be re-stated or
+  # boot dies with "Missing secret_key_base". That is why the s3 and share overlays re-state it
+  # too. Values come from .kamal/secrets.ovh (R2), NOT from .kamal/secrets (SeaweedFS), which
+  # kamal does not read under `-d`.
+  secret:
+    - RAILS_MASTER_KEY
+    - CHUNK_SECRET_ACCESS_KEY
+    - CHUNK_ACCESS_KEY_ID
   clear:
     STORAGE_BACKEND: s3
     CHUNK_ENDPOINT: https://d1ea7ae1da7f90fb8edd168ab7928e7d.r2.cloudflarestorage.com
     CHUNK_BUCKET: maker-chunks-prod
     CHUNK_REGION: auto
-    CHUNK_ACCESS_KEY_ID: <%= ENV["CHUNK_ACCESS_KEY_ID"] %>
+    # ⚠️ CHUNK_ACCESS_KEY_ID IS DELIBERATELY NOT HERE — it moved to env.secret above, and moving
+    # it back would re-break this destination. It was `<%= ENV["CHUNK_ACCESS_KEY_ID"] %>`, which
+    # cannot work from a secrets file: kamal secrets feed env.secret lookups and are never
+    # exported into the process ENV that ERB reads. Unset, the ERB rendered empty, YAML parsed
+    # nil, and the destination refused to load at all —
+    #   Kamal::ConfigurationError: env/clear/CHUNK_ACCESS_KEY_ID: should be a string
+    # — so `-d ovh` was unusable without a manual export. An access key ID is an identifier
+    # rather than a credential (the Unraid one sits in deploy.yml in clear), so this is about
+    # making the destination loadable, not about secrecy.
 
     # Sidecar accessories run on the UNRAID host (see `accessories:` in deploy.yml, whose `host:` is
     # 192.168.1.95), so `tinkerex-boxes` / `tinkerex-openscad` do not resolve on this box. Kamal

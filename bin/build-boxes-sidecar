@@ -2,12 +2,13 @@
 # Build + push the Box Generator Python sidecar image (sidecar/boxes) to ghcr. This is a SEPARATE,
 # GPL-3.0 image from the Rails app — the app never links it (see sidecar/boxes/README.md, §9).
 #
-# Requires KAMAL_REGISTRY_PASSWORD in the env (the same ghcr token the app deploy uses):
-#   KAMAL_REGISTRY_PASSWORD="$(op read 'op://Personal/ghcr.io/password')" bin/build-boxes-sidecar
+# The ghcr token comes from 1Password via bin/secret — no export needed. Export
+# KAMAL_REGISTRY_PASSWORD first if you want to override it. Unlike kamal (whose backticks discard
+# exit status, hence bin/secrets-preflight), `set -e` aborts here if the read fails.
 # Then boot/update the accessory on the box:  bin/kamal accessory reboot boxes
 set -euo pipefail
 
-: "${KAMAL_REGISTRY_PASSWORD:?set KAMAL_REGISTRY_PASSWORD (ghcr token) first}"
+KAMAL_REGISTRY_PASSWORD="$(bin/secret KAMAL_REGISTRY_PASSWORD 'op://Personal/ghcr.io/password')"
 IMAGE="ghcr.io/chaim354/boxes-sidecar:latest"
 
 echo "$KAMAL_REGISTRY_PASSWORD" | docker login ghcr.io -u chaim354 --password-stdin
