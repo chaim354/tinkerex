@@ -18,4 +18,41 @@
       </div>
     <% end %>
   <% end %>
+
+  <%# TEMPORARY — boxes, openscad, and generators still have their own controllers and are not yet
+      manifest-driven (generators migrates in Task 6 of the addon-host-surface plan; its Ruby
+      controller/views/routes are still live until Task 7 deletes them). Each block disappears when
+      that addon migrates to a bundle. Boxes/OpenSCAD availability still keys on the sidecar env var,
+      exactly as the old Registry entries did; generators was always-available (client-only). %>
+  <%= link_to tools_generators_path, class: "addon-card" do %>
+    <span class="addon-icon">✏️</span>
+    <span class="addon-title">Generators</span>
+    <span class="addon-desc muted">Parametric 2D drawings → SVG (laser & CNC)</span>
+  <% end %>
+  <% if BoxesClient.configured? %>
+    <%= link_to tools_boxes_path, class: "addon-card" do %>
+      <span class="addon-icon">📦</span>
+      <span class="addon-title">Box Generator</span>
+      <span class="addon-desc muted">Parametric laser-cut / CNC boxes</span>
+    <% end %>
+  <% else %>
+    <div class="addon-card disabled" title="Not configured on this deployment">
+      <span class="addon-icon">📦</span>
+      <span class="addon-title">Box Generator</span>
+      <span class="addon-desc muted">Unavailable here</span>
+    </div>
+  <% end %>
+  <% if OpenscadClient.configured? %>
+    <%= link_to tools_openscad_path, class: "addon-card" do %>
+      <span class="addon-icon">🧊</span>
+      <span class="addon-title">OpenSCAD</span>
+      <span class="addon-desc muted">Parametric .scad + params → 3MF</span>
+    <% end %>
+  <% else %>
+    <div class="addon-card disabled" title="Not configured on this deployment">
+      <span class="addon-icon">🧊</span>
+      <span class="addon-title">OpenSCAD</span>
+      <span class="addon-desc muted">Unavailable here</span>
+    </div>
+  <% end %>
 </div>
