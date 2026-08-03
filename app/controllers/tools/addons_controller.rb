@@ -6,17 +6,45 @@ module Tools
 
     before_action :load_addon
 
-    # `asset` is a plain GET that streams static bundle bytes for the browser's own
-    # `<script type="module" src="...">`/ESM `import` to load — inherently non-XHR. Rails'
-    # forgery protection marks every protected GET action for a same-origin check on its
-    # response (`verify_same_origin_request`, actionpack's request_forgery_protection.rb) and
-    # unconditionally raises `InvalidCrossOriginRequest` (-> 422) for a non-XHR JS response,
-    # regardless of Origin — that guard exists to stop a third-party page's `<script src>` from
-    # exfiltrating a *user-specific secret* embedded in protected JS. This response has no such
-    # secret: it is the same static addon bundle for every viewer, same-origin-proxied only to
-    # satisfy CSP `script_src :self` (see the `asset` action comment below), so there is nothing
-    # for the guard to protect and it would otherwise make the endpoint permanently unusable for
-    # its one real caller, the browser's own module loader.
+    # `skip_forgery_protection` only does `skip_before_action :verify_authenticity_token`
+    # (actionpack's request_forgery_protection.rb, `protect_from_forgery`) — it does NOT skip the
+    # `verify_same_origin_request` after_action, which stays installed via
+    # `append_after_action :verify_same_origin_request` and runs on every request regardless. This
+    # is not a no-op: `verify_authenticity_token` is the ONLY place that calls
+    # `mark_for_same_origin_verification!`, and the after_action's first condition is
+    # `marked_for_same_origin_verification?`. Skip the before_action and the request is never
+    # marked, so the after_action's guard short-circuits to nothing. If a future reader sees the
+    # after_action still `append`ed and "restores" the before_action believing the skip was inert,
+    # they undo this fix.
+    #
+    # Scoped to exactly one effect, because `asset` is GET-only: `verified_request?` is already
+    # true for every GET (`verify_authenticity_token` treats GET/HEAD as "should be safe and
+    # idempotent" and never checks a token for them), so the CSRF-token check this skip removes
+    # was doing nothing here regardless. The ONLY thing this skip actually disables is the
+    # cross-origin-JS guard (`verify_same_origin_request`) that piggybacks on the same
+    # before_action having run. That guard exists to stop a third-party page's
+    # `<script src="our-host/...">` from having ITS origin execute OUR JS with the visiting
+    # user's cookies attached, letting the attacker's page read a *per-user secret* the response
+    # body would otherwise leak (the classic script-inclusion/JSONP-era attack the check was built
+    # for). It does not apply here: every addon asset is the same static bundle for every viewer —
+    # there is no per-user data in the body to exfiltrate. And it must be disabled, not narrowed:
+    # `verify_same_origin_request` fires unconditionally for any non-XHR JS response regardless of
+    # Origin, which is exactly what the browser's own `<script type="module" src="...">`/ESM
+    # `import` load looks like (same-origin, plain GET, non-XHR) — the guard has no way to tell
+    # that load apart from a hostile one, so it must go for the endpoint's one real caller to work
+    # at all.
+    #
+    # Residual, stated plainly: `asset` still sits behind `authenticate_user!` (Tools::BaseController),
+    # so this is not made anonymous. But a signed-in user's browser will run ANY page's embedded
+    # `<script src>` with that user's session cookie attached, same-origin check or not — that is
+    # what this skip removes. A third-party page can still `<script src>` a chosen addon key/path
+    # and observe success (200 vs 404) via `onload`/`onerror`, without reading the response body.
+    # That makes this endpoint a login-state oracle ("is this visitor signed in to our app?") and,
+    # per addon key, an addon-inventory oracle ("does this signed-in user's server have addon X
+    # configured?"). Small — no response bytes leak, no state changes — but real, and a reader
+    # should not have to rediscover it. Whether that residual is acceptable, or the endpoint
+    # should move to a per-manifest content hash / different auth shape to close it, is a product
+    # decision, not one made by this comment.
     skip_forgery_protection only: :asset
 
     def show

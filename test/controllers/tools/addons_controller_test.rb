@@ -29,7 +29,14 @@ module Tools
       Rails.cache = ActiveSupport::Cache::MemoryStore.new
       Maker::Addons::Source.stub = FakeAddonSource.new(
         manifests: [ MANIFEST ],
-        assets: { "widgetkit/generators.js" => "export default { mount() {} }" }
+        assets: {
+          "widgetkit/generators.js" => "export default { mount() {} }",
+          # Seeded ONLY so the traversal test can fail for the right reason. If asset_path! ever stops
+          # refusing, FakeAddonSource#asset would find this key and the controller would serve it —
+          # so the assertion below distinguishes "refused" from the coincidental "not in the hash",
+          # which is what made an earlier version of this test pass under mutation.
+          "widgetkit/../../secret" => "PWNED"
+        }
       )
       @user = User.create!(email: "addons@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -77,11 +84,12 @@ module Tools
       assert_response :not_found
     end
 
-    test "a traversing asset path is refused" do
+    test "a traversing asset path is refused, not merely absent" do
       # Belt and braces: Source#asset_path! refuses it too, but the controller is the door an
       # attacker actually knocks on, and a 404 here must not depend on the layer below.
       get "/tools/widgetkit/asset/../../secret"
       assert_response :not_found
+      assert_no_match(/PWNED/, response.body)
     end
   end
 end
