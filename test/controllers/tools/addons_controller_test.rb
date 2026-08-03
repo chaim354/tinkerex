@@ -80,6 +80,34 @@ module Tools
       assert_select "[data-addon-save-url-value=?]", tools_addon_path("widgetkit")
     end
 
+    # A migrated addon's manifest is the only place left to ask for the wide container — the legacy
+    # `Tools::BoxesController` view opted in with its own `content_for :container_class` line, and
+    # that line lived in the VIEW BODY, which is exactly what a manifest-driven port does not carry
+    # over. Asserting the RENDERED `<main>` class, not `@addon.layout`: §14d's recorded lesson is that
+    # a test asserting a Ruby value has twice gone green over broken markup, so this has to look at
+    # what the layout actually emitted.
+    test "an addon declaring layout: wide renders inside the wide container" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge("key" => "widekey", "layout" => "wide") ]
+      )
+
+      get tools_addon_path("widekey")
+
+      assert_response :success
+      assert_select "main.container.container-wide"
+    end
+
+    # MANIFEST (the setup default) has no "layout" key at all — the ordinary case, and it must render
+    # the plain narrow container, not merely "not wide" (a typo like `container-wid` would pass a
+    # weaker assertion).
+    test "an addon with no layout key renders inside the default container only" do
+      get tools_addon_path("widgetkit")
+
+      assert_response :success
+      assert_select "main.container"
+      assert_select "main.container-wide", count: 0
+    end
+
     # The bundle needs these two URLs at mount time — it never guesses at Rails routing, so the shell
     # is the only place they can come from. Asserting the RENDERED attribute, not a Ruby value: this
     # repo has shipped two form bugs where a test asserted a Ruby hash and the real markup was broken

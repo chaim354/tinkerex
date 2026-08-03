@@ -7,7 +7,7 @@ module Maker
     # `available?` is retained from the frozen-hash design and still earns its place: an addon whose
     # source is unreachable, whose api_version we don't speak, or whose manifest is malformed greys
     # out rather than 500ing. One bad addon must never take /tools down.
-    Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services) do
+    Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout) do
       def available? = true # a registered addon is by definition fetchable; see Registry#manifests
     end
 
@@ -43,7 +43,12 @@ module Maker
           key: manifest["key"].to_s, title: manifest["title"].to_s, icon: manifest["icon"].to_s,
           description: manifest["description"].to_s, entry: manifest["entry"].to_s,
           pins: manifest["pins"].is_a?(Hash) ? manifest["pins"] : {},
-          services: manifest["services"].is_a?(Array) ? manifest["services"].map(&:to_s) : []
+          services: manifest["services"].is_a?(Array) ? manifest["services"].map(&:to_s) : [],
+          # Only "wide" is meaningful today. Anything else — absent, nil, a typo, a value a NEWER
+          # addon invents for a host version we haven't shipped yet — collapses to the same default
+          # as "absent" rather than erroring: a manifest is fetched from a source this process does
+          # not control (Maker::Addons::Source), so an unrecognized value must degrade, not 500.
+          layout: manifest["layout"].to_s == "wide" ? "wide" : nil
         )
       end
     end
