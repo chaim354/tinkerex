@@ -80,6 +80,27 @@ module Tools
       assert_select "[data-addon-save-url-value=?]", tools_addon_path("widgetkit")
     end
 
+    # The bundle needs these two URLs at mount time — it never guesses at Rails routing, so the shell
+    # is the only place they can come from. Asserting the RENDERED attribute, not a Ruby value: this
+    # repo has shipped two form bugs where a test asserted a Ruby hash and the real markup was broken
+    # (§14d), so a test here has to look at what actually reaches the page.
+    test "the shell passes a service base URL and a states URL a bundle can use directly" do
+      get tools_addon_path("widgetkit")
+      assert_response :success
+
+      # PINS THE WIRE SHAPE: a bundle builds each sidecar call as
+      # `${ctx.serviceUrl}${service}/${path}` (e.g. "boxes/generate") by plain string
+      # concatenation — it has no route helper of its own — so the base must end in "/" and must
+      # not itself already contain "service/<something>". This is the literal contract, not a
+      # round-trip through the same helper that built it (§14e: assert the wire format).
+      assert_select "[data-addon-service-url-value=?]", "/tools/widgetkit/service/"
+      # Also derived from the real route, so a future change to the route's shape fails this test
+      # instead of silently drifting from the literal above.
+      assert_select "[data-addon-service-url-value=?]",
+                    tools_addon_service_path("widgetkit", "S", "P").delete_suffix("S/P")
+      assert_select "[data-addon-states-url-value=?]", tools_addon_states_path("widgetkit")
+    end
+
     test "an unknown addon key is a 404, not a 500" do
       get tools_addon_path("nope")
       assert_response :not_found

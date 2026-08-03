@@ -62,6 +62,7 @@ module Tools
       @importmap = merged_importmap
       @default_parent_node_id = current_project_folder_node_id
       @folders = folder_options
+      @service_url = service_base_url
     end
 
     # Same-origin proxy for the addon's bundle and its pinned modules. Same-origin is not a
@@ -138,6 +139,19 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # The base URL a bundle can reach its sidecar(s) through: append `service_name/path` and fetch.
+    # Computed from the ACTUAL route (via placeholder substitution) rather than hand-duplicating its
+    # pattern as a literal string, so a future change to the service route's shape cannot silently
+    # desync this — the same reasoning as `merged_importmap` re-drawing from config rather than
+    # mutating a shared map. A bundle names its own service (from its manifest) and appends it, so it
+    # never has to know Rails' route shape at all, only string concatenation.
+    #
+    # The placeholders are synthetic and `delete_suffix` matches literally (not a regex), so this is
+    # correct even in the degenerate case where an addon's own key collides with a placeholder.
+    def service_base_url
+      tools_addon_service_path(@addon.key, "__SERVICE__", "__PATH__").delete_suffix("__SERVICE__/__PATH__")
     end
 
     # The manifest must DECLARE the service, and the host must have a URL for it. Both, not either —

@@ -5,13 +5,18 @@ import { Controller } from "@hotwired/stimulus"
 // The bundle is NOT a Stimulus controller — an addon must not have to know the host's JS framework.
 export default class extends Controller {
   static targets = ["mount"]
-  static values = { entry: String, saveUrl: String, folders: Array, defaultFolder: String }
+  static values = {
+    entry: String, saveUrl: String, serviceUrl: String, statesUrl: String,
+    folders: Array, defaultFolder: String,
+  }
 
   async connect() {
     try {
       const module = await import(this.entryValue)
       await module.default.mount(this.mountTarget, {
         saveUrl: this.saveUrlValue,
+        serviceUrl: this.serviceUrlValue,
+        statesUrl: this.statesUrlValue,
         folders: this.foldersValue,
         defaultFolder: this.defaultFolderValue,
         csrfToken: document.querySelector("meta[name=csrf-token]")?.content,
