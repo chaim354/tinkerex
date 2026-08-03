@@ -77,7 +77,7 @@ env:
     CHUNK_ENDPOINT: http://192.168.1.8:8333
     CHUNK_BUCKET: my-bucket
     CHUNK_REGION: us-east-1
-    # Authoritative source = 1Password item "seaweednew" (op://Personal/seaweednew/access key).
+    # Authoritative source = 1Password item "seaweednew" (op://tinkerex/seaweednew/access key).
     # The secret is sourced from the SAME item in .kamal/secrets — keep them together or you
     # get InvalidAccessKeyId.
     #

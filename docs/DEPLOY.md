@@ -131,17 +131,36 @@ desktop-app/biometric auth when it is not — **same command, no second code pat
 desktop app to approve a read: the desktop integration re-locks on its own timeout, and a hung
 authorization looks like `error initializing client: authorization timeout`.
 
-To set one up (all of this is done by you in 1Password — the token is a bearer credential and is
-never committed):
+**The vault split is already done.** Every reference is `op://tinkerex/…`, a vault holding only
+this project's items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`). Two reasons it is not `Personal`:
 
-1. Create a vault holding **only** this project's items (`ghcr.io`, `seaweednew`, `R2`,
-   `tinkerex-origin`). Scope matters: today's desktop integration exposes the whole `Personal`
-   vault to anything that can run `op`.
-2. 1Password → Developer → **Service Accounts** → create one, grant it **read-only** on that
-   vault, copy the token once.
-3. Update the `op://Personal/…` references in `.kamal/secrets*` to the new vault name.
-4. Provide the token to the runner as a secret env var, then verify with
-   `OP_SERVICE_ACCOUNT_TOKEN=… bin/secrets-preflight --all` — it prints which auth path it used.
+- **A service account CANNOT be granted access to a Personal or Private vault** — 1Password's own
+  CLI refuses it (`op service-account create --help`). Leaving the items in `Personal` makes the
+  unattended path impossible, not merely untidy.
+- Anything that can run `op` on this machine — including a coding agent — can read every item in
+  whatever vault the references point at. A project vault bounds that to four items.
+
+Service accounts **are** available on a personal (Individual/Families) plan; only the *Private
+vault* restriction applies. The published rate limits list "1Password and 1Password Families" as
+its own tier at 1,000 reads/day, which is far above what deploys use (a full
+`bin/secrets-preflight --all` costs ~8 reads).
+
+To mint one (yours to do — the token is a bearer credential and is never committed):
+
+```sh
+op service-account create tinkerex-deploy --vault tinkerex:read_items --expires-in 90d
+```
+
+The token prints **once** and is never retrievable again — save it to 1Password immediately. Then
+give it to the runner as a secret env var and verify:
+
+```sh
+OP_SERVICE_ACCOUNT_TOKEN=… bin/secrets-preflight --all   # prints which auth path it used
+```
+
+⚠️ **Do not `export` it into your interactive shell.** A bare `export OP_SERVICE_ACCOUNT_TOKEN=ops_…`
+writes the credential to `~/.zsh_history` in plaintext. Use `read -rs OP_SERVICE_ACCOUNT_TOKEN &&
+export OP_SERVICE_ACCOUNT_TOKEN`, or scope it to the single command as above.
 
 **There is no CI consumer today.** All six workflows in `.github/workflows/` reference zero
 GitHub secrets (`grep -c '${{ secrets\.'` → 0 in each): the test gates run on SQLite with stub
