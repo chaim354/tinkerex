@@ -33,9 +33,6 @@ pin "process" # @2.1.0
 pin "jszip-buffer-chunk" # jspm.io internal chunk for @jspm/core@2.1.0's browser buffer shim
 
 pin "lib/chunk_upload", to: "lib/chunk_upload.js"
-# The tray layout vocabulary (boxes.py's section syntax, its ASCII art, and the parse back out of
-# it), shared by the traylayout controller that WRITES the art and the topview one that READS it.
-pin "lib/tray_layout", to: "lib/tray_layout.js"
 
 # Three.js r0.185.1 (MIT) — the interactive 3D viewer (modelviewer_controller.js), DYNAMIC-imported
 # so the payload ships only on pages with a 3D file. Vendored from unpkg (the official ES build),

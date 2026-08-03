@@ -19,23 +19,10 @@
     <% end %>
   <% end %>
 
-  <%# TEMPORARY — boxes and openscad still have their own controllers and are not yet
-      manifest-driven. Each block disappears when that addon migrates to a bundle. `generators`
-      migrated (this is now served by the @addons loop above); availability still keys on the
+  <%# TEMPORARY — openscad still has its own controller and is not yet manifest-driven. This block
+      disappears when that addon migrates to a bundle too. `generators` and `boxes` have both
+      migrated (both are now served by the @addons loop above); availability still keys on the
       sidecar env var, exactly as the old Registry entries did. %>
-  <% if BoxesClient.configured? %>
-    <%= link_to tools_boxes_path, class: "addon-card" do %>
-      <span class="addon-icon">📦</span>
-      <span class="addon-title">Box Generator</span>
-      <span class="addon-desc muted">Parametric laser-cut / CNC boxes</span>
-    <% end %>
-  <% else %>
-    <div class="addon-card disabled" title="Not configured on this deployment">
-      <span class="addon-icon">📦</span>
-      <span class="addon-title">Box Generator</span>
-      <span class="addon-desc muted">Unavailable here</span>
-    </div>
-  <% end %>
   <% if OpenscadClient.configured? %>
     <%= link_to tools_openscad_path, class: "addon-card" do %>
       <span class="addon-icon">🧊</span>
