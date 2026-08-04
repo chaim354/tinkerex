@@ -58,7 +58,7 @@ gem "image_processing", "~> 2.0"
 # (Image thumbnails shell out to the `vipsthumbnail` binary — NOT the ruby-vips FFI gem — so no
 #  in-process libvips thread pool to deadlock Rails' fork-based parallel test runner. See ImageThumb.)
 gem "rubyzip", "~> 3.4", require: "zip"
-gem "nokogiri", "~> 1.18"
+gem "nokogiri", "~> 1.19"
 
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
 gem "aws-sdk-s3", require: false

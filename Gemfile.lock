@@ -503,7 +503,7 @@ DEPENDENCIES
   kamal
   kramdown (~> 2.5)
   lexxy (= 0.9.27)
-  nokogiri (~> 1.18)
+  nokogiri (~> 1.19)
   omniauth (~> 2.1)
   omniauth-rails_csrf_protection (~> 2.0)
   omniauth_openid_connect (~> 0.8)
