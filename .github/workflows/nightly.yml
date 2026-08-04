@@ -32,7 +32,7 @@ jobs:
       linux:   ${{ steps.p.outputs.linux }}
       windows: ${{ steps.p.outputs.windows }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - id: p
         name: Resolve the declared runner fleet
@@ -52,7 +52,7 @@ jobs:
     if: ${{ needs.preflight.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Build fs-cfapi (lib + maker-cfapi)
@@ -82,7 +82,7 @@ jobs:
     if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
@@ -127,7 +127,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: System deps (FUSE + allow_other)
@@ -161,7 +161,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
@@ -197,7 +197,7 @@ jobs:
     # cfg(linux), so sync-engine builds with no FUSE on mac.
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       # Use the runner's preinstalled Ruby/bundler (the maker-mac dev box) — ruby/setup-ruby
@@ -232,7 +232,7 @@ jobs:
     runs-on: [self-hosted, windows]
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Two-device e2e (Windows client stack vs the deployed server)
@@ -259,7 +259,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
@@ -284,7 +284,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       # Preinstalled Ruby/bundler on the maker-mac box (ruby/setup-ruby assumes the hosted layout).
@@ -304,7 +304,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Two real CfAPI sync roots, A<->B byte-for-byte through the mounts
@@ -324,7 +324,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Live CfAPI smoke (register -> enumerate -> hydrate -> new/edit/delete/rename)
@@ -344,7 +344,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Live CfAPI conformance (varied sizes / nested dirs / churn, byte-for-byte)
@@ -360,7 +360,7 @@ jobs:
     if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: System deps (FUSE, rclone, build tools, autotools)

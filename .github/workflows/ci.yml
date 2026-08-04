@@ -57,7 +57,7 @@ jobs:
       linux:   ${{ steps.p.outputs.linux }}
       windows: ${{ steps.p.outputs.windows }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: p
         name: Resolve the declared runner fleet
         env:
@@ -75,7 +75,7 @@ jobs:
   scan:
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Security scanners (gems, importmap, brakeman)
@@ -86,7 +86,7 @@ jobs:
     env:
       RUBOCOP_CACHE_ROOT: tmp/rubocop
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Prepare RuboCop cache
@@ -104,7 +104,7 @@ jobs:
   test:
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Ensure resvg (SVG→PNG for the preview tests)
@@ -133,7 +133,7 @@ jobs:
   test-share-backend:
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Ensure resvg (SVG→PNG for the preview tests)
@@ -163,7 +163,7 @@ jobs:
   test-s3-backend:
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Ensure resvg (SVG→PNG for the preview tests)
@@ -178,7 +178,7 @@ jobs:
   system-test:
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
         run: bundle install --quiet
       - name: Run the system tests

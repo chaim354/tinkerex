@@ -60,7 +60,7 @@ jobs:
       linux:   ${{ steps.p.outputs.linux }}
       windows: ${{ steps.p.outputs.windows }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - id: p
         name: Resolve the declared runner fleet
@@ -96,7 +96,7 @@ jobs:
       tok_mac:    ${{ steps.seed.outputs.tok_mac }}
       tok_linux:  ${{ steps.seed.outputs.tok_linux }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Reachability + register/pair three devices (emit tokens/url/tag as outputs)
@@ -141,7 +141,7 @@ jobs:
     outputs:
       expected_sha: ${{ steps.push.outputs.EXPECTED_SHA }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Windows write THROUGH the CfAPI mount → push to the shared server
@@ -162,7 +162,7 @@ jobs:
     runs-on: [self-hosted, macos]
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: macOS pull #1 — read the windows-written file byte-for-byte through the WebDAV mount
@@ -184,7 +184,7 @@ jobs:
     outputs:
       expected_sha: ${{ steps.edit.outputs.EXPECTED_SHA }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: System deps (FUSE + allow_other)
@@ -205,7 +205,7 @@ jobs:
     runs-on: [self-hosted, macos]
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: macOS pull #2 — read the linux-EDITED file byte-for-byte through the WebDAV mount
@@ -223,7 +223,7 @@ jobs:
     runs-on: [self-hosted, windows]
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Windows pull #2 — read the linux-EDITED file byte-for-byte through the CfAPI mount
