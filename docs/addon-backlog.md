@@ -30,14 +30,46 @@ Tags: `[client]` `[server]` · `[lib]` permissive dep · `[sidecar]` GPL-isolate
 ## Client add-ons (browser-side, grouped by engine)
 
 ### Engine — Maker.js (Apache-2.0) · form → 2D SVG/DXF
-Build the param-driven drawing harness once, reuse for a whole family. These are boxes.py-shaped but
-simple enough to compute in JS (no sidecar):
+The workhorse: build the param-driven drawing harness once, reuse for a whole family. Boxes.py-shaped
+but simple enough to compute in JS (no sidecar):
 - **Material test grid** ⭐ — power × speed sweep (the laser classic; most obviously-missing generator)
 - Kerf & focus test cards
 - Living-hinge / lattice-flex pattern
 - Bolt-circle / hole-pattern → DXF
 - Inlay generator (kerf-comp male/female)
 - Badge / keychain / tag maker
+- **2D gears / sprockets / pulleys / rack** — involute spur, ANSI roller-chain, GT2 timing
+- **Enclosure faceplate** — parametric cutouts for buttons, LEDs, connectors, screw holes
+- **Woodworking joinery layout** — finger-joint / dovetail / tab-and-slot → DXF
+- **Clock face** — numerals + tick marks
+- **Ruler / scale / protractor / angle gauge**
+- **Graph / grid / isometric / hex / dot paper** → SVG/PDF
+- **Stencil generator** — auto-bridges so letters (O, A, R) stay connected
+- **Monogram / sign / house-number plate**
+- **Decorative panels** — Voronoi, Truchet tiles, geometric star, Celtic knot
+- **Spirograph / hypotrochoid art**
+- **N-gon & picture-frame miter layout** (regular polygons, compound corners)
+- **Coaster / trivet pattern**
+
+### Engine — code libraries (JS, MIT) → SVG
+Client twins of the server label engine (⑤); the inventory-tied label *sheets* stay server (they read the DB).
+- **QR code** (qrcode-generator) — engrave/print labels
+- **Barcode** (JsBarcode) — Code128 / EAN / UPC
+- **Data Matrix & 100+ symbologies** (bwip-js)
+
+### Engine — in-browser viewers (JS, no server)
+Interactive inspection to complement the server-rendered grid thumbnails:
+- **STL / 3MF viewer** (three.js) — rotate, measure, section
+- **G-code viewer** — parse + draw toolpaths on canvas, with cut-time & bounds estimate
+- **DXF viewer** (dxf-parser)
+
+### Engine — browser canvas (image, no server)
+- Halftone / dither for engraving (image → dithered SVG)
+- **Raster → SVG trace** (ImageTracer.js) — client twin of the server vtracer path (⑨)
+- **Pixel-art / Perler-bead / cross-stitch chart** from an image → grid
+- **Image prep** — crop / resize / rotate / threshold / contrast for engraving
+- **Palette extractor** from an image
+- **Lithophane** (image → STL via three.js) — client twin of the server PIL path
 
 ### Engine — Method Draw / svg-edit (MIT) · embeddable SVG canvas
 - In-app **laser SVG editor** — add cut/score/engrave layer conventions + kerf offset
@@ -45,14 +77,22 @@ simple enough to compute in JS (no sidecar):
 ### Engine — Kiri:Moto (MIT) · in-browser CAM
 - SVG/DXF/STL → **G-code toolpaths** (laser + CNC)
 
-### Engine — browser canvas (no dependency)
-- Halftone / dither for engraving (image → dithered SVG)
+### No engine — calculators & reference (pure JS) ⭐ bundle as one "Maker Calculators" addon
+- **Electronics** — resistor color code (4/5/6-band) + SMD decoder, capacitor code, LED series resistor,
+  voltage divider, Ohm's-law wheel, battery life + pack (series/parallel) config, AWG wire gauge /
+  ampacity / voltage-drop, 555 timer, RC/LC filter cutoff, op-amp gain, dB converter
+- **Motion & mechanical** — stepper steps/mm (belt + leadscrew), GT2 belt length, gear/pulley ratio,
+  RPM ↔ surface speed, feeds & speeds, bolt torque
+- **Shop math** — metric ↔ imperial, fraction ↔ decimal ↔ mm, drill & tap chart, thread pitch / TPI,
+  N-gon dimensions, compound-miter, right-triangle/trig solver, bolt-circle coordinates, golden ratio, board-foot
+- **Materials & print** — material weight (volume × density), filament length ↔ weight ↔ cost, print
+  electricity cost, scale/shrink compensation, kerf compensation
+- **Reference tables** — thread pitch, screw & clearance-hole sizes, wire gauge, bearing sizes (608/623…),
+  material density, twist-drill decimals, saved laser material-settings presets (localStorage)
 
-### No engine — pure JS calculators / reference
-- **Maker Calculators gallery** ⭐ — Ohm's law, LED resistor, GT2 belt, gear/pulley ratio, stepper
-  resolution, board-foot, material weight, print cost… (one addon, ~15 tools)
-- Feeds & speeds calculator (math is client; the bit library that feeds it is Server → inventory)
-- Tap/drill & thread-pitch charts
+### Client shop utilities
+- Process / interval timer (etch, cure, develop)
+- Print-layout / label preview (browser print CSS)
 
 ---
 
