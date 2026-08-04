@@ -37,7 +37,7 @@ jobs:
       linux:   ${{ steps.p.outputs.linux }}
       windows: ${{ steps.p.outputs.windows }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - id: p
         name: Resolve the declared runner fleet
@@ -69,7 +69,7 @@ jobs:
       conf: ${{ steps.f.outputs.conf }}
       twodev: ${{ steps.f.outputs.twodev }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false, fetch-depth: 0 }
       - id: f
         name: Decide which jobs run
@@ -116,7 +116,7 @@ jobs:
     if: ${{ needs.changes.outputs.mac == 'true' }}
     runs-on: [self-hosted, macos]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -143,7 +143,7 @@ jobs:
     if: ${{ needs.preflight.outputs.linux == 'true' && needs.changes.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: FUSE dev headers
@@ -160,7 +160,7 @@ jobs:
     if: ${{ needs.preflight.outputs.linux == 'true' && needs.changes.outputs.engine == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Set up Ruby
@@ -214,7 +214,7 @@ jobs:
     if: ${{ needs.preflight.outputs.windows == 'true' && needs.changes.outputs.windows == 'true' }}
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Build fs-cfapi (lib + maker-cfapi)
@@ -238,7 +238,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Live CfAPI smoke (register -> enumerate -> hydrate -> new/edit/delete/rename)
@@ -257,7 +257,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Live CfAPI conformance (varied sizes / nested dirs / churn, byte-for-byte)
@@ -276,7 +276,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, linux]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
@@ -301,7 +301,7 @@ jobs:
     continue-on-error: true
     runs-on: [self-hosted, windows]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { clean: false }
       - uses: dtolnay/rust-toolchain@stable
       - name: Two real CfAPI sync roots, A<->B byte-for-byte through the mounts
