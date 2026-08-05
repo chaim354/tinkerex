@@ -672,6 +672,33 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   **merged importmap** actually resolved a bare specifier through the proxy — not merely that
   the entry module itself loaded. Mutation-checked: blanking `pins` in the fixture manifest
   turns it red.
+- **The service proxy ALLOWLISTS content types, and `image/svg+xml` is deliberately NOT on it**
+  — the entry most likely to be "restored", because SVG is the box generator's main output.
+  `#service` used to echo the sidecar's `Content-Type` verbatim `inline`, a same-origin
+  script-execution channel: the route is `via: %i[get post]` while boxes' `/generate` is
+  POST-only, so a plain GET returns **Werkzeug's 405 page as `text/html`** under our origin.
+  SVG is script-capable and `nosniff` does not help it. Excluding it costs the generator
+  **nothing** — `preview.js` reads the render with `fetch()` + `res.text()` and re-encodes it as
+  a `data:` URL, and neither header affects a `fetch()` body. Two entries are load-bearing the
+  other way and must stay INLINE: **`image/jpeg`** (`gallery.js` points an `<img src>` straight
+  at this proxy for sample photos) and **`application/json`** (`preview.js` branches on a JSON
+  content-type to read a sidecar's error message). Unlisted types degrade to
+  `octet-stream` + `attachment` rather than 415, so a sidecar upgrade can't become an outage. If
+  a future bundle needs an SVG in an `<img src>`, add it back **with a
+  `Content-Security-Policy: sandbox` response header**, not by relaxing the list.
+- **An addon save validates its filenames AT THE DOOR, backend-neutrally** —
+  `Maker::MoveNode.valid_leaf_name?` in `parse_files`, not inside any adapter. Share and S3 each
+  refuse a traversing name in their own `leaf!`; **chunk has no name check anywhere** (
+  `Sync::Commit.begin` validates the manifest exhaustively and the name not at all, and `Node`
+  validates `name` for **presence only**), so `"../../escape.txt"` created a live node on the
+  main deployment, bound for the changelog and every device mount. A guard that exists on two
+  backends and silently does not on the third is this repo's recorded failure shape — the fix is
+  the door, never a third copy in the chunk adapter. The save also pre-checks destination names
+  (a CHECK, not a lock) so chunk stops creating two same-named siblings in one directory, and
+  `Tools::AddonsController` maps `UnsupportedOperation`/`FetchError`/`NotFound` **once** via
+  `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
+  is a `fetch()` that branches on `res.ok` and **fetch follows a 302**, so answering an error the
+  way success is answered reports "Saved." over a save that never happened.
 
 ### 14d. The maker web layer
 
@@ -738,6 +765,34 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Mutation#apply` / `Restore` / `Conflicts`, or concurrent commits deadlock on a
   `FOR KEY SHARE`→`FOR UPDATE` lock upgrade. A **statement-mode pooler breaks it** — the boot
   guard refuses to start behind one.
+- **EVERY REFCOUNT WRITE GOES THROUGH `Sync::Gc.touch_refcounts!`, never a bare `update_all`** —
+  because `update_all` does not maintain timestamps, and `Gc.sweep_orphans!`'s grace window
+  filters on `updated_at`. With the column only ever written at `insert_all` time the filter
+  tested the chunk's **CREATION age, not its ZEROING age**, so for any chunk older than the
+  window — i.e. **every real chunk** — the protection the sweep's own contract promises did not
+  exist. Four sites (`gc`, `commit`, `restore`, `conflicts`). Two ordering rules go with it, and
+  neither is decoration: `sweep_orphans!` **deletes compare-and-swap**
+  (`where(id:, refcount: ..0).delete_all == 1` before the byte delete), because it takes NO user
+  lock and its batch is a snapshot a concurrent `Commit#finalize` can re-reference **0 → 1 while
+  uploading nothing** (it deduped against the row) — leaving a live version pointing at a chunk
+  with no row and no bytes; and `prune_version!` is **claim-then-decrement** (delete the version
+  row, decrement only if it removed 1), so two overlapping retention passes cannot decrement
+  twice for one removal. The `WHERE refcount > 0` guard prevents a NEGATIVE refcount, which was
+  never the bug. Failure mode throughout: **silent permanent data loss**, managed/tiered only
+  (`keep_all` never decrements). Beware the test shape that hid it — every sweep test hand-set
+  `updated_at` via `update_column`, and the "within grace" one used a chunk created moments
+  earlier, so it passed either way.
+- **`config.active_storage.variant_processor = :disabled`, and it must stay that way.**
+  `load_defaults 8.1` sets it to `:vips`, which loads `ImageProcessing::Vips` → `ruby-vips` at
+  boot. This app deliberately ships **no `ruby-vips`**: every thumbnail shells out to the
+  `vipsthumbnail` BINARY, precisely so there is no in-process libvips thread pool to deadlock the
+  fork-based parallel test runner. That was silently inert until activestorage **8.1.3.1** (the
+  CVE-2026-66066 fix) added an eager `require "image_processing/vips"`, whose LoadError message
+  ("ImageProcessing::Vips requires the ruby-vips gem") matches **neither** arm of the engine's own
+  `rescue` (`/libvips/`, `/image_processing/` — note the underscore), so it re-raised and **took
+  the whole boot down**. `:disabled` is the engine's supported answer and removes that CVE's code
+  path STRUCTURALLY rather than leaving it merely unreachable by argument. **Do not "fix" this by
+  adding `ruby-vips`** — that reintroduces the deadlock the subprocess design exists to avoid.
 - **Server presigning is local** (HMAC) — you can verify chunk URLs without the storage being
   reachable.
 - **A FAKE THAT SHARES THE CODE'S MISUNDERSTANDING CONFIRMS IT.** `FakeS3` decoded
