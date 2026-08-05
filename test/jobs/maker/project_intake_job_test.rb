@@ -17,6 +17,50 @@ module Maker
                           parent_node_id: parent, size: 1, content_hash: SecureRandom.hex(8))
     end
 
+    # --- the device-push nudge ---------------------------------------------------
+    #
+    # Closes §12.10: a file arriving through the MOUNT had no fast path and waited up to 15 minutes
+    # for the periodic sweep, because a device push never nudged the way the three web upload doors
+    # do. §12.10 rejected the obvious fix because Sync::Commit#finalize runs once PER FILE — 500
+    # files would mean 500 synchronous sweeps. This ENQUEUES instead, and the job's own
+    # limits_concurrency collapses the burst into one sweep. Asserting the enqueue rather than the
+    # filing is what separates this design from the rejected one.
+    test "a file landing at a project folder root enqueues a deferred sweep" do
+      node = file("bracket.stl")
+
+      assert_enqueued_with(job: Maker::ProjectIntakeJob, args: [ { user_id: @user.id } ]) do
+        Maker::ProjectIntakeJob.nudge(user: @user, node:)
+      end
+    end
+
+    # ROOT = INBOX IS THE WHOLE SORT RULE (§14f), so a file arriving deeper is already where someone
+    # put it and there is nothing to file. This arm is what keeps the nudge off every commit in the
+    # library — without it, every synced file anywhere would enqueue a sweep.
+    test "a file landing deeper than the project root does NOT enqueue" do
+      sub = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+                                parent_node_id: @folder.node_id)
+      node = file("part.step", parent: sub.node_id)
+
+      assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
+        Maker::ProjectIntakeJob.nudge(user: @user, node:)
+      end
+    end
+
+    test "a file outside every project folder does NOT enqueue" do
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "loose.stl", kind: "file",
+                                 parent_node_id: nil, size: 1, content_hash: SecureRandom.hex(8))
+
+      assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
+        Maker::ProjectIntakeJob.nudge(user: @user, node:)
+      end
+    end
+
+    # BEST-EFFORT: this runs inside the commit a device is waiting on, so nothing it does may fail
+    # that commit. A nil node stands in for "the caller had nothing to give us".
+    test "nudge never raises, whatever it is handed" do
+      assert_nothing_raised { Maker::ProjectIntakeJob.nudge(user: @user, node: nil) }
+    end
+
     test "perform attaches and files" do
       node = file("panel.svg")
       Maker::ProjectIntakeJob.perform_now(user_id: @user.id)

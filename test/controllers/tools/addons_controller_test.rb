@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "../../support/fake_addon_source"
 require_relative "../../support/fake_service_proxy"
+require "tmpdir"
 
 module Tools
   class AddonsControllerTest < ActionDispatch::IntegrationTest
@@ -149,6 +150,98 @@ module Tools
       assert_response :success
       assert_equal "text/javascript", response.media_type
       assert_equal "export default { mount() {} }", response.body
+    end
+
+    # --- asset caching -----------------------------------------------------------
+    #
+    # Over HTTP every asset was a fresh TCP connection + GET to the accessory, per module per page
+    # view — 12 modules for the boxes bundle, and a 180 KB makerjs.js re-proxied through Ruby on
+    # every navigation of the generators one. These use a COUNTING source, because "cached" is a
+    # claim about how many times the upstream was ASKED, and no assertion about a response body can
+    # observe that.
+    class CountingSource < FakeAddonSource
+      attr_reader :calls
+
+      def initialize(**kw)
+        super
+        @calls = Hash.new(0)
+      end
+
+      def asset(key, path)
+        @calls["#{key}/#{path}"] += 1
+        super
+      end
+    end
+
+    def counting_source
+      src = CountingSource.new(manifests: [ MANIFEST ], cacheable: true,
+                               assets: { "widgetkit/generators.js" => "export default {}" })
+      Maker::Addons::Source.stub = src
+      src
+    end
+
+    test "a repeated asset request is served from cache, not re-fetched upstream" do
+      src = counting_source
+
+      3.times { get tools_addon_asset_path("widgetkit", "generators.js") }
+
+      assert_response :success
+      assert_equal 1, src.calls["widgetkit/generators.js"],
+                   "the accessory should be asked once, not once per request"
+    end
+
+    test "a cacheable asset tells the browser it may keep it" do
+      counting_source
+      get tools_addon_asset_path("widgetkit", "generators.js")
+
+      assert_response :success
+      cache_control = response.headers["Cache-Control"].to_s
+      assert_match(/max-age=#{Tools::AddonsController::ASSET_TTL.to_i}/, cache_control)
+      assert_match(/private/, cache_control,
+                   "this endpoint is behind authenticate_user!; a shared cache must not hold it")
+    end
+
+    # THE LOCAL SOURCE IS NEVER CACHED, and this is the arm most likely to be "simplified" away.
+    # Source::Local is the dev/test backend reading straight off disk: the fetch costs nothing, and
+    # a cached copy would make an addon author's own edit invisible for the whole TTL — delivering
+    # the "my fix didn't deploy" confusion to the one person actually editing the file.
+    test "the local dev source is re-read every time, never cached" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "widgetkit"))
+        asset = File.join(dir, "widgetkit", "generators.js")
+        File.write(asset, "export default 1")
+        File.write(File.join(dir, "manifests.json"), [ MANIFEST ].to_json)
+        Maker::Addons::Source.stub = Maker::Addons::Source::Local.new(dir)
+
+        get tools_addon_asset_path("widgetkit", "generators.js")
+        assert_equal "export default 1", response.body
+
+        File.write(asset, "export default 2")
+        get tools_addon_asset_path("widgetkit", "generators.js")
+
+        assert_equal "export default 2", response.body, "a dev edit must be visible immediately"
+        # NOT `assert_no_match(/max-age/)` — Rails' own default for an uncached response is
+        # "max-age=0, private, must-revalidate", so that weaker assertion fails against correct
+        # behaviour. What must be absent is the POSITIVE lifetime this endpoint sets when caching.
+        assert_no_match(/max-age=#{Tools::AddonsController::ASSET_TTL.to_i}/,
+                        response.headers["Cache-Control"].to_s)
+      end
+    end
+
+    # A FAILURE MUST NOT BE CACHED — the same rule Registry#all's rescue-outside-fetch documents,
+    # one layer down. Caching a 404 would turn a two-second accessory blip into five minutes of a
+    # broken addon page.
+    test "an upstream failure is not cached; the next request tries again" do
+      src = counting_source
+      src.assets.delete("widgetkit/generators.js")
+
+      get tools_addon_asset_path("widgetkit", "generators.js")
+      assert_response :not_found
+
+      src.assets["widgetkit/generators.js"] = "export default {}"
+      get tools_addon_asset_path("widgetkit", "generators.js")
+
+      assert_response :success, "the failure must not have been cached"
     end
 
     test "a missing asset is a 404, not a 500" do

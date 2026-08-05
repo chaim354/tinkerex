@@ -66,6 +66,18 @@ module Maker
 
       def asset_path!(path) = self.class.validate_asset_path!(path)
 
+      # MAY ITS ASSETS BE CACHED? A predicate the source ANSWERS, rather than a class check at the
+      # call site — same preference as §14b's Phase 3 trap, and here the two backends genuinely
+      # differ rather than coincidentally agreeing.
+      #
+      # TRUE over HTTP, where every asset is a fresh TCP connection + GET to the accessory
+      # (Net::HTTP.start per call, no keep-alive) plus a full-body buffer, repeated per module per
+      # page view: the boxes bundle is 12 ES modules, and the generators bundle re-proxies a 180 KB
+      # makerjs.js on every navigation. FALSE on Local, where the read is a disk hit costing nothing
+      # and caching would do real harm — an addon author editing a file in dev would be served a
+      # stale copy for the whole TTL and reasonably conclude reloading was broken.
+      def cacheable? = true
+
       private
 
       def get(path)
@@ -141,6 +153,11 @@ module Maker
         end
 
         def asset(key, path) = read("#{key}/#{Source.validate_asset_path!(path)}")
+
+        # NEVER. This is the dev/test source: the read is free, and a cached copy would make an
+        # addon author's edit invisible for the TTL — the "my fix didn't deploy" confusion the whole
+        # caching design is supposed to avoid, delivered to the one person editing the file.
+        def cacheable? = false
 
         private
 

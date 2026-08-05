@@ -107,6 +107,22 @@ module Maker
     # that cannot afford the expensive one.
     EAGER_MAX_MOVES = 25
 
+    # THE S3 DEFAULT, because 25 was measured on chunk/local-SQLite and is NOT an even bound across
+    # backends — the comment above already said so and then left the number the same on all three.
+    # FileLayer::S3#move is three sequential, unbatched network calls per file (a HEAD, a COPY, a
+    # DELETE), so 25 eager moves is 75 sequential S3 round-trips inside one browser-facing request:
+    # at the ~85–205 ms per call this repo measured against a real R2 bucket, six to fifteen seconds
+    # an upload's response sits waiting. 5 keeps the same shape of promise (a handful of files
+    # dropped in a folder file themselves immediately) at roughly a second instead.
+    #
+    # ASKS THE ADAPTER'S CLASS, DELIBERATELY, and it is worth saying why that is not the Phase 3 trap
+    # §14b records. That trap was a GATE — `is_a?(Share)` decided WHETHER to index, so an
+    # unrecognized backend was silently skipped and an s3 library was never indexed at all. This is a
+    # THRESHOLD, and the property it keys on ("one move here is three network round-trips") is not
+    # a capability any adapter declares. An unrecognized backend falls through to 25, i.e. today's
+    # behaviour on every backend — it fails toward SLOW, never toward silence or data loss.
+    EAGER_MAX_MOVES_S3 = 5
+
     # How deep the tree walks go before giving up. A project folder is shallow; this is a backstop
     # against a CYCLE in `nodes`, which makes an unbounded walk spin — fatal on SQLite, which has
     # no statement timeout (the same hazard V1::NodesController#move spends would_create_cycle? on).
@@ -182,8 +198,14 @@ module Maker
 
       # A dry run never refuses — seeing this number is the entire reason to run one.
       refused = !dry_run && inbox_total > cap
-      results = projects.map do |project|
-        [ project, for_project(user:, project:, dry_run:, move: !refused) ]
+      # ONE NUDGE FOR THE WHOLE USER SWEEP. #call already batches its own run; wrapping the loop
+      # here makes those batches JOIN (LibraryChannel.batch is a no-op when one is already open for
+      # the same user), so fifty projects emit one message instead of fifty. Without this the
+      # per-project batching would still be a 50x improvement and a 50x remaining waste.
+      results = LibraryChannel.batch(user) do
+        projects.map do |project|
+          [ project, for_project(user:, project:, dry_run:, move: !refused) ]
+        end
       end
 
       RunResult.new(results:, status: refused ? :refused_too_many_moves : :ok, inbox_total:, cap:)
@@ -313,13 +335,19 @@ module Maker
     # setting one variable and checking the OTHER method's behaviour is untouched.
     #
     # NAMED "eager", NOT "sync" — deliberately avoiding this codebase's other, precisely-defined
-    # sense of that word (Capabilities#syncable? — "this backend IS the chunk/sync engine"). This
-    # cap is orthogonal to that axis: it applies identically on all three backends and is gated only
-    # on which CONTROLLER ACTION runs it (the eager nudge vs. the periodic sweep), never on which
-    # backend is current. A reader primed by capabilities.rb could otherwise misread "sync" here as
-    # backend-specific, which it is not.
+    # sense of that word (Capabilities#syncable? — "this backend IS the chunk/sync engine"). What
+    # selects this cap is which CONTROLLER ACTION is running (the eager nudge vs. the periodic
+    # sweep); a reader primed by capabilities.rb could otherwise misread "sync" here as meaning the
+    # chunk backend, which it does not.
+    #
+    # THE DEFAULT IS NOW BACKEND-AWARE, AND THIS COMMENT USED TO SAY IT WAS NOT. It read "it applies
+    # identically on all three backends ... never on which backend is current", which was true of
+    # the code and wrong about the world: EAGER_MAX_MOVES_S3 explains why 25 sequential moves cost
+    # ~1 s on chunk and 6–15 s on S3. An ENV override still wins on every backend, so an operator
+    # who has set PROJECT_ORGANIZE_EAGER_MAX_MOVES keeps exactly what they set.
     def self.eager_max_moves
-      Integer(ENV.fetch("PROJECT_ORGANIZE_EAGER_MAX_MOVES", EAGER_MAX_MOVES.to_s))
+      default = FileLayer.current.is_a?(FileLayer::S3) ? EAGER_MAX_MOVES_S3 : EAGER_MAX_MOVES
+      Integer(ENV.fetch("PROJECT_ORGANIZE_EAGER_MAX_MOVES", default.to_s))
     end
 
     def initialize(user:, project:, dry_run: false, move: true)
@@ -345,8 +373,15 @@ module Maker
       # filing — including filing we would disagree with — and position is what records that, so
       # there is no state to keep. Re-filing a subfolder would fight the user every 15 minutes, and
       # on chunk each round of that fight is a changelog entry broadcast to every device.
-      inbox = files.select { |n| n.parent_node_id == folder.node_id }
-      moved, skipped, skips, plan = file_all(inbox)
+      inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id })
+      # ONE NUDGE FOR THE WHOLE RUN, not one per file. Each move is its own Sync::Mutation.apply and
+      # each ensure_path! its own folder creation, so filing 25 files broadcast 26 times — against
+      # LibraryChannel's own stated contract ("never per-operation") and, on managed Postgres, 500
+      # serialized locks + 500 Solid Cable rows + 500 nudges per device for a 500-file sweep. The
+      # pull protocol makes one nudge sufficient: a device pulls everything after its own cursor,
+      # so the final head_seq subsumes every seq before it. Batches JOIN, so .for_user's loop over
+      # projects collapses to a single nudge for the entire sweep rather than one per project.
+      moved, skipped, skips, plan = LibraryChannel.batch(@user) { file_all(inbox) }
 
       Result.new(attached:, moved:, skipped:, skips:, plan:, status: :ok)
     end
@@ -371,13 +406,28 @@ module Maker
     # rather than enqueued as a parent it cannot be. The visited set makes a cycle terminate instead
     # of spinning (see MAX_DEPTH), and it is checked before the kind so a cycle through a directory
     # cannot re-enqueue it.
+    #
+    # PARTIAL SELECT, because this walk is the one part of the sweep that scales with the LIBRARY
+    # rather than with the work. It materialized a full Node for every file under every project
+    # folder, every 15 minutes, forever — at 100k attached files that is ~10^5 AR instantiations per
+    # user per sweep inside the Puma-hosted worker, to answer a question that reads four columns.
+    # WALK_COLUMNS is exactly what the walk, #attach and the inbox test consume; `id` rides along
+    # because an AR record without its primary key is a footgun for anything that later reloads it.
+    #
+    # WHICH IS WHY #call RE-LOADS THE INBOX IN FULL BEFORE MOVING ANYTHING. Maker::MoveNode reaches
+    # for columns this select omits (own_live_node!, and then the port/chunk move paths touch
+    # storage_path / current_version_id / updated_seq), and a partially-selected record answers those
+    # with ActiveModel::MissingAttributeError rather than a value. The split is the point: the walk
+    # is O(files in the library), the moves are O(cap).
+    WALK_COLUMNS = %i[id node_id parent_node_id name kind].freeze
+
     def subtree_files(folder)
       files = []
       frontier = [ folder.node_id ]
       seen = Set.new(frontier)
       MAX_DEPTH.times do
         break if frontier.empty?
-        children = @user.nodes.present.where(parent_node_id: frontier).to_a
+        children = @user.nodes.present.where(parent_node_id: frontier).select(*WALK_COLUMNS).to_a
         frontier = []
         children.each do |node|
           next unless seen.add?(node.node_id)
@@ -390,6 +440,22 @@ module Maker
       end
       warn_if_truncated(frontier)
       files
+    end
+
+    # The inbox, as WHOLE Node records — see WALK_COLUMNS for why the walk cannot hand these
+    # straight to Maker::MoveNode. ONE extra query, and it is bounded by the inbox rather than the
+    # library: in steady state (everything already filed) the inbox is empty and this does not query
+    # at all, and on the intended first run it is the backlog the caps already bound.
+    #
+    # ORDER IS PRESERVED DELIBERATELY. `where(node_id: [...])` returns rows in whatever order the
+    # adapter likes, and the inbox order decides WHICH files get filed when a run hits its cap — so
+    # re-sorting to the walk's order is what keeps a capped sweep deterministic instead of
+    # silently filing a different subset on Postgres than on SQLite.
+    def full_records(light_nodes)
+      return [] if light_nodes.empty?
+
+      by_id = @user.nodes.present.where(node_id: light_nodes.map(&:node_id)).index_by(&:node_id)
+      light_nodes.filter_map { |n| by_id[n.node_id] }
     end
 
     # Fires ONLY when MAX_DEPTH ran out with directories still unexplored — a walk that simply

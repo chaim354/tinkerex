@@ -11,9 +11,20 @@
 #
 # WHY NOT ENFORCING YET: the app ships a vendored Jspreadsheet grid, the Lexxy rich-text editor,
 # and an importmap. `javascript_importmap_tags` emits an INLINE <script type="importmap">, so an
-# enforcing `script-src :self` with no nonce takes every page's JavaScript down at once. Run
-# report-only, read the violations from the browser console on the grid page, the editor, the file
-# browser and all three /tools addons, then tighten and flip. Tracked in docs/OPEN-WORK.md.
+# enforcing `script-src :self` with no nonce takes every page's JavaScript down at once.
+#
+# VIOLATIONS ARE NOW COLLECTED, WHICH THEY WERE NOT. The plan used to be "read them from the
+# browser console on the grid page, the editor, the file browser and all three /tools addons" —
+# one person, one browser, four pages, and blind to what a real visitor's extension or a
+# republished addon bundle triggers. `report_uri` below now POSTs every violation to
+# CspReportsController, which logs it. Grep a week of `[csp-violation]` lines
+# (`kamal app logs -g csp-violation`) before flipping the switch at the bottom of this file.
+#
+# ONE MORE THING TO CHECK BEFORE FLIPPING, because the addon platform changed the stakes since
+# this comment was written: enforcing is the only egress control against a hostile addon bundle
+# (a bundle runs same-origin with the session), so it matters more than it did — but a bundle
+# needing `unsafe-eval` or a `blob:` worker will break the moment it is enforced. Confirm the
+# collected reports are empty for /tools/* specifically, not just for the four host pages.
 Rails.application.configure do
   config.content_security_policy do |policy|
     policy.default_src :self
@@ -38,6 +49,36 @@ Rails.application.configure do
     # blob endpoint — PDF previews would go blank. The system tests logged the report-only
     # violation on the first run; no integration test could have.
     policy.frame_ancestors :self
+
+    # REPORT-ONLY WITHOUT A report-uri MEASURES NOTHING, which is what this policy did until now.
+    # Every violation landed in the console of whichever visitor triggered it and nowhere else, so
+    # the "read the violations, then tighten and flip" plan above had no data to read: the manual
+    # sweep it describes is one person, one browser, four pages, and it cannot see what a real
+    # visitor's extension or a republished addon bundle does. Collect first, then flip.
+    #
+    # A LITERAL, AND NOT FOR WANT OF TRYING TO DERIVE IT. This path is written twice — here and in
+    # config/routes.rb — which is exactly the shape this repo distrusts, because a report-uri
+    # pointing at a 404 fails SILENTLY: the browser stops reporting and says nothing, which is
+    # indistinguishable from a clean policy. The obvious fix,
+    # `Rails.application.routes.url_helpers.csp_violation_report_path`, DOES NOT BOOT: this block is
+    # `instance_exec`'d EAGERLY inside ActionDispatch::ContentSecurityPolicy#initialize, i.e. while
+    # config/initializers runs, and routes are not drawn until the finisher — so the helper is
+    # undefined and the whole app dies at boot with `undefined method 'csp_violation_report_path'`.
+    # Same family as §14a's `Library` boot guard, and found the same way: by booting, not by
+    # reading. Do not "clean this up" back into a helper call.
+    #
+    # The duplication is therefore guarded by a TEST instead of by construction —
+    # test/integration/csp_report_test.rb asserts this literal both resolves to CspReportsController
+    # and is what the response header actually carries. Change one, that test fails.
+    #
+    # `_path`-shaped, not a full URL: the report is same-origin, and a hard-coded host would be
+    # wrong on at least two of the three backend hostnames and on OVH's domain.
+    #
+    # `report-uri` is formally deprecated in favour of `report-to`, which additionally needs a
+    # `Reporting-Endpoints` response header and a named endpoint group. Deliberately not used yet:
+    # report-uri is what current browsers still honour, and the point of this change is to get data
+    # now, not to be standards-current. Revisit when flipping to enforcing.
+    policy.report_uri "/csp-violation-report"
   end
 
   # The importmap tag is inline and needs a nonce.
@@ -53,7 +94,8 @@ Rails.application.configure do
   end
   config.content_security_policy_nonce_directives = %w[script-src]
 
-  # MEASURE, DO NOT ENFORCE. Flip this to false only after the violation list is empty across the
-  # grid page, the rich-text editor, the file browser and all three /tools addons.
+  # MEASURE, DO NOT ENFORCE — but measurement is now real rather than aspirational (see the
+  # report_uri above). Flip this to false only after a stretch of production traffic produces no
+  # `[csp-violation]` log lines, /tools/* included.
   config.content_security_policy_report_only = true
 end

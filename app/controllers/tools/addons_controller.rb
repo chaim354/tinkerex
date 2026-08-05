@@ -108,11 +108,15 @@ module Tools
     # a browser cannot reach them, and CSP is script_src :self (spec §4.2). Proxying is what lets the
     # addon's JS run with the host's session and no token (spec §3.3).
     #
-    # NOT cached in this phase, deliberately: a stale bundle reads as "my fix didn't deploy", which is
-    # worse than a slow one (spec §8 risk 3). Caching gets designed against a working pipeline with a
-    # real content hash to key on.
+    # CACHED NOW, BOUNDED BY THE REGISTRY'S OWN TTL — see ASSET_TTL.
     def asset
-      body = Maker::Addons::Source.current.asset(@addon.key, params[:path])
+      source = Maker::Addons::Source.current
+      body = cached_asset(source, @addon.key, params[:path])
+      # A repeat navigation inside the window then costs NOTHING — no request at all, which is the
+      # larger half of the win: a page load fetches 4–6 modules at once and that burst landed on the
+      # web pool every single time. `public: false` because this endpoint sits behind
+      # authenticate_user! and a shared cache must not hold a response fetched with a session.
+      expires_in ASSET_TTL, public: false if source.cacheable?
       send_data body, type: content_type_for(params[:path]), disposition: "inline"
     rescue Maker::Addons::Source::Error
       head :not_found
@@ -336,6 +340,50 @@ module Tools
                PROXIED_INLINE_TYPE_PREFIXES.any? { |prefix| base.start_with?(prefix) }
       inline ? [ base, "inline" ] : [ "application/octet-stream", "attachment" ]
     end
+
+    # HOW STALE AN ASSET MAY BE, AND WHY THAT NUMBER. The old comment on #asset said caching was
+    # deferred because "a stale bundle reads as 'my fix didn't deploy', which is worse than a slow
+    # one", and it was right about the risk and wrong about the baseline: the addon INDEX is already
+    # cached for Registry::TTL, so a republished bundle already takes up to five minutes to be
+    # noticed at all. Matching that number means caching adds NO staleness the system did not
+    # already have — the index and the assets it names now expire together, instead of assets being
+    # fresh against an index that is not.
+    #
+    # NOT THE CONTENT-HASH SCHEME the audit ultimately wants (immutable URLs, cached for a year).
+    # That needs a per-publish version to key on, and the manifest contract has none — Registry
+    # REQUIREs key/title/icon/description/api_version/entry and nothing that changes when only an
+    # asset's bytes do. Adding one is a change to the manifest format, which lives in a separate
+    # repo and would have to be rolled out to every bundle; it belongs with the addon API plan, not
+    # here. This is the version of the fix that is entirely inside this repo's control.
+    ASSET_TTL = Maker::Addons::Registry::TTL
+
+    # Bodies above this are served but NOT cached. A bundle asset is JS/CSS/JSON — the largest in
+    # production is makerjs at ~180 KB — so anything at this scale is anomalous, and Solid Cache
+    # writes to the same Postgres/SQLite the sync engine uses. Refusing to cache the outlier is
+    # cheaper than discovering it as a cache table full of one file.
+    MAX_CACHED_ASSET_BYTES = 8_000_000
+
+    # THE RESCUE SITS OUTSIDE THE CACHE WRITE, and that placement is the same one Registry#all
+    # documents: a Source::Error must propagate to #asset's rescue (-> 404) rather than being
+    # cached. Caching a failure would turn a two-second accessory blip into five minutes of a
+    # broken addon page — the exact bug Registry's comment was written about, one layer down.
+    def cached_asset(source, key, path)
+      return source.asset(key, path) unless source.cacheable?
+
+      cached = Rails.cache.read(asset_cache_key(key, path))
+      return cached if cached
+
+      body = source.asset(key, path)
+      if body.bytesize <= MAX_CACHED_ASSET_BYTES
+        Rails.cache.write(asset_cache_key(key, path), body, expires_in: ASSET_TTL)
+      end
+      body
+    end
+
+    # `path` is already validated by Source.validate_asset_path! before it reaches the source, but
+    # it is interpolated into a cache key here BEFORE that validation runs — so it is scoped under a
+    # fixed namespace and never used to address anything but the cache.
+    def asset_cache_key(key, path) = [ "maker/addons/asset", key, path.to_s ]
 
     def content_type_for(path)
       case File.extname(path.to_s)

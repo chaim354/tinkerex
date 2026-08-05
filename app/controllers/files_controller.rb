@@ -180,8 +180,20 @@ class FilesController < ApplicationController
     else
       @folder = current_folder
       @crumbs = folder_crumbs(@folder)
-      @nodes = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
-                           .order(kind: :desc, name: :asc).to_a
+      scope = current_user.nodes.present.where(parent_node_id: @folder&.node_id)
+      # PAGED ONLY UNDER THE NAME SORT — see #paged_folder? for why the other two cannot be.
+      @paged = paged_folder?
+      if @paged
+        @child_count = scope.count
+        @pages = [ (@child_count / FOLDER_PAGE.to_f).ceil, 1 ].max
+        @page = resolve_page(@pages)
+        @nodes = scope.order(folder_page_order(@dir))
+                      .offset((@page - 1) * FOLDER_PAGE).limit(FOLDER_PAGE).to_a
+      else
+        @nodes = scope.order(kind: :desc, name: :asc).to_a
+        @pages = 1
+        @page = 1
+      end
       @truncated = false
     end
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
@@ -196,7 +208,20 @@ class FilesController < ApplicationController
     # including on ties. One authority per mode is cheaper than that promise -- and the promise
     # that DOES have to hold (the two mean the same thing) is pinned by a test that asks for the
     # same files both ways and compares the two orders.
-    @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir) unless @flat
+    #
+    # A PAGED FOLDER IS SORTED BY SQL, FOR THE SAME REASON FLAT MODE IS: once a LIMIT exists the
+    # ORDER BY is what SELECTS the rows, so SQL is the authority and a second comparator over the
+    # slice is redundant work at best.
+    #
+    # STATED HONESTLY, because it was mutation-checked and the obvious claim is too strong: leaving
+    # the Ruby sort in place here does NOT currently break anything. folder_page_order reproduces
+    # sort_key's order exactly, and sort_nodes is stable, so re-running it over an already-ordered
+    # page is a no-op — removing this `|| @paged` keeps every test green. The reason to skip it is
+    # that having two authorities agree by coincidence is precisely the arrangement that rots: the
+    # danger is real and lives in folder_page_order (dropping its LOWER() DOES scatter rows across
+    # page boundaries, and files_pagination_test.rb goes red when you do), so the invariant worth
+    # keeping is "one order, expressed once", not "this line is load-bearing today".
+    @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir) unless @flat || @paged
     # Only the flat view needs it — a folder view already tells you where you are, and this is a
     # query the folder view would pay for and never read.
     @folder_paths = @flat ? folder_paths_for(@nodes) : {}
@@ -609,6 +634,18 @@ class FilesController < ApplicationController
   SORTS = %w[name type modified].freeze
   DEFAULT_SORT = "name".freeze
   DIRS = %w[asc desc].freeze
+
+  # Rows per folder page. The folder view had NO bound at all — flat mode was capped at FLAT_LIMIT
+  # because "a folder is self-limiting and a whole-library view is not", which is true of a tidy
+  # library and false of a NAS directory with ten thousand children: measured at 2000 children the
+  # page is 225–307 ms of which 175–278 ms is ERB, on 5 queries and ~0 ms of database, so the cost
+  # is per-ROW rendering and the only fix is to render fewer rows. 250 keeps a page comfortably
+  # under 40 ms of that render while still being a screenful for anyone paging by hand.
+  #
+  # A CAP WOULD HAVE BEEN WRONG HERE even though it is right for flat mode: a truncated SEARCH is
+  # "your top matches", but a truncated FOLDER hides children in the app's primary navigation
+  # surface, with no way to reach them. Paging bounds the render without hiding anything.
+  FOLDER_PAGE = 250
   DEFAULT_DIR = "asc".freeze
 
   def resolve_sort
@@ -692,6 +729,54 @@ class FilesController < ApplicationController
   # other no-type files at whichever end "" falls, rather than at whichever end "—" falls -- both
   # group, and "" is the one already shipped), and a DIRECTORY is keyed on its extname, which is
   # read only for dir-against-dir order since sort_nodes partitions them out afterwards.
+  # ONLY THE NAME SORT PAGES, AND THE OTHER TWO ARE NOT AN OVERSIGHT.
+  #
+  # Paging means SQL chooses the rows, so SQL has to be able to express the display order. Of the
+  # three sorts only `name` maps to a column:
+  #   - `type` is COMPUTED — File.extname(...).downcase minus the dot, except a symlink, which
+  #     keys on the literal "symlink". FilesHelper states the agreement between that key and the
+  #     rendered Type cell as an invariant, and reproducing it in SQL means reproducing it twice
+  #     (SQLite and Postgres) and keeping all three in step forever.
+  #   - `modified` reads the PORT's mtime out of @info_by_node, not `nodes.mtime`. Those are
+  #     different authorities by design — the whole reason stat_all exists — and quietly swapping
+  #     one for the other in an ORDER BY would change what "Modified" means, per backend, with
+  #     nothing to say so.
+  # So those two keep today's full-folder load. The ceiling is therefore fixed for the DEFAULT
+  # view and still open for a user who has clicked Type or Modified; that is a deliberate,
+  # stated limit, not a claim to have bounded the page in general.
+  def paged_folder? = @sort == DEFAULT_SORT
+
+  # The display order, IN SQL, for the name sort — it must match what sort_nodes would have
+  # produced or paging drops and duplicates rows across page boundaries.
+  #
+  # Three parts, each mirroring one line of the Ruby it replaces: directories LAST (sort_nodes ends
+  # `files + dirs`, and a symlink counts as a file there, so the test is `kind = 'dir'`, not a
+  # three-way order); then the name, CASE-INSENSITIVELY, because sort_key downcases; then `name`
+  # itself as a deterministic tie-break so two names differing only in case cannot swap places
+  # between two requests and shuffle a row across a page edge.
+  #
+  # Arel, not string interpolation: `dir` is user input off the query string. It is already
+  # constrained to DIRS by resolve_sort, so this is defence in depth rather than the only guard —
+  # but an ORDER BY built by interpolating a param is exactly the shape Brakeman flags and the
+  # shape that is one refactor away from being unguarded.
+  def folder_page_order(dir)
+    nodes = Node.arel_table
+    descending = dir == "desc"
+    name_key = Arel::Nodes::NamedFunction.new("LOWER", [ nodes[:name] ])
+    [
+      Arel::Nodes::Grouping.new(nodes[:kind].eq("dir")).asc,
+      descending ? name_key.desc : name_key.asc,
+      descending ? nodes[:name].desc : nodes[:name].asc
+    ]
+  end
+
+  # Clamped, never trusted: a page number out of range must land on a real page rather than an
+  # empty one, so `?page=999` on a two-page folder shows page 2 and `?page=0`/garbage shows page 1.
+  # An out-of-range page rendering blank is how a paged list gets reported as "my files vanished".
+  def resolve_page(pages)
+    params[:page].to_i.clamp(1, pages)
+  end
+
   def sort_key(node, info, key)
     case key
     when "type"     then node.symlink? ? "symlink" : File.extname(node.name).downcase.delete(".")

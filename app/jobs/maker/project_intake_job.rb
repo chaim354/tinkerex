@@ -52,6 +52,47 @@ module Maker
       User.find_each { |user| perform_later(user_id: user.id) }
     end
 
+    # How long a nudge waits before sweeping — long enough for the rest of a device's batch to land,
+    # short enough that "I dropped files in and nothing happened" is never the experience.
+    NUDGE_DELAY = 30.seconds
+
+    # THE DEVICE-PUSH NUDGE — the gap CLAUDE.md §12 item 10 records, closed in the shape that item
+    # said a fix would have to take rather than the shape it said would be worse.
+    #
+    # A file arriving through the MOUNT had no fast path at all: the three web upload doors call
+    # Maker::ProjectIntake.for_node inline, but a device push never did, so it waited up to 15
+    # minutes for the periodic sweep. §12.10 rejected the obvious fix on solid grounds —
+    # Sync::Commit#finalize runs once PER FILE, so sweeping there would turn a 500-file device sync
+    # into 500 synchronous full-project sweeps.
+    #
+    # ASYNC + DEDUPLICATED IS THE WHOLE DIFFERENCE. This ENQUEUES rather than sweeps, and this job's
+    # own `limits_concurrency to: 1, key: user_id, on_conflict: :discard` collapses those 500
+    # enqueues into ONE sweep a few seconds after the batch settles: same trigger as the rejected
+    # version, one sweep instead of five hundred.
+    #
+    # ONLY WHEN THE FILE LANDED AT A PROJECT FOLDER'S ROOT — both a cost control and a faithful
+    # reading of the rule. §14f's "ROOT = INBOX IS THE WHOLE SORT RULE" means a file arriving deeper
+    # is already where someone put it and there is nothing to file. One indexed `exists?` per
+    # finalize is the price, paid on the sync hot path, and it is what stops this enqueueing for
+    # every commit in the library.
+    #
+    # THE RESIDUAL, STATED PLAINLY: the ENQUEUES are not deduplicated, only the SWEEP is. 500
+    # root-landing files write 500 job rows of which 499 are discarded when they become ready;
+    # Solid Queue's hourly clear_solid_queue_finished_jobs reclaims them. Deduplicating the enqueue
+    # itself means asking the queue what is already scheduled, which couples this to Solid Queue's
+    # schema to save a row rather than a sweep.
+    #
+    # BEST-EFFORT: nothing here may fail the commit a device is waiting on.
+    def self.nudge(user:, node:)
+      return if node.nil? || node.parent_node_id.blank?
+      return unless user.maker_projects.where(folder_node_id: node.parent_node_id).exists?
+
+      set(wait: NUDGE_DELAY).perform_later(user_id: user.id)
+    rescue StandardError => e
+      Rails.logger.warn("Maker::ProjectIntakeJob.nudge failed for user #{user.id}: " \
+                        "#{e.class}: #{e.message}")
+    end
+
     private
 
     # THE LOG IS THE ENTIRE AUDIT TRAIL. Nothing persists a marker for what was filed, so these

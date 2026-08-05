@@ -147,6 +147,57 @@ module Maker
       assert_not preview.asset.attached?
     end
 
+    # --- the byte ceiling --------------------------------------------------------
+    #
+    # THE ASSERTION THAT MATTERS IS "WITHOUT READING", not "without rendering", because the cost
+    # this ceiling exists to avoid is the READ: on S3 the first index of a large library enqueues
+    # one of these per renderable object and each read is a full billed download — the same egress
+    # §14a's identity ladder refused to pay for hashing, paid silently by previews.
+    #
+    # PROVED BY STAGING NO BYTES AT ALL. There is no version, no manifest and no chunk behind this
+    # node, so any read attempt raises and lands the preview in `failed`. Reaching `unsupported` is
+    # therefore positive evidence that the read never happened — a plain "status is unsupported"
+    # assertion against a fully-staged file could not tell those two apart.
+    test "a file over the preview ceiling is skipped WITHOUT reading its bytes" do
+      node = stage_node(node_id: "huge.svg", version_id: "v1", name: "huge.svg")
+      node.update!(size: Maker::GeneratePreviewJob::MAX_PREVIEW_BYTES + 1)
+      preview = @user.maker_previews.create!(node_id: "huge.svg", version_id: "v1", kind: "thumbnail")
+
+      forcing_available(Maker::Previews::Svg) do
+        assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id) }
+      end
+
+      preview.reload
+      assert_equal "unsupported", preview.status,
+                   "`failed` would mean the read was attempted; `unsupported` means it was skipped"
+      assert_match(/ceiling/, preview.error)
+      assert_not preview.asset.attached?
+    end
+
+    # The other half — the guard must refuse the outliers, not everything.
+    test "a file under the ceiling still renders normally" do
+      stage_version(node_id: "small.svg", version_id: "v1", bytes: @svg, name: "small.svg")
+      @user.nodes.find_by(node_id: "small.svg").update!(size: @svg.bytesize)
+      preview = @user.maker_previews.create!(node_id: "small.svg", version_id: "v1", kind: "thumbnail")
+
+      forcing_available(Maker::Previews::Svg) { Maker::GeneratePreviewJob.perform_now(preview.id) }
+
+      assert_equal "ready", preview.reload.status
+    end
+
+    # An unknown size PROCEEDS rather than refusing. Refusing on "the catalog cannot answer" would
+    # silently stop previewing files whose row is merely incomplete, and FileLayer::MAX_BYTES still
+    # backstops the read — so proceeding restores the old behaviour rather than inventing a new one.
+    test "a node with no recorded size is rendered, not refused" do
+      stage_version(node_id: "nosize.svg", version_id: "v1", bytes: @svg, name: "nosize.svg")
+      assert_nil @user.nodes.find_by(node_id: "nosize.svg").size, "fixture premise: size is unknown"
+      preview = @user.maker_previews.create!(node_id: "nosize.svg", version_id: "v1", kind: "thumbnail")
+
+      forcing_available(Maker::Previews::Svg) { Maker::GeneratePreviewJob.perform_now(preview.id) }
+
+      assert_equal "ready", preview.reload.status
+    end
+
     test "unsupported extension flips status to unsupported (not failed), no attachment, no raise" do
       stage_version(node_id: "weird.sldprt", version_id: "v2", bytes: "anything")
       preview = @user.maker_previews.create!(node_id: "weird.sldprt", version_id: "v2")

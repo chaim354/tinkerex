@@ -1,4 +1,5 @@
 require "test_helper"
+require "tmpdir"
 
 module Maker
   # The intake policy, WITHOUT HTTP.
@@ -8,6 +9,11 @@ module Maker
   # the port wants a real disk or bucket behind every fixture. The doors themselves are covered
   # per-backend in move_node_test.rb and library_folder_test.rb.
   class ProjectIntakeTest < ActiveSupport::TestCase
+    # config/cable.yml uses the `test` adapter, which is what makes these assertions observable at
+    # all — the same shape as §14e's rate-limiting note, where a null backend makes a guard fire
+    # never and the test pass for the wrong reason.
+    include ActionCable::TestHelper
+
     setup do
       pin_file_layer_backend("chunk")
       @user = User.create!(email: "pi-#{SecureRandom.hex(4)}@example.com",
@@ -44,6 +50,93 @@ module Maker
         ActiveSupport::Notifications.subscribed(counter, "sql.active_record", &block)
       end
       count
+    end
+
+    # Every statement issued inside the block, as SQL strings. Same exclusions as count_queries.
+    def capture_sql(&block)
+      seen = []
+      collector = ->(_name, _start, _finish, _id, payload) do
+        next if payload[:name] == "SCHEMA" || payload[:cached]
+        seen << payload[:sql]
+      end
+      ActiveRecord::Base.uncached do
+        ActiveSupport::Notifications.subscribed(collector, "sql.active_record", &block)
+      end
+      seen
+    end
+
+    # --- the shape of the walk ---------------------------------------------------
+    #
+    # THE ONE PART OF THE SWEEP THAT SCALES WITH THE LIBRARY, so its cost is a property worth
+    # asserting rather than trusting. #subtree_files used to materialize a full Node for every file
+    # under every project folder on every 15-minute sweep — ~10^5 AR instantiations per user at NAS
+    # scale — to answer a question that reads four columns.
+    #
+    # IDENTIFYING THE WALK TOOK TWO TRIES, so the discriminator is spelled out. The sweep issues
+    # several SELECTs mentioning parent_node_id, and most of them SHOULD select whole rows: the
+    # folder lookups resolve `Projects`/`<slug>` by name, and #full_records deliberately re-loads
+    # the inbox in full because Maker::MoveNode touches columns the walk omits. A blanket "nothing
+    # selects nodes.*" would forbid those and fail for the wrong reason; matching on `IN (` fails
+    # the other way, because a single-directory frontier renders as `= ?` and the walk goes unseen —
+    # which is how the first version of this test passed vacuously (it asserted over an empty set).
+    #
+    # What is unique to the walk: it filters on parent_node_id and NOT on name. Every by-name
+    # lookup carries a `"nodes"."name" = ` term; the walk never does.
+    test "the subtree walk selects only the columns it reads, never whole rows" do
+      file("bracket.stl")
+      dir("cad")
+
+      walk = capture_sql { intake }.select do |sql|
+        sql.match?(/\ASELECT/i) && sql.include?("parent_node_id") && !sql.match?(/"nodes"\."name" =/)
+      end
+
+      assert walk.any?, "expected to observe the breadth-first walk's own query"
+      walk.each do |sql|
+        assert_not sql.match?(/SELECT\s+"nodes"\.\*/i),
+                   "the walk must not SELECT whole rows — it reads four columns: #{sql}"
+        assert sql.include?(%("nodes"."kind")),
+               "sanity: the walk names its columns explicitly: #{sql}"
+      end
+    end
+
+    # --- the nudge ---------------------------------------------------------------
+    #
+    # LibraryChannel's header has always said "one event per commit — never per-operation", and the
+    # sweep was the thing violating it: each move is its own Sync::Mutation.apply and each category
+    # subfolder its own ensure_path!, so filing N files broadcast N+1 times. Devices converged fine
+    # (pull is incremental), which is exactly why it went unnoticed — the cost is all server-side:
+    # on managed Postgres a 500-file sweep meant 500 serialized user-row locks, 500 Solid Cable
+    # inserts and 500 nudges per device.
+    #
+    # BOTH HALVES ARE ASSERTED, because "batched" and "swallowed" look identical if you only count
+    # down. The second assertion is the one that matters: the surviving nudge must carry the FINAL
+    # head_seq, since that is what makes one message subsume the ones it replaced — a device pulls
+    # everything after its own cursor, so a nudge carrying a stale seq would leave the last moves
+    # unannounced until something else happened to broadcast.
+    test "filing many files emits ONE nudge, carrying the final head_seq" do
+      5.times { |i| file("part#{i}.stl") }
+
+      stream = LibraryChannel.broadcasting_for(@user)
+      result = nil
+      # Counts only what happens INSIDE the block, which is the assertion that matters.
+      assert_broadcasts(stream, 1) { result = intake }
+
+      # `.last`, not `.sole`: `broadcasts` returns the test's CUMULATIVE list, and setup's
+      # ensure_library_folder! already put one on this stream before the block ran.
+      latest = ActiveSupport::JSON.decode(broadcasts(stream).last)
+
+      assert_equal 5, result.moved, "sanity: this test is only meaningful if work happened"
+      assert_equal @user.reload.head_seq, latest["head_seq"],
+                   "the one surviving nudge must carry the LATEST seq, not the first"
+    end
+
+    # A sweep that files nothing must say nothing — the batch flushes only when a seq was recorded,
+    # so a steady-state sweep every 15 minutes stays silent rather than nudging every device to
+    # pull a changelog that has not moved.
+    test "a sweep with nothing to file broadcasts nothing at all" do
+      file("already.stl", parent: dir("cad").node_id)
+
+      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) { intake }
     end
 
     # --- the attach step ---------------------------------------------------------
@@ -766,10 +859,14 @@ module Maker
     # A separate, much smaller cap for the ONE caller that runs INSIDE a web request (for_node,
     # below) rather than an unattended background job (for_user/the periodic sweep, above). Named
     # "eager" (the eager nudge FilesController drives), deliberately NOT "sync" -- this cap has
-    # nothing to do with Capabilities#syncable? (chunk vs. share/s3) and applies identically on all
-    # three backends. See EAGER_MAX_MOVES's comment in project_intake.rb for the full argument;
-    # these tests exist to PROVE the two caps never leak into each other, not just assert it in a
-    # comment.
+    # nothing to do with Capabilities#syncable?. See EAGER_MAX_MOVES's comment in project_intake.rb
+    # for the full argument; these tests exist to PROVE the two caps never leak into each other,
+    # not just assert it in a comment.
+    #
+    # THIS COMMENT USED TO SAY THE CAP "applies identically on all three backends", which was true
+    # of the code and wrong about the world -- FileLayer::S3#move is three sequential network calls
+    # per file, so 25 eager moves is 75 S3 round-trips inside one browser request. The default is
+    # now backend-aware; the tests below pin both halves and the ENV override that outranks them.
 
     test "PROJECT_ORGANIZE_EAGER_MAX_MOVES is honored per call" do
       prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
@@ -785,6 +882,53 @@ module Maker
       assert_equal 25, Maker::ProjectIntake::EAGER_MAX_MOVES
       assert_equal 25, Maker::ProjectIntake.eager_max_moves
       assert_operator Maker::ProjectIntake::EAGER_MAX_MOVES, :<, Maker::ProjectIntake::MAX_MOVES
+    end
+
+    # The S3 default is LOWER, because one move there is a HEAD + a COPY + a DELETE — three
+    # sequential network calls — so the same cap buys three times the round-trips inside a request
+    # a browser is waiting on. Pinned per backend rather than asserted once, because the whole
+    # point of this change is that the number is NOT the same everywhere.
+    # SETS FileLayer.current DIRECTLY rather than pin_file_layer_backend, because that helper only
+    # sets LIBRARY_BACKEND and the real adapters refuse to build without their own env
+    # (LIBRARY_PATH / the five LIBRARY_S3_*). The cap asks the adapter's CLASS and nothing else, so
+    # an adapter instance is the whole precondition — no bucket and no directory are ever touched.
+    def with_adapter(adapter)
+      FileLayer.current = adapter
+      yield
+    ensure
+      FileLayer.reset!
+    end
+
+    def s3_adapter
+      FileLayer::S3.new(bucket: "b", region: "us-east-1", access_key_id: "ak",
+                        secret_access_key: "sk", prefix: "library")
+    end
+
+    test "the eager cap drops on s3, where one move is three network calls" do
+      with_adapter(s3_adapter) { assert_equal 5, Maker::ProjectIntake.eager_max_moves }
+
+      assert_operator Maker::ProjectIntake::EAGER_MAX_MOVES_S3, :<,
+                      Maker::ProjectIntake::EAGER_MAX_MOVES
+    end
+
+    test "share keeps the chunk default — only s3 pays three calls per move" do
+      Dir.mktmpdir do |dir|
+        with_adapter(FileLayer::Share.new(root: dir)) do
+          assert_equal 25, Maker::ProjectIntake.eager_max_moves
+        end
+      end
+    end
+
+    # An operator who has set the variable keeps exactly what they set, on EVERY backend — the
+    # backend-aware value is a DEFAULT, not a ceiling imposed over the override.
+    test "the ENV override still outranks the backend-aware default on s3" do
+      prior = ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"]
+      ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = "40"
+      begin
+        assert_equal 40, Maker::ProjectIntake.eager_max_moves
+      ensure
+        ENV["PROJECT_ORGANIZE_EAGER_MAX_MOVES"] = prior
+      end
     end
 
     # --- for_node ----------------------------------------------------------------
