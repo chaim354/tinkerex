@@ -945,6 +945,12 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   when set and desktop/biometric auth when not. Items live in the **`tinkerex` vault, never
   `Personal`**: 1Password *refuses* to grant a service account access to a Personal/Private vault,
   so `op://Personal/…` failing is by design, not a broken vault.
+- **EVERY SECRET FAILING AT ONCE MEANS THE TOKEN EXPIRED — DON'T DEBUG THE REPO.** The token
+  reaches the process through the environment and so is invisible to this tree: nothing here can
+  be edited to fix it, and `git log` will show nothing that broke it. Re-mint per `docs/DEPLOY.md`.
+  **ONE secret failing is the opposite diagnosis** — a wrong ref or field name in that single
+  `.kamal/secrets*` line. `bin/secrets-preflight --all` tells the two apart at a glance, and prints
+  which auth path is in use.
 - **NEVER `op read "$ref" 2>&1 >/dev/null`** — the redirection order LEAKS the value (`2>&1` points
   fd2 at the captured stdout *before* `>/dev/null` moves fd1). It printed a live ghcr PAT into a
   transcript and forced a rotation. `bin/secret` keeps the value on fd1 only.
