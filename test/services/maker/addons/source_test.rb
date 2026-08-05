@@ -59,6 +59,34 @@ module Maker
         assert_equal "generators/makerjs.js", source.asset_path!("generators/makerjs.js")
       end
 
+      # THE HTTP SOURCE ONLY — WHICH IS PRECISELY WHY THIS WAS GREEN FOR MONTHS OVER A LIVE 500.
+      # validate_asset_path! rejects traversal, absolute paths and empty segments; it does NOT
+      # reject spaces, newlines, NULs or non-ASCII, all of which make URI.parse raise. Source::Local
+      # (the dev/test default) reads with Pathname#read and never parses a URI, so the entire suite
+      # ran past a condition only the production code path can reach — the same shape as §14a's
+      # STORAGE_BACKEND 500, a guard whose precondition is never established in test. These
+      # construct the HTTP Source explicitly for that reason.
+      #
+      # NO SERVER IS NEEDED and none is started: URI.parse raises on the FIRST line of #get, long
+      # before any socket. A test that needed a listener would be testing something else.
+      test "an asset path URI.parse cannot handle is Source::Error (a 404), not a bare 500" do
+        [ "a b.js", "café.js", "a\nb.js" ].each do |bad|
+          error = assert_raises(Source::Error, "expected #{bad.inspect} to be a routine refusal") do
+            Source.new("http://addons.test").asset("widgetkit", bad)
+          end
+          assert_includes error.message, "InvalidURIError",
+                          "the refusal should still name the real cause for an operator"
+        end
+      end
+
+      # The complement, and the reason the one above cannot pass vacuously: an ordinary name must
+      # still get as far as the network (here: a connection refusal), not be swallowed by the new
+      # rescue arm. Port 1 is closed, so this proves the path reached Net::HTTP.
+      test "an ordinary asset path still reaches the network rather than failing URI parsing" do
+        error = assert_raises(Source::Error) { Source.new("http://127.0.0.1:1").asset("widgetkit", "ok.js") }
+        assert_not_includes error.message, "InvalidURIError"
+      end
+
       test "a malformed manifest index raises Source::Error, not a JSON error" do
         source = Source.new("http://addons.test")
         # NOT Object#stub: minitest 6 dropped minitest/mock in this repo (`require "minitest/mock"`

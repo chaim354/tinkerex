@@ -87,6 +87,29 @@ module Maker
       nil
     end
 
+    # THE ONE DEFINITION OF "this is a single, storable path segment", exposed for the same reason
+    # `collision?` and `available_name` are: a second, privately-spelled copy is how this class's
+    # neighbours have drifted before. #leaf! is the raising form; this is the predicate a caller
+    # uses when its own refusal is a routine 422 rather than an exception.
+    #
+    # THE CALLER THIS WAS EXTRACTED FOR IS Tools::AddonsController#parse_files, and its absence
+    # there was a live defect with an asymmetric blast radius. An addon save validated its
+    # filenames not at all — only presence, string-ness, count and total bytes — so the name went
+    # straight to whichever write door the deployment uses. Share and S3 both call their own
+    # `leaf!` and refused (raising FileLayer::NotFound, which nothing rescued -> 500), but the
+    # CHUNK path has no name check anywhere: Sync::Commit.begin validates the manifest
+    # exhaustively and the name not at all, and Node validates `name` for PRESENCE ONLY. So a save
+    # named "../../escape.txt" created a live node with that name on the main deployment, and that
+    # name then flows into the changelog and out to every device mount, where FUSE/CfAPI/WebDAV
+    # have to materialize it. A guard that exists on two backends and silently does not on the
+    # third is this repo's recorded failure shape, and the fix belongs in the DOOR (backend-
+    # neutral, before any write is attempted), not in a third copy inside the chunk adapter.
+    def self.valid_leaf_name?(name)
+      name.is_a?(String) && name.present? &&
+        !name.include?("/") && !name.include?("\\") && !name.include?("\0") &&
+        name != "." && name != ".." && name.bytesize <= MAX_NAME_BYTES
+    end
+
     # Is `name` already held under `parent_node_id` by a LIVE node that is not `except_node_id`?
     # The exact predicate #call raises Collision on, exposed because the conflict prompt has to ask
     # the SAME question before claiming a collision exists. A second, privately-spelled copy there
@@ -168,9 +191,7 @@ module Maker
     # BACKSLASH IS A SEPARATOR TOO. Harmless on POSIX, but the default Windows backend is CfAPI,
     # where a name carrying `\` is a path — and this is now reachable from a browser form.
     def leaf!(name)
-      return if name.is_a?(String) && name.present? &&
-                !name.include?("/") && !name.include?("\\") && !name.include?("\0") &&
-                name != "." && name != ".." && name.bytesize <= MAX_NAME_BYTES
+      return if self.class.valid_leaf_name?(name)
 
       raise InvalidName, "#{name.inspect} is not a valid file name"
     end

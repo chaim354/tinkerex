@@ -58,6 +58,44 @@ module Tools
     # decision, not one made by this comment.
     skip_forgery_protection only: :asset
 
+    # THE PORT'S REFUSALS, MAPPED ONCE — the gap FilesController's own rescue_from block warns
+    # about, one controller over. This controller inherited none of that mapping, so every
+    # condition the port answers routinely for an upload answered a 500 for an addon save: a
+    # duplicate output filename on share/s3 is FileLayer::UnsupportedOperation (§14a: "a clobber is
+    # UnsupportedOperation"), and an unmounted share is FetchError. Same condition, two answers,
+    # one layer up — which is the shape §14a's clobber bullet and the TrashController incident both
+    # describe, and which no adapter suite can see because the gap is in the CONTROLLER.
+    #
+    # JSON, NOT A REDIRECT-WITH-FLASH, and this is a correctness point rather than a style one: the
+    # only caller is the bundle's `fetch(ctx.saveUrl, { method: "POST" })`, which branches on
+    # `res.ok`. fetch FOLLOWS a 302, so answering an error the way #create answers success would
+    # make a failed save arrive as `res.ok === true` and render "Saved." over a save that did not
+    # happen. The status code has to carry the refusal. The body is there for the error contract
+    # the addon API plan wants; today's bundles read only the status, which is why they currently
+    # report a bare "Save failed."
+    #
+    # NotImplementedError is deliberately absent, per LibraryCapabilities: it is a wiring bug and
+    # must stay a loud 500 (and it is a ScriptError, so rescue_from would not reach it anyway).
+    rescue_from FileLayer::UnsupportedOperation do |e|
+      render json: { error: "unsupported_operation", message: e.message },
+             status: :unprocessable_entity
+    end
+
+    rescue_from FileLayer::FetchError do
+      render json: { error: "fetch_error", message: "Couldn't reach your library. Try again." },
+             status: :service_unavailable
+    end
+
+    # 422, NOT 404. NotFound here means the save named a destination folder that no longer exists
+    # (the leaf-name arm that used to raise it is closed in #parse_files, before any write is
+    # attempted). A 404 on a POST to the save endpoint reads as "this endpoint is gone", which
+    # would send an addon author looking in entirely the wrong place; the honest answer is that the
+    # request was refused.
+    rescue_from FileLayer::NotFound do
+      render json: { error: "not_found", message: "That destination folder no longer exists." },
+             status: :unprocessable_entity
+    end
+
     def show
       @importmap = merged_importmap
       @default_parent_node_id = current_project_folder_node_id
@@ -98,7 +136,8 @@ module Tools
         method: get_like ? :get : :post, url: url, path: path,
         params: get_like ? request.query_parameters : request.request_parameters
       )
-      send_data res.body, type: res.content_type, disposition: "inline", status: res.status
+      type, disposition = proxied_delivery(res.content_type)
+      send_data res.body, type:, disposition:, status: res.status
     rescue Maker::Addons::Source::Error, Maker::Addons::ServiceProxy::Error
       head :not_found
     end
@@ -121,17 +160,38 @@ module Tools
 
     # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
     # the request — bounded here, because a client-supplied body is not a trusted size.
+    #
+    # THE STATE AND ITS FILES ARE ONE UNIT OF WORK. Before this transaction, a save whose second
+    # file collided left the AddonState row committed with the AddonFile rows of however many
+    # writes happened to land first — probed on share: four files with a collision at #2 and #3
+    # produced two written files, an orphan state, and a 500. The state row is the addon's own
+    # record of "this save happened"; committing it for a save that did not is worse than failing.
+    #
+    # WHAT THE TRANSACTION DOES NOT COVER, STATED PLAINLY SO NOBODY READS MORE INTO IT: on
+    # share/s3 the bytes already written are FILES/OBJECTS in the user's library and a DB rollback
+    # does not remove them. They become ordinary library files (the scan indexes them on its next
+    # pass), which is the honest outcome — and deliberately not "fixed" by a compensating delete
+    # here, because §14a's copy->delete->tombstone landmine is exactly what inventing one produces.
+    # What the rollback buys is that no AddonState/AddonFile row claims a save that did not
+    # complete, and that the caller gets a routine 422 naming the collision instead of a 500.
     def create
       files = parse_files
       return head(:unprocessable_entity) if files.nil?
 
-      state = current_user.maker_addon_states.create!(
-        addon_key: @addon.states_key, name: params.require(:name), data: parse_data
-      )
-      addon_files = Maker::Addons::LibraryOutput.write(
-        user: current_user, state:, parent_node_id: chosen_parent_node_id,
-        files: files.map { |f| { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" } }
-      )
+      parent_node_id = chosen_parent_node_id
+      refuse_taken_names!(files, parent_node_id)
+
+      state = nil
+      addon_files = nil
+      ApplicationRecord.transaction do
+        state = current_user.maker_addon_states.create!(
+          addon_key: @addon.states_key, name: params.require(:name), data: parse_data
+        )
+        addon_files = Maker::Addons::LibraryOutput.write(
+          user: current_user, state:, parent_node_id:,
+          files: files.map { |f| { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" } }
+        )
+      end
       attach_addon_files_to_current_project(addon_files)
       # @addon.key here, NOT states_key — this builds a ROUTE (back to this addon's own page), not a
       # data scope. The state was just filed under states_key above; conflating the two here would
@@ -167,12 +227,55 @@ module Tools
       ENV["#{name.to_s.upcase.tr('-', '_')}_SIDECAR_URL"].presence
     end
 
+    # ALL THE NAMES, CHECKED BEFORE ANY BYTE IS WRITTEN — which closes two different defects.
+    #
+    # 1. CHUNK MODE HAD NO CLOBBER CHECK AT ALL. Share and S3 refuse a taken destination inside
+    #    FileLayer#write, so saving the same output name twice there is a refusal; on chunk the
+    #    same save SUCCEEDS TWICE and leaves two sibling nodes with the same name in one directory
+    #    — POSIX-illegal the moment a device materializes that directory on a real mount. One
+    #    condition must not have two answers across backends; that is the port's whole job.
+    # 2. IT MAKES THE PARTIAL WRITE MUCH SMALLER. LibraryOutput writes files one at a time, so a
+    #    collision discovered on file #3 has already put #1 and #2 into the library — and on
+    #    share/s3 those bytes are real files a DB rollback cannot take back. Asking first means the
+    #    common case fails before anything is written at all.
+    #
+    # A CHECK, NOT A LOCK — the same caveat §14a states for S3#write's head-then-put. Two
+    # simultaneous saves of the same name can both pass here; share/s3 still refuse the loser at
+    # write time (-> the same 422 via rescue_from), and chunk still permits it. Closing that
+    # remaining window means server-side adjudication of sibling names, which §5 of the audit
+    # explicitly rules out: the CLIENT adjudicates collisions by design, and a unique index on
+    # (user, parent, name) would break its displacement model.
+    #
+    # Raises UnsupportedOperation rather than returning a flag so it lands on the one mapping at
+    # the top of this class — §14a: "the destination is taken" IS UnsupportedOperation, and a
+    # second spelling of that answer is the exact drift that bullet was written about.
+    def refuse_taken_names!(files, parent_node_id)
+      taken = files.map { |f| f["name"] }.select do |name|
+        Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
+      end
+      return if taken.empty?
+
+      raise FileLayer::UnsupportedOperation,
+            "#{taken.map(&:inspect).join(', ')} already #{taken.one? ? 'exists' : 'exist'} in that " \
+            "folder. Rename the save or pick another folder."
+    end
+
     # Returns nil (-> 422) rather than raising, so a malformed or oversized payload is a routine
     # refusal instead of a 500.
     def parse_files
       parsed = JSON.parse(params[:files].to_s)
       return nil unless parsed.is_a?(Array) && parsed.any? && parsed.size <= MAX_FILES
-      return nil unless parsed.all? { |f| f.is_a?(Hash) && f["name"].present? && f["body"].is_a?(String) }
+      return nil unless parsed.all? { |f| f.is_a?(Hash) && f["body"].is_a?(String) }
+      # THE NAME CHECK, BACKEND-NEUTRAL AND BEFORE ANY WRITE. This used to be `f["name"].present?`,
+      # which is not a filename check — it accepted "../../escape.txt", and on chunk (the main
+      # deployment, and the one door with no name validation anywhere downstream) that produced a
+      # live node with that name, bound for every device's mount. See Maker::MoveNode.valid_leaf_name?
+      # for the full argument and why the guard belongs here rather than in the chunk adapter.
+      return nil unless parsed.all? { |f| Maker::MoveNode.valid_leaf_name?(f["name"]) }
+      # Within ONE save, too: #refuse_taken_names! asks the database, which cannot see two files
+      # in this same batch claiming the same name — neither exists yet, so both pass and chunk
+      # writes the duplicate pair itself.
+      return nil unless parsed.map { |f| f["name"] }.uniq.size == parsed.size
       return nil if parsed.sum { |f| f["body"].bytesize } > MAX_FILE_BYTES
 
       parsed
@@ -185,6 +288,53 @@ module Tools
       parsed.is_a?(Hash) ? parsed : {}
     rescue JSON::ParserError
       {}
+    end
+
+    # WHAT A SIDECAR MAY BE SERVED AS, UNDER THIS APP'S OWN ORIGIN. `#service` used to echo
+    # `res.content_type` verbatim with `disposition: "inline"`, which is a same-origin script-
+    # execution channel wearing a proxy's clothes — and NOT a hypothetical one: the route is
+    # `via: %i[get post]` while the boxes sidecar's `/generate` is POST-only, so a plain GET to it
+    # reaches Werkzeug's 405 page, `Content-Type: text/html`, rendered inline as OUR document. The
+    # bodies a sidecar emits are static today so there is no working XSS, but the channel is open
+    # and the first sidecar endpoint that reflects any input closes the gap for an attacker, not us.
+    # Its sibling `#asset` has always mapped through `content_type_for`; this is that same rule,
+    # arriving late on the more dangerous of the two doors (a sidecar's output is DERIVED FROM USER
+    # INPUT; an addon's own asset is a static file the operator published).
+    #
+    # THE LIST IS THE UNION OF WHAT THE SIDECARS ACTUALLY EMIT, minus what is unsafe inline —
+    # verified against sidecar/boxes/app.py and sidecar/openscad/app.py, not guessed:
+    #   application/json  boxes' generator lists + its JSON error bodies. LOAD-BEARING: the boxes
+    #                     bundle's preview.js branches on `content-type` including "json" to read
+    #                     an error message, so demoting this would silently degrade every sidecar
+    #                     error to the generic fallback text.
+    #   image/jpeg        the `/sample/<name>` generator photos. ALSO LOAD-BEARING: gallery.js sets
+    #                     `img.src` straight at this proxy, so these must stay INLINE or the tiles
+    #                     stop rendering.
+    #   text/plain        openscad's catalog reads.
+    #   model/*           openscad's rendered 3MF (`model/3mf`).
+    #
+    # image/svg+xml IS DELIBERATELY ABSENT, and that is the one entry worth explaining because it
+    # is the box generator's main output. SVG is script-capable and `nosniff` does not help, so it
+    # must not be a same-origin inline document. It costs nothing here: preview.js consumes the
+    # render with `fetch()` + `res.text()` and re-encodes it into a `data:image/svg+xml` URL
+    # itself, and neither Content-Type nor Content-Disposition affects a fetch() body. So the
+    # generator keeps working byte-for-byte while the top-level-navigation path stops being a
+    # script vector. If a future bundle wants an SVG straight in an `<img src>`, add it back
+    # WITH a `Content-Security-Policy: sandbox` response header, not by relaxing this line.
+    #
+    # Anything unlisted is served as an opaque download rather than refused: a proxy that 415s on
+    # an unexpected type turns a sidecar upgrade into an outage, while octet-stream + attachment
+    # is inert in every browser and still delivers the bytes to a `fetch()` caller.
+    PROXIED_INLINE_TYPES = %w[application/json image/jpeg image/png text/plain].freeze
+    PROXIED_INLINE_TYPE_PREFIXES = %w[model/].freeze
+
+    # -> [type, disposition]. Parameters (`; charset=utf-8`, which Flask appends to text/*) are
+    # stripped before matching and not echoed back — the allowlist decides the whole header.
+    def proxied_delivery(content_type)
+      base = content_type.to_s.split(";").first.to_s.strip.downcase
+      inline = PROXIED_INLINE_TYPES.include?(base) ||
+               PROXIED_INLINE_TYPE_PREFIXES.any? { |prefix| base.start_with?(prefix) }
+      inline ? [ base, "inline" ] : [ "application/octet-stream", "attachment" ]
     end
 
     def content_type_for(path)

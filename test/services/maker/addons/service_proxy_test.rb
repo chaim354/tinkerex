@@ -70,6 +70,18 @@ module Maker
         ServiceProxy.const_set(:MAX_BODY_BYTES, prior_cap)
       end
 
+      # Same gap, same fix, as Source#get's: URI.parse is the first statement in #call and is not a
+      # network error, so a path carrying a space or non-ASCII byte raised straight out of
+      # Tools::AddonsController#service as a 500 for any authenticated user. No listener needed —
+      # the raise happens before any socket is opened.
+      test "a path URI.parse cannot handle raises Error, not a bare URI::InvalidURIError" do
+        [ "a b", "café", "a\nb" ].each do |bad|
+          assert_raises(ServiceProxy::Error, "expected #{bad.inspect} to be a routine refusal") do
+            ServiceProxy.new.call(method: :get, url: "http://sidecar.test", path: bad)
+          end
+        end
+      end
+
       test "an unreachable host raises Error, not a bare Net::HTTP exception" do
         assert_raises(ServiceProxy::Error) do
           ServiceProxy.new.call(method: :get, url: "http://127.0.0.1:1", path: "x")

@@ -60,7 +60,12 @@ module Maker
             return Response.new(status: res.code.to_i, content_type: res.content_type, body: body)
           end
         end
-      rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError, OpenSSL::SSL::SSLError => e
+      # URI::Error for the same reason Source#get rescues it: `URI.parse` is the first statement
+      # here and is not a network error, so a path that survives validate_asset_path! (which
+      # rejects traversal but not spaces, newlines, NULs or non-ASCII) raised straight out of the
+      # action as a 500. -> Error, which the controller already maps to 404.
+      rescue URI::Error, SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError,
+             OpenSSL::SSL::SSLError => e
         raise Error, "#{path} -> #{e.class}: #{e.message}"
       end
 
