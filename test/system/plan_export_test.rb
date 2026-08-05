@@ -186,4 +186,121 @@ class PlanExportTest < ApplicationSystemTestCase
     assert_equal({ "one" => [], "many" => [ "Sheet 1,1 of 2×1", "Sheet 2,1 of 2×1" ] },
                  JSON.parse(labels))
   end
+
+  # ---- pdf.js ---------------------------------------------------------------------------------
+
+  def pdf_bytes(prims_js, pages_js = nil)
+    in_module("pdf.js", <<~JS)
+      (() => {
+        const pages = #{pages_js || "[{ paper: { name: 'A4', w: 210, h: 297 }, prims: #{prims_js} }]"}
+        const bytes = m.buildPdf(pages)
+        return JSON.stringify({
+          text: new TextDecoder("latin1").decode(bytes),
+          ascii: [...bytes].every((b) => b < 128),
+        })
+      })()
+    JS
+  end
+
+  test "the PDF declares its page size in points" do
+    doc = JSON.parse(pdf_bytes("[]"))["text"]
+
+    assert doc.start_with?("%PDF-1.4"), "not a PDF: #{doc[0, 40].inspect}"
+    assert_includes doc, "/MediaBox [0 0 595.28 841.89]"
+    assert_includes doc, "/BaseFont /Helvetica"
+    assert_includes doc, "/Encoding /WinAnsiEncoding"
+    assert_includes doc, "%%EOF"
+  end
+
+  # THE Y-FLIP. PDF's origin is bottom-left; SVG's is top-left. A flipped plan is INVISIBLE on a
+  # symmetric tray, so this uses a deliberately asymmetric one: a line 10 mm from the TOP must land
+  # 287 mm up the page (813.54 pt), not 10 mm up (28.35 pt).
+  test "PDF coordinates are flipped from SVG's top-left origin" do
+    doc = JSON.parse(pdf_bytes(
+      "[{ kind: 'line', x1: 0, y1: 10, x2: 50, y2: 10, role: 'outline' }]"))["text"]
+
+    assert_includes doc, "813.54 l"
+    assert_not_includes doc, "28.35 l"
+  end
+
+  # × is the only non-ASCII character the drawing itself emits, and the calibration caption adds an
+  # em dash. \327 and \227 are those two under WinAnsiEncoding; being octal escapes they keep the
+  # file byte-for-byte ASCII.
+  test "non-ASCII characters become octal escapes and the file stays ASCII" do
+    result = JSON.parse(pdf_bytes(<<~PRIMS.strip))
+      [{ kind: 'text', x: 50, y: 50, size: 3, text: '120×80', role: 'label' },
+       { kind: 'text', x: 50, y: 80, size: 3, text: '100 mm — check', role: 'calib-label' }]
+    PRIMS
+
+    assert_includes result["text"], "(120\\32780) Tj"
+    assert_includes result["text"], "(100 mm \\227 check) Tj"
+    assert result["ascii"], "the PDF must stay byte-for-byte ASCII"
+  end
+
+  # Every /Page's /Parent must name the Pages object, whose id is only known after the pages are
+  # written. Predicting byte offsets and ids is how this kind of writer goes silently wrong, so the
+  # writer asserts its own prediction — this proves the prediction is right for >1 page too.
+  test "a multi-page PDF wires every page to the pages object" do
+    doc = JSON.parse(pdf_bytes(nil, <<~PAGES.strip))
+      [{ paper: { name: 'A4', w: 210, h: 297 }, prims: [] },
+       { paper: { name: 'A4', w: 210, h: 297 }, prims: [] }]
+    PAGES
+
+    parent = doc["text"][/\/Parent (\d+) 0 R/, 1]
+    assert_includes doc["text"], "#{parent} 0 obj\n<< /Type /Pages /Count 2"
+    assert_equal 2, doc["text"].scan(/\/Type \/Page[^s]/).size
+  end
+
+  # ---- export.js: the SVG renderer ------------------------------------------------------------
+
+  # THE WIRE FORMAT, and the whole feature. A viewBox alone is what the on-screen panel already
+  # had, and a viewBox alone is exactly what is NOT to scale — the physical width/height attributes
+  # are what give the drawing a size rather than merely a shape.
+  test "a page SVG carries its physical size in millimetres" do
+    head = in_module("export.js", <<~JS)
+      (() => {
+        const svg = m.pageSvg({ paper: { name: "A4", w: 210, h: 297 }, prims: [] })
+        return svg.slice(0, svg.indexOf(">") + 1)
+      })()
+    JS
+
+    assert_includes head, 'width="210mm"'
+    assert_includes head, 'height="297mm"'
+    assert_includes head, 'viewBox="0 0 210 297"'
+  end
+
+  # What goes to the library: the whole plan at full size, untiled. Tiling is a property of the
+  # printer, not of the drawing.
+  test "the library SVG is the whole untiled plan at full size" do
+    head = in_module("export.js", <<~JS)
+      (() => {
+        const model = m.buildModelFor({
+          cols: [50, 50, 50, 50, 50], rows: [50, 50],
+          hwalls: [[1,1,1,1,1],[1,1,1,1,1],[1,1,1,1,1]].map((r) => r.map(Boolean)),
+          vwalls: [[1,1,1,1,1,1],[1,1,1,1,1,1]].map((r) => r.map(Boolean)),
+        }, 3)
+        const svg = m.planSvgFor(model)
+        return svg.slice(0, svg.indexOf(">") + 1)
+      })()
+    JS
+
+    # 5 x 50 mm cells + 4 inner walls + 2 outer = 268 mm; 2 x 50 + 1 + 2 = 109 mm.
+    assert_includes head, 'width="268mm"'
+    assert_includes head, 'height="109mm"'
+  end
+
+  test "a plan too big for the paper still exports as one untiled library SVG" do
+    pages = in_module("export.js", <<~JS)
+      (() => {
+        const model = m.buildModelFor({
+          cols: [50, 50, 50, 50, 50], rows: [50, 50],
+          hwalls: [[1,1,1,1,1],[1,1,1,1,1],[1,1,1,1,1]].map((r) => r.map(Boolean)),
+          vwalls: [[1,1,1,1,1,1],[1,1,1,1,1,1]].map((r) => r.map(Boolean)),
+        }, 3)
+        return String(m.pagesFor(model, "A4").pages.length)
+      })()
+    JS
+
+    assert_equal "2", pages
+  end
 end
