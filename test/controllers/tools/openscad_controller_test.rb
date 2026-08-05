@@ -334,6 +334,39 @@ module Tools
                    "a .3mf saved into a project folder should be filed into models/ by the nudge"
     end
 
+    # WHY THIS DOOR NEEDS NO OVERWRITE CONFIRMATION, pinned rather than asserted in a comment.
+    #
+    # Tools::AddonsController#create gained a 409 + confirm flow because a re-save there reuses the
+    # user's own filename, so the second save collides with the first in its category folder and
+    # (before the fix) stranded a duplicate at the project root forever. THIS door cannot reach that
+    # state: its output name embeds `state.id`, a fresh autoincrement per save, so saving the same
+    # design twice under the same NAME still produces two different FILENAMES. There is nothing to
+    # collide with and nothing to ask about — building the dialog here would be UI for an
+    # unreachable branch.
+    #
+    # THE GUARD IS ON THE PROPERTY THAT MAKES IT TRUE, not on the absence of the dialog. Drop
+    # `state.id` from the filename — to make re-saves overwrite rather than accumulate, say — and
+    # this goes red, which is the moment this door DOES need what the other one has.
+    #
+    # (The residual is unchanged and already handled: if a name somehow IS taken in the category
+    # folder — a hand-renamed file — the sweep leaves the output at the project root and
+    # #project_intake_sentence says so, exactly as it did before this arc.)
+    test "two saves of the same design never produce the same filename" do
+      2.times do
+        post tools_openscad_path, params: { name: "Same Name", generator: "hex_plate",
+                                            params: { cols: "6", wall: "2.5" } }
+        assert_response :redirect
+      end
+
+      names = @user.maker_addon_states.for_addon("openscad").flat_map do |s|
+        s.files.map { |f| @user.nodes.find_by(node_id: f.node_id)&.name }
+      end.compact
+      assert_equal 2, names.size
+      assert_equal names.uniq.size, names.size,
+                   "two saves collided on one filename — this door now needs the 409 + confirm " \
+                   "flow Tools::AddonsController#create has"
+    end
+
     test "create does NOT copy the .scad source into the library" do
       # Spec §6.1: for a bring-your-own file, copying the source would spread a possibly
       # restrictively-licensed design around the user's library and into any future share/export

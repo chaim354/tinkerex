@@ -82,8 +82,14 @@ adapter and every existing caller.
 
 ### 4. The two doors differ, and only one is finishable in this repo
 
-- **`Tools::OpenscadController#create`** — server-rendered, so a full Rails confirm (re-render with
-  an "Overwrite" button) is buildable here end to end.
+- **`Tools::OpenscadController#create`** — ~~server-rendered, so a full Rails confirm is buildable
+  here end to end.~~ **CORRECTED WHILE BUILDING: this door cannot reach the bug, so it gets a guard
+  instead of a dialog.** Its output name embeds `state.id`, a fresh autoincrement per save, so
+  saving the same design twice under the same NAME still yields two different FILENAMES — there is
+  nothing to collide with and nothing to ask about. A confirm flow here would be UI for an
+  unreachable branch. What landed instead is a test pinning the property that makes it unreachable:
+  drop `state.id` from the filename and it goes red, which is exactly the moment this door would
+  need what the other one has.
 - **`Tools::AddonsController#create`** — driven by a `fetch()` in a bundle. Server answers the 409;
   the dialog is a change in `tinkerex-addons` (`addons/generators/generators.js:108`,
   `addons/boxes/editor.js:196`, `addons/boxes-next/editor.js:196` — all three share the shape
@@ -95,7 +101,7 @@ adapter and every existing caller.
 2. `LibraryOutput.write(replace:)` — chunk's versioned path + the port path.
 3. The category-folder collision check at both doors.
 4. The 409 contract + `overwrite` param on `Tools::AddonsController`.
-5. OpenSCAD's server-rendered confirm.
+5. ~~OpenSCAD's server-rendered confirm.~~ → a guard that the door cannot collide (see above).
 6. Bundle dialogs in all three addons (second repo, second PR).
 
 Each step mutation-checked per §15. Steps 1–5 are one PR here; step 6 is its own PR there, and the
