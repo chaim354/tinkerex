@@ -27,6 +27,34 @@ module Library
     # nothing wrong — discard rather than record a failure (GeneratePreviewJob sets the precedent).
     discard_on ActiveRecord::RecordNotFound
 
+    # ONE SCAN PER USER AT A TIME. Library::Reconciler's crash-repair design argues about
+    # SEQUENTIAL passes (see its header) and nothing enforced that: library_scan fires every 15
+    # minutes, and a first pass over a big NAS spends longer than that just hashing, so run N+1
+    # started while run N was still walking. Two concurrent passes over one library interleave
+    # observations with tombstones — precisely the state whose absence the pairing logic assumes.
+    #
+    # PER USER, NOT GLOBAL: two users' libraries share nothing, and a global key would serialize a
+    # multi-user deployment's whole scan behind its slowest library.
+    #
+    # on_conflict: :discard, NOT the default :block. A blocked scan queues up behind the running
+    # one, so a library that takes 20 minutes to walk accumulates a permanent backlog of scans
+    # that each re-do the work of the one before. Dropping the tick is the right answer and this
+    # job already says why in its retry commentary: the 15-minute schedule IS the retry, and it is
+    # a better one than a replay because it re-observes the world instead of a stale verdict.
+    #
+    # duration is the semaphore's SAFETY VALVE for a worker that dies mid-scan, not an expected
+    # runtime — it has to exceed a realistic slow pass or it lets exactly the overlap this
+    # prevents back in. 1 hour comfortably covers the ~1–3 min/100k-file walk this repo measured
+    # over SMB/NFS with headroom; the cost of that choice, stated plainly, is that a hard worker
+    # crash skips this user's scans for up to an hour before the semaphore expires.
+    #
+    # NOTE FOR THE INTAKE CALL BELOW: concurrency controls are applied when a job is ENQUEUED, so
+    # #intake_project_folders' `perform_now` is unaffected by ProjectIntakeJob's own limit. That
+    # matters — §14f requires the intake to run inline, in this job, strictly after the reconcile,
+    # and a limit that could discard it would break that guarantee rather than protect it.
+    limits_concurrency to: 1, key: ->(args) { args[:user_id] },
+                       duration: 1.hour, on_conflict: :discard
+
     # DELIBERATELY NO `retry_on Library::Scanner::UnsafeScan`, and no discard_on for it either.
     #
     # UnsafeScan is a REFUSAL, not a crash: the root is missing, or the pass would tombstone an

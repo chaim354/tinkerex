@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-03 (**Secrets resolve from 1Password per destination, with a preflight — PR #122 + the `tinkerex` vault split**)
+**Updated:** 2026-08-05 (**The chunk-GC grace window was dead code — the 2026-08-03 audit's seven "do now" items, PR #132**)
 
 ## What this file is
 
@@ -60,7 +60,77 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-03): secrets resolve from 1Password per destination, with a preflight (PR #122, branch `claude/1password-persistent-access-13fe8f`; vault split on `claude/1password-vault-scope`)
+## Latest (2026-08-05): the chunk-GC grace window was dead code — the audit's seven "do now" items (PR #132, branch `claude/opus-audit-list-c37ecf`)
+
+Works through the **"Do now"** table in `docs/AUDIT-2026-08-03.md` §5. Two items are correctness,
+one closes a security channel, four are robustness. Rules landed in **CLAUDE.md §14c/§14e**.
+
+### A-H1 — the grace window did not exist, and the sweep raced every bumper
+
+`Gc.sweep_orphans!` frees chunks at `refcount: ..0 AND updated_at <= cutoff`, promising in its own
+contract never to free a *freshly-zeroed* chunk. Every refcount mutation was a raw `update_all`,
+which does not maintain timestamps — so `updated_at` only ever held its `insert_all` value and the
+filter measured **creation age, not zeroing age**. For any chunk older than the window (every real
+chunk) there was no protection at all. The sweep additionally took no user lock and never
+re-checked `refcount` at delete time, so a concurrent `Commit#finalize` deduping against a still-
+present row (0 → 1, **uploading nothing**) could interleave with the delete and strand a live
+version on a chunk with no row and no bytes. **Silent permanent data loss**, managed/tiered only —
+`RETENTION_POLICY` defaults to `keep_all`, which never decrements.
+
+Fixed at four sites via `Gc.touch_refcounts!`, plus compare-and-delete in the sweep and
+claim-then-decrement in `prune_version!` (which also makes overlapping retention passes safe
+independently of the new job limit).
+
+**Why the suite was green:** every sweep test hand-set `updated_at` with `update_column` — the
+first one says *"bypass the updated_at touch"* out loud — and the "keeps a recently-zeroed chunk"
+test used a chunk **created** moments earlier under the same frozen clock, so it passed whether or
+not the decrement moved the column. The replacement ages the chunk and zeroes it now.
+
+### The other six
+
+| Item | Was | Now |
+|---|---|---|
+| **2.2** addon save | Presence-only filename check; share/S3 refused traversal in their own `leaf!` (→ unrescued 500), **chunk had no name check anywhere** so `"../../escape.txt"` became a live node. No transaction; chunk made duplicate siblings. | Door-level `MoveNode.valid_leaf_name?`, one transaction, pre-flight name check, `rescue_from` → 422/503 |
+| **2.3** service proxy | Echoed sidecar `Content-Type` verbatim inline, same-origin — reachable via boxes' POST-only `/generate` returning Werkzeug's `text/html` 405 | Allowlist + `octet-stream`/`attachment` fallback |
+| **2.4** `URI::Error` | 500 for any authenticated user on an asset path with a space or non-ASCII byte | Rescued in both clients → 404 |
+| **A-M1** job overlap | No `limits_concurrency` anywhere | Scan/intake per-user `:discard`; retention global `:block` |
+| **P1** Puma | 3 web threads sharing the process with the job supervisor, vs 30–90 s sidecar calls | `RAILS_MAX_THREADS: 16` (**next deploy**) |
+| **CVE-2026-66066** | `bin/ci scan` RED | `rails` 8.1.3 → 8.1.3.1 |
+
+### The bump exposed a latent misconfiguration
+
+activestorage 8.1.3.1 adds an eager `require "image_processing/vips"`, and the engine's own
+`rescue LoadError` matches `/libvips/` and `/image_processing/` but **not** the real message
+("ImageProcessing::**Vips** requires the ruby-vips gem") — so it re-raised and **took boot down**.
+`load_defaults 8.1` had been asking for `:vips` all along while this app deliberately ships no
+`ruby-vips` (its in-process pool deadlocks the fork-based parallel runner; thumbnails shell out to
+the `vipsthumbnail` binary). Set `variant_processor = :disabled` — the engine's supported answer,
+which also removes the CVE's path structurally. Rule in §14e.
+
+### Verified
+
+Bare `bin/ci` green, **exit 0** (by exit code, not output text). All ten gates; three backend legs
+**identical** at **1912 runs / 6613 assertions**, system tests 22 / 143. The audit's baseline at
+`6095b87` was 1893 / 6498 — the **+19 runs are exactly the tests added here** (3 GC, 4 concurrency,
+2 source, 1 proxy, 9 addon controller). Remote CI: all 7 checks pass, no divergence from local.
+
+Every guard mutation-checked per §15 — reverted, confirmed red on exactly its own test, restored.
+
+**Two failures on the first full run were self-inflicted and are recorded because the shapes
+recur:** Brakeman flagged SQL interpolation in the new helper (the refcount delta is now a bound
+parameter, not a `"+ 1"` fragment), and the new duplicate-name test reused `grid.svg`, colliding on
+the **share leg only** with a file a sibling test leaves on disk that a DB rollback cannot undo.
+
+### Left open by this arc
+
+Everything in the audit's **"before SaaS"**, **"before the inventory/BOM UI"** and **performance**
+tiers: the addon trust model (2.1), CSP `report_uri` + enforcement, per-user storage accounting,
+`prune_changelog!`, `manifest_chunks` reclamation, `/tools` rate limits, sidecar auth, referential
+integrity, bare-FK indexes. `test/jobs/concurrency_limits_test.rb` asserts **declarations and
+computed keys, not runtime blocking** — Solid Queue enforces the semaphore in its own backend,
+which the test env does not run; the file says so in its header.
+
+## 2026-08-03: secrets resolve from 1Password per destination, with a preflight (PR #122, branch `claude/1password-persistent-access-13fe8f`; vault split on `claude/1password-vault-scope`)
 
 Deploys required `export CHUNK_SECRET_ACCESS_KEY=… KAMAL_REGISTRY_PASSWORD=…` before every run,
 even though `docs/DEPLOY.md` already used `op read` for the sidecar builds. `bin/secret VAR

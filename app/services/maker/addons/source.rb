@@ -80,7 +80,19 @@ module Maker
       # SSLError is in this list for the HTTPS source Phase B introduces, not for today's
       # http://127.0.0.1 — without it a TLS failure escapes Source::Error, and Registry's
       # degrade-to-no-addons rescue would miss it and 500 instead.
-      rescue SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError,
+      #
+      # URI::Error is here because `URI.parse` is the FIRST thing this method does and it is not a
+      # network error, so the five below never covered it. validate_asset_path! rejects `..`, `.`,
+      # empty segments and a leading `/` — it does NOT reject spaces, newlines, NULs or non-ASCII,
+      # all of which make URI.parse raise. The result was a 500 for any authenticated user who
+      # requested `/tools/<key>/asset/a%20b.js`, and a 500 rather than the intended 404 for an
+      # addon that legitimately shipped `café.js` — which reads as "my fix didn't deploy", exactly
+      # the confusion the asset action's own comment is trying to avoid.
+      #
+      # HTTP MODE ONLY, WHICH IS WHY THE SUITE WAS GREEN OVER IT: Source::Local (dev/test) reads
+      # with Pathname#read and never parses a URI, so the guard's precondition was never
+      # established in test — the same shape as §14a's STORAGE_BACKEND 500.
+      rescue URI::Error, SystemCallError, Net::OpenTimeout, Net::ReadTimeout, SocketError,
              OpenSSL::SSL::SSLError => e
         raise Error, "#{path} -> #{e.class}: #{e.message}"
       end

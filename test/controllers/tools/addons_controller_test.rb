@@ -55,6 +55,10 @@ module Tools
       Maker::Addons::ServiceProxy.reset!
       Rails.cache = @prior_cache
       FileLayer.reset!
+      # Centralised rather than per-test `ensure`s: several tests below now set this, and the
+      # sibling test that asserts a declared-but-unconfigured service is REFUSED depends on it
+      # being absent — so one leak turns that test green for the wrong reason.
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
     end
 
     # Registers a canned response for one full sidecar URL (base + path), via the ServiceProxy seam
@@ -177,6 +181,132 @@ module Tools
       assert_equal 1, state.files.count
     end
 
+    # ---- save: the filename is a filename ------------------------------------------------
+    #
+    # ASYMMETRIC ACROSS BACKENDS, WHICH IS WHY IT SURVIVED. #parse_files checked `name.present?`
+    # and nothing else. Share and S3 each call their own `leaf!` inside #write and refused (as an
+    # unrescued FileLayer::NotFound -> 500), but CHUNK has no name check anywhere on the path —
+    # Sync::Commit.begin validates the manifest exhaustively and the name not at all, and Node
+    # validates `name` for presence only. So the main deployment created a live node called
+    # "../../escape.txt" and put it in the changelog, bound for every device's mount.
+    #
+    # Runs on all three legs and asserts the SAME answer on each, which is the actual fix: the
+    # refusal is now at the door, before any backend is asked.
+    test "save refuses a traversing filename on every backend" do
+      %w[../../escape.txt a/b.svg a\\b.svg . ..].each do |bad|
+        assert_no_difference -> { @user.maker_addon_states.count }, "#{bad.inspect} was accepted" do
+          assert_no_difference -> { @user.nodes.count } do
+            post tools_addon_path("widgetkit"), params: {
+              name: "traversal", data: "{}",
+              files: [ { name: bad, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+            }
+          end
+        end
+        assert_response :unprocessable_entity, "#{bad.inspect} should be a routine refusal"
+      end
+    end
+
+    test "save refuses a name that is not a string at all" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "weird", data: "{}",
+        files: [ { name: [ "grid.svg" ], content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_response :unprocessable_entity
+    end
+
+    # ---- save: one name, one file --------------------------------------------------------
+    #
+    # The mirror-image defect of the traversal one, and again chunk was the exposed backend: share
+    # and s3 refuse a clobber inside #write, while chunk let the SAME save succeed twice and left
+    # two sibling nodes with the same name in one directory — POSIX-illegal the moment a device
+    # materializes that directory. The answer is now the same 422 everywhere, and no orphan state.
+    test "save refuses a name already taken in the destination folder, leaving no orphan state" do
+      # A NAME UNIQUE TO THIS RUN, and the reason is a real property of the share leg rather than
+      # fussiness: FileLayer::Share#write puts an actual FILE on disk under LIBRARY_PATH, and the
+      # test transaction rolls back the `nodes` row but cannot roll back the file. A sibling test
+      # in this same file already saves "grid.svg", so reusing that name made THIS test's FIRST
+      # save collide with the leftover on disk — a 422 in the wrong place, and only on one of the
+      # three legs. The collision this test is about must be the one it creates itself.
+      name = "dup-#{SecureRandom.hex(4)}.svg"
+      files = [ { name:, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      post tools_addon_path("widgetkit"), params: { name: "first", data: "{}", files: }
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert_equal 1, @user.nodes.present.where(name:).count
+
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        assert_no_difference -> { @user.nodes.present.where(name:).count } do
+          post tools_addon_path("widgetkit"), params: { name: "second", data: "{}", files: }
+        end
+      end
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+    end
+
+    # The database cannot see this one: neither file exists yet, so both pass the collision query
+    # and chunk writes the duplicate pair itself. Caught in #parse_files instead.
+    test "save refuses two files claiming the same name within one save" do
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        post tools_addon_path("widgetkit"), params: {
+          name: "dupes", data: "{}",
+          files: [ { name: "grid.svg", content_type: "image/svg+xml", body: "<svg/>" },
+                   { name: "grid.svg", content_type: "image/svg+xml", body: "<svg x=''/>" } ].to_json
+        }
+      end
+      assert_response :unprocessable_entity
+    end
+
+    # ---- save: the state and its files are one unit of work ------------------------------
+    #
+    # THE AUDIT'S ACTUAL PROBE, reproduced against a port that fails PART WAY THROUGH rather than
+    # up front: four files where the third write raises left two files written, an AddonState row
+    # committed for a save that never completed, and a 500. The pre-flight name check now catches
+    # the ordinary collision before any write, so this drives the residual case it cannot see — a
+    # port refusing at write time (a TOCTOU loser, or any other UnsupportedOperation) — which is
+    # exactly what the transaction is for. Uses a fake port so it behaves identically on all three
+    # CI legs instead of only on the port-writable ones.
+    test "a port refusal part way through a save leaves no AddonState behind" do
+      FileLayer.current = FailingPort.new(fail_on_write: 3)
+
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        assert_no_difference -> { Maker::AddonFile.count } do
+          post tools_addon_path("widgetkit"), params: {
+            name: "partial", data: "{}",
+            files: (1..4).map { |i| { name: "f#{i}.svg", content_type: "image/svg+xml", body: "<svg/>" } }.to_json
+          }
+        end
+      end
+      assert_response :unprocessable_entity, "a clobber is a routine refusal, not a 500"
+    ensure
+      FileLayer.reset!
+    end
+
+    # A port that is writable, counts writes, and refuses the Nth the way a real clobber does.
+    # Only the four verbs this path touches are implemented — anything else raising NoMethodError
+    # is the honest outcome for a fake that has wandered outside its purpose.
+    class FailingPort
+      Info = Struct.new(:node_id, :content_token, keyword_init: true)
+
+      def initialize(fail_on_write:)
+        @fail_on = fail_on_write
+        @writes = 0
+      end
+
+      def capabilities
+        FileLayer::Capabilities.new(versioned: false, syncable: false, presignable: false,
+                                    scannable: true, port_writable: true)
+      end
+
+      def write(_user, parent_node_id:, name:, io:)
+        @writes += 1
+        raise FileLayer::UnsupportedOperation, "#{name.inspect} already exists" if @writes == @fail_on
+
+        Info.new(node_id: SecureRandom.uuid, content_token: "t#{@writes}")
+      end
+
+      # Preview enqueue asks; answering nil is enough to make it decline (see LibraryOutput).
+      def stat(_user, node_id:) = nil
+    end
+
     test "save refuses a payload over the size cap" do
       post tools_addon_path("widgetkit"), params: {
         name: "huge", data: "{}",
@@ -201,15 +331,82 @@ module Tools
 
     test "service proxies to the sidecar URL the HOST configures" do
       ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
-      stub_http_ok("http://sidecar.test/render", body: "SIDECAR-BODY", content_type: "image/svg+xml")
+      # An ALLOWLISTED type, so this test keeps proving what it is named for — that the proxy
+      # reaches the host-configured URL and returns its body and type — without also depending on
+      # the disposition policy the tests below pin. It used to use image/svg+xml, which now
+      # deliberately downgrades (see PROXIED_INLINE_TYPES).
+      stub_http_ok("http://sidecar.test/render", body: "SIDECAR-BODY", content_type: "application/json")
 
       post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render"), params: { a: "1" }
 
       assert_response :success
       assert_equal "SIDECAR-BODY", response.body
-      assert_equal "image/svg+xml", response.media_type
-    ensure
-      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+      assert_equal "application/json", response.media_type
+    end
+
+    # ---- service proxy: what a sidecar may be served AS, under our origin ------------------
+    #
+    # THE REACHABLE CASE, NOT A HYPOTHETICAL ONE. The service route is `via: %i[get post]` while
+    # boxes' /generate is POST-only, so a plain GET reaches Werkzeug's 405 page — Content-Type:
+    # text/html — which the old `type: res.content_type, disposition: "inline"` rendered as a
+    # document under this app's own origin. No sidecar reflects input today so there is no working
+    # XSS, but the channel was open and the first one that does closes it for an attacker.
+    test "a sidecar's text/html is never served inline under our origin" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "<script>alert(1)</script>",
+                   content_type: "text/html")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_response :success
+      assert_equal "application/octet-stream", response.media_type
+      assert_match(/attachment/, response.headers["Content-Disposition"].to_s)
+    end
+
+    # SVG is script-capable and `nosniff` does not help, so it must not be an inline same-origin
+    # document either — and it costs the box generator nothing, because preview.js consumes the
+    # render with fetch() + res.text() and re-encodes it into a data: URL itself. Neither header
+    # affects a fetch() body, which is what makes this downgrade safe to make.
+    test "a sidecar's SVG is delivered as an attachment, not an inline document" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "<svg/>", content_type: "image/svg+xml")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_response :success
+      assert_equal "<svg/>", response.body, "the bytes still reach a fetch() caller unchanged"
+      assert_equal "application/octet-stream", response.media_type
+      assert_match(/attachment/, response.headers["Content-Disposition"].to_s)
+    end
+
+    # The other half of the allowlist, and the half that would break the product if it were wrong:
+    # gallery.js points an <img src> straight at this proxy for a generator's sample photo, and
+    # preview.js branches on a JSON content-type to read a sidecar's error message. Both must stay
+    # inline with their own type — a blanket "download everything" fix would have broken both.
+    test "allowlisted types keep their own content type and stay inline" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      { "image/jpeg" => "sample", "application/json" => '{"error":"nope"}',
+        "text/plain" => "catalog", "model/3mf" => "3MF" }.each do |type, body|
+        stub_http_ok("http://sidecar.test/render", body:, content_type: type)
+
+        get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+        assert_response :success
+        assert_equal type, response.media_type, "#{type} must survive the proxy unchanged"
+        assert_no_match(/attachment/, response.headers["Content-Disposition"].to_s)
+      end
+    end
+
+    # Flask appends "; charset=utf-8" to text/*, so the parameter has to be stripped before the
+    # allowlist is consulted or every text/plain response silently downgrades to a download.
+    test "a content type carrying parameters still matches the allowlist" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "hi", content_type: "text/plain; charset=utf-8")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_equal "text/plain", response.media_type
+      assert_no_match(/attachment/, response.headers["Content-Disposition"].to_s)
     end
 
     test "a service the manifest does not declare is refused" do

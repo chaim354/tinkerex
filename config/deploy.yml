@@ -56,6 +56,25 @@ env:
     # When you start using multiple servers, you should split out job processing to a dedicated machine.
     SOLID_QUEUE_IN_PUMA: true
 
+    # THE WEB POOL MUST BE BIGGER THAN THE NUMBER OF CONCURRENT SLOW PROXY CALLS, and the stock
+    # value was not. config/puma.rb defaults to `threads 3, 3` via RAILS_MAX_THREADS, and this file
+    # never set it — so production ran THREE web threads in the one process that also hosts the
+    # Solid Queue supervisor (above), against synchronous sidecar calls held open for up to
+    # Maker::Addons::ServiceProxy::READ_TIMEOUT (30 s) or OpenscadClient's render read (90 s). The
+    # boxes bundle fires a proxied render on a 600 ms debounce per parameter drag, and the
+    # browser's AbortController frees the BROWSER, not the Rails thread — so three users dragging
+    # sliders could consume the entire pool and queue everything behind them, including the v1 sync
+    # control plane. There is no reentrancy deadlock (sidecars never call back, and Phase B serves
+    # bundle assets from the addons accessory, not from this process), so the failure mode is
+    # starvation rather than deadlock — which is exactly why it degrades quietly instead of erroring.
+    #
+    # 16 is the value §14e already validated in development for the same class of problem (several
+    # near-simultaneous addon asset requests against the stock 3-thread pool, which intermittently
+    # 404'd until RAILS_MAX_THREADS=16). This is the cheapest of the three fixes the audit lists;
+    # the other two — per-endpoint proxy timeouts and moving renders to a job with a polled result —
+    # remain the real answer for SaaS scale, since a thread count only raises the ceiling.
+    RAILS_MAX_THREADS: 16
+
     # Opens the POST /v1/test/users signup seam so the automated E2E tests + dev can enroll
     # accounts against THIS box. SAFE here: this Unraid instance is a NON-production test/dev
     # deploy (despite running as RAILS_ENV=production for deploy reasons). The seam creates

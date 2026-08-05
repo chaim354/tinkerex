@@ -22,6 +22,23 @@ module Maker
     # wrong — discard rather than record a failure (GeneratePreviewJob sets the precedent).
     discard_on ActiveRecord::RecordNotFound
 
+    # ONE SWEEP PER USER AT A TIME, same shape and same reasoning as Library::ScanJob's — two
+    # concurrent sweeps over one user's project folders both read "what is loose at the root",
+    # both decide to file the same file, and the loser's move runs against a node the winner has
+    # already moved. :discard because a queued second sweep re-does the first one's work; the
+    # 15-minute schedule is the retry.
+    #
+    # ONLY THE SCHEDULED FAN-OUT IS LIMITED. Concurrency controls apply at ENQUEUE, so the two
+    # entry points that run this work synchronously are untouched, which is required rather than
+    # incidental: Library::ScanJob#intake_project_folders calls `perform_now` (§14f — the intake
+    # MUST run inline, after the reconcile, or a move races the Scanner's observations), and the
+    # eager nudge calls Maker::ProjectIntake directly rather than going through this job at all.
+    #
+    # duration: a capped sweep is bounded work (MAX_MOVES 500) and measured in tens of ms at
+    # steady state, so 15 minutes — one schedule tick — is ample cover for a crashed worker.
+    limits_concurrency to: 1, key: ->(args) { args[:user_id] },
+                       duration: 15.minutes, on_conflict: :discard
+
     def perform(user_id:)
       user = User.find(user_id)
       run = Maker::ProjectIntake.for_user(user:)
