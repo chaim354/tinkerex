@@ -313,6 +313,86 @@ module Tools
     # and s3 refuse a clobber inside #write, while chunk let the SAME save succeed twice and left
     # two sibling nodes with the same name in one directory — POSIX-illegal the moment a device
     # materializes that directory. The answer is now the same 422 everywhere, and no orphan state.
+    # ---- save: the eager project-folder nudge --------------------------------------------
+    #
+    # THE ADDON SAVE WAS THE ONE BROWSER-FACING DOOR WITH NO NUDGE. §14f names seven ways a file
+    # reaches `Projects/<slug>/`; the three web upload doors call
+    # ProjectFolderIntake#intake_project_folder inline (FilesController#create, #finalize_upload,
+    # Projects::UploadsController#create) and a device push got one in 2b9ca85 — but this door, where
+    # the user is WATCHING the save complete and the save dialog DEFAULTS to the current project's
+    # folder, silently left the file at the project root for up to 15 minutes. On a share/s3
+    # deployment there is no `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all!
+    # declines on a scannable backend), so the wait is on Library::ScanJob's own poll.
+    #
+    # ONE SWEEP FOR THE WHOLE SAVE, not one per file: every file in a save shares `parent_node_id`,
+    # and .for_node sweeps the OWNING PROJECT rather than the single node, so the first written file
+    # covers all of them. AFTER attach_addon_files_to_current_project, per ProjectFolderIntake's own
+    # call-site ordering rule ("that create! MUST run before this call").
+    test "save files the output into its category folder without waiting for the sweep" do
+      project = @user.maker_projects.create!(name: "Harbor Signs")
+      folder = project.ensure_library_folder!(@user)
+      name = "harbor-number-#{SecureRandom.hex(4)}.svg"
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+
+      node = @user.nodes.present.find_by(name:)
+      assert node, "the save should have written the file"
+      assert_equal "design", @user.nodes.find_by(node_id: node.parent_node_id)&.name,
+                   "an .svg saved into a project folder should be filed into design/ by the nudge"
+    end
+
+    # THE OTHER HALF OF READING THE RETURN VALUE (§14f: "A CALLER MUST READ intake_project_folder'S
+    # RETURN VALUE, NOT JUST TRIGGER ITS SIDE EFFECT"). A save whose destination category folder
+    # already holds that name stays at the project root — correct, and the same outcome the upload
+    # doors have — but saying "Saved" and nothing else is the exact regression FilesController#create
+    # already had to fix once.
+    test "save says so when a collision leaves the output at the project root" do
+      project = @user.maker_projects.create!(name: "Harbor Signs")
+      folder = project.ensure_library_folder!(@user)
+      design = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", project.slug, "design" ])
+      name = "harbor-taken-#{SecureRandom.hex(4)}.svg"
+      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
+                          parent_node_id: design.node_id, size: 1, content_hash: SecureRandom.hex(8))
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+
+      assert_equal folder.node_id, @user.nodes.present.find_by(name:, parent_node_id: folder.node_id)&.parent_node_id
+      assert_match(/design\/.*stayed at the project root/, flash[:notice])
+    end
+
+    # A SAVE WRITES A SET, AND THE COLLIDING ONE NEED NOT BE THE FIRST. Every upload door writes one
+    # file, so #left_unfiled_by_conflict? was only ever asked about one name; asking it about just
+    # `files.first` here would report a bare "Saved" for a save whose SECOND output stayed at the
+    # root — the same missing-feedback regression that method exists to end, reintroduced one door
+    # over. Mutation-checked: narrowing #unfiled_by_conflict to `Array(names).first` turns this red
+    # while the single-file test above stays green.
+    test "save names the colliding output even when it is not the first file" do
+      project = @user.maker_projects.create!(name: "Harbor Signs")
+      folder = project.ensure_library_folder!(@user)
+      design = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", project.slug, "design" ])
+      clear = "harbor-clear-#{SecureRandom.hex(4)}.svg"
+      taken = "harbor-taken-#{SecureRandom.hex(4)}.svg"
+      @user.nodes.create!(node_id: SecureRandom.uuid, name: taken, kind: "file",
+                          parent_node_id: design.node_id, size: 1, content_hash: SecureRandom.hex(8))
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
+        files: [ { name: clear, content_type: "image/svg+xml", body: "<svg/>" },
+                 { name: taken, content_type: "image/svg+xml", body: "<svg x=''/>" } ].to_json
+      }
+
+      assert_equal "design", @user.nodes.find_by(node_id: @user.nodes.present.find_by(name: clear).parent_node_id)&.name,
+                   "the non-colliding output should still have been filed"
+      assert_match(/design\/.*stayed at the project root/, flash[:notice])
+    end
+
     test "save refuses a name already taken in the destination folder, leaving no orphan state" do
       # A NAME UNIQUE TO THIS RUN, and the reason is a real property of the share leg rather than
       # fussiness: FileLayer::Share#write puts an actual FILE on disk under LIBRARY_PATH, and the

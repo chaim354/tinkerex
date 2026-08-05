@@ -477,14 +477,51 @@ module Maker
       assert_equal @folder.node_id, node.reload.parent_node_id
     end
 
-    test "a file another project claims is not filed" do
+    # ...BUT :attached_elsewhere IS NOT ONE OF THE THREE THAT TRANSFERS, and this test asserts the
+    # OPPOSITE of what it asserted before (it required the file to stay at the root). The rule's own
+    # justification is positional — Maker::AttachToProject's header: "another project already claims
+    # it, and a file should not be YANKED OUT OF THE FOLDER THAT PROJECT PUT IT IN" — and it was
+    # written for #call/#relocate, where the destination is THIS project's folder and the source may
+    # well be the other project's. #place's move is `Projects/<slug>/` -> `Projects/<slug>/<cat>/`:
+    # the file is already inside this project's own folder, so there is no other project's folder to
+    # yank it out of and the rule's precondition cannot hold. Nothing about the other project's view
+    # changes either — node_id never changes across a move (Maker::MoveNode's stated promise), so its
+    # attachment keeps pointing at the same file.
+    #
+    # IT WAS SILENT AND PERMANENT, which is why it is worth a test rather than a comment: the file
+    # sat at the root through every 15-minute sweep forever, with a `skips` entry only
+    # `rake projects:organize` prints. Reachable without doing anything unusual —
+    # CurrentProject#attach_addon_files_to_current_project attaches an addon's output to whatever
+    # project is CURRENT, regardless of which folder the save dialog wrote it into, so one addon save
+    # into another project's folder made that file permanently unsortable.
+    #
+    # THE OTHER TWO RULES ARE UNCHANGED, deliberately: :not_a_file and :model_bundle still refuse
+    # here (see the test above, which still passes). Only the arm whose stated reason is about the
+    # SOURCE folder is scoped, and it is scoped at Maker::AttachToProject#refusal_for — one policy
+    # home — rather than by this class second-guessing a symbol it was handed.
+    test "a file another project also claims is still filed — the move stays inside this project's own folder" do
       other = @user.maker_projects.create!(name: "Bench")
       node = file("shared.stl")
       other.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
       result = intake
-      assert_equal 0, result.moved
-      assert_equal [ [ "shared.stl", :attached_elsewhere ] ], result.skips
-      assert_equal @folder.node_id, node.reload.parent_node_id
+      assert_equal 1, result.moved
+      assert_empty result.skips
+      assert_equal "models", parent_name(node)
+      assert other.file_attachments.exists?(node_id: node.node_id),
+             "the other project's attachment must survive the move — node_id never changes"
+    end
+
+    # The rule still applies where its own reason DOES hold: a move that would take the file out of
+    # another project's folder is still refused. This is the half that must not regress.
+    test "a file another project claims is still not relocated INTO this project by the attach door" do
+      other = @user.maker_projects.create!(name: "Bench")
+      other_folder = other.ensure_library_folder!(@user)
+      node = file("shared.stl", parent: other_folder.node_id)
+      other.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
+
+      policy = Maker::AttachToProject.new(user: @user, project: @project)
+      assert_equal :attached_elsewhere, policy.refusal_for(node)
+      assert_equal other_folder.node_id, node.reload.parent_node_id
     end
 
     # A collision leaves the file at the root AND keeps the attachment — the attach is the durable

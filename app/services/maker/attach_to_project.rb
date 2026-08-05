@@ -24,7 +24,11 @@ module Maker
   #                         FOLDER into the project — is refused by FileLayer::S3#move for the same
   #                         reason as above: S3 has no directory and no rename.)
   #   :attached_elsewhere — another project already claims it, and a file should not be yanked out
-  #                         of the folder that project put it in.
+  #                         of the folder that project put it in. THE ONLY ONE OF THE THREE THAT IS
+  #                         POSITIONAL — its reason is about the move's SOURCE — so it is the only
+  #                         one a caller can opt out of, via `within_own_folder:` (see #refusal_for).
+  #                         Maker::ProjectIntake#place does, because its move never leaves the folder
+  #                         this project already owns. The other two are unconditional.
   #
   # THE ATTACH IS THE DURABLE HALF AND THE MOVE IS BEST-EFFORT. A collision or an unmounted NAS
   # must never lose the attachment: it is a reference the user asked for, and it is exactly as true
@@ -140,10 +144,42 @@ module Maker
     # Why a relocate would be refused, or nil if the policy allows it. PUBLIC because the conflict
     # prompt has to ask the same question before OFFERING the button: rendering a dialog wired to a
     # move that will be refused is how the bundle case became reachable from the UI at all.
-    def refusal_for(node)
+    #
+    # `within_own_folder:` — THE CALLER'S MOVE KEEPS THE FILE INSIDE THE FOLDER THIS PROJECT ALREADY
+    # OWNS, so the :attached_elsewhere arm does not apply to it. Maker::ProjectIntake#place is that
+    # caller and today the only one: it moves `Projects/<slug>/x.svg` to
+    # `Projects/<slug>/design/x.svg`.
+    #
+    # THE RULE IS POSITIONAL, WHICH IS WHY IT CAN BE SCOPED AT ALL. Its stated reason (see the header
+    # above) is that "a file should not be yanked out of the folder that project put it in" — a fact
+    # about the move's SOURCE. #call and #relocate move a file INTO this project's folder from
+    # wherever it is, which may well be another project's folder, so there the rule bites. A move
+    # that starts inside this project's own folder cannot be taking the file out of another
+    # project's, so the precondition cannot hold and refusing is refusing for a reason that is not
+    # there. Nothing about the other project's view changes either: node_id never changes across a
+    # move (Maker::MoveNode's stated promise), so its attachment keeps pointing at the same file.
+    #
+    # IT WAS A REAL, SILENT, PERMANENT BUG, not a theoretical asymmetry. A file at a project root
+    # that any OTHER project also claimed was skipped by every 15-minute sweep forever, recorded only
+    # as a `skips` entry that nothing but `rake projects:organize` prints — and it is reachable
+    # without doing anything unusual, because CurrentProject#attach_addon_files_to_current_project
+    # attaches an addon's output to whatever project is CURRENT regardless of which folder the save
+    # dialog wrote it into. One addon save into a second project's folder made that file
+    # permanently unsortable.
+    #
+    # A KWARG HERE RATHER THAN #place IGNORING THE SYMBOL IT WAS HANDED. The three rules have one
+    # home on purpose (this class's header records #relocate being written below all of them), and a
+    # caller that filters the ANSWER is a second place that has to know what each symbol means — the
+    # drift this class exists to end. The caller states its SITUATION; the policy decides.
+    #
+    # SCOPED TO THIS ARM ONLY. :not_a_file and :model_bundle still refuse — the bundle rule is
+    # deliberately about the ATTACHMENT rather than the folder ("MEMBERSHIP IS THE ATTACHMENT, NOT
+    # THE FOLDER", above), so unlike this one it is not a claim about where the file currently sits
+    # and there is no equivalent argument for relaxing it.
+    def refusal_for(node, within_own_folder: false)
       return :not_a_file unless node.file?
       return :model_bundle if model_owning(node)
-      return :attached_elsewhere if attached_elsewhere?(node)
+      return :attached_elsewhere if !within_own_folder && attached_elsewhere?(node)
 
       nil
     end

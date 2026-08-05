@@ -197,10 +197,29 @@ module Tools
         )
       end
       attach_addon_files_to_current_project(addon_files)
+
+      # THE EAGER NUDGE, and this door was the last browser-facing one without it. §14f names seven
+      # ways a file reaches `Projects/<slug>/`; the three web upload doors call this inline and a
+      # device push got one in 2b9ca85, but an addon save — where the save dialog DEFAULTS to the
+      # current project's folder and the user is watching the redirect land — left its output at the
+      # project root until the next sweep. That is up to 15 minutes on chunk, and on share/s3 there
+      # is no `project_folder_intake` schedule at all (ProjectIntakeJob.sweep_all! declines on a
+      # scannable backend), so the wait is on Library::ScanJob's own poll.
+      #
+      # ONE SWEEP FOR THE WHOLE SAVE. Every file in a save shares `parent_node_id`, and .for_node
+      # sweeps the OWNING PROJECT rather than the one node, so the first written file covers all of
+      # them — calling it per file would re-sweep the same project N times for one request.
+      #
+      # AFTER attach_addon_files_to_current_project, per ProjectFolderIntake's own call-site ordering
+      # rule: a door that makes its own file_attachments create! for these files must do it first.
+      intake_result = intake_project_folder(addon_files.first&.node_id)
+
       # @addon.key here, NOT states_key — this builds a ROUTE (back to this addon's own page), not a
       # data scope. The state was just filed under states_key above; conflating the two here would
       # send the user to the wrong addon's page after a states_key-diverging save.
-      redirect_to tools_addon_path(@addon.key), notice: "Saved “#{state.name}”."
+      redirect_to tools_addon_path(@addon.key),
+                  notice: project_intake_sentence("Saved “#{state.name}”", intake_result,
+                                                  unfiled_by_conflict(intake_result, files.map { |f| f["name"] }))
     end
 
     private

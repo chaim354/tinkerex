@@ -653,7 +653,13 @@ module Maker
     # File.extname all became a flash message with a green suite. InvalidName is a NAMED subclass
     # created for exactly this purpose; ArgumentError itself is not.
     def place(node)
-      refusal = attach_policy.refusal_for(node)
+      # `within_own_folder: true` — this move is `Projects/<slug>/x` -> `Projects/<slug>/<cat>/x`,
+      # inside the folder this project already owns, so :attached_elsewhere does not apply to it.
+      # See #refusal_for for the full argument; the short version is that the rule's stated reason is
+      # about the move's SOURCE ("yanked out of the folder that project put it in") and there is no
+      # other project's folder here to yank it out of. Left unscoped, a file any second project also
+      # claimed sat at the root through every sweep forever, silently.
+      refusal = attach_policy.refusal_for(node, within_own_folder: true)
       return refusal if refusal
 
       dest = Maker::ProjectFolders.folder_for(node.name)

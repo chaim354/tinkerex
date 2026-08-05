@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**The tray plan comes off the screen to scale — print, PDF, SVG, library**)
+**Updated:** 2026-08-05 (**An addon-saved file did not autosort — two defects on one path**)
 
 ## What this file is
 
@@ -60,7 +60,91 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): the tray plan comes off the screen to scale — print, PDF, SVG, library (branch `claude/box-layouts-export-print-e3a7ce`; bundle branch `claude/plan-print-to-scale`)
+## Latest (2026-08-05): an addon-saved file did not autosort — two defects on one path (branch `claude/file-mover-autosort-bug-c83346`)
+
+Reported as "there is a bug in the file mover, `harbor-number-v4.svg` did not autosort", on a
+**share** deployment, from a **`/tools` addon save**. The happy path was never broken — `.svg` at a
+project root files into `design/`, and the 74 existing intake/folder tests were green throughout — so
+this was a **conditional** skip. Probing (rather than reading) enumerated every condition that leaves
+an `.svg` at a project root: `:attached_elsewhere`, `:model_bundle`, `:conflict`, and the eager cap,
+the last of which returns `moved=0, skipped=0, skips=[], status=:ok` — **indistinguishable from
+"nothing to do"**. Two of those turned out to be defects rather than policy, and both sit on the
+door the report named.
+
+### Defect A — the addon save doors never nudged
+
+§14f names seven ways a file reaches `Projects/<slug>/`. The three web upload doors call
+`ProjectFolderIntake#intake_project_folder` inline and a device push got one in 2b9ca85 — but
+**neither addon save door did**, and the save dialog *defaults to the current project's folder*. So
+the user watched the redirect land on a file that visibly had not sorted. The wait is up to 15
+minutes on chunk; on **share/s3 there is no `project_folder_intake` schedule at all**
+(`ProjectIntakeJob.sweep_all!` declines on a scannable backend), so it rides `Library::ScanJob`'s
+poll — which is the deployment this was reported from.
+
+Both doors now nudge (`Tools::AddonsController#create`, `Tools::OpenscadController#create`), with
+the concern included on `Tools::BaseController` so a third inherits it. **One sweep per save, not one
+per file** — every file in a save shares `parent_node_id` and `.for_node` sweeps the owning PROJECT,
+so per-file calls would re-sweep the same project N times for one request — and **after** the attach,
+per `ProjectFolderIntake`'s own call-site ordering rule.
+
+Wiring the nudge in also made §14f's "a caller must READ the return value" reachable here:
+`#project_intake_notice` was split so the conflict clause has one home
+(`#project_intake_sentence`), with the LEAD-IN left to the caller — the doors genuinely differ there
+("Uploaded grid.svg" vs "Saved “3mm birch test”") and must not differ on what follows. The upload
+doors' strings are **byte-identical** to before the extraction, pinned by the two tests that assert
+the full sentence. `#unfiled_by_conflict` is the plural form, because a save writes a SET and the
+colliding output need not be the first.
+
+### Defect B — `:attached_elsewhere` refused a move that never left the folder
+
+`ProjectIntake#place` asks `AttachToProject#refusal_for`, whose `:attached_elsewhere` arm exists —
+by its own stated reason — because "a file should not be yanked out of the folder that project put
+it in". That is a fact about the move's **SOURCE**, and it was written for `#call`/`#relocate`, where
+the destination is this project's folder and the source may well be another's. `#place`'s move is
+`Projects/<slug>/x` → `Projects/<slug>/<cat>/x`: the file is already inside this project's own
+folder, so the precondition cannot hold. `node_id` never changes across a move, so the other
+project's attachment survives regardless.
+
+Unscoped it was **silent and permanent** — the file sat at the root through every sweep forever,
+recorded only in a `skips` entry nothing but `rake projects:organize` prints. And it is reachable
+without doing anything unusual: `CurrentProject#attach_addon_files_to_current_project` attaches an
+addon's output to whatever project is **current**, regardless of which folder the save dialog wrote
+it into, so **one addon save into a second project's folder made that file permanently unsortable** —
+which is how A and B compose into the reported symptom.
+
+Scoped at `#refusal_for` via `within_own_folder:`, **not** by `#place` filtering the symbol it was
+handed: the three rules have one home on purpose, and a caller that filters the ANSWER is a second
+place that has to know what each symbol means. The caller states its situation; the policy decides.
+`:not_a_file` and `:model_bundle` stay **unconditional** — the bundle rule is deliberately about the
+ATTACHMENT rather than the folder ("MEMBERSHIP IS THE ATTACHMENT, NOT THE FOLDER"), so it makes no
+claim about where the file currently sits and has no equivalent argument for relaxing.
+
+### Mutation checks (§15)
+
+Every guard was reverted and confirmed red, then restored:
+
+- `within_own_folder: true` removed from `#place` → the intake test goes red (`moved` 0, not 1).
+- The kwarg's default flipped to `true` → **4** failures, including a pre-existing
+  `attach_to_project_test.rb` case — proof the other doors genuinely still get the rule.
+- `#unfiled_by_conflict` narrowed to `Array(names).first` → the multi-file test goes red while the
+  single-file one stays green.
+- Both addon-door tests were watched red before the nudge existed (the file's parent read
+  `harbor-signs`, the project root, instead of `design`/`models`).
+
+### Not fixed, and deliberately
+
+- **`:model_bundle`** in the same position — the argument for relaxing it is weaker (see above) and
+  there is no evidence it bit this file (an addon-saved `.svg` is not a `Maker::Model` member).
+- **The eager cap's silent Result.** `for_node` over the cap answers
+  `moved=0, skipped=0, skips=[], status=:ok`, which no caller can tell from "nothing to file". It
+  does log a WARN, and the periodic sweep still files the backlog, so this is a reporting gap rather
+  than a stuck file — recorded here rather than widened into.
+- **A genuine `:conflict`** — if `design/harbor-number-v4.svg` already existed, the file correctly
+  stays at the root. What changed is that the addon door now *says so* instead of a bare "Saved".
+
+---
+
+## 2026-08-05: the tray plan comes off the screen to scale — print, PDF, SVG, library (branch `claude/box-layouts-export-print-e3a7ce`; bundle branch `claude/plan-print-to-scale`)
 
 The top view added on 2026-08-02 already computed the tray in real millimetres and, by reading the
 very params the generator is about to be handed, could not drift from the cut sheet. But its `<svg>`
