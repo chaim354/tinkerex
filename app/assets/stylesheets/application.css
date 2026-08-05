@@ -286,6 +286,12 @@ details[open] > .box-group-summary::before, details[open] > .box-saved-summary::
 .box-topview { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
 .box-topview h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: baseline; gap: 8px; }
 .box-topview-summary { font-size: 12px; font-weight: 400; margin-left: auto; }
+/* Print / PDF / SVG, plus the paper the tiler pages onto. These live on the panel because the
+   panel is what removes itself when a generator has no compartments — so the controls inherit
+   that gate for free rather than needing one of their own. */
+.box-topview-actions { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
+.box-topview-actions select { font-size: 12px; padding: 2px 4px; }
+.box-topview-actions .btn-sm { padding: 3px 8px; font-size: 12px; }
 .box-topview-canvas { background: #fff; border-radius: 6px; padding: 8px; overflow-x: auto; }
 .box-topview-canvas .tv-svg { display: block; width: 100%; height: auto; max-height: 320px; }
 .box-topview-hint { font-size: 11.5px; margin: 8px 0 0; }

@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**The chunk-GC grace window was dead code — the 2026-08-03 audit's seven "do now" items, PR #132**)
+**Updated:** 2026-08-05 (**The tray plan comes off the screen to scale — print, PDF, SVG, library**)
 
 ## What this file is
 
@@ -60,7 +60,82 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): the chunk-GC grace window was dead code — the audit's seven "do now" items (PR #132, branch `claude/opus-audit-list-c37ecf`)
+## Latest (2026-08-05): the tray plan comes off the screen to scale — print, PDF, SVG, library (branch `claude/box-layouts-export-print-e3a7ce`; bundle branch `claude/plan-print-to-scale`)
+
+The top view added on 2026-08-02 already computed the tray in real millimetres and, by reading the
+very params the generator is about to be handed, could not drift from the cut sheet. But its `<svg>`
+carried only a `viewBox`, and `application.css` sized it `width: 100%; max-height: 320px` — so
+nothing about it was to scale, and the addon had no download or print at all. Now it prints 1:1, so
+you can set real parts into the drawn compartments before committing material. **The cut sheet is
+deliberately not in scope** — it is flat panels, and cannot answer whether your screwdriver fits
+compartment 4.
+
+**Design** `docs/superpowers/specs/2026-08-05-boxes-plan-print-to-scale-design.md`,
+**plan** `docs/superpowers/plans/2026-08-05-boxes-plan-print-to-scale.md`.
+
+Four modules in the bundle repo, all client-side — so `bin/build-push` is the whole deploy and Rails
+is never rebuilt:
+
+| | |
+|---|---|
+| `plan.js` | the coordinate model, **extracted out of `top_view.js`'s private `svg()`** so the panel and every export read one geometry; plus the print marks |
+| `sheet.js` | pagination: a 10 mm overlap band, trim crosshairs, a per-page 100 mm calibration bar, tile registration labels, a 40-sheet refusal |
+| `pdf.js` | uncompressed PDF 1.4, base-14 Helvetica, no font embedding, no dependency (~120 lines) |
+| `export.js` | the four sinks — print (hidden iframe), PDF, SVG, and the untiled library SVG |
+
+**Three things that cost real thought, and one that was wrong in the spec until it was checked:**
+
+- **No inset.** The spec said to inset opening outlines by `t/2` to reach "the wall's inner face".
+  That is wrong: a wall is drawn at `colX(i) - t` with width `t`, so it occupies
+  `[colX(c) - t, colX(c)]` and its inner face **already is** the cell boundary. Insetting would have
+  made every opening `t` too small on both axes — the exact error a 1:1 fit-check exists to avoid.
+  Caught while working out the geometry for the plan, and corrected in the spec before any code.
+- **Outlines come off a slot lattice**, not from merging rectangles: `(2·nc+1) × (2·nr+1)` slots,
+  each labelled with a compartment id or `WALL`, emitting a segment wherever adjacent labels differ.
+  Absent walls take the id of the cells they join, so a merged run has **no internal seam** — which
+  a per-rectangle stroke would have drawn straight down the middle of an opening that has none.
+- **The PDF y-axis flips** (SVG top-left, PDF bottom-left) and **a flipped plan is invisible on a
+  symmetric tray**. The test uses an asymmetric layout for that reason alone.
+- **`/Page`'s `/Parent` must be predicted** before the Pages object exists. The writer asserts its
+  own prediction rather than trusting it, so a mis-prediction fails loudly at build time instead of
+  producing a subtly broken file.
+
+**Saved to the library as `<base>-plan.svg`, untiled and full size** — tiling is a property of the
+printer, not of the drawing. No host change: `MAX_FILES` is 8 and `parse_files` already refuses
+duplicate names within a batch. **SVG rather than PDF** because `parse_files` requires a String body
+over JSON, so binary cannot round-trip; a base64 path would have cost a Rails redeploy for something
+the PDF download already gives. (§14c's *"each save writes ONE file"* recorded deleting the
+write-only `.params.json`, which duplicated `AddonState#data`. A second genuine output is not that.)
+
+**Verification.** 22 new system tests in `test/system/plan_export_test.rb`, importing the bundle
+modules through the host's real asset proxy in a real browser — so what is under test is the shipped
+artifact. They assert the **wire format** (`width="162mm"`, `/MediaBox [0 0 595.28 841.89]`, the
+literal `\327` escape), never a round-trip through our own code, because a reader of our own PDF
+sharing our own misunderstanding is `FakeS3`'s shape (§14e). Four guards mutation-checked, each
+confirmed red then restored: the `mm` suffix (kills 4 tests, including the end-to-end print and
+library ones), the PDF y-flip, the tile overlap, and the merged-cell seam. `bin/ci` green in 47.8 s;
+the three backend legs report identical counts (**1912 runs / 6613 assertions** each), system 44.
+
+**Checked against real software, not just our own assertions** (§14e's "prefer a probe over an
+argument"): poppler's `pdfinfo` parses the output cleanly — 2 pages, A4 595.28 × 841.89 pt — and
+`pdftoppm` renders it correctly at 1:1, with the `×` and the em dash both resolving through the
+WinAnsi octal escapes, and the tiled sheet showing its overlap band.
+
+**What is NOT verified, stated plainly: nothing automated can prove the paper is right.** The
+browser's print dialog defaults to "Fit to printable area", rescales silently, and no page can
+detect or prevent it. That is what the 100 mm calibration bar is for, and confirming it means
+printing a sheet and measuring it with a ruler. The PDF download is the sink that is exact by
+construction.
+
+`boxes-next` carries the same change: it was byte-identical to `boxes` and
+`bin/check-fixture-drift` does not cover it (no host fixture), so letting it lag would be silent.
+
+**Declined on purpose:** a title block (page labels stay — those are registration for taping tiles,
+not decoration) and cut marks on the compartment openings.
+
+---
+
+## 2026-08-05: the chunk-GC grace window was dead code — the audit's seven "do now" items (PR #132, branch `claude/opus-audit-list-c37ecf`)
 
 Works through the **"Do now"** table in `docs/AUDIT-2026-08-03.md` §5. Two items are correctness,
 one closes a security channel, four are robustness. Rules landed in **CLAUDE.md §14c/§14e**.
