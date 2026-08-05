@@ -261,11 +261,21 @@ module FileLayer
     # COST, stated rather than hidden: one HEAD (the clobber check) + one PUT + one HEAD (the
     # mtime — see below). Two billed HEADs per write. The first is what the write contract
     # requires; the second is what the store's own clock costs.
-    def write(user, parent_node_id: nil, name: nil, io: nil)
+    # `replace: true` — see FileLayer::Share#write's header for the full argument; it is the port's
+    # contract, not this adapter's, and adapter_write_contract.rb pins that the two answer alike.
+    # The short version: it is the opt-in the clobber refusal is the default for, it MUST reuse the
+    # existing node (a new node_id orphans every attachment, §14a), and on a vacant path it is an
+    # ordinary create.
+    #
+    # CHEAPER HERE THAN ON SHARE, not more dangerous: put_object is atomic and overwrites by
+    # definition, so a replace skips the head-then-put CHECK and adds nothing. There is no
+    # temp-key dance to add either — §14a records why S3#write has none.
+    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
       observable!(rel)
       key = key_for_rel(rel)
+      existing = (user.nodes.present.find_by(storage_path: rel, kind: "file") if replace)
       # Read BEFORE the clobber check, deliberately: reading up to 256MB between the HEAD and the
       # PUT would widen the very race the check already cannot win (below). The bytes are needed
       # either way, and buffering them for a write that is about to be refused costs nothing but
@@ -288,7 +298,7 @@ module FileLayer
         #
         # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant"
         # and clobber: object_exists? lets those through to the rescue below. Fail safe.
-        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(key)
+        raise UnsupportedOperation, "#{rel.inspect} already exists" if !replace && object_exists?(key)
 
         put = @client.put_object(bucket: @bucket, key:, body: bytes)
         # The ONLY source of the object's mtime. put_object's response carries no last_modified
@@ -310,9 +320,7 @@ module FileLayer
       # never arrived is an attachment resolving to a permanent NotFound, which is strictly worse
       # than no attachment at all — the user can retry an upload that failed loudly, and cannot
       # fix a file that browses fine and 404s forever. Pinned by the write contract.
-      node = user.nodes.create!(
-        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
-        storage_path: rel, parent_node_id:,
+      attrs = {
         size: bytes.bytesize, mtime: nanos(head.last_modified),
         # Through ObjectIdentity.for — the ONE normalizer, the same call the observer makes.
         # NEVER the raw ETag: S3 wraps every one in literal quotes, in put responses exactly as in
@@ -320,7 +328,17 @@ module FileLayer
         # one object two identities. Every written file then reads as changed on the next pass and
         # move-pairing never pairs — the phase's headline promise, inverted by two quotes.
         content_hash: ObjectIdentity.for(etag: put.etag)
-      )
+      }
+      node =
+        if existing
+          # UPDATE, so node_id survives (see the header). A replace resolves to the SAME rel, so
+          # name/storage_path/parent are already this object's and only the content facts move.
+          existing.update!(**attrs)
+          existing
+        else
+          user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+                             storage_path: rel, parent_node_id:, **attrs)
+        end
       stat(user, node_id: node.node_id)
     end
 

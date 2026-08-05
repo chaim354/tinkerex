@@ -128,6 +128,35 @@ module FileLayerWritableContract
                  "the existing bytes must survive — on a current-state-only backend there is no restore"
   end
 
+  # `replace: true` IS THE OPT-IN THAT THE REFUSAL ABOVE IS THE DEFAULT FOR — and the two tests
+  # belong side by side, because the whole claim is that adding this does not weaken that.
+  # `write` refuses a clobber because an UNASKED write must never destroy bytes; `replace: true` is
+  # a caller saying "I asked, and a user confirmed". Every existing caller omits it and gets the
+  # refusal unchanged.
+  #
+  # THE NODE_ID MUST SURVIVE, and that is the assertion this test exists for rather than the bytes.
+  # A replace implemented as delete-then-create would pass a bytes-only check while orphaning every
+  # attachment, BOM link and tag pointing at that file — §14a's recorded landmine, whose whole
+  # signature is that nothing errors and nothing logs. Same node, new content.
+  #
+  # In the CONTRACT rather than each adapter's suite for the reason the clobber test gives: the
+  # mechanisms differ per backend (Share renames over the destination, S3 puts to the same key) and
+  # the ANSWER must not.
+  def test_write_contract_write_replaces_in_place_when_asked
+    first = adapter.write(@user, parent_node_id: nil, name: "iterate.svg", io: StringIO.new("v1"))
+
+    second = adapter.write(@user, parent_node_id: nil, name: "iterate.svg",
+                           io: StringIO.new("v2-longer"), replace: true)
+
+    assert_equal first.node_id, second.node_id,
+                 "a replace must reuse the node — a new node_id orphans every attachment (§14a)"
+    assert_equal "v2-longer", adapter.read(@user, node_id: first.node_id)
+    assert_equal 1, @user.nodes.present.where(storage_path: "iterate.svg").count,
+                 "a replace must leave ONE live node at that path, not a second alongside it"
+    assert_equal "v2-longer".bytesize, @user.nodes.find_by!(node_id: first.node_id).size,
+                 "the node's indexed size must follow the new content, or the next scan disagrees"
+  end
+
   # THE SAME CONDITION MUST GET THE SAME ANSWER FROM EVERY VERB THAT CAN MEET IT, which is why
   # this exists next to the test above rather than being folded into it. "The destination is
   # taken" is one condition; write, move and undelete can all hit it. Fixing only `write` — the

@@ -180,12 +180,30 @@ module FileLayer
     # is SELF-HEALING: the next scan indexes the file. (`delete` reaches the same conclusion by a
     # harder road — see the argument there, where a transaction would actively manufacture a
     # silent resurrection.)
-    def write(user, parent_node_id: nil, name: nil, io: nil)
+    # `replace: true` — REPLACE THE CONTENT OF THE FILE ALREADY AT THIS PATH, reusing its node.
+    # The opt-in the clobber refusal below is the DEFAULT for, and adding it does not weaken that:
+    # every existing caller omits it and still gets the refusal. It exists for a door that has just
+    # shown a user "this would replace design/x.svg — overwrite?" and been told yes.
+    #
+    # IT MUST REUSE THE NODE, NOT MINT ONE. A replace written as delete-then-create would look
+    # right and orphan every attachment, BOM link and tag pointing at the file — §14a's recorded
+    # landmine, whose signature is that nothing errors and nothing logs.
+    #
+    # THE DISK HALF IS ALREADY WRITTEN: File.rename over an existing destination is atomic on
+    # POSIX, so the temp-then-rename below replaces safely with no change at all. Only this guard
+    # and the indexing at the bottom differ.
+    #
+    # `replace: true` ON A VACANT PATH IS AN ORDINARY CREATE, deliberately — the caller is stating
+    # intent about a collision, not asserting one exists, and a door that raced the file's deletion
+    # should still write. The same is true when the bytes are there but unindexed: `existing` is
+    # nil, a node is created, and that is exactly what the next scan would have done.
+    def write(user, parent_node_id: nil, name: nil, io: nil, replace: false)
       leaf!(name)
       rel = join_rel(parent_dir_rel!(user, parent_node_id), name)
       observable!(rel)
       dest = resolve_inside!(rel)
-      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest)
+      existing = (user.nodes.present.find_by(storage_path: rel, kind: "file") if replace)
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest) && !replace
 
       bytes = read_capped!(io)
       FileUtils.mkdir_p(dest.dirname)
@@ -217,11 +235,17 @@ module FileLayer
       # stat the DESTINATION after the rename — that is the mtime the next scan will stat, and
       # the scan-agreement test pins that these two agree exactly.
       st = File.stat(dest)
-      node = user.nodes.create!(
-        node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
-        storage_path: rel, parent_node_id:,
-        size: st.size, mtime: nanos(st), content_hash: Digest::SHA256.hexdigest(bytes)
-      )
+      attrs = { size: st.size, mtime: nanos(st), content_hash: Digest::SHA256.hexdigest(bytes) }
+      node =
+        if existing
+          # UPDATE, so node_id survives (see the header). name/storage_path/parent are already
+          # this file's — a replace resolves to the SAME rel — so only the content facts move.
+          existing.update!(**attrs)
+          existing
+        else
+          user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file", deleted: false,
+                             storage_path: rel, parent_node_id:, **attrs)
+        end
       stat(user, node_id: node.node_id)
     end
 
