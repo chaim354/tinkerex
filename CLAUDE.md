@@ -278,6 +278,12 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 # ALL local gates, one command (this is what CI runs, by name):
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
 
+# SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves
+# every credential (exported shell value wins, else 1Password) and backs each .kamal/secrets*
+# file. ALWAYS preflight first — kamal expands `$(…)` through Ruby BACKTICKS, which discard
+# exit status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
+bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
+
 # Server tests (SQLite; proves adapter-agnosticism)
 bin/rails test
 # The other two backend legs need their env or they DON'T look like a missing var —
@@ -863,6 +869,33 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Projects::UploadsController#create`); the JSON-only branches still run the intake and
   still file what they can, they just don't surface the fact, because nothing downstream
   reads that response key today.
+
+### 14g. Deploy secrets
+
+- **KAMAL CANNOT NOTICE AN UNREADABLE SECRET, SO `bin/secrets-preflight` IS NOT OPTIONAL.** It
+  expands `$(…)` in `.kamal/secrets*` through Ruby **backticks, which discard exit status** — a
+  locked vault makes `bin/secret` exit 1, the substitution yields `""`, and `Kamal::Secrets#[]`
+  returns that empty string **without raising**. A *missing* key raises; an *empty* one does not,
+  so the failure surfaces later and elsewhere (an empty `KAMAL_REGISTRY_PASSWORD` becomes a
+  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.11.
+- **SECRETS ARE PER-DESTINATION, AND `.kamal/secrets` IS THE *BASE* FILE, NOT A SHARED ONE.** Kamal
+  reads `[secrets-common, secrets.<dest>]`, so anything added to `.kamal/secrets` is invisible
+  under `-d`. Required, not tidiness: `CHUNK_SECRET_ACCESS_KEY` is **SeaweedFS on Unraid and
+  Cloudflare R2 on OVH** — one name, two credentials, which `secrets-common` cannot tell apart.
+- **ONLY UNIVERSALLY-REQUIRED KEYS MAY LIVE IN `secrets-common`.** `InlineCommandSubstitution` runs
+  every `$(…)` in a parsed file **eagerly**, not lazily per key, so a credential parked there makes
+  `-d share` shell out for something a share container never holds. Guarded, mutation-checked, in
+  `test/deploy_hygiene_test.rb` — which is **static** (no vault needed, passes on a bare runner).
+- **`op read` NEEDS NO SECOND CODE PATH FOR UNATTENDED RUNS** — it uses `OP_SERVICE_ACCOUNT_TOKEN`
+  when set and desktop/biometric auth when not. Items live in the **`tinkerex` vault, never
+  `Personal`**: 1Password *refuses* to grant a service account access to a Personal/Private vault,
+  so `op://Personal/…` failing is by design, not a broken vault.
+- **NEVER `op read "$ref" 2>&1 >/dev/null`** — the redirection order LEAKS the value (`2>&1` points
+  fd2 at the captured stdout *before* `>/dev/null` moves fd1). It printed a live ghcr PAT into a
+  transcript and forced a rotation. `bin/secret` keeps the value on fd1 only.
+- **`kamal deploy` WARNS ON AN UNCOMMITTED TREE, IT DOES NOT REFUSE** (`say "Building with
+  uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
+  from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
 
 ---
 
