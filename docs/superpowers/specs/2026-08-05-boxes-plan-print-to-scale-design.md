@@ -122,15 +122,22 @@ outlines and fills nothing (§5.2) — so a single shared primitive array would 
 must not be duplicated is the *maths underneath both*, because that is where a divergence would be
 silent and wrong.
 
-So `plan.js` exports one model builder and two primitive emitters, all three in one module:
+So `plan.js` exports the model builder and the **print** emitter only:
 
 ```
 buildModel({ cols, rows, hwalls, vwalls }, thickness)
-  -> { w, h, colX, rowY, t, id, groups }     // the coordinate model; no marks
+  -> { w, h, colX, rowY, t, nc, nr, id, groups }   // the coordinate model; no marks
 
-screenPrims(model) -> prims                  // filled cells, merged runs, walls, crossings
-printPrims(model)  -> prims                  // inset opening outlines, tray outline, labels
+printPrims(model) -> prims                          // opening outlines, tray outline, labels
 ```
+
+**The screen drawing stays inside `top_view.js`.** An earlier draft of this spec had a matching
+`screenPrims(model)`, which is the wrong cut: `top_view.js`'s `svg()` does more than emit marks —
+it wraps each compartment in `<g data-compartment="k">`, and the existing system test counts those
+groups. Flattening that into a primitive array would either lose the grouping or push DOM
+structure into a module that should not know about it, for no gain. `svg()` therefore keeps its
+body and merely *takes* `buildModel`'s output instead of recomputing `colX`/`rowY`/`w`/`h`/`t`
+inline. That is the whole extraction, and it is the only duplication that actually mattered.
 
 `prims` is a flat array, every coordinate in **millimetres**, origin at the plan's top-left (the
 outside face of the outer wall), y increasing **downward**:
@@ -162,17 +169,28 @@ Hairline-outline mode cannot simply stroke each cell rectangle — a merged comp
 rectangles, and stroking each would draw internal seams down the middle of an opening that has
 none. Computing a rectilinear union would work but is more machinery than this needs.
 
-The direct read of the data model is simpler and exact:
+**No inset is needed, and adding one would be the bug.** A wall is drawn at `colX(i) - t` with
+width `t` (`top_view.js:115`), so it occupies `[colX(c) - t, colX(c)]` — its inner face is
+*already* the cell boundary `colX(c)`. The opening region is therefore exactly the union of the
+compartment's cells plus the connector bands where its walls are absent, which is precisely the
+set of rectangles the screen renderer already fills. Insetting by `t/2` would make every opening
+`t` too small on both axes, which is the exact error a 1:1 fit-check exists to avoid.
 
-> For each compartment group, for each cell in it, for each of its four sides: if the neighbour
-> across that side is not in the same group, emit a line along that side **inset by `t/2`** — the
-> wall's inner face.
+Computing the outline of that union is done on a **slot lattice** rather than by rectangle
+merging, because the lattice makes it correct by construction. The plan is `(2·nc + 1) × (2·nr + 1)`
+slots: odd indices are cells, even indices are the wall bands between them (the outer bands have
+width `t` only where an outer wall exists, `0` otherwise). Each slot is labelled with a compartment
+id or `WALL`:
 
-Absent walls emit nothing, so merged cells read as one continuous opening with no seams; present
-walls emit an edge on each side, so the drawn opening is the **real opening**, not the opening
-plus the material. That inset matters: at 1:1 for fit-checking, being wrong by `t` on every
-dimension defeats the purpose. Collinear adjacent segments may be left unmerged — visually
-identical.
+- **cell slot** → `id[r][c]`;
+- **band slot between two cells** → `WALL` if that wall is present, otherwise the id of the two
+  cells it joins (they are merged, so the band is part of the opening);
+- **corner slot** → the common id if all four touching cells share one, else `WALL`.
+
+An outline segment is emitted between any two adjacent slots whose labels differ, treating
+off-lattice as `WALL`. Absent walls produce no edge, so merged cells read as one continuous
+opening with no internal seams; present walls produce an edge on each face. Collinear adjacent
+segments may be left unmerged — visually identical.
 
 The tray's overall outside rectangle is drawn as a slightly heavier line, so the sheet reads as a
 tray rather than as loose boxes.
