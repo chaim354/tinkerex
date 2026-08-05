@@ -1,6 +1,13 @@
 Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
 
+  # Where the browser POSTs CSP violations. NAMED, because the policy's `report_uri` is built from
+  # this route rather than repeating the path as a literal — the same reasoning as the Active
+  # Storage shadow below: a path written twice is a path that can desync, and a report-uri pointing
+  # at a 404 fails SILENTLY. The browser simply stops reporting, and a report-only policy with
+  # nothing arriving looks exactly like a policy with no violations.
+  post "csp-violation-report" => "csp_reports#create", as: :csp_violation_report
+
   # Active Storage's direct-upload endpoint, REMOVED. ActiveStorage::DirectUploadsController
   # descends from ActiveStorage::BaseController — not this app's ApplicationController — so it
   # shipped live and UNAUTHENTICATED: an anonymous POST minted a real Blob and returned a signed

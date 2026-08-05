@@ -43,6 +43,35 @@
 <% end %>
 
 <%#
+  FOLDER PAGING. Rendered only when there IS more than one page, so an ordinary folder looks
+  exactly as it always did — this bounds huge directories, it is not a new widget on every page.
+
+  The links carry files_query_base (the folder) PLUS sort/dir. sort and dir are deliberately
+  omitted from in-page links elsewhere because they are cookie-persisted, but a page link is the
+  one place they must be explicit: "page 3" only means anything under the ordering that produced
+  it, so a link that dropped them could hand the next request a different sort and therefore a
+  different page 3.
+%>
+<% if @paged && @pages > 1 %>
+  <nav class="pager" aria-label="Folder pages">
+    <% if @page > 1 %>
+      <%= link_to "‹ Previous",
+                  files_path(**files_query_base, sort: @sort, dir: @dir, page: @page - 1),
+                  rel: "prev", class: "pager-prev" %>
+    <% end %>
+    <span class="pager-status">
+      Page <%= number_with_delimiter(@page) %> of <%= number_with_delimiter(@pages) %>
+      (<%= number_with_delimiter(@child_count) %> items)
+    </span>
+    <% if @page < @pages %>
+      <%= link_to "Next ›",
+                  files_path(**files_query_base, sort: @sort, dir: @dir, page: @page + 1),
+                  rel: "next", class: "pager-next" %>
+    <% end %>
+  </nav>
+<% end %>
+
+<%#
   UPLOAD — when a project is CURRENT, the single upload button defaults into it (its Projects/<slug>
   folder + attach), reusing the EXISTING project upload/attach control (spec 2026-07-23) — no new
   controller, no new JS. A small link overrides to a plain library-root upload (?upload=library)

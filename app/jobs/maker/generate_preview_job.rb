@@ -16,6 +16,30 @@ module Maker
 
     Unsupported = Class.new(StandardError)
 
+    # THE CEILING A PREVIEW IS WORTH, WHICH IS NOT THE CEILING A FILE IS ALLOWED TO BE.
+    #
+    # Rendering buffers the WHOLE file (Maker::FileBytes.read returns a String), and the only bound
+    # on that was FileLayer::MAX_BYTES — 256 MiB, which exists to cap an UPLOAD, not a thumbnail.
+    # Three consequences, worst first:
+    #   - On S3 the first index of a large library enqueues one of these per renderable object and
+    #     each one is a FULL BILLED DOWNLOAD. §14a's identity ladder explicitly refused to pay that
+    #     cost for hashing ("a full billed egress to index a library the user already has is the
+    #     cost the on-ramp exists to avoid") — previews were paying it silently, for the same bytes.
+    #   - Worst case ~3 x 256 MB transient in the worker process, which on self-host shares RSS and
+    #     the GVL with the web threads (SOLID_QUEUE_IN_PUMA).
+    #   - A 200 MB STL does not produce a better thumbnail than a 20 MB one; it produces the same
+    #     512px image after far more work.
+    #
+    # 32 MB comfortably covers the formats with real thumbnails (STL/3MF/SVG/DXF/LightBurn, images,
+    # PDF) while excluding the outliers that cost the most and gain the least. Operator-tunable,
+    # following PROJECT_ORGANIZE_EAGER_MAX_MOVES' precedent, because the right number depends on the
+    # library: raise it on a fast local share, lower it on metered object storage.
+    #
+    # SKIPPED, NOT FAILED. It resolves to `unsupported`, which is already this job's word for "no
+    # preview for this file here" — a deliberate terminal state that does NOT retry. `failed` would
+    # be wrong twice: nothing failed, and it would invite a retry that re-reads the same bytes.
+    MAX_PREVIEW_BYTES = ENV.fetch("PREVIEW_MAX_BYTES", 32.megabytes).to_i
+
     # A preview can be destroyed (e.g. file deleted) before this enqueued job runs;
     # discard cleanly rather than letting find's RecordNotFound be swallowed as a "failure".
     discard_on ActiveRecord::RecordNotFound
@@ -48,14 +72,18 @@ module Maker
         # omit filename, and preview.node_id is a UUID with no extension, so renderer
         # selection would wrongly land on "unsupported" without this. Falls back to the
         # raw node_id when there's no matching node row (still correctly unsupported).
-        name = filename.presence ||
-               preview.user.nodes.find_by(node_id: preview.node_id)&.name ||
-               preview.node_id
+        # ONE lookup, TWO answers. This used to resolve only the name, and to skip the row entirely
+        # when an explicit `filename:` was passed; the row is now always read because `size` is what
+        # the ceiling below judges. It is effectively free — an indexed find the job already made in
+        # the common case.
+        node = preview.user.nodes.find_by(node_id: preview.node_id)
+        name = filename.presence || node&.name || preview.node_id
         renderer = Maker::Previews::Registry.for_filename(name)
 
         ext = File.extname(name.to_s).downcase.delete_prefix(".")
         raise Unsupported, "no preview renderer for .#{ext}" if renderer.nil?
         raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless renderer.available?
+        refuse_if_oversized!(node, ext)
 
         bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
         result = render_with(renderer, bytes, ext:, kind: preview.kind)
@@ -83,6 +111,28 @@ module Maker
     end
 
     private
+
+    # Decline to render a file too big to be worth rendering — see MAX_PREVIEW_BYTES.
+    #
+    # JUDGED ON THE CATALOG ROW, WHICH IS THE ONLY PLACE IT IS FREE. `nodes.size` is populated by
+    # all three backends (it is the catalog the scan and the sync engine both maintain), so this
+    # costs nothing beyond the find already made. Asking the PORT for the size instead would mean a
+    # HEAD per object on S3 — paying a per-object request to avoid a per-object download, on every
+    # preview, which is the trade §14a's LIBRARY_S3_HEAD_FOR_CHECKSUM note already rejected.
+    #
+    # AN UNKNOWN SIZE PROCEEDS. A missing node row or a null size means the catalog cannot answer,
+    # and refusing on "I don't know" would silently stop previewing files whose row is merely
+    # incomplete. FileLayer::MAX_BYTES still backstops the read, so the failure mode of proceeding
+    # is the old behaviour, not a new one.
+    def refuse_if_oversized!(node, ext)
+      size = node&.size
+      return if size.nil? || size <= MAX_PREVIEW_BYTES
+
+      raise Unsupported,
+            "#{ext.presence || 'file'} is #{ActiveSupport::NumberHelper.number_to_human_size(size)}, " \
+            "over the #{ActiveSupport::NumberHelper.number_to_human_size(MAX_PREVIEW_BYTES)} preview " \
+            "ceiling (raise PREVIEW_MAX_BYTES to render larger files)"
+    end
 
     # Write the outcome ONLY if the row still points at the content this run rendered.
     #
