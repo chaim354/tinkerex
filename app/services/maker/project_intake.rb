@@ -137,6 +137,44 @@ module Maker
     # unexplored, #warn_if_truncated logs instead of letting the sweep look complete.
     MAX_DEPTH = 32
 
+    # Where a file named `name`, landing at `parent_node_id`, will END UP once this sweep files it
+    # — and what is already sitting there. `folder` is the category folder's NAME (it may not exist
+    # yet); `occupied_by` is the live file already holding that name inside it, or nil.
+    Destination = Data.define(:project, :folder, :occupied_by)
+
+    # ASK BEFORE WRITING. A door's own collision check looks at the folder the USER PICKED; this
+    # sweep's looks at the CATEGORY folder it files into. Those are different folders, and a re-save
+    # slips straight between them: the first copy has already moved to `design/`, leaving the picked
+    # folder vacant, so the door accepts a name the sweep then cannot place — and the second copy
+    # sits at the project root through every later sweep, forever. Reproduced end to end
+    # (harbor-number-v4.svg, saved twice). That is CLAUDE.md §12 item 11, recorded as an open
+    # product question; this is the half of it that actually bites.
+    #
+    # nil FOR ANYTHING THAT IS NOT A PROJECT FOLDER'S OWN ROOT — the same question §14f's sort rule
+    # asks ("ROOT = INBOX") and the same one ProjectIntakeJob.nudge asks, so a save into an ordinary
+    # library folder has no category destination and keeps today's behaviour untouched.
+    #
+    # IT CREATES NOTHING. The category folder is looked up, never ensured: a read that mkdirs as a
+    # side effect of being asked is the bug Projects::AttachmentsController#relocate shipped, and
+    # the reason #live_folder reads `folder_node_id` rather than calling
+    # Project#ensure_library_folder!. A folder that does not exist yet simply cannot be occupied.
+    #
+    # THE FOLDER NAME COMES FROM Maker::ProjectFolders.folder_for — the same pure function #place
+    # uses a moment later, so what this predicts and what the sweep does cannot disagree. Not a
+    # second copy of the vocabulary (§14d: add an extension in ROLE_BY_EXT only).
+    def self.destination_for(user:, parent_node_id:, name:)
+      return nil if parent_node_id.blank?
+
+      project = user.maker_projects.find_by(folder_node_id: parent_node_id)
+      return nil unless project
+
+      folder_name = Maker::ProjectFolders.folder_for(name)
+      folder = user.nodes.present.find_by(parent_node_id:, name: folder_name, kind: "dir")
+      occupied = folder && user.nodes.present.find_by(parent_node_id: folder.node_id, name:,
+                                                      kind: "file")
+      Destination.new(project:, folder: folder_name, occupied_by: occupied)
+    end
+
     def self.for_project(user:, project:, dry_run: false, move: true)
       new(user:, project:, dry_run:, move:).call
     end

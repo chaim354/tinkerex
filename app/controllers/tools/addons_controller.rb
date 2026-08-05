@@ -184,6 +184,14 @@ module Tools
 
       parent_node_id = chosen_parent_node_id
       refuse_taken_names!(files, parent_node_id)
+      # TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THAT IS THE POINT rather than
+      # redundancy. #refuse_taken_names! asks about the folder the user PICKED and is terminal
+      # ("pick another name"). This asks about the CATEGORY folder the sweep will file into, which
+      # is where a re-save actually collides — and is answerable ("overwrite?"). The gap between
+      # them is the bug: after the first save is filed, the picked folder is vacant again, so the
+      # first check passes and the sweep is left holding a file it cannot place.
+      placements = resolve_placements(files, parent_node_id)
+      return if render_would_replace(files, placements)
 
       state = nil
       addon_files = nil
@@ -193,7 +201,10 @@ module Tools
         )
         addon_files = Maker::Addons::LibraryOutput.write(
           user: current_user, state:, parent_node_id:,
-          files: files.map { |f| { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" } }
+          files: files.each_with_index.map do |f, i|
+            { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" }
+              .merge(placements[i].except(:folder))
+          end
         )
       end
       attach_addon_files_to_current_project(addon_files)
@@ -272,6 +283,56 @@ module Tools
     # Raises UnsupportedOperation rather than returning a flag so it lands on the one mapping at
     # the top of this class — §14a: "the destination is taken" IS UnsupportedOperation, and a
     # second spelling of that answer is the exact drift that bullet was written about.
+    # Per file: where it should go and whether it replaces what is there. An EMPTY hash is "the
+    # picked folder, create" — today's behaviour, and the answer for every save that is not a
+    # re-save into a project folder's root.
+    #
+    # PER FILE, NOT PER SAVE, because one save can collide on some outputs and not others: the
+    # boxes addon emits `<base>.svg` and `<base>-plan.svg` together, and a re-save can find the
+    # first name taken in its category folder and the second free. That is why
+    # Maker::Addons::LibraryOutput takes a per-file destination.
+    #
+    # THE DESTINATION IS THE OCCUPANT'S OWN PARENT, not a folder this method resolves separately —
+    # there is an occupant, so its parent IS the category folder, already created. Nothing here
+    # mkdirs: a save that needs a folder made still lands at the picked folder and the sweep files
+    # it, exactly as before.
+    def resolve_placements(files, parent_node_id)
+      files.map do |f|
+        dest = Maker::ProjectIntake.destination_for(user: current_user, parent_node_id:,
+                                                    name: f["name"])
+        occupied = dest&.occupied_by
+        next {} unless occupied
+
+        { folder: dest.folder, parent_node_id: occupied.parent_node_id, replace: true }
+      end
+    end
+
+    # 409 when a save would replace something and the user has not said so. Answers true if it
+    # rendered, so #create can return.
+    #
+    # 409, NOT THE 422 #refuse_taken_names! RAISES, and a bundle needs the two kept apart: 422
+    # (`unsupported_operation`) means "that name is taken where you asked" and never succeeds on
+    # retry, while 409 means "this WOULD replace something — resend with overwrite and it will".
+    # One is an error to report, the other is a question to ask.
+    #
+    # THE BODY NAMES EVERY COLLIDING FILE AND ITS FOLDER, so the dialog can say which output it is
+    # about — a multi-file save that reported only a count would make the user guess.
+    #
+    # OLD BUNDLES DEGRADE HONESTLY. They branch on `res.ok` alone, so a 409 reads as "Save failed."
+    # — no dialog, but also no silent second copy stranded at the project root, which is what they
+    # got before. The dialog itself ships in the bundle repo.
+    def render_would_replace(files, placements)
+      return false if params[:overwrite].present?
+
+      colliding = files.zip(placements).select { |_f, p| p[:replace] }
+      return false if colliding.empty?
+
+      render json: { error: "would_replace",
+                     files: colliding.map { |f, p| { name: f["name"], folder: p[:folder] } } },
+             status: :conflict
+      true
+    end
+
     def refuse_taken_names!(files, parent_node_id)
       taken = files.map { |f| f["name"] }.select do |name|
         Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)

@@ -464,6 +464,53 @@ module Maker
       assert_equal @folder.node_id, d.reload.parent_node_id
     end
 
+    # --- .destination_for: where a file WILL end up, asked BEFORE it is written ------------------
+    #
+    # THE GAP THIS CLOSES (CLAUDE.md §12 item 11, and the bug that prompted it): a door's collision
+    # check looks at the folder the user PICKED, and the sweep's looks at the CATEGORY folder it
+    # files into. Those are different folders, so a re-save slips between them — the first copy has
+    # already moved to design/, leaving the root vacant, so the door accepts a name the sweep then
+    # cannot place. Reproduced: harbor-number-v4.svg, saved twice, stranded at the project root
+    # through every later sweep.
+    #
+    # ANSWERS nil FOR ANYTHING THAT IS NOT A PROJECT FOLDER'S OWN ROOT, which is the same question
+    # §14f's sort rule asks and the same one ProjectIntakeJob.nudge asks. A save into an ordinary
+    # library folder has no category destination and must keep today's behaviour exactly.
+    test "destination_for names the category folder a file will be filed into" do
+      d = Maker::ProjectIntake.destination_for(user: @user, parent_node_id: @folder.node_id,
+                                               name: "panel.svg")
+      assert_equal "design", d.folder
+      assert_equal @project.id, d.project.id
+      assert_nil d.occupied_by, "nothing is in design/ yet"
+    end
+
+    test "destination_for reports the file already occupying that name" do
+      sub = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", @project.slug, "design" ])
+      taken = file("panel.svg", parent: sub.node_id)
+
+      d = Maker::ProjectIntake.destination_for(user: @user, parent_node_id: @folder.node_id,
+                                               name: "panel.svg")
+      assert_equal taken.node_id, d.occupied_by&.node_id
+    end
+
+    # THE CATEGORY FOLDER NEED NOT EXIST YET, and asking must not create it — the same rule
+    # #live_folder follows for Project#ensure_library_folder!. A read that creates directories as a
+    # side effect of being asked is the bug Projects::AttachmentsController#relocate shipped.
+    test "destination_for creates nothing" do
+      before = @user.nodes.count
+      Maker::ProjectIntake.destination_for(user: @user, parent_node_id: @folder.node_id,
+                                           name: "part.stl")
+      assert_equal before, @user.nodes.count
+    end
+
+    test "destination_for answers nil outside a project folder root" do
+      sub = dir("design")
+      assert_nil Maker::ProjectIntake.destination_for(user: @user, parent_node_id: sub.node_id,
+                                                      name: "panel.svg")
+      assert_nil Maker::ProjectIntake.destination_for(user: @user, parent_node_id: nil,
+                                                      name: "panel.svg")
+    end
+
     # THE THREE EXISTING RULES MUST NOT BE BYPASSED BY THIS THIRD DOOR. Maker::AttachToProject's
     # header records #relocate being written below all of them and gutting a model bundle while
     # reporting success.
