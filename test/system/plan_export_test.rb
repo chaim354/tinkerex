@@ -20,7 +20,7 @@ class PlanExportTest < ApplicationSystemTestCase
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
     FakeBoxesSidecar.install!
-    sign_in_as "planexport@example.com"
+    @user = sign_in_as "planexport@example.com"
   end
 
   teardown do
@@ -302,5 +302,109 @@ class PlanExportTest < ApplicationSystemTestCase
     JS
 
     assert_equal "2", pages
+  end
+
+  # ---- the editor surface ---------------------------------------------------------------------
+
+  def open_generator(key)
+    visit tools_addon_path("boxes")
+    find(".addon-card", text: key).click
+    assert_selector ".box-topview svg", wait: 5
+  end
+
+  # Resolved through the PORT, not through a Node lookup: the suite runs on all three
+  # LIBRARY_BACKEND legs and `stat` is the one question all three answer.
+  def saved_files
+    Maker::AddonState.order(:id).last.files.map { |f| FileLayer.current.stat(@user, node_id: f.node_id) }
+  end
+
+  def saved_names = saved_files.map(&:name).sort
+
+  def saved_node_id_for(suffix)
+    saved_files.find { |f| f.name.end_with?(suffix) }.node_id
+  end
+
+  test "the top view offers print and export controls" do
+    open_generator("TrayLayout")
+
+    assert_selector '[data-export="print"]'
+    assert_selector '[data-export="pdf"]'
+    assert_selector '[data-export="svg"]'
+    assert_selector '[data-export="paper"]'
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # The print surface is a hidden iframe: not window.open (popup blockers) and not a print-only div
+  # in the host page (which would mean hiding chrome the bundle does not own). Asserting on that
+  # iframe's real document is asserting on exactly what the printer is handed.
+  test "printing builds a sheet whose SVG is sized in millimetres" do
+    open_generator("TrayLayout")
+
+    find('[data-export="print"]').click
+    head = page.evaluate_script(<<~JS)
+      (() => {
+        const f = document.querySelector("iframe.plan-print-frame")
+        if (!f) return "NO FRAME"
+        const s = f.contentDocument.querySelector("svg")
+        return s ? s.outerHTML.slice(0, s.outerHTML.indexOf(">") + 1) : "NO SVG"
+      })()
+    JS
+
+    assert_includes head, 'width="210mm"'
+    assert_includes head, 'height="297mm"'
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # The default TrayLayout (sx 50*3, sy 50*2, t 3) is 162 x 109 mm, so it fits one A4 sheet and the
+  # tiler produces a single page through the same path a tiled plan takes.
+  test "a tray that fits prints as one sheet" do
+    open_generator("TrayLayout")
+
+    find('[data-export="print"]').click
+    count = page.evaluate_script(<<~JS)
+      document.querySelector("iframe.plan-print-frame").contentDocument.querySelectorAll("svg").length
+    JS
+
+    assert_equal 1, count
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # A generator with no compartments has no panel, so it has no controls — the same self-gating
+  # that keeps FrontPanel's very different `layout` DSL out.
+  test "a generator with no compartments offers no export controls" do
+    visit tools_addon_path("boxes")
+    find(".addon-card", text: "ABox").click
+    assert_selector ".box-preview"
+
+    assert page.has_no_selector?('[data-export="print"]')
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # MAX_FILES is 8 and parse_files already refuses duplicate names within a batch, so a second
+  # output needs no host change. §14c's "each save writes ONE file" recorded deleting the
+  # write-only .params.json, which duplicated AddonState#data; a second genuine output is not that.
+  test "saving a tray writes the plan beside the cut sheet" do
+    open_generator("TrayLayout")
+
+    find('[data-role="name"]').set("Drawer insert")
+    find('[data-role="save"]').click
+    assert_selector '[data-role="save-status"]', text: "Saved."
+
+    assert_equal [ "drawer-insert-plan.svg", "drawer-insert.svg" ], saved_names
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # The saved plan is the ARCHIVAL artifact: full size and untiled, not the A4 page the printer got.
+  test "the saved plan is the untiled drawing, not a paper sheet" do
+    open_generator("TrayLayout")
+
+    find('[data-role="name"]').set("Insert")
+    find('[data-role="save"]').click
+    assert_selector '[data-role="save-status"]', text: "Saved."
+
+    svg = FileLayer.current.read(@user, node_id: saved_node_id_for("-plan.svg"))
+    assert_includes svg, 'width="162mm"'
+    assert_includes svg, 'height="109mm"'
+    assert_not_includes svg, 'width="210mm"'
   end
 end

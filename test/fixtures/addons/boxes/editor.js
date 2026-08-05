@@ -3,6 +3,9 @@ import { mountTraySync } from "./tray_sync.js"
 import { mountTopView } from "./top_view.js"
 import { mountPreview, generateSvg } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
+import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
+
+const PAPER_KEY = "boxes.paper"
 
 // The per-generator editor: the param form (grouped, collapsible), the live preview, the top-view
 // compartment plan, and "made with this generator" prior boxes. Ported from the tinkerex repo's
@@ -63,8 +66,20 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
             <span class="box-topview-summary muted" data-topview="summary"
                   role="status" aria-live="polite"></span>
           </h3>
+          <div class="box-topview-actions">
+            <select data-export="paper" aria-label="Paper size">
+              <option value="A4">A4</option>
+              <option value="Letter">Letter</option>
+              <option value="A3">A3</option>
+              <option value="Tabloid">Tabloid</option>
+            </select>
+            <button type="button" class="btn ghost btn-sm" data-export="print">Print</button>
+            <button type="button" class="btn ghost btn-sm" data-export="pdf">PDF</button>
+            <button type="button" class="btn ghost btn-sm" data-export="svg">SVG</button>
+          </div>
           <div class="box-topview-canvas" data-topview="canvas"></div>
-          <p class="box-topview-hint muted">Compartments only — joinery is on the cut sheet above.</p>
+          <p class="box-topview-hint muted">Compartments only — joinery is on the cut sheet above.
+            Printed sheets are 1:1 — check the 100&nbsp;mm bar with a ruler.</p>
         </div>
 
         <div data-role="prior-wrap"></div>
@@ -88,7 +103,45 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   const destroyers = []
   destroyers.push(mountSections(root))
   destroyers.push(mountTraySync($("groups")))
-  destroyers.push(mountTopView($("topview-panel"), $("groups")))
+
+  const topView = mountTopView($("topview-panel"), $("groups"))
+  destroyers.push(topView)
+
+  // The top-view panel REMOVES ITSELF when the first draw yields no grid — that is how FrontPanel,
+  // whose `layout` is a different DSL entirely, is kept out. So these controls exist only where a
+  // plan exists, and need no gate of their own.
+  const paperSel = root.querySelector('[data-export="paper"]')
+  if (paperSel) {
+    paperSel.value = localStorage.getItem(PAPER_KEY) || "A4"
+    const rememberPaper = () => localStorage.setItem(PAPER_KEY, paperSel.value)
+    paperSel.addEventListener("change", rememberPaper)
+    destroyers.push({ destroy: () => paperSel.removeEventListener("change", rememberPaper) })
+  }
+
+  const exportBase = () =>
+    $("name").value.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || generator.key.toLowerCase()
+
+  // Mid-edit the art is routinely unparseable and the panel deliberately keeps the last good
+  // drawing up, so an export uses that same model: what you print is what you are looking at.
+  const onExport = (event) => {
+    const which = event.target.closest("[data-export]")?.dataset.export
+    if (!which || which === "paper") return
+    const model = topView.getPlan?.()
+    if (!model) return
+
+    const say = (text) => { const s = root.querySelector('[data-topview="summary"]'); if (s) s.textContent = text }
+    try {
+      const sinks = { print: printPlan, pdf: downloadPdf, svg: downloadSvg }
+      const pages = sinks[which](model, paperSel.value, exportBase())
+      if (which === "print" && pages > 1) say(`${pages} sheets — tape along the overlap band.`)
+    } catch (e) {
+      // The 40-sheet refusal lands here, and so does anything the print frame throws. Saying it in
+      // the panel beats a console error nobody sees.
+      say(e.message)
+    }
+  }
+  root.addEventListener("click", onExport)
+  destroyers.push({ destroy: () => root.removeEventListener("click", onExport) })
 
   const preview = mountPreview({
     serviceUrl: ctx.serviceUrl,
@@ -126,9 +179,19 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     body.append("name", name)
     body.append("parent_node_id", $("folder").value)
     body.append("data", JSON.stringify({ generator: generator.key, params }))
-    body.append("files", JSON.stringify([
-      { name: `${base}.svg`, content_type: "image/svg+xml", body: result.svg },
-    ]))
+    // The plan goes in UNTILED and full size: tiling is a property of the printer, not of the
+    // drawing, and an archival artifact should not arrive pre-chopped into sheets. SVG rather than
+    // PDF because parse_files requires a String body over JSON — binary cannot round-trip, and a
+    // base64 path would cost a Rails redeploy for something the PDF download already gives.
+    // MAX_FILES is 8, so a second output needs no host change.
+    const outputs = [ { name: `${base}.svg`, content_type: "image/svg+xml", body: result.svg } ]
+    const planModel = topView.getPlan?.()
+    if (planModel) {
+      outputs.push({
+        name: `${base}-plan.svg`, content_type: "image/svg+xml", body: planSvgFor(planModel),
+      })
+    }
+    body.append("files", JSON.stringify(outputs))
 
     const res = await fetch(ctx.saveUrl, { method: "POST", body, headers: { "X-CSRF-Token": ctx.csrfToken } })
     setSaveStatus(res.ok ? "Saved." : "Save failed.", !res.ok)
