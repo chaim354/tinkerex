@@ -1,4 +1,5 @@
-import { sections, parseArt, gridFrom, compartments } from "./tray_layout.js"
+import { sections, parseArt, gridFrom } from "./tray_layout.js"
+import { buildModel } from "./plan.js"
 
 // A plan of the tray you are describing, drawn from the params already on the form. Ported from the
 // tinkerex repo's topview_controller.js (a Stimulus controller) to a plain mount/destroy function.
@@ -35,6 +36,11 @@ export function mountTopView(panel, root) {
   // fields no longer describe the tray.
   const model = () => (layout ? parseArt(layout.value) : gridFrom(sections(sx.value), sections(sy.value)))
 
+  // The last model that DREW — mid-edit the art is routinely unparseable and `draw` deliberately
+  // leaves the previous drawing up, so an export must have the thing on screen to work from rather
+  // than refuse. See `getPlan` below.
+  let lastModel = null
+
   // Returns whether it drew — used both at mount (to decide the panel belongs on this page at all)
   // and on every redraw.
   const draw = () => {
@@ -43,9 +49,12 @@ export function mountTopView(panel, root) {
     // flashing an error at someone in the middle of typing a number.
     if (!m) return false
     const t = Number(thickness?.value) > 0 ? Number(thickness.value) : 3
-    const { id, groups } = compartments(m)
+    // The coordinate maths lives in plan.js so the panel and every to-scale export read ONE model.
+    const built = buildModel(m, t)
+    lastModel = built
+    const { groups } = built
 
-    canvas.innerHTML = svg(m, id, groups, t)
+    canvas.innerHTML = svg(built)
     const merged = groups.filter((g) => g.length > 1).length
     summary.textContent =
       `${groups.length} compartment${groups.length === 1 ? "" : "s"}` + (merged ? ` · ${merged} merged` : "")
@@ -66,6 +75,9 @@ export function mountTopView(panel, root) {
   root.addEventListener("change", redraw)
 
   return {
+    // The last good model, for the to-scale exporters in export.js. What you print is therefore
+    // what you are looking at, including mid-edit when the art itself no longer parses.
+    getPlan: () => lastModel,
     destroy() {
       root.removeEventListener("input", redraw)
       root.removeEventListener("change", redraw)
@@ -73,18 +85,10 @@ export function mountTopView(panel, root) {
   }
 }
 
-function svg({ cols, rows, hwalls, vwalls }, id, groups, t) {
-  const nc = cols.length, nr = rows.length
-  const sum = (a) => a.reduce((x, y) => x + y, 0)
-  // The grid is rigid: a cell sits at the same place whether or not its walls are drawn. A removed
-  // wall therefore does not move anything — it hands its own thickness to the compartment, which is
-  // why a merge is wider than the two cells added together.
-  const hasL = vwalls.some((r) => r[0]), hasT = hwalls[0].some(Boolean)
-  const x0 = hasL ? t : 0, y0 = hasT ? t : 0
-  const colX = (c) => x0 + sum(cols.slice(0, c)) + c * t
-  const rowY = (r) => y0 + sum(rows.slice(0, r)) + r * t
-  const w = x0 + sum(cols) + (nc - 1) * t + (vwalls.some((r) => r[nc]) ? t : 0)
-  const h = y0 + sum(rows) + (nr - 1) * t + (hwalls[nr].some(Boolean) ? t : 0)
+// Takes the built model (plan.js's buildModel) rather than raw grid + thickness: the coordinate
+// arithmetic that used to open this function now lives there, shared with every export.
+function svg(model) {
+  const { cols, rows, hwalls, vwalls, nc, nr, t, colX, rowY, w, h, id, groups, sum } = model
 
   const out = []
   const rect = (x, y, rw, rh, cls) =>
