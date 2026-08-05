@@ -469,7 +469,11 @@ module Tools
                                     scannable: true, port_writable: true)
       end
 
-      def write(_user, parent_node_id:, name:, io:)
+      # `replace:` MIRRORS THE REAL SIGNATURE and is deliberately ignored: this fake exists to fail
+      # a write part-way through a multi-file save, and a replace changes nothing about that. What
+      # it must NOT do is omit the kwarg — a fake whose arity has drifted from the port's turns
+      # every caller into an ArgumentError that says nothing about the behaviour under test.
+      def write(_user, parent_node_id:, name:, io:, replace: false)
         @writes += 1
         raise FileLayer::UnsupportedOperation, "#{name.inspect} already exists" if @writes == @fail_on
 
