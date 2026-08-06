@@ -192,11 +192,18 @@ transcript is gone the moment that session ends — which is exactly how the acc
 once already, sending the next reader to a two-month-old handoff doc naming an account that no
 longer worked.
 
-| backend | container | account | password |
+| backend | container name prefix | account | password |
 |---|---|---|---|
-| share | `tinkerex-web-share` | `demo@tinkerex.local` | `MakerDemo2026!` |
-| chunk | `tinkerex-web` | **unverified — check before assuming** | |
-| s3 | `tinkerex-web-s3` | **unverified — check before assuming** | |
+| chunk | `tinkerex-web-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
+| share | `tinkerex-web-share-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
+| s3 | `tinkerex-web-s3-<sha>` | `demo@tinkerex.local` | `MakerDemo2026!` |
+
+**THE THREE ROWS BEING IDENTICAL IS A CONVENTION, NOT A MECHANISM** — they are three separate
+accounts in three separate databases that happen to have been given the same address and password.
+Nothing keeps them in sync: a password reset on one leaves the other two alone, and a future account
+added to one backend only is an ordinary state, not a bug. Keep the table per-row for that reason
+even while the rows agree; collapsing it to a single line is how the next reader concludes that
+fixing one fixed all three.
 
 **A PASSWORD IS IN GIT HERE ON PURPOSE, AND THE REASON IS LOAD-BEARING.** This box is a
 non-production test/dev deploy (despite `RAILS_ENV=production`), its `ENABLE_TEST_SIGNUP` seam is
@@ -206,14 +213,30 @@ a second, plaintext home. If this box ever stops being a throwaway, this table m
 with it.
 
 **EACH BACKEND HAS ITS OWN SQLite VOLUME** (`tinkerex_storage`, `tinkerex_storage_share`,
-`tinkerex_storage_s3`) — so each has its **own `users` table**. An account created on one does not
-exist on the others, and that is why the table above is per-backend rather than a single line. A
-login that works on share and fails on chunk is this, not a broken deploy.
+`tinkerex_storage_s3`) — so each has its **own `users` table**. That is the mechanism behind the
+paragraph above: an account created on one does not exist on the others. A login that works on share
+and fails on chunk is this, not a broken deploy.
 
-List what actually exists, rather than trusting the table:
+List what actually exists, rather than trusting the table. This walks all three and labels each,
+which is also how you learn the running SHA:
 
 ```sh
-ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name=tinkerex-web-share) bin/rails runner "puts User.pluck(:email)"'
+ssh kamal1@192.168.1.95 'for c in $(docker ps --format "{{.Names}}" | grep "^tinkerex-web"); do
+  echo "=== $c"
+  docker exec "$c" bin/rails runner "puts User.pluck(:email)"
+done'
+```
+
+**`docker ps -f name=…` MATCHES ON SUBSTRING, NOT EXACTLY** — so `name=tinkerex-web` returns **all
+three** container ids, and the obvious `docker exec $(docker ps -qf name=tinkerex-web) …` then feeds
+docker a second id where it expects the command. Iterating over names, as above, sidesteps it. If you
+do want one backend at a time, anchor the pattern — and note that `[0-9a-f]` is what isolates chunk,
+because both `share` and `s3` begin with a letter that is not hex:
+
+```sh
+ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name="^tinkerex-web-[0-9a-f]")  bin/rails runner "puts User.pluck(:email)"'   # chunk
+ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name="^tinkerex-web-share-")    bin/rails runner "puts User.pluck(:email)"'   # share
+ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name="^tinkerex-web-s3-")       bin/rails runner "puts User.pluck(:email)"'   # s3
 ```
 
 Create one (the seam is open on all three; it creates a **confirmed** account, no email
