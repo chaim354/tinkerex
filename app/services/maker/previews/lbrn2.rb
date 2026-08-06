@@ -55,45 +55,58 @@ module Maker
       #   that appear nowhere in the corpus. Hue is reliable, the exact byte less so. Wrong only
       #   in shade, never in identity, and correcting one is a single line here.
       #
+      # THE NAMES ARE OURS, NOT LIGHTBURN'S. LightBurn identifies a layer only by its number, so
+      # "Blue" is a label this app invents to make the settings panel readable — which is why a
+      # user's OWN layer name always wins over it (see LbrnMetadata#layers). Naming them is only
+      # defensible because the colours beside them are evidence-backed; a made-up name over a
+      # made-up colour would be two guesses stacked.
+      #
       # Cosmetic by construction: nothing measures or decides anything from these. Getting index
       # 19 a shade off tints one outline; it cannot move a number.
       LAYER_PALETTE = [
-        "#000000", # 00 measured
-        "#0000ff", # 01 measured
-        "#ff0000", # 02 measured
-        "#00e000", # 03 measured
-        "#d0d000", # 04 measured
-        "#ff8000", # 05 measured
-        "#00e0e0", # 06 measured
-        "#ff00ff", # 07 measured
-        "#b4b4b4", # 08 palette strip - light grey
-        "#0000a0", # 09 measured
-        "#a00000", # 10 measured
-        "#00a000", # 11 measured
-        "#a0a000", # 12 palette strip - olive
-        "#c08000", # 13 measured
-        "#00a0ff", # 14 palette strip - azure
-        "#a000a0", # 15 measured
-        "#808080", # 16 palette strip - mid grey
-        "#868dbb", # 17 measured (few samples; matches the strip's periwinkle)
-        "#c08080", # 18 palette strip - dusty rose
-        "#6070c0", # 19 palette strip - medium blue
-        "#c04060", # 20 palette strip - crimson
-        "#80c080", # 21 palette strip - sage
-        "#f0b98d", # 22 measured
-        "#f6c4e1", # 23 measured
-        "#ffa0d0", # 24 palette strip - pink
-        "#602080", # 25 palette strip - dark purple
-        "#a05000", # 26 palette strip - brown
-        "#004754", # 27 measured
-        "#a0f0a0", # 28 palette strip - mint
-        "#fff2c8"  # 29 measured (few samples; matches the strip's cream)
+        [ "#000000", "Black" ],        # 00 measured
+        [ "#0000ff", "Blue" ],         # 01 measured
+        [ "#ff0000", "Red" ],          # 02 measured
+        [ "#00e000", "Green" ],        # 03 measured
+        [ "#d0d000", "Yellow" ],       # 04 measured
+        [ "#ff8000", "Orange" ],       # 05 measured
+        [ "#00e0e0", "Cyan" ],         # 06 measured
+        [ "#ff00ff", "Magenta" ],      # 07 measured
+        [ "#b4b4b4", "Light grey" ],   # 08 palette strip
+        [ "#0000a0", "Navy" ],         # 09 measured
+        [ "#a00000", "Dark red" ],     # 10 measured
+        [ "#00a000", "Dark green" ],   # 11 measured
+        [ "#a0a000", "Olive" ],        # 12 palette strip
+        [ "#c08000", "Amber" ],        # 13 measured
+        [ "#00a0ff", "Azure" ],        # 14 palette strip
+        [ "#a000a0", "Purple" ],       # 15 measured
+        [ "#808080", "Grey" ],         # 16 palette strip
+        [ "#868dbb", "Periwinkle" ],   # 17 measured (few samples; matches the strip)
+        [ "#c08080", "Dusty rose" ],   # 18 palette strip
+        [ "#6070c0", "Slate blue" ],   # 19 palette strip
+        [ "#c04060", "Crimson" ],      # 20 palette strip
+        [ "#80c080", "Sage" ],         # 21 palette strip
+        [ "#f0b98d", "Peach" ],        # 22 measured
+        [ "#f6c4e1", "Pale pink" ],    # 23 measured
+        [ "#ffa0d0", "Pink" ],         # 24 palette strip
+        [ "#602080", "Dark purple" ],  # 25 palette strip
+        [ "#a05000", "Brown" ],        # 26 palette strip
+        [ "#004754", "Dark teal" ],    # 27 measured
+        [ "#a0f0a0", "Mint" ],         # 28 palette strip
+        [ "#fff2c8", "Cream" ]         # 29 measured (few samples; matches the strip)
       ].freeze
 
       # The palette colour for a CutIndex, or nil when it is outside the palette. Out of range is
       # ORDINARY, not corrupt: LightBurn's tool layers (T1/T2) sit past the 30 numbered ones, and
       # a caller should fall back to DEFAULT_STROKE rather than treat it as an error.
-      def layer_color(cut_index)
+      def layer_color(cut_index) = layer_entry(cut_index)&.first
+
+      # The colour's NAME, e.g. "Dark teal" — see LAYER_PALETTE on why this app names them at all.
+      def layer_name(cut_index) = layer_entry(cut_index)&.last
+
+      # ONE TABLE, TWO READERS. Parallel arrays for colour and name would be free to drift; this
+      # cannot, because there is only ever one row per layer.
+      def layer_entry(cut_index)
         i = Integer(cut_index.to_s, exception: false)
         LAYER_PALETTE[i] if i && i >= 0 && i < LAYER_PALETTE.length
       end
@@ -124,7 +137,8 @@ module Maker
       #   1  original
       #   2  an absent <numPasses> reports 1 pass rather than nothing (see LbrnMetadata#layers)
       #   3  layers carry their LightBurn palette colour, so the panel can show a swatch
-      THUMBNAIL_REVISION = 3
+      #   4  layers carry a colour NAME, so an unnamed layer reads "Blue" not "C01"
+      THUMBNAIL_REVISION = 4
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION

@@ -84,6 +84,25 @@ module Maker
         refute layer.key?("power_min"), "minPower has no flat default and must stay absent"
       end
 
+      # A LAYER'S COLOUR NAME, so the panel can label an untouched layer something better than the
+      # index it already shows in a swatch. Carried beside "name", never substituted into it —
+      # LbrnMetadata records what the FILE says and the view decides what to display.
+      test "layers carry the palette colour's name" do
+        # This fixture OVERRIDES its colours, so there is deliberately no name to give: the
+        # palette's word for index 0 is "Black", and printing that beside a red swatch would be
+        # worse than printing nothing.
+        c00 = Maker::Previews::LbrnMetadata.parse(@bytes)["layers"].first
+        assert_equal "#ff0000", c00["color"], "the file's own colour wins"
+        assert_nil c00["color_name"], "a file-supplied colour has no palette name"
+
+        bare = %(<LightBurnProject><CutSetting type="Cut"><index Value="27"/></CutSetting>) +
+               %(<Shape Type="Rect" CutIndex="27" W="10" H="10" XForm="1 0 0 1 0 0"/></LightBurnProject>)
+        layer = Maker::Previews::LbrnMetadata.parse(bare)["layers"].first
+        assert_equal "#004754", layer["color"]
+        assert_equal "Dark teal", layer["color_name"]
+        assert_equal "27", layer["index"], "the raw index stays available; the name does not replace it"
+      end
+
       test "an explicit numPasses still wins" do
         bare = %(<LightBurnProject><CutSetting type="Cut"><index Value="0"/>) +
                %(<numPasses Value="4"/></CutSetting>) +

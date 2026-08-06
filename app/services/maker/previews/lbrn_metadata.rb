@@ -46,6 +46,17 @@ module Maker
             # index — which is the ordinary case, since no real export writes <color> at all.
             # Without the fallback the panel's swatch was invisible on every real file.
             "color"     => (c = val(cs, "color")).present? ? Lbrn2.normalize_color(c) : Lbrn2.layer_color(idx),
+            # The colour's name, for a panel that would otherwise label every layer "C01". Carried
+            # SEPARATELY from "name" rather than substituted into it, because the two answer
+            # different questions and only the view knows which it wants — the raw file name still
+            # has to be available to anything that cares what LightBurn actually wrote.
+            #
+            # ONLY WHEN THE COLOUR CAME FROM THE PALETTE. A file may override a layer's colour, and
+            # `Lbrn2.layer_name` names the PALETTE entry for that index — so on a file that recolours
+            # C01 to green, naming it anyway would print "Blue" beside a green swatch: a label
+            # contradicting the very thing it labels. No name is better than a wrong one; the view
+            # falls back to the index.
+            "color_name" => (c.present? ? nil : Lbrn2.layer_name(idx)),
             "mode"      => mode(cs["type"]),
             "speed"     => Lbrn2.num(val(cs, "speed")),
             "power_max" => Lbrn2.num(val(cs, "maxPower")),
