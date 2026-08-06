@@ -138,6 +138,33 @@ module Web
       assert_equal current_revision, stale.reload.renderer_revision
     end
 
+    # THE PANEL LABELS A LAYER BY COLOUR, BUT ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX.
+    # "C01" tells a reader nothing the swatch beside it does not already show; a name its owner
+    # chose tells them everything, and substituting a colour over it would destroy information.
+    # Both directions asserted, because a rule that only ever fires one way is half a rule.
+    test "an unnamed layer is labelled by colour, not by its index" do
+      # nested-plate.lbrn2 supplies no <color>, so its layers take LightBurn's palette — which is
+      # the ordinary case and the only one with a name to show. real-export.lbrn2 (this file's
+      # main fixture) OVERRIDES its colours, so it deliberately has no palette name at all.
+      node = upload("plate.lbrn2", file_fixture_bytes("nested-plate.lbrn2"))
+      # The panel renders from the THUMBNAIL row's metadata, and #show enqueues nothing — so the
+      # artifact has to be built explicitly. Through the real pipeline, not a hand-written hash:
+      # the labels asserted below have to come from LbrnMetadata actually parsing the fixture.
+      token = FileLayer.current.stat(@user, node_id: node).content_token
+      thumb = Maker::Previews::Enqueue.call(user: @user, node_id: node, name: "plate.lbrn2",
+                                            version_id: token, kind: "thumbnail")
+      Maker::GeneratePreviewJob.perform_now(thumb.id, filename: "plate.lbrn2")
+      assert_equal "ready", thumb.reload.status
+
+      get file_path(node)
+
+      assert_response :success
+      labels = css_select(".lbrn-layers tbody td:first-child").map { |td| td.text.strip }
+      assert_includes labels, "Black", "C00 should read as its colour"
+      assert_includes labels, "Red",   "C02 should read as its colour"
+      assert_empty labels.grep(/\AC\d+\z/), "no layer should still be labelled by its index"
+    end
+
     test "404s for a node this user does not own" do
       other = User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
       stranger = other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs.lbrn2", kind: "file")

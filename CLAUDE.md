@@ -1115,6 +1115,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   RECOVERED from the embedded thumbnails by mapping contours into pixel space and reading what
   LightBurn painted. `Lbrn2::LAYER_PALETTE` marks each entry `measured` or `palette strip`. It is
   cosmetic by construction: nothing measures or decides anything from it.
+- **THE PANEL LABELS A LAYER BY COLOUR ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX**, and the
+  precedence has three arms, all load-bearing: a name its owner CHOSE wins outright; else the
+  colour's name, since "C01" says nothing the swatch does not; else the file's own label
+  **verbatim**. That last arm is reached whenever a file OVERRIDES a layer's colour — there is then
+  no palette name — and reconstructing it as `"C#{index}"` loses LightBurn's zero padding, turning
+  `C00` into `C0`. A pre-existing flow test caught exactly that.
+- **A FILE-SUPPLIED COLOUR GETS NO NAME.** `Lbrn2.layer_name` names the PALETTE entry for an index,
+  so naming a recoloured layer prints "Blue" beside a green swatch — a label contradicting the
+  thing it labels. `LbrnMetadata` returns nil there and the view falls through. The names are ours,
+  not LightBurn's (it identifies layers only by number), which is why a user's own name outranks
+  them.
 - **THE PALETTE HAS ONE DEFINITION, SERVER-SIDE.** The geometry payload carries a `colors` map for
   the layers a file uses, rather than the client looking indices up in a copy — §14d's third
   extension→role table is the precedent for what a second copy does. It also means a file that DOES

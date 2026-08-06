@@ -17,7 +17,22 @@
           <tr>
             <td>
               <% if layer["color"].to_s.match?(/\A#[0-9a-fA-F]{3,8}\z/) %><span class="lbrn-swatch" style="background: <%= layer["color"] %>"></span><% end %>
-              <%= layer["name"].presence || "C#{layer["index"]}" %>
+              <%# THREE ANSWERS, IN ORDER, AND THE LAST ONE IS NOT DECORATION.
+                  1. A name its owner chose ("Score lines") beats everything — substituting a
+                     colour over it would destroy information rather than add any.
+                  2. Otherwise the colour's name, since LightBurn's default "C01" tells a reader
+                     nothing the swatch beside it does not already show.
+                  3. Otherwise the file's own name, VERBATIM. This arm is reached when a file
+                     overrides a layer's colour, so there IS no palette name — and reconstructing
+                     the label as "C#{index}" instead loses LightBurn's zero padding, turning
+                     "C00" into "C0". A pre-existing flow test caught exactly that.
+                  The index stays reachable as a tooltip, since it is how LightBurn's own UI
+                  refers to the layer. %>
+              <% file_name = layer["name"].to_s %>
+              <% chosen = file_name.present? && !file_name.match?(/\AC\d+\z/) %>
+              <span title="Layer C<%= layer["index"] %>"><%=
+                chosen ? file_name : (layer["color_name"].presence || file_name.presence || "C#{layer["index"]}")
+              %></span>
             </td>
             <td><%= layer["mode"] %></td>
             <%# recipe_num, never `.to_i` — that truncated 6.67 mm/s to "6". See FilesHelper. %>
