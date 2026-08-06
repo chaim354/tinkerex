@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**A re-save asks before it overwrites**)
+**Updated:** 2026-08-06 (**Click a shape in a .lbrn2 and it tells you how big it is**)
 
 ## What this file is
 
@@ -60,7 +60,84 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+## Latest (2026-08-06): click a shape in a .lbrn2 and it tells you how big it is (branch `claude/lightburn-shape-dimensions`)
+
+**The question that started it:** *"in the lightburn parser are you calculating the size of each
+shape, and is there any way we can implement that if you click on a shape it tells you its
+dimensions?"* Answer to the first half: **no.** `Lbrn2.each_geometry` yields every drawable
+contour's points and `job_size` folds all of them into **one** `BBox` — the "Job size" row in the
+Laser Settings panel. Per-shape extents were computed and thrown away.
+
+The obstacle to the second half was never the parser. The file page shows LightBurn's **own
+embedded PNG** (57 of 58 real exports carry one) and even the fallback rasterizes our SVG via resvg,
+because `Maker::Previews::Svg` refuses to inline user SVG as an XSS rule. There was nothing on the
+page to hit-test, and a raster's pixels have no mapping back to mm.
+
+**Shipped:** a **Measure** button on `.lbrn/.lbrn2` file pages. It fetches a coordinate payload,
+draws the outlines as an SVG built in the DOM, and reports the clicked contour's size — `40 × 20 mm`,
+or `⌀6.2 mm` when it is round. Alt-click widens to the whole object. Scroll to zoom, drag to pan.
+
+**Architecture:** a new `geometry` **preview kind** through the existing pipeline — `Enqueue` →
+`GeneratePreviewJob` → `Lbrn2.render(kind: "geometry")` → `LbrnGeometry` → JSON attached as the
+Preview's asset and served from its blob URL, off Rails. It is the **first kind to exercise that
+seam end to end**: `model_glb` has been declared in `Preview::KINDS` all along but is refused by
+`Mesh`, so nothing ever produced a second artifact from one file before this.
+
+**Sized by measurement, not guesswork**, over the 58 real exports at `~/Documents/3d printing copy`
+(gzipped): bounding boxes alone are **median 0.6 KB / worst 15 KB**; full outlines **12 KB / 734 KB**;
+outlines thinned 3:1 **5 KB / 281 KB**. Server parse+walk: median 7 ms, worst 436 ms. Two findings
+shaped the payload — **JSON beats shipping the SVG by up to ~4,000×** (`metal test 5.lbrn2` is
+1.45 MB gzipped as SVG and 0.1 KB as geometry, because the SVG inlines the placed photo's base64),
+and **the biggest files are the cheapest** (`pics.lbrn2` is 24 MB holding 2 shapes; its cost is
+fetching bytes, not parsing them — which is why the work belongs in a job, not a request).
+`rake lbrn:geometry_report[<dir>]` reproduces the table. Current reading: 58 files, no skips,
+median 5.7 KB / 7.9 ms, worst 284.6 KB.
+
+**Nine guards on this branch could not fail for the reason they existed**, and every one was found
+by mutation-checking rather than by reading. Recorded because the pattern is more useful than any
+individual bug — the full list is in
+`docs/superpowers/plans/2026-08-06-lightburn-shape-dimensions.md` under "Corrections made during
+execution":
+
+- The bezier-circle fixture was never asserted to be **round**. Its bbox is pinned by four on-axis
+  vertices, so swapping the `c0`/`c1` handles yields a **four-lobed shape with radii 4.14–10.0**
+  and all nine assertions stay green.
+- A mutation that changed **which** object id was shared rather than **whether** — with one
+  `<Shape>` in the fixture, both behaviours are indistinguishable.
+- Fixing that opened a hole in the *other* mutation: ids `[1, 2, 2]` have the same unique count
+  **and** the same density as the correct `[1, 1, 2]`. Only a positional comparison separates them.
+- The union-to-`job_size` guard could not catch a measure-after-thinning bug, for a reason worth
+  more than the gap: **`BEZIER_SAMPLES % DECIMATE_STRIDE == 0`**, so decimation drops only
+  intermediate curve samples and never an original vertex. Now asserted directly.
+- `CIRCLE_TOLERANCE` was settable to **1,000,000** with everything green.
+- Four payload fields (`job`'s origin, `c`, `i`, `PRECISION`) were asserted with `key?` rather than
+  by value — including `i`, the only thing standing behind the bitmap-exclusion promise.
+- A "user does not own it" test used a node id existing **nowhere**, so it 404'd either way.
+- Two bugs in the plan's own controller code, found by running it: calling `Enqueue` unconditionally
+  on a poll makes the action's `"failed"` branch **dead code** and re-enqueues a doomed render on
+  every poll; and a plain `get` defaults to `:html`, so `RecordNotFound` answered **302 to
+  `files_path`** rather than 404.
+- `perform_enqueued_jobs { get file_path(...) }` cannot make a thumbnail ready — the block form only
+  runs jobs enqueued *during* the block, and `#show` enqueues nothing.
+
+**The through-line: an aggregate assertion — count, uniq, density, sum, or a union over a whole
+document — is the shape most likely to be green over a wrong answer.** Six of the nine were one.
+Four were caught by an implementer reporting an honest *negative* result on a mutation the plan
+predicted would fail, rather than adjusting the test until it went red.
+
+**Known gap, recorded rather than papered over:** `draw`'s paint-order rule (contours appended in
+descending bbox-area order, so the browser's topmost-wins dispatch selects the smallest containing
+shape) is **untested**. `bezier-circle.lbrn2`'s two shapes are equal-area and disjoint, so neither
+ever covers the other and the mutation stays green. Catching it needs a nested fixture — a plate
+with a hole. Noted in `test/system/lbrn_measure_test.rb`.
+
+Invariants: **CLAUDE.md §14h**. Spec and plan:
+`docs/superpowers/specs/2026-08-06-lightburn-shape-dimensions-design.md`,
+`docs/superpowers/plans/2026-08-06-lightburn-shape-dimensions.md`.
+
+---
+
+## 2026-08-05: a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
 
 Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
 but not v4?** Because **v4 was saved twice.** Reproduced exactly —
