@@ -1070,6 +1070,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
   file until this. `RendererContractTest` still passes because its `render_with` never sends
   `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
+- **A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT.** `pending` exists so a user
+  never sees an artifact of the PREVIOUS CONTENT labelled as the current file — a lie the spinner
+  honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
+  file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
+  on a page that **does not poll**, so it stayed a spinner until someone reloaded, and read as
+  "generating preview is broken".
+- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
+  `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
+  row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
+  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture on a
+  page that doesn't poll. Same mechanism, opposite right answers; do not unify them.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but the only things
   that CALL it for a thumbnail are the index's `backfill_thumbnails` and (now) `#show`. Backfill

@@ -302,12 +302,19 @@ class FilesController < ApplicationController
     revision = Maker::Previews::Enqueue.revision_for_name(node.name, "geometry")
     preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
                                                   kind: "geometry", renderer_revision: revision)
-    preview ||= Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
-                                              name: node.name, version_id: token, kind: "geometry")
-    # nil = no renderer for this filename. Terminal and honest: the Measure button is only
-    # rendered for .lbrn/.lbrn2, so reaching here otherwise is a client bug, not a wait.
-    return render json: { status: "unsupported", error: "no geometry for #{node.name}" } if preview.nil?
-
+    # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
+    # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
+    # rebuild, because a thumbnail is a PICTURE of this same file and the detail page does not poll
+    # — blanking it would strand a spinner there. Geometry is the opposite on both counts: it is
+    # the DATA the client measures and draws from, so an older build's payload is wrong rather than
+    # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
+    # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
+    # the revision check exists to stop.
+    if preview.nil?
+      Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                    name: node.name, version_id: token, kind: "geometry")
+      return render json: { status: "pending" }
+    end
     case preview.status
     when "ready"
       render json: { status: "ready",
