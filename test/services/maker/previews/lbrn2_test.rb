@@ -438,6 +438,38 @@ module Maker
           assert_in_delta 10.0, all_y.max - all_y.min, 0.01, "the two letters share one 10mm y-span"
         end
 
+        test "each_geometry yields an object id that groups a Text with its BackupPath" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("text-backup-path.lbrn2"))
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
+
+          assert_equal 2, ids.length
+          assert_equal 1, ids.uniq.length,
+                       "both BackupPath contours belong to ONE object (the Text), so alt-click reports the whole word"
+        end
+
+        test "each_geometry gives separate shapes separate object ids, and Groups consume none" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("real-export.lbrn2"))
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
+
+          # real-export.lbrn2: a Rect, two Paths (one an instance), and a Group holding one Path.
+          # The Group emits nothing itself, so four drawable shapes -> four distinct ids.
+          assert_equal 4, ids.length
+          assert_equal 4, ids.uniq.length, "each non-Group Shape gets its own object id"
+        end
+
+        test "the existing callers are unaffected by the new yielded value" do
+          %w[real-export.lbrn2 sample.lbrn2 laser-settings.lbrn2].each do |name|
+            bytes = fixture(name)
+            doc = Maker::Previews::Lbrn2.parse_document(bytes)
+            # job_size destructures 4 params, to_svg 5. Ruby block arity is lenient, so a 6th
+            # value must change neither. This is CLAUDE.md's one-traversal rule, asserted.
+            assert Maker::Previews::Lbrn2.job_size(doc), "#{name} must still report a job size"
+            assert_match(/<svg/, Maker::Previews::Lbrn2.to_svg(bytes), "#{name} must still render SVG")
+          end
+        end
+
         def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
       end
     end

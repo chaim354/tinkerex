@@ -105,17 +105,31 @@ module Maker
 
       # THE one traversal, shared with LbrnMetadata so the thumbnail and the reported job size
       # can never disagree. Yields every drawable leaf as
-      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil)
+      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id)
       # with the points already transformed into SVG space (composed affine, then Y-flipped).
       #
-      # The last two are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
-      # measuring caller (`job_size`) reads only the points and is correct ignoring both, which is
-      # what lets an ellipse stay exact and a bitmap show its photo without either of them
-      # changing what the file measures.
+      # The last three are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
+      # measuring caller (`job_size`) reads only the points and is correct ignoring all of them,
+      # which is what lets an ellipse stay exact, a bitmap show its photo, and a measuring client
+      # group contours by object without any of them changing what the file measures.
+      #
+      # `object_id` counts NON-GROUP `<Shape>` elements in document order. A Group emits nothing
+      # of its own — walk_shapes recurses into <Children> and `next`s — so it consumes no id, which
+      # is what keeps a group transparent to measurement exactly as it is to drawing. A Text's
+      # <BackupPath> deliberately REUSES its parent Text's id: the outline IS the text, so
+      # alt-clicking one letter must report the whole word rather than one contour of it.
       def each_geometry(doc, &block)
         return if doc.root.nil?
 
-        walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), &block)
+        walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), Counter.new, &block)
+      end
+
+      # A mutable counter threaded through the recursive walk. A plain Integer would be copied
+      # into each recursive frame, so a Group's children would restart the numbering and two
+      # different shapes could share an id.
+      class Counter
+        def initialize = @n = 0
+        def succ! = (@n += 1)
       end
 
       # The drawn extent in mm, or nil when there is no geometry. Lives HERE, beside the walk it
@@ -169,39 +183,44 @@ module Maker
       # usually identity-transformed coordinates. A flat `//Shape` sweep sees the children but
       # drops the transform that positions them, and separately hands the Group itself every
       # descendant vertex (via `.//VertList` or `shape.text`), drawing a scribble through them.
-      def walk_shapes(parent, parent_xform, index, hidden, &block)
+      def walk_shapes(parent, parent_xform, index, hidden, counter, &block)
         parent.xpath("./Shape").each do |shape|
           world = compose(parent_xform, shape_xform(shape))
 
           if shape["Type"] == "Group"
             kids = shape.at_xpath("./Children")
-            walk_shapes(kids, world, index, hidden, &block) if kids
+            walk_shapes(kids, world, index, hidden, counter, &block) if kids
             next
           end
 
           # Before the BackupPath below, so hiding a Text hides its outline too.
           next if hidden.include?(cut_key(shape["Type"], shape["CutIndex"]))
 
-          emit_shape(shape, world, index, &block)
+          object_id = counter.succ!
+          emit_shape(shape, world, index, object_id, &block)
 
-          # A Text stores its rendered outline in `<BackupPath>`. Two things about it:
+          # A Text stores its rendered outline in `<BackupPath>`. Three things about it:
           #
           # It is NOT a `<Shape>`, so a `//Shape` sweep never sees text at all — all 74 Text
           # shapes in this corpus contributed nothing to any bounding box.
           #
-          # And its `<XForm>` is already in DOCUMENT space: it composes with nothing, not the
+          # Its `<XForm>` is already in DOCUMENT space: it composes with nothing, not the
           # Text's own transform and not the groups around it. 64 of the 74 write the very
           # same matrix as their Text, so composing the pair doubles the translation — that
           # is what threw "Polster Library" clean off its sign. The other 10 settle what the
           # value actually is: in logo.lbrn2 a Text at (99.216, -127.493) sits inside a group
           # scaled 0.825 at (249.244, 245.2), and 0.825 * 99.216 + 249.244 = 331.09 is
           # exactly the BackupPath's own e — it is group ∘ text, already flattened.
+          #
+          # And it shares its Text's object_id rather than taking a new one, because the
+          # outline IS the text. Give it its own and alt-clicking a letter reports that
+          # letter's contour instead of the word.
           bp = shape.at_xpath("./BackupPath")
-          emit_shape(bp, shape_xform(bp), index, &block) if bp
+          emit_shape(bp, shape_xform(bp), index, object_id, &block) if bp
         end
       end
 
-      def emit_shape(shape, world, index)
+      def emit_shape(shape, world, index, object_id)
         cut = shape["CutIndex"]
 
         case shape["Type"]
@@ -213,7 +232,7 @@ module Maker
           corners = [ [ -w / 2, -h / 2 ], [ w / 2, -h / 2 ], [ w / 2, h / 2 ], [ -w / 2, h / 2 ] ]
           pts = corners.map { |(x, y)| apply(world, x, y) }
           image = shape["Type"] == "Bitmap" ? bitmap_image(shape, world, pts) : nil
-          yield cut, pts + [ pts.first ], true, nil, image
+          yield cut, pts + [ pts.first ], true, nil, image, object_id
         when "Ellipse"
           rx = num(shape["Rx"]); ry = num(shape["Ry"])
           return if rx.nil? || ry.nil?
@@ -226,11 +245,11 @@ module Maker
             t = i * (2 * Math::PI / ELLIPSE_SAMPLES)
             apply(world, rx * Math.cos(t), ry * Math.sin(t))
           end
-          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil)
+          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil), nil, object_id
         when "Path", "Line"
           verts, prims = index.geometry_for(shape)
           polylines(verts, prims).each do |pts, closed|
-            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil
+            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil, nil, object_id
           end
         end
       end
