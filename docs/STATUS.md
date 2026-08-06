@@ -140,13 +140,15 @@ seam end to end**: `model_glb` has been declared in `Preview::KINDS` all along b
 
 **Sized by measurement, not guesswork**, over the 58 real exports at `~/Documents/3d printing copy`
 (gzipped): bounding boxes alone are **median 0.6 KB / worst 15 KB**; full outlines **12 KB / 734 KB**;
-outlines thinned 3:1 **5 KB / 281 KB**. Server parse+walk: median 7 ms, worst 436 ms. Two findings
+outlines thinned 3:1 **5 KB / 281 KB** — the scheme #145 deletes; RDP at 0.01 mm supersedes it at
+**8 KB / 208 KB**, smaller AND correct. Server parse+walk: median 7 ms, worst 436 ms. Two findings
 shaped the payload — **JSON beats shipping the SVG by up to ~4,000×** (`metal test 5.lbrn2` is
 1.45 MB gzipped as SVG and 0.1 KB as geometry, because the SVG inlines the placed photo's base64),
 and **the biggest files are the cheapest** (`pics.lbrn2` is 24 MB holding 2 shapes; its cost is
 fetching bytes, not parsing them — which is why the work belongs in a job, not a request).
 `rake lbrn:geometry_report[<dir>]` reproduces the table. Current reading: 58 files, no skips,
-median 5.7 KB / 7.9 ms, worst 284.6 KB.
+median 5.7 KB / 7.9 ms, worst 284.6 KB. (Superseded by #145 and #149 below — the shipped figures
+are median 8.0 KB and a build ~32% faster on the box.)
 
 **Nine guards on this branch could not fail for the reason they existed**, and every one was found
 by mutation-checking rather than by reading. Recorded because the pattern is more useful than any
@@ -163,7 +165,9 @@ execution":
   **and** the same density as the correct `[1, 1, 2]`. Only a positional comparison separates them.
 - The union-to-`job_size` guard could not catch a measure-after-thinning bug, for a reason worth
   more than the gap: **`BEZIER_SAMPLES % DECIMATE_STRIDE == 0`**, so decimation drops only
-  intermediate curve samples and never an original vertex. Now asserted directly.
+  intermediate curve samples and never an original vertex. **That reasoning was wrong in general
+  and #145 is the correction** — it holds only for an all-bezier contour, which
+  `bezier-circle.lbrn2` happens to be.
 - `CIRCLE_TOLERANCE` was settable to **1,000,000** with everything green.
 - Four payload fields (`job`'s origin, `c`, `i`, `PRECISION`) were asserted with `key?` rather than
   by value — including `i`, the only thing standing behind the bitmap-exclusion promise.
@@ -180,11 +184,68 @@ document — is the shape most likely to be green over a wrong answer.** Six of 
 Four were caught by an implementer reporting an honest *negative* result on a mutation the plan
 predicted would fail, rather than adjusting the test until it went red.
 
-**Known gap, recorded rather than papered over:** `draw`'s paint-order rule (contours appended in
-descending bbox-area order, so the browser's topmost-wins dispatch selects the smallest containing
-shape) is **untested**. `bezier-circle.lbrn2`'s two shapes are equal-area and disjoint, so neither
-ever covers the other and the mutation stays green. Catching it needs a nested fixture — a plate
-with a hole. Noted in `test/system/lbrn_measure_test.rb`.
+### What followed, same day, and why (PRs #145, #147, #149, #150, #151, #152, #153)
+
+The feature shipped and then took **seven more PRs**, every one started by the user looking at the
+real thing. Recorded together because the pattern is the lesson: each round was found by a person
+opening a page, and none by the suite.
+
+**#145 — curves and text were being mangled.** The drawing payload thinned contours by a fixed
+INDEX STRIDE, justified by `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`. True — but only for an
+all-bezier contour: `polylines` appends 12 points per `B` segment and exactly **one** per `L`, so a
+single straight edge shifts every later index and the alignment collapses. For an `L` segment that
+one point IS a vertex, so dropping it cuts the corner off. Measured: **1148 of 5259 thinned
+contours displaced by >5% of their own size, worst case 58.7 mm.** Replaced with Ramer-Douglas-
+Peucker at 0.01 mm — error-bounded by construction, corners kept by definition, and *smaller*
+(208 KB worst case against the stride's 285). `bezier-circle.lbrn2` is all-bezier, which is exactly
+why the guard asserting that coupling passed throughout.
+
+**#147 — the fix didn't reach anyone.** Four already-measured files kept serving mangled curves
+after the deploy and had to be destroyed by hand. A preview is stale on **two axes** and only
+`version_id` (content) was checked; nothing asked whether the CODE had moved. Added
+`maker_previews.renderer_revision`, `NOT NULL DEFAULT 1` so adding the column didn't itself trigger
+a full-library rebuild, and per-KIND so a geometry fix doesn't re-render ~1400 thumbnails.
+
+**#149 — first load was slow.** Profiled on the box rather than guessed: `build` was 2,763 ms of
+which the WALK was 2,123 — the existing parser, not the Measure work. `GeometryIndex` parsed every
+inline `<VertList>` up front and `geometry_for` then re-parsed each one at emit: 2.5 MB of text,
+twice. Consulting the index first cut it to 1,878 ms (**-32%** on the box). The bigger user-facing
+win was the poll schedule: `[400, 800, 1500, 2500]` checks CUMULATIVELY at 400/1200/2700/5200 ms,
+so a 3.5 s render went unnoticed until 5.2 s. **Measured and dropped:** skipping the index for
+documents that never instance paid +0% and was removed rather than carried.
+
+**#150 — paint order, and the palette.** `nested-plate.lbrn2` (a plate and a hole on a SHARED
+centre) finally made the hit-test rule testable; reversing the sort turns it red. And CLAUDE.md's
+refusal to hard-code LightBurn's palette was relitigated deliberately — the Measure view now draws
+OUR outlines, and the values are no longer guesses: 16 of 30 were RECOVERED from the embedded
+thumbnails by mapping contours into pixel space and reading what LightBurn painted. The colour
+ships in the payload (one definition) as an SVG PRESENTATION ATTRIBUTE, so `--selected` can still
+outrank it.
+
+**#151 — layers labelled by colour.** Three arms: a user's own name wins; else the colour's name;
+else the file's label VERBATIM — reconstructing it as `C#{index}` loses LightBurn's zero padding
+and turns `C00` into `C0`, which a pre-existing flow test caught.
+
+**#152 — the revision check was unreachable.** `Enqueue` compared revisions correctly from day one,
+but `thumbnails_for` matched on `(kind, node_id, version_id)` alone, so a stale row counted as
+present and backfill skipped it; `#show` never enqueued at all. **172 of 174 LightBurn thumbnails
+sat at revision 1 through two deploys that had bumped it.** Every test of the mechanism passed
+throughout — they all called `Enqueue` directly and none opened a page.
+
+**#153 — and that fix broke the preview.** Blanking a stale row to `pending` is right for a CONTENT
+change (the artifact depicts a different file) and wrong for a RENDERER one (same file, older
+code): the file page doesn't poll, so it stranded a spinner. Now only content blanks. A failing
+test then caught that geometry needs the opposite — it is DATA the client measures from, and its
+client DOES poll — so `#geometry` reports `pending` whenever it had to enqueue, without reading the
+row's status. Same mechanism, opposite right answers.
+
+**The through-line, and the reason this entry is long:** eleven guards across this arc could not
+fail for the reason they existed, and the recurring shape is an assertion that holds whether or not
+the code is right — an aggregate (count, uniq, density, a union over a document), a presence check
+where a value was meant, an attribute where the computed style was meant, or a fixture whose two
+cases are indistinguishable (a CutIndex 0 contour whose palette colour equals the fallback). The
+last three rounds reached the user because **every verification was server-side**: `rails runner`
+and headless Chrome, never a browser. Both #152 and #153 were invisible to that.
 
 Invariants: **CLAUDE.md §14h**. Spec and plan:
 `docs/superpowers/specs/2026-08-06-lightburn-shape-dimensions-design.md`,
