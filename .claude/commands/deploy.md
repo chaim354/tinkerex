@@ -66,9 +66,14 @@ A zero exit means kamal finished, not that the app works. Check all three:
 # Every container should now carry the NEW git SHA
 ssh kamal1@192.168.1.95 "docker ps --format '{{.Names}}\t{{.Status}}' | grep '^tinkerex-web'"
 
-# Health per backend, through the proxy's host routing
+# Health per backend, through the proxy's host routing. BOTH suffixes, not just .local: each
+# deployment registers two names (deploy.yml's `proxy:` comment says why), and a missing or
+# fat-fingered `.home` entry deploys perfectly green — kamal-proxy simply 404s that name later,
+# when someone tries to reach it over Tailscale from a phone. Probe what you rely on.
 for h in chunk share s3; do
-  ssh kamal1@192.168.1.95 "curl -s -o /dev/null -w '$h %{http_code}\n' -H 'Host: $h.tinkerex.local' http://localhost/up"
+  for d in local home; do
+    ssh kamal1@192.168.1.95 "curl -s -o /dev/null -w '$h.$d %{http_code}\n' -H 'Host: $h.tinkerex.$d' http://localhost/up"
+  done
 done
 ```
 

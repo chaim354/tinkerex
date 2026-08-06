@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-06 (**Click a shape in a .lbrn2 and it tells you how big it is**)
+**Updated:** 2026-08-06 (**Each Unraid backend gets a second hostname, reachable over Tailscale**)
 
 ## What this file is
 
@@ -60,7 +60,62 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-06): click a shape in a .lbrn2 and it tells you how big it is (branch `claude/lightburn-shape-dimensions`)
+## Latest (2026-08-06): each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
+
+**The question that started it:** *"is there a way for me to access the unraid share version
+website through my tailscale network?"* Yes — and the obstacle was never the network. All three
+backends sit behind one kamal-proxy that routes on the **`Host` header** (`deploy.yml`'s `proxy:`),
+so reaching the box by its Tailscale IP, or via a subnet router advertising `192.168.1.0/24`, gets
+packets to the box and then **404s** — an unregistered Host, not a connection failure. Fix the
+name and it works.
+
+**Why a second name rather than a DNS rewrite for the existing one.** With AdGuard on the box the
+obvious move is a rewrite for `share.tinkerex.local` → done. It does not work: **`.local` is
+reserved for mDNS (RFC 6762)**, and macOS/iOS resolve it through Bonjour without ever consulting
+the configured resolver — so the rewrite is silently ignored on exactly the devices that cannot
+edit `/etc/hosts`. `.home` is not mDNS-hijacked, so an ordinary DNS server can answer for it.
+
+**What changed — config only, no app code.** Each of the three destinations moves from
+`proxy.host` (singular) to `proxy.hosts` (plural) and registers both names:
+
+| destination | names registered |
+|---|---|
+| `deploy.yml` (chunk) | `chunk.tinkerex.local`, `chunk.tinkerex.home` |
+| `deploy.share.yml` | `share.tinkerex.local`, `share.tinkerex.home` |
+| `deploy.s3.yml` | `s3.tinkerex.local`, `s3.tinkerex.home` |
+
+`.local` is **kept**, not replaced — every existing client reaches these through an `/etc/hosts`
+entry, and dropping the old name would break them the moment the new one landed. `deploy.ovh.yml`
+sets no `proxy` block at all and is untouched.
+
+Plural `hosts` is the supported spelling on the pinned kamal (2.12.0), verified against the tag
+rather than assumed: `def hosts; proxy_config["hosts"] || proxy_config["host"]&.split(","); end`.
+
+**The verify probe was widened with it, and that is the load-bearing part.** `.claude/commands/
+deploy.md` health-checked `-H 'Host: $h.tinkerex.local'` only. A missing or fat-fingered `.home`
+entry deploys **perfectly green** under that probe and fails later, from a phone, as a bare 404 —
+this repo's recorded failure shape (a green check over something that never worked). It now loops
+both suffixes, six checks instead of three.
+
+**Not done here, and deliberately.** The rest of the path is box-side configuration, not repo
+state: the AdGuard rewrites, Tailscale split-DNS pointed at AdGuard, and the nginx/NPM proxy host
+(forward to `192.168.1.95:80` — kamal-proxy; Puma's 3000 is not published on the VM). Two findings
+recorded while tracing it:
+
+- **`FORCE_SSL=1` would be safe behind NPM**, which is not the usual answer for a proxy in front of
+  a proxy. The kamal config sets no `ssl:`, so kamal-proxy defaults `forward-headers` to
+  `!TLSEnabled` — **on** — and it preserves an inbound `X-Forwarded-Proto` rather than overwriting
+  it. NPM's `https` therefore reaches Rails intact and `assume_ssl` believes it, so no redirect
+  loop. Left unset for now: nothing terminates TLS yet, and no public CA will sign a `.home` name.
+- **`crypto.subtle` (`lib/chunk_upload.js:5`) is a secure-context API reached only from
+  `uploadChunkFile`.** Share is `port_writable`, so its uploads go through `uploadPortFile` — a
+  plain FormData POST — and are fully functional over plain HTTP. The same line implies browser
+  uploads on the **chunk** deployment are broken at `http://chunk.tinkerex.local` today, on the
+  LAN, independent of any of this. **Not verified in a browser** — recorded as a lead, not a fact.
+
+---
+
+## 2026-08-06: click a shape in a .lbrn2 and it tells you how big it is (branch `claude/lightburn-shape-dimensions`)
 
 **The question that started it:** *"in the lightburn parser are you calculating the size of each
 shape, and is there any way we can implement that if you click on a shape it tells you its
