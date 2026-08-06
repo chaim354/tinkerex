@@ -529,6 +529,32 @@ module Maker
           end
         end
 
+        # --- The `kind:` seam (Task 5) -------------------------------------------------------
+        # `kind` selects the ARTIFACT: "geometry" is the JSON coordinate payload behind the
+        # Measure view, and every other value (including the default) is the existing
+        # thumbnail/PNG path. Pinned here, beside the dialect tests, because real-export.lbrn2
+        # is the one fixture whose shape count ("geometry") and whose "still a PNG" path
+        # (default) are both already asserted elsewhere in this file.
+
+        test "render(kind: geometry) returns the JSON payload" do
+          result = Maker::Previews::Lbrn2.render(fixture("real-export.lbrn2"), kind: "geometry")
+
+          assert_equal "application/json", result[:content_type]
+          assert_equal 4, JSON.parse(result[:bytes])["shapes"].length
+        end
+
+        test "render defaults to the thumbnail and is unchanged by the new kwarg" do
+          result = Maker::Previews::Lbrn2.render(fixture("real-export.lbrn2"))
+
+          assert_equal "image/png", result[:content_type]
+          assert result[:metadata].present?, "the thumbnail path still carries LbrnMetadata"
+        end
+
+        test "geometry is an accepted preview kind and json maps to a .json asset" do
+          assert_includes Maker::Preview::KINDS, "geometry"
+          assert_equal ".json", Maker::GeneratePreviewJob.new.send(:asset_ext, "application/json")
+        end
+
         def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
       end
     end

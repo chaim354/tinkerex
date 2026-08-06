@@ -51,7 +51,14 @@ module Maker
       # <Thumbnail Source="base64png"> attribute, which is far better than re-drawing the geometry
       # as outlines. Fall back to the hand-rolled geometry parser (-> SVG -> PNG) only when a file
       # has no embedded thumbnail (older LightBurn versions, or a hand-authored file).
-      def render(lbrn2_bytes, size: 512)
+      #
+      # `kind` selects the ARTIFACT, mirroring Mesh's branch. "geometry" is a JSON payload of
+      # coordinates for the browser's Measure view — deliberately NOT an image, which is why
+      # RendererContractTest still passes: that test never passes `kind`, so it exercises the
+      # thumbnail path and its "must be an inline-safe raster" assertion stays true of it.
+      def render(lbrn2_bytes, size: 512, kind: "thumbnail")
+        return Maker::Previews::LbrnGeometry.render(lbrn2_bytes) if kind == "geometry"
+
         meta = Maker::Previews::LbrnMetadata.parse(lbrn2_bytes)
         img = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes) ||
               Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
