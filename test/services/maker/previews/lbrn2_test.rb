@@ -424,7 +424,7 @@ module Maker
           end
         end
 
-        test "text-backup-path fixture yields two contours from the BackupPath" do
+        test "text-backup-path fixture yields two contours from the BackupPath, plus the Rect beside it" do
           doc = Maker::Previews::Lbrn2.parse_document(fixture("text-backup-path.lbrn2"))
           contours = []
           Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, *| contours << pts }
@@ -433,6 +433,9 @@ module Maker
                        "2 contours from the Text's BackupPath (the Text itself emits nothing) " \
                        "+ 1 from the Rect placed beside it for the object-id density check below"
 
+          # Measured over all THREE contours, including the Rect's — this only still reads "the
+          # two letters" because the Rect sits INSIDE their span (see the fixture's own comment).
+          # If the Rect ever moved outside it, these numbers would move and say so loudly.
           all_x = contours.flatten(1).map(&:first)
           all_y = contours.flatten(1).map(&:last)
           assert_in_delta 30.0, all_x.max - all_x.min, 0.01, "the two letters span 30 mm"
@@ -467,7 +470,9 @@ module Maker
           # look like "two the same" and nothing could tell them apart — which is why the Rect
           # had to be added at all.
           assert_equal (1..ids.uniq.length).to_a, ids.uniq.sort,
-                       "object ids must be dense from 1 — a gap means a tick was burned on an unyielded shape"
+                       "in THIS fixture the ids must be dense from 1 — a gap would mean the " \
+                       "BackupPath burned a fresh tick instead of reusing the Text's (real files " \
+                       "are NOT guaranteed dense; see each_geometry's doc comment)"
         end
 
         test "each_geometry gives separate shapes separate object ids, and Groups consume none" do
@@ -481,13 +486,45 @@ module Maker
           assert_equal 4, ids.uniq.length, "each non-Group Shape gets its own object id"
         end
 
+        test "a shape after a Group keeps counting where the group left off" do
+          # real-export.lbrn2 CANNOT catch a Counter regression: its Group is the LAST shape, so
+          # nothing ever yields after a group returns, which is the only place either bug below is
+          # observable. This fixture puts a plain Shape after the Group specifically to expose it.
+          xml = <<~XML
+            <LightBurnProject AppVersion="1.6.00">
+              <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 0 0</XForm></Shape>
+              <Shape Type="Group" CutIndex="0">
+                <XForm>1 0 0 1 0 0</XForm>
+                <Children>
+                  <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 20 0</XForm></Shape>
+                </Children>
+              </Shape>
+              <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 40 0</XForm></Shape>
+            </LightBurnProject>
+          XML
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(Maker::Previews::Lbrn2.parse_document(xml)) { |_c, _p, _k, _e, _i, oid| ids << oid }
+          # A Group consuming a tick gives [1, 3, 4]; a plain-Integer counter gives [1, 2, 2]
+          # (the outer frame's own counter rewinds to 1 when the recursive call returns, so the
+          # Rect after the Group repeats the id already spent inside it).
+          assert_equal [ 1, 2, 3 ], ids
+        end
+
         test "the existing callers are unaffected by the new yielded value" do
-          %w[real-export.lbrn2 sample.lbrn2 laser-settings.lbrn2].each do |name|
+          # job_size destructures 4 params, to_svg 5. Ruby block arity is lenient, so a 6th value
+          # must change neither — asserted as an EXACT size, not merely "truthy": a caller
+          # silently reading the wrong positional param (e.g. treating `image` as `object_id`)
+          # would still return SOME hash and pass a weaker check without ever being wrong in a
+          # way that fails it.
+          sizes = {
+            "real-export.lbrn2" => { "width" => 110.0, "height" => 110.0 },
+            "sample.lbrn2" => { "width" => 100.0, "height" => 40.0 },
+            "laser-settings.lbrn2" => { "width" => 40.0, "height" => 20.0 }
+          }
+          sizes.each do |name, expected|
             bytes = fixture(name)
             doc = Maker::Previews::Lbrn2.parse_document(bytes)
-            # job_size destructures 4 params, to_svg 5. Ruby block arity is lenient, so a 6th
-            # value must change neither. This is CLAUDE.md's one-traversal rule, asserted.
-            assert Maker::Previews::Lbrn2.job_size(doc), "#{name} must still report a job size"
+            assert_equal expected, Maker::Previews::Lbrn2.job_size(doc), "#{name} job size must be unchanged"
             assert_match(/<svg/, Maker::Previews::Lbrn2.to_svg(bytes), "#{name} must still render SVG")
           end
         end

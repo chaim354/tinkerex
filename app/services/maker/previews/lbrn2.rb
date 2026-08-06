@@ -108,28 +108,27 @@ module Maker
       #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id)
       # with the points already transformed into SVG space (composed affine, then Y-flipped).
       #
-      # The last three are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
-      # measuring caller (`job_size`) reads only the points and is correct ignoring all of them,
-      # which is what lets an ellipse stay exact, a bitmap show its photo, and a measuring client
-      # group contours by object without any of them changing what the file measures.
+      # The last two are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
+      # measuring caller (`job_size`) reads only the points and is correct ignoring both, which is
+      # what lets an ellipse stay exact and a bitmap show its photo without either of them
+      # changing what the file measures.
       #
       # `object_id` counts NON-GROUP `<Shape>` elements in document order. A Group emits nothing
-      # of its own — walk_shapes recurses into <Children> and `next`s — so it consumes no id, which
-      # is what keeps a group transparent to measurement exactly as it is to drawing. A Text's
-      # <BackupPath> deliberately REUSES its parent Text's id: the outline IS the text, so
-      # alt-clicking one letter must report the whole word rather than one contour of it.
+      # of its own — walk_shapes recurses into <Children> and `next`s — so it consumes no id. A
+      # Text's <BackupPath> deliberately REUSES its parent Text's id rather than taking a fresh
+      # one: the outline IS the text, so the two must group as one object (why a fresh id here is
+      # a real bug, not just untidy: the "groups a Text with its BackupPath" test).
+      #
+      # IDS ARE DISTINCT PER OBJECT, NOT DENSE — never assume 1..N. The counter ticks in
+      # `walk_shapes` BEFORE `emit_shape` is called, and `emit_shape` returns without yielding for
+      # a Rect/Bitmap missing W/H, an Ellipse missing Rx/Ry, or a Text with no BackupPath — each
+      # such shape still spends an id nothing ever uses. A real document can yield ids as sparse
+      # as `[3]`. A caller that groups by object_id (Task 3) may rely on equality only, never on
+      # contiguity.
       def each_geometry(doc, &block)
         return if doc.root.nil?
 
         walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), Counter.new, &block)
-      end
-
-      # A mutable counter threaded through the recursive walk. A plain Integer would be copied
-      # into each recursive frame, so a Group's children would restart the numbering and two
-      # different shapes could share an id.
-      class Counter
-        def initialize = @n = 0
-        def succ! = (@n += 1)
       end
 
       # The drawn extent in mm, or nil when there is no geometry. Lives HERE, beside the walk it
@@ -142,6 +141,20 @@ module Maker
         each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
         w, h = bbox.dimensions
         w && { "width" => w.round(1), "height" => h.round(1) }
+      end
+
+      # A mutable counter threaded through the recursive walk, `walk_shapes`' only user. A plain
+      # Integer would be COPIED into each recursive frame: a Group's children would correctly
+      # CONTINUE numbering from the parent's current value, but every increment they make is
+      # invisible to the parent once the recursive call returns — Ruby integers are immutable, and
+      # the return value goes unused. So the PARENT'S OWN counter REWINDS to its pre-Group value,
+      # and the next sibling after the Group reuses an id already spent inside it: [1, 2, 2], not
+      # [1, 2, 3]. Pinned by "a shape after a Group keeps counting where the group left off" —
+      # real-export.lbrn2 cannot catch this at all, because its Group is the LAST shape and
+      # nothing ever yields after one returns.
+      class Counter
+        def initialize = @n = 0
+        def succ! = (@n += 1)
       end
 
       # Layers LightBurn itself does not draw. Two things here are easy to get wrong, and each
@@ -199,7 +212,7 @@ module Maker
           object_id = counter.succ!
           emit_shape(shape, world, index, object_id, &block)
 
-          # A Text stores its rendered outline in `<BackupPath>`. Three things about it:
+          # A Text stores its rendered outline in `<BackupPath>`. Two things about it:
           #
           # It is NOT a `<Shape>`, so a `//Shape` sweep never sees text at all — all 74 Text
           # shapes in this corpus contributed nothing to any bounding box.
@@ -212,9 +225,8 @@ module Maker
           # scaled 0.825 at (249.244, 245.2), and 0.825 * 99.216 + 249.244 = 331.09 is
           # exactly the BackupPath's own e — it is group ∘ text, already flattened.
           #
-          # And it shares its Text's object_id rather than taking a new one, because the
-          # outline IS the text. Give it its own and alt-clicking a letter reports that
-          # letter's contour instead of the word.
+          # It also reuses its Text's object_id here rather than taking a fresh one — see
+          # each_geometry's doc comment above for why.
           bp = shape.at_xpath("./BackupPath")
           emit_shape(bp, shape_xform(bp), index, object_id, &block) if bp
         end

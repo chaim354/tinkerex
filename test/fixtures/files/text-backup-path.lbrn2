@@ -11,16 +11,10 @@
        3. The BackupPath's PrimList yields TWO disjoint contours (two "letters"),
           which is what makes this the object-grouping fixture: both contours must
           share the Text's object id, so alt-click reports the whole word.
-       4. THE RECT IS NOT DECORATION. With only the Text in this file, "the BackupPath
-          reuses its parent Text's counter tick" and "the BackupPath burns a fresh tick
-          of its own" are INDISTINGUISHABLE from outside — both give two contours sharing
-          ONE id, just a different number, because a Text yields no geometry of its own to
-          expose which tick got spent on it. The Text's tick is observable only if
-          something else follows and inherits the NEXT number — that something is this
-          Rect. Correct: ids [1, 1, 2] (BackupPath reuses tick 1, Rect gets 2 — dense, no
-          gap). Wrong: ids [2, 2, 3] (BackupPath burns its own tick 2, the Text's tick 1
-          goes unspent — a GAP at 1). The mutation-check for the reuse rule asserts exactly
-          that density, not just that the two BackupPath contours agree with each other.
+       4. THE RECT IS NOT DECORATION — it is the second reference point that makes the
+          Text's counter tick observable at all; with only the Text in this file, "reuses
+          its parent's tick" and "burns a fresh one" are indistinguishable from outside.
+          Full argument, both id sequences: the "groups a Text with its BackupPath" test.
      Positioned at local (-3..3, -3..3) + XForm (+15, +5) = document x 12..18, y 2..8, so it
      sits INSIDE the Text's own 30 x 10 mm span and changes no span or job-size assertion.
      Contours: A x 0..10 y 0..10, B x 20..30 y 0..10.  Object bbox: 30 x 10 mm.
