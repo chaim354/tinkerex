@@ -1032,7 +1032,12 @@ class FilesController < ApplicationController
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
     return :model3d if %w[stl 3mf obj].include?(ext)
-    # A file we can render a server-side thumbnail for (dxf, lbrn2, step, stp, iges, igs, ...) but
+    # LightBurn -> the interactive Measure view (lbrnmeasure_controller.js), which supersedes the
+    # static thumbnail the way :model3d does for meshes. The thumbnail is still generated and is
+    # still what the page shows at rest — Measure is a button, not a replacement, because
+    # LightBurn's own embedded render is in colour and ours is black outlines.
+    return :lbrn if %w[lbrn lbrn2].include?(ext)
+    # A file we can render a server-side thumbnail for (dxf, step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

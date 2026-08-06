@@ -120,5 +120,55 @@ module Web
       get geometry_file_path(stranger.node_id)
       assert_response :not_found
     end
+
+    test "an lbrn2 file page offers the Measure surface" do
+      get file_path(@node_id)
+
+      assert_response :success
+      assert_select "[data-controller='lbrnmeasure']", 1
+      # VALUE, not just presence — an attribute pointing at the wrong URL is exactly the bug a
+      # presence check misses.
+      assert_select "[data-lbrnmeasure-url-value='#{geometry_file_path(@node_id)}']", 1
+      assert_select "button[data-action='lbrnmeasure#load']", 1
+    end
+
+    test "a non-lbrn file page does not" do
+      other = upload("drawing.dxf", file_fixture_bytes("sample.dxf"))
+      get file_path(other)
+
+      assert_response :success
+      assert_select "[data-controller='lbrnmeasure']", 0
+    end
+
+    # The :lbrn branch REPLACES the :thumbnail branch for these files, so everything that branch
+    # handled has to still work. A ready thumbnail is the resting state — Measure is a button,
+    # not a replacement.
+    #
+    # DIRECT ROW MANIPULATION, NOT `perform_enqueued_jobs { get file_path(@node_id) }` — the
+    # latter was tried first and does NOT work: #show never enqueues anything (it only reads the
+    # existing Preview row), so wrapping its GET in perform_enqueued_jobs has nothing to catch —
+    # the block only inlines jobs ENQUEUED DURING it, and the thumbnail job from setup's upload was
+    # already sitting in the queue before the block started (verified against activejob 8.1.3.1's
+    # TestAdapter: only a NEW #enqueue call checks the perform-inline flag). Confirmed empirically:
+    # that version left @thumbnail stuck at "pending" and failed this test for the wrong reason —
+    # same idiom as files_flow_test.rb's "the detail page shows a ready thumbnail for a CAD file".
+    test "the lbrn page still shows its thumbnail poster when one is ready" do
+      token = FileLayer.current.stat(@user, node_id: @node_id).content_token
+      preview = @user.maker_previews.find_by!(node_id: @node_id, version_id: token, kind: "thumbnail")
+      preview.update!(status: "ready")
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+
+      get file_path(@node_id)
+
+      assert_response :success
+      assert_select ".lbrn-measure-fallback img", 1
+    end
+
+    test "the lbrn page says so while the thumbnail is still generating" do
+      get file_path(@node_id)
+
+      assert_response :success
+      assert_select ".lbrn-measure-fallback", text: /Generating preview/
+    end
   end
 end
