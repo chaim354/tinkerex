@@ -173,6 +173,7 @@ module Maker
       when "image/png"         then ".png"
       when "image/jpeg"        then ".jpg"
       when "model/gltf-binary" then ".glb"
+      when "application/json"  then ".json"
       else ".bin"
       end
     end

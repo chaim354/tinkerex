@@ -1018,6 +1018,70 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
   from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
 
+### 14h. LightBurn shape measurement
+
+- **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; DECIMATION IS DRAWING-ONLY.**
+  `LbrnGeometry` thins contours over 32 points 3:1 to keep the payload small (the worst real file
+  drops 734 KB → 281 KB gzipped) and computes `b` and `d` **before** thinning. Measure after
+  thinning and every curve under-reports, silently, while every "does it draw" test stays green.
+- **`DECIMATE_STRIDE` IS COUPLED TO `Lbrn2::BEZIER_SAMPLES`, ACROSS TWO FILES, AND THE STRIDE MUST
+  DIVIDE THE SAMPLE COUNT.** 12 % 3 == 0, so an original LightBurn vertex lands on every kept index
+  and decimation drops only *intermediate curve samples* — never a vertex. That is why a thinned
+  curve keeps its extremes and its corners. Break the division and contour bboxes start moving,
+  silently. Asserted directly, because it is invisible from either file alone.
+- **THE PAYLOAD'S BBOXES MUST UNION TO `Lbrn2.job_size`** — one traversal, so the Measure view and
+  the Laser Settings panel cannot disagree; §14b's `LbrnMetadata` second-copy bug is the precedent.
+  But **a union is the weakest possible form of that assertion** and cannot catch a
+  measure-after-thinning bug: any per-shape error some other shape already bounds disappears into
+  it. It stayed green on three separate fixtures. The guard with teeth is **per-shape**, on a
+  fixture whose ellipse is not shadowed by a larger Rect.
+- **CIRCULARITY NEEDS THE 12-POINT FLOOR, NOT JUST THE RADIUS TEST.** A square's four corners are
+  all equidistant from its centre — as are any regular polygon's vertices — so radius variance
+  alone calls every square round. Measured: a `Rect` emits 5 points with radial spread **0.00000**
+  while a real bezier circle's 49 points spread **0.00263**, so the naive metric ranks the square
+  as *more* circular. A `Rect` emits 5, a bezier circle 49, an `Ellipse` 33. Accepted consequence:
+  a genuine 16-gon reports as round. `bezier-circle.lbrn2` pins both directions and **the square is
+  the assertion that carries the weight**.
+- **`each_geometry`'s 6th yielded value (`object_id`) counts NON-GROUP `<Shape>`s, and a Text's
+  `<BackupPath>` REUSES its parent's** — the outline *is* the text, so alt-clicking one letter must
+  report the whole word. A Group consumes no id. **Ids are DISTINCT PER OBJECT and nothing more —
+  never assume contiguity**: a shape that yields nothing (a Rect without W/H, an Ellipse without
+  Rx/Ry, a Text with no BackupPath) still spends a tick, so gaps are ordinary in a real file.
+- **Bitmap base64 is EXCLUDED from the geometry payload, deliberately.** It is the single reason
+  the payload is cheap: `metal test 5.lbrn2` is 1.45 MB gzipped as SVG and 0.1 KB as geometry JSON.
+  A measuring view needs the rectangle, not the photo. Restoring it re-inflates every
+  photo-engraving file by three orders of magnitude. `rake lbrn:geometry_report` is what notices —
+  no fixture is big enough to.
+- **A CORRUPT DOCUMENT RAISES; AN EMPTY ONE DOES NOT.** `LbrnGeometry` raises `ParseError` when
+  `doc.root` is nil, matching `to_svg`, so the job marks it `failed`. A document that parses with no
+  shapes returns the empty payload and goes `ready`. Collapse them and a corrupt file presents as a
+  working Measure view reading "No measurable geometry in this file" — a lie about the file.
+- **`geometry` IS THE FIRST KIND TO EXERCISE THE PREVIEW `kind` SEAM END TO END.** `model_glb` is
+  declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
+  file until this. `RendererContractTest` still passes because its `render_with` never sends
+  `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
+- **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`.** `Enqueue`
+  resets a `failed` row to `pending` and re-enqueues *whenever called* — right for a one-shot nudge
+  at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
+  **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
+  geometry preview is terminal until the content changes, which is honest because a transient
+  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals.
+- **`#geometry` RESCUES `RecordNotFound` LOCALLY**, because the class-level `rescue_from` branches
+  on format and answers a plain `get` — html, the default with no Accept header — with a **302 to
+  `files_path`**. Right for `#show`/`#blob`, which render a page; wrong for a JSON poller, which
+  would read a redirect body carrying neither a status key nor a 404.
+- **The Measure view builds its SVG with `createElementNS`, never `innerHTML`.**
+  `Maker::Previews::Svg` rasterizes precisely because the web layer refuses to inline SVG;
+  constructing elements from parsed coordinates sidesteps that rule rather than excepting it.
+- **Hit-testing is PAINT ORDER, not geometry.** Contours are appended in DESCENDING bbox-area order
+  so the browser's own topmost-wins dispatch selects the hole rather than the plate around it.
+  Sorting the other way silently makes small features unclickable — and **this is currently
+  UNTESTED**: `bezier-circle.lbrn2`'s two shapes are equal-area and disjoint, so neither ever covers
+  the other and the mutation stays green. Catching it needs a nested fixture (see
+  `test/system/lbrn_measure_test.rb`).
+- **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
+  user-space threshold calls an ordinary click a drag and silently swallows the selection.
+
 ---
 
 ## 15. Working agreements for the coding agent

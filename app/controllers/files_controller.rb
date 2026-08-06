@@ -258,6 +258,58 @@ class FilesController < ApplicationController
     render json: out
   end
 
+  # GET /files/:id/geometry (JSON) — the coordinate payload behind the .lbrn2 Measure view.
+  #
+  # Enqueue-and-report, NOT render-and-wait. Parsing means reading the whole file out of the
+  # file layer, and the biggest .lbrn2 files are photo engravings — 24 MB on disk for two shapes —
+  # so doing it inline would block a browser request on a multi-megabyte fetch. The job already
+  # owns that work, along with the MAX_PREVIEW_BYTES ceiling, the FetchError retry policy, and
+  # commit_if_current's version-race guard.
+  #
+  # Same response shape as #thumbnails so the client's polling code is a known quantity — INCLUDING
+  # never redirecting. The class-level `rescue_from ActiveRecord::RecordNotFound` a few lines up
+  # branches on request format and answers a plain `get` (html, the default with no Accept header)
+  # with a 302 to files_path — right for #show/#blob, which render a page, and wrong here: a JSON
+  # poller reading a redirect's body would see neither a status key nor a 404. Caught locally so
+  # this action's shape holds regardless of what the caller's Accept header happens to be.
+  #
+  # LOOKS UP THE EXISTING ROW BEFORE CALLING Enqueue, RATHER THAN CALLING IT UNCONDITIONALLY. This
+  # is not the same shape as #enqueue_preview's eager, upload-time call: Enqueue.call resets a
+  # `failed` row to "pending" and re-enqueues WHENEVER it is called (documented — "when it
+  # previously `failed`"), which is exactly right for a one-shot nudge at upload time and exactly
+  # wrong for a passive poll. Calling it on every GET would mean a client polling a permanently
+  # broken file (the parse will fail again, unchanged) re-enqueues a doomed render on every poll —
+  # the retry storm `Unsupported` exists elsewhere in this file to avoid — and would make the
+  # "failed" branch below DEAD CODE, since preview.status could never still read "failed" by the
+  # time this method reads it. Reading the row first and only falling through to Enqueue when
+  # nothing exists YET for the current content_token keeps Enqueue as the one-time trigger for the
+  # first render (or a re-render after content genuinely changes, via Enqueue's own staleness
+  # check) while leaving a terminal ready/failed/unsupported status alone to be reported as is.
+  def geometry
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
+    return render json: { status: "pending" } if token.nil?
+
+    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token, kind: "geometry")
+    preview ||= Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                              name: node.name, version_id: token, kind: "geometry")
+    # nil = no renderer for this filename. Terminal and honest: the Measure button is only
+    # rendered for .lbrn/.lbrn2, so reaching here otherwise is a client bug, not a wait.
+    return render json: { status: "unsupported", error: "no geometry for #{node.name}" } if preview.nil?
+
+    case preview.status
+    when "ready"
+      render json: { status: "ready",
+                     url: (url_for(preview.asset) if preview.asset.attached?) }
+    when "failed", "unsupported"
+      render json: { status: preview.status, error: preview.error }
+    else
+      render json: { status: "pending" }
+    end
+  rescue ActiveRecord::RecordNotFound
+    head :not_found
+  end
+
   # GET /files/:node_id — view/preview a single file + metadata.
   #
   # THE PORT, NOT Version, AND THAT IS THE SAME FIX AS #blob RATHER THAN SCOPE CREEP. `Version`
@@ -980,7 +1032,12 @@ class FilesController < ApplicationController
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
     return :model3d if %w[stl 3mf obj].include?(ext)
-    # A file we can render a server-side thumbnail for (dxf, lbrn2, step, stp, iges, igs, ...) but
+    # LightBurn -> the interactive Measure view (lbrnmeasure_controller.js), which supersedes the
+    # static thumbnail the way :model3d does for meshes. The thumbnail is still generated and is
+    # still what the page shows at rest — Measure is a button, not a replacement, because
+    # LightBurn's own embedded render is in colour and ours is black outlines.
+    return :lbrn if %w[lbrn lbrn2].include?(ext)
+    # A file we can render a server-side thumbnail for (dxf, step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

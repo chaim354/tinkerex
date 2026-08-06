@@ -78,6 +78,10 @@ Rails.application.routes.draw do
     end
     member do
       get "blob"
+      # The .lbrn2 Measure view's coordinate payload. A SECOND preview kind for the same node
+      # (kind: "geometry"), so this neither replaces nor disturbs the thumbnail. The payload
+      # itself leaves via the blob URL, off Rails — this action only reports where it is.
+      get "geometry"
     end
   end
 

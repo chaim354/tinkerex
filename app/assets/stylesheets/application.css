@@ -112,6 +112,29 @@ dl.meta dd { margin: 0; }
 .model-viewer:fullscreen { background: var(--soft); padding: 12px; }
 .model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
 
+/* --- LightBurn Measure view (lbrnmeasure_controller.js) — .lbrn/.lbrn2 --- */
+.lbrn-measure { position: relative; }
+.lbrn-measure-stage { display: none; width: 100%; aspect-ratio: 1; }
+.lbrn-measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.lbrn-measure-stage svg.is-panning { cursor: grabbing; }
+.lbrn-measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.lbrn-measure-launch { display: inline-flex; gap: 8px; }
+.lbrn-measure-actions { display: none; gap: 4px; }
+.lbrn-measure-dims { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lbrn-measure-fallback { text-align: center; padding: 24px; }
+/* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
+.lbrn-measure--ready .lbrn-measure-stage { display: block; }
+.lbrn-measure--ready .lbrn-measure-fallback { display: none; }
+.lbrn-measure--ready .lbrn-measure-launch { display: none; }
+.lbrn-measure--ready .lbrn-measure-actions { display: inline-flex; }
+/* Outline geometry drawn from the /geometry payload — see lbrnmeasure_controller.js (Task 8). */
+.lbrn-contour { fill: transparent; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.lbrn-contour--open { fill: none; }
+.lbrn-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
+.lbrn-contour--hover { stroke: #2b7; stroke-width: 2; }
+.lbrn-contour--selected { stroke: #d40; stroke-width: 2.5; }
+.lbrn-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+
 /* login */
 .auth-card { max-width: 380px; margin: 80px auto; text-align: center; }
 .auth-card h1 { margin: 0; font-size: 28px; }

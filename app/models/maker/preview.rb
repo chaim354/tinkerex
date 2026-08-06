@@ -9,7 +9,10 @@ module Maker
     belongs_to :user
     has_one_attached :asset
 
-    KINDS = %w[thumbnail model_glb render].freeze
+    # `geometry` is a JSON payload, not an image — the coordinates behind the .lbrn2 Measure view.
+    # It is the FIRST kind to exercise the kind seam end to end: `model_glb` is declared here but
+    # refused by Mesh, so nothing in production produced a second artifact until this one.
+    KINDS = %w[thumbnail model_glb render geometry].freeze
     # pending → processing → ready | failed | unsupported.
     # `unsupported` = no permissive renderer for this file type (a deliberate, non-error
     # terminal state; distinct from `failed` = a real render/fetch error).

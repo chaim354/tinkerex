@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-authored, but in the dialect real LightBurn writes (see real-export.lbrn2):
+     <XForm> is a CHILD element, <VertList> is "V<x> <y>c0x..c0y..c1x..c1y..", and
+     <PrimList> carries "B<a> <b>" cubic segments (42 of the 58 real files use them).
+
+     TWO SHAPES, ONE BOUNDING BOX EACH, BOTH 20 x 20 mm:
+       circle  r=10 at (0,0)   -> x -10..10, y -10..10   MUST report d
+       square  20x20 at (50,0) -> x  40..60, y -10..10   MUST NOT report d
+     They are the same size on purpose. A w==h test passes both; the circularity test
+     must separate them. The square is the assertion that carries the weight.
+-->
+<LightBurnProject AppVersion="1.6.00" FormatVersion="1" MaterialHeight="0">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <speed Value="20"/>
+        <maxPower Value="80"/>
+    </CutSetting>
+    <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1">
+        <XForm>1 0 0 1 0 0</XForm>
+        <VertList>V10 0c0x10c0y5.523c1x10c1y-5.523V0 10c0x-5.523c0y10c1x5.523c1y10V-10 0c0x-10c0y-5.523c1x-10c1y5.523V0 -10c0x5.523c0y-10c1x-5.523c1y-10</VertList>
+        <PrimList>B0 1B1 2B2 3B3 0</PrimList>
+    </Shape>
+    <Shape Type="Rect" CutIndex="0" W="20" H="20" Cr="0">
+        <XForm>1 0 0 1 50 0</XForm>
+    </Shape>
+</LightBurnProject>
