@@ -33,6 +33,11 @@ pin "process" # @2.1.0
 pin "jszip-buffer-chunk" # jspm.io internal chunk for @jspm/core@2.1.0's browser buffer shim
 
 pin "lib/chunk_upload", to: "lib/chunk_upload.js"
+# The chooser modal, imported by BOTH filechooser_controller (the form field) and addon_controller
+# (which hands it to a bundle as ctx.chooseFolder). A host pin, so it is drawn into every addon's
+# merged importmap too — but a bundle must NOT import it by this specifier: the contract is the
+# ctx function, so that this path stays the host's to change without republishing a bundle.
+pin "lib/file_chooser", to: "lib/file_chooser.js"
 
 # Three.js r0.185.1 (MIT) — the interactive 3D viewer (modelviewer_controller.js), DYNAMIC-imported
 # so the payload ships only on pages with a 3D file. Vendored from unpkg (the official ES build),

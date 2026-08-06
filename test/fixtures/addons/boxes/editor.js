@@ -5,6 +5,7 @@ import { mountPreview, generateSvg } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
 import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
 import { saveWithOverwrite } from "./save.js"
+import { mountFolderField } from "./folder_field.js"
 
 const PAPER_KEY = "boxes.paper"
 
@@ -15,7 +16,9 @@ const PAPER_KEY = "boxes.paper"
 //
 // root: element to render into. generator: {key, title, group, param_groups}. states: the full
 // saved-states array (filtered here to this generator for the prior-boxes list). ctx: the mount
-// context (serviceUrl, saveUrl, csrfToken, folders, defaultFolder). prefillValues: a saved box's
+// context (serviceUrl, saveUrl, csrfToken, and the destination keys folder_field.js reads:
+// chooseFolder/defaultFolderLabel on a current host, folders/defaultFolder on an older one).
+// prefillValues: a saved box's
 // `params`, when opened via "Load"/"Duplicate & tweak", or null for a fresh generator.
 // onBack(): return to the gallery. onSaved(): a save completed — the caller re-fetches states.
 // onOpenGenerator(key, prefillValues): re-open the editor (same or another generator) — used by the
@@ -37,10 +40,14 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
             <span class="box-field-label">Name</span>
             <input type="text" data-role="name" required>
           </label>
-          <label class="box-field">
+          <!-- A <div>, NOT the <label> its siblings use, because mountFolderField may render a
+               <button> here: a <label> wrapping a button re-dispatches the click, which opens the
+               chooser and immediately reopens it. The <select> shape never had that problem, which
+               is why this one field's markup differs from the Name field above it. -->
+          <div class="box-field">
             <span class="box-field-label">Save to folder</span>
-            <select data-role="folder"></select>
-          </label>
+            <span data-role="folder-field"></span>
+          </div>
           <div class="page-actions">
             <button type="button" data-role="preview-btn" class="btn ghost">Preview</button>
             <button type="button" data-role="save" class="btn">Save to library</button>
@@ -92,11 +99,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   $("key").textContent = generator.key
   $("title").textContent = generator.title
 
-  for (const [ label, id ] of ctx.folders) {
-    const opt = new Option(label, id)
-    if (id === ctx.defaultFolder) opt.selected = true
-    $("folder").add(opt)
-  }
+  const folderField = mountFolderField($("folder-field"), ctx)
 
   $("groups").appendChild(buildParamGroups(generator.param_groups, prefillValues))
   renderPrior($("prior-wrap"), states, generator, onOpenGenerator)
@@ -178,7 +181,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     const base = name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "box"
     const body = new FormData()
     body.append("name", name)
-    body.append("parent_node_id", $("folder").value)
+    body.append("parent_node_id", folderField.value())
     body.append("data", JSON.stringify({ generator: generator.key, params }))
     // The plan goes in UNTILED and full size: tiling is a property of the printer, not of the
     // drawing, and an archival artifact should not arrive pre-chopped into sheets. SVG rather than

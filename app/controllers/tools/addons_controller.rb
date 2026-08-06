@@ -99,7 +99,13 @@ module Tools
     def show
       @importmap = merged_importmap
       @default_parent_node_id = current_project_folder_node_id
+      # BOTH shapes of "where does this save go?", because a bundle may be built against either.
+      # `folders` is the flat [label, node_id] list the shipped bundles build a <select> from;
+      # `default_folder_label` is the one path a chooser trigger shows. This repo cannot know which
+      # a given bundle reads — publishing the bundle image is the addon deploy and Rails is never
+      # rebuilt (§14c) — so it answers both until the addons repo says otherwise.
       @folders = folder_options
+      @default_folder_label = folder_path_label(@default_parent_node_id)
       @service_url = service_base_url
     end
 

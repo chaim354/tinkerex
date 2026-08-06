@@ -28,6 +28,9 @@
      data-addon-service-url-value="<%= @service_url %>"
      data-addon-states-url-value="<%= tools_addon_states_path(@addon.key) %>"
      data-addon-folders-value="<%= @folders.to_json %>"
-     data-addon-default-folder-value="<%= @default_parent_node_id %>">
+     data-addon-default-folder-value="<%= @default_parent_node_id %>"
+     data-addon-default-folder-label-value="<%= @default_folder_label %>"
+     data-addon-children-url-value="<%= library_children_path %>"
+     data-addon-create-url-value="<%= library_folders_path %>">
   <div data-addon-target="mount"></div>
 </div>

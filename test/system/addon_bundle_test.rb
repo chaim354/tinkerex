@@ -111,4 +111,63 @@ class AddonBundleTest < ApplicationSystemTestCase
     # dropping the assertion, so a real error still fails this test.
     assert_no_console_errors ignoring: [ /status of 409 \(Conflict\)/ ]
   end
+
+  # ctx.chooseFolder — THE HOST-PROVIDED FOLDER CHOOSER, CALLED FROM A BUNDLE.
+  #
+  # This is a cross-repo contract with no compile-time link between its two halves: the host hands a
+  # function into a bundle it never sees, and the bundle calls a function it cannot type-check. The
+  # two are also deployed independently — publishing a bundle image IS the addon deploy and Rails is
+  # never rebuilt (§14c) — so nothing anywhere fails loudly when the shapes stop agreeing. A browser
+  # driving the real modal through the real context is the only thing that does.
+  #
+  # WHY NOT COVERED BY file_chooser_test.rb. That drives the SAME modal, but through
+  # shared/_folder_field on a server-rendered page — a path with no bundle, no proxied ESM and no
+  # context object. It would stay green through a typo in addon_controller.js's values or the
+  # show.html.erb data attributes that feed it, which is precisely the seam this test exists for.
+  test "a bundle can drive the host's folder chooser and save into what it picked" do
+    user = User.find_by!(email: "bundle@example.com")
+    Maker::LibraryFolder.ensure_path!(user, [ "Projects", "harbor" ])
+
+    visit "/tools/fixture?fname=picked.svg"
+    assert_selector "[data-role=fixture-output]", text: "pinned-ok"
+
+    click_button "Choose folder"
+    assert_selector ".filechooser-overlay"
+    find(".filechooser-row", text: "Projects").click
+    find(".filechooser-row", text: "harbor").click
+    click_on "Choose"
+
+    assert_selector "[data-role=fixture-folder]", text: "/Projects/harbor"
+
+    # THE NODE_ID, NOT JUST THE PATH THE BUNDLE PRINTED. The modal reports {nodeId, path} and the
+    # bundle shows one and submits the other, so asserting the visible half alone would pass over a
+    # chooser that resolved the right label with the wrong id — a save into the wrong folder,
+    # reported as a success.
+    click_button "Save"
+    assert_selector "[data-role=fixture-status]", text: "Saved."
+    harbor = user.nodes.present.find_by!(name: "harbor", kind: "dir")
+    assert_equal harbor.node_id, user.nodes.present.find_by!(name: "picked.svg").parent_node_id
+
+    assert_no_console_errors
+  end
+
+  # CANCEL IS NOT "THE ROOT", and the promise has to say so. `{nodeId: ""}` is a real answer (save
+  # to the library root) and `null` is the absence of one; a chooser that collapsed them would move
+  # a user's destination to the root every time they pressed Esc — silently, and in the direction
+  # that loses the file they were about to file.
+  test "cancelling the chooser leaves the bundle's destination alone" do
+    user = User.find_by!(email: "bundle@example.com")
+    Maker::LibraryFolder.ensure_path!(user, [ "Projects" ])
+
+    visit "/tools/fixture?fname=cancelled.svg"
+    assert_selector "[data-role=fixture-output]", text: "pinned-ok"
+
+    click_button "Choose folder"
+    find(".filechooser-row", text: "Projects").click # a selection exists — and is then thrown away
+    find(".filechooser").send_keys(:escape)
+    assert_no_selector ".filechooser-overlay"
+
+    assert_selector "[data-role=fixture-folder]", text: "(cancelled)"
+    assert_no_console_errors
+  end
 end
