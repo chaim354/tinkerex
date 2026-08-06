@@ -1020,15 +1020,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14h. LightBurn shape measurement
 
-- **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; DECIMATION IS DRAWING-ONLY.**
-  `LbrnGeometry` thins contours over 32 points 3:1 to keep the payload small (the worst real file
-  drops 734 KB → 281 KB gzipped) and computes `b` and `d` **before** thinning. Measure after
-  thinning and every curve under-reports, silently, while every "does it draw" test stays green.
-- **`DECIMATE_STRIDE` IS COUPLED TO `Lbrn2::BEZIER_SAMPLES`, ACROSS TWO FILES, AND THE STRIDE MUST
-  DIVIDE THE SAMPLE COUNT.** 12 % 3 == 0, so an original LightBurn vertex lands on every kept index
-  and decimation drops only *intermediate curve samples* — never a vertex. That is why a thinned
-  curve keeps its extremes and its corners. Break the division and contour bboxes start moving,
-  silently. Asserted directly, because it is invisible from either file alone.
+- **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; THINNING IS DRAWING-ONLY.**
+  `LbrnGeometry` simplifies contours to keep the payload small (the worst real file drops
+  728 KB → 200 KB gzipped) and computes `b` and `d` **before** thinning. Measure after thinning and
+  every curve under-reports, silently, while every "does it draw" test stays green. `d` is the
+  sharper case: a 0.2 mm hole thins to 9 points, below `MIN_CIRCLE_POINTS`, so measuring after
+  would drop its diameter entirely and report a bare bounding box instead of "⌀0.2 mm".
+- **THINNING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY POSITION IN THE ARRAY.** `simplify` is
+  Ramer-Douglas-Peucker against `SIMPLIFY_TOLERANCE` (0.01 mm). **Do not replace it with an index
+  stride** — that is what shipped first, and it was wrong: `Lbrn2.polylines` appends 12 points per
+  `B` (bezier) segment and exactly **ONE** per `L` (straight) segment, so a single straight edge
+  shifts every later index and no vertex lands where a stride expects. For an `L` segment that one
+  point IS a vertex, so dropping it cuts the corner off entirely. Measured over the corpus before
+  the fix: **1148 of 5259 thinned contours displaced by more than 5% of their own size, worst case
+  58.7 mm.** RDP keeps a corner by construction (a corner is the farthest point from any chord
+  spanning it) and is also *smaller* — 200 KB worst case against the stride's 281 KB.
+  - The stride's justification, `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`, was **true but only for
+    an all-bezier contour**, and `bezier-circle.lbrn2` is exactly that (`B0 1B1 2B2 3B3 0`) — so
+    the guard asserting it passed while real mixed-geometry files were being mangled. If you find
+    yourself proving a property on that fixture, check it on a contour with an `L` op too.
 - **THE PAYLOAD'S BBOXES MUST UNION TO `Lbrn2.job_size`** — one traversal, so the Measure view and
   the Laser Settings panel cannot disagree; §14b's `LbrnMetadata` second-copy bug is the precedent.
   But **a union is the weakest possible form of that assertion** and cannot catch a

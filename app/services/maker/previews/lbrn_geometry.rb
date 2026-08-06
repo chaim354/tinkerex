@@ -18,23 +18,25 @@ module Maker
 
       SCHEMA_VERSION = 1
 
-      # Contours at or below this ship every point. Above it they are thinned (DECIMATE_STRIDE).
+      # HOW FAR THE DRAWN LINE MAY STRAY FROM THE REAL CONTOUR, in mm. Thinning is bounded by this
+      # and by nothing else — see `simplify`.
       #
-      # All the savings live in big contours — bookmark.lbrn2 averages 278 points each — and the
-      # floor is what stops a 12-point circle degenerating into a triangle. Measured over the 58
-      # real exports: thinning above this cuts the worst file from 734 KB to 281 KB gzipped.
-      DECIMATE_ABOVE = 32
-
-      # NOT FREE TO CHANGE INDEPENDENTLY OF Lbrn2::BEZIER_SAMPLES. Lbrn2 flattens each cubic into
-      # BEZIER_SAMPLES points, so an original LightBurn vertex lands on every BEZIER_SAMPLES-th
-      # flattened index. Keeping every DECIMATE_STRIDE-th point preserves EVERY original vertex,
-      # not just the bbox, exactly because 12 % 3 == 0 — this stride divides that sample count.
-      # Break the divisibility (either constant) and decimation starts dropping real vertices
-      # instead of only intermediate curve samples: contour bboxes move, silently, on whichever
-      # fixture's extremes no longer land on a kept index. See the coupling test in
-      # lbrn_geometry_test.rb, which asserts this divisibility directly rather than relying on it
-      # to hold by accident.
-      DECIMATE_STRIDE = 3
+      # 0.01 mm is an order of magnitude below a hobby laser's positional accuracy (~0.05 mm) and
+      # two below a typical kerf (~0.1-0.2 mm), so it is invisible in the only terms this file's
+      # readers care about. Measured over the 58 real exports: median payload 7.5 KB gzipped,
+      # worst 200 KB — the worst case is 29% SMALLER than the index-stride scheme this replaced,
+      # while bounding the error at 0.01 mm instead of that scheme's measured 58.7 mm.
+      #
+      # THIS REPLACED A FIXED INDEX STRIDE, AND THE REASON MATTERS. That scheme kept every third
+      # point and justified itself with `Lbrn2::BEZIER_SAMPLES % 3 == 0`: since each cubic
+      # flattens to 12 points, an original vertex lands on every 12th index, so all of them
+      # survive. True — but ONLY for a contour built entirely of `B` ops. `Lbrn2.polylines`
+      # appends 12 points per BEZIER segment and exactly ONE per `L` (straight) segment, so a
+      # single straight edge shifts every later index by one and the alignment collapses. And for
+      # an `L` segment that one point IS a vertex: dropping a curve sample flattens a curve
+      # slightly, dropping a vertex cuts the corner off entirely. Over the corpus that displaced
+      # 1148 of 5259 thinned contours by more than 5% of their own size.
+      SIMPLIFY_TOLERANCE = 0.01
 
       # Circularity, for the readout's diameter. THREE conditions, and the point count is the one
       # most likely to be trimmed as redundant — it is not. A square's four corners are all
@@ -86,7 +88,7 @@ module Maker
             "b" => [ x0, y0, x1, y1 ].map { |v| v.round(PRECISION) },
             "k" => closed ? 1 : 0,
             "i" => image ? 1 : 0,
-            "p" => decimate(points).map { |(x, y)| [ x.round(PRECISION), y.round(PRECISION) ] }
+            "p" => simplify(points).map { |(x, y)| [ x.round(PRECISION), y.round(PRECISION) ] }
           }
           # EVERY MEASUREMENT COMES FROM THE FULL-RESOLUTION POINTS, above and here. Decimation
           # is a drawing concession; it must never move a reported number. An implementation that
@@ -112,13 +114,66 @@ module Maker
           "x" => min_x.round(PRECISION), "y" => min_y.round(PRECISION) }
       end
 
-      # Every DECIMATE_STRIDE-th point, always keeping the last so a closed contour still closes.
-      def decimate(points)
-        return points if points.length <= DECIMATE_ABOVE
+      # Ramer-Douglas-Peucker: keep the point FARTHEST from the current chord, recurse on both
+      # halves, discard anything within SIMPLIFY_TOLERANCE of the line it would sit on.
+      #
+      # WHY THIS SHAPE OF ALGORITHM RATHER THAN A CHEAPER ONE. It selects by geometric error, not
+      # by position in the array, so it cannot care whether a point came from an `L` op or a `B`
+      # op — which is precisely the distinction the index-stride scheme was blind to. A corner is
+      # by definition the farthest point from any chord spanning it, so corners are kept by
+      # construction rather than by index luck, and the redundant middles of a flattened curve
+      # collapse. It also compresses BETTER here: 26,682 points where the stride left 62,773, on
+      # the same file, while being correct.
+      #
+      # ITERATIVE, WITH AN EXPLICIT STACK, deliberately. The textbook form recurses once per kept
+      # point, and a nearly-degenerate contour (every point marginally outside the tolerance)
+      # recurses to its own length — real contours here run to thousands of points, which is close
+      # enough to Ruby's stack limit not to want to find out. The stack costs two integers a frame.
+      #
+      # First and last points are always kept, so a closed contour still closes.
+      def simplify(points)
+        return points if points.length < 3
 
-        out = points.each_slice(DECIMATE_STRIDE).map(&:first)
-        out << points.last unless out.last == points.last
-        out
+        keep = Array.new(points.length, false)
+        keep[0] = keep[-1] = true
+        stack = [ [ 0, points.length - 1 ] ]
+
+        until stack.empty?
+          first, last = stack.pop
+          next if last <= first + 1
+
+          far_i = nil
+          far_d = SIMPLIFY_TOLERANCE
+          ((first + 1)...last).each do |i|
+            d = point_segment_distance(points[i], points[first], points[last])
+            if d > far_d
+              far_d = d
+              far_i = i
+            end
+          end
+          next if far_i.nil?
+
+          keep[far_i] = true
+          stack.push([ first, far_i ], [ far_i, last ])
+        end
+
+        points.each_with_index.filter_map { |p, i| p if keep[i] }
+      end
+
+      # Distance from `point` to the SEGMENT ab — not to the infinite line, which would report a
+      # point beyond either end as closer than it is and let `simplify` discard a real extreme.
+      def point_segment_distance(point, seg_a, seg_b)
+        px, py = point
+        ax, ay = seg_a
+        bx, by = seg_b
+        dx = bx - ax
+        dy = by - ay
+        # A degenerate chord is ordinary here, not a guard against bad data: a CLOSED contour
+        # starts with first == last, so the very first call always has one.
+        return Math.hypot(px - ax, py - ay) if dx.abs < 1e-12 && dy.abs < 1e-12
+
+        t = ((((px - ax) * dx) + ((py - ay) * dy)) / ((dx * dx) + (dy * dy))).clamp(0.0, 1.0)
+        Math.hypot(px - (ax + (t * dx)), py - (ay + (t * dy)))
       end
 
       # The contour's diameter in mm when it is round, else nil. See MIN_CIRCLE_POINTS.
