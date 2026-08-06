@@ -116,6 +116,34 @@ module Maker
           assert_equal 110.0, meta["job"]["width"], "instanced geometry must contribute to the bbox"
         end
 
+        # EVERY <VertList> IS PARSED EXACTLY ONCE, and this is a guard on WORK DONE rather than
+        # on output — the only kind that can see this regression, because parsing twice produces
+        # the identical drawing at double the cost, so no assertion about the result can fail.
+        # Measured on `reference card.lbrn2` (2.69 MB, 641 inline lists): re-parsing was ~9% of
+        # every instancing file's render, ~20% of that one's.
+        #
+        # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist
+        # in this suite (requiring it is a LoadError) — same reason test_helper's
+        # `with_concurrent_file_attachment` counts calls this way.
+        test "a VertList is parsed exactly once per document" do
+          calls = 0
+          mod = Maker::Previews::Lbrn2.singleton_class
+          original = mod.instance_method(:parse_vertlist)
+          mod.define_method(:parse_vertlist) { |text| calls += 1; original.bind(self).call(text) }
+
+          begin
+            doc = Maker::Previews::Lbrn2.parse_document(@real)
+            Maker::Previews::Lbrn2.each_geometry(doc) { |*| }
+          ensure
+            mod.define_method(:parse_vertlist, original)
+          end
+
+          lists = Maker::Previews::Lbrn2.parse_document(@real).xpath("//VertList").length
+          assert_operator lists, :>, 0, "fixture precondition: the document must have inline lists"
+          assert_equal lists, calls,
+                       "expected one parse per <VertList>, got #{calls} for #{lists} lists"
+        end
+
         test "a Group's XForm places its Children" do
           # The group scales its 5x5 child by 2 and lifts it to y 100..110.
           meta = Maker::Previews::LbrnMetadata.parse(@real)

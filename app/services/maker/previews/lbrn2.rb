@@ -545,8 +545,25 @@ module Maker
           end
         end
 
+        # THE INDEX IS CONSULTED BEFORE A SHAPE'S OWN INLINE LIST, and the order is a measured
+        # performance fix rather than a preference. Parsing a `<VertList>` is a regex scan over
+        # what is routinely megabytes; the constructor above has already parsed every one of them.
+        # Asking `Lbrn2.vertices(shape)` first — as this did — re-scanned each inline list a
+        # SECOND time at emit. On `reference card.lbrn2` (2.69 MB, 641 inline lists) that was the
+        # same 2.5 MB of text parsed twice, and the walk it sits in was 98% of the time to build a
+        # Measure view. Reversing the order cuts ~9% off every file that instances (35 of the 58
+        # real exports) and ~20% off the worst one.
+        #
+        # SAFE BECAUSE A VertID IDENTIFIES A VERTEX LIST — that is what instancing means — so the
+        # index can never shadow a shape's own geometry with someone else's. Verified rather than
+        # assumed: across the 58 real exports, zero VertIDs carry more than one inline
+        # `<VertList>`. If that ever stops holding, this order silently draws the wrong shape.
+        #
+        # PRIMS ARE DELIBERATELY LEFT INLINE-FIRST, and the asymmetry is the point: a `<PrimList>`
+        # is read with `.text` and never parsed, so reading one twice costs nothing — and leaving
+        # it alone means no one has to establish that PrimIDs are unique the way VertIDs are.
         def geometry_for(shape)
-          verts = Lbrn2.vertices(shape) || @verts[shape["VertID"]]
+          verts = @verts[shape["VertID"]] || Lbrn2.vertices(shape)
           prims = shape.at_xpath("./PrimList")&.text || @prims[shape["PrimID"]]
           [ verts, prims ]
         end
