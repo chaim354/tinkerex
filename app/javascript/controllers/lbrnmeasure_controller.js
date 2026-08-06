@@ -17,7 +17,16 @@ const SCHEMA_VERSION = 1
 
 // The job's retry_on uses polynomial backoff over 5 attempts, which can run for minutes — far
 // longer than anyone watches a spinner. Poll a bounded number of times, then say so honestly.
-const POLL_DELAYS_MS = [400, 800, 1500, 2500, 4000, 6000]
+//
+// WHAT THE USER WAITS IS THE CUMULATIVE DELAY, NOT ANY SINGLE STEP — and reading this list as
+// individual pauses is exactly how the previous schedule [400, 800, 1500, 2500, 4000, 6000]
+// looked unremarkable while being anything but. It checked at 400, 1200, 2700 and 5200 ms, so a
+// render finishing at 3.5 s went unnoticed until 5.2 s. Nearly two seconds of the observed wait
+// was this array rather than the server.
+//
+// These check at 250, 650, 1250, 2150, 3450, 5250, 7750, 11250, 16250 ms — five looks inside the
+// first 3.5 s, where real renders land, and still bounded so a wedged job stops being polled.
+const POLL_DELAYS_MS = [250, 400, 600, 900, 1300, 1800, 2500, 3500, 5000]
 
 // Screen pixels of pointer travel before a drag counts as a pan rather than a click.
 const PAN_SLOP_PX = 3
