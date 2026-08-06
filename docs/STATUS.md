@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**A re-save asks before it overwrites**)
+**Updated:** 2026-08-06 (**A re-save asks before it overwrites — MERGED + DEPLOYED**)
 
 ## What this file is
 
@@ -60,7 +60,7 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (PR #138, branch `claude/addon-save-overwrite`; bundles PR tinkerex-addons#2) — **DEPLOYED 2026-08-06**
 
 Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
 but not v4?** Because **v4 was saved twice.** Reproduced exactly —
@@ -124,12 +124,53 @@ one node with the original `node_id`, plus a dismiss path asserting the original
 - **A syntax check that checked nothing.** `node --check "$f" | head -2 && echo ok` reports `head`'s
   exit status, so ten JS files "passed" without being parsed. Re-run properly against `.mjs` copies.
 
+### MERGED + DEPLOYED live, 2026-08-06
+
+Both PRs merged (#136, then **#138** — see the note below on why it is not #137) and shipped to the
+**three Unraid backends** in one image. OVH was NOT deployed; bare "deploy" means Unraid (§7).
+
+| | before | after |
+|---|---|---|
+| Rails image | `2b9ca85` | **`475685f2f47beae5c7b91929b6b8afd9733b4388`** |
+| chunk / share / s3 | — | all `Up`, `/up` **200** each |
+| Addon bundles | `8a2ea18` | **`84b7893c982b402634368edff8e13c3ff350ad38`** |
+
+**Verified by looking inside the running image, not by the exit code** — booting is compatible with
+having shipped the old code. In the live `share` container: `within_own_folder` ×4
+(`attach_to_project.rb`), `render_would_replace` ×2 and `intake_project_folder` ×1
+(`addons_controller.rb`), `destination_for` ×1 (`project_intake.rb`), `replace` ×12 (`share.rb`).
+On the accessory: all three `save.js` serve **200** over the Kamal network and `generators/save.js`
+contains the `would_replace`/`overwrite` logic. `bin/check-fixture-drift` passed as part of the
+publish; `bin/secrets-preflight --all` passed before the build.
+
+**ORDER MATTERS AND IT IS RAILS FIRST.** The bundles branch on a 409 the server only sends once the
+Rails image is live; publishing bundles first makes a re-save get a 422 the dialog does not
+recognise — it falls through to "Save failed.", the old behaviour, harmless but pointless.
+
+**TWO PROCESS MISTAKES, RECORDED BECAUSE BOTH COST TIME AND NEITHER IS OBVIOUS:**
+
+- **`gh pr merge --delete-branch` CLOSED THE STACKED PR.** #137 was based on #136's branch; deleting
+  that branch on merge made GitHub **close** #137 rather than retarget it, and a closed PR's base
+  cannot be changed. Recovery was a rebase onto the new `main` (dropping the commit #136 had landed
+  **squashed**, i.e. under a different SHA) and a fresh PR, #138 — same seven commits, no content
+  lost. **Do not delete a branch another PR is based on until the stack is retargeted.**
+- **`op item get 'ghcr.io'` RESOLVES TO NOTHING.** Items live in the **`tinkerex` vault**
+  (§14g) — the reference is `op://tinkerex/ghcr.io/password`. The unqualified lookup returned an
+  empty string, and a `2>/dev/null` on it hid the reason; `bin/build-push`'s own `:?` guard is what
+  caught it. Same family as §14g's "an unreadable secret becomes an empty one".
+
 ### Left open
 
 `:model_bundle` in the same position as `:attached_elsewhere` (weaker argument, no evidence it bit
 this file); the eager cap's silent `Result`; and a project-wide name scan, §12.11's broader question,
 which this deliberately does not attempt — it closes the destination the file is actually headed for,
 without a library-wide scan on every save.
+
+**The originally reported file is still stranded, and no deploy fixes it.**
+`harbor-number-v4.svg` exists twice — once in `Projects/harbor-signs/design/`, once at that
+project's root. The fix stops it happening again; it does not reconcile the pair that already
+exists. Delete or rename the `design/` copy and the next sweep files the newer one, or re-save from
+the addon and take the new overwrite prompt.
 
 ---
 
