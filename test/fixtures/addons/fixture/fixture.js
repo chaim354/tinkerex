@@ -18,18 +18,46 @@ import { saveWithOverwrite } from "./save.js"
 //
 // The destination and filename come from the QUERY STRING so the Ruby test can point one fixture at
 // whatever project folder it just built, rather than the fixture hard-coding library state.
+// IT ALSO EXERCISES ctx.chooseFolder, the host-provided folder chooser, for the same reason it
+// exercises save.js: that contract is a FUNCTION the host hands across, and whether a bundle can
+// actually call it — modal opens, columns fetch, promise resolves with {nodeId, path}, cancel
+// resolves null — is observable nowhere but a browser. The feature-detect below is not defensive
+// padding either; it is the shape every real bundle uses, because a bundle image can be published
+// (or rolled back) against a host that predates this key.
 export default {
   mount(el, ctx) {
     const q = new URLSearchParams(location.search)
     el.innerHTML = `<p data-role="fixture-output">${label}</p>
+      <button data-role="fixture-choose">Choose folder</button>
+      <p data-role="fixture-folder">${ctx.defaultFolderLabel || "(none)"}</p>
       <button data-role="fixture-save">Save</button>
       <p data-role="fixture-status"></p>`
+
+    let chosen = null // null = "the bundle never chose", distinct from "" = the library root
+    el.querySelector("[data-role=fixture-choose]").addEventListener("click", async () => {
+      if (typeof ctx.chooseFolder !== "function") {
+        el.querySelector("[data-role=fixture-folder]").textContent = "(no chooser on this host)"
+        return
+      }
+      const selection = await ctx.chooseFolder()
+      // A CANCEL MUST NOT MOVE THE DESTINATION. Resolving null and resolving {nodeId: ""} are two
+      // different answers and this is the line that proves the bundle side can tell them apart.
+      if (!selection) {
+        el.querySelector("[data-role=fixture-folder]").textContent += " (cancelled)"
+        return
+      }
+      chosen = selection.nodeId
+      el.querySelector("[data-role=fixture-folder]").textContent = selection.path
+    })
 
     el.querySelector("[data-role=fixture-save]").addEventListener("click", async () => {
       const body = new FormData()
       body.append("name", "fixture save")
       body.append("data", "{}")
-      body.append("parent_node_id", q.get("parent") || "")
+      // The chooser's answer WINS over the query string when the bundle made one — so a passing
+      // save assertion proves the node_id travelled all the way from the modal into the request,
+      // not merely into a <p>.
+      body.append("parent_node_id", chosen !== null ? chosen : (q.get("parent") || ""))
       body.append("files", JSON.stringify([
         { name: q.get("fname"), content_type: "image/svg+xml", body: "<svg>v2</svg>" },
       ]))

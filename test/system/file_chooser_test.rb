@@ -109,6 +109,33 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_no_console_errors(ignoring: [ /library\/folders.*422/ ])
   end
 
+  # REOPENING MUST NOT FORGET WHAT IS ALREADY CHOSEN — a defect in the original controller, fixed
+  # when the modal was split out into lib/file_chooser.js.
+  #
+  # It seeded the modal's selection as {nodeId: <the field's value>, path: <the ROOT label>}, two
+  # halves describing different folders. Nothing looked wrong until you pressed Choose without
+  # navigating: #choose writes nodeId (unchanged, still the subfolder) to the hidden input and the
+  # path to the button, so the form submitted the subfolder under a label reading "/ (library
+  # root)". Wrong in the direction that looks like it worked, and only ever on the SECOND open —
+  # which is why the original suite, whose every case opened once, could not see it.
+  test "reopening after a choice keeps the chosen folder, in both halves" do
+    open_editor
+    find(".folder-field-btn").click
+    find(".filechooser-row", text: "Projects").click
+    click_on "Choose"
+    assert_text "/Projects"
+
+    find(".folder-field-btn").click
+    assert_text "Selected: /Projects" # NOT "/ (library root)"
+    click_on "Choose"
+
+    chosen = @user.nodes.present.find_by(name: "Projects", kind: "dir")
+    assert_text "/Projects"
+    assert_equal chosen.node_id, find("input[name='parent_node_id']", visible: false).value,
+                 "the label and the submitted node_id must name the same folder"
+    assert_no_console_errors
+  end
+
   test "Escape closes the modal without committing a selection" do
     open_editor
     find(".folder-field-btn").click
