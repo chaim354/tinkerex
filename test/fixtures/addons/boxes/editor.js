@@ -4,6 +4,7 @@ import { mountTopView } from "./top_view.js"
 import { mountPreview, generateSvg } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
 import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
+import { saveWithOverwrite } from "./save.js"
 
 const PAPER_KEY = "boxes.paper"
 
@@ -193,8 +194,12 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     }
     body.append("files", JSON.stringify(outputs))
 
-    const res = await fetch(ctx.saveUrl, { method: "POST", body, headers: { "X-CSRF-Token": ctx.csrfToken } })
-    setSaveStatus(res.ok ? "Saved." : "Save failed.", !res.ok)
+    // Through saveWithOverwrite, not a bare fetch. A re-save under the same name is the ORDINARY
+    // way to iterate on a design, and BOTH outputs collide on it (<base>.svg and
+    // <base>-plan.svg) — which used to strand a second copy of each at the project root.
+    // See save.js for the 409 contract.
+    const { res, cancelled } = await saveWithOverwrite(ctx.saveUrl, body, ctx.csrfToken)
+    setSaveStatus(cancelled ? "Not saved." : res.ok ? "Saved." : "Save failed.", !cancelled && !res.ok)
     if (res.ok) onSaved()
   }
   $("save").addEventListener("click", onSaveClick)
