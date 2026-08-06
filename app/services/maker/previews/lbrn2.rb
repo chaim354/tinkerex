@@ -47,6 +47,19 @@ module Maker
 
       def available? = Maker::Previews::Svg.available?
 
+      # Which build of this renderer produced a stored artifact — see
+      # `Maker::Previews::Enqueue.revision_for`, which compares it against the row's
+      # `renderer_revision` and re-renders whatever no longer matches.
+      #
+      # PER KIND, NOT PER RENDERER, and that distinction is the whole reason this takes an
+      # argument. This renderer emits two unrelated artifacts from one file, and they version
+      # independently: bumping the geometry payload must not re-render every LightBurn thumbnail
+      # in the library as a side effect. On the live share backend that would be ~1400 rebuilds
+      # attached to a fix that had nothing to do with them.
+      def payload_revision(kind)
+        kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : 1
+      end
+
       # Embedded thumbnail FIRST — a LightBurn file carries its own full-colour render in a
       # <Thumbnail Source="base64png"> attribute, which is far better than re-drawing the geometry
       # as outlines. Fall back to the hand-rolled geometry parser (-> SVG -> PNG) only when a file

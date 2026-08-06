@@ -290,7 +290,18 @@ class FilesController < ApplicationController
     token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
     return render json: { status: "pending" } if token.nil?
 
-    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token, kind: "geometry")
+    # SCOPED BY renderer_revision AS WELL AS version_id, and the second half is load-bearing. This
+    # lookup exists to stop a poll re-enqueueing a TERMINAL row (see the comment above), but a row
+    # made by an OLDER BUILD is not terminal — it is stale, and finding it here would serve its
+    # payload back unchanged forever, because a file's content never has to change for the code
+    # that renders it to. That is exactly what happened when the thinning fix deployed: four
+    # already-measured files kept serving mangled curves until they were destroyed by hand.
+    # Missing the row sends this through Enqueue, which repoints it and re-renders. It also means
+    # bumping a revision un-sticks a `failed` row — right, because the code that failed is not the
+    # code running now.
+    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "geometry")
+    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
+                                                  kind: "geometry", renderer_revision: revision)
     preview ||= Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                               name: node.name, version_id: token, kind: "geometry")
     # nil = no renderer for this filename. Terminal and honest: the Measure button is only

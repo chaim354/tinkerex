@@ -62,6 +62,68 @@ module Maker
         end
         assert_not @user.maker_previews.exists?(node_id: "n1")
       end
+
+      # THE SECOND STALENESS AXIS. `version_id` asks whether an artifact was made from the file's
+      # current CONTENT; `renderer_revision` asks whether it was made by the current CODE. Only the
+      # first existed, so when the .lbrn2 geometry thinning was fixed, every already-measured file
+      # went on serving the old algorithm's output — its content had not changed and nothing else
+      # was compared. Four had to be found and destroyed by hand on the live box.
+      test "a renderer revision bump makes an otherwise current preview stale" do
+        current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                     status: "ready", renderer_revision: current - 1)
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "geometry")
+        end
+        row = @user.maker_previews.find_by!(node_id: "n1", kind: "geometry")
+        assert_equal current, row.renderer_revision
+        assert_equal "pending", row.status
+      end
+
+      test "a preview already at the current revision is left alone" do
+        current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                     status: "ready", renderer_revision: current)
+
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "geometry")
+        end
+      end
+
+      # REVISIONS ARE PER KIND, and this is the assertion that keeps a geometry fix from becoming
+      # an unannounced full-library rebuild. Lbrn2 renders both artifacts from one file; the live
+      # share backend holds ~1400 thumbnails, and re-rendering all of them as a side effect of an
+      # unrelated change would be an outage-shaped event, not a tidy-up.
+      test "bumping the geometry revision does not invalidate a thumbnail" do
+        assert_operator Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry"),
+                        :>, Maker::Previews::Enqueue::BASE_REVISION,
+                        "this proves nothing unless geometry has actually moved past the base"
+        assert_equal Maker::Previews::Enqueue::BASE_REVISION,
+                     Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "thumbnail")
+
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                     status: "ready", renderer_revision: 1)
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "thumbnail")
+        end
+      end
+
+      # A renderer declaring no revision sits at the base — which is exactly what the migration
+      # stamped every pre-existing row with, so installing this mechanism invalidated nothing.
+      test "a renderer with no declared revision sits at the base" do
+        assert_equal Maker::Previews::Enqueue::BASE_REVISION,
+                     Maker::Previews::Enqueue.revision_for_name("part.stl", "thumbnail")
+
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                     status: "ready", renderer_revision: 1)
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+      end
     end
   end
 end

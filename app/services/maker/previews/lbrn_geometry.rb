@@ -16,7 +16,25 @@ module Maker
     module LbrnGeometry
       module_function
 
+      # The WIRE CONTRACT, checked by lbrnmeasure_controller.js against its own copy of this
+      # number. Bump only when the payload's SHAPE changes in a way the shipped client cannot
+      # read — and bump both files together, since that coupling is inherent to a wire format.
       SCHEMA_VERSION = 1
+
+      # WHICH BUILD OF THIS FILE PRODUCED A STORED PAYLOAD. Bump on ANY change that alters the
+      # output, whether or not the schema moves: `Maker::Previews::Enqueue` compares it against
+      # `maker_previews.renderer_revision` and re-renders whatever no longer matches.
+      #
+      # THIS IS THE ONE TO BUMP, and SCHEMA_VERSION is the easy thing to reach for instead. They
+      # answer different questions — the schema says whether the CLIENT can parse a payload, this
+      # says whether the SERVER should still be serving one. Revision 2 changed every coordinate
+      # while touching no key at all: a schema bump would have been wrong (shipped clients read it
+      # fine), and having neither is what left four already-measured files serving mangled curves
+      # after the fix deployed, until they were found and destroyed by hand.
+      #
+      #   1  index-stride thinning — mangled any contour mixing straight and curved edges
+      #   2  error-bounded simplification against SIMPLIFY_TOLERANCE
+      PAYLOAD_REVISION = 2
 
       # HOW FAR THE DRAWN LINE MAY STRAY FROM THE REAL CONTOUR, in mm. Thinning is bounded by this
       # and by nothing else — see `simplify`.
