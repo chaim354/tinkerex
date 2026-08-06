@@ -54,6 +54,17 @@ module Maker
       end
 
       def build(doc)
+        # A rootless document means parse_document could not make sense of the bytes at all — the
+        # SAME condition Lbrn2.to_svg raises ParseError for, and this artifact must match it.
+        # Without this check, each_geometry's own `return if doc.root.nil?` yields nothing,
+        # silently, and the method below returns the ordinary empty-payload shape — turning a
+        # corrupt upload into a READY Measure view claiming "No measurable geometry in this file"
+        # instead of a failed preview: a lie about the file. A document that DOES have a root but
+        # genuinely contains no shapes is a DIFFERENT, honest case — it reaches that same empty
+        # payload by actually walking a real (if sparse) document, and the client has a message
+        # for it. Keep the two distinct; do not collapse an empty project into a parse failure.
+        raise Lbrn2::ParseError, "not a LightBurn project" if doc.root.nil?
+
         shapes = []
         min_x = min_y = Float::INFINITY
         max_x = max_y = -Float::INFINITY
