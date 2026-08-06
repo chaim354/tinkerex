@@ -194,8 +194,25 @@ module Web
       assert_response :success
       stale.reload
       assert_equal current, stale.renderer_revision, "the row must be repointed, not served"
-      assert_equal "pending", stale.status,
-                   "a stale artifact must not be shown as current while its replacement renders"
+      # AND THE OLD PICTURE STAYS UP. A renderer bump does not make the stored artifact a lie —
+      # it depicts this exact file, just built by older code — so blanking it to "pending" would
+      # replace a correct image with a spinner on a page that does not poll. Only a CONTENT change
+      # earns the spinner. Shipping it the other way read as "generating preview is broken".
+      assert_equal "ready", stale.status,
+                   "a renderer rebuild must not blank an artifact that is still of this file"
+    end
+
+    test "a CONTENT change still blanks the artifact rather than showing the wrong picture" do
+      thumbnail_at(current_thumbnail_revision)
+      row = Maker::Preview.find_by!(user: @user, node_id: @node_id, kind: "thumbnail")
+      row.update!(version_id: "some-older-content")
+
+      Maker::Previews::Enqueue.call(user: @user, node_id: @node_id, name: "measure.lbrn2",
+                                    version_id: FileLayer.current.stat(@user, node_id: @node_id).content_token,
+                                    kind: "thumbnail")
+
+      assert_equal "pending", row.reload.status,
+                   "an artifact of DIFFERENT content must not be shown as current"
     end
 
     test "a thumbnail at the current revision is served without re-enqueueing" do

@@ -14,10 +14,13 @@ module Maker
     # growing ~17.6/day with editing. Repointing removes the leak at its source instead of adding
     # a reaper to chase it, and ActiveStorage purges the replaced blob by itself.
     #
-    # `status = "pending"` on a repoint is deliberate and is what keeps the page honest: the row
-    # still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an image
-    # only when `ready`, so the user sees a spinner rather than the old picture labelled as the new
-    # content. Same thing they saw before, when the superseded row simply was not found.
+    # `status = "pending"` ON A CONTENT REPOINT is deliberate and is what keeps the page honest: the
+    # row still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an
+    # image only when `ready`, so the user sees a spinner rather than the old picture labelled as
+    # the new content. Same thing they saw before, when the superseded row simply was not found.
+    #
+    # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
+    # depicts this exact file; only the code that built it moved on.
     #
     # This is deliberately a DIFFERENT policy from V1::Maker::PreviewsController#create, which DOES
     # create a row for a non-renderable name so an API client can poll and observe the terminal
@@ -46,12 +49,26 @@ module Maker
         # until a thinning fix shipped for the .lbrn2 Measure view and every already-measured file
         # kept serving output from the old algorithm, because its content had not changed and
         # nothing else was being compared.
-        stale = preview.version_id != version_id || preview.renderer_revision != revision
-        return preview unless preview.new_record? || stale || preview.status == "failed"
+        content_moved = preview.version_id != version_id
+        rebuilt       = preview.renderer_revision != revision
+        return preview unless preview.new_record? || content_moved || rebuilt || preview.status == "failed"
 
         preview.version_id = version_id
         preview.renderer_revision = revision
-        preview.status = "pending"
+        # BLANKED ONLY WHEN THE CONTENT MOVED — the two staleness axes deserve different answers.
+        #
+        # `pending` exists so a user never sees an artifact of the PREVIOUS CONTENT labelled as the
+        # current file; that is a lie and the spinner is the honest replacement. A RENDERER bump is
+        # not that case: the stored artifact still depicts exactly this file, it was merely built by
+        # older code. Blanking it replaces a correct picture with a spinner for as long as the job
+        # takes — and the detail page does not poll, so it stays a spinner until someone reloads.
+        # Shipped that way briefly and it read as "generating preview is broken", which is fair.
+        #
+        # Leaving `ready` alone means the old artifact stays visible until the job swaps it. The
+        # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,
+        # and both are written here before it is enqueued, so a run that started under an older
+        # revision still cannot stamp its output onto this row.
+        preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
         preview.save!
         Maker::GeneratePreviewJob.perform_later(preview.id, filename: name)
         preview

@@ -79,7 +79,12 @@ module Maker
         end
         row = @user.maker_previews.find_by!(node_id: "n1", kind: "geometry")
         assert_equal current, row.renderer_revision
-        assert_equal "pending", row.status
+        # STATUS IS LEFT ALONE on a renderer-only rebuild — the artifact still depicts this exact
+        # file, and blanking it strands a spinner on the (non-polling) file page. Consumers that
+        # cannot tolerate an older build's output say so themselves: FilesController#geometry
+        # answers "pending" whenever it had to enqueue, without reading this status at all.
+        assert_equal "ready", row.status,
+                     "a renderer rebuild must not blank an artifact that is still of this file"
       end
 
       test "a preview already at the current revision is left alone" do
