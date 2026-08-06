@@ -125,9 +125,14 @@ module Tools
       # Doubles as the prefill on `new` ("duplicate & tweak") and as the user's own submitted values
       # when `create` hands the form back — the same read is right for both.
       @values = params[:params]&.to_unsafe_h || {}
-      # BEFORE folder_options: ensures the project folder exists so it is a selectable option.
+      # BEFORE the label lookup: ensures the project folder exists so it has a path to show.
       @default_parent_node_id = current_project_folder_node_id
-      @folders = folder_options
+      # `params[:parent_node_id]` first so `create`'s re-render-on-a-rejected-value hands the form
+      # back with the folder the user actually picked, exactly as the old select's `selected:` did.
+      # NOT `folder_options` any more: the chooser fetches one level at a time, so this page no
+      # longer needs every dir the user owns — only the path of the one folder the button shows.
+      @selected_parent_node_id = params[:parent_node_id].presence || @default_parent_node_id
+      @selected_parent_label   = folder_path_label(@selected_parent_node_id)
       @prior = prior_designs_for(@source)
       @source
     end

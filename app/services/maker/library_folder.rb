@@ -15,6 +15,10 @@ module Maker
       new(user).ensure_path!(segments)
     end
 
+    def self.create_child!(user, parent_node_id:, name:)
+      new(user).create_child!(parent_node_id:, name:)
+    end
+
     def initialize(user)
       @user = user
       @port_writable = FileLayer.current.capabilities.port_writable?
@@ -24,6 +28,12 @@ module Maker
       parent = nil # nil = library root
       segments.each { |name| parent = ensure_segment(parent&.node_id, name) }
       parent
+    end
+
+    # Create (or find) ONE child dir under `parent_node_id` (nil = library root). The single-segment
+    # sibling of ensure_path!, for the chooser's "New Folder" — same cross-backend branch, one segment.
+    def create_child!(parent_node_id:, name:)
+      ensure_segment(parent_node_id, name)
     end
 
     private

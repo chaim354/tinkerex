@@ -81,6 +81,10 @@ Rails.application.routes.draw do
     end
   end
 
+  # --- Library browse (session-authed JSON; data source for the reusable folder/file chooser) ---
+  get  "library/children", to: "library_browse#children",      as: :library_children
+  post "library/folders",  to: "library_browse#create_folder", as: :library_folders
+
   # --- Per-file notes (keyed by node_id, session auth) ---
   post "files/:node_id/notes", to: "notes#create", as: :file_notes
   resources :notes, only: %i[destroy]

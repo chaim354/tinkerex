@@ -25,11 +25,19 @@
       <input type="text" name="name" value="<%= params[:name] %>" required>
     </label>
 
-    <label class="box-field">
-      <span class="box-field-label">Save to folder</span>
-      <%= select_tag :parent_node_id,
-                     options_for_select(@folders, params[:parent_node_id].presence || @default_parent_node_id) %>
-    </label>
+    <%# NOT a <label>: the trigger is a <button>, and a label wrapping a button makes the click
+        reach the button twice in some browsers (the label re-dispatches), which opens and
+        immediately re-opens the modal. The old <select> had no such problem, which is why this
+        markup differs from its neighbours above. %>
+    <div class="box-field">
+      <span class="box-field-label" id="ff-label-parent">Save to folder</span>
+      <%= render "shared/folder_field",
+                 name: "parent_node_id",
+                 children_url: library_children_path,
+                 create_url: library_folders_path,
+                 value: @selected_parent_node_id,
+                 label: @selected_parent_label %>
+    </div>
 
     <% if @param_groups.blank? %>
       <p class="muted">

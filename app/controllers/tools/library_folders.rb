@@ -3,7 +3,30 @@ module Tools
   # BoxesController so Boxes and Generators share ONE copy (DRY). Both methods are private helpers
   # for the including controller.
   module LibraryFolders
+    ROOT_LABEL = "/ (library root)".freeze
+
     private
+
+    # The human path of ONE folder ("/Projects/harbor"), for the chooser's trigger button.
+    #
+    # NOT `folder_options.rassoc(id)`, which is the obvious version and the wrong shape: that
+    # plucks EVERY dir the user owns and builds a label for each, to use one of them. The chooser
+    # asks the server for a level at a time, so the whole tree is precisely what it no longer needs
+    # — paying for it anyway would leave the flat picker's cost on a page that dropped the picker.
+    # O(depth) parent hops instead, and depth is a path, not a library.
+    def folder_path_label(node_id)
+      return ROOT_LABEL if node_id.blank?
+
+      names = []
+      seen  = Set.new # a parent cycle is not reachable through the app's own doors; do not hang if one is
+      node  = current_user.nodes.present.find_by(node_id:, kind: "dir")
+      while node && seen.add?(node.node_id)
+        names.unshift(node.name)
+        node = node.parent_node_id &&
+               current_user.nodes.present.find_by(node_id: node.parent_node_id, kind: "dir")
+      end
+      names.any? ? "/#{names.join('/')}" : ROOT_LABEL
+    end
 
     # The folder the user picked to save into, or nil (= library root). SCOPED to the user's own
     # live dirs, so a forged/foreign node_id can't write into someone else's tree and a stale or
@@ -31,7 +54,7 @@ module Tools
         labels[nid] = "#{prefix}/#{name}"
       end
       folders = rows.map { |nid, _p, _n| [ label.call(nid), nid ] }.sort_by(&:first)
-      [ [ "/ (library root)", "" ] ] + folders
+      [ [ ROOT_LABEL, "" ] ] + folders
     end
   end
 end
