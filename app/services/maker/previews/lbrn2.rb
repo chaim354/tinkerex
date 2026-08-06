@@ -56,8 +56,15 @@ module Maker
       # independently: bumping the geometry payload must not re-render every LightBurn thumbnail
       # in the library as a side effect. On the live share backend that would be ~1400 rebuilds
       # attached to a fix that had nothing to do with them.
+      # The thumbnail artifact carries `LbrnMetadata` alongside its image, so this bumps when the
+      # PANEL's numbers change and not only when the picture does.
+      #
+      #   1  original
+      #   2  an absent <numPasses> reports 1 pass rather than nothing (see LbrnMetadata#layers)
+      THUMBNAIL_REVISION = 2
+
       def payload_revision(kind)
-        kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : 1
+        kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
       end
 
       # Embedded thumbnail FIRST — a LightBurn file carries its own full-colour render in a

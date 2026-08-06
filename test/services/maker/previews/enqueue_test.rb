@@ -93,19 +93,30 @@ module Maker
         end
       end
 
-      # REVISIONS ARE PER KIND, and this is the assertion that keeps a geometry fix from becoming
-      # an unannounced full-library rebuild. Lbrn2 renders both artifacts from one file; the live
-      # share backend holds ~1400 thumbnails, and re-rendering all of them as a side effect of an
-      # unrelated change would be an outage-shaped event, not a tidy-up.
-      test "bumping the geometry revision does not invalidate a thumbnail" do
-        assert_operator Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry"),
-                        :>, Maker::Previews::Enqueue::BASE_REVISION,
-                        "this proves nothing unless geometry has actually moved past the base"
-        assert_equal Maker::Previews::Enqueue::BASE_REVISION,
-                     Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "thumbnail")
+      # REVISIONS ARE PER KIND, and this is what keeps a fix to one artifact from becoming an
+      # unannounced rebuild of another. Lbrn2 renders both a thumbnail and a geometry payload from
+      # one file, and they must be able to move independently.
+      #
+      # ASSERTED THROUGH A STAND-IN RENDERER RATHER THAN AGAINST Lbrn2's OWN NUMBERS, and the
+      # reason is worth stating because the obvious version of this test is worthless right now:
+      # Lbrn2's two revisions BOTH happen to be 2, so code that ignored `kind` entirely and
+      # returned one revision for both would satisfy every value-based assertion. A double whose
+      # two kinds differ is the only thing that can tell dispatch from coincidence.
+      test "revision_for asks the renderer for the specific kind" do
+        two_kinds = Class.new do
+          def self.payload_revision(kind) = kind == "geometry" ? 7 : 3
+        end
 
+        assert_equal 7, Maker::Previews::Enqueue.revision_for(two_kinds, "geometry")
+        assert_equal 3, Maker::Previews::Enqueue.revision_for(two_kinds, "thumbnail")
+      end
+
+      # And the consequence at the door: a thumbnail already at ITS revision is left alone, whatever
+      # geometry's happens to be.
+      test "a thumbnail at its own current revision is not re-enqueued" do
+        thumb = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "thumbnail")
         @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
-                                     status: "ready", renderer_revision: 1)
+                                     status: "ready", renderer_revision: thumb)
         assert_no_enqueued_jobs do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
                                         version_id: "v1", kind: "thumbnail")
