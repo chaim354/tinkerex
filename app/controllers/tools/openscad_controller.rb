@@ -60,16 +60,22 @@ module Tools
                 params: p }.compact
       )
       base = state.name.parameterize.presence || "model"
+      # NAMED ONCE, because the eager nudge below has to ask #project_intake_sentence about this
+      # exact name and an inline literal in two places is a name that can drift from itself.
+      filename = "#{base}-#{state.id}.3mf"
       # ONE file. The params are NOT written beside it: `state.data` above is the record, and
       # `Tools::AddonParamsController` serves it as a download.
       addon_files = Maker::Addons::LibraryOutput.write(
         user: current_user, state:, parent_node_id: chosen_parent_node_id,
-        files: [
-          { name: "#{base}-#{state.id}.3mf", bytes:, content_type: "model/3mf", role: "output" }
-        ]
+        files: [ { name: filename, bytes:, content_type: "model/3mf", role: "output" } ]
       )
       attach_addon_files_to_current_project(addon_files)
-      redirect_to tools_openscad_design_path(state), notice: "Saved “#{state.name}”."
+      # THE EAGER NUDGE — the sibling of Tools::AddonsController#create's, for the same reason and in
+      # the same order (after the attach, per ProjectFolderIntake's call-site rule). ONE file here,
+      # so the name asked about is that file's own, built above rather than read back from `nodes`.
+      intake_result = intake_project_folder(addon_files.first&.node_id)
+      redirect_to tools_openscad_design_path(state),
+                  notice: project_intake_sentence("Saved “#{state.name}”", intake_result, filename)
     rescue OpenscadParams::Invalid => e
       # A REJECTED VALUE IS SOMETHING TO FIX, so hand the editor straight back with the user's own
       # values still in it. Bouncing to the index would make the check cost them the whole form,

@@ -124,10 +124,40 @@ module ProjectFolderIntake
   # rule: attach is durable, filing is best-effort). "but" introduces where it landed, not an
   # apology for what went wrong.
   def project_intake_notice(intake_result, filename)
-    base = "Uploaded #{filename}."
-    return base unless left_unfiled_by_conflict?(intake_result, filename)
+    project_intake_sentence("Uploaded #{filename}", intake_result, filename)
+  end
 
-    "Uploaded #{filename}, but a file of that name is already in " \
+  # THE SAME SENTENCE WITH THE LEAD-IN LEFT TO THE CALLER, because the doors genuinely differ on
+  # that half and must not differ on this one. An upload door says "Uploaded grid.svg"; the addon
+  # save doors say "Saved “3mm birch test”" — the state's name, not a filename, since one save can
+  # write several files. What follows the lead-in is the identical fact about the identical
+  # mechanism, so it has one home here rather than a paraphrase per controller (CLAUDE.md's rule for
+  # a verb more than one caller performs, applied to a sentence).
+  #
+  # THE LEAD-IN CARRIES NO TRAILING PUNCTUATION, deliberately: the conflict form turns the period
+  # into a comma ("Uploaded x, but …"), so a caller that supplied its own "." would produce
+  # "Uploaded x., but …". #project_intake_notice above is now this method's first caller rather than
+  # its owner, and its output is byte-identical to what it produced before this extraction — pinned
+  # by project_upload_attach_test.rb and project_folder_intake_test.rb, which assert the full string.
+  #
+  # A nil `filename` IS A LEGAL INPUT and answers the plain lead-in: #unfiled_by_conflict below
+  # answers nil when a save had no collision, and threading that straight through is what keeps the
+  # addon door free of its own `if`.
+  def project_intake_sentence(lead, intake_result, filename)
+    return "#{lead}." unless left_unfiled_by_conflict?(intake_result, filename)
+
+    "#{lead}, but a file of that name is already in " \
       "#{Maker::ProjectFolders.folder_for(filename)}/, so this one stayed at the project root."
+  end
+
+  # The first of `names` this sweep left at the project root because its destination category folder
+  # was taken, or nil. THE PLURAL FORM of #left_unfiled_by_conflict?, and it exists because an addon
+  # save writes a SET of files in one request while every upload door writes one — asking only about
+  # the first file would report "Saved" with no qualification for a save whose SECOND output
+  # collided, which is the same missing-feedback regression #left_unfiled_by_conflict? was added to
+  # end. Reports the first, not all of them: the flash is one sentence, and one named collision is
+  # what makes the user go look.
+  def unfiled_by_conflict(intake_result, names)
+    Array(names).find { |name| left_unfiled_by_conflict?(intake_result, name) }
   end
 end

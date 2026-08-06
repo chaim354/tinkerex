@@ -314,6 +314,26 @@ module Tools
       assert_redirected_to tools_openscad_design_path(state)
     end
 
+    # THE SECOND ADDON SAVE DOOR NEEDS THE SAME EAGER NUDGE AS Tools::AddonsController#create, and
+    # this test exists because "there are two of them" is precisely the shape §14f warns about — a
+    # rule wired into one door and silently not the other. A .3mf is `model` -> `models/`, so this
+    # also proves the nudge is category-driven rather than hard-coded to the .svg case the bug was
+    # reported against.
+    test "create files the 3mf into its category folder without waiting for the sweep" do
+      project = @user.maker_projects.create!(name: "Harbor Signs")
+      folder = project.ensure_library_folder!(@user)
+
+      post tools_openscad_path, params: { name: "OS Bundle", generator: "hex_plate",
+                                          params: { cols: "6", wall: "2.5" },
+                                          parent_node_id: folder.node_id }
+
+      state = @user.maker_addon_states.for_addon("openscad").order(:id).last
+      out = state.files.find { |f| f.role == "output" }
+      node = @user.nodes.find_by(node_id: out.node_id)
+      assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id)&.name,
+                   "a .3mf saved into a project folder should be filed into models/ by the nudge"
+    end
+
     test "create does NOT copy the .scad source into the library" do
       # Spec §6.1: for a bring-your-own file, copying the source would spread a possibly
       # restrictively-licensed design around the user's library and into any future share/export

@@ -889,6 +889,32 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   them is exactly how `#relocate` once silently pulled a file out of a model's bundle
   folder while reporting success. `ProjectIntake#place` is a third door onto that one
   policy, not a second copy of it.
+- **`:attached_elsewhere` IS THE ONE RULE THAT DOES NOT TRANSFER TO THE INTAKE, and it is
+  scoped AT `#refusal_for` (`within_own_folder:`), never by `#place` filtering the answer.**
+  Its stated reason is positional — "yanked out of the folder that project put it in" — and
+  `#place`'s move is `Projects/<slug>/x` → `Projects/<slug>/<cat>/x`, so there is no other
+  project's folder to yank it out of; `node_id` never changes, so the other project's
+  attachment survives. Unscoped it was **silent and permanent**: a file any second project
+  also claimed sat at the root through every 15-minute sweep forever, recorded only in a
+  `skips` entry nothing but `rake projects:organize` prints. Reachable without doing
+  anything unusual — `CurrentProject#attach_addon_files_to_current_project` attaches an
+  addon's output to whatever project is **current**, regardless of which folder the save
+  dialog wrote it into. `:not_a_file` and `:model_bundle` stay unconditional: the bundle
+  rule is deliberately about the ATTACHMENT rather than the folder, so it makes no claim
+  about where the file currently sits and has no equivalent argument for relaxing.
+- **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there are TWO of them**
+  (`Tools::AddonsController#create`, `Tools::OpenscadController#create`), and the concern is
+  included on `Tools::BaseController` so a third inherits it. This was the last
+  browser-facing door without one: the save dialog DEFAULTS to the current project's folder,
+  so the user watched the redirect land on a file that visibly did not sort — 15 minutes on
+  chunk, and on share/s3 there is no `project_folder_intake` schedule at all
+  (`ProjectIntakeJob.sweep_all!` declines on a scannable backend), so it waits on
+  `Library::ScanJob`'s poll. **ONE sweep per save, not one per file** (every file in a save
+  shares `parent_node_id` and `.for_node` sweeps the owning PROJECT), **after** the attach
+  per `ProjectFolderIntake`'s call-site rule. The conflict clause has one home,
+  `#project_intake_sentence` — the doors differ on the LEAD-IN ("Uploaded grid.svg" vs
+  "Saved “X”") and must not differ on what follows — and `#unfiled_by_conflict` is its plural
+  form, because a save writes a SET and the colliding output need not be the first.
 - **THE SCANJOB ORDERING — INTAKE STRICTLY AFTER THE RECONCILE, SAME JOB — IS A
   CORRECTNESS CONSTRAINT, NOT A CONVENIENCE.** A move made after the Scanner has captured
   its observations gets paired back by `(content_hash, size)` — `best_pairing` working
@@ -919,11 +945,11 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   flash (before the eager nudge existed) to a silent "Uploaded x." with no sign the file
   stayed at the project root (after it, before this fix).
   `ProjectFolderIntake#left_unfiled_by_conflict?` / `#project_intake_notice` read the
-  `:conflict` entry out of `Result#skips` for exactly this — but only in the two doors
+  `:conflict` entry out of `Result#skips` for exactly this — but only in the **four** doors
   whose response a user actually sees (`FilesController#create`'s HTML branch,
-  `Projects::UploadsController#create`); the JSON-only branches still run the intake and
-  still file what they can, they just don't surface the fact, because nothing downstream
-  reads that response key today.
+  `Projects::UploadsController#create`, and both addon save doors); the JSON-only branches
+  still run the intake and still file what they can, they just don't surface the fact,
+  because nothing downstream reads that response key today.
 
 ### 14g. Deploy secrets
 
