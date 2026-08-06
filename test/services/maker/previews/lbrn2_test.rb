@@ -429,8 +429,9 @@ module Maker
           contours = []
           Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, *| contours << pts }
 
-          assert_equal 2, contours.length,
-                       "the Text emits nothing; its BackupPath's PrimList yields two contours"
+          assert_equal 3, contours.length,
+                       "2 contours from the Text's BackupPath (the Text itself emits nothing) " \
+                       "+ 1 from the Rect placed beside it for the object-id density check below"
 
           all_x = contours.flatten(1).map(&:first)
           all_y = contours.flatten(1).map(&:last)
@@ -443,9 +444,30 @@ module Maker
           ids = []
           Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
 
-          assert_equal 2, ids.length
-          assert_equal 1, ids.uniq.length,
+          # Document order: the Text's two BackupPath contours (the letters) yield first, then
+          # the Rect placed beside them.
+          assert_equal 3, ids.length
+
+          # THE GROUPING CLAIM, checked POSITIONALLY rather than via a deduplicated count. A
+          # count alone cannot tell "the two letters share one id, and the Rect gets its own"
+          # apart from "the second letter collides with the Rect's id while the first is split
+          # off alone" — both give ids.uniq.length == 2. That second, WRONG shape is exactly
+          # what a per-contour-id mutation produced here, undetected, until this was asserted
+          # positionally: [1, 2, 2] has 2 unique values and is dense from 1, same as the correct
+          # [1, 1, 2], so neither an aggregate count nor a density check catches it.
+          assert_equal ids[0], ids[1],
                        "both BackupPath contours belong to ONE object (the Text), so alt-click reports the whole word"
+          assert_not_equal ids[0], ids[2], "the Rect beside the Text must be a different object"
+
+          # THE ASSERTION THAT CATCHES THE ORIGINAL BUG, and the reason the Rect is in this
+          # fixture at all. A Text yields no geometry of its own, so its counter tick is
+          # observable ONLY through the BackupPath reusing it. Give the BackupPath a fresh id
+          # instead and the Text's tick is burned unobserved, leaving a GAP: the ids become
+          # [2, 2, 3] rather than [1, 1, 2]. With only one Shape in the fixture, both behaviours
+          # look like "two the same" and nothing could tell them apart — which is why the Rect
+          # had to be added at all.
+          assert_equal (1..ids.uniq.length).to_a, ids.uniq.sort,
+                       "object ids must be dense from 1 — a gap means a tick was burned on an unyielded shape"
         end
 
         test "each_geometry gives separate shapes separate object ids, and Groups consume none" do
