@@ -24,6 +24,16 @@ module Maker
       # floor is what stops a 12-point circle degenerating into a triangle. Measured over the 58
       # real exports: thinning above this cuts the worst file from 734 KB to 281 KB gzipped.
       DECIMATE_ABOVE = 32
+
+      # NOT FREE TO CHANGE INDEPENDENTLY OF Lbrn2::BEZIER_SAMPLES. Lbrn2 flattens each cubic into
+      # BEZIER_SAMPLES points, so an original LightBurn vertex lands on every BEZIER_SAMPLES-th
+      # flattened index. Keeping every DECIMATE_STRIDE-th point preserves EVERY original vertex,
+      # not just the bbox, exactly because 12 % 3 == 0 — this stride divides that sample count.
+      # Break the divisibility (either constant) and decimation starts dropping real vertices
+      # instead of only intermediate curve samples: contour bboxes move, silently, on whichever
+      # fixture's extremes no longer land on a kept index. See the coupling test in
+      # lbrn_geometry_test.rb, which asserts this divisibility directly rather than relying on it
+      # to hold by accident.
       DECIMATE_STRIDE = 3
 
       # Circularity, for the readout's diameter. THREE conditions, and the point count is the one

@@ -102,6 +102,26 @@ module Maker
         assert_equal full[decimated["o"]], decimated["b"]
       end
 
+      # THE COUPLING THAT MAKES DECIMATION SAFE FOR CURVES, and it spans two files.
+      # Lbrn2 flattens each cubic into BEZIER_SAMPLES points, so an original LightBurn vertex lands
+      # on every BEZIER_SAMPLES-th index. Keeping every DECIMATE_STRIDE-th point therefore preserves
+      # EVERY original vertex exactly when the stride divides the sample count — only intermediate
+      # curve samples are dropped. Change either constant so this stops holding and contour bboxes
+      # begin to move under decimation, silently, with the drawing losing corners rather than detail.
+      test "the decimation stride divides the bezier sample count, so no original vertex is dropped" do
+        assert_equal 0, Maker::Previews::Lbrn2::BEZIER_SAMPLES % LbrnGeometry::DECIMATE_STRIDE
+
+        doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
+        Lbrn2.each_geometry(doc) do |_c, points, *|
+          next unless points.length > LbrnGeometry::DECIMATE_ABOVE
+
+          kept = LbrnGeometry.decimate(points)
+          vertices = (0...points.length).step(Maker::Previews::Lbrn2::BEZIER_SAMPLES).map { |i| points[i] }
+          assert vertices.all? { |v| kept.include?(v) },
+                 "every original vertex must survive decimation, not merely the bbox"
+        end
+      end
+
       test "a contour above the threshold is actually thinned, and a small one is left alone" do
         shapes = build("bezier-circle.lbrn2")["shapes"]
         doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
