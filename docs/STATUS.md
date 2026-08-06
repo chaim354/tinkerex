@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**A re-save asks before it overwrites**)
+**Updated:** 2026-08-06 (**The file chooser, revived and handed to the addon bundles**)
 
 ## What this file is
 
@@ -60,7 +60,131 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+## Latest (2026-08-06): the file chooser, revived from a closed PR and handed to the addon bundles (PR #140, branch `claude/file-chooser-ui-location-3df3a9`; bundles PR tinkerex-addons#3) — **DEPLOYED 2026-08-06**
+
+**Started as a question, not a task:** *"is the new file chooser UI still in a branch or worktree?"*
+The answer was worse than a branch — **PR #76 had been closed unmerged** (2026-08-04), its branch was
+**241 commits behind**, and its one consumer no longer existed: `0880f09` wired
+`app/views/tools/boxes/new.html.erb`, which **#125 deleted** when boxes moved to the addons repo.
+Meanwhile `main` still shipped `Tools::LibraryFolders#folder_options` — a `<select>` listing **every
+folder in the library**, which stops being a picker somewhere around the fiftieth.
+
+The reusable half still applied. It was ported, two real defects in it were fixed, and the half PR #76
+never had — **the addon bundles** — was built.
+
+### The addon problem, and why the obvious two answers are wrong
+
+Since #125 the addon UIs are ESM bundles in a **separate repo**, so `shared/_folder_field` cannot
+reach them: a Rails partial has nowhere to render inside a bundle's own layout. Two candidates were
+rejected on their merits before the third was built —
+
+- **Host renders the field into a slot.** The bundle owns its layout; the host has no idea where a
+  destination field belongs in it.
+- **Bundle imports the module by specifier.** That makes `lib/file_chooser.js`'s *path* part of the
+  addon API — unmovable without republishing every bundle.
+
+**A function on the mount context** is what landed: `ctx.chooseFolder(opts) -> Promise<{nodeId, kind,
+path} | null>`. That forced the modal out of `filechooser_controller.js` into
+**`app/javascript/lib/file_chooser.js`** as a plain promise-returning class — a bundle is not a
+Stimulus controller and must not have to become one — leaving the controller as only the form-field
+face of it. That split is most of the diff.
+
+**ADDITIVE, AND THAT IS THE LOAD-BEARING PART.** `ctx.folders`/`defaultFolder` stay, and so does
+`folder_options`. The two repos deploy **independently** — publishing the bundle image *is* the addon
+deploy, Rails is never rebuilt, and `bin/rollback` can restore an older bundle at any moment — so a
+bundle is routinely running against a host of the other vintage. `folder_field.js` (per addon, the
+same duplication idiom as `save.js`) feature-detects on `ctx.chooseFolder`. Neither side drops its
+half until the other has nothing reachable that reads it. **Consequence: the two PRs needed no
+lockstep merge and no deploy ordering** — unlike the entry below, where Rails had to go first.
+
+### Two defects fixed, not merely ported
+
+- **A new door with weaker name validation than the shared one.** `create_folder` checked blank +
+  `include?("/")` — the exact defect `Maker::MoveNode.valid_leaf_name?` was extracted to close (§14c).
+  Share and S3 refuse a non-leaf in their own `leaf!`, but **chunk has no name check anywhere
+  downstream** and chunk is the main deployment, so `..`, a backslash, a NUL byte and an unbounded
+  length all became live dir nodes bound for the changelog and every device mount.
+- **The modal's two halves could name different folders.** It seeded its selection as
+  `{nodeId: <the field's value>, path: <the ROOT label>}`. Invisible until the **second** open, where
+  pressing Choose without navigating wrote the subfolder's `node_id` to the hidden input and
+  `/ (library root)` to the button — the form submitted the right folder under a label saying root.
+  Only ever on a reopen, which is why a suite whose every case opened once could not see it.
+
+Also kept distinct at every layer, host and bundle: **cancel resolves `null`, choosing the root
+resolves `{nodeId: ""}`**. Collapsing them moves the destination to root on every Esc.
+
+`/tools/openscad` — the one Rails-rendered save form left on `main` — also dropped `folder_options`
+for a new `folder_path_label` (O(depth) parent hops). The chooser fetches one level at a time, so
+keeping the full pluck would have left the flat picker's cost on the page that removed it.
+
+### Verification
+
+Bare `bin/ci` green; three legs identical at **1970 runs / 6869 assertions**, system tests
+**55 / 329**. (Stated absolutely, not as a delta against the entry below — this file's own header
+says these counts do not chain and a baseline must come from running the merge-base.)
+
+**The browser tier is doing the real work here.** Stimulus registration (`pin_all_from` +
+`eagerLoadControllersFrom`), the `innerHTML`-built modal, the `fetch`-fed columns, the cross-repo
+context object and the CSP are invisible to every Ruby test — and `script_src :self` is report-only,
+so a chooser reaching for an inline handler would log a violation in one visitor's console and break
+for real the day that policy is enforced. `assert_no_console_errors` is what makes that check exist.
+Three new system files: the modal through the form field, the fixture bundle through
+`ctx.chooseFolder`, and the **real boxes bundle** through the snapshot `bin/check-fixture-drift`
+guards — including the rollback arm, mounting the shipped `folder_field.js` against a context with no
+`chooseFolder`, because that branch is the one no ordinary run ever executes.
+
+Five mutations run and restored: the name guard (weakened, `a\b` becomes a real node), the selection
+seeding (restored, the reopen test fails), and each shape of `mountFolderField` forced so the other
+bundle test goes red.
+
+### DEPLOYED live, 2026-08-06
+
+| | version | evidence |
+|---|---|---|
+| Rails, all three Unraid backends | **`ef0bf90f91aa873a4dd98109afc932e0902fc086`** | `/up` **200** on chunk, share, s3 |
+| Addon bundle accessory | **`d9c4ec66734ae0bfec723397c2c4a8c543143885`** / `sha256:72ad7f1d…` | `docker inspect` digest matches the pushed manifest |
+
+OVH was **not** deployed; bare "deploy" means Unraid (§7).
+
+**Proved the change shipped, not that containers booted.** `/library/children` answers **302** (the
+auth redirect) on all three backends against a **404 control** on `/library/no-such-route` — the
+route is really in the table. `lib/file_chooser.js`, `shared/_folder_field.html.erb` and
+`library_browse_controller.rb` are all in the running image, and `addon_controller.js` inside it
+carries `chooseFolder` + `defaultFolderLabel` **alongside** the legacy `folders`. From the Rails
+container, `http://tinkerex-addons/boxes/folder_field.js` returns **200 / 3429 b** over the Kamal
+network, and `Rails.cache.read(["maker/addons/asset", "boxes", "editor.js"])` is **nil** — nothing
+stale held, so the next request serves the new bundle rather than waiting out the 5-minute TTL.
+
+**No mixed-version window exists here**, and it is worth knowing why: each `editor.js` carries its own
+markup *and* its own logic, so a stale asset cache serves a consistent **old** bundle, never a
+half-new one. The only cross-file dependency is new-`editor.js` → `folder_field.js`, which is in the
+image before either can be served.
+
+### Two process notes
+
+- **`bin/build-push` does not roll anything.** It pushes the image; the accessory pins `:latest` and
+  keeps running whatever it started with until **`kamal accessory reboot addons`** from the *tinkerex*
+  repo. Merging the addons repo is a third step removed from users seeing a change.
+- **The `/deploy` skill is out of date on secrets.** It still documents `export
+  KAMAL_REGISTRY_PASSWORD=…` before deploying; §14g's rule is the opposite — no export,
+  `bin/secrets-preflight` first, because kamal turns an unreadable secret into a silently **empty**
+  one. Preflight was used instead (base/share/s3, all resolved, service-account auth). The skill text
+  is worth correcting.
+
+### Left open
+
+**`generators` has no host fixture**, deliberately — `bin/check-fixture-drift` snapshots only `boxes`,
+and adding one means copying makerjs and its pins into this repo. Its `folder_field.js` is
+byte-identical to the covered copy, but its `generators.js` wiring is verified **by reading, not by
+running**. `boxes-next` likewise has no fixture; it stays byte-identical to `boxes`.
+
+The chooser's **file-pick mode** is still built and unwired — the project "Attach a file" flow
+(`app/views/projects/attachments/new.html.erb`) remains search-only, and is the natural first
+consumer.
+
+---
+
+## 2026-08-05: a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
 
 Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
 but not v4?** Because **v4 was saved twice.** Reproduced exactly —
