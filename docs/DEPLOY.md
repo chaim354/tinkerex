@@ -185,6 +185,65 @@ From a client on the same network (reaches the Rails box and the chunk store):
 ```
 …or in the Tauri app, set **Sync server URL** and Mount.
 
+## 5. Test accounts on the Unraid box
+
+**THIS SECTION IS THE ONE PLACE THESE ARE RECORDED.** A credential that lives only in a session
+transcript is gone the moment that session ends — which is exactly how the account below got lost
+once already, sending the next reader to a two-month-old handoff doc naming an account that no
+longer worked.
+
+| backend | container | account | password |
+|---|---|---|---|
+| share | `tinkerex-web-share` | `demo@tinkerex.local` | `MakerDemo2026!` |
+| chunk | `tinkerex-web` | **unverified — check before assuming** | |
+| s3 | `tinkerex-web-s3` | **unverified — check before assuming** | |
+
+**A PASSWORD IS IN GIT HERE ON PURPOSE, AND THE REASON IS LOAD-BEARING.** This box is a
+non-production test/dev deploy (despite `RAILS_ENV=production`), its `ENABLE_TEST_SIGNUP` seam is
+deliberately open, and it is reachable only on the LAN and the tailnet. **Never record a managed-SaaS
+or internet-facing credential here** — those resolve through 1Password per §2b and must not acquire
+a second, plaintext home. If this box ever stops being a throwaway, this table moves to 1Password
+with it.
+
+**EACH BACKEND HAS ITS OWN SQLite VOLUME** (`tinkerex_storage`, `tinkerex_storage_share`,
+`tinkerex_storage_s3`) — so each has its **own `users` table**. An account created on one does not
+exist on the others, and that is why the table above is per-backend rather than a single line. A
+login that works on share and fails on chunk is this, not a broken deploy.
+
+List what actually exists, rather than trusting the table:
+
+```sh
+ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name=tinkerex-web-share) bin/rails runner "puts User.pluck(:email)"'
+```
+
+Create one (the seam is open on all three; it creates a **confirmed** account, no email
+verification — `app/controllers/v1/test_users_controller.rb`):
+
+```sh
+curl -X POST http://share.tinkerex.home/v1/test/users \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"demo@tinkerex.local","password":"MakerDemo2026!"}'
+```
+
+Reset a forgotten one, keeping its library, attachments and BOM links:
+
+```sh
+ssh kamal1@192.168.1.95 'docker exec -i $(docker ps -qf name=tinkerex-web-share) bin/rails runner -' <<'RUBY'
+u = User.find_by(email: "demo@tinkerex.local")
+abort "no such user" unless u
+u.update!(password: "MakerDemo2026!", confirmed_at: u.confirmed_at || Time.current)
+puts "#{u.email} updated"
+RUBY
+```
+
+Three things about that snippet are deliberate. **`confirmed_at` is set only when currently null** —
+an account predating confirmation otherwise resets fine and still bounces to the confirmation page,
+which reads as a wrong password. **It aborts on nil** instead of raising `NoMethodError` on a
+mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styling: interactive
+**zsh performs history expansion on `!` inside DOUBLE quotes**, so the obvious one-liner dies on
+`MakerDemo2026!` — and on `update!` — with `zsh: event not found`. Single quotes suppress it;
+`%q(...)` in Ruby avoids nesting quotes at all if you want a one-liner.
+
 ---
 
 ## Migrating off the old on-box build
