@@ -1263,8 +1263,16 @@ end
 # The :lbrn branch replaces the :thumbnail branch for these files, so everything that
 # branch handled has to still work. A ready thumbnail is the resting state — Measure is a
 # button, not a replacement.
+# CORRECTED DURING EXECUTION: `perform_enqueued_jobs { get file_path(...) }` does NOT work
+# here. The block form only runs jobs enqueued DURING the block, and #show enqueues nothing —
+# the upload's job is already sitting in enqueued_jobs from setup and is never touched.
+# Verified at source level (activejob 8.1.3.1) and empirically. Use this codebase's own idiom
+# for the case (files_flow_test.rb, "the detail page shows a ready thumbnail for a CAD file"):
+# create the Preview row and attach its asset directly.
+#
+# Task 6's uses of perform_enqueued_jobs ARE correct — there the GET itself enqueues.
 test "the lbrn page still shows its thumbnail poster when one is ready" do
-  perform_enqueued_jobs { get file_path(@node_id) }
+  # ...create the ready thumbnail row directly, per files_flow_test.rb...
   get file_path(@node_id)
 
   assert_response :success
