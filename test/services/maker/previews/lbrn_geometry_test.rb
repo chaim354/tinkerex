@@ -129,24 +129,17 @@ module Maker
         end
       end
 
-      # THE GAP THE TEST ABOVE CANNOT CLOSE, however identical it looks. `BEZIER_SAMPLES` (12,
-      # in Lbrn2) divides `DECIMATE_STRIDE` (3) evenly, so the circle's four axis-extreme points
-      # sit at flattened indices 0/12/24/36/48 — all multiples of 3 — and survive decimation
-      # exactly; its reported bbox comes out identical whether "b" is measured from full or from
-      # decimated points. That is a coincidence of two unrelated constants, not anything this
-      # code enforces: checked by hand, with `build` measuring "b" from `decimate(points)`
-      # instead of `points`, EVERY test in this file — this one included — stayed green.
-      # laser-settings.lbrn2's Ellipse has no such coincidence: its four axis extremes fall on
-      # sample indices 0/8/16/24 (verified by hand), and only 0 and 24 are multiples of 3 — the
-      # x-minimum (idx 16) and y-minimum (idx 8) are NOT retained, so decimating it measurably
-      # moves the reported box, from x 40.0..60.0 / y -40.0..-20.0 to x 40.19..60.0 /
-      # y -39.81..-20.0. Isolating that one shape — rather than the whole-job union, where a
-      # co-located Rect already supplies the same bound — is what lets this assertion fail for
+      # THE GAP THE TEST ABOVE CANNOT CLOSE, however identical it looks. A UNION over a whole
+      # document hides any per-shape error some other shape already bounds — on
+      # bezier-circle.lbrn2 the union stayed green with `b` measured from thinned points on three
+      # separate fixtures. This isolates ONE shape whose extremes are its own: laser-settings'
+      # Ellipse is not shadowed by the co-located Rect in either axis, so thinning it moves the
+      # reported box measurably (x 40.0..60.0 becomes x 40.19..60.0) and this assertion fails for
       # the reason it exists.
       #
       # Paired positionally, same reasoning as the test above — laser-settings.lbrn2 has no Text
       # either, so this isn't live here, but the pairing shouldn't depend on that.
-      test "a decimated ellipse still reports its FULL-resolution bbox" do
+      test "a thinned ellipse still reports its FULL-resolution bbox" do
         doc = Lbrn2.parse_document(fixture("laser-settings.lbrn2"))
         full = []
         Lbrn2.each_geometry(doc) do |_c, points, *|
@@ -156,51 +149,132 @@ module Maker
           full << { n: points.length, bbox: [ xs.min, ys.min, xs.max, ys.max ].map { |v| v.round(2) } }
         end
 
-        decimated = build("laser-settings.lbrn2")["shapes"].zip(full)
-                                                             .find { |_s, f| f[:n] > LbrnGeometry::DECIMATE_ABOVE }
-        assert decimated, "the fixture's ellipse should exceed the decimation threshold"
-        s, f = decimated
+        ellipse = build("laser-settings.lbrn2")["shapes"].zip(full).max_by { |_s, f| f[:n] }
+        assert ellipse, "the fixture should have an ellipse"
+        s, f = ellipse
         assert_equal f[:bbox], s["b"]
       end
 
-      # THE COUPLING THAT MAKES DECIMATION SAFE FOR CURVES, and it spans two files.
-      # Lbrn2 flattens each cubic into BEZIER_SAMPLES points, so an original LightBurn vertex lands
-      # on every BEZIER_SAMPLES-th index. Keeping every DECIMATE_STRIDE-th point therefore preserves
-      # EVERY original vertex exactly when the stride divides the sample count — only intermediate
-      # curve samples are dropped. Change either constant so this stops holding and contour bboxes
-      # begin to move under decimation, silently, with the drawing losing corners rather than detail.
-      test "the decimation stride divides the bezier sample count, so no original vertex is dropped" do
-        assert_equal 0, Maker::Previews::Lbrn2::BEZIER_SAMPLES % LbrnGeometry::DECIMATE_STRIDE
+      # THE INVARIANT THE DRAWING PAYLOAD ACTUALLY OWES ITS READER, stated as a BOUND rather than
+      # as a property of one algorithm: whatever thinning is applied, no point of the true contour
+      # may end up further than SIMPLIFY_TOLERANCE from the line the browser draws.
+      #
+      # This replaces a coupling assertion that could not fail for the reason it existed.
+      # `BEZIER_SAMPLES % DECIMATE_STRIDE == 0` was said to mean "every original vertex survives",
+      # and it does — but ONLY for a contour built entirely of `B` ops, because `polylines` appends
+      # 12 points per bezier segment and exactly ONE per `L` segment. A single straight edge shifts
+      # every later index by one and destroys the alignment. bezier-circle.lbrn2 is all-bezier
+      # (PrimList `B0 1B1 2B2 3B3 0`), so it satisfied the old assertion while real mixed-geometry
+      # files were being mangled: measured over the 58-file corpus, 1148 of 5259 thinned contours
+      # were displaced by more than 5% of their own size, worst case 58.7 mm.
+      #
+      # A dropped CURVE SAMPLE flattens a curve slightly. A dropped VERTEX cuts a corner off
+      # entirely — and for an `L` segment every point IS a vertex.
+      # THE TEST BELOW MEASURES AGAINST SIMPLIFY_TOLERANCE, SO IT CANNOT POLICE THE CONSTANT
+      # ITSELF — set it to 100 and every deviation assertion passes trivially while the drawing
+      # turns to spaghetti. This pins the magnitude against a literal instead. 0.05 mm is a hobby
+      # laser's positional accuracy; anything at or above that is visible in the terms this
+      # file's readers measure in, and is a decision to argue for here rather than to slip past.
+      test "the tolerance stays below what a laser can actually resolve" do
+        assert_operator LbrnGeometry::SIMPLIFY_TOLERANCE, :>, 0,
+                        "a zero tolerance disables thinning entirely"
+        assert_operator LbrnGeometry::SIMPLIFY_TOLERANCE, :<=, 0.05
+      end
 
-        doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
-        Lbrn2.each_geometry(doc) do |_c, points, *|
-          next unless points.length > LbrnGeometry::DECIMATE_ABOVE
+      test "simplification never moves the drawn line further than the tolerance" do
+        %w[real-export.lbrn2 sample.lbrn2 laser-settings.lbrn2 bezier-circle.lbrn2
+           text-backup-path.lbrn2].each do |name|
+          doc = Lbrn2.parse_document(fixture(name))
+          drawn = build(name)["shapes"].map { |s| s["p"] }
+          full = []
+          Lbrn2.each_geometry(doc) { |_c, pts, *| full << pts if pts.length >= 2 }
 
-          kept = LbrnGeometry.decimate(points)
-          vertices = (0...points.length).step(Maker::Previews::Lbrn2::BEZIER_SAMPLES).map { |i| points[i] }
-          assert vertices.all? { |v| kept.include?(v) },
-                 "every original vertex must survive decimation, not merely the bbox"
+          full.zip(drawn).each_with_index do |(original, kept), i|
+            dev = max_deviation(original, kept)
+            assert_operator dev, :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 0.011,
+                            "#{name} contour #{i}: drawn line is #{dev.round(3)} mm off the real one"
+          end
         end
       end
 
-      # Paired positionally, same reasoning as the two decimation tests above.
-      test "a contour above the threshold is actually thinned, and a small one is left alone" do
-        doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
-        counts = []
-        Lbrn2.each_geometry(doc) do |_c, points, *|
-          next if points.length < 2
+      # THE CASE THE OLD ALGORITHM GOT WRONG, isolated. Six edges alternating straight and curved,
+      # so `polylines` emits 1 point for each `L` and 12 for each `B` and no vertex lands on a
+      # predictable index. Under stride-3 decimation EVERY corner here is dropped (they sit at
+      # indices 1, 13, 25, 26, 38 — none a multiple of 3) and the outline cuts straight across the
+      # shape. The rightmost corner is the one to name: lose it and the contour visibly collapses.
+      test "a contour mixing straight and curved edges keeps its corners" do
+        xml = <<~XML
+          <LightBurnProject AppVersion="1.6.00">
+            <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1">
+              <XForm>1 0 0 1 0 0</XForm>
+              <VertList>V0 0c0x1c1x1V30 0c0x40c0y-6c1x22c1y0V40 10c0x40c0y16c1x40c1y4V30 20c0x1c1x1V0 20c0x-10c0y26c1x8c1y20V-10 10c0x-10c0y4c1x-10c1y16</VertList>
+              <PrimList>L0 1B1 2B2 3L3 4B4 5B5 0</PrimList>
+            </Shape>
+          </LightBurnProject>
+        XML
+        doc = Lbrn2.parse_document(xml)
+        original = nil
+        Lbrn2.each_geometry(doc) { |_c, pts, *| original = pts }
+        assert_operator original.length, :>, 32, "the fixture must exceed any thinning threshold"
 
-          counts << points.length
-        end
+        drawn = JSON.parse(LbrnGeometry.render(xml)[:bytes])["shapes"].first["p"]
 
-        pairs = build("bezier-circle.lbrn2")["shapes"].zip(counts)
-        big = pairs.find { |_s, n| n > Maker::Previews::LbrnGeometry::DECIMATE_ABOVE }
-        small = pairs.find { |_s, n| n <= Maker::Previews::LbrnGeometry::DECIMATE_ABOVE }
+        # apply() flips Y, so the shape's rightmost corner (40, 10) arrives as (40.0, -10.0).
+        assert_includes drawn, [ 40.0, -10.0 ],
+                        "the rightmost corner must survive — dropping it cuts the shape open"
+        assert_operator max_deviation(original, drawn), :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 0.011
+      end
 
-        assert big,   "the bezier circle should exceed the threshold"
-        assert small, "the 5-point square should not"
-        assert_operator big[0]["p"].length, :<, big[1], "a big contour must be thinned"
-        assert_equal small[1], small[0]["p"].length,    "a small contour must be untouched"
+      # Thinning must still HAPPEN — an implementation that returns every point trivially satisfies
+      # the bound above while re-inflating the payload the exclusion rules exist to keep small.
+      #
+      # Asserted on `simplify` DIRECTLY rather than through a fixture, and that is the honest
+      # framing rather than a shortcut. None of the repo's fixtures thin at all, because thinning
+      # removes REDUNDANCY and LightBurn does not oversample a 20 mm circle: its 49 flattened
+      # points sit ~0.021 mm off their neighbours' chord, above the 0.01 mm tolerance, so every one
+      # of them is load-bearing. The redundancy lives in the real corpus — small text contours
+      # flattened at a fixed 12 samples per cubic — where this cuts the worst file from 728 KB to
+      # 200 KB gzipped. `rake lbrn:geometry_report` is what observes that; a 2 KB fixture cannot.
+      test "simplify collapses points that carry no shape" do
+        straight = (0..49).map { |i| [ i * 0.1, 0.0 ] }
+        assert_equal [ [ 0.0, 0.0 ], [ 4.9, 0.0 ] ], LbrnGeometry.simplify(straight),
+                     "50 collinear points describe one segment"
+
+        # A curve sampled far finer than the tolerance needs: 200 points around a 0.5 mm circle.
+        fine = (0..200).map { |i| t = i * 2 * Math::PI / 200; [ 0.5 * Math.cos(t), 0.5 * Math.sin(t) ] }
+        kept = LbrnGeometry.simplify(fine)
+        assert_operator kept.length, :<, fine.length / 4, "an oversampled arc must collapse"
+        assert_operator max_deviation(fine, kept), :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 1e-9
+      end
+
+      # `d` COMES FROM FULL-RESOLUTION POINTS, and this is the case that can prove it. A 0.2 mm
+      # circle — a pilot hole or a registration dot — arrives as 49 flattened points and thins to
+      # 9, because at that size LightBurn's fixed 12-samples-per-cubic is wildly redundant. Nine is
+      # BELOW MIN_CIRCLE_POINTS, so a `diameter` computed from the thinned outline would refuse to
+      # call it round and report no `d` at all, silently turning a correct "⌀0.2 mm" into a bare
+      # bounding box. Measuring before thinning is what keeps the readout honest for exactly the
+      # small features a measuring tool exists to inspect.
+      test "a small circle still reports a diameter after its outline is thinned" do
+        xml = <<~XML
+          <LightBurnProject AppVersion="1.6.00">
+            <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1">
+              <XForm>1 0 0 1 0 0</XForm>
+              <VertList>V0.1 0c0x0.1c0y0.05523c1x0.1c1y-0.05523V0 0.1c0x-0.05523c0y0.1c1x0.05523c1y0.1V-0.1 0c0x-0.1c0y-0.05523c1x-0.1c1y0.05523V0 -0.1c0x0.05523c0y-0.1c1x-0.05523c1y-0.1</VertList>
+              <PrimList>B0 1B1 2B2 3B3 0</PrimList>
+            </Shape>
+          </LightBurnProject>
+        XML
+        full = nil
+        Lbrn2.each_geometry(Lbrn2.parse_document(xml)) { |_c, pts, *| full = pts }
+        shape = JSON.parse(LbrnGeometry.render(xml)[:bytes])["shapes"].first
+
+        assert_operator full.length, :>=, LbrnGeometry::MIN_CIRCLE_POINTS
+        assert_operator shape["p"].length, :<, LbrnGeometry::MIN_CIRCLE_POINTS,
+                        "the thinned outline must fall below the circularity floor, or this proves nothing"
+        # Asserted before the delta so a regression reads as "no diameter at all" rather than as a
+        # TypeError from assert_in_delta trying to coerce nil.
+        assert shape["d"], "no diameter reported — d was measured from the thinned outline"
+        assert_in_delta 0.2, shape["d"], 0.01, "d must be measured before thinning"
       end
 
       # BOTH DIRECTIONS. Asserting only that the circle is round still passes with the tolerance
@@ -273,6 +347,27 @@ module Maker
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
 
       def build(name) = JSON.parse(LbrnGeometry.render(fixture(name))[:bytes])
+
+      # The largest distance from any point of `original` to the polyline `kept` — i.e. how far
+      # the drawn line strays from the real contour. Measured point-to-SEGMENT, not
+      # point-to-point: a thinned polyline is allowed to omit points, and only matters when it
+      # omits them in a way that moves the LINE.
+      def max_deviation(original, kept)
+        original.map { |p| kept.each_cons(2).map { |a, b| point_segment_distance(p, a, b) }.min || 0.0 }.max
+      end
+
+      def point_segment_distance(point, a, b)
+        px, py = point
+        ax, ay = a
+        bx, by = b
+        dx = bx - ax
+        dy = by - ay
+        return Math.hypot(px - ax, py - ay) if dx.abs < 1e-12 && dy.abs < 1e-12
+
+        t = (((px - ax) * dx) + ((py - ay) * dy)) / ((dx * dx) + (dy * dy))
+        t = t.clamp(0.0, 1.0)
+        Math.hypot(px - (ax + (t * dx)), py - (ay + (t * dy)))
+      end
     end
   end
 end
