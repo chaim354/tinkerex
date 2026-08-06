@@ -60,8 +60,35 @@ bin/ci
 | `test/fixtures/files/bezier-circle.lbrn2` | **new** — 4-segment bezier circle + same-size square |
 | `test/fixtures/files/text-backup-path.lbrn2` | **new** — Text + multi-contour `BackupPath` |
 | `test/services/maker/previews/lbrn_geometry_test.rb` | **new** — payload unit tests |
-| `test/controllers/files_geometry_test.rb` | **new** — endpoint, driven as real requests |
+| `test/integration/web/lbrn_geometry_test.rb` | **new** — endpoint, driven as real requests |
 | `test/system/lbrn_measure_test.rb` | **new** — click a contour, assert the readout |
+
+### Test conventions in this repo — verified, and NOT what you would guess
+
+Checked against the tree, because the first draft of this plan guessed all four wrong:
+
+- **Web/controller tests live in `test/integration/web/`**, not `test/controllers/` (which holds
+  only `current_project_controller_test.rb`, `projects/`, `tools/`). They are
+  `module Web; class XTest < ActionDispatch::IntegrationTest`.
+- **There are NO Rails model fixtures.** `test/fixtures/` contains only `action_text/`, `addons/`
+  and `files/`. There is no `users(:one)` — a test creates its own `User` and signs in.
+- **Sign-in is a per-file helper**, not a shared one, and it uses the real password flow:
+  ```ruby
+  PASSWORD = "correct horse battery staple".freeze
+
+  def sign_in(email = "web@example.com")
+    user = User.find_by(email:) ||
+           User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
+    post user_session_path, params: { user: { email:, password: PASSWORD } }
+    user
+  end
+  ```
+- **A test whose fixtures are backend-shaped must say so** with `pin_file_layer_backend("chunk")`
+  in `setup` (31 of the 43 web tests do). `FileLayer.current` otherwise reads the ambient
+  `LIBRARY_BACKEND`, so the share leg points a chunk-shaped test at the Share adapter and it fails
+  looking for bytes on a disk that has none. That failure is the honest signal, not a bug.
+  `files_flow_test.rb` also carries a chunk `upload(name, bytes)` helper mirroring the browser's
+  two-phase presigned flow — copy it rather than reinventing it.
 
 `LbrnGeometry` is a separate file from `Lbrn2` deliberately: `lbrn2.rb` is already 590 lines and
 carries the parser's hard-won dialect knowledge. The payload builder is a different
@@ -964,7 +991,7 @@ git commit -m "feat(previews): add the geometry preview kind"
 **Files:**
 - Modify: `config/routes.rb:67-82`
 - Modify: `app/controllers/files_controller.rb`
-- Create: `test/controllers/files_geometry_test.rb`
+- Create: `test/integration/web/lbrn_geometry_test.rb`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -972,79 +999,96 @@ Drive real requests. A test that sets preview statuses in Ruby and asserts on th
 about the endpoint — that is the shape §14a's capability-gating tests had when nine of them could
 not fail for the reason they existed.
 
+Follow `test/integration/web/files_flow_test.rb` for structure: `module Web`, the local `sign_in`
+helper, `pin_file_layer_backend("chunk")`, and its two-phase `upload(name, bytes)` helper. Read
+that file first and copy its conventions rather than inventing them.
+
 ```ruby
 require "test_helper"
 
-class FilesGeometryTest < ActionDispatch::IntegrationTest
-  setup do
-    @user = users(:one)
-    sign_in_as @user
-    @node = @user.nodes.present.find_by(kind: "file")
-  end
+module Web
+  # The .lbrn2 Measure view's coordinate endpoint. Chunk-shaped (it uploads through
+  # Sync::Commit's two-phase flow), so it pins the backend and says so — see
+  # test_helper#pin_file_layer_backend.
+  class LbrnGeometryTest < ActionDispatch::IntegrationTest
+    include ActiveJob::TestHelper
 
-  test "requires authentication" do
-    sign_out
-    get geometry_file_path(@node.node_id)
-    assert_redirected_to new_session_path
-  end
+    setup do
+      pin_file_layer_backend("chunk")
+      Storage::ChunkStore.reset!
+      @user = sign_in
+      @node_id = upload("measure.lbrn2", file_fixture_bytes("real-export.lbrn2"))
+    end
 
-  test "answers pending while the preview is being generated" do
-    get geometry_file_path(@node.node_id)
+    test "requires authentication" do
+      delete destroy_user_session_path
+      get geometry_file_path(@node_id)
+      assert_redirected_to new_user_session_path
+    end
 
-    assert_response :success
-    assert_equal "pending", response.parsed_body["status"]
-  end
+    test "answers pending while the preview is being generated" do
+      get geometry_file_path(@node_id)
 
-  test "answers ready with a blob url once the preview is generated" do
-    perform_enqueued_jobs { get geometry_file_path(@node.node_id) }
-    get geometry_file_path(@node.node_id)
+      assert_response :success
+      assert_equal "pending", response.parsed_body["status"]
+    end
 
-    assert_response :success
-    body = response.parsed_body
-    assert_equal "ready", body["status"]
-    assert body["url"].present?, "a ready geometry preview must expose its blob url"
-  end
+    test "answers ready with a blob url once the preview is generated" do
+      perform_enqueued_jobs { get geometry_file_path(@node_id) }
+      get geometry_file_path(@node_id)
 
-  test "surfaces a failed preview rather than 500ing" do
-    preview = Maker::Preview.create!(user: @user, node_id: @node.node_id, kind: "geometry",
-                                     version_id: content_token_for(@node), status: "failed",
-                                     error: "boom")
-    get geometry_file_path(@node.node_id)
+      assert_response :success
+      body = response.parsed_body
+      assert_equal "ready", body["status"]
+      assert body["url"].present?, "a ready geometry preview must expose its blob url"
+    end
 
-    assert_response :success
-    assert_equal "failed", response.parsed_body["status"]
-    assert_equal "boom", response.parsed_body["error"]
-    assert_equal "failed", preview.reload.status
-  end
+    test "the ready payload is the geometry, not an image" do
+      perform_enqueued_jobs { get geometry_file_path(@node_id) }
+      preview = @user.maker_previews.find_by!(node_id: @node_id, kind: "geometry")
 
-  test "surfaces unsupported with the job's own message" do
-    Maker::Preview.create!(user: @user, node_id: @node.node_id, kind: "geometry",
-                           version_id: content_token_for(@node), status: "unsupported",
-                           error: "lbrn2 is 40 MB, over the 32 MB preview ceiling")
-    get geometry_file_path(@node.node_id)
+      assert_equal "application/json", preview.asset.content_type
+      assert_equal 4, JSON.parse(preview.asset.download)["shapes"].length
+    end
 
-    assert_equal "unsupported", response.parsed_body["status"]
-    assert_match(/over the 32 MB preview ceiling/, response.parsed_body["error"])
-  end
+    test "surfaces a failed preview rather than 500ing" do
+      preview_for(@node_id).update!(status: "failed", error: "boom")
+      get geometry_file_path(@node_id)
 
-  test "404s for a node the user does not own" do
-    get geometry_file_path("no-such-node")
-    assert_response :not_found
-  end
+      assert_response :success
+      assert_equal "failed", response.parsed_body["status"]
+      assert_equal "boom", response.parsed_body["error"]
+    end
 
-  private
+    test "surfaces unsupported with the job's own message" do
+      preview_for(@node_id).update!(status: "unsupported",
+                                    error: "lbrn2 is 40 MB, over the 32 MB preview ceiling")
+      get geometry_file_path(@node_id)
 
-  def content_token_for(node)
-    FileLayer.current.stat(@user, node_id: node.node_id)&.content_token
+      assert_equal "unsupported", response.parsed_body["status"]
+      assert_match(/over the 32 MB preview ceiling/, response.parsed_body["error"])
+    end
+
+    test "404s for a node this user does not own" do
+      other = User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+      stranger = other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs.lbrn2", kind: "file")
+
+      get geometry_file_path(stranger.node_id)
+      assert_response :not_found
+    end
   end
 end
 ```
 
-> **Adapt to this repo's helpers.** Check an existing controller test (e.g.
-> `test/controllers/files_controller_test.rb`) for the real sign-in helper name, the fixture
-> accessor, and whether a `.lbrn2` node fixture already exists. If no `.lbrn2` node fixture exists,
-> create one whose bytes are `test/fixtures/files/real-export.lbrn2` — the endpoint must be
-> exercised against a file the renderer can actually handle.
+> **`preview_for`, `file_fixture_bytes`, `upload` and `sign_in` are yours to write** — model them
+> on `files_flow_test.rb`. `preview_for` should call `Maker::Previews::Enqueue` the same way the
+> action does (or find the row it created) so the test manipulates a REAL row rather than
+> constructing one whose `version_id` may not match what the endpoint looks up. Getting that wrong
+> produces a test that passes while the endpoint is broken.
+>
+> The cross-user test is the one most likely to pass for the wrong reason — a node id that does not
+> exist 404s whether or not the action scopes by user. It must create a node owned by a DIFFERENT
+> user. Mutation-check it by dropping the `current_user` scope in the action (Step 6).
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1121,9 +1165,10 @@ Temporarily drop the user scope:
     node = Node.present.find_by!(node_id: params[:id])
 ```
 
-Expected: the "404s for a node the user does not own" test still passes (the id does not exist at
-all), which is the tell — **strengthen that test** to create a node owned by `users(:two)` and
-request it as `users(:one)`, then confirm the mutation makes it fail. **Restore the scope.**
+Expected: **RED** on "404s for a node this user does not own" — the stranger's node is now found
+and the action answers 200 instead of 404. If it stays green, the test is asserting against a
+node id that does not exist anywhere, which 404s either way; fix the test, not the mutation.
+**Restore the scope.**
 
 - [ ] **Step 7: Commit**
 
@@ -1139,36 +1184,53 @@ git commit -m "feat(files): GET /files/:id/geometry endpoint"
 **Files:**
 - Modify: `app/controllers/files_controller.rb` (`preview_kind`)
 - Modify: `app/views/files/show.html.erb:130`
-- Modify: `test/controllers/files_controller_test.rb`
+- Modify: `test/integration/web/lbrn_geometry_test.rb` (the file Task 6 created)
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `test/controllers/files_controller_test.rb`:
+Append to `test/integration/web/lbrn_geometry_test.rb`, reusing its `setup` and helpers:
 
 ```ruby
-test "an lbrn2 file page offers the Measure surface and keeps its thumbnail states" do
-  node = lbrn2_node # a node whose name ends .lbrn2
-  get file_path(node.node_id)
+test "an lbrn2 file page offers the Measure surface" do
+  get file_path(@node_id)
 
   assert_response :success
   assert_select "[data-controller='lbrnmeasure']", 1
   assert_select "[data-lbrnmeasure-url-value]", 1
+  assert_select "button[data-action='lbrnmeasure#load']", 1
 end
 
-test "a non-lbrn thumbnail file page is unaffected" do
-  node = @user.nodes.present.find_by("name LIKE ?", "%.dxf")
-  skip "no dxf fixture" if node.nil?
-  get file_path(node.node_id)
+test "a non-lbrn file page does not" do
+  other = upload("drawing.dxf", file_fixture_bytes("sample.dxf"))
+  get file_path(other)
 
   assert_response :success
   assert_select "[data-controller='lbrnmeasure']", 0
+end
+
+# The :lbrn branch replaces the :thumbnail branch for these files, so everything that
+# branch handled has to still work. A ready thumbnail is the resting state — Measure is a
+# button, not a replacement.
+test "the lbrn page still shows its thumbnail poster when one is ready" do
+  perform_enqueued_jobs { get file_path(@node_id) }
+  get file_path(@node_id)
+
+  assert_response :success
+  assert_select ".lbrn-measure-fallback img", 1
+end
+
+test "the lbrn page says so while the thumbnail is still generating" do
+  get file_path(@node_id)
+
+  assert_response :success
+  assert_select ".lbrn-measure-fallback", text: /Generating preview/
 end
 ```
 
 - [ ] **Step 2: Run to verify it fails**
 
 ```bash
-bin/rails test test/controllers/files_controller_test.rb -n "/Measure surface/"
+bin/rails test test/integration/web/lbrn_geometry_test.rb -n "/Measure surface/"
 ```
 
 Expected: **FAIL** — `Expected exactly 1 element matching "[data-controller='lbrnmeasure']", found 0`.
@@ -1254,15 +1316,17 @@ In `app/assets/stylesheets/application.css` (match the file's existing conventio
 - [ ] **Step 6: Run the tests**
 
 ```bash
-bin/rails test test/controllers/files_controller_test.rb
+bin/rails test test/integration/web/
 ```
 
-Expected: **PASS**.
+Expected: **PASS**. Run the whole directory, not just the new file — `preview_kind` is shared, and
+`files_flow_test.rb` / `page_query_budget_test.rb` are the ones most likely to notice a change to
+what the show page renders.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/controllers/files_controller.rb app/views/files/show.html.erb app/assets/stylesheets/application.css test/controllers/files_controller_test.rb
+git add app/controllers/files_controller.rb app/views/files/show.html.erb app/assets/stylesheets/application.css test/integration/web/lbrn_geometry_test.rb
 git commit -m "feat(files): lbrn preview branch with a Measure surface"
 ```
 
@@ -1701,13 +1765,19 @@ git commit -m "feat(lbrn2): zoom and pan the Measure view"
 Hermetic on repo fixtures — never the 58-file corpus, which a fresh clone does not have. Follow
 `test/system/addon_bundle_test.rb` for this repo's system-test setup and sign-in helper.
 
+System tests already have a shared helper module — `test/system/support/web_helpers.rb`, included
+by `ApplicationSystemTestCase` — providing `sign_in_as(email)`, `project_with_folder`, and
+`assert_no_console_errors(ignoring:)`. Use them; do not hand-roll a sign-in or a raw
+`logs.get(:browser)` check. Note the base class **drains the browser log buffer in `setup`**
+because Selenium reuses one Chrome across a file and the log is a drain — a backlog from one test
+otherwise fails the next.
+
 ```ruby
 require "application_system_test_case"
 
 class LbrnMeasureTest < ApplicationSystemTestCase
   setup do
-    @user = users(:one)
-    sign_in_as @user
+    @user = sign_in_as
     @node = create_library_file(@user, "measure-me.lbrn2", "bezier-circle.lbrn2")
   end
 
@@ -1736,18 +1806,19 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     click_on "Measure"
     assert_selector ".lbrn-measure--ready", wait: 10
 
-    severe = page.driver.browser.logs.get(:browser).select { |l| l.level == "SEVERE" }
-    assert_empty severe, "console errors: #{severe.map(&:message).join("\n")}"
+    assert_no_console_errors
   end
 end
 ```
 
-> **`create_library_file` may not exist.** Check `test/system/` and `test/test_helper.rb` for the
-> existing way to put bytes into the library under the active `LIBRARY_BACKEND`. If there is no
-> helper, write one that reads `test/fixtures/files/bezier-circle.lbrn2` and creates the node
-> through the same door `FilesController#create` uses, so all three legs behave identically.
-> The SEVERE-console assertion is this repo's established way of catching client defects that
-> integration tests cannot see (it is what caught two shipped CSP defects).
+> **`create_library_file` does NOT exist — you must write it.** Check `test/system/support/` and
+> the other system tests for how they get bytes into the library, and follow whatever they do.
+> Whatever you write must work on all three `LIBRARY_BACKEND` legs, since `bin/ci` runs them all
+> and their counts must match.
+>
+> `assert_no_console_errors` is this repo's established way of catching client defects integration
+> tests cannot see — it caught two shipped CSP defects. It takes an `ignoring:` list; do not reach
+> for it to silence a real error.
 
 - [ ] **Step 2: Run it**
 
