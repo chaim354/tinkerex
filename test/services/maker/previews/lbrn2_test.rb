@@ -395,6 +395,50 @@ module Maker
           assert_equal 2, meta["shape_count"], "the Rect after the oversized attribute must survive"
           assert_equal 40.0, meta["job"]["width"]
         end
+
+        test "bezier-circle fixture parses as one closed circle and one closed square" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
+          shapes = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, closed, *| shapes << [ pts, closed ] }
+
+          assert_equal 2, shapes.length, "expected exactly the circle and the square"
+
+          circle, square = shapes.sort_by { |(pts, _)| pts.map(&:first).min }
+          assert circle[1], "circle contour must be closed"
+          assert square[1], "square contour must be closed"
+
+          assert_operator circle[0].length, :>=, 12, "a 4-segment bezier circle must flatten to >= 12 points"
+          assert_equal 5, square[0].length, "a Rect emits 4 corners plus the closing point"
+
+          # THE ASSERTION THAT MAKES THIS FIXTURE WORTH HAVING. The bbox is pinned by the four
+          # on-axis vertices, so it stays 20x20 even if the curve between them is wrong — swapping
+          # c0/c1 yields a four-lobed shape with radii 4.14..10.0 and every other assertion here
+          # still passes. Roundness is the whole point of the fixture; assert it directly.
+          circle[0].each { |(x, y)| assert_in_delta 10.0, Math.hypot(x, y), 0.01 }
+
+          # Both are 20 x 20 mm. That is the whole point of this fixture.
+          { "circle" => circle, "square" => square }.each do |name, (pts, _)|
+            xs = pts.map(&:first); ys = pts.map(&:last)
+            assert_in_delta 20.0, xs.max - xs.min, 0.05, "#{name} width"
+            assert_in_delta 20.0, ys.max - ys.min, 0.05, "#{name} height"
+          end
+        end
+
+        test "text-backup-path fixture yields two contours from the BackupPath" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("text-backup-path.lbrn2"))
+          contours = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, *| contours << pts }
+
+          assert_equal 2, contours.length,
+                       "the Text emits nothing; its BackupPath's PrimList yields two contours"
+
+          all_x = contours.flatten(1).map(&:first)
+          all_y = contours.flatten(1).map(&:last)
+          assert_in_delta 30.0, all_x.max - all_x.min, 0.01, "the two letters span 30 mm"
+          assert_in_delta 10.0, all_y.max - all_y.min, 0.01, "the two letters share one 10mm y-span"
+        end
+
+        def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
       end
     end
   end
