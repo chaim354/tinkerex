@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**An addon-saved file did not autosort — two defects on one path**)
+**Updated:** 2026-08-05 (**A re-save asks before it overwrites**)
 
 ## What this file is
 
@@ -60,7 +60,80 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): an addon-saved file did not autosort — two defects on one path (branch `claude/file-mover-autosort-bug-c83346`)
+## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+
+Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
+but not v4?** Because **v4 was saved twice.** Reproduced exactly —
+
+```
+[v3 saved once]       -> ["design"]
+[v4 save #1]          -> ["design"]
+[v4 save #2]          -> ["design", "harbor-signs"]   <- two copies
+[after 3 more sweeps] -> ["design", "harbor-signs"]   <- stuck
+```
+
+The door's collision check and the sweep's look at **different folders**. `refuse_taken_names!` asks
+about the folder the user picked — vacant, because copy #1 had already been filed into `design/` —
+so the save was accepted, and the sweep then could not place it. CLAUDE.md §12 item 11 recorded that
+as an open product question; this closes the half that bites.
+
+**The decision was overwrite-after-confirmation** (not auto-rename: the user is iterating on one
+drawing, not accumulating copies; not silent overwrite: it destroys work without asking).
+
+### What landed, in six steps
+
+1. **`FileLayer#write(replace:)`** on Share + S3 — the opt-in the clobber refusal is the default for.
+   It **must reuse the existing node**; a delete-then-create passes any bytes-oriented test while
+   orphaning every attachment (§14a's landmine). Cheap on both: Share's temp-then-rename is already
+   atomic over an existing destination and `put_object` overwrites by definition, so a replace
+   *skips* work. In the shared write contract, so the two adapters cannot answer differently.
+2. **`LibraryOutput`** gains a per-file destination and `replace:`. Per-file because one save can
+   collide on some outputs and not others — boxes emits `<base>.svg` and `<base>-plan.svg` together.
+   Chunk's replace is simply a new **version** against the existing node (`base_version_id` = its
+   current), so it touches the port not at all and the old bytes stay restorable.
+3. **`ProjectIntake.destination_for`** — where a not-yet-written file will end up, and what is
+   already there. Creates nothing; nil outside a project folder's own root.
+4. **409 `would_replace` + `overwrite`** at `Tools::AddonsController#create`. Kept distinct from the
+   existing 422: one never succeeds on retry, the other is a question.
+5. **OpenSCAD needed no dialog** — the plan called for one, and reading the code first showed the
+   door cannot collide (its filename embeds `state.id`). A guard on that property landed instead.
+6. **`save.js` in all three bundles** (second repo) — reads the 409, asks `window.confirm`, re-POSTs
+   with `overwrite=1`. Declining is reported separately from failing.
+
+### Verification
+
+Bare `bin/ci` green, exit 0 at every step; three legs identical at **1959 runs / 6807 assertions**,
+system tests **46 / 260**. Every guard mutation-checked and restored: the port's node reuse, chunk's
+node reuse, the kwarg default, the conflict list, the OpenSCAD filename, and the browser helper's
+`overwrite` append.
+
+**Proven in a real browser**, because the client half is observable nowhere else: the hermetic
+fixture addon imports a verbatim copy of the shipped helper and drives save → re-save → accept →
+one node with the original `node_id`, plus a dismiss path asserting the original bytes survive.
+
+### Three findings that cost real time
+
+- **A comment claimed a mutation it had not run.** It said narrowing the conflict list to `.first`
+  turned the multi-file test red; with only ONE colliding file that mutation is a no-op and it
+  stayed **green**. The test now uses two collisions plus a free name — the smallest shape where
+  "all" and "the first" differ. The false sentence is recorded at the test rather than deleted.
+- **A fixture that could not exist on share/s3.** The already-filed file was built with
+  `nodes.create!`, leaving `storage_path` NULL — and that column is how the *port* addresses a file,
+  so `Share#write(replace:)` missed it and created a second node: chunk green, share/s3 red. The two
+  lookups are different **on purpose** (chunk nodes have no `storage_path`) and now say so.
+- **A syntax check that checked nothing.** `node --check "$f" | head -2 && echo ok` reports `head`'s
+  exit status, so ten JS files "passed" without being parsed. Re-run properly against `.mjs` copies.
+
+### Left open
+
+`:model_bundle` in the same position as `:attached_elsewhere` (weaker argument, no evidence it bit
+this file); the eager cap's silent `Result`; and a project-wide name scan, §12.11's broader question,
+which this deliberately does not attempt — it closes the destination the file is actually headed for,
+without a library-wide scan on every save.
+
+---
+
+## 2026-08-05: an addon-saved file did not autosort — two defects on one path (branch `claude/file-mover-autosort-bug-c83346`)
 
 Reported as "there is a bug in the file mover, `harbor-number-v4.svg` did not autosort", on a
 **share** deployment, from a **`/tools` addon save**. The happy path was never broken — `.svg` at a
