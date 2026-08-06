@@ -345,52 +345,162 @@ module Tools
                    "an .svg saved into a project folder should be filed into design/ by the nudge"
     end
 
-    # THE OTHER HALF OF READING THE RETURN VALUE (§14f: "A CALLER MUST READ intake_project_folder'S
-    # RETURN VALUE, NOT JUST TRIGGER ITS SIDE EFFECT"). A save whose destination category folder
-    # already holds that name stays at the project root — correct, and the same outcome the upload
-    # doors have — but saying "Saved" and nothing else is the exact regression FilesController#create
-    # already had to fix once.
-    test "save says so when a collision leaves the output at the project root" do
-      project = @user.maker_projects.create!(name: "Harbor Signs")
-      folder = project.ensure_library_folder!(@user)
-      design = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", project.slug, "design" ])
-      name = "harbor-taken-#{SecureRandom.hex(4)}.svg"
-      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
-                          parent_node_id: design.node_id, size: 1, content_hash: SecureRandom.hex(8))
+    # A SAVE WRITES A SET, AND THE 409 MUST NAME EVERY COLLIDING OUTPUT — a body reporting only a
+    # count, or only the first, makes the user guess which drawing the dialog is about. The boxes
+    # addon emits `<base>.svg` AND `<base>-plan.svg` in one save, so a plain re-save collides on
+    # BOTH; a third, free name is in the mix here to pin the other half (a free output must not be
+    # listed).
+    #
+    # THE TWO-COLLISION SHAPE IS WHAT MAKES THE MUTATION BITE, and an earlier version of this test
+    # got that wrong: with only ONE colliding file, narrowing #render_would_replace's `select` to
+    # `.first(1)` is a no-op and the mutation stayed GREEN while the comment above it claimed it
+    # turned red. The claim was false as written — caught by running the mutation rather than
+    # trusting the sentence. Two collisions is the smallest case where "all of them" and "the first
+    # of them" actually differ.
+    #
+    # NOTE WHAT REPLACED WHAT. Two tests here used to assert the OLD outcome — the second copy
+    # stranded at the project root, with a flash explaining it (PR #136). The door now catches that
+    # case BEFORE writing anything, so the stranding no longer happens and there is no flash to
+    # assert. #project_intake_sentence's :conflict branch is NOT dead, though, and is deliberately
+    # kept: the door's check and the sweep are not atomic, so a file landing in the category folder
+    # between them still ends with the output at the root and the flash saying so. That race is not
+    # constructible from out here, which is stated rather than papered over with a test that would
+    # only be proving the mock.
+    test "the conflict names every colliding output, not just the first" do
+      plan = "harbor-plan-#{SecureRandom.hex(4)}.svg"
+      body = "harbor-body-#{SecureRandom.hex(4)}.svg"
+      clear = "harbor-clear-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(plan, body)
 
       post tools_addon_path("widgetkit"), params: {
         name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
-        files: [ { name:, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+        files: [ { name: plan, content_type: "image/svg+xml", body: "<svg>a</svg>" },
+                 { name: clear, content_type: "image/svg+xml", body: "<svg>b</svg>" },
+                 { name: body, content_type: "image/svg+xml", body: "<svg>c</svg>" } ].to_json
       }
 
-      assert_equal folder.node_id, @user.nodes.present.find_by(name:, parent_node_id: folder.node_id)&.parent_node_id
-      assert_match(/design\/.*stayed at the project root/, flash[:notice])
+      assert_response :conflict
+      assert_equal [ { "name" => plan, "folder" => "design" },
+                     { "name" => body, "folder" => "design" } ],
+                   response.parsed_body["files"],
+                   "BOTH collisions are named, in save order, and the free output is not"
+      assert_nil @user.nodes.present.find_by(name: clear),
+                 "nothing may be written until the user answers — not even the file that would fit"
     end
 
-    # A SAVE WRITES A SET, AND THE COLLIDING ONE NEED NOT BE THE FIRST. Every upload door writes one
-    # file, so #left_unfiled_by_conflict? was only ever asked about one name; asking it about just
-    # `files.first` here would report a bare "Saved" for a save whose SECOND output stayed at the
-    # root — the same missing-feedback regression that method exists to end, reintroduced one door
-    # over. Mutation-checked: narrowing #unfiled_by_conflict to `Array(names).first` turns this red
-    # while the single-file test above stays green.
-    test "save names the colliding output even when it is not the first file" do
-      project = @user.maker_projects.create!(name: "Harbor Signs")
-      folder = project.ensure_library_folder!(@user)
-      design = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", project.slug, "design" ])
+    # CONFIRMING A MIXED SAVE does both halves: the free name is created at the picked folder (the
+    # sweep files it), the taken one replaces in place. Per-file placement is why
+    # Maker::Addons::LibraryOutput takes a per-file destination rather than one for the call.
+    # THE ALREADY-FILED FILE IS PUT THERE BY A REAL SAVE, not by `nodes.create!`, and that is a
+    # correctness requirement of the test rather than tidiness. A hand-built node has no
+    # `storage_path`, and on share/s3 that column is how the PORT addresses a file — FileLayer
+    # ::Share#write(replace:) resolves the node to reuse by `storage_path`, because `rel` is what it
+    # derived the destination from. So a fixture node with a NULL storage_path is a file that cannot
+    # exist on those backends, the lookup misses, and a second node is created: chunk green,
+    # share/s3 red. Found exactly that way.
+    #
+    # (The two lookups are DIFFERENT ON PURPOSE and must not be "unified": chunk nodes have no
+    # storage_path at all — the changelog is their catalog — so Maker::Addons::LibraryOutput
+    # #existing_at asks by (parent, name) there, while the port asks by storage_path here. Each is
+    # authoritative for its own backend.)
+    test "confirming a mixed save creates the free output and replaces the taken one" do
       clear = "harbor-clear-#{SecureRandom.hex(4)}.svg"
       taken = "harbor-taken-#{SecureRandom.hex(4)}.svg"
-      @user.nodes.create!(node_id: SecureRandom.uuid, name: taken, kind: "file",
-                          parent_node_id: design.node_id, size: 1, content_hash: SecureRandom.hex(8))
+      _project, folder = project_with_filed(taken)
+      old = @user.nodes.present.find_by!(name: taken)
 
       post tools_addon_path("widgetkit"), params: {
-        name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
-        files: [ { name: clear, content_type: "image/svg+xml", body: "<svg/>" },
-                 { name: taken, content_type: "image/svg+xml", body: "<svg x=''/>" } ].to_json
+        name: "harbor v4", data: "{}", parent_node_id: folder.node_id, overwrite: "1",
+        files: [ { name: clear, content_type: "image/svg+xml", body: "<svg>new</svg>" },
+                 { name: taken, content_type: "image/svg+xml", body: "<svg>replaced</svg>" } ].to_json
       }
+      assert_redirected_to tools_addon_path("widgetkit")
 
-      assert_equal "design", @user.nodes.find_by(node_id: @user.nodes.present.find_by(name: clear).parent_node_id)&.name,
-                   "the non-colliding output should still have been filed"
-      assert_match(/design\/.*stayed at the project root/, flash[:notice])
+      assert_equal "design", @user.nodes.find_by(node_id: @user.nodes.present.find_by!(name: clear).parent_node_id)&.name,
+                   "the free output is created and the nudge files it"
+      assert_equal 1, @user.nodes.present.where(name: taken).count
+      assert_equal old.node_id, @user.nodes.present.find_by!(name: taken).node_id,
+                   "the taken output is replaced in place, keeping its node (§14a)"
+      assert_equal "<svg>replaced</svg>", FileLayer.current.read(@user, node_id: old.node_id)
+    end
+
+    # ---- save: a re-save asks before it overwrites -----------------------------------------
+    #
+    # THE BUG THIS CLOSES, reproduced end to end before the fix. Save #1 lands at the project root
+    # and the sweep files it into design/. Save #2 under the same name finds the ROOT vacant — copy
+    # #1 has moved — so refuse_taken_names! accepts it, and the sweep then cannot place it because
+    # design/ is taken. The second copy sits at the project root through every later sweep, forever,
+    # with two copies of the file in the library. That is CLAUDE.md §12 item 11 in the wild.
+    #
+    # 409, NOT 422, and the split is load-bearing rather than cosmetic: 422 (unsupported_operation)
+    # means "this name is taken where you asked, pick another", which never succeeds on retry, and
+    # 409 means "this WOULD replace something — say yes and I will". A bundle has to tell them apart
+    # to know whether to offer an Overwrite button or just an error.
+    # A project whose folder already holds `names`, put there by a REAL save so the eager nudge
+    # files each one into its category folder — see the mixed-save test for why a hand-built
+    # `nodes.create!` is not a substitute (no storage_path, which is how the port addresses a file
+    # on share/s3).
+    def project_with_filed(*names)
+      project = @user.maker_projects.create!(name: "Harbor Signs")
+      folder = project.ensure_library_folder!(@user)
+      post tools_addon_path("widgetkit"), params: {
+        name: "harbor v4", data: "{}", parent_node_id: folder.node_id,
+        files: names.map { |n| { name: n, content_type: "image/svg+xml", body: "<svg>v1</svg>" } }.to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      [ project, folder ]
+    end
+
+    test "re-saving a name already filed in its category folder asks first, writing nothing" do
+      name = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      filed = @user.nodes.present.find_by!(name:)
+
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        assert_no_difference -> { @user.nodes.present.where(name:).count } do
+          post tools_addon_path("widgetkit"), params: {
+            name: "harbor v4 again", data: "{}", parent_node_id: folder.node_id,
+            files: [ { name:, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+          }
+        end
+      end
+      assert_response :conflict
+      assert_equal "would_replace", response.parsed_body["error"]
+      assert_equal [ { "name" => name, "folder" => "design" } ], response.parsed_body["files"]
+      assert_equal "<svg>v1</svg>", FileLayer.current.read(@user, node_id: filed.node_id),
+                   "the existing bytes must be untouched until the user confirms"
+    end
+
+    test "confirming the overwrite replaces the filed file in place, keeping its node" do
+      name = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      filed = @user.nodes.present.find_by!(name:)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "harbor v4 again", data: "{}", parent_node_id: folder.node_id, overwrite: "1",
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+
+      assert_equal 1, @user.nodes.present.where(name:).count,
+                   "the whole point: ONE copy, not one filed and one stranded at the root"
+      assert_equal filed.node_id, @user.nodes.present.find_by!(name:).node_id,
+                   "a replace must keep the node — a new node_id orphans every attachment (§14a)"
+      assert_equal "<svg>v2</svg>", FileLayer.current.read(@user, node_id: filed.node_id)
+      assert_equal "design", @user.nodes.find_by(node_id: @user.nodes.present.find_by!(name:).parent_node_id)&.name
+    end
+
+    # A save into an ORDINARY library folder has no category destination, so none of this applies
+    # and today's behaviour is untouched. Without this the check would have to guess, and guessing
+    # would put a 409 in front of saves that have no sweep coming for them at all.
+    test "a save outside a project folder is unaffected by the category check" do
+      name = "loose-#{SecureRandom.hex(4)}.svg"
+      post tools_addon_path("widgetkit"), params: {
+        name: "loose", data: "{}",
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert_nil @user.nodes.present.find_by!(name:).parent_node_id
     end
 
     test "save refuses a name already taken in the destination folder, leaving no orphan state" do
@@ -469,7 +579,11 @@ module Tools
                                     scannable: true, port_writable: true)
       end
 
-      def write(_user, parent_node_id:, name:, io:)
+      # `replace:` MIRRORS THE REAL SIGNATURE and is deliberately ignored: this fake exists to fail
+      # a write part-way through a multi-file save, and a replace changes nothing about that. What
+      # it must NOT do is omit the kwarg — a fake whose arity has drifted from the port's turns
+      # every caller into an ArgumentError that says nothing about the behaviour under test.
+      def write(_user, parent_node_id:, name:, io:, replace: false)
         @writes += 1
         raise FileLayer::UnsupportedOperation, "#{name.inspect} already exists" if @writes == @fail_on
 

@@ -467,6 +467,21 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Library` and **took the boot down while every test stayed green** (test env skips it).
   **The S3 boot guard does NO NETWORK** — a boot depending on a third party turns a blip
   into a crash loop. Config *presence* is what boot can honestly check.
+- **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.**
+  The refusal is still the default on both writable adapters and every existing caller omits the
+  kwarg; `replace:` exists for a door that has just asked a user "this would replace `design/x.svg`
+  — overwrite?" and been told yes. **It MUST reuse the existing node.** A replace written as
+  delete-then-create passes any bytes-oriented test while orphaning every attachment, BOM link and
+  tag — the landmine two bullets down, whose signature is that nothing errors and nothing logs.
+  Pinned in `adapter_write_contract.rb` beside the clobber test, asserting **`node_id` survives**,
+  not merely the content. Cheap on both backends because each already had the hard part: Share's
+  temp-then-rename is atomic over an existing destination and `put_object` overwrites by definition,
+  so a replace **skips** work rather than adding it. **The two adapters resolve "the file being
+  replaced" DIFFERENTLY and must keep doing so** — the port asks by `storage_path` (what it derived
+  the destination from), chunk's `LibraryOutput#existing_at` asks by `(parent, name)` because chunk
+  nodes have no `storage_path` at all. A test fixture built with `nodes.create!` has a NULL
+  `storage_path`, which cannot exist on share/s3: the lookup misses, a second node is created, and
+  the leg splits chunk-green / share-red.
 - **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
   two different questions: `content_token` need only be an opaque content-*state* token, but
   `content_hash` must be content-*determined* for move-pairing — and **a multipart ETag is
@@ -902,6 +917,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   dialog wrote it into. `:not_a_file` and `:model_bundle` stay unconditional: the bundle
   rule is deliberately about the ATTACHMENT rather than the folder, so it makes no claim
   about where the file currently sits and has no equivalent argument for relaxing.
+- **TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THE GAP BETWEEN THEM WAS A REAL BUG.**
+  A door's own check (`refuse_taken_names!`) asks about the folder the user **picked** and is
+  terminal ("pick another name" → **422** `unsupported_operation`). `Maker::ProjectIntake
+  .destination_for` asks about the **category folder** the sweep will file into, and is answerable
+  ("overwrite?" → **409** `would_replace`). A re-save goes straight through the gap: the first copy
+  has already been filed, so the picked folder is vacant, the door accepts, and the sweep then
+  cannot place the second copy — which sits at the project root **forever**, with two copies of one
+  drawing in the library. That is CLAUDE.md §12 item 11 in the wild (`harbor-number-v4.svg`, saved
+  twice, while v3 and v5 sorted fine). **Keep 409 and 422 distinct**: a bundle must be able to tell
+  "never succeeds on retry" from "say yes and it will", or it offers an Overwrite button for a save
+  that can never take one. `destination_for` **creates nothing** — looking up a category folder must
+  not mkdir it (`#relocate`'s recorded bug) — and takes its folder name from
+  `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
+  behaviour cannot disagree.
+- **`Tools::OpenscadController#create` CANNOT REACH THAT BUG, and the guard is on the property that
+  makes it so** — its output name embeds `state.id`, a fresh autoincrement per save, so two saves of
+  one design under one name still produce two filenames. A confirm dialog there would be UI for an
+  unreachable branch. Drop `state.id` from the name and `openscad_controller_test.rb` goes red,
+  which is exactly when that door needs what the other one has.
 - **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there are TWO of them**
   (`Tools::AddonsController#create`, `Tools::OpenscadController#create`), and the concern is
   included on `Tools::BaseController` so a third inherits it. This was the last
