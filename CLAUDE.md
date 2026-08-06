@@ -1102,10 +1102,29 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   constructing elements from parsed coordinates sidesteps that rule rather than excepting it.
 - **Hit-testing is PAINT ORDER, not geometry.** Contours are appended in DESCENDING bbox-area order
   so the browser's own topmost-wins dispatch selects the hole rather than the plate around it.
-  Sorting the other way silently makes small features unclickable — and **this is currently
-  UNTESTED**: `bezier-circle.lbrn2`'s two shapes are equal-area and disjoint, so neither ever covers
-  the other and the mutation stays green. Catching it needs a nested fixture (see
-  `test/system/lbrn_measure_test.rb`).
+  There is no point-in-polygon code; reversing that sort silently makes every small feature inside
+  a larger one unclickable, while drawing an identical picture. Pinned by
+  `nested-plate.lbrn2` — a plate and a hole on a SHARED CENTRE, clicked at the SVG element's own
+  centre so paint order alone decides the answer. `bezier-circle.lbrn2` cannot test this and the
+  gap went unclosed for a while because of it: its two shapes are equal-area AND disjoint, so
+  neither ever covers the other.
+- **LIGHTBURN'S LAYER PALETTE IS A HARD-CODED TABLE, AND THAT WAS RELITIGATED ON PURPOSE.** §14's
+  earlier note refused one, on the grounds it would mean "30 colours guessed from thumbnails". The
+  Measure view changed the calculus — it draws OUR outlines, where the file's own render is
+  unavailable and the alternative is flat black — and the values are no longer guesses: most were
+  RECOVERED from the embedded thumbnails by mapping contours into pixel space and reading what
+  LightBurn painted. `Lbrn2::LAYER_PALETTE` marks each entry `measured` or `palette strip`. It is
+  cosmetic by construction: nothing measures or decides anything from it.
+- **THE PALETTE HAS ONE DEFINITION, SERVER-SIDE.** The geometry payload carries a `colors` map for
+  the layers a file uses, rather than the client looking indices up in a copy — §14d's third
+  extension→role table is the precedent for what a second copy does. It also means a file that DOES
+  override a layer's colour is honoured without the client knowing that is possible.
+- **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.lbrn-contour` MUST
+  NOT DECLARE A STROKE.** Presentation attributes sit BELOW every CSS rule, which is exactly what
+  lets `--hover`/`--selected` recolour a contour. Set it inline instead and selection silently stops
+  changing colour (only width moves); give `.lbrn-contour` a stroke and every layer flattens to one
+  colour. Both directions are mutation-checked, and both need the COMPUTED style asserted — reading
+  the attribute reports what we wrote even when a rule outranks it.
 - **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
   user-space threshold calls an ordinary click a drag and silently swallows the selection.
 
