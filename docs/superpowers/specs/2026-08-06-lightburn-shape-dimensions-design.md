@@ -211,17 +211,25 @@ and measures after will pass any "does it draw" test while silently under-report
 
 #### 5.5.2 Circle detection
 
-A contour gets `d` when **all** of:
+A contour gets `d` when **all three** hold:
 
-- it is closed (`k == 1`), and
-- every point lies within **2%** of the mean radius measured from the bbox centre.
+1. it is closed (`k == 1`), **and**
+2. it has **at least 12 points**, **and**
+3. every point lies within **2%** of the mean radius measured from the bbox centre.
 
-Then `d = (w + h) / 2`.
+Then `d = (w + h) / 2`, computed from **full-resolution** points like every other measurement.
 
-This is a circularity test, **not** a `w == h` test — a `w == h` test calls every square round. It
-deliberately catches circles drawn as four bezier segments, the usual form for a hole imported from
-DXF/SVG, which the parser's existing `ellipse` flag does not: that flag only fires for
-`Type="Ellipse"` under an axis-aligned transform.
+**Condition 2 is not padding, and dropping it is the trap.** A square's four corners are all
+equidistant from its centre — so are any regular polygon's vertices — which means the radius test
+*alone* calls every square round. A `Rect` emits exactly 5 points, a bezier circle 49, and an
+`Ellipse` 33, so a 12-point floor separates them cleanly. Accepted and deliberate: a genuine
+16-sided polygon will be reported as round. It is 20 mm across either way, and the alternative
+(an area test as well) buys accuracy nobody asked for.
+
+This is a circularity test, **not** a `w == h` test — a `w == h` test calls every square round for
+a different reason. It deliberately catches circles drawn as four bezier segments, the usual form
+for a hole imported from DXF/SVG, which the parser's existing `ellipse` flag does not: that flag
+only fires for `Type="Ellipse"` under an axis-aligned transform.
 
 ### 5.6 `FilesController#geometry` + route
 
@@ -368,6 +376,19 @@ Add two minimal fixtures rather than weakening either assertion:
 2. **`bezier-circle.lbrn2`** — a circle written as four `B` segments in a `PrimList` (LightBurn's
    own form, and the form an imported DXF/SVG hole takes), plus a square of the same width and
    height in the same file, so the both-directions circularity assertion has its negative case.
+
+**Both fixtures must be authored in the dialect LightBurn actually writes**, verified against the
+corpus, not invented:
+
+- `<BackupPath Type="Path" CutIndex="N">` **carries a `Type` attribute** (74 instances across the
+  corpus, all `Type="Path"`). Without it, `emit_shape`'s `case shape["Type"]` matches no arm and
+  the fixture emits nothing — a test that passes while proving nothing.
+- `B<a> <b>` `PrimList` segments are real: 42 of the 58 files use them.
+
+This is the trap `real-export.lbrn2` exists to document — `sample.lbrn2` is hand-authored in a form
+LightBurn has never emitted, and the parser that matched it drew 1.0% of real shapes. Author both
+new fixtures against `real-export.lbrn2`'s dialect, and add a test that asserts the parser reads
+the expected contour count out of each *before* relying on either.
 
 **Gates.** Bare `bin/ci` — all gates, and the three test legs (`test`, `test-share`, `test-s3`)
 must report identical counts.
