@@ -47,7 +47,21 @@ module Maker
             "speed"     => Lbrn2.num(val(cs, "speed")),
             "power_max" => Lbrn2.num(val(cs, "maxPower")),
             "power_min" => Lbrn2.num(val(cs, "minPower")),
-            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) && p.to_i
+            # AN ABSENT `numPasses` MEANS ONE PASS, NOT "UNKNOWN" — LightBurn writes only values
+            # that differ from its defaults. Measured over the 58 real exports: 135 CutSetting
+            # blocks, and just 5 carry the field, every one of them saying 4. Everything else runs
+            # a single pass and says nothing about it.
+            #
+            # Reporting nil rendered an EMPTY Passes cell on almost every layer of every real file,
+            # which reads as "we could not parse this" for a number the file states perfectly
+            # clearly by omission. Note `.compact` below, which is why nil vanished silently rather
+            # than showing up as an obvious hole: the key was dropped from the hash entirely.
+            #
+            # Deliberately NOT extended to the other sometimes-absent fields. `minPower` (6 of 135)
+            # has no such flat default — it tracks maxPower unless a layer uses power ramping — and
+            # the panel already handles its absence correctly by showing one power figure instead
+            # of two. Guessing a value there would invent data; here it recovers a stated one.
+            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) ? p.to_i : 1
           }.compact
         end.sort_by { |l| l["index"].to_i }
       end

@@ -62,7 +62,11 @@ module Maker
       # would otherwise attach v1's bytes to a row that says v2 and mark it ready: a wrong image
       # shown as current, silently. Under the old row-per-version key that was impossible by
       # construction, and this guard is what buys the same immunity back.
-      target = preview.version_id
+      #
+      # BOTH COORDINATES, not just the content: a row is equally repointed when the RENDERER's
+      # revision moves, and a run that started under the old build must not stamp its output onto
+      # a row now claiming the new one. Same race, second axis.
+      target = [ preview.version_id, preview.renderer_revision ]
 
       begin
         preview.update!(status: "processing", error: nil)
@@ -146,7 +150,7 @@ module Maker
     # enqueued a job for the new content, so the newer render is already coming.
     def commit_if_current(preview, target)
       preview.reload
-      return if preview.version_id != target
+      return if [ preview.version_id, preview.renderer_revision ] != target
 
       yield
     rescue ActiveRecord::RecordNotFound

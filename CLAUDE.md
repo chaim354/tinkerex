@@ -1070,6 +1070,23 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
   file until this. `RendererContractTest` still passes because its `render_with` never sends
   `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
+- **A PREVIEW IS STALE ON TWO INDEPENDENT AXES, AND `version_id` IS ONLY THE FIRST.** It asks
+  whether an artifact was made from the file's current CONTENT; `renderer_revision` asks whether it
+  was made by the current CODE. With only the first, a payload change invalidated **nothing** —
+  a finished design's content never changes — so the .lbrn2 thinning fix deployed and four
+  already-measured files kept serving mangled curves until they were destroyed by hand, on the one
+  backend of three that had them. **Change a payload → bump the renderer's `PAYLOAD_REVISION`.**
+  - **Revisions are PER KIND** (`Lbrn2.payload_revision(kind)`): one renderer emits both a
+    thumbnail and a geometry payload, and bumping geometry must not rebuild ~1400 thumbnails as a
+    side effect of an unrelated fix.
+  - **`renderer_revision` is `NOT NULL DEFAULT 1`, and both halves are load-bearing.** Nullable, a
+    NULL would differ from every declared revision, so adding the column would itself have
+    triggered a full-library re-render; and `Enqueue` is **not** the only creator —
+    `V1::Maker::PreviewsController` builds rows via `find_or_initialize_by`, which with no default
+    would leave them stale forever, re-enqueueing on every request.
+  - **`SCHEMA_VERSION` is NOT this**, and is the easy thing to bump by mistake. It is the wire
+    contract the JS checks; `PAYLOAD_REVISION` is the server-side cache key. Revision 2 changed
+    every coordinate while touching no key, so the schema was rightly left alone.
 - **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`.** `Enqueue`
   resets a `failed` row to `pending` and re-enqueues *whenever called* — right for a one-shot nudge
   at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch

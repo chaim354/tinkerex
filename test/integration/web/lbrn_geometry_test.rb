@@ -48,10 +48,18 @@ module Web
     # action resolves via FileLayer.current.stat. find_or_create_by!, not create!: the row may
     # already exist (e.g. a prior GET in the same test), and a plain create! would then hit the
     # (user, node, kind) uniqueness index instead of handing back the row a test wants to mutate.
-    def preview_for(node_id)
+    #
+    # STAMPED WITH THE CURRENT RENDERER REVISION, like a row the app itself would have written.
+    # Leave it null and the row reads as STALE, so the controller correctly routes past it into
+    # Enqueue and every terminal-status test below sees "pending" instead of what it set.
+    def preview_for(node_id, revision: current_revision)
       token = FileLayer.current.stat(@user, node_id:).content_token
-      Maker::Preview.find_or_create_by!(user: @user, node_id:, version_id: token, kind: "geometry")
+      row = Maker::Preview.find_or_create_by!(user: @user, node_id:, version_id: token, kind: "geometry")
+      row.update!(renderer_revision: revision)
+      row
     end
+
+    def current_revision = Maker::Previews::Enqueue.revision_for_name("measure.lbrn2", "geometry")
 
     test "requires authentication" do
       delete destroy_user_session_path
@@ -111,6 +119,23 @@ module Web
 
       assert_equal "unsupported", response.parsed_body["status"]
       assert_match(/over the 32 MB preview ceiling/, response.parsed_body["error"])
+    end
+
+    # THE BUG THIS WHOLE MECHANISM EXISTS FOR, at the door where it was actually observed. A row
+    # left by an OLDER BUILD is ready, and its file's content has not changed — so before the
+    # revision check, this endpoint found it and served its payload back forever. On the live
+    # share backend that meant four already-measured files kept rendering mangled curves after
+    # the fix deployed, until they were destroyed by hand.
+    test "does not serve a payload rendered by an older build" do
+      stale = preview_for(@node_id, revision: current_revision - 1)
+      stale.update!(status: "ready")
+
+      get geometry_file_path(@node_id)
+
+      assert_response :success
+      assert_equal "pending", response.parsed_body["status"],
+                   "a stale-revision row must be re-rendered, not served"
+      assert_equal current_revision, stale.reload.renderer_revision
     end
 
     test "404s for a node this user does not own" do
