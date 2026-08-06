@@ -13,6 +13,56 @@ class DeployHygieneTest < ActiveSupport::TestCase
                     "add `/sidecar/` to .dockerignore — `COPY . .` ships the GPL sidecars otherwise"
   end
 
+  # The three Unraid destinations and the backend name each one's hostnames are built from. OVH is
+  # absent on purpose: it sets no `proxy` block, so it INHERITS the base's (verified pre-existing —
+  # it read ["chunk.tinkerex.local"] before .home was added and ["chunk.tinkerex.local",
+  # "chunk.tinkerex.home"] after). That inheritance looks wrong for an internet-facing host with
+  # FORCE_SSL=1, but it is a separate question from this guard and predates it.
+  UNRAID_DESTINATIONS = { nil => "chunk", "share" => "share", "s3" => "s3" }.freeze
+
+  test "every Unraid destination registers BOTH a .local and a .home hostname" do
+    # kamal-proxy routes on the Host header, so a name that is not in this list is a 404 — including
+    # a name a front proxy (nginx/NPM) forwards, since it passes the original Host through.
+    #
+    # WHY TWO NAMES, and why neither may be dropped:
+    #   .local  — what every existing client already reaches these by, via /etc/hosts. Removing it
+    #             breaks all of them at once.
+    #   .home   — the one a phone can reach. `.local` is reserved for mDNS (RFC 6762): macOS and iOS
+    #             resolve it through Bonjour and NEVER consult the configured resolver, so a DNS
+    #             rewrite for a `.local` name (AdGuard, or anything else) is silently ignored on
+    #             exactly the devices that cannot edit /etc/hosts. Drop .home and remote access dies
+    #             on every phone while every LAN client stays green — invisible from a desktop.
+    #
+    # Asserted off the MERGED kamal config, not by re-reading the YAML: `hosts` is an ARRAY, and
+    # kamal's deep_merge REPLACES arrays rather than unioning them (unlike env.clear, a hash). That
+    # replacement is the reason three destinations do not collide into one another's names, so it is
+    # the merged result that has to be right, not the file.
+    UNRAID_DESTINATIONS.each do |destination, backend|
+      hosts = proxy_hosts(destination)
+
+      assert_equal [ "#{backend}.tinkerex.local", "#{backend}.tinkerex.home" ].sort, hosts.sort,
+                   "#{destination || 'base'} must register exactly #{backend}.tinkerex.local AND " \
+                   "#{backend}.tinkerex.home. Note `proxy: host:` (singular) can only express one " \
+                   "name — use `proxy: hosts:` (plural, a list)."
+    end
+  end
+
+  test "no two Unraid destinations claim the same hostname" do
+    # One box, one kamal-proxy, three containers. Kamal does not detect a duplicate host: the last
+    # deploy silently wins the name and the losing backend becomes unreachable under it, which reads
+    # as "the deploy worked but I'm looking at the wrong library" rather than as an error.
+    all = UNRAID_DESTINATIONS.keys.flat_map { |destination| proxy_hosts(destination) }
+
+    # `tally`, NOT `all - all.uniq`: Array#- removes EVERY occurrence of a matched element, so that
+    # expression is always [] and the message names nothing. The assertion still fires correctly
+    # either way, which is exactly why this went unnoticed until the guard was mutation-checked.
+    duplicates = all.tally.select { |_, count| count > 1 }.keys
+
+    assert_empty duplicates,
+                 "two destinations registered the same proxy hostname: #{duplicates.inspect} — " \
+                 "one box, one kamal-proxy, so the last deploy silently wins the name"
+  end
+
   test "the OVH overlay clears every Unraid-host-only service URL it cannot reach" do
     # Kamal DEEP-MERGES env.clear (a hash), so the overlay inherits deploy.yml's accessory hostnames.
     # Those resolve only on the Unraid host, where the accessories actually run. Inheriting one makes
@@ -103,6 +153,16 @@ class DeployHygieneTest < ActiveSupport::TestCase
 
       [ key, value ]
     }.to_h
+  end
+
+  # The hostnames kamal-proxy will actually route for a destination, read off the MERGED config for
+  # the same reason required_secret_keys does — so array-replacement semantics are reflected here
+  # rather than re-implemented.
+  def proxy_hosts(destination)
+    require "kamal"
+    Kamal::Configuration.create_from(
+      config_file: ROOT.join("config/deploy.yml"), destination: destination
+    ).proxy.hosts
   end
 
   # Straight from the MERGED deploy config, so this cannot drift from what kamal will look up.
