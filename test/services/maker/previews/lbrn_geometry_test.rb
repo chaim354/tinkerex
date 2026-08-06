@@ -53,6 +53,110 @@ module Maker
         assert_equal 4, JSON.parse(result[:bytes])["shapes"].length
       end
 
+      test "decimation thins big contours but never moves a reported bbox" do
+        doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
+        full = {}
+        Lbrn2.each_geometry(doc) do |_c, points, _k, _e, _i, oid|
+          xs = points.map(&:first); ys = points.map(&:last)
+          full[oid] = [ xs.min, ys.min, xs.max, ys.max ].map { |v| v.round(2) }
+        end
+
+        build("bezier-circle.lbrn2")["shapes"].each do |s|
+          assert_equal full[s["o"]], s["b"], "the reported bbox must equal the FULL-resolution bbox"
+
+          s["p"].each do |(x, y)|
+            assert_operator x, :>=, s["b"][0] - 0.01
+            assert_operator y, :>=, s["b"][1] - 0.01
+            assert_operator x, :<=, s["b"][2] + 0.01
+            assert_operator y, :<=, s["b"][3] + 0.01
+          end
+        end
+      end
+
+      # THE GAP THE TEST ABOVE CANNOT CLOSE, however identical it looks. `BEZIER_SAMPLES` (12,
+      # in Lbrn2) divides `DECIMATE_STRIDE` (3) evenly, so the circle's four axis-extreme points
+      # sit at flattened indices 0/12/24/36/48 — all multiples of 3 — and survive decimation
+      # exactly; its reported bbox comes out identical whether "b" is measured from full or from
+      # decimated points. That is a coincidence of two unrelated constants, not anything this
+      # code enforces: checked by hand, with `build` measuring "b" from `decimate(points)`
+      # instead of `points`, EVERY test in this file — this one included — stayed green.
+      # laser-settings.lbrn2's Ellipse has no such coincidence: its four axis extremes fall on
+      # sample indices 0/8/16/24 (verified by hand), and only 0 and 24 are multiples of 3 — the
+      # x-minimum (idx 16) and y-minimum (idx 8) are NOT retained, so decimating it measurably
+      # moves the reported box, from x 40.0..60.0 / y -40.0..-20.0 to x 40.19..60.0 /
+      # y -39.81..-20.0. Isolating that one shape — rather than the whole-job union, where a
+      # co-located Rect already supplies the same bound — is what lets this assertion fail for
+      # the reason it exists.
+      test "a decimated ellipse still reports its FULL-resolution bbox" do
+        doc = Lbrn2.parse_document(fixture("laser-settings.lbrn2"))
+        counts = {}
+        full = {}
+        Lbrn2.each_geometry(doc) do |_c, points, _k, _e, _i, oid|
+          counts[oid] = points.length
+          xs = points.map(&:first); ys = points.map(&:last)
+          full[oid] = [ xs.min, ys.min, xs.max, ys.max ].map { |v| v.round(2) }
+        end
+
+        decimated = build("laser-settings.lbrn2")["shapes"].find { |s| counts[s["o"]] > LbrnGeometry::DECIMATE_ABOVE }
+        assert decimated, "the fixture's ellipse should exceed the decimation threshold"
+        assert_equal full[decimated["o"]], decimated["b"]
+      end
+
+      test "a contour above the threshold is actually thinned, and a small one is left alone" do
+        shapes = build("bezier-circle.lbrn2")["shapes"]
+        doc = Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
+        counts = {}
+        Lbrn2.each_geometry(doc) { |_c, points, _k, _e, _i, oid| counts[oid] = points.length }
+
+        big = shapes.find { |s| counts[s["o"]] > Maker::Previews::LbrnGeometry::DECIMATE_ABOVE }
+        small = shapes.find { |s| counts[s["o"]] <= Maker::Previews::LbrnGeometry::DECIMATE_ABOVE }
+
+        assert big,   "the bezier circle should exceed the threshold"
+        assert small, "the 5-point square should not"
+        assert_operator big["p"].length, :<, counts[big["o"]], "a big contour must be thinned"
+        assert_equal counts[small["o"]], small["p"].length,    "a small contour must be untouched"
+      end
+
+      # BOTH DIRECTIONS. Asserting only that the circle is round still passes with the tolerance
+      # loosened to 50% — the square is the assertion that carries the weight.
+      test "a bezier circle reports a diameter and a same-sized square does not" do
+        shapes = build("bezier-circle.lbrn2")["shapes"].sort_by { |s| s["b"][0] }
+        circle, square = shapes
+
+        assert_in_delta 20.0, circle["d"], 0.05, "the circle must report d"
+        assert_nil square["d"], "a 20x20 square is NOT round, however equidistant its corners are"
+
+        # They are deliberately the same size, so w==h cannot be what separated them.
+        assert_in_delta circle["b"][2] - circle["b"][0], square["b"][2] - square["b"][0], 0.05
+      end
+
+      test "an open contour never reports a diameter" do
+        shapes = build("real-export.lbrn2")["shapes"]
+        assert shapes.any? { |s| s["k"].zero? }, "fixture must have an open contour"
+        shapes.each { |s| assert_nil s["d"], "an open contour has no diameter" if s["k"].zero? }
+      end
+
+      # CIRCLE_TOLERANCE, PINNED. Every other test above leaves the tolerance unguarded: the
+      # square "a bezier circle reports a diameter..." relies on is 5 points, so
+      # MIN_CIRCLE_POINTS (12) rejects it before CIRCLE_TOLERANCE is ever consulted — set the
+      # tolerance to 1_000_000 and the whole file above stays green (checked by hand while
+      # writing this test). This is the missing case: a 10x9 ellipse (LightBurn's own Ellipse
+      # samples 32 points + a closing point = 33, clearing the point floor) whose radius varies
+      # ~5.5% around its bbox-centre mean — round enough to be a plausible "is this circular"
+      # candidate, not round enough to pass the shipped 2% tolerance. At CIRCLE_TOLERANCE = 0.5
+      # (the same value the point-count-floor test above already uses) this shape's "d" flips
+      # from nil to 19.0 — verified by hand — which is what makes this assertion, unlike the
+      # others, actually exercise the tolerance comparison rather than never reaching it.
+      test "an ellipse just outside the tolerance reports no diameter" do
+        xml = %(<LightBurnProject AppVersion="1.6.00">) +
+              %(<Shape Type="Ellipse" CutIndex="0" Rx="10" Ry="9"><XForm>1 0 0 1 0 0</XForm></Shape>) +
+              %(</LightBurnProject>)
+        shapes = JSON.parse(LbrnGeometry.render(xml)[:bytes])["shapes"]
+
+        assert_equal 1, shapes.length
+        assert_nil shapes.first["d"], "a 10x9 ellipse is ~5.5% off-round — outside the shipped 2% tolerance"
+      end
+
       private
 
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
