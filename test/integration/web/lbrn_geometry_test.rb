@@ -61,6 +61,20 @@ module Web
 
     def current_revision = Maker::Previews::Enqueue.revision_for_name("measure.lbrn2", "geometry")
 
+    # The same shape for the THUMBNAIL kind. find_or_create_by!, not create!: uploading in setup
+    # already minted one through the real door, and (user, node, kind) is unique.
+    def thumbnail_at(revision, status: "ready")
+      token = FileLayer.current.stat(@user, node_id: @node_id).content_token
+      row = Maker::Preview.find_or_create_by!(user: @user, node_id: @node_id, version_id: token,
+                                              kind: "thumbnail")
+      row.update!(renderer_revision: revision, status:, version_id: token)
+      row
+    end
+
+    def current_thumbnail_revision
+      Maker::Previews::Enqueue.revision_for_name("measure.lbrn2", "thumbnail")
+    end
+
     test "requires authentication" do
       delete destroy_user_session_path
       get geometry_file_path(@node_id)
@@ -163,6 +177,41 @@ module Web
       assert_includes labels, "Black", "C00 should read as its colour"
       assert_includes labels, "Red",   "C02 should read as its colour"
       assert_empty labels.grep(/\AC\d+\z/), "no layer should still be labelled by its index"
+    end
+
+    # THE PATH THAT MADE renderer_revision UNREACHABLE FOR THUMBNAILS, driven as a real request.
+    #
+    # Every earlier test of the mechanism called Enqueue directly, so all of them passed while the
+    # thing a USER does — open a file page — never consulted a revision at all. Two deploys bumped
+    # THUMBNAIL_REVISION and 172 of 174 LightBurn thumbnails stayed on revision 1, which is why
+    # layer colours were invisible: the Laser Settings panel draws from that stored metadata.
+    test "opening a file page re-enqueues a thumbnail left by an older build" do
+      current = current_thumbnail_revision
+      stale = thumbnail_at(current - 1)
+
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) { get file_path(@node_id) }
+
+      assert_response :success
+      stale.reload
+      assert_equal current, stale.renderer_revision, "the row must be repointed, not served"
+      assert_equal "pending", stale.status,
+                   "a stale artifact must not be shown as current while its replacement renders"
+    end
+
+    test "a thumbnail at the current revision is served without re-enqueueing" do
+      thumbnail_at(current_thumbnail_revision)
+
+      assert_no_enqueued_jobs { get file_path(@node_id) }
+      assert_response :success
+    end
+
+    # The grid's own read path, which decides whether backfill enqueues anything. A stale row
+    # counting as "existing" here is what silenced the detail page's sibling above.
+    test "the file list does not count an older build's thumbnail as present" do
+      thumbnail_at(current_thumbnail_revision - 1)
+
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) { get files_path }
+      assert_response :success
     end
 
     test "404s for a node this user does not own" do
