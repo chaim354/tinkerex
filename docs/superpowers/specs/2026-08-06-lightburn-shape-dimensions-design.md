@@ -197,6 +197,13 @@ method carries the `huge` flag; without it libxml2 caps a single attribute at 10
 hands back a **truncated tree** — root intact, every `Shape` after the inlined photo gone. Two of
 the 58 real files hit this, and the failure is silent: a clean-looking parse reporting no geometry.
 
+**A corrupt document raises; an empty one does not.** `render` raises `Lbrn2::ParseError` when
+`doc.root` is nil, matching `to_svg`, so the job marks the preview `failed`. A document that parses
+but genuinely holds no shapes returns the empty payload and goes `ready` — the client has an honest
+message for that. Collapsing the two makes a corrupt file present as a working Measure view reading
+"No measurable geometry in this file", which is a lie about the file rather than a graceful
+degradation.
+
 #### 5.5.1 Decimation
 
 - Contours of **≤ 32 points ship intact**.
@@ -322,6 +329,10 @@ The resting PNG stays visible under every failure state.
 | poll ceiling reached | "Still generating — reload to check." |
 | unknown payload `v` | "This preview needs a newer version of the page — reload." |
 
+Note what is deliberately **not** in that table: a document that parses but holds no shapes is not
+an error at all. It reaches `ready` with an empty payload and the client says "No measurable
+geometry in this file". Only an unparseable document raises (§5.5), and it lands in `failed`.
+
 ## 7. Testing
 
 Every guard below is **mutation-checked** (§15): after it goes green, break the thing it guards and
@@ -341,8 +352,20 @@ one caller. Mutate by applying decimation to all contours, or by dropping `Backu
 
 Around it:
 
-- **`b` is invariant under decimation** — the reported bbox equals the full-resolution bbox, *and*
-  every decimated point falls inside it. Mutate by computing `b` after decimating.
+- **Every payload field is pinned BY VALUE, not by presence.** Learned the expensive way: `job`'s
+  origin, `c`, `i` and `PRECISION` were each mutable to a wrong value with all 136 tests green.
+  `key?` is not a test. `i` is the only thing standing behind the bitmap-exclusion promise, and
+  `job`'s origin places every shape in the client's viewBox.
+- **`b` is invariant under decimation** — the reported bbox equals the full-resolution bbox.
+  Mutate by computing `b` after decimating. The **union-over-the-document** form of this assertion
+  cannot catch it, for two compounding reasons: `BEZIER_SAMPLES % DECIMATE_STRIDE == 0` means no
+  original vertex is ever dropped, and where a contour *does* shrink, a co-located Rect already
+  bounds the union. It needs a **per-shape** assertion on a fixture whose ellipse is not shadowed.
+  (Asserting the decimated points fall inside the bbox is decorative — they are a subset of the
+  points the bbox was measured over, so it holds under any implementation.)
+- **The stride/sample coupling is asserted directly** — `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`,
+  plus a check that every original vertex survives `decimate`. It spans two files and two
+  constants, and breaks silently.
 - **Circle detection asserts both directions** — a bezier-drawn circle IS round *and* a square is
   NOT. Asserting only the first still passes with the tolerance loosened to 50%, which is §15's
   "assert the narrowest true thing, then mutate to prove each assertion carries weight".
