@@ -97,6 +97,7 @@ export default class extends Controller {
   }
 
   draw(payload) {
+    this.colors = payload.colors || {}
     this.byObject = new Map()
     for (const s of payload.shapes) {
       if (!this.byObject.has(s.o)) this.byObject.set(s.o, [])
@@ -140,6 +141,17 @@ export default class extends Controller {
     const points = shape.p.map(([x, y]) => `${x},${y}`).join(" ")
     node.setAttribute("points", points)
     node.setAttribute("class", shape.i ? "lbrn-bitmap" : (shape.k ? "lbrn-contour" : "lbrn-contour lbrn-contour--open"))
+    // LightBurn's own layer colour, sent by the server so the palette has ONE definition (see
+    // LbrnGeometry#layer_colors).
+    //
+    // A PRESENTATION ATTRIBUTE, NOT node.style — and the difference is the whole highlight
+    // mechanism. An inline style beats a stylesheet, so setting style.stroke here would make
+    // .lbrn-contour--hover and --selected unable to recolour anything: clicking a contour would
+    // change its width and nothing else. A presentation attribute sits BELOW every CSS rule in
+    // the cascade, so the layer colour shows at rest and the highlight classes still win. For the
+    // same reason .lbrn-contour must not declare a stroke of its own — a class rule would beat
+    // this attribute and every layer would draw identically.
+    if (!shape.i) node.setAttribute("stroke", this.colors[shape.c] || "#000000")
     node.__shape = shape
     if (shape.k || shape.i) return node
 

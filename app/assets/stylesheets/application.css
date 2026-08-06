@@ -128,7 +128,11 @@ dl.meta dd { margin: 0; }
 .lbrn-measure--ready .lbrn-measure-launch { display: none; }
 .lbrn-measure--ready .lbrn-measure-actions { display: inline-flex; }
 /* Outline geometry drawn from the /geometry payload — see lbrnmeasure_controller.js (Task 8). */
-.lbrn-contour { fill: transparent; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* NO `stroke` HERE ON PURPOSE: the layer colour arrives as a presentation attribute from
+   lbrnmeasure_controller.js, and any class rule would outrank it and flatten every layer
+   to one colour. The --hover/--selected rules below DO declare one, which is how they
+   still win over the attribute. */
+.lbrn-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .lbrn-contour--open { fill: none; }
 .lbrn-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
 .lbrn-contour--hover { stroke: #2b7; stroke-width: 2; }

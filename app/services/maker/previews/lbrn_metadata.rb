@@ -42,7 +42,10 @@ module Maker
           {
             "index"     => idx.to_s,
             "name"      => val(cs, "name"),
-            "color"     => (c = val(cs, "color")) && Lbrn2.normalize_color(c),
+            # The file's own colour if it has one, else LightBurn's built-in palette for this
+            # index — which is the ordinary case, since no real export writes <color> at all.
+            # Without the fallback the panel's swatch was invisible on every real file.
+            "color"     => (c = val(cs, "color")).present? ? Lbrn2.normalize_color(c) : Lbrn2.layer_color(idx),
             "mode"      => mode(cs["type"]),
             "speed"     => Lbrn2.num(val(cs, "speed")),
             "power_max" => Lbrn2.num(val(cs, "maxPower")),

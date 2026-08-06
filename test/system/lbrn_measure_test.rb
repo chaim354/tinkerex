@@ -105,6 +105,25 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   # plate and hole on a shared centre, and the padded viewBox is centred on it too, so the middle
   # of the element is user-space (0, 0) — inside both. Which one answers is decided by paint order
   # alone. Targeting a contour directly would prove nothing.
+  # C02 IS RED, and picking a non-black layer is what makes this able to fail. On C00 the palette
+  # colour and the client's fallback are both black, so a drawing that never consulted the palette
+  # at all would look identical — that is precisely how an earlier version of this test stayed
+  # green with the server sending no colours whatsoever.
+  test "a layer's palette colour reaches the drawing" do
+    open_measure_view(@nested_id)
+
+    # The plate spans x -30..30 and the hole only -5..5, so minimum-x identifies each.
+    #
+    # COMPUTED STYLE, NOT THE ATTRIBUTE. Reading `[:stroke]` reports what we WROTE, which stays
+    # right even when a stylesheet rule outranks it and the drawing is a different colour
+    # entirely — adding `stroke: currentColor` back to .lbrn-contour left an attribute-based
+    # version of this test perfectly green. Ask the browser what it actually painted.
+    assert_equal "rgb(255, 0, 0)", contour_with_min_x(-5).style("stroke")["stroke"],
+                 "the hole is on C02, which LightBurn paints red"
+    assert_equal "rgb(0, 0, 0)", contour_with_min_x(-30).style("stroke")["stroke"],
+                 "the plate is on C00, which is black"
+  end
+
   test "clicking where a hole overlaps its plate selects the hole" do
     open_measure_view(@nested_id)
 
@@ -116,6 +135,25 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
   # And the plate is still reachable where the hole is not, so the test above is not passing
   # because the plate became unclickable altogether.
+  # LAYER COLOUR REACHES THE DRAWING, and the highlight still beats it. Both halves matter: the
+  # colour arrives as a PRESENTATION ATTRIBUTE precisely so the --selected class can outrank it,
+  # and an inline style (the obvious alternative) would silently invert that — clicking a contour
+  # would change its width and nothing else. nested-plate.lbrn2 is all CutIndex 0, whose palette
+  # entry is black, so this uses the circle/square fixture's C00 and asserts the mechanism rather
+  # than a specific hue.
+  test "contours are stroked in their LightBurn layer colour, and selection still overrides it" do
+    open_measure_view
+
+    contour = contour_with_min_x(40)
+    assert_equal "#000000", contour[:stroke], "C00 is black in LightBurn's palette"
+
+    contour.click
+    assert_selector ".lbrn-measure-dims", text: SQUARE_READOUT
+    # The class must win over the attribute — computed, not declared.
+    assert_equal "rgb(221, 68, 0)", contour.style("stroke")["stroke"],
+                 "the --selected rule must outrank the layer colour attribute"
+  end
+
   test "the plate is still selectable away from the hole" do
     open_measure_view(@nested_id)
 

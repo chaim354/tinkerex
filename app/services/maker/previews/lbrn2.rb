@@ -36,6 +36,68 @@ module Maker
 
       DEFAULT_STROKE = "#000000".freeze
 
+      # LIGHTBURN'S BUILT-IN LAYER PALETTE, by CutIndex. The file never carries it (see
+      # `cut_colors`), and it is not in LightBurn's prefs either — it is compiled into the app —
+      # so this table is the only way a layer's real colour reaches our own drawing.
+      #
+      # PROVENANCE MATTERS HERE, because CLAUDE.md previously refused this table on the grounds
+      # that it would mean "hard-coding 30 colours guessed from thumbnails". Two things changed:
+      # the Measure view now draws our OWN outlines (where the thumbnail's colours are unavailable
+      # and the alternative is flat black), and these are no longer guesses.
+      #
+      #   MEASURED — recovered from the embedded thumbnails of the 58 real exports by mapping each
+      #   contour into thumbnail pixel space and reading the colour LightBurn painted. These are
+      #   the indices that actually occur in that corpus, and the clean hex steps they land on
+      #   (ff/e0/c0/a0/80) are themselves evidence the reading is right rather than an
+      #   anti-aliasing artifact.
+      #
+      #   FROM THE PALETTE STRIP — read off a screenshot of LightBurn's own layer bar for indices
+      #   that appear nowhere in the corpus. Hue is reliable, the exact byte less so. Wrong only
+      #   in shade, never in identity, and correcting one is a single line here.
+      #
+      # Cosmetic by construction: nothing measures or decides anything from these. Getting index
+      # 19 a shade off tints one outline; it cannot move a number.
+      LAYER_PALETTE = [
+        "#000000", # 00 measured
+        "#0000ff", # 01 measured
+        "#ff0000", # 02 measured
+        "#00e000", # 03 measured
+        "#d0d000", # 04 measured
+        "#ff8000", # 05 measured
+        "#00e0e0", # 06 measured
+        "#ff00ff", # 07 measured
+        "#b4b4b4", # 08 palette strip - light grey
+        "#0000a0", # 09 measured
+        "#a00000", # 10 measured
+        "#00a000", # 11 measured
+        "#a0a000", # 12 palette strip - olive
+        "#c08000", # 13 measured
+        "#00a0ff", # 14 palette strip - azure
+        "#a000a0", # 15 measured
+        "#808080", # 16 palette strip - mid grey
+        "#868dbb", # 17 measured (few samples; matches the strip's periwinkle)
+        "#c08080", # 18 palette strip - dusty rose
+        "#6070c0", # 19 palette strip - medium blue
+        "#c04060", # 20 palette strip - crimson
+        "#80c080", # 21 palette strip - sage
+        "#f0b98d", # 22 measured
+        "#f6c4e1", # 23 measured
+        "#ffa0d0", # 24 palette strip - pink
+        "#602080", # 25 palette strip - dark purple
+        "#a05000", # 26 palette strip - brown
+        "#004754", # 27 measured
+        "#a0f0a0", # 28 palette strip - mint
+        "#fff2c8"  # 29 measured (few samples; matches the strip's cream)
+      ].freeze
+
+      # The palette colour for a CutIndex, or nil when it is outside the palette. Out of range is
+      # ORDINARY, not corrupt: LightBurn's tool layers (T1/T2) sit past the 30 numbered ones, and
+      # a caller should fall back to DEFAULT_STROKE rather than treat it as an error.
+      def layer_color(cut_index)
+        i = Integer(cut_index.to_s, exception: false)
+        LAYER_PALETTE[i] if i && i >= 0 && i < LAYER_PALETTE.length
+      end
+
       IDENTITY = [ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 ].freeze
 
       # Curves are flattened for rendering. Even (so t=0.5, a curve's usual extreme, is sampled)
@@ -61,7 +123,8 @@ module Maker
       #
       #   1  original
       #   2  an absent <numPasses> reports 1 pass rather than nothing (see LbrnMetadata#layers)
-      THUMBNAIL_REVISION = 2
+      #   3  layers carry their LightBurn palette colour, so the panel can show a swatch
+      THUMBNAIL_REVISION = 3
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
@@ -338,22 +401,23 @@ module Maker
       # `<CutSetting_Img type="Image">`, so an exact-name match silently drops its colour and
       # leaves it out of the laser-settings panel.
       #
-      # EXPECT THIS TO FIND NOTHING on a real file, and do not read that as a bug: not one of
-      # the 150 CutSetting blocks across this corpus carries a `<color>` at all. LightBurn keys
-      # a layer's colour off its INDEX, from a fixed built-in palette it never writes into the
-      # document, so the geometry SVG draws in `DEFAULT_STROKE`. That costs almost nothing in
-      # practice — `render` prefers the file's own embedded thumbnail, which is LightBurn's
-      # full-colour render, and 57 of 58 files here carry one. Reproducing the palette would
-      # mean hard-coding 30 colours guessed from thumbnails, which is not worth being wrong
-      # about; the parse below stays for files that do carry the field.
+      # EXPECT THIS TO FIND NOTHING IN THE FILE, and do not read that as a bug: not one of the
+      # 150 CutSetting blocks across this corpus carries a `<color>`. LightBurn keys a layer's
+      # colour off its INDEX, from a built-in palette it never writes into the document — so the
+      # per-file parse below is for the rare file that does carry the field, and everything else
+      # falls back to `LAYER_PALETTE`.
       def cut_colors(doc)
         out = {}
         cut_settings(doc).each do |cs|
           idx = cs["index"] || cs.at_xpath("index")&.[]("Value") || cs.at_xpath("index")&.text
+          next if idx.nil?
+
           raw = cs.at_xpath("color")&.[]("Value") || cs.at_xpath("color")&.text || cs["color"]
-          out[idx.to_s] = normalize_color(raw) if idx
+          # The file's own value wins where it exists — a user CAN recolour a layer — but that is
+          # the rare case; every real export here relies on the built-in palette instead.
+          out[idx.to_s] = raw.present? ? normalize_color(raw) : layer_color(idx)
         end
-        out
+        out.compact
       end
 
       def cut_settings(doc)

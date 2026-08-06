@@ -21,10 +21,20 @@
         <speed Value="20"/>
         <maxPower Value="80"/>
     </CutSetting>
+    <!-- The hole is on a DIFFERENT layer, and index 2 specifically: LightBurn paints C02 red,
+         so a drawing that fell back to a default stroke instead of consulting the palette is
+         distinguishable. On C00 it would not be — that layer is black, the same as the
+         fallback, and a test written against it passes either way. -->
+    <CutSetting type="Cut">
+        <index Value="2"/>
+        <name Value="C02"/>
+        <speed Value="35"/>
+        <maxPower Value="60"/>
+    </CutSetting>
     <Shape Type="Rect" CutIndex="0" W="60" H="40" Cr="0">
         <XForm>1 0 0 1 0 0</XForm>
     </Shape>
-    <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1">
+    <Shape Type="Path" CutIndex="2" VertID="1" PrimID="1">
         <XForm>1 0 0 1 0 0</XForm>
         <VertList>V5 0c0x5c0y2.7615c1x5c1y-2.7615V0 5c0x-2.7615c0y5c1x2.7615c1y5V-5 0c0x-5c0y-2.7615c1x-5c1y2.7615V0 -5c0x2.7615c0y-5c1x-2.7615c1y-5</VertList>
         <PrimList>B0 1B1 2B2 3B3 0</PrimList>

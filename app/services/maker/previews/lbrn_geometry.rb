@@ -34,7 +34,8 @@ module Maker
       #
       #   1  index-stride thinning — mangled any contour mixing straight and curved edges
       #   2  error-bounded simplification against SIMPLIFY_TOLERANCE
-      PAYLOAD_REVISION = 2
+      #   3  carries per-layer colours so the Measure view draws in LightBurn's palette
+      PAYLOAD_REVISION = 3
 
       # HOW FAR THE DRAWN LINE MAY STRAY FROM THE REAL CONTOUR, in mm. Thinning is bounded by this
       # and by nothing else — see `simplify`.
@@ -121,8 +122,26 @@ module Maker
         {
           "v" => SCHEMA_VERSION,
           "job" => job_box(min_x, min_y, max_x, max_y),
+          # CutIndex -> the colour LightBurn draws that layer in, for the layers this file
+          # actually uses. SENT FROM THE SERVER RATHER THAN LOOKED UP IN THE CLIENT, so the
+          # palette has exactly one definition — a second copy in JS is this repo's recorded
+          # failure shape (§14d's third extension->role table, which drifted). It also means a
+          # file that DOES override a layer's colour is honoured without the client knowing
+          # such a thing is possible.
+          "colors" => layer_colors(doc, shapes),
           "shapes" => shapes
         }
+      end
+
+      # CutIndex -> colour, for the layers this document actually draws.
+      #
+      # `cut_colors` is resolved ONCE, not per layer: it walks every CutSetting element, so calling
+      # it inside the map below would re-walk them for each distinct layer in the file.
+      def layer_colors(doc, shapes)
+        from_file = Lbrn2.cut_colors(doc)
+        shapes.filter_map { |s| s["c"] }.uniq
+              .to_h { |cut| [ cut, from_file[cut] || Lbrn2.layer_color(cut) ] }
+              .compact
       end
 
       def job_box(min_x, min_y, max_x, max_y)
