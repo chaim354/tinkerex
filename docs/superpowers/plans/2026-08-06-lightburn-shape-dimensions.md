@@ -124,7 +124,10 @@ circularity, and a `w == h` test cannot tell them apart.
 `BackupPath`'s `<XForm>` is already in document space and composes with nothing (see the comment in
 `walk_shapes`), so it is written as identity here.
 
-Two disjoint square contours in one `BackupPath` stand in for two letters:
+Two disjoint square contours in one `BackupPath` stand in for two letters, **plus a Rect** — see
+Task 2 Step 5 for why the second shape is load-bearing rather than decorative. It sits inside the
+30 × 10 span so no span assertion changes. (`Lbrn2.apply` negates Y, so verify the placement rather
+than trusting the arithmetic here.)
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -152,8 +155,16 @@ Two disjoint square contours in one `BackupPath` stand in for two letters:
             <PrimList>L0 1L1 2L2 3L3 0L4 5L5 6L6 7L7 4</PrimList>
         </BackupPath>
     </Shape>
+    <Shape Type="Rect" CutIndex="0" W="6" H="6" Cr="0">
+        <XForm>1 0 0 1 15 5</XForm>
+    </Shape>
 </LightBurnProject>
 ```
+
+> The trailing Rect is **not decoration** — it is the second reference point that makes the object-id
+> sequence observable, and without it Task 2's mutation check cannot fail. It sits inside the
+> 30 × 10 span (x 12..18, y 2..8) so the span assertions below are unaffected. Add a line to the
+> fixture's own header comment saying so, with that consequence named.
 
 - [ ] **Step 3: Write the failing test that proves the parser reads both fixtures**
 
@@ -187,13 +198,15 @@ test "text-backup-path fixture yields two contours from the BackupPath" do
   contours = []
   Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, *| contours << pts }
 
-  assert_equal 2, contours.length,
-               "the Text emits nothing; its BackupPath's PrimList yields two contours"
+  assert_equal 3, contours.length,
+               "the Text emits nothing; its BackupPath yields two contours, plus the Rect"
 
   all_x = contours.flatten(1).map(&:first)
   all_y = contours.flatten(1).map(&:last)
+  # The Rect sits INSIDE the letters' span, so these are unchanged by its presence.
+  # If they move, the Rect was placed wrong.
   assert_in_delta 30.0, all_x.max - all_x.min, 0.01, "the two letters span 30 mm"
-  assert_in_delta 10.0, all_y.max - all_y.min, 0.01
+  assert_in_delta 10.0, all_y.max - all_y.min, 0.01, "the two letters span 10 mm"
 end
 ```
 
@@ -240,9 +253,30 @@ test "each_geometry yields an object id that groups a Text with its BackupPath" 
   ids = []
   Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
 
-  assert_equal 2, ids.length
-  assert_equal 1, ids.uniq.length,
+  # Document order: the Text's two BackupPath contours (the letters) yield first, then
+  # the Rect placed beside them.
+  assert_equal 3, ids.length
+
+  # THE GROUPING CLAIM, checked POSITIONALLY rather than via a deduplicated count. A
+  # count alone cannot tell "the two letters share one id, and the Rect gets its own"
+  # apart from "the second letter collides with the Rect's id while the first is split
+  # off alone" — both give ids.uniq.length == 2. That second, WRONG shape is exactly
+  # what a per-contour-id mutation produced here, undetected, until this was asserted
+  # positionally: [1, 2, 2] has 2 unique values and is dense from 1, same as the correct
+  # [1, 1, 2], so neither an aggregate count nor a density check catches it.
+  assert_equal ids[0], ids[1],
                "both BackupPath contours belong to ONE object (the Text), so alt-click reports the whole word"
+  assert_not_equal ids[0], ids[2], "the Rect beside the Text must be a different object"
+
+  # THE ASSERTION THAT CATCHES THE ORIGINAL BUG, and the reason the Rect is in this
+  # fixture at all. A Text yields no geometry of its own, so its counter tick is
+  # observable ONLY through the BackupPath reusing it. Give the BackupPath a fresh id
+  # instead and the Text's tick is burned unobserved, leaving a GAP: the ids become
+  # [2, 2, 3] rather than [1, 1, 2]. With only one Shape in the fixture, both behaviours
+  # look like "two the same" and nothing could tell them apart — which is why the Rect
+  # had to be added at all.
+  assert_equal (1..ids.uniq.length).to_a, ids.uniq.sort,
+               "object ids must be dense from 1 — a gap means a tick was burned on an unyielded shape"
 end
 
 test "each_geometry gives separate shapes separate object ids, and Groups consume none" do
@@ -405,6 +439,16 @@ Expected: **PASS**, including the pre-existing tests in that file.
 
 - [ ] **Step 5: Mutation-check the grouping guard**
 
+> **Corrected during execution.** The obvious assertion here — "both contours share one id" — is
+> one this mutation **cannot** fail, and the first run through this task proved it. With a single
+> `<Shape>` in the fixture, both BackupPath contours come from ONE `emit_shape` call and share
+> whatever id is passed, so a fresh id changes *which* id is shared, not *whether* it is. The Text
+> itself yields no geometry, so there is no second reference point. That is a guard unable to fail
+> for the reason it exists — this repo's recorded failure shape, reached by following the plan.
+>
+> The fix is a **second shape in the fixture**, which makes the Text's counter tick observable: it
+> is *used* only if the BackupPath reuses it, so a fresh id leaves a **gap** in the id sequence.
+
 Temporarily change the `BackupPath` line in `walk_shapes` to take a fresh id:
 
 ```ruby
@@ -415,8 +459,24 @@ Temporarily change the `BackupPath` line in `walk_shapes` to take a fresh id:
 bin/rails test test/services/maker/previews/lbrn2_test.rb -n "/groups a Text/"
 ```
 
-Expected: **FAIL** — `Expected: 1, Actual: 2`. Then **restore the original line** and re-run to
-confirm green.
+Expected: **FAIL** on the density assertion — the ids become `[2, 2, 3]` rather than `[1, 1, 2]`.
+
+```
+correct:  Text ticks 1 (yields nothing) → BackupPath reuses 1 (×2) → Rect ticks 2  → [1,1,2] dense
+mutated:  Text ticks 1 (yields nothing) → BackupPath ticks 2  (×2) → Rect ticks 3  → [2,2,3] gap
+```
+
+Then **restore the original line** and re-run to confirm green.
+
+**Run the second mutation too** — increment the id per-contour inside `emit_shape`'s `Path` arm.
+It must go red on the **positional** assertion, not the density one.
+
+> This is where a third gap turned up during execution, and it is worth reading before trusting any
+> aggregate assertion in this file. Once the Rect existed, the per-contour mutation produced ids
+> `[1, 2, 2]` — the second letter colliding with the Rect's id while the first was split off alone.
+> That has two unique values and is dense from 1, **exactly like the correct `[1, 1, 2]`**, so both
+> `uniq.length` and the density check stayed green over a plainly wrong grouping. Only a positional
+> comparison separates them. Each mutation now fails a different, correctly-targeted assertion.
 
 - [ ] **Step 6: Commit**
 
@@ -1892,6 +1952,30 @@ centroid while the spec said bbox centre, a bias introduced by a closed contour'
 point — now the bbox centre; hover and selection styled the transparent hit twin on open contours,
 so highlighting them would have changed nothing visible — now routed through `styleNode`; and a
 dead `dataset.shape` write left over from an earlier draft.
+
+**Corrections made during execution, kept here rather than quietly patched** — both were guards
+that could not fail for the reason they existed, i.e. the failure mode this plan is written to
+avoid, reached by following the plan:
+
+1. **Task 1's fixture was not asserted to be round.** The bbox is pinned by the circle's four
+   on-axis vertices, so swapping the `c0`/`c1` handles yields a four-lobed shape with radii
+   4.14–10.0 while every assertion stays green. Closed-ness and point count are equally blind.
+   Fixed by a per-point radius assertion; real spread is 0.0026 mm against a 0.01 tolerance.
+2. **Task 2's mutation check could not fail.** With one `<Shape>` in the fixture, both BackupPath
+   contours come from a single `emit_shape` call and share whatever id is passed — so a fresh id
+   changes which id is shared, not whether. Fixed by adding a second shape, which turns the
+   difference into an observable gap in the id sequence.
+3. **And the fix to (2) opened a third hole, in the other mutation.** With the Rect present, a
+   per-contour-id mutation yields `[1, 2, 2]` — one letter colliding with the Rect — which has the
+   same unique count *and* the same density as the correct `[1, 1, 2]`. Both aggregate assertions
+   stayed green over a plainly wrong grouping; only a positional comparison separates them. Full
+   reasoning at Task 2 Step 5.
+
+The lesson worth carrying into the remaining tasks: **an aggregate assertion (count, uniq, density,
+sum) is the shape most likely to be green over a wrong answer.** Each of these three was one.
+
+Both were caught by review and by an implementer who reported an honest negative result instead of
+a clean one. That is the process working; neither would have been visible in a green suite.
 
 **Known soft spots, flagged rather than hidden:**
 
