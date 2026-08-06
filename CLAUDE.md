@@ -1206,6 +1206,13 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
   "get it reviewed".
 - State plainly in the PR what was verified and what was not.
+- **`docs/STATUS.md` IS PART OF THE WORK, IN THE SAME BRANCH AND THE SAME PR — never a tidy-up
+  afterwards.** Deferred, it does not happen: a single feature ran to eight merged PRs while its
+  STATUS entry went on describing the algorithm the second PR had already deleted, so the
+  canonical record documented code that no longer existed. The entry is also cheapest to write
+  while the numbers are still in front of you — measured figures, suite counts, what was tried and
+  rejected — and those are exactly what a later pass reconstructs badly or omits. Amend the entry
+  the arc already has rather than appending a new one per PR; one arc is one entry.
 
 ### CI
 
@@ -1239,4 +1246,6 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to
   justify, the story goes in STATUS.md and the rule comes here.
-- Update this file **and** `docs/STATUS.md` when the architecture moves.
+- Update this file **and** `docs/STATUS.md` when the architecture moves — **in the branch that
+  moves it**, per the close-out rule in §15. A STATUS entry written later is written from
+  memory, and the measured numbers that make one worth reading are the first thing lost.
