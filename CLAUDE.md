@@ -1070,6 +1070,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
   file until this. `RendererContractTest` still passes because its `render_with` never sends
   `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
+- **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
+  it did not.** `Enqueue` compared revisions correctly from the day it shipped, but the only things
+  that CALL it for a thumbnail are the index's `backfill_thumbnails` and (now) `#show`. Backfill
+  skips any node `thumbnails_for` reports a row for, and that query matched on `(kind, node_id,
+  version_id)` alone — so a stale row satisfied it, nothing re-enqueued, and **172 of 174 LightBurn
+  thumbnails sat at revision 1 through two deploys that had bumped it**, leaving the layer colours
+  those deploys added invisible. `thumbnails_for` now drops rows from an older renderer, and
+  `#show` enqueues instead of only reading. **Every test of the mechanism passed throughout**,
+  because they all called `Enqueue` directly and none drove the thing a user does — open a page.
 - **A PREVIEW IS STALE ON TWO INDEPENDENT AXES, AND `version_id` IS ONLY THE FIRST.** It asks
   whether an artifact was made from the file's current CONTENT; `renderer_revision` asks whether it
   was made by the current CODE. With only the first, a payload change invalidated **nothing** —

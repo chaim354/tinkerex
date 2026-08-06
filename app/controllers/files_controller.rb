@@ -336,8 +336,7 @@ class FilesController < ApplicationController
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
     token = @info&.content_token
-    @thumbnail = token && current_user.maker_previews
-                            .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
+    @thumbnail = token && current_thumbnail(@node, token)
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
     # file can be in several projects, and until now the page gave no sign it was in any. The
     # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
@@ -597,9 +596,47 @@ class FilesController < ApplicationController
     tokens = nodes.filter_map { |n| info[n.node_id]&.content_token }
     return {} if tokens.empty?
 
+    # A ROW FROM AN OLDER RENDERER IS NOT "EXISTING", and leaving that out is what made the whole
+    # renderer_revision mechanism unreachable for thumbnails. `Enqueue` compares revisions
+    # correctly — but the only thing that CALLS it for a thumbnail is backfill_thumbnails, which
+    # skips any node this method reports a row for. So a stale row satisfied the check, nothing
+    # re-enqueued, and 172 of 174 LightBurn thumbnails sat at revision 1 through two deploys that
+    # had bumped it. The mechanism was right and simply never asked.
+    #
+    # FILTERED IN RUBY, NOT SQL, because the current revision depends on the RENDERER and so on
+    # each node's filename — there is no single value to put in a WHERE. Still one query, which is
+    # what page_query_budget_test.rb asserts; this only drops rows from its result.
+    name_by_node = nodes.to_h { |n| [ n.node_id, n.name ] }
     current_user.maker_previews
                 .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
+                .select { |p| current_revision?(p, name_by_node[p.node_id]) }
                 .index_by { |p| [ p.node_id, p.version_id ] }
+  end
+
+  # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
+  #
+  # #show USED TO ONLY READ, and that is why a bumped revision never reached the detail page: the
+  # only thing enqueueing thumbnails is the index's backfill, so a file whose page you opened
+  # directly kept rendering an older build's metadata until you happened to visit the list. The
+  # Laser Settings panel is drawn from that metadata, which is how a deploy that added layer
+  # colours left them invisible on 172 of 174 files.
+  #
+  # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
+  # rather than an older artifact labelled as current) or nil when nothing can render this name.
+  def current_thumbnail(node, token)
+    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail")
+    row = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
+                                              kind: "thumbnail", renderer_revision: revision)
+    return row if row
+
+    Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                  name: node.name, version_id: token, kind: "thumbnail")
+  end
+
+  def current_revision?(preview, name)
+    return false if name.blank?
+
+    preview.renderer_revision == Maker::Previews::Enqueue.revision_for_name(name, preview.kind)
   end
 
   # How many missing thumbnails ONE page load may enqueue.
