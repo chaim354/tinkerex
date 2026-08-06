@@ -750,8 +750,28 @@ Temporarily make `build` compute the bbox from decimated points:
 bin/rails test test/services/maker/previews/lbrn_geometry_test.rb -n "/union to exactly/"
 ```
 
-Expected: **FAIL** on `bezier-circle.lbrn2` — the thinned circle inscribes the real one, so the
-reported width shrinks below 20.0. **Restore** and re-run to confirm green.
+> **Corrected during execution — this mutation does NOT fail, and the reason is worth more than
+> the gap.** `Lbrn2::BEZIER_SAMPLES` is 12 and `DECIMATE_STRIDE` is 3, and **12 % 3 == 0**, so
+> every original LightBurn vertex lands on a kept index (0, 12, 24, 36, 48 on the circle — all
+> multiples of 3). Decimation drops only *intermediate curve samples*, never a vertex, so the
+> circle's bbox is byte-identical either way. The other fixtures hide it differently: their
+> 33-point Ellipse *does* shrink in isolation, but a co-located Rect already bounds the job union
+> in every affected dimension.
+>
+> That coupling is a genuinely good property — it is why measurement is safe and why the drawing
+> keeps its corners — but it spans two constants in two files and breaks silently if either moves.
+> So it gets **asserted directly** rather than relied on:
+>
+> ```ruby
+> assert_equal 0, Maker::Previews::Lbrn2::BEZIER_SAMPLES % LbrnGeometry::DECIMATE_STRIDE
+> ```
+>
+> plus a per-contour check that every original vertex survives `decimate`. Mutation: set
+> `DECIMATE_STRIDE = 5`, confirm red, restore.
+>
+> The union guard still earns its place — it ties the payload to `job_size` — but a **per-shape**
+> decimation test on a fixture whose ellipse is not shadowed by a Rect (`laser-settings.lbrn2`) is
+> what actually catches a measure-after-thinning bug. Both are in the suite.
 
 - [ ] **Step 6: Commit**
 
@@ -865,6 +885,13 @@ bin/rails test test/services/maker/previews/lbrn_geometry_test.rb -n "/square do
 Expected: **PASS** — and that is the point. A 50% tolerance is obviously wrong yet this test stays
 green, because the point-count floor is doing the work. It demonstrates why the assertion needed
 both directions *and* why one mutation is not proof. **Restore to 0.02.**
+
+> **Corrected during execution: the tolerance was completely unguarded.** Set to `1_000_000` and
+> all eight tests stayed green. Closed with an inline-XML `<Shape Type="Ellipse" Rx="10" Ry="9">`
+> — LightBurn's own Ellipse path, so no hand-rolled bezier maths and no new fixture file. Its
+> radius varies ~5.5% about the bbox centre: round enough to be a plausible candidate, outside the
+> 2% tolerance. At 0.02 it reports no `d`; at 0.5 it reports `d = 19.0`. That is now test 9, and it
+> is the only thing standing between `CIRCLE_TOLERANCE` and any value at all.
 
 - [ ] **Step 5: Commit**
 
@@ -1934,6 +1961,12 @@ Insert a new subsection after §14g, and **do not renumber anything**:
   `LbrnGeometry` thins contours over 32 points 3:1 to keep the payload small (the worst real file
   drops 734 KB → 281 KB gzipped), and computes `b` and `d` **before** thinning. Measure after
   thinning and every curve under-reports, silently, while every "does it draw" test stays green.
+- **`DECIMATE_STRIDE` IS COUPLED TO `Lbrn2::BEZIER_SAMPLES`, ACROSS TWO FILES, AND THE STRIDE MUST
+  DIVIDE THE SAMPLE COUNT.** 12 % 3 == 0, so an original LightBurn vertex lands on every kept
+  index and decimation drops only *intermediate curve samples* — never a vertex. That is why a
+  thinned curve keeps its extremes and its corners. Set either constant so the division stops
+  holding and contour bboxes begin to move under decimation, silently. Asserted directly in
+  `lbrn_geometry_test.rb`, because it is invisible from either file alone.
 - **The payload's bboxes must union to `Lbrn2.job_size`** — asserted in
   `lbrn_geometry_test.rb`, rounding once to `job_size`'s 1dp before demanding equality. This is
   what keeps the measure view and the Laser Settings panel on ONE traversal; the second copy is
@@ -2042,8 +2075,20 @@ avoid, reached by following the plan:
    stayed green over a plainly wrong grouping; only a positional comparison separates them. Full
    reasoning at Task 2 Step 5.
 
+4. **Task 3's union mutation could not fail either**, for a reason worth more than the gap:
+   `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`, so decimation drops only intermediate curve samples and
+   never an original vertex. Now asserted directly rather than relied on. Task 3 Step 5.
+5. **`CIRCLE_TOLERANCE` was unguarded at any value** — `1_000_000` left all eight tests green.
+   Closed with an inline-XML ellipse that is round-ish but outside 2%. Task 4 Step 4.
+
 The lesson worth carrying into the remaining tasks: **an aggregate assertion (count, uniq, density,
-sum) is the shape most likely to be green over a wrong answer.** Each of these three was one.
+sum, or a union over a whole document) is the shape most likely to be green over a wrong answer.**
+Four of these five were one. A union in particular hides any per-item error that some other item
+already bounds — which is exactly how (4) stayed green on three separate fixtures.
+
+Two of the five were found by implementers reporting an honest negative result on a mutation the
+plan told them to expect to pass. That is the single highest-value behaviour in this loop; a
+subagent that "fixes" a mutation check until it goes red would have buried all four.
 
 Both were caught by review and by an implementer who reported an honest negative result instead of
 a clean one. That is the process working; neither would have been visible in a green suite.
