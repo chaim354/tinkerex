@@ -17,6 +17,12 @@ contradicted a doc, the contradiction is recorded rather than quietly corrected.
 "env-gated" and live. It is not — nothing in the repo enables `force_ssl` or `assume_ssl`. See
 audit S1.
 
+**Re-verified 2026-08-06 against `main` at `ef0bf90`.** Two rows in §1 had gone stale — **S4-enforce**
+(its stated method was replaced by PR #135, which added the collection endpoint the flip was always
+waiting on) and **P3** (the folder view is now paged under the name sort). Both corrected in place
+below. The superseding audit is `docs/AUDIT-2026-08-03.md`, whose §5 is the current ranked list; this
+document's §1 predates it and is now the *older* of the two.
+
 ---
 
 ## Legend
@@ -44,11 +50,11 @@ spends the next reader's attention on finished work.
 | # | Item | Class | Size |
 |---|---|---|---|
 | S1-deploy | **`FORCE_SSL=1` is set in `config/deploy.ovh.yml` but has not been deployed.** The code fix is in; it takes effect on the next `kamal deploy -d ovh`. Verify afterwards: http→https 301, an HSTS header, a `Secure` session cookie, and `/up` still answering 200 (the `ssl_options` exclusion — if that breaks, kamal rolls the deploy back). | Blocking | S |
-| S4-enforce | **Flip the CSP from report-only to enforcing.** The policy is live and report-only; two defects in it were already caught by the browser and fixed (see the audit's S4-a/S4-b). Remaining: read the console for violations on the grid page, the rich-text editor, the file browser and all three `/tools` addons, then set `content_security_policy_report_only = false`. A test cannot tell you this — only a browser can. | Next | S |
+| S4-enforce | **Flip the CSP from report-only to enforcing.** ~~Read the console for violations on the grid page, the editor, the file browser and all three `/tools` addons~~ — **that method was retired by PR #135** (2026-08-05), which argued it is one person, one browser, four pages, and blind to what a real visitor's extension or a republished bundle does. `CspReportsController` + a `report_uri` now collect violations as `[csp-violation]` log lines, so the flip finally has an instrument. Remaining: **read a week of collected reports**, then set `content_security_policy_report_only = false`. Collection started 2026-08-05. | Next | S |
 | S7-breach | Add a breached-password check at signup. The length floor is now 10; the breach check is the other half of current guidance and was left out because it puts a network dependency on the signup path — a decision, not a detail. | Backlog | M |
 | S5 | Upload size cap + per-user quota — **needs a number from you.** A wrong one rejects legitimate CAD files, which is why it was not guessed. Self-host it is the user's own disk; on the managed plan it is unbounded storage and egress with no ceiling and no way to express one. | Decision | M |
 | P2 | Collapse the four redundant `Node Load`s on `projects#show` — `@att_nodes`, `@entry_nodes` and `ThumbnailMap` each resolve nodes independently. **Constant, not N+1** (it does not grow with the page), so this is ~3 round-trips of latency, not a scaling bug. | Backlog | S |
-| P3 | Pagination for the `files#index` folder view — carried unchanged. ~160 ms of render at 2000 nodes, identical on all three backends, so the residual is HTML generation rather than query cost. A file-browser decision on its own merits. | Decision | M |
+| P3 | ~~Pagination for the `files#index` folder view — carried unchanged.~~ **Partly done (PR #135):** `FOLDER_PAGE = 250` pages the folder view **under the name sort only**. `type` (computed) and `modified` (the port's mtime, not `nodes.mtime`) are not columns an `ORDER BY` can page on, so both still load the whole folder. Remaining is a genuine decision, not an oversight: page those two by either duplicating adapter logic in SQL or changing which authority answers "Modified". Residual cost is per-row ERB — 175–278 ms of a 225–307 ms 2000-child page on ~0 ms of database. | Decision | M |
 
 ---
 

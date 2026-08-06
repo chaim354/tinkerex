@@ -45,13 +45,36 @@ reading the last entry.
   through this seam. The fix, when this stops being acceptable, is one line —
   `ENABLE_TEST_SIGNUP: ""` in `config/deploy.ovh.yml` beside the two sidecar-URL blanks, which exist to
   defeat exactly this deep-merge. Recorded at the edit site too.
-- **A chunk-mode device push has no fast path into project-folder filing.**
-  `Maker::ProjectIntake`'s eager nudge (`ProjectFolderIntake`) covers only the three web
-  upload doors — `Sync::Commit#finalize`, the device-sync write path, never calls it — so a
-  file arriving through the mount waits for `Maker::ProjectIntakeJob`'s 15-minute schedule
-  like everything else. Deliberate, not an oversight: `#finalize` runs once per file, so
-  wiring the nudge into it would turn one 500-file device sync into 500 synchronous
-  full-project sweeps.
+- ~~**A chunk-mode device push has no fast path into project-folder filing.**~~ **CLOSED by
+  PR #135** (2026-08-05; entry below). `Maker::ProjectIntakeJob.nudge`, called from
+  `V1::CommitsController#finalize`, **enqueues** a sweep instead of running one, and the job's
+  `limits_concurrency` collapses a 500-file burst into a single sweep — so the 500 synchronous
+  full-project sweeps this bullet correctly rejected never happen. **The residual that remains
+  true:** the enqueues themselves are not deduplicated, only the sweep is, so a 500-file burst
+  writes 500 job rows of which 499 are discarded. Left as-is deliberately — deduplicating the
+  enqueue couples this to Solid Queue's schema to save a row rather than a sweep. *(Kept in
+  struck-through form rather than deleted: this bullet stood for a day after it stopped being
+  true, and a reader who remembers it deserves the correction rather than silence.)*
+- **A SECOND intermittent, captured 2026-08-06 — `TrayLayoutTest`, and it is NOT the known
+  `SQLite3::BusyException` one** (§12 item 7, `Tools::GeneratorsControllerTest#setup`). Seen once
+  during a docs-only `bin/ci` run:
+  `Capybara::ElementNotFound: Unable to find css "[data-param=\"layout\"]"`
+  (`test/system/tray_layout_test.rb:46`), i.e. the addon bundle's params had not rendered.
+  **Isolated rather than assumed:** the file alone passed 5/5; the full system suite on the *same*
+  clean tree passed 55/55; the same suite with the docs diff restored passed 55/55 twice, `bin/ci`
+  **exit 0**. So it is a flake in the full-suite run, not a regression — most plausibly the addon
+  asset fetch losing a race against Capybara's several concurrent Pumas, which is the neighbourhood
+  of the `ADDON_SOURCE_PATH` reentrancy §14e records. **Not diagnosed, and deliberately not chased
+  in a docs branch** — recorded so the next person who sees it starts from "known, second one"
+  rather than re-deriving it. Assertion count is the tell: the failing run showed 325, a clean run
+  329.
+  **The OLD intermittent also recurred in the same session**, and its capture is worth more than
+  this one: `SQLite3::BusyException` in **`Sync::RestoreTest#setup`** on the **s3** leg (three
+  immediate re-runs clean at identical 1970/6869). The only prior capture was
+  `Tools::GeneratorsControllerTest#setup` on 2026-07-27, which made a hard-coded `gen@example.com`
+  look like a plausible cause. A second capture in a different class, a different suite area and a
+  different backend leg **rules that out** — and rules out "controller tests only" with it.
+  `CLAUDE.md` §12 item 7 updated accordingly.
 - **A `projects:organize` dry run cannot see a name collision a real run would hit.**
   Collision detection lives inside `Maker::MoveNode.call`, which a dry run never reaches —
   it writes nothing, on purpose — so its "would file" answer is optimistic whenever the
@@ -214,6 +237,125 @@ Every guard was reverted and confirmed red, then restored:
   than a stuck file — recorded here rather than widened into.
 - **A genuine `:conflict`** — if `design/harbor-number-v4.svg` already existed, the file correctly
   stays at the root. What changed is that the addon door now *says so* instead of a bare "Saved".
+
+---
+
+## 2026-08-05: CSP violations are now collected, and five hot paths stop doing avoidable work (PR #135, branch `claude/audit-csp-and-perf`)
+
+> **Recorded 2026-08-06, a day late — and the lateness is the reason this note exists.** The arc
+> merged as `2b9ca85` and then went unnarrated while three later arcs were written up, so both
+> standing open-lists kept advertising two gaps it had already closed (`CLAUDE.md` §12 items 8 and
+> 10, and this file's own carried "device push has no fast path" bullet). §14e's rule — *a stale
+> open-list is worse than none* — is about exactly this, and it cost a reader a re-derivation
+> before it was caught. Write the entry with the merge.
+
+Item **9** plus the **performance tier** (18, 19, 20, 21, 22, 23) of `docs/AUDIT-2026-08-03.md` §5.
+Nothing here is correctness; the CSP half is the one that unblocks a decision.
+
+### CSP (item 9) — report-only had been measuring nothing
+
+The policy had run report-only for weeks with **no `report-uri`**, so every violation existed only in
+the console of whichever visitor happened to trigger it. The initializer's own plan — *"read the
+violations from the browser console on the grid page, the editor, the file browser and all three
+`/tools` addons"* — is one person, one browser, four pages, and blind to what a real visitor's
+extension or a republished addon bundle does. **The "collect, then flip to enforcing" step therefore
+had no data to flip on.** `CspReportsController` now collects them: unauthenticated **by necessity**
+(the violations most worth catching are on the sign-in pages), rate-limited, body-capped, and logging
+a **fixed allowlist of fields** rather than the attacker-supplied JSON whole. Violations surface as
+`[csp-violation]` log lines.
+
+**The `report_uri` is a literal that also appears in `config/routes.rb`, and not for want of trying
+to derive it.** The CSP block is `instance_exec`'d inside
+`ActionDispatch::ContentSecurityPolicy#initialize` — i.e. while `config/initializers` runs — and
+routes are not drawn until the finisher, so `routes.url_helpers.csp_violation_report_path` is
+undefined and **the app dies at boot**. Same family as §14a's `Library` boot guard, and found the
+same way: by booting. `test/integration/csp_report_test.rb` guards the duplication instead.
+
+The flip to `content_security_policy_report_only = false` is **deliberately not in this arc** — it
+now has an instrument, and wants a week of real traffic through it.
+
+### Addon assets (18)
+
+Every asset was a fresh TCP connection + GET to the accessory (`Net::HTTP.start` per call, **no
+keep-alive**) plus a full-body buffer, **per module per page view** — 12 modules for `boxes`, a
+180 KB `makerjs.js` re-proxied on every navigation of `generators`. Now cached server-side and marked
+`private`/`max-age`, **both bounded by `Registry::TTL`**: the index was *already* cached for five
+minutes, so this adds **no staleness the system did not have** — the index and the assets it names
+now expire together. `Source#cacheable?` keeps the dev/local source **uncached**, because a stale copy
+there would hide an addon author's own edit.
+
+Not the content-hash scheme the audit ultimately wants: that needs a **per-publish version to key
+on**, and the manifest contract has none — a change to a format that lives in another repo.
+
+### Folder paging (19), scoped deliberately
+
+Flat mode was capped at `FLAT_LIMIT` on the reasoning that *"a folder is self-limiting and a
+whole-library view is not"* — true of a tidy library, **false of a NAS directory with 10k children**,
+where the measured 2000-child page is **225–307 ms of which 175–278 ms is ERB**, on 5 queries and
+~0 ms of database. `FOLDER_PAGE = 250`, SQL-ordered.
+
+**Only under the name sort**, and the exclusion is not laziness: `type` is *computed* (extension, with
+a symlink special case `FilesHelper` pins to the rendered cell) and `modified` reads the **port's**
+mtime rather than `nodes.mtime`, so neither can become an `ORDER BY` without either duplicating Ruby
+logic across two adapters or silently changing which authority answers "Modified". Those two keep the
+full-folder load, and a test asserts that limit so it stays deliberate.
+
+**A hard cap was rejected**: a truncated *search* is "your top matches", but a truncated *folder*
+hides children in the primary navigation surface with no way to reach them.
+
+### Intake sweep (20, 21, 23) — and the device-push nudge
+
+The subtree walk materialized a full `Node` for every file under every project folder every 15
+minutes — ~10⁵ AR instantiations per user at NAS scale to answer a question that reads **four
+columns**; it now selects those four and re-loads whole records only for the inbox, which
+`Maker::MoveNode` requires. Filing N files broadcast **N+1** times against `LibraryChannel`'s own
+"never per-operation" contract (500 serialized locks, 500 Solid Cable rows and 500 nudges per device
+for a 500-file sweep); `LibraryChannel.batch` collapses a sweep to **one** nudge carrying the final
+`head_seq`. `EAGER_MAX_MOVES` gains an **S3 default of 5** (`EAGER_MAX_MOVES_S3`), because
+`FileLayer::S3#move` is three sequential network calls per file — 25 was measured on chunk and the old
+comment *said so* while leaving the number the same on all three.
+
+**§12 item 10 closed, in the shape that item said a fix would need.** `ProjectIntakeJob.nudge`
+**enqueues** rather than sweeping, and the job's `limits_concurrency to: 1, key: user_id,
+on_conflict: :discard` collapses a 500-file burst into **one** sweep — not the 500 synchronous sweeps
+§12.10 rejected. It fires only when a file lands at a project folder's **root** (§14f's sort rule),
+one indexed `exists?` per finalize, and lives in `V1::CommitsController`, **not `Sync::Commit`**,
+because a maker call inside the sync engine inverts the layering. **Residual, stated plainly:** the
+*enqueues* are not deduplicated, only the *sweep* is — 500 root-landing files write 500 job rows of
+which 499 are discarded when they become ready, reclaimed by Solid Queue's hourly finished-job clear.
+Deduplicating the enqueue itself means coupling to Solid Queue's schema to save a row rather than a
+sweep.
+
+### Previews (22)
+
+Rendering buffered whole files up to `FileLayer::MAX_BYTES` (**256 MiB**) — a cap meant for an
+**upload**. On S3 the first index of a large library made that a **full billed download per renderable
+object**, the same egress §14a's identity ladder refused to pay for hashing. Now
+`PREVIEW_MAX_BYTES` = 32 MB, judged against `nodes.size` **before any read**, and resolved as
+`unsupported` — a terminal, non-retrying state — rather than `failed`.
+
+### Two tests initially passed against deliberately broken code
+
+Both this repo's recorded shape, both caught by **mutation rather than review**: the intake-walk test
+matched on `IN (` while a single-directory frontier renders `= ?`, so it asserted over an **empty
+set**; and the pagination test used `Alpha`/`beta`, which order identically in bytes *and* downcased,
+so removing `LOWER()` from the SQL order sailed through. `Zeta`/`apple` is the pair that actually
+conflicts (`Z` is 90, `a` is 97) and makes a missing `LOWER()` scatter rows across page boundaries.
+
+One comment was **corrected rather than left standing**: skipping the Ruby sort on a paged folder is
+*not* the correctness condition first written — the mutation proved it a no-op, since
+`folder_page_order` reproduces `sort_key` exactly and the sort is stable. The real guard is `LOWER()`
+in that order, and the comment now says so.
+
+### Verified
+
+Bare `bin/ci` green, **exit 0**. All gates; the three backend legs **identical** at **1942 runs /
+6732 assertions**, system tests 44 / 246. Branched from `origin/main` at `e8e224d` (includes PR #134).
+Every guard mutation-checked per §15 — reverted, confirmed red on its own test, restored.
+
+**What it closes in the standing lists:** `CLAUDE.md` §12 item **10** outright; §12 item **8**
+narrowed (the folder view is bounded under the name sort; the other two sorts and the per-row ERB cost
+remain). Both corrected 2026-08-06 alongside this entry.
 
 ---
 

@@ -248,19 +248,29 @@ Genuinely open:
    a concurrent-commit load test (the boot guard + deadlock fix are in).
 6. **Linux and Windows CI coverage is skipped, not passing** — only the macOS runner is
    registered. See §15 and `docs/STATUS.md` ("CI runs again").
-7. **The unexplained intermittent** — `SQLite3::BusyException` in a controller test
-   `setup`, captured 2026-07-27, still undiagnosed. The cross-worker explanation is
-   *disproved*: each parallel worker has its own SQLite file, so the lock holder is inside
-   the failing worker.
-8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three
-   backends (the port's N+1 is closed; the residual is HTML). Pagination never existed.
+7. **The unexplained intermittent** — `SQLite3::BusyException` in a test `setup`, captured
+   2026-07-27, still undiagnosed. The cross-worker explanation is *disproved*: each parallel
+   worker has its own SQLite file, so the lock holder is inside the failing worker.
+   **Second capture 2026-08-06** — `Sync::RestoreTest#setup`, on the **s3** leg, from a
+   docs-only diff; three immediate re-runs were clean at identical counts. It is therefore
+   **not** specific to `Tools::GeneratorsControllerTest` or to that test's hard-coded email,
+   and not specific to controller tests or to one backend leg. Setup-time lock contention is
+   the whole of what is known.
+8. **`FilesController#index` render cost — now bounded under ONE of the three sorts.**
+   `FOLDER_PAGE = 250` pages the folder view **only under the name sort** (PR #135): `type`
+   is computed and `modified` reads the **port's** mtime, so neither is a column an
+   `ORDER BY` could page on without duplicating adapter logic or changing which authority
+   answers "Modified". Those two still load the whole folder. The residual is per-row ERB
+   (175–278 ms of a 225–307 ms 2000-child page, on ~0 ms of database) — identical on all
+   three backends, so it is HTML generation, not query cost.
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the
    models and v1 API exist. Obvious next slices.
-10. **A chunk-mode device push through the mount gets no eager nudge for project-folder
-    filing.** `Sync::Commit#finalize` never calls it — only the three web upload doors do
-    — so a file arriving via the mount waits for the 15-minute sweep like everything
-    else. Wiring it in would be worse, not better: `#finalize` runs once per file, so a
-    500-file device sync would become 500 synchronous full-project sweeps.
+10. **CLOSED (PR #135) — kept as a numbered slot because §14f and the audit cite "§12.10".**
+    A device push *does* get an eager nudge now: `Maker::ProjectIntakeJob.nudge` from
+    `V1::CommitsController#finalize` (never `Sync::Commit`, which would invert the layering)
+    **enqueues** a sweep, and `limits_concurrency` collapses a 500-file burst into one — so
+    the 500 synchronous sweeps this item rejected still never happen. **Residual:** the
+    enqueues are not deduplicated, only the sweep is; 499 of 500 job rows are discarded.
 11. **Whether a project-scoped upload should duplicate-check across the whole project,
     not just its immediate destination, is an open product question.** Today two files
     can both be named `dup.stl` under one project — the first filed into its category
