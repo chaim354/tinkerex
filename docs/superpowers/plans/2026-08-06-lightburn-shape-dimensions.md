@@ -1153,13 +1153,36 @@ In `app/controllers/files_controller.rb`, beside `#thumbnails`:
   # commit_if_current's version-race guard.
   #
   # Same response shape as #thumbnails so the client's polling code is a known quantity.
+> **Two bugs corrected during execution — this code as first written did not work.** Both were
+> found by running it, not by reading it, and both made one of the plan's own tests fail:
+>
+> 1. **Calling `Enqueue.call` unconditionally makes the `"failed"` branch DEAD CODE.** `Enqueue`
+>    resets a failed row to `pending` and re-enqueues *whenever it is called* — right for a
+>    one-shot nudge at upload time, wrong for a passive poll. `preview.status` could never still
+>    read `"failed"` by the time the `case` reads it, and a client polling a permanently broken
+>    file would re-enqueue a doomed render on **every poll**. Fixed by reading the existing row for
+>    the current `content_token` first and only falling through to `Enqueue` when none exists.
+> 2. **A plain `get` defaults to `:html`**, so `RecordNotFound` reached the class-level
+>    `rescue_from`'s html branch and answered **302 to `files_path`** rather than 404 — right for
+>    `#show`/`#blob`, which render a page, and flatly contrary to this action's own "same shape as
+>    `#thumbnails`" contract. A JSON poller reading that redirect's body sees neither a status key
+>    nor a 404. Fixed with a local `rescue`.
+>
+> Accepted consequence of (1), stated rather than discovered later: **a `failed` geometry preview is
+> terminal until the file's content changes.** That is honest — a transient byte-store failure
+> surfaces as `FetchError`, which `retry_on` handles and which leaves the row `processing` (so the
+> client keeps polling and it self-heals), so `failed` genuinely means the parse failed. Re-saving
+> the file changes the token and retries automatically.
+
+```ruby
   def geometry
     node = current_user.nodes.present.find_by!(node_id: params[:id])
     token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
     return render json: { status: "pending" } if token.nil?
 
-    preview = Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
-                                            name: node.name, version_id: token, kind: "geometry")
+    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token, kind: "geometry")
+    preview ||= Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                              name: node.name, version_id: token, kind: "geometry")
     # nil = no renderer for this filename. Terminal and honest: the Measure button is only
     # rendered for .lbrn/.lbrn2, so reaching here otherwise is a client bug, not a wait.
     return render json: { status: "unsupported", error: "no geometry for #{node.name}" } if preview.nil?
@@ -1173,6 +1196,8 @@ In `app/controllers/files_controller.rb`, beside `#thumbnails`:
     else
       render json: { status: "pending" }
     end
+  rescue ActiveRecord::RecordNotFound
+    head :not_found
   end
 ```
 
@@ -1994,6 +2019,17 @@ Insert a new subsection after §14g, and **do not renumber anything**:
 - **Hit-testing is paint order, not geometry.** Contours are appended in DESCENDING bbox-area
   order so the browser's own topmost-wins dispatch selects the hole rather than the plate around
   it. Sorting the other way silently makes small features unclickable.
+- **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`, and that is
+  not interchangeable with the eager upload-time call.** `Enqueue.call` resets a `failed` row to
+  `pending` and re-enqueues *whenever called* — correct for a one-shot nudge, wrong for a poll.
+  Unconditional, it makes the action's own `"failed"` branch **dead code** and re-enqueues a doomed
+  render on every poll of a permanently broken file. Accepted consequence: a `failed` geometry
+  preview is terminal until the content changes — honest, because a transient byte-store failure is
+  a `FetchError`, which leaves the row `processing` and self-heals.
+- **`#geometry` rescues `RecordNotFound` LOCALLY, and the class-level `rescue_from` is why.** That
+  handler branches on request format and answers a plain `get` — html, the default with no Accept
+  header — with a **302 to `files_path`**. Right for `#show`/`#blob`, which render a page; wrong
+  for a JSON poller, which would read a redirect body containing neither a status key nor a 404.
 ```
 
 - [ ] **Step 2: Record the arc in `docs/STATUS.md`**
