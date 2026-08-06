@@ -20,6 +20,16 @@ require "application_system_test_case"
 class LbrnMeasureTest < ApplicationSystemTestCase
   FIXTURE = "bezier-circle.lbrn2".freeze
 
+  # A PLATE WITH A HOLE THROUGH IT, and the only fixture that can test hit-test paint order.
+  #   plate  Rect 60 x 40 at the origin        -> area 2400 mm^2
+  #   hole   bezier circle r=5, SAME centre    -> area  100 mm^2, reported as a diameter
+  # A click at the middle lands inside BOTH, so which one is reported is decided purely by the
+  # order `draw` appended them in. bezier-circle.lbrn2 cannot do this: its two shapes are
+  # equal-area AND disjoint, so neither ever covers the other and the ordering is unobservable.
+  NESTED = "nested-plate.lbrn2".freeze
+  HOLE_READOUT  = "⌀10 mm".freeze
+  PLATE_READOUT = "60 × 40 mm".freeze
+
   # bezier-circle.lbrn2 holds exactly two shapes, DELIBERATELY THE SAME SIZE:
   #   circle  r=10 at (0,0)   -> bbox 20 x 20 mm, and the payload gives it d = 20
   #   square  20x20 at (50,0) -> bbox 20 x 20 mm, no d
@@ -33,13 +43,17 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # The fixture lands BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
     # root as an unmounted mount point, and sign_in_as ends on /files, which renders through the
     # port. Indexing later is fine; an empty library at that moment is not.
-    File.binwrite(@root.join(FIXTURE), File.binread(Rails.root.join("test/fixtures/files", FIXTURE)))
+    [ FIXTURE, NESTED ].each do |f|
+      File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
+    end
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
 
     @user = sign_in_as("lbrn-measure@example.com")
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
-    @node_id = @user.nodes.find_by!(storage_path: FIXTURE).node_id
-    render_geometry!
+    @node_id   = @user.nodes.find_by!(storage_path: FIXTURE).node_id
+    @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
+    render_geometry!(@node_id, FIXTURE)
+    render_geometry!(@nested_id, NESTED)
   end
 
   teardown do
@@ -77,19 +91,44 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # A GAP, RECORDED RATHER THAN PAPERED OVER: nothing here covers `draw`'s paint order.
+  # THE ASSERTION THE WHOLE HIT-TEST DESIGN RESTS ON, and it was untestable until this fixture
+  # existed. `draw` appends contours in DESCENDING bbox-area order so the browser's own
+  # topmost-wins dispatch selects the SMALLEST shape containing the pointer — that is the entire
+  # selection algorithm, there is no point-in-polygon code anywhere.
   #
-  # The controller appends contours in DESCENDING bbox-area order so the browser's own
-  # topmost-wins hit dispatch selects the smallest shape containing the click — that is the
-  # entire selection algorithm, and reversing it silently makes a hole inside a plate
-  # unclickable. Mutation-checked and it stayed GREEN: this fixture's two shapes are the same
-  # area AND disjoint, so neither ever covers the other and order cannot matter.
+  # Reverse that sort and a hole inside a plate becomes unclickable: every click reports the plate.
+  # It is exactly the kind of break no output assertion catches, because both orders draw an
+  # identical picture. bezier-circle.lbrn2 could not see it either — its two shapes are equal-area
+  # AND disjoint, so neither ever covers the other and the mutation stayed green.
   #
-  # Catching it needs a fixture with one contour strictly inside another (a plate with a hole),
-  # asserting the click lands on the hole. Not added here because bezier-circle.lbrn2 is shared
-  # with lbrn_geometry_test.rb, where the equal-size circle/square pair is load-bearing for the
-  # circularity assertions — a nested fixture is a separate file and a separate decision.
-  # Until that exists, treat the paint-order rule in draw() as UNTESTED.
+  # Clicking the SVG ELEMENT'S CENTRE rather than a specific contour is the point: the fixture puts
+  # plate and hole on a shared centre, and the padded viewBox is centred on it too, so the middle
+  # of the element is user-space (0, 0) — inside both. Which one answers is decided by paint order
+  # alone. Targeting a contour directly would prove nothing.
+  test "clicking where a hole overlaps its plate selects the hole" do
+    open_measure_view(@nested_id)
+
+    stage_svg.click
+
+    assert_selector ".lbrn-measure-dims", text: HOLE_READOUT
+    assert_no_selector ".lbrn-measure-dims", text: PLATE_READOUT
+  end
+
+  # And the plate is still reachable where the hole is not, so the test above is not passing
+  # because the plate became unclickable altogether.
+  test "the plate is still selectable away from the hole" do
+    open_measure_view(@nested_id)
+
+    # A QUARTER OF THE ELEMENT'S WIDTH RIGHT OF CENTRE, computed rather than guessed. The padded
+    # viewBox is 62.4 user units wide in a square element, so with `meet` the horizontal axis fills
+    # it: 1 mm is width/62.4 px. The plate reaches ±30 mm (±0.48 of the width) and the hole only
+    # ±5 mm (±0.08), so 0.25 is comfortably inside one and clear of the other.
+    svg = stage_svg
+    svg.click(x: (svg.native.size.width * 0.25).to_i, y: 0)
+
+    assert_selector ".lbrn-measure-dims", text: PLATE_READOUT
+  end
+
 
   test "✕ Image dismisses the Measure view and returns to the poster" do
     open_measure_view
@@ -113,16 +152,16 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # real pipeline: Enqueue mints the row the controller will look up, GeneratePreviewJob reads the
     # bytes back through the port and LbrnGeometry produces the payload — nothing here hand-writes
     # coordinates, so the numbers the browser measures are genuinely derived from the fixture.
-    def render_geometry!
-      token = FileLayer.current.stat(@user, node_id: @node_id).content_token
-      preview = Maker::Previews::Enqueue.call(user: @user, node_id: @node_id, name: FIXTURE,
+    def render_geometry!(node_id, filename)
+      token = FileLayer.current.stat(@user, node_id: node_id).content_token
+      preview = Maker::Previews::Enqueue.call(user: @user, node_id: node_id, name: filename,
                                               version_id: token, kind: "geometry")
-      Maker::GeneratePreviewJob.perform_now(preview.id, filename: FIXTURE)
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: filename)
       assert_equal "ready", preview.reload.status, "the geometry payload must be ready to measure"
     end
 
-    def open_measure_view
-      visit file_path(@node_id)
+    def open_measure_view(node_id = @node_id)
+      visit file_path(node_id)
       click_on "Measure"
       # The --ready class is what reveals the stage and hides the poster; without waiting for it the
       # clicks below race the fetch and land on a display:none SVG.
@@ -139,6 +178,10 @@ class LbrnMeasureTest < ApplicationSystemTestCase
       assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
       match
     end
+
+    # Scoped to the measure stage: the page carries a dozen other <svg> icons, and a bare
+    # find("svg") is ambiguous.
+    def stage_svg = find(".lbrn-measure-stage svg")
 
     def min_x(polygon)
       polygon[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min

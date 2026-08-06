@@ -1102,10 +1102,12 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   constructing elements from parsed coordinates sidesteps that rule rather than excepting it.
 - **Hit-testing is PAINT ORDER, not geometry.** Contours are appended in DESCENDING bbox-area order
   so the browser's own topmost-wins dispatch selects the hole rather than the plate around it.
-  Sorting the other way silently makes small features unclickable — and **this is currently
-  UNTESTED**: `bezier-circle.lbrn2`'s two shapes are equal-area and disjoint, so neither ever covers
-  the other and the mutation stays green. Catching it needs a nested fixture (see
-  `test/system/lbrn_measure_test.rb`).
+  There is no point-in-polygon code; reversing that sort silently makes every small feature inside
+  a larger one unclickable, while drawing an identical picture. Pinned by
+  `nested-plate.lbrn2` — a plate and a hole on a SHARED CENTRE, clicked at the SVG element's own
+  centre so paint order alone decides the answer. `bezier-circle.lbrn2` cannot test this and the
+  gap went unclosed for a while because of it: its two shapes are equal-area AND disjoint, so
+  neither ever covers the other.
 - **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
   user-space threshold calls an ordinary click a drag and silently swallows the selection.
 
