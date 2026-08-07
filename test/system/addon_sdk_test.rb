@@ -59,8 +59,12 @@ class AddonSdkTest < ApplicationSystemTestCase
     click_button "Save"
     assert_selector "[data-role=sdk-status]", text: "Saved."
     # The onReplace callback ran and was told WHICH file and WHICH folder — a bundle that only knew
-    # "something conflicted" could not write a truthful prompt.
-    assert_selector "[data-role=sdk-status][data-replaced*='sdk-dup.svg']"
+    # "something conflicted" could not write a truthful prompt. EXACT match, not a substring: this
+    # save collides on exactly one file, so the attribute holds exactly one "name@folder" pair — a
+    # substring match would pass just as happily on "sdk-dup.svg@undefined", asserting nothing about
+    # the folder half of the pair, which is the half that comes from the server's `would_replace`
+    # payload and is the actual reason a prompt can name a real destination.
+    assert_selector "[data-role=sdk-status][data-replaced='sdk-dup.svg@design']"
     # THE 409 IS THE FLOW, NOT A DEFECT, and Chrome logs a SEVERE console entry for ANY non-2xx
     # fetch response — so an unfiltered assert_no_console_errors fails on the very thing this test
     # exists to exercise (addon_bundle_test.rb hits the identical shape for the identical reason).
