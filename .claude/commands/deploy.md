@@ -24,14 +24,44 @@ Confirm the commits you intend to ship are in that log. Then:
 
 - `git status --short` must be **empty**. Kamal builds the working tree, not `HEAD` — uncommitted
   edits ship silently. Stop if anything is dirty.
-- Secrets. `.kamal/secrets` passes two variables through from the shell, and neither is set by
-  default. Resolve them from 1Password **without printing the values**:
+- Secrets. **Do not `export` anything** (CLAUDE.md §13). `.kamal/secrets*` resolve every credential
+  through `bin/secret`, which reads 1Password itself. Run the preflight and read its output:
   ```bash
-  export KAMAL_REGISTRY_PASSWORD="$(op item get 'ghcr.io' --fields password --reveal)"
-  export CHUNK_SECRET_ACCESS_KEY="$(op item get 'seaweednew' --fields 'secret key' --reveal)"
+  bin/secrets-preflight --all
   ```
-  Check them with `${#VAR}` (a length), never by echoing. `RAILS_MASTER_KEY` comes from
-  `config/master.key`, which must exist.
+  It must end `All secrets resolved for: base, s3, share, ovh. Safe to deploy.` **This is not
+  optional politeness** — kamal expands `$(…)` through Ruby **backticks, which discard exit
+  status**, so an unreadable secret becomes an **empty** one and `Kamal::Secrets#[]` returns it
+  **without raising** (a *missing* key raises; an *empty* one does not). An empty credential
+  deploys silently and surfaces later as a confusing `docker login` error. `RAILS_MASTER_KEY` comes
+  from `config/master.key`, which must exist — **git worktrees do not have it** (gitignored +
+  untracked), so `cp <main-checkout>/config/master.key .` first if you are deploying from one.
+
+  > ⚠️ **THIS STEP USED TO SAY "export two secrets first", WITH COMMANDS THAT NO LONGER WORK.** It
+  > gave `op item get 'ghcr.io' --fields password` and `op item get 'seaweednew' --fields 'secret
+  > key'`; **both now return the empty string**, because agent shells authenticate as a service
+  > account scoped to the `tinkerex` vault (PR #123) and those unqualified item names no longer
+  > resolve. Observed 2026-08-07: both returned length 0 while `bin/secrets-preflight --all`
+  > resolved all four destinations in the same session.
+  >
+  > **The export is obsolete rather than dangerous, and the distinction is worth stating exactly,
+  > because the scary version of this warning is wrong.** `bin/secret` prefers an exported value —
+  > but its guard is `[ -n "${!name:-}" ]`, which tests for **non-empty**, so an exported EMPTY
+  > string falls **through** to 1Password and resolves correctly. Verified by probe, not reasoned:
+  > `KAMAL_REGISTRY_PASSWORD="" bin/secret KAMAL_REGISTRY_PASSWORD op://tinkerex/ghcr.io/password`
+  > returns the real value. So following the old step did not poison anything — it just did nothing,
+  > while producing a `${#VAR}` of 0 that reads as a broken vault and sends you debugging the wrong
+  > thing.
+  >
+  > What an export CAN still do is win with a **non-empty wrong** value, which is precisely why the
+  > override exists (the OVH leg reuses `CHUNK_SECRET_ACCESS_KEY` for a different credential). Use
+  > it deliberately or not at all.
+
+  If the preflight reports failures, read which ones: **every secret failing at once means the
+  service-account token expired** — re-mint per `docs/DEPLOY.md`, and do not go looking for a
+  repo change, since the token arrives through the environment and nothing in this tree can affect
+  it. **One secret failing is the opposite diagnosis** — a wrong ref or field in that single
+  `.kamal/secrets*` line.
 - Reachability and the current state, so you can prove afterwards that something changed:
   ```bash
   ssh -o BatchMode=yes kamal1@192.168.1.95 "docker ps --format '{{.Names}}' | grep '^tinkerex-web'"
@@ -78,12 +108,28 @@ done
 ```
 
 Then prove the **change itself** shipped, not merely that containers booted — booting is
-compatible with having deployed the old code. Pick something specific from this deploy and look
-for it inside the running image, e.g.:
+compatible with having deployed the old code. Reading the changed file inside the image is the
+floor:
 
 ```bash
 ssh kamal1@192.168.1.95 "docker exec <container> sed -n '1,20p' /rails/<path/to/changed/file>"
 ```
+
+**Prefer EXERCISING the change over reading it**, where the change has an observable output. Source
+being present proves the copy happened; it does not prove a compiled artifact was rebuilt from it,
+which is a different question and the one that bites. Feed the deployed container a fixture and look
+at what comes back — e.g. for the STL thumbnailer, pipe a tall test model through the binary in the
+running image and inspect the PNG:
+
+```bash
+ssh kamal1@192.168.1.95 "docker exec -i <container> sh -c \
+  'cat > /tmp/t.stl && stl-thumbnailer /tmp/t.stl /tmp/t.png 320 320 >/dev/null 2>&1 && base64 -w0 /tmp/t.png'" \
+  < fixture.stl | base64 -d > out.png
+```
+
+And where a change spans a compiled artifact AND server code that depends on it (a renderer plus its
+`*_REVISION` bump), **verify both halves**: they ship in one image but fail independently, and each
+half alone is worse than neither.
 
 ## 4. Report
 
@@ -99,4 +145,7 @@ the user's call, not automatic.
 - Deploy OVH on a bare "deploy"
 - Build from a dirty or unsynced tree
 - Print a secret value
+- **`export` a secret as a matter of routine** — `.kamal/secrets*` resolve their own; an export is
+  a deliberate per-run override (a non-empty one wins), not a setup step
+- Deploy without `bin/secrets-preflight` — it is the only thing that catches a silent empty
 - Report success from an exit code alone
