@@ -1,0 +1,45 @@
+<%#
+  One collapsible role section of the project Files panel.
+
+  Locals: key (a stable slug for the section), label, group (attachments), open (Boolean).
+
+  EXTRACTED BECAUSE THERE ARE NOW TWO CALLERS — the ROLE_LABELS loop and the Backups section — and
+  they must render identically apart from being open or closed. Inlining the second was the obvious
+  thing and would have meant two copies of the tile markup, which is how the Detach button ends up
+  on one of them and not the other.
+
+  `open` is a real HTML attribute, so a closed section costs nothing at render time and the browser
+  keeps the toggle state for the life of the page. It is NOT persisted across loads: that would need
+  a cookie per section per project, and the panel's default (everything open but Backups) is the
+  answer for almost every visit.
+%>
+<section class="attachment-group">
+  <details <%= "open" if open %>>
+    <summary class="attachment-group-head">
+      <%= label %> <span class="muted">(<%= group.size %>)</span>
+    </summary>
+    <div class="attachments-grid">
+      <% group.each do |att| %>
+        <% node = @att_nodes[att.node_id] %>
+        <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+        <div class="attachment-tile">
+          <%# data-download-url is what puts "Download" in the right-click menu (filemenu#open).
+              Same blob endpoint the file page's own Download button uses, with ?download=1 so the
+              disposition is `attachment` whatever the type would otherwise allow inline. %>
+          <%= link_to file_path(att.node_id), class: "grid-card file-cell",
+                      data: { thumbs_target: "cell", node_id: att.node_id, ext: ext,
+                              action: "contextmenu->filemenu#open",
+                              note_url: file_notes_path(att.node_id),
+                              download_url: blob_file_path(att.node_id, download: 1) } do %>
+            <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
+            <span class="grid-name"><%= node.name %></span>
+          <% end %>
+          <div class="tile-meta">
+            <%= button_to "Detach", attachment_path(att), method: :delete, class: "linkbtn danger",
+                          form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  </details>
+</section>

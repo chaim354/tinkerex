@@ -84,6 +84,22 @@ production:
     queue: background
     schedule: every saturday at 5am
 
+  # Project/model file ATTACHMENTS (and chosen project covers) pointing at a node the library no
+  # longer has. The scan tombstones a deleted file rather than destroying it, so no `dependent:`
+  # callback fires and nothing else was sweeping these — a file deleted on the NAS stayed in every
+  # project it was attached to, as an "unavailable" tile, forever.
+  #
+  # DAILY, WHERE dead_node_preview_reaper ABOVE IS WEEKLY, and not by inheritance: both are DB-only
+  # and both wait out the same 30-day grace, so cadence buys neither cost nor timeliness against the
+  # window. The difference is what a late sweep leaves visible — a stale preview row renders
+  # nowhere, a stale attachment is a row the user can see. Two queries per user, so daily is cheap.
+  #
+  # Backend-neutral (no `command:` gate): a dead node is dead on all three backends.
+  dead_node_attachment_reaper:
+    class: Maker::AttachmentReaperJob
+    queue: background
+    schedule: every day at 5am
+
   # Project-folder intake: attach what is under each Projects/<slug>/ folder, file what is loose at
   # its root. CHUNK DEPLOYMENTS ONLY — sweep_all! declines when the backend is `scannable`, because
   # on share/s3 Library::ScanJob already calls the intake at the end of its own perform, strictly

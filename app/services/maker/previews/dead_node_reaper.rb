@@ -16,28 +16,16 @@ module Maker
     # `Maker::Preview` would point the file layer at the maker layer, which is the coupling
     # CLAUDE.md §12 step 10 exists to prevent. A periodic sweep is the honest mechanism.
     #
-    # THE WHOLE DESIGN QUESTION IS REVIVABILITY, and the two cases genuinely differ:
-    #
-    #   * NO NODE ROW AT ALL -> reaped immediately. Both ways back need the tombstone: the share
-    #     Reconciler's revive-by-path looks up `deleted: true` rows BY `storage_path`, and
-    #     `undelete`/`Sync::Trash.restore` reconstruct from the row. With no row, that node_id can
-    #     never return, so there is nothing to protect and no grace worth serving.
-    #   * A TOMBSTONE -> spared until `grace` has passed. A tombstone is a deletion that can be
-    #     TAKEN BACK, and taking it back returns the same node_id — a file dragged out of a folder
-    #     and back returns with its content unchanged, at which point the row would have been live
-    #     again. Reaping inside the window turns an undo into a re-render. Dated from the node's
-    #     `updated_at`, which is when it was tombstoned — NOT from the preview's, which records
-    #     when the thumbnail was last rendered and can be months older than the deletion.
-    #
-    # `grace` defaults to 30 days to line up with `LIBRARY_TRASH_DAYS`'s default undo window. It is
-    # deliberately NOT read from that setting: it applies to all three backends while
-    # LIBRARY_TRASH_DAYS is share-only, and that setting treats 0 as "keep forever" (see
-    # `Library::TrashPurgeJob`) — a meaning that would invert dangerously here, where 0 reads
-    # naturally as "no grace".
+    # WHEN A ROW MAY GO — including why a tombstone gets a grace window and a hard-gone node does
+    # not — lives in `Maker::DeadNodes`, shared with `Maker::AttachmentReaper`. The two reapers ask
+    # the identical question about the identical rows; keeping two copies of the answer is how they
+    # would come to disagree. What is specific to previews stays here: reaping a preview costs a
+    # re-render, where reaping an attachment costs the user's own filing, so the shared window is
+    # the CONSERVATIVE one of the two by construction.
     module DeadNodeReaper
       module_function
 
-      GRACE = 30.days
+      GRACE = Maker::DeadNodes::GRACE
 
       def reap_all!(grace: GRACE, dry_run: false)
         User.find_each.sum do |user|
@@ -54,13 +42,12 @@ module Maker
         previews = user.maker_previews.to_a
         return 0 if previews.empty?
 
-        # One query for every node the previews name, live or tombstoned. `nodes` (not `present`)
-        # on purpose: a tombstone is exactly what tells the two cases apart, so filtering it out
-        # here would make every tombstone look like a hard-gone node and reap it with no grace.
-        nodes = user.nodes.where(node_id: previews.map(&:node_id)).index_by(&:node_id)
+        # One query for every node the previews name, live or tombstoned — see DeadNodes.index for
+        # why `present` would be wrong here.
+        nodes = Maker::DeadNodes.index(user, previews.map(&:node_id))
         cutoff = grace.ago
 
-        doomed = previews.select { |p| reapable?(nodes[p.node_id], cutoff) }
+        doomed = previews.select { |p| Maker::DeadNodes.reapable?(nodes[p.node_id], cutoff) }
         return doomed.size if dry_run
 
         doomed.each do |p|
@@ -68,16 +55,6 @@ module Maker
           p.destroy!
         end
         doomed.size
-      end
-
-      # nil node -> gone for good, reap. Live node -> never (a reaper that could touch a live
-      # node's preview would be deleting the thing the page renders). Tombstone -> only once its
-      # undo window has closed.
-      def reapable?(node, cutoff)
-        return true  if node.nil?
-        return false unless node.deleted?
-
-        node.updated_at < cutoff
       end
     end
   end

@@ -236,6 +236,10 @@ class FilesController < ApplicationController
     # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
     # covers an ensure failure, same as ProjectsController#show's).
     @current_project_folder_node_id = current_project_folder_node_id
+    # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
+    # the control for choosing a whole-library type view, so scoping it to the folder you happen to
+    # be standing in would hide the types the filter exists to reach.
+    @ext_facets = ext_facets
   end
 
   # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
@@ -918,10 +922,51 @@ class FilesController < ApplicationController
   # mistaken for a snapshot. Pagination is the follow-up if a real library hits this.
   FLAT_LIMIT = 2000
 
-  # `add_ext` is the free-text field beside the chips; it simply joins the list, so there is one
-  # filter param and one code path rather than two ways to say the same thing. `.to_s` on each,
-  # because `?ext[]=a` and `?ext[x]=y` hand us an Array and a Parameters -- both stringify into
-  # something the whitelist below then drops, which is the point.
+  # EVERY EXTENSION THE USER'S LIBRARY ACTUALLY HOLDS, with how many files carry it:
+  # { "stl" => 42, "lbrn2" => 17, ... }. This is what the type filter offers.
+  #
+  # THE CONTROL IT REPLACED LISTED THE VOCABULARY, NOT THE LIBRARY. `FilesHelper::EXT_FAMILIES`
+  # is derived from `ROLE_BY_EXT`, so the chip row offered `.sldasm`, `.ngc` and `.fcstd` to
+  # someone who has never owned one, in a wall of ~35 chips, while a `.kicad`-shaped extension the
+  # user really did have appeared nowhere and had to be typed into a free-text box beside it. A
+  # dropdown built from this hash has the opposite property in both directions: everything offered
+  # exists, and everything that exists is offered.
+  #
+  # IN RUBY, AND §5.2 IS WHY: there is no expression for "the file's extension" portable across
+  # SQLite and Postgres (substr/instr vs substring/position), and a denormalised `ext` column would
+  # have to be written by Sync::Commit and Sync::Mutation — the maker/file-layer §10 tripwire, to
+  # serve a filter. So this is ONE query returning N short strings, tallied here.
+  #
+  # THE COST IS UNBOUNDED IN N, stated because it is a real property of this page rather than a
+  # hypothetical. MEASURED on this box (SQLite, one user, 13 extensions):
+  #
+  #     20,000 files -> 14.4 ms total, of which 3.1 ms is the query
+  #    100,000 files -> 86.2 ms total, of which 11.3 ms is the query
+  #
+  # So the database is not the cost — the per-row `File.extname` in Ruby is, ~7/8ths of it. For
+  # scale, the same page already spends 175-278 ms of ERB rendering 2000 rows (see FOLDER_PAGE),
+  # which is why this is not cached: a cache would add a second query and a staleness window to
+  # shave a tenth of what the render costs. It is ONE query whatever N is, which is the property
+  # page_query_budget_test.rb actually asserts. A library big enough for the milliseconds to matter
+  # will have hit CLAUDE.md §12 item 8 (the render cost) long before it notices this.
+  #
+  # FILTERED BY EXT_RE, so the options can only ever be extensions #resolve_exts will accept. A
+  # `.tar.gz` or a name ending in a 30-character suffix is simply not offered, rather than
+  # rendering an option that links and silently does nothing — the exact defect `ext_slots_left?`
+  # exists to prevent one control over.
+  def ext_facets
+    current_user.nodes.present.where(kind: "file").pluck(:name)
+                .each_with_object(Hash.new(0)) do |name, tally|
+      ext = File.extname(name.to_s).downcase.delete(".")
+      tally[ext] += 1 if ext.match?(EXT_RE)
+    end
+  end
+
+  # `add_ext` is the type dropdown's own param; it simply joins the list, so there is one filter
+  # param and one code path rather than two ways to say the same thing. (It was the free-text field
+  # beside the chips before the dropdown replaced both.) `.to_s` on each, because `?ext[]=a` and
+  # `?ext[x]=y` hand us an Array and a Parameters -- both stringify into something the whitelist
+  # below then drops, which is the point.
   def resolve_exts
     [ params[:ext], params[:add_ext] ].compact_blank.map(&:to_s).join(",")
       .downcase.split(",").map(&:strip).select { |e| e.match?(EXT_RE) }.uniq.first(MAX_EXTS)

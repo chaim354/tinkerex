@@ -764,6 +764,29 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   is safe (flat `name="title"`); **`fields_for` is what interpolates brackets**. Both were
   invisible to a green suite because the tests POSTed `params: { x: {...} }` as a Ruby hash,
   which bypasses the form entirely. **Assert the rendered field name.**
+- **AN ERB COMMENT ENDS AT ITS FIRST `%>`, SO ONE THAT QUOTES A SNIPPET CONTAINING ONE PRINTS ITS
+  OWN PROSE INTO THE PAGE** — and **no `assert_select` in this suite can see it**, because the
+  defect produces a TEXT NODE and every assertion here asks about ELEMENTS. Shipped once, in
+  `files/_ext_filter.html.erb`; three lines of a code comment sat in the middle of the Files page
+  through a fully green run and were found by opening the page. Never write `<%= … %>` or a bare
+  `%>` inside a `<%# … %>`; describe the wrong spelling in words. Guarded on the RENDERED OUTPUT by
+  `test/integration/web/template_hygiene_test.rb` (a static template scan was tried first and is
+  weaker — it has to guess whether the text after a terminator was meant to be markup or prose).
+- **`back_target_path` COMPARES THE REFERER'S ORIGIN AND THEN DISCARDS IT** — only a root-relative
+  path ever reaches an `href`, so a cross-origin referer is DROPPED, never sanitised and re-emitted.
+  Do not "improve" it into accepting a URL param: the referer is chosen precisely because a file
+  page has seven entry points and a param would be seven call sites that must agree plus an eighth
+  that silently reverts to `files_path`. A referer equal to the current page must keep falling back —
+  notes and move conflicts both redirect to the page they came from.
+- **A DELETED FILE IS HIDDEN FROM A PROJECT IMMEDIATELY AND ITS ROW DESTROYED ONLY AFTER THE GRACE
+  WINDOW, AND THE ASYMMETRY IS THE POINT.** `Library::Reconciler` tombstones rather than destroys, so
+  a tombstone is one undo away from returning with the **same `node_id`** — which is what every
+  attachment, BOM link and tag is keyed on. Hiding is reversible, so `ProjectsController#show` does it
+  at once; destroying is not, so `Maker::AttachmentReaper` waits. Collapsing the two — destroying on
+  sight — turns "restore from Trash" into "restore, then re-file it into every project by hand".
+  `Maker::DeadNodes` owns the one definition of `reapable?`, shared with the preview reaper; its index
+  reads `user.nodes`, **NOT `.present`**, because a tombstone is exactly what tells "revivable" from
+  "gone for good" and filtering it out reaps every tombstone with no grace at all.
 
 ### 14e. Architecture and process
 
@@ -1182,6 +1205,28 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   - **`SCHEMA_VERSION` is NOT this**, and is the easy thing to bump by mistake. It is the wire
     contract the JS checks; `PAYLOAD_REVISION` is the server-side cache key. Revision 2 changed
     every coordinate while touching no key, so the schema was rightly left alone.
+  - **A RENDERER WHOSE OUTPUT IS BUILT BY ANOTHER RENDERER MUST TRACK THAT ONE'S REVISION.**
+    `ThreeMf`'s mesh fallback calls `Stl.render`, so bumping `Stl` alone leaves every CAD-exported
+    3MF (Shapr3D, Onshape, Fusion — none carry an embedded slicer thumbnail) rendering from the old
+    code forever, with nothing anywhere to say so. Pinned as a RELATIONSHIP in `stl_test.rb`, never
+    as two literals.
+  - **AND A CHANGE IN THE RUST CRATE NEEDS THE RUBY-SIDE BUMP, WHICH IS THE HALF WITH NO COMPILER
+    BEHIND IT.** `client/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
+    binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
+    re-renders everything with the old binary. **Ship both or neither.**
+- **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
+  The formats declare no orientation, but every producer and consumer in 3D printing treats +Z as up
+  (the 3MF core spec puts the build plate in the XY plane). `auto_frame` orbited **Y** and the Three.js
+  viewer used the library default, so every model rendered **tipped onto its side** — consistently
+  enough to read as a house style. Every thumbnail test asked "is the frame non-blank?", which a model
+  lying down answers exactly as well as one standing up; **only a POSITIONAL assertion catches this**,
+  and it needs BOTH directions (a tall column must render tall AND a flat slab must render wide) or a
+  fix that merely swapped which axis is wrong still passes. `.obj` stays Y-up — that is Wavefront's own
+  convention, and guessing Z there breaks the case the per-format map exists to get right.
+  - **THE VIEWER MOVES THE CAMERA, NOT THE MODEL**, and three.js's own 3MFLoader docblock suggests the
+    opposite (`object.rotation.set(-Math.PI/2, 0, 0)`). Equivalent on screen, wrong for `showDims`: the
+    bounding box is read AFTER parse, so a rotated 10×20×30 model reports "10 × 30 × 20 mm" — a
+    measurement contradicting the user's own slicer.
 - **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`.** `Enqueue`
   resets a `failed` row to `pending` and re-enqueues *whenever called* — right for a one-shot nudge
   at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch

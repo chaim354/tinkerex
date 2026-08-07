@@ -87,4 +87,53 @@ class FilesHelperTest < ActiveSupport::TestCase
     assert_equal "6.67", recipe_num("6.67")
     assert_equal "15",   recipe_num("15")
   end
+
+  # --- ext_facet_groups: the type dropdown's optgroups ------------------------
+
+  # THE INVERSION THAT IS THE WHOLE FEATURE: membership comes from the LIBRARY (`facets`), and
+  # EXT_FAMILIES is consulted only for grouping and order. The chip row this replaced had it the
+  # other way round and offered every extension in the vocabulary to everyone.
+  test "ext_facet_groups offers only what the library holds, grouped by family" do
+    groups = ext_facet_groups({ "stl" => 3, "svg" => 1 }, [])
+
+    assert_equal [ [ "Models", [ [ "stl", 3 ] ] ], [ "Vector", [ [ "svg", 1 ] ] ] ], groups
+  end
+
+  # A family with nothing in it renders nothing — no empty labelled row.
+  test "ext_facet_groups omits a family the library has no files for" do
+    labels = ext_facet_groups({ "stl" => 1 }, []).map(&:first)
+
+    assert_equal [ "Models" ], labels
+    assert_not_includes labels, "G-code"
+  end
+
+  # THE FREE-TEXT ESCAPE HATCH'S REPLACEMENT. An extension no ROLE_BY_EXT entry names still has to
+  # be reachable — and here it is strictly better than the field was, because the user does not have
+  # to know it exists: it can only appear if they already own a file with it.
+  test "ext_facet_groups files an unknown extension under Other, last" do
+    groups = ext_facet_groups({ "stl" => 1, "kicad" => 2 }, [])
+
+    assert_equal [ "Models", "Other" ], groups.map(&:first)
+    assert_equal [ [ "kicad", 2 ] ], groups.last.last
+  end
+
+  # The dropdown ADDS and the chips REMOVE. `add_ext` unions into `ext`, so offering an active type
+  # would be an option whose selection changes nothing.
+  test "ext_facet_groups excludes types that are already active" do
+    groups = ext_facet_groups({ "stl" => 3, "3mf" => 1 }, [ "stl" ])
+
+    assert_equal [ [ "Models", [ [ "3mf", 1 ] ] ] ], groups
+  end
+
+  test "ext_facet_groups is empty when every type the library holds is already active" do
+    assert_empty ext_facet_groups({ "stl" => 3 }, [ "stl" ])
+  end
+
+  # Within a family, alphabetical — a picker whose order changes as files are added is one you
+  # cannot build muscle memory for.
+  test "ext_facet_groups sorts within a family by extension, not by count" do
+    groups = ext_facet_groups({ "stl" => 1, "3mf" => 99, "obj" => 5 }, [])
+
+    assert_equal [ "3mf", "obj", "stl" ], groups.first.last.map(&:first)
+  end
 end

@@ -438,21 +438,25 @@ table.files th a:hover { text-decoration: underline; }
 .sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
 
-/* --- The flat by-extension filter: a chip row + a free-text escape hatch + the bound notice --- */
+/* --- The flat by-extension filter: a dropdown of what the library holds + the active chips --- */
 .ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
-.ext-family { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.ext-family .family-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-picker { display: inline-flex; gap: 6px; align-items: center; }
+.ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; font-size: 13px; max-width: 260px; }
+/* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
+   resolve_exts would then drop. */
+.ext-picker select:disabled { opacity: .45; cursor: not-allowed; }
+.ext-active { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
   font-size: 13px; color: var(--muted); }
 .ext-filter .chip:hover { text-decoration: none; background: var(--soft); color: var(--fg); }
 .ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.ext-other { display: inline-flex; gap: 4px; align-items: center; }
-.ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
-/* The full-set state, matching .chip.disabled below — the two controls answer one condition. */
-.ext-other input:disabled, .ext-other button:disabled { opacity: .45; cursor: not-allowed; }
+/* The × is INSIDE the chip link, so the whole chip is one target that removes that type. */
+.ext-filter .chip .chip-x { margin-left: 6px; opacity: .75; font-weight: 700; }
+.ext-filter .chip.active:hover { background: var(--fg); border-color: var(--fg); color: #fff; }
 .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
   background: var(--soft); color: var(--muted); font-size: 13px; }
-.ext-filter .chip.disabled { opacity: .45; cursor: not-allowed; }
 .param-group-adv > summary { cursor: pointer; }
 .param-group-adv[open] > summary { margin-bottom: 10px; }
 

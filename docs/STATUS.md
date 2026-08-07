@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-07 (**Measure works on .mage, .dxf and .svg, not only LightBurn**)
+**Updated:** 2026-08-07 (**an eight-item UI pass: Back, STL axes, deleted-file propagation, the type filter, project covers, collapsible file sections, tasks without a reload, right-click download**)
 
 ## What this file is
 
@@ -60,7 +60,177 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-07): Measure stops being a LightBurn feature — .mage, .dxf and .svg too (branch `claude/measure-feature-mage-svg-dxf-0111cj`)
+## Latest (2026-08-07): eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
+
+**The ask** was a list, verbatim: the Back button always returns to Files; STL thumbnails come out
+wrong way up; a file deleted from the share stays in the Files view and its projects; the type filter
+should be a dropdown of what is actually in storage; a project's main image should be choosable; the
+project file sections should collapse and hide LightBurn/MillMage backups; adding a task should not
+reload the page; files should be right-click downloadable.
+
+All eight shipped. Two of them were not the bug the sentence described, and those are the two worth
+reading.
+
+### 1. "Back" was a link to `/files` wearing the label of a back button
+
+`files/show.html.erb` hard-coded `link_to "Back", files_path`, so every route into a file page lost
+its context: six folders deep it dumped you at the root, mid-filter it cleared the filter, and reached
+from a project's Files panel it walked you out of the project.
+
+`ApplicationHelper#back_target_path(default:)` derives the target from the **referer**, not from a
+`?return_to=` param. That choice is about how many call sites have to be right: a file page is
+reachable from the list, the grid, a project panel, a model bundle, the trash, an addon-save redirect
+and any search — threading a param through all of them is seven edits that must agree plus an eighth
+that gets forgotten. **It cannot become an open redirect**: the scheme/host/port are COMPARED and then
+DISCARDED, so only a root-relative path ever reaches `href`; a cross-origin referer is dropped, not
+sanitised. A referer equal to the current page falls back to the default — not exotic, since adding a
+note, deleting a note and resolving a move conflict all redirect back to the same file page.
+
+Mutation-checked both guards: spelling the origin test as `start_with?` reddens the lookalike-host
+test; removing the self-reference guard reddens its own.
+
+### 2. The STL camera orbited the wrong axis — and the fix is worthless without a revision bump
+
+`client/stl-thumbnailer`'s `auto_frame` put the pitch on **Y** and passed `Vec3::unit_y()` as the up
+vector. STL is **Z-up** by universal convention (every slicer puts the build plate at Z=0), and the
+3MF core spec agrees — so every thumbnail in the library rendered **tipped onto its side**,
+consistently enough to read as a house style. `modelviewer_controller.js` had the identical bug from
+the other direction: Three.js's world is Y-up and **neither STLLoader nor ThreeMFLoader rotates what
+it parses** (3MFLoader's own docblock tells the caller to do it, and we were not).
+
+Measured, by restoring the old camera: an upright **4×4×16 column rendered 192×140** — wider than
+tall. Nine Rust tests, seven of which stayed green under that mutation, because they all ask "is the
+frame non-blank?" — a question a model lying down answers exactly as well as one standing up. The two
+new ones are positional and both directions are pinned (a tall column must render tall, a flat slab
+must render wide), so a fix that merely swapped which axis is wrong cannot pass.
+
+**The viewer moves the CAMERA, not the model**, and that half matters: rotating the object is the
+docblock's suggestion and is equivalent on screen, but `showDims` reads the bounding box *after*
+parse, so a rotated 10×20×30 model would report "10 × 30 × 20 mm" — a measurement disagreeing with the
+user's own slicer. `.obj` stays Y-up, which is Wavefront's convention.
+
+**THE HALF THAT IS EASY TO SHIP WITHOUT.** `Stl` and `ThreeMf` declared no `payload_revision`, so they
+sat at `BASE_REVISION`. A file's content never changes, so without a bump every STL already in a
+library keeps serving the old picture **forever** — this is CLAUDE.md §14h's recorded lesson, and it
+would have applied verbatim. Both now declare `THUMBNAIL_REVISION = 2`, and `ThreeMf` tracks `Stl`'s
+number **as a relationship, not a literal**, because its mesh fallback renders THROUGH `Stl.render`:
+bumping only `Stl` would leave every CAD-exported 3MF sideways with nothing to say so.
+
+> **DEPLOY NOTE:** the Rust fix needs the `stl-thumbnailer` binary REBUILT into the Rails image. The
+> revision bump makes Rails re-render; it cannot make an old binary draw a new picture. Ship both or
+> the library re-renders itself sideways at revision 2.
+
+### 3. A deleted file left the Files view but never left its projects
+
+Half the complaint was already right: `FilesController#index` scopes on `nodes.present`, so a
+tombstone never lists. The projects half was not — `Library::Reconciler` TOMBSTONES rather than
+destroys (deliberately; it is what makes a NAS reorganisation survivable), so no `dependent:` callback
+fires, and the panel rendered a "⚠️ (file unavailable)" tile with a Remove button, forever, once per
+project.
+
+**Split into an instant half and a graced half, because the two have opposite risk.**
+`ProjectsController#show` stops rendering a tile whose node is gone — hiding is reversible, so it is
+immediate. `Maker::AttachmentReaper` (daily) destroys the rows and NULLs a stale chosen cover — but
+only once the tombstone's undo window has closed, because a tombstone is one undo away from returning
+with the SAME node_id, and the attachment is keyed on it. Reaping inside the window would turn
+"restore from Trash" into "restore, then re-file this into every project by hand".
+
+The rule now has one home: `Maker::DeadNodes` owns `reapable?` and the 30-day window, shared with
+`Maker::Previews::DeadNodeReaper`, which previously held a private copy. Mutation-checked: swapping
+`user.nodes` for `user.nodes.present` in the shared index reddens **three** tests across both reapers
+— a tombstone would look hard-gone and be reaped with no grace at all.
+
+**Not silent.** The panel says "N attached files no longer in your library" with a link to the Trash,
+and an "empty" project is a different sentence from one whose files were all deleted.
+
+### 4. The type filter listed the vocabulary; now it lists the library
+
+The chip row was derived from `ROLE_BY_EXT`, so it offered `.sldasm`, `.ngc` and `.fcstd` — ~35 chips
+— to someone who owns none of them, while an extension they really did have appeared nowhere and had
+to be typed into a free-text box beside it. `FilesController#ext_facets` tallies what the library
+actually holds; `ext_facet_groups` uses `EXT_FAMILIES` **only for grouping and order**. Everything
+offered exists, everything that exists is offered, with counts. The free-text escape hatch is gone
+with the wall it stood beside — an unknown extension lands under "Other" and the user no longer has to
+know it exists.
+
+Measured (SQLite, 13 extensions): **20,000 files → 14.4 ms, of which 3.1 ms is the query; 100,000 →
+86.2 ms, of which 11.3 ms**. The cost is the per-row `File.extname` in Ruby, ~7/8ths of it — so it is
+NOT cached: a cache would add a second query and a staleness window to shave a tenth of what the same
+page already spends rendering (175–278 ms of ERB at 2000 rows). One query whatever N is.
+
+Three mutation checks: dropping the `kind: "file"` filter, keeping active types in the dropdown, and —
+the one worth naming — spelling the disabled state as `disabled="[interpolation]"`. `disabled` is a
+**boolean attribute**: any value at all turns it on, so that spelling renders `disabled="false"` and
+disables the control permanently.
+
+### 5–8, briefly
+
+- **Project covers.** `cover_node_id` becomes a real column; the reader keeps the derived pick (first
+  image, else first model, else first attachment) as its fallback, so **no existing project changed
+  appearance**. The form uses the EXISTING `filechooser` in `mode: "file"` — supported since it was
+  written, first caller now. The form pre-fills from `project[:cover_node_id]`, not the reader, or
+  "nobody has chosen" would silently become an explicit choice on the next save.
+- **Collapsible sections + backups.** Native `<details>`, no JS, matching `models/_file_tree`. LightBurn
+  and MillMage write `<stem>_backup.<ext>` rescue copies (confirmed against the real corpus:
+  `traymammon-1_backup.lbrn2`, `metal test 1_backup.lbrn2`); those move to a **closed** Backups
+  section rather than being dropped — the file is really in the project's folder. Both halves of the
+  rule are required, so a user's own `battery_backup.stl` is not filed as one.
+- **Tasks without a reload.** `Projects::TasksController` answers `turbo_stream` by replacing
+  `#project-tasks` only; the HTML redirect stays as the no-JS path. The error renders INSIDE the
+  replaced element — a `redirect_to ... alert:` would set a flash no response ever draws. Verified in
+  a real browser: a marker set on `window` before the add survived, `turbo:load` fired zero times, the
+  panel element was swapped, the count went to "Todo (2)" and the input cleared. Found on the way: the
+  partial's `render "task"` resolved only from `ProjectsController` — a second caller made it
+  `MissingPartial` on every stream, now fully qualified.
+- **Right-click download.** `filemenu_controller.js` gains a Download entry built from a
+  `data-download-url` the server writes, on the list, the grid and project tiles. **No HTML `download`
+  attribute**, deliberately: on chunk and s3 the blob endpoint 302s to a presigned cross-origin URL and
+  browsers ignore `download` across origins — it would work on share and silently open-in-tab on the
+  product's main deployment. `?download=1` and the server-set header is the one mechanism that holds on
+  all three. The grid needed it most: a card has no row-actions cell.
+
+### The finding that only a browser could produce
+
+**An ERB comment that quotes a snippet containing `%>` terminates early and prints its own remaining
+prose into the page.** One did, in `files/_ext_filter.html.erb`, and three lines of a code comment sat
+in the middle of the Files page. **Every test in the suite stayed green** — `assert_select` asks about
+ELEMENTS and this defect produces a TEXT NODE. It was found by opening the page, which is §15's
+"probe over an argument" in one screenshot.
+
+A static scan of the templates was written first and is the weaker guard: it has to guess whether the
+text after a comment's terminator was meant to be markup or prose. `test/integration/web/template_hygiene_test.rb`
+asserts on the RENDERED OUTPUT of eleven pages instead — no ERB delimiter, and no phrase that only
+appears in this branch's code comments. Both halves are checked (`<%` AND `%>`, since an early
+terminator leaks a CLOSER, not an opener), and mutation-checking it by reinstating the bad comment
+reddens both.
+
+### Verification
+
+`bin/ci` green, all seven gates. **2172 runs, 7790 assertions, 0 failures on each of the three backend
+legs — identical counts** (chunk / share / s3), plus 70 system tests and 9 Rust crate tests. Baseline
+at the merge-base was 2107 runs, so this arc added 65 tests.
+
+Driven in a real browser against a seeded library on `STORAGE_BACKEND=local`: the type dropdown's
+optgroups and counts, the active-chip filter row, the project panel's six sections (Laser 1, Backups 2
+closed) with the missing-file line, Back landing on `/projects/desk-lamp` from a project-opened file,
+the right-click menu's three entries with the correct blob URL, a task added with zero `turbo:load`
+events, `camera.up === [0,0,1]` with a 4×4×16 column standing upright and dims still reading
+"4 × 4 × 16 mm", and the rebuilt thumbnailer's own PNG of the same column.
+
+### Left open
+
+- **`Maker::AttachmentReaper` sweeps model attachments too** (it reads `user.maker_file_attachments`,
+  which is all attachable types) **but only the PROJECT panel hides them.** The models page never had
+  the bug — its file tree is built from live `nodes` and `@viewable_3d` already skips missing ones — so
+  there was nothing to fix there; recorded because the reaper's scope is wider than the view fix's.
+- **Section open/closed state is not persisted.** It survives the life of the page and resets on
+  reload. Persisting it needs a cookie per section per project, and the default (everything open but
+  Backups) is right for almost every visit.
+- **`ext_facets` is unbounded in N**, by decision — the numbers and the argument are above.
+
+---
+
+## 2026-08-07: Measure stops being a LightBurn feature — .mage, .dxf and .svg too (branch `claude/measure-feature-mage-svg-dxf-0111cj`)
 
 **The ask:** *"i want to add the measure feature we just did from lbrn2 to mage files and svg and
 dxf."* The entry below shipped it for `.lbrn/.lbrn2`. This generalises it to the other three vector
