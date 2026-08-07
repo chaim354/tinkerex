@@ -106,6 +106,10 @@ module Maker
           # manifest should not contain; refusing it leaves the addon available, which is the
           # failure direction an operator can actually diagnose.
           min_host: manifest["min_host"].is_a?(Integer) ? manifest["min_host"] : 0,
+          # `Array()` means a BARE STRING is accepted here as a one-element list, unlike `services`
+          # and `pins` which type-check. Lenient in the CONSENT direction — the worst case is an
+          # author writing `"shares_states_with": "boxes-next"` and it working — so it is safe, but
+          # it is leniency rather than validation and the doc says "array of strings".
           shares_states_with: Array(manifest["shares_states_with"]).map(&:to_s)
         )
       end
@@ -117,20 +121,29 @@ module Maker
       #
       # THE TARGET MUST ALSO BUILD, NOT MERELY APPEAR IN THE RAW INDEX. Finding the entry by key is
       # not enough: an entry `build` itself REJECTS — missing a REQUIRED key, or declaring an
-      # api_version this host doesn't speak — would still CONFER a grant on its behalf, and
-      # transitively too (A claims B, B claims C unreciprocated, C is malformed: A would still be
-      # admitted, pointed at a B that nobody agreed was legitimate). That entry never appears in
-      # `Registry.all`, so an operator has no surface on which to even see it, let alone audit what
-      # it granted — a grant from an entry nobody can see is a grant nobody can audit. `build` is
-      # pure and reads only the one manifest handed to it, so calling it again here costs nothing and
-      # introduces no ordering dependency on `index`.
+      # api_version this host doesn't speak — would otherwise CONFER a grant on its own behalf while
+      # never appearing in `Registry.all`, leaving an operator no surface on which to see it, let
+      # alone audit what it granted. `build` is pure and reads only the one manifest handed to it, so
+      # calling it again here costs nothing and introduces no ordering dependency on `index`.
+      #
+      # WHAT THIS DOES *NOT* CLOSE, STATED PLAINLY BECAUSE AN EARLIER DRAFT OF THIS COMMENT CLAIMED
+      # OTHERWISE AND WAS FALSE. There are TWO ways a target can be invisible in the gallery, and
+      # this clause closes ONE: `build` rejecting it. The other is the target being skipped by THIS
+      # SAME CHECK, and such a target still confers a grant. Probed, against the exact index the old
+      # comment offered as its example (A claims B, B reciprocates A, B claims C unreciprocated, C
+      # malformed): **A IS ADMITTED with states_key "b" while B is absent from `Registry.all`** — so
+      # the "transitively too" claim was simply not true of the code. It is also HARMLESS, which is
+      # why the check is not made recursive: that target still had to write `shares_states_with`
+      # itself, so no addon ever receives a namespace whose owner did not consent. Consent is the
+      # property that matters here; gallery visibility is not.
       #
       # SKIP, NOT GREY OUT — DELIBERATELY THE OPPOSITE OF `min_host`'S CHOICE ABOVE, and the two do
       # not generalise to each other. `min_host` leaves a too-new addon LISTED with an
       # `unavailable_reason`, on the grounds that an addon which silently never appears reads as a
       # broken deploy. That argument does not reach here, because `Tools::AddonsController` never
-      # gates on `available?` at all — its only consumers are the three lines in
-      # `app/views/tools/home/index.html.erb` that decide how a gallery card renders. A
+      # gates on `available?` at all — its ONE consumer is the `if addon.available?` in
+      # `app/views/tools/home/index.html.erb` that decides how a gallery card renders (two further
+      # lines there render `unavailable_reason`), and nothing else in the app asks. A
       # listed-but-unavailable addon is still `Registry.find`-able, `load_addon` still succeeds, and
       # `#states`/`#create` still serve `@addon.states_key` exactly as if nothing were wrong. Greying
       # this out would leave the hole wide open while LOOKING closed. A future editor harmonising the
@@ -139,7 +152,13 @@ module Maker
       # A refusal SKIPS the addon, exactly as an unsupported api_version does, rather than raising:
       # one bad manifest must never take /tools down. The consequence is worth stating because it is
       # silent — an addon that gets this wrong simply does not appear, and the operator's only clue
-      # is the log line below.
+      # is the log line below. That line fires ONCE PER `Registry.all`, i.e. once per request, NOT
+      # once per deploy: only `manifests` is cached, and `.all` re-filters the cached index on every
+      # call — which is every `/tools` render and every `Registry.find` through `load_addon`.
+      # Measured: 5 calls, 5 lines, with the index cached. Left as-is deliberately (deduplicating it
+      # means process-global state for a log line), but a standing unreciprocated claim in production
+      # is one warn per request until the manifest is fixed, and that is a log-volume fact worth
+      # knowing before reading it as a loop.
       #
       # A↔B CYCLES ARE ADMITTED, NOT A BUG. Two addons each naming the other in both `states_key` AND
       # `shares_states_with` are both admitted, and their saved-state namespaces SWAP rather than one

@@ -173,6 +173,14 @@ declares are rendered on its gallery card and, with the reasoning, on its own pa
 | `project:read` | See which project you are working in |
 | `service:<name>` | Call the `<name>` service |
 
+> This table is a **hand-maintained copy** of `Maker::Addons::Permissions::LABELS`, and nothing keeps
+> the two in sync. **The code is authoritative.** It is reproduced here because this file is the
+> author-facing reference and an author cannot read the server's source — but if a name here renders
+> differently than documented, believe the page. (A drifting second copy of a vocabulary is a
+> failure shape this repo has recorded before; the mitigation is that these labels are **cosmetic** —
+> nothing measures, gates or decides anything from them, so drift costs a wrong caption and nothing
+> else.)
+
 A name this host has never heard of is displayed **as you spelled it**, rather than being dropped —
 a card that silently understates what an addon asked for would be worse than one showing a
 developer-facing string.
@@ -218,8 +226,13 @@ why. Three cases all produce that same silence:
   target, no harm", would let a typo quietly reserve a namespace and start colliding the day the
   real addon shipped);
 - the target addon exists but is **itself invalid** — missing a required key, or declaring an
-  `api_version` this host does not speak. An entry that never appears in the gallery cannot confer
-  a grant on its own behalf.
+  `api_version` this host does not speak. An entry the host rejects outright cannot confer a grant
+  on its own behalf.
+
+The check is **not recursive**, which is worth knowing so you do not chase a phantom: if the target
+is a valid addon that happens to be skipped for *its own* unreciprocated `states_key`, your claim on
+it still stands and your addon still appears. That is deliberate — the target consented to you in
+writing, and its own separate mistake is not yours.
 
 Setting `states_key` to your own key, or omitting it, is the ordinary case and is never checked.
 

@@ -98,8 +98,8 @@ already grant itself into something the other side has to agree to.
   than raising: no reciprocation; a target **absent from the index** (the permissive "no target, no
   harm" reading would let a typo reserve a namespace and collide the day the real addon shipped);
   and — the reviewer's own counterexample — a target that is present but **itself rejected by
-  `build`**, since an entry that never appears in the gallery would otherwise confer a grant nobody
-  can audit, transitively.
+  `build`**, since an entry the host rejects outright would otherwise confer a grant nobody can
+  audit.
 - **Permission display** on the gallery card (names, `to_sentence`) and on the addon's own page
   (names plus each entry's optional `reasoning`).
 
@@ -128,11 +128,52 @@ reciprocating — so `Registry.find` began returning nil and the three controlle
 404s. A constraint that could be added without a single existing assertion noticing would be a
 constraint over a case nothing exercised. The fix adds a **`RECIPROCATING_MANIFEST` beside**
 `MANIFEST` rather than editing `MANIFEST` itself, so the "FIXTURE_KEY declares no `states_key`
-anywhere in this suite" guarantee its comment makes stays true for that file's other 45 tests — and
+anywhere in this suite" guarantee its comment makes stays true for that file's other 46 tests — and
 it was made in **its own commit (`da75f34`)**, out of the states_key task's assigned file scope, so
 the collateral stays isolated and revertible. The new constraint's own five tests were
 mutation-checked: reverting only the `&& build(target)` clause turned **exactly one** of them red
 while the other four stayed green.
+
+**THE WHOLE-BRANCH REVIEW CAUGHT A FALSE CLAIM THIS BRANCH INTRODUCED — in a comment written to
+*correct* something, which is the failure mode a correction is most prone to.** `0faffe1` justified
+the `build(target)` clause with a transitive example: *"A claims B, B claims C unreciprocated, C is
+malformed: A would still be admitted, pointed at a B that nobody agreed was legitimate."* Probed
+against that exact index: **`a` IS admitted with `states_key="b"`, and `b` is absent from
+`Registry.all`** — so the clause does not do what its own example said. The control case (target
+*directly* malformed) is correctly refused, so the clause works; only the explanation was wrong. The
+general principle stated alongside it was the wrong part: `build(target)` closes **one** of two ways
+a target can be invisible, and the other — a target skipped by `states_key_permitted?` itself —
+still confers a grant. **There is no functional consequence**, because that target still had to
+write `shares_states_with`, so no addon ever gets a namespace whose owner did not consent. The claim
+had propagated to **four** places (the comment, CLAUDE.md §14c, `docs/addon-api-v1.md` §2, this
+entry); all four now state the residual plainly rather than deleting the sentence, because "this
+closes the `build`-rejects case, and a target skipped by this same check still confers a grant,
+harmlessly, because it consented" is more useful to the next reader than silence. **Consent, not
+gallery visibility, is the property being enforced** — that sentence is the invariant the four
+copies had drifted away from.
+
+**The one non-documentation item: the branch shipped visible UI with no styling.** `.addon-card`,
+`.addon-desc`, `.addon-icon` and `.addon-title` all had rules; `.addon-permissions` had none. So the
+card's permission line rendered at body **15px — larger than the 13px description above it** — and
+the addon page's list was a bare `<ul>` with UA bullets and a 40px indent. One class serves two
+elements (a `<span>` on the card, a `<ul>` on the page), so the rule is `.addon-permissions {
+font-size: 13px }` plus a `ul.addon-permissions` list reset. **Checked in a real browser rather than
+assumed**, since the system suite covers neither page: computed `font-size` is now 13px on both and
+matches `.addon-desc` exactly, `list-style-type: none`, `padding-left: 0px`. That check also
+confirmed the raw-name fallback end to end — an unknown `totally:unknown` renders as itself — and
+that `reasoning` appears on the page and not on the card. The temporary test was deleted after it
+reported, so the suite counts below are unchanged.
+
+**Two smaller corrections from the same review.** The warn line for a refused claim fires **once per
+`Registry.all`, i.e. once per request** — only `manifests` is cached, `.all` re-filters on every
+call — not once per deploy as its comment claimed (measured: 5 calls, 5 lines, index cached). With
+the unreciprocated `boxes-next` below still live in production that is one line per request until
+the bundles repo lands its fix; the comment is corrected and the behaviour deliberately left alone.
+And `docs/addon-api-v1.md`'s permission table is a **hand-maintained second copy** of
+`Permissions::LABELS` with nothing keeping them in sync — named in the doc, with the code marked
+authoritative, which is worth stating out loud on a branch whose selling point is that the
+vocabulary has one definition. The mitigation is that these labels are cosmetic: nothing measures,
+gates or decides anything from them.
 
 **Permissions are DISPLAYED, NOT ENFORCED — a deliberate scope decision, recorded because the spec
 said otherwise.** Spec §8.1 describes permissions as "checked server-side on every request"; what

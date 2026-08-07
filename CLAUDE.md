@@ -771,15 +771,19 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   normalize.**
 - **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
   the target, the target names the claimant back in `shares_states_with`, **and the target must
-  itself be a VALID addon** (`build` must succeed on it), or a manifest nobody can see in the
-  gallery confers a grant nobody can audit. Anything else is SKIPPED, **including a claim on an
-  addon absent from the index** (the permissive "no target, no harm" reading lets a typo reserve a
-  namespace and start colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1.
-  The check lives in `Registry.all`, **not `build`**, because it is a question about a PAIR of
-  manifests and `build` is handed one.
+  itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
+  grant nobody can audit. Anything else is SKIPPED, **including a claim on an addon absent from the
+  index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
+  colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
+  `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
+  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
+  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
+  the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
+  not gallery visibility, is the property being enforced.
 - **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
-  AWAY.** `Tools::AddonsController` never gates on `available?` (its only consumers are three lines
-  in `app/views/tools/home/index.html.erb`), so a listed-but-unavailable addon is still
+  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
+  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
+  `unavailable_reason`), so a listed-but-unavailable addon is still
   `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
   from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
   leaving the hole open**. Do not harmonise the two.
