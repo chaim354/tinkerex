@@ -399,7 +399,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 
 | # | PR | Unblocks | Risk |
 |---|---|---|---|
-| 1 | Spec + SDK v1 over today's transport + `capabilities()` + typed errors; `generators` adopts it | Everything downstream; deletes per-bundle fetch code | low |
+| 1 | **SHIPPED** (branch `claude/todo-list-review-6beccc`) — spec + SDK v1 over today's transport + `capabilities()` + typed errors, proved in a browser by an **SDK-only fixture bundle**; `generators`' adoption is a follow-up PR in `chaim354/tinkerex-addons` (see below) | Everything downstream; deletes per-bundle fetch code | low |
 | 2 | Manifest metadata, `min_host` / `HOST_LEVEL`, `states_key` constraint, permission display | Closes audit §2.1 while every manifest is first-party | low |
 | 3 | Error contract completion + state CRUD + keyset paging | States stop accumulating unboundedly | low |
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
@@ -407,6 +407,17 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | 6 | Per-service timeouts, `integrity`, content-hash asset URLs | Perf + the stale-bundle trap | medium |
 | 7 | OpenSCAD migrates onto the generic surface; the bespoke controller retires | Retires the last hand-written addon controller | **high** — server-side param coercion moves into the sidecar |
 | 8 | Ring 2 | Third-party addons | triggered, not scheduled |
+
+**Row 1's scope correction, recorded where the wrong version was written.** This document said
+*"`generators` adopts it"*. **`generators` does not live in this repo** — bundles live in
+`chaim354/tinkerex-addons` and ship by republishing the accessory image (CLAUDE.md §14c), so that
+adoption spans two repos and cannot land in the same PR as the SDK. What PR 1 shipped in its place is
+a **second hermetic fixture** (`test/fixtures/addons/sdk-fixture/`, driven by
+`test/system/addon_sdk_test.rb`) that touches the host **only** through `@maker/addon-sdk`, added
+beside the existing `fixture` addon — **which deliberately stays on the raw-`ctx` path**, so both
+halves of the compatibility rules in §10 are covered by something that RUNS. `generators`' migration is
+a follow-up PR in the bundles repo; until it lands, **no real published bundle has been proven against
+the SDK.** Narrated in `docs/STATUS.md` (2026-08-07, the host SDK).
 
 ---
 
