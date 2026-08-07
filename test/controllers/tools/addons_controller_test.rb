@@ -219,6 +219,19 @@ module Tools
       assert_includes response.body, tools_addon_asset_path("widgetkit", "makerjs.js")
     end
 
+    # THE SDK IS A HOST PIN, WHICH IS WHAT MAKES IT FREE TO AN ADDON. merged_importmap draws every
+    # host pin before the addon's own, so a bundle can `import { host } from "@maker/addon-sdk"`
+    # without declaring anything in its manifest. If this pin is ever dropped, every SDK-based
+    # bundle fails in the browser with a bare specifier error and nothing server-side notices.
+    test "the merged importmap resolves the SDK specifier for every addon" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      json = JSON.parse(css_select("script[type='importmap']").first.text)
+      assert json["imports"].key?("@maker/addon-sdk"),
+             "@maker/addon-sdk is not in the merged importmap: #{json["imports"].keys.sort.inspect}"
+      assert_match %r{/maker/addon_sdk}, json["imports"]["@maker/addon-sdk"]
+    end
+
     test "serves an addon asset as JavaScript" do
       get tools_addon_asset_path("widgetkit", "generators.js")
       assert_response :success
