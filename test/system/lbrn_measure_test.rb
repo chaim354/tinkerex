@@ -3,7 +3,7 @@ require "application_system_test_case"
 # The .lbrn2 Measure view: click a contour, read its size in mm.
 #
 # BROWSER-TIER BY CONSTRUCTION (test/system/README.md's rule). Everything asserted here lives in
-# lbrnmeasure_controller.js — an SVG built with createElementNS from a fetched JSON payload, hit
+# measure_controller.js — an SVG built with createElementNS from a fetched JSON payload, hit
 # tested by the browser's own paint-order dispatch, with the readout written into a target span.
 # None of that is observable from a request test; test/integration/web/lbrn_geometry_test.rb already
 # covers the endpoint's statuses, the payload's content type and the view's data-* attributes.
@@ -39,7 +39,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   SQUARE_READOUT = "20 × 20 mm".freeze
 
   setup do
-    @root = Pathname.new(Dir.mktmpdir("lbrn-measure"))
+    @root = Pathname.new(Dir.mktmpdir("measure-view"))
     # The fixture lands BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
     # root as an unmounted mount point, and sign_in_as ends on /files, which renders through the
     # port. Indexing later is fine; an empty library at that moment is not.
@@ -48,7 +48,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     end
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
 
-    @user = sign_in_as("lbrn-measure@example.com")
+    @user = sign_in_as("measure-view@example.com")
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     @node_id   = @user.nodes.find_by!(storage_path: FIXTURE).node_id
     @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
@@ -66,12 +66,12 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     contour_with_min_x(40).click
 
-    assert_selector ".lbrn-measure-dims", text: SQUARE_READOUT
+    assert_selector ".measure-dims", text: SQUARE_READOUT
   end
 
   # THE ASSERTION THAT CARRIES THE WEIGHT, and the reason the fixture holds two same-sized shapes.
   # MUTATION-CHECKED: making sizeLabel always `return this.dims(shape.b)` — i.e. ignoring the
-  # server's `d` — turns this test RED ("expected to find css '.lbrn-measure-dims' with text '⌀20
+  # server's `d` — turns this test RED ("expected to find css '.measure-dims' with text '⌀20
   # mm' ... found 1 match: '20 × 20 mm'") while the square test above stays GREEN. A single-shape
   # fixture could not tell those two apart.
   test "clicking a circular contour reports a diameter, not a bounding box" do
@@ -79,7 +79,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     contour_with_min_x(-10).click
 
-    assert_selector ".lbrn-measure-dims", text: CIRCLE_READOUT
+    assert_selector ".measure-dims", text: CIRCLE_READOUT
   end
 
   test "the Measure view draws the file's contours without logging a console error" do
@@ -87,7 +87,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     # COUNT, not mere presence: the whole payload has to reach the DOM, and "the SVG mounted" is
     # true of a draw that emitted one node and dropped the other.
-    assert_selector "svg polygon.lbrn-contour", count: 2
+    assert_selector "svg polygon.measure-contour", count: 2
     assert_no_console_errors
   end
 
@@ -116,7 +116,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     #
     # COMPUTED STYLE, NOT THE ATTRIBUTE. Reading `[:stroke]` reports what we WROTE, which stays
     # right even when a stylesheet rule outranks it and the drawing is a different colour
-    # entirely — adding `stroke: currentColor` back to .lbrn-contour left an attribute-based
+    # entirely — adding `stroke: currentColor` back to .measure-contour left an attribute-based
     # version of this test perfectly green. Ask the browser what it actually painted.
     assert_equal "rgb(255, 0, 0)", contour_with_min_x(-5).style("stroke")["stroke"],
                  "the hole is on C02, which LightBurn paints red"
@@ -129,8 +129,8 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     stage_svg.click
 
-    assert_selector ".lbrn-measure-dims", text: HOLE_READOUT
-    assert_no_selector ".lbrn-measure-dims", text: PLATE_READOUT
+    assert_selector ".measure-dims", text: HOLE_READOUT
+    assert_no_selector ".measure-dims", text: PLATE_READOUT
   end
 
   # And the plate is still reachable where the hole is not, so the test above is not passing
@@ -148,7 +148,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     assert_equal "#000000", contour[:stroke], "C00 is black in LightBurn's palette"
 
     contour.click
-    assert_selector ".lbrn-measure-dims", text: SQUARE_READOUT
+    assert_selector ".measure-dims", text: SQUARE_READOUT
     # The class must win over the attribute — computed, not declared.
     assert_equal "rgb(221, 68, 0)", contour.style("stroke")["stroke"],
                  "the --selected rule must outrank the layer colour attribute"
@@ -164,7 +164,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     svg = stage_svg
     svg.click(x: (svg.native.size.width * 0.25).to_i, y: 0)
 
-    assert_selector ".lbrn-measure-dims", text: PLATE_READOUT
+    assert_selector ".measure-dims", text: PLATE_READOUT
   end
 
 
@@ -173,8 +173,8 @@ class LbrnMeasureTest < ApplicationSystemTestCase
 
     click_on "✕ Image"
 
-    assert_no_selector ".lbrn-measure--ready"
-    assert_no_selector "svg polygon.lbrn-contour"
+    assert_no_selector ".measure-view--ready"
+    assert_no_selector "svg polygon.measure-contour"
   end
 
   private
@@ -203,7 +203,7 @@ class LbrnMeasureTest < ApplicationSystemTestCase
       click_on "Measure"
       # The --ready class is what reveals the stage and hides the poster; without waiting for it the
       # clicks below race the fetch and land on a display:none SVG.
-      assert_selector ".lbrn-measure--ready"
+      assert_selector ".measure-view--ready"
     end
 
     # DOCUMENT ORDER CANNOT TELL THESE TWO APART — that is a coin flip, not a test. `draw` appends in
@@ -212,14 +212,14 @@ class LbrnMeasureTest < ApplicationSystemTestCase
     # spans x -10..10 and the square x 40..60, so the minimum x of the rendered `points` attribute
     # identifies each one no matter how they were ordered or which is on top.
     def contour_with_min_x(expected)
-      match = all("svg polygon.lbrn-contour").find { |poly| min_x(poly) == expected }
+      match = all("svg polygon.measure-contour").find { |poly| min_x(poly) == expected }
       assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
       match
     end
 
     # Scoped to the measure stage: the page carries a dozen other <svg> icons, and a bare
     # find("svg") is ambiguous.
-    def stage_svg = find(".lbrn-measure-stage svg")
+    def stage_svg = find(".measure-stage svg")
 
     def min_x(polygon)
       polygon[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min

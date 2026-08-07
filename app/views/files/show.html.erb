@@ -127,39 +127,10 @@
         <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
       </div>
     </div>
-  <% elsif @kind == :lbrn %>
-    <%# LightBurn: the colour thumbnail at rest, with a button that swaps in a measurable outline
-        view built from the geometry payload. Mirrors the 3D viewer's lazy pattern — nothing is
-        fetched until the user asks, which matters because the payload reaches 281 KB gzipped on
-        the densest real files (LbrnGeometry::DECIMATE_ABOVE's own measurement, post-thinning).
-        The fallback reproduces ALL THREE states the :thumbnail branch handled, because .lbrn2 no
-        longer reaches it. %>
-    <div class="lbrn-measure"
-         data-controller="lbrnmeasure"
-         data-lbrnmeasure-url-value="<%= geometry_file_path(@node.node_id) %>">
-      <div class="lbrn-measure-stage" data-lbrnmeasure-target="stage"></div>
-      <div class="lbrn-measure-bar">
-        <span class="lbrn-measure-dims" data-lbrnmeasure-target="dims"></span>
-        <span class="lbrn-measure-launch">
-          <button type="button" class="btn small" data-action="lbrnmeasure#load">Measure</button>
-        </span>
-        <span class="lbrn-measure-actions">
-          <button type="button" class="btn small ghost" data-action="lbrnmeasure#reset">Reset view</button>
-          <button type="button" class="btn small ghost" aria-label="Return to image"
-                  data-action="lbrnmeasure#showPoster">✕ Image</button>
-        </span>
-      </div>
-      <div class="lbrn-measure-fallback" data-lbrnmeasure-target="fallback">
-        <% if @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
-          <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
-        <% elsif %w[pending processing].include?(@thumbnail&.status) %>
-          <p class="muted">Generating preview…</p>
-        <% else %>
-          <p class="muted">No inline preview for this file.</p>
-          <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-        <% end %>
-      </div>
-    </div>
+  <% elsif @kind == :measure %>
+    <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
+        measurable outline view built from the geometry payload. See _measure.html.erb. %>
+    <%= render "measure" %>
   <% elsif @kind == :thumbnail && @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
     <%# A server-rendered PNG thumbnail for a 3D/CAD/vector file the browser can't show raw. %>
     <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
