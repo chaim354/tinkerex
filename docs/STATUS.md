@@ -170,6 +170,31 @@ holds whether or not the code is right.
 are **environment, not this branch** — identical on the merge-base, and they `chmod 000` a directory
 while the container runs as **root**, which reads it anyway. They pass on the macOS CI runner.
 
+**Deployed 2026-08-06 — and the gap between "merged" and "live" is the part worth recording.**
+This arc's PR (#156) merged *after* the previous deploy went out, so for a while all three Unraid
+backends ran `9ab3930` — the merge of #154, the commit immediately before this work. At that commit
+`MEASURABLE_EXTS` does not exist, `preview_kind` has no `:measure` branch and `_measure.html.erb`
+is not in the tree, so `.svg` fell through to `:image` and `.dxf` to `:thumbnail`: **no Measure
+button at all, which presents exactly like a broken feature** and was reported as one (*"i added the
+measure feature to svgs and dxf but it doesnt seem to have worked"*). Nothing was wrong with the
+code. **§15's close-out rule ends at "open the PR", so merged-but-never-built is the default state
+of any freshly-merged feature** — the triage is one command, `docker ps` on the box, because the
+container name *is* the git SHA. `docker images ghcr.io/chaim354/tinkerex` separates the two cases:
+no image tagged with the feature's SHA means the build never ran, rather than a deploy that failed.
+
+All three legs now run **`167d711`**, built once and rolled with `--skip-push`. Verified on the box
+rather than from an exit code: three container SHAs, six `/up` checks (both `.local` and `.home`,
+per the entry two below), and — because booting is compatible with having shipped the old code —
+`MEASURABLE_EXTS`, `_measure.html.erb` and `measure_controller.js` confirmed present *inside each
+running image*. Then the feature itself, executed in the production chunk container: an 80 × 40 mm
+SVG measured `job 80.0 × 40.0` with the circle resolved as **⌀10.0 mm**, and
+`Svg.available_for?("geometry")` / `Dxf.available_for?("geometry")` both true — the gate whose
+mis-wiring is the first of the two bugs above. **No backfill is needed**: no `geometry` row ever
+existed for these formats, so the first Measure click enqueues and the client's poll resolves it.
+
+**Not verified:** no logged-in click-through of the live web UI — that needs a browser session. The
+server-side payload is confirmed in production; the browser half rests on `measure_formats_test.rb`.
+
 Invariants: **CLAUDE.md §14h**.
 
 ---
