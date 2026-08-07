@@ -77,8 +77,16 @@ module Maker
         assert_equal "generators", addon.states_key
       end
 
+      # Predates the mutual-declaration constraint below (states_key was added in d000c76, the
+      # constraint in the audit-§2.1 fix), so the claimed addon must now reciprocate — otherwise
+      # this is exactly the unreciprocated claim the constraint refuses, and `Registry.find` would
+      # return nil instead of the addon this test means to inspect.
       test "a manifest's declared states_key carries onto the Addon" do
-        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "legacy-generators") ])
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("states_key" => "legacy-generators"),
+          MANIFEST.merge("key" => "legacy-generators", "title" => "Legacy Generators",
+                         "shares_states_with" => [ "generators" ])
+        ])
         Rails.cache.clear
         addon = Registry.find("generators")
         assert_equal "legacy-generators", addon.states_key
@@ -198,6 +206,44 @@ module Maker
           "shares_states_with" => [ "boxes-next" ]
         ) ])
         assert_equal [ "boxes-next" ], Registry.find("generators").shares_states_with
+      end
+
+      # AUDIT §2.1, CLOSED. `states_key` let a manifest declare itself the reader AND WRITER of
+      # another addon's saved states — for every user, unconditionally, with nothing checking that
+      # the other addon agreed or even existed. It was safe only because every manifest was
+      # first-party. The constraint is MUTUAL: the claimant names the target, and the target must
+      # name the claimant back.
+      test "an addon claiming another's states_key is skipped unless that addon shares back" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST,
+          MANIFEST.merge("key" => "thief", "title" => "Thief", "states_key" => "generators")
+        ])
+        assert_nil Registry.find("thief"), "an unreciprocated states_key claim must not be registered"
+        assert_not_nil Registry.find("generators"), "the target addon is unaffected"
+      end
+
+      test "a mutual declaration is honoured" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("shares_states_with" => [ "boxes-next" ]),
+          MANIFEST.merge("key" => "boxes-next", "title" => "Boxes Next", "states_key" => "generators")
+        ])
+        assert_equal "generators", Registry.find("boxes-next").states_key
+      end
+
+      # A CLAIM ON AN ADDON THAT IS NOT THERE IS STILL REFUSED. The target might appear later, or
+      # might be a typo; either way nothing has agreed to the sharing, so the permissive reading
+      # ("no target, no harm") would let a typo silently grant itself a private namespace and then
+      # start colliding the day the real addon shipped.
+      test "a states_key naming an addon that does not exist is refused" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("key" => "orphan", "title" => "Orphan", "states_key" => "nobody")
+        ])
+        assert_nil Registry.find("orphan")
+      end
+
+      test "the ordinary case — states_key equal to the addon's own key — is untouched" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "generators") ])
+        assert_equal "generators", Registry.find("generators").states_key
       end
 
       test "min_host defaults to 0 when the manifest omits it" do
