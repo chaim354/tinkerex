@@ -11,10 +11,10 @@
         <span class="addon-desc muted"><%= addon.description %></span>
       <% end %>
     <% else %>
-      <div class="addon-card disabled" title="Not configured on this deployment">
+      <div class="addon-card disabled" title="<%= addon.unavailable_reason %>">
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>
-        <span class="addon-desc muted">Unavailable here</span>
+        <span class="addon-desc muted"><%= addon.unavailable_reason %></span>
       </div>
     <% end %>
   <% end %>

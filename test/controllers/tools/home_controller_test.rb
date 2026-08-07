@@ -41,5 +41,24 @@ module Tools
       assert_select ".addon-card", text: /Generators/ # from the registry-driven @addons loop
       assert_select ".addon-card", text: /OpenSCAD/    # openscad's own hardcoded card, untouched
     end
+
+    # THE GALLERY SHOWS THE REASON, NOT A FIXED SENTENCE. Before this, the disabled card's tooltip
+    # said "Not configured on this deployment" for every cause there could be — which for a
+    # too-new addon points an operator at env vars that are perfectly fine.
+    test "a too-new addon renders its own unavailable reason" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1)
+      ])
+      get tools_path
+      assert_response :success
+      assert_select ".addon-card.disabled" do
+        # NOT `[title=?]` — rails-dom-testing only performs a REGEXP match on an attribute through
+        # its `:match('attr', ?)` pseudo-class; a plain `[attr=?]` substitutes a Regexp via #to_s
+        # into an exact CSS equality selector (`[title="(?-mix:...)"]`) and can never match real
+        # text. Verified by reproducing both against rails-dom-testing 2.3.0 directly: `[title=?]`
+        # finds 0 elements against this exact title, `:match('title', ?)` finds 1.
+        assert_select ":match('title', ?)", /Needs a newer version of this host/
+      end
+    end
   end
 end

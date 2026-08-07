@@ -217,6 +217,27 @@ module Maker
         Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => 2) ])
         assert_equal 2, Registry.find("generators").min_host
       end
+
+      # THE ADDON IS STILL BUILT AND STILL LISTED. Skipping it would be the easy implementation and
+      # the wrong one: an operator who published an addon needs to see WHY it is not usable, and an
+      # addon that silently never appears reads as a broken deploy.
+      test "an addon asking for a newer host is listed but unavailable, with a reason naming both levels" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1)
+        ])
+        addon = Registry.find("generators")
+        assert_not_nil addon, "the addon must still be listed"
+        assert_not addon.available?
+        assert_match(/level #{Maker::Addons::Host::LEVEL + 1}/, addon.unavailable_reason)
+        assert_match(/level #{Maker::Addons::Host::LEVEL}/, addon.unavailable_reason)
+      end
+
+      test "an addon asking for exactly this host level is available" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL)
+        ])
+        assert Registry.find("generators").available?
+      end
     end
   end
 end
