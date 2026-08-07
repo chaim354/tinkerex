@@ -17,13 +17,21 @@
 // UNINITIALIZED_HOST below), so getting this wrong fails loudly at the read, not with a generic
 // null-dereference several calls later.
 
-// THE SENTINEL a bundle sees if it reads `host` before initHost() has run — e.g. code at a bundle's
-// own module top level, which executes at import time, before addon_controller.js's initHost(ctx)
-// call happens. Throwing beats returning null: `Cannot read properties of null` names nothing, and
-// a top-level `const { files } = host` would silently capture null with NO error at all, to be
-// dereferenced pages later with no clue where it went wrong. THE ONE HONEST COST: this is still an
-// OBJECT, so `if (host)` is truthy whether or not initHost() has run — `capabilities()` is the
-// supported way to ask "is a real host here", never a truthiness check on the binding itself.
+// THE SENTINEL a bundle sees if it reads `host` while no host is live — before any initHost() has
+// run, or after teardownHost(). A BUNDLE'S OWN MODULE TOP LEVEL IS *NOT* THE BEFORE-INIT CASE, and
+// an earlier draft of this comment claimed it was: connect() calls initHost(ctx) and THEN
+// `await import(entry)` (addon_controller.js), so top-level code always sees a real host and a
+// top-level `const { files } = host` SUCCEEDS. It is worth writing this down because the real
+// hazard is the opposite one and is SILENT rather than loud: an ES module is evaluated ONCE PER URL
+// PER PAGE, so on a re-mount (a Turbo navigation away and back) initHost builds a NEW Host while
+// the cached module's top level does NOT re-run — that captured `files` goes on serving the
+// PREVIOUS, torn-down host's _ctx, stale csrfToken and stale chooseFolder included, with nothing
+// thrown and nothing logged. Reading through `host` at call time is what fixes it: the live binding
+// resolves to the current instance. THIS sentinel then covers the genuinely dead read — a closure
+// that outlived its mount — turning it into a named error rather than `Cannot read properties of
+// null`, which names nothing. THE ONE HONEST COST: this is still an OBJECT, so `if (host)` is
+// truthy whether or not a host is live — `capabilities()` is the supported way to ask "is a real
+// host here", never a truthiness check on the binding itself.
 
 // SET ONCE initHost() HAS EVER RUN, AND NEVER BACK TO false — teardownHost() puts `host` right back
 // on this same Proxy, so the trap below sees ONE object for two different developers: one who read

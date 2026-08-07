@@ -145,18 +145,28 @@ import { host } from "@maker/addon-sdk"
 The specifier `@maker/addon-sdk` is pinned by the host on every addon page. Do not vendor a copy and
 do not pin it yourself.
 
-### `host` is a live binding — do not destructure it at module top level
+### `host` is a live binding — read through it at call time, never capture it
 
-The host initialises `host` *before* it imports your bundle, but a module's top-level code and a
-subsequent teardown both sit outside that window:
+The host initialises `host` before it imports your bundle, so a top-level destructure **succeeds**
+on first load. That is exactly what makes it dangerous: it works the first time and goes wrong
+later, without an error.
 
 ```js
-// WRONG — captures the binding's value at import time.
+// WRONG — captures whichever host instance happens to be current at import time.
 import { host } from "@maker/addon-sdk"
-const { files } = host          // throws at import: host_not_initialized
+const { files } = host
 
+export default {
+  mount(el, ctx) {
+    el.querySelector("button").addEventListener("click", () => files.save({ /* … */ }))
+  },
+}
+```
+
+```js
 // RIGHT — read through `host` at call time.
 import { host } from "@maker/addon-sdk"
+
 export default {
   mount(el, ctx) {
     el.querySelector("button").addEventListener("click", () => host.files.save({ /* … */ }))
@@ -164,13 +174,27 @@ export default {
 }
 ```
 
-Before the host is initialised — and again after your addon is torn down — every property read on
-`host` throws an `AddonError` with code `host_not_initialized`, naming which of the two happened.
-It throws rather than returning null so the failure lands where the mistake is.
+**Why the first one breaks.** An ES module is evaluated **once per URL per page**: its top-level
+code runs on the first mount and never again. Your addon, though, can be mounted more than once in
+one page's life — a client-side navigation away and back re-mounts it, and the host builds a **new**
+host object each time. The cached module's top level does not re-run, so `files` still refers to the
+**previous, torn-down** host — its context, its CSRF token, its folder chooser, all belonging to a
+mount that is over. Nothing throws and nothing is logged; the second visit simply misbehaves while
+the first was fine.
 
-One consequence worth knowing: the uninitialised `host` is still an object, so **`if (host)` is
-always truthy** and is not a way to ask whether a real host is present. Use `await
-host.capabilities()` for that.
+`host` being a live binding is the fix, not a footnote: reading `host.files` at call time always
+resolves to the host that is current *now*. Hold the **name**, never the value — and the same goes
+for anything you reach through it.
+
+**When you do get a loud failure.** Reading a property off `host` itself while no host is live
+throws an `AddonError` with code `host_not_initialized`. Two situations reach it: no host has ever
+been initialised, and — the one a bundle actually hits — a callback that outlived its mount reading
+`host` after teardown. The message names which of the two it was, so a stale closure is not mistaken
+for an ordering bug. This is the good outcome: capturing the value hides the same mistake, reading
+the binding reports it.
+
+One consequence worth knowing: that sentinel is still an object, so **`if (host)` is always truthy**
+and is not a way to ask whether a real host is present. Use `await host.capabilities()` for that.
 
 ### `host.level`
 
@@ -520,7 +544,14 @@ only when you did not.
 | `not_found` | 422 | `AddonError` | The destination folder no longer exists. (422, not 404 — the endpoint is fine; the request was refused.) |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
 | `request_failed` | any | `AddonError` | The fallback when a failure response carries no code at all. A save rejected for a malformed or oversized payload answers a body-less 422 and arrives this way. |
-| `name_taken` | — | `NameTakenError` | Reserved. The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. **Branch on `instanceof NameTakenError`, not on the code string**, and both spellings are handled for you. |
+| `name_taken` | — | `NameTakenError` | **Reserved.** The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. |
+| `service_unavailable` | — | `ServiceUnavailableError` | **Reserved**, in the same way. The SDK already maps it; this host does not emit it yet — an unreachable library arrives as `fetch_error`. |
+
+The two reserved codes are why you should **branch on the error class, not on the code string**. Each
+reserved code maps to the same class as the code the host emits for that condition today
+(`name_taken` and `unsupported_operation` are both `NameTakenError`; `service_unavailable` and
+`fetch_error` are both `ServiceUnavailableError`), so an `instanceof` check keeps working when the
+host starts emitting the newer spelling, and a `e.code === "…"` check quietly stops matching.
 
 ### Codes the SDK raises itself, before or around a request
 
