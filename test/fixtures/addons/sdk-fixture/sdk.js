@@ -15,7 +15,9 @@ export default {
     el.innerHTML = `<p data-role="sdk-level"></p>
       <p data-role="sdk-caps"></p>
       <button data-role="sdk-save">Save</button>
-      <p data-role="sdk-status"></p>`
+      <p data-role="sdk-status"></p>
+      <button data-role="sdk-service-probe">Probe service</button>
+      <p data-role="sdk-service"></p>`
 
     // Rendering the LEVEL proves initHost ran before this module was imported — a fixture that only
     // asserted its own text would pass with the binding still null.
@@ -46,6 +48,31 @@ export default {
         // what today's hand-rolled "Save failed." cannot.
         status.textContent = e instanceof WouldReplaceError ? "Would replace." : `Failed: ${e.code}`
       }
+    })
+
+    // BOTH HALVES OF ONE URL. `service.get`'s first argument is the SERVICE NAME and its second is
+    // the PATH; they are adjacent segments of the same URL, so a traversal in either is the same
+    // defect and both must be refused before the request leaves the browser. Only a browser can
+    // prove that: `/tools/sdk-fixture/service/../../evil/x` is normalized to `/tools/evil/x` BY THE
+    // URL PARSER ITSELF, so the server's own guard never sees it — a request test would be asserting
+    // about a URL the browser never sends.
+    //
+    // RENDERING THE ERROR'S CLASS AS WELL AS ITS CODE IS WHAT GIVES THE ASSERTION TEETH. Remove
+    // either guard and the call reaches the network instead, the normalized URL matches no route,
+    // and the SDK reports `ServiceError:service_error` — a DIFFERENT string rather than a missing
+    // one, so the test fails on its own assertion and not merely on a console check.
+    //
+    // Depends on the host answering `service: true` (Maker::Addons::Host::CAPABILITIES). If that is
+    // ever flipped off, `_require("service")` throws first and this reads
+    // `UnsupportedCapabilityError:unsupported_capability` — loudly wrong, which is the right way to
+    // find out.
+    el.querySelector("[data-role=sdk-service-probe]").addEventListener("click", async () => {
+      const attempt = async (fn) => {
+        try { await fn(); return "no-error" } catch (e) { return `${e.name}:${e.code}` }
+      }
+      const name = await attempt(() => host.service.get("../../evil", "x"))
+      const path = await attempt(() => host.service.get("fixture-svc", "../../evil"))
+      el.querySelector("[data-role=sdk-service]").textContent = `name=${name} path=${path}`
     })
   },
 }
