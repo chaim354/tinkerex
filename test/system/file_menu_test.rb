@@ -88,6 +88,28 @@ class FileMenuTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # DOWNLOAD, IN THE GRID, WHICH IS THE SURFACE THAT NEEDS IT. A grid card has no row-actions cell,
+  # so before this the only way to the bytes was to open the file first — the list at least had a
+  # Download link per row. The href is asserted rather than clicked: following it would hand the
+  # headless browser a real file transfer, and what is being tested is the menu's wiring, not
+  # FilesController#blob (which files_flow_test.rb already drives end to end).
+  #
+  # test/integration/web/file_menu_wiring_test.rb asserts every SURFACE feeds the attribute; this
+  # asserts the controller turns the attribute into a usable entry. Different failures — the
+  # attribute can be present on a menu that never reads it, and vice versa.
+  test "the right-click menu offers Download, in the grid as well as the list" do
+    node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "grid")
+
+    find(".file-cell", text: "widget.stl").right_click
+
+    assert_selector ".file-menu a", text: "Download"
+    assert_equal blob_file_path(node.node_id, download: 1),
+                 find(".file-menu a", text: "Download")[:href].sub(%r{\Ahttps?://[^/]+}, "")
+
+    assert_no_console_errors
+  end
+
   # project_with_folder gives a SOURCE folder ("parts") that is deliberately NOT the project's own
   # folder — this is a file sitting in the library, not yet part of any project, which is the
   # ordinary case the attach control exists for.

@@ -20,6 +20,26 @@ module Maker
 
       BIN = ENV.fetch("STL_THUMBNAILER_BIN", "stl-thumbnailer").freeze
 
+      # WHICH BUILD OF THE RENDERER PRODUCED A STORED THUMBNAIL (§14h). A file's CONTENT is the only
+      # staleness axis `Enqueue` checked before `renderer_revision` existed — and a finished design's
+      # content never changes, so without this every STL already in a library keeps serving the
+      # picture the old code made, forever.
+      #
+      #   1 -> the original Y-up camera, which rendered every Z-up print file lying on its side.
+      #   2 -> Z-up (client/stl-thumbnailer's `auto_frame`). Bumped BECAUSE the picture changed;
+      #        that is the entire trigger, and it is why this constant exists rather than being
+      #        inferred from anything.
+      #
+      # DECLARED HERE RATHER THAN ONLY IN THE RUST CRATE, because it is the RAILS side that has to
+      # invalidate a cached artifact — the crate has no idea a `maker_previews` row exists. Rebuilding
+      # the binary without bumping this leaves the library exactly as sideways as it was.
+      THUMBNAIL_REVISION = 2
+
+      # This renderer produces no `geometry` payload, so there is one number and `kind` cannot
+      # change it. The signature still matches the measurable renderers' so `Enqueue.revision_for`
+      # has one way to ask.
+      def payload_revision(_kind) = THUMBNAIL_REVISION
+
       def available?
         # Running the binary (even with no/invalid args → usage + non-zero exit) confirms it
         # exists; only a missing/inexecutable binary raises ENOENT/EACCES.

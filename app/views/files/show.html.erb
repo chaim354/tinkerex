@@ -20,7 +20,10 @@
     <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn" %>
     <%= button_to "Delete", file_path(@node.node_id), method: :delete,
           form: { data: { turbo_confirm: "Delete #{@node.name}?" } }, class: "btn danger" %>
-    <%= link_to "Back", files_path, class: "btn ghost" %>
+    <%# Back to WHERE THE USER CAME FROM (the folder, the filter, the project panel), not to the
+        library root — see ApplicationHelper#back_target_path. files_path stays as the fallback for
+        a direct visit, which is what this link always did. %>
+    <%= link_to "Back", back_target_path(default: files_path), class: "btn ghost" %>
   </div>
 </div>
 

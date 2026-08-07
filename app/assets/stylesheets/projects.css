@@ -55,8 +55,14 @@
 
 .attachment-group { margin-bottom: 20px; }
 .attachment-group:last-child { margin-bottom: 0; }
+/* A <summary>, so it carries the disclosure triangle and is focusable/clickable for free.
+   `list-style` is left alone deliberately — the marker IS the affordance that says "this opens". */
 .attachment-group-head { font-size: 12px; font-weight: 700; color: var(--muted);
-                         text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px; }
+                         text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 10px;
+                         cursor: pointer; }
+.attachment-group-head:hover { color: var(--fg); }
+.attachment-group details[open] > .attachment-group-head { margin-bottom: 10px; }
+.attachments-missing { font-size: 13px; margin: 4px 0 0; }
 
 .field { display: block; margin-bottom: 14px; }
 .field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
@@ -64,6 +70,14 @@
   border: 1px solid var(--line); border-radius: 6px; font: inherit; }
 .form-actions { display: flex; gap: 12px; align-items: center; }
 .form-errors { border-radius: 6px; margin-bottom: 14px; }
+/* The cover chooser sits inside a .field, whose `> span { display: block }` would otherwise
+   stretch the chooser's own wrapper span. Two classes beat one class + one type, so this wins
+   without !important. */
+.field > .folder-field { display: inline-flex; }
+/* A checkbox must not inherit `.field input { width: 100% }`. Same specificity as that rule, so
+   it has to come after it — which it does. */
+.field-inline { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 13px; }
+.field-inline input { width: auto; }
 
 .task-form input { width: 100%; max-width: 480px; padding: 8px;
   border: 1px solid var(--line); border-radius: 6px; font: inherit; margin-bottom: 8px; }

@@ -1,12 +1,24 @@
 <%#
-  Attached design files, grouped by role into headed sections in ROLE_LABELS order. `@att_nodes`
-  (node_id => Node) is the source of truth for name + availability — a DB fact, independent of the
-  file backend. `@thumbs` (ThumbnailMap) is best-effort. A node not in @att_nodes (deleted/missing)
-  renders as an unavailable placeholder, never a broken image or a 500.
+  Attached design files, grouped by role into COLLAPSIBLE sections in ROLE_LABELS order.
+
+  `@attachments` has already had the dead ones filtered out by ProjectsController#show — a file
+  deleted from the library leaves the project immediately, and `@missing_attachment_count` is how
+  many did, so the change is never silent. There is no "(file unavailable)" tile any more: it was
+  the only thing that branch rendered, and hiding those rows makes it unreachable rather than
+  merely rare.
+
+  `@thumbs` (ThumbnailMap) is best-effort and independent of that — a backend blip degrades a tile
+  to its format badge, which is a different condition from the file being gone and must not be
+  confused with it.
 
   ONE `thumbs` controller wraps every group rather than one per grid: Stimulus finds targets
   anywhere in the controller element's subtree, so a single instance polls all pending cells on the
-  page instead of N instances polling their own slice.
+  page instead of N instances polling their own slice. `filemenu` rides along on the same element
+  for the same reason — one document-level listener, every tile.
+
+  NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
+  before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
+  Open by default, because the panel's job is to show a project's files.
 %>
 <section class="panel attachments-panel">
   <div class="panel-head">
@@ -19,7 +31,7 @@
     </div>
   </div>
 
-  <% if @attachments.empty? %>
+  <% if @attachments.empty? && @missing_attachment_count.zero? %>
     <p class="muted">No files attached yet.</p>
   <% else %>
     <%# Group by role, but fold anything off-vocabulary into "other" rather than dropping it. Every
@@ -27,43 +39,35 @@
         cannot trigger today — but the render iterates ROLE_LABELS, so without this an unrecognized
         role renders NOWHERE. A file silently vanishing from a user's project is a far worse failure
         than one filed under the wrong heading, and role_for's own unknown-extension default makes
-        "other" the obvious bucket. %>
-    <% grouped = @attachments.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
-    <div data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        "other" the obvious bucket.
+
+        BACKUPS COME OUT FIRST, and they are keyed on the NODE's name rather than the attachment's
+        `label`, because the name is what LightBurn wrote and the label is whatever a user may since
+        have typed. They keep their own section at the bottom instead of being dropped: a rescue copy
+        is still a real file in the project's folder, and a panel that pretended otherwise would be
+        lying about what is on disk. %>
+    <% backups, live = @attachments.partition { |a| Maker::FileAttachment.backup?(@att_nodes[a.node_id].name) } %>
+    <% grouped = live.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
+    <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>
         <% group = grouped[role] %>
         <% next if group.blank? %>
-        <section class="attachment-group">
-          <h3 class="attachment-group-head"><%= label %> <span class="muted">(<%= group.size %>)</span></h3>
-          <div class="attachments-grid">
-            <% group.each do |att| %>
-              <% node = @att_nodes[att.node_id] %>
-              <% if node %>
-                <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
-                <div class="attachment-tile">
-                  <%= link_to file_path(att.node_id), class: "grid-card file-cell",
-                              data: { thumbs_target: "cell", node_id: att.node_id, ext: ext } do %>
-                    <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
-                    <span class="grid-name"><%= node.name %></span>
-                  <% end %>
-                  <div class="tile-meta">
-                    <%= button_to "Detach", attachment_path(att), method: :delete, class: "linkbtn danger",
-                                  form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
-                  </div>
-                </div>
-              <% else %>
-                <div class="attachment-tile unavailable">
-                  <span class="thumb">⚠️</span>
-                  <span class="grid-name"><%= att.label.presence || "(file unavailable)" %></span>
-                  <div class="tile-meta">
-                    <%= button_to "Remove", attachment_path(att), method: :delete, class: "linkbtn danger" %>
-                  </div>
-                </div>
-              <% end %>
-            <% end %>
-          </div>
-        </section>
+        <%= render "attachment_group", key: role, label: label, group: group, open: true %>
+      <% end %>
+
+      <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
+          rather than gone, so nothing about the project's folder is hidden from someone looking
+          for it. %>
+      <% if backups.any? %>
+        <%= render "attachment_group", key: "backups", label: "Backups", group: backups, open: false %>
       <% end %>
     </div>
+
+    <% if @missing_attachment_count.positive? %>
+      <p class="muted attachments-missing">
+        <%= pluralize(@missing_attachment_count, "attached file") %> no longer in your library.
+        <%= link_to "Check the trash", trash_index_path %>
+      </p>
+    <% end %>
   <% end %>
 </section>

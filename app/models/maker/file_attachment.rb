@@ -64,6 +64,30 @@ module Maker
       ROLE_BY_EXT.fetch(File.extname(name.to_s).downcase.delete("."), "other")
     end
 
+    # LightBurn and MillMage (same vendor, same convention) write a rescue copy of a project beside
+    # it as `<stem>_backup.<ext>` — `traymammon-1_backup.lbrn2`, `metal test 1_backup.lbrn2`. They
+    # are real files in the library and stay there; what they are not is something a project's Files
+    # panel should put at eye level next to the design they shadow.
+    #
+    # BOTH HALVES ARE REQUIRED, and the extension half is what keeps this narrow: a user's own
+    # `battery_backup.stl` or `db_backup.zip` is not a LightBurn rescue copy and must not be filed
+    # as one. The cost of the remaining false positive — someone who genuinely names a LightBurn
+    # file `..._backup.lbrn2` — is that it renders one section lower, in a group they can open.
+    #
+    # `.lbrn` (v1) is included alongside `.lbrn2` even though only `.lbrn2` is in ROLE_BY_EXT: the
+    # question here is "did LightBurn write this as a backup", which the older extension answers the
+    # same way, and getting it wrong costs a stray tile rather than a misfiled role.
+    BACKUP_EXTS = %w[lbrn lbrn2 mage].freeze
+    BACKUP_SUFFIX = "_backup".freeze
+
+    def self.backup?(name)
+      base = File.basename(name.to_s).downcase
+      ext = File.extname(base).delete(".")
+      return false unless BACKUP_EXTS.include?(ext)
+
+      File.basename(base, ".#{ext}").end_with?(BACKUP_SUFFIX)
+    end
+
     validates :node_id, presence: true
     validates :role, inclusion: { in: ROLES }
   end

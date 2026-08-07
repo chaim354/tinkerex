@@ -32,6 +32,15 @@ module Web
                           parent_node_id: parent, mtime: 1_000_000_000, size: 5)
     end
 
+    # The type dropdown's real options as { ext => count-as-rendered }. The disabled placeholder is
+    # excluded by `[value]:not([value=''])` — it is a label, not an option anyone can choose. The
+    # count is read out of the LABEL rather than recomputed, so these tests assert what the user
+    # sees rather than re-deriving it from the same data the view used.
+    def ext_options
+      css_select(".ext-picker option[value]").reject { |o| o["value"].blank? }
+                                             .to_h { |o| [ o["value"], o.text[/\((.+)\)/, 1] ] }
+    end
+
     # Same reader as files_sort_test.rb — a thumbnailable file's link contains the thumbnail cell
     # as well as the name, so read the .file-name span when there is one.
     def listed_names
@@ -257,21 +266,87 @@ module Web
       assert_includes listed_names, "tiny.stl"
     end
 
-    # A chip whose extension the controller then drops is a control that looks live and does
-    # nothing: it renders, it links, and clicking it silently returns the ordinary folder view.
-    # This is what keeps FilesHelper::EXT_FAMILIES and FilesController::EXT_RE from drifting.
-    test "every chip in the row is an extension the controller actually accepts" do
-      get files_path
-      hrefs = css_select(".ext-filter a.chip").map { |a| a["href"] }
-      assert_equal FilesHelper::EXT_FAMILIES.values.flatten.size, hrefs.size
+    # --- the type dropdown ------------------------------------------------------
 
-      hrefs.each do |href|
-        get href
-        # The clicked chip comes back ACTIVE — the one signal that works whether or not the
-        # library happens to hold a file of that type.
+    # THE POINT OF THE CONTROL, IN ONE ASSERTION: the options are what the LIBRARY holds, not what
+    # the vocabulary knows. The chip row this replaced iterated `ROLE_BY_EXT` and offered ~35 types
+    # — `.sldasm`, `.ngc`, `.fcstd` — to a user who owns none of them.
+    test "the dropdown offers exactly the extensions the library actually holds" do
+      get files_path
+      assert_equal %w[3mf pdf stl], ext_options.keys.sort
+    end
+
+    # THE OTHER HALF, and it is what retires the free-text escape hatch: an extension the curated
+    # vocabulary has never heard of is offered anyway, because it can only appear here if the user
+    # already has a file with it. `.kicad` is in no ROLE_BY_EXT entry.
+    test "an extension the vocabulary has never heard of is offered under Other" do
+      file("board.kicad", nil)
+      get files_path
+      assert_includes ext_options.keys, "kicad"
+      assert_select ".ext-picker optgroup[label=Other] option[value=kicad]"
+      # And it really filters, rather than merely appearing.
+      get files_path(add_ext: "kicad")
+      assert_equal %w[board.kicad], listed_names
+    end
+
+    # The counts are the evidence the list is derived rather than curated — a hard-coded option
+    # cannot carry one.
+    test "each option carries how many files of that type the library holds" do
+      get files_path
+      assert_equal({ "stl" => "3", "3mf" => "1", "pdf" => "1" }, ext_options)
+    end
+
+    # An OPTION whose extension the controller then drops is a control that looks live and does
+    # nothing: it renders, it submits, and it silently returns the ordinary folder view. Every
+    # option is driven for real here, which is what keeps ext_facets and EXT_RE from drifting.
+    test "every option in the dropdown is an extension the controller actually accepts" do
+      file("board.kicad", nil)
+      file("sketch.f3d", nil)
+      get files_path
+      exts = ext_options.keys
+      assert_operator exts.size, :>=, 5
+
+      exts.each do |ext|
+        get files_path(add_ext: ext)
+        # The chosen type comes back ACTIVE — the one signal that works whatever the library holds.
         assert_select ".ext-filter a.chip.active", { count: 1 },
-                      "#{href} rendered a chip the filter then ignored"
+                      "add_ext=#{ext} rendered an option the filter then ignored"
       end
+    end
+
+    # Directories and symlinks are not file TYPES. `old-versions.stl` as a DIRECTORY is the row that
+    # proves the kind filter runs here too — without it the assertion holds whether or not
+    # ext_facets filters on kind at all, exactly as in the listing test below.
+    test "the dropdown counts files only, never folders or symlinks" do
+      @user.nodes.create!(node_id: "dir-trap", name: "old-versions.stl", kind: "dir")
+      @user.nodes.create!(node_id: "n-alias", name: "alias.stl", kind: "symlink",
+                          mtime: 1_000_000_000, size: 1)
+      get files_path
+      assert_equal "3", ext_options["stl"], "a folder or symlink was counted as a file of its type"
+    end
+
+    test "a tombstoned file drops out of the dropdown" do
+      @user.nodes.find_by!(node_id: "n-part.3mf").update!(deleted: true)
+      get files_path
+      assert_not_includes ext_options.keys, "3mf"
+    end
+
+    test "another user's extensions never appear in the dropdown" do
+      other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
+      other.nodes.create!(node_id: "theirs", name: "secret.kicad", kind: "file", mtime: 1, size: 1)
+
+      get files_path
+      assert_not_includes ext_options.keys, "kicad"
+    end
+
+    # An empty library must not render a select whose only entry is a disabled placeholder — a
+    # control that cannot be used is the thing this row has already been fixed for twice.
+    test "an empty library says so instead of rendering an unusable select" do
+      @user.nodes.destroy_all
+      get files_path
+      assert_select ".ext-picker select", count: 0
+      assert_select ".ext-picker .muted", text: "no files yet"
     end
 
     test "chips mark the active extensions and toggle them off" do
@@ -286,9 +361,24 @@ module Web
       assert_select ".ext-filter a.chip.active[href=?]", files_path
     end
 
-    test "an inactive chip adds itself to the active set rather than replacing it" do
+    # TWO CONTROLS, ONE JOB EACH: the select ADDS, the chips REMOVE. Adding is a union rather than a
+    # replacement, and the hidden `ext` field carrying the current set is what makes it one.
+    test "choosing from the dropdown adds to the active set rather than replacing it" do
       get files_path(ext: "stl")
-      assert_select ".ext-filter a.chip[href=?]", files_path(ext: "stl,3mf")
+      assert_select ".ext-picker input[type=hidden][name=ext][value=stl]"
+      assert_includes ext_options.keys, "3mf"
+
+      get files_path(ext: "stl", add_ext: "3mf")
+      assert_equal %w[deep.stl part.3mf root.stl tiny.stl], listed_names.sort
+    end
+
+    # An ACTIVE type is absent from the dropdown: `add_ext` unions into `ext`, so re-choosing one
+    # would be an option whose selection changes nothing. It is a chip instead, and the chip removes.
+    test "an active type leaves the dropdown and becomes a removable chip" do
+      get files_path(ext: "stl")
+      assert_not_includes ext_options.keys, "stl"
+      assert_select ".ext-active a.chip.active[href=?]", files_path
+      assert_select ".ext-active a.chip.active .chip-x"
     end
 
     test "a chip URL carries no sort, so the cookie's sort still applies through it" do
@@ -300,7 +390,7 @@ module Web
       assert_select "th[aria-sort=descending]", text: /Modified/
     end
 
-    test "the free-text field adds an extension the chip list doesn't know" do
+    test "add_ext filters on its own, the way the dropdown submits it" do
       file("model.f3d", nil)
       get files_path(add_ext: "f3d")
       assert_equal %w[model.f3d], listed_names
@@ -472,49 +562,42 @@ module Web
       assert_select ".view-toggle a[href=?]", files_path(ext: "stl", view: "list")
     end
 
-    test "with the type limit reached, the remaining chips are inert rather than dead links" do
-      # Eight from the chip row itself, so the row really is full.
+    # ONE CONTROL NOW, so the bound has one place to be honoured — where the chips and the free-text
+    # field beside them were two controls answering one condition, and shipped answering it
+    # differently (the field accepted a ninth type and silently dropped it, two inches from a chip
+    # correctly rendered inert for that exact reason).
+    #
+    # BOTH HALVES MATTER. Asserting only "disabled when full" passes for a control that is ALWAYS
+    # disabled, so the not-full case is asserted too; and the sentence is read from `ext_limit_title`
+    # rather than retyped, so a literal here cannot drift from the string the app shows.
+    test "with the type limit reached, the dropdown goes inert rather than dropping a ninth type" do
       full = %w[stl 3mf obj step stp svg dxf lbrn2]
       assert_equal FilesController::MAX_EXTS, full.size
-      get files_path(ext: full.join(","))
-
-      assert_select ".ext-filter a.chip.active", count: 8
-      # A ninth would be dropped by resolve_exts, so it must not be offered as a link at all.
-      assert_select ".ext-filter a.chip", count: 8
-      assert_select ".ext-filter span.chip.disabled[aria-disabled=true]", text: ".pdf"
-      # Turning one off is still offered, or the row would be a dead end.
-      assert_select ".ext-filter a.chip.active[href=?]", files_path(ext: (full - [ "pdf", "stl" ]).join(","))
-    end
-
-    # THE ESCAPE HATCH OBEYS THE SAME BOUND AS THE CHIPS — the test above covers only the chips,
-    # and while it passed the field two inches away still accepted a ninth extension and dropped
-    # it. Reproduced: with the eight below active, `add_ext=lbrn2` came back with the same eight
-    # chips, no .lbrn2 row, and nothing on the page saying why — beside a `.lbrn2` CHIP correctly
-    # rendered inert for that exact reason.
-    #
-    # BOTH HALVES MATTER. Asserting only "disabled when full" passes for a field that is ALWAYS
-    # disabled, so the not-full case is asserted too; and the sentence is asserted to be the chips'
-    # own (ext_limit_title), because two controls answering one condition differently is the defect
-    # being fixed, not the wording.
-    test "the free-text field goes inert with the chips instead of accepting a ninth type" do
-      full = %w[stl 3mf obj step stp svg dxf pdf]
-      assert_equal FilesController::MAX_EXTS, full.size
-      # Read from the helper, not retyped: a literal here would let the two controls drift apart
-      # again while this test stayed green on the copy it happened to hold.
       title = Object.new.extend(FilesHelper).ext_limit_title
 
       get files_path(ext: full.join(","))
-      assert_select ".ext-other input[name=add_ext][disabled]"
-      assert_select ".ext-other button[type=submit][disabled]"
-      assert_select ".ext-other input[name=add_ext][title=?]", title
-      # And the chip beside it says the SAME sentence, from the same string.
-      assert_select ".ext-filter span.chip.disabled[title=?]", title
+      assert_select ".ext-active a.chip.active", count: 8
+      assert_select ".ext-picker select[disabled]"
+      assert_select ".ext-picker select[title=?]", title
+      # Turning one off is still offered, or the row would be a dead end.
+      assert_select ".ext-active a.chip.active[href=?]", files_path(ext: (full - [ "stl" ]).join(","))
 
-      # One slot free: the field is a working control again.
+      # One slot free: a working control again. `disabled` is a BOOLEAN attribute, so the obvious
+      # `disabled="<%= !slots_left %>"` spelling renders `disabled="false"` and disables it forever
+      # — this is the assertion that catches that.
       get files_path(ext: full.take(7).join(","))
-      assert_select ".ext-other input[name=add_ext]"
-      assert_select ".ext-other input[name=add_ext][disabled]", count: 0
-      assert_select ".ext-other button[type=submit][disabled]", count: 0
+      assert_select ".ext-picker select"
+      assert_select ".ext-picker select[disabled]", count: 0
+    end
+
+    # A ninth extension arriving in a HAND-EDITED URL is still dropped silently, deliberately: that
+    # is EXT_RE's standing rule for everything arriving in a query string ("anything else is
+    # dropped, not rejected"). The bound above is about a CONTROL; this is about input.
+    test "a ninth extension in the URL is dropped without an error page" do
+      nine = %w[stl 3mf obj step stp svg dxf lbrn2 pdf]
+      get files_path(ext: nine.join(","))
+      assert_response :success
+      assert_select ".ext-active a.chip.active", count: FilesController::MAX_EXTS
     end
 
     # A SYMLINK IS NOT A FILE TYPE, and the flat filter's `kind: "file"` says so deliberately —

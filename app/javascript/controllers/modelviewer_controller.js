@@ -1,5 +1,27 @@
 import { Controller } from "@hotwired/stimulus"
 
+// WHICH WAY IS UP, PER FORMAT. Three.js's world is Y-up and NEITHER STLLoader NOR ThreeMFLoader
+// rotates what it parses — 3MFLoader's own docblock tells the caller to do it
+// (`object.rotation.set(-Math.PI/2, 0, 0) // z-up conversion`), and we were not. So a Z-up print
+// file rendered lying on its side here, exactly as it did in the server-side thumbnail
+// (client/stl-thumbnailer/src/lib.rs), and the two agreed with each other about being wrong.
+//
+// `.stl` and `.3mf` are Z-UP: the format declares nothing, but every producer and consumer in 3D
+// printing treats +Z as up, and the 3MF core spec puts the build plate in the XY plane. `.obj` is
+// left Y-UP, which is Wavefront's own convention and what Blender/Maya/most DCC tools export —
+// guessing Z there would break the case this map exists to get right.
+//
+// THE CAMERA IS MOVED, THE MODEL IS NOT, and that is the half worth not "simplifying". Rotating the
+// object instead (the docblock's suggestion) is equivalent on screen and wrong for `showDims`: the
+// bounding box is read AFTER parse, so a rotated 10x20x30 model would report "10 x 30 x 20 mm" —
+// a measurement that disagrees with the user's own slicer. Leaving the mesh in its file's axes and
+// telling the camera which way is up keeps the numbers honest.
+const UP_AXIS = { stl: "z", "3mf": "z", obj: "y" }
+// Camera offset expressed as (right, back, up) multiples of the model's largest dimension — an
+// iso-ish 3/4 view, roughly matching the poster thumbnail it replaces so the picture does not jump
+// when the viewer boots.
+const VIEW_OFFSET = { right: 1.4, back: 1.6, up: 1.0 }
+
 // Interactive 3D viewer for the mesh formats a print library is made of (STL / 3MF / OBJ).
 // Parses the raw model bytes CLIENT-SIDE — no server conversion — and renders a manipulable
 // WebGL scene. Three.js (~2MB unminified core) is pulled via a DYNAMIC import in boot() so it
@@ -126,7 +148,10 @@ export default class extends Controller {
 
     const maxDim = Math.max(size.x, size.y, size.z) || 1
     this.camera = new THREE.PerspectiveCamera(45, width / height, maxDim / 100, maxDim * 100)
-    this.camera.position.set(maxDim * 1.4, maxDim * 1.0, maxDim * 1.6)
+    // BEFORE the position and before OrbitControls, which both read camera.up: the controls build
+    // their spherical frame from it, so a viewer set up Y-up and corrected afterwards orbits about
+    // the wrong pole and tumbles under the mouse.
+    this.applyUpAxis(maxDim)
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.renderer.setPixelRatio(window.devicePixelRatio)
@@ -149,6 +174,21 @@ export default class extends Controller {
 
     this.element.classList.add("model-viewer--ready")
     this.animate()
+  }
+
+  // Point the camera's up vector at whichever axis this format calls up, and place it on an
+  // iso-ish 3/4 view in that frame. An unknown format falls back to Three's own Y-up default —
+  // the same answer as before this existed, so a new format added to parse() degrades rather than
+  // renders sideways.
+  applyUpAxis(maxDim) {
+    const { right, back, up } = VIEW_OFFSET
+    if (UP_AXIS[this.formatValue] === "z") {
+      this.camera.up.set(0, 0, 1)
+      this.camera.position.set(maxDim * right, maxDim * back, maxDim * up)
+    } else {
+      this.camera.up.set(0, 1, 0)
+      this.camera.position.set(maxDim * right, maxDim * up, maxDim * back)
+    }
   }
 
   async parse(THREE, buf) {

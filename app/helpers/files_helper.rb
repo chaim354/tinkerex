@@ -57,6 +57,33 @@ module FilesHelper
     [ label, exts ] if exts.any?
   }.to_h.freeze
 
+  # The type dropdown's `<optgroup>`s: [[family label, [[ext, count], ...]], ...].
+  #
+  # `facets` is FilesController#ext_facets — what the LIBRARY holds. EXT_FAMILIES is only consulted
+  # for GROUPING AND ORDER, never for membership, and that inversion is the whole change: the chip
+  # row this replaced iterated the vocabulary and offered `.sldasm` to someone who has never owned
+  # one, while an extension the user really did have appeared nowhere.
+  #
+  # ANYTHING THE VOCABULARY HAS NEVER HEARD OF LANDS IN "Other" RATHER THAN BEING DROPPED. That
+  # bucket is the free-text escape hatch's replacement, and it is strictly better than the field
+  # was: the user no longer has to know the extension, because it can only appear here if they
+  # already have a file with it. (ROLE_LABELS' own "other" never collides — it is the fallback for
+  # unrecognised extensions, so no extension maps to it and EXT_FAMILIES omits it entirely.)
+  #
+  # ACTIVE EXTENSIONS ARE EXCLUDED, because the dropdown ADDS and the chips beside it REMOVE.
+  # Offering an active type would be an option whose selection changes nothing — `add_ext` unions
+  # into `ext`, so re-adding is a no-op — which is the class of dead control this row has already
+  # been fixed for twice.
+  def ext_facet_groups(facets, active_exts)
+    remaining = facets.except(*active_exts)
+    known = EXT_FAMILIES.filter_map do |label, exts|
+      entries = exts.select { |e| remaining.key?(e) }.sort.map { |e| [ e, remaining[e] ] }
+      [ label, entries ] if entries.any?
+    end
+    other = (remaining.keys - EXT_FAMILIES.values.flatten).sort.map { |e| [ e, remaining[e] ] }
+    other.any? ? known + [ [ "Other", other ] ] : known
+  end
+
   # The URL for toggling `ext` into or out of the active set.
   #
   # NEITHER `folder` NOR `sort`/`dir` RIDES ALONG, and both omissions are the same argument

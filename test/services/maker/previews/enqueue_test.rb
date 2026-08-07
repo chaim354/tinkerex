@@ -15,8 +15,15 @@ module Maker
         assert_equal "pending", p.status
       end
 
+      # THE FIXTURE CARRIES THE RENDERER'S CURRENT REVISION, and it has to: this test is about the
+      # CONTENT axis (same node, same version -> no rebuild), and a row left at the column default
+      # would be stale on the OTHER axis, so it re-enqueues for a reason that has nothing to do with
+      # what is being asserted. It went red the moment `.stl` first declared a revision — the
+      # mechanism working, not a regression.
       test "is idempotent: re-enqueuing a ready (node, version) does not enqueue again" do
-        p = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "ready")
+        p = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                         status: "ready",
+                                         renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
         assert_no_enqueued_jobs do
           result = Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
           assert_equal p.id, result.id
@@ -130,14 +137,23 @@ module Maker
 
       # A renderer declaring no revision sits at the base — which is exactly what the migration
       # stamped every pre-existing row with, so installing this mechanism invalidated nothing.
+      #
+      # `.obj` (Mesh), NOT `.stl`: this test named a real extension, and the extension it named
+      # acquired a revision when the STL camera was fixed — at which point the test failed for the
+      # right reason and had to move rather than be relaxed. If Mesh ever declares one too, MOVE THE
+      # FIXTURE AGAIN to whatever still declares nothing (Pdf, ImageThumb, TextThumb); do not delete
+      # the assertion, because "silence means BASE_REVISION" is what makes a renderer's cache
+      # invalidate only when someone deliberately says so.
       test "a renderer with no declared revision sits at the base" do
+        assert_not Maker::Previews::Mesh.respond_to?(:payload_revision),
+                   "this fixture needs a renderer that declares NOTHING — pick another one"
         assert_equal Maker::Previews::Enqueue::BASE_REVISION,
-                     Maker::Previews::Enqueue.revision_for_name("part.stl", "thumbnail")
+                     Maker::Previews::Enqueue.revision_for_name("part.obj", "thumbnail")
 
         @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
                                      status: "ready", renderer_revision: 1)
         assert_no_enqueued_jobs do
-          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.obj", version_id: "v1")
         end
       end
     end
