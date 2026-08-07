@@ -26,7 +26,11 @@
 // supported way to ask "is a real host here", never a truthiness check on the binding itself.
 const UNINITIALIZED_HOST = new Proxy({}, {
   get(_target, prop) {
-    if (typeof prop === "symbol") return undefined // let engine/devtools introspection pass quietly
+    // Only SYMBOL-KEYED reads pass silently — console.log/util.inspect genuinely work, because they
+    // probe via well-known symbols rather than guessing at string keys. String coercion gets NO such
+    // pass: String(host), a template literal, and JSON.stringify(host) all probe `.toString`/
+    // `.toJSON` — STRING keys — so they still throw here, same as any ordinary property read.
+    if (typeof prop === "symbol") return undefined
     throw new AddonError(
       "host_not_initialized",
       `host.${String(prop)} was read before initHost() ran. addon_controller.js calls initHost(ctx) ` +
@@ -80,9 +84,11 @@ export class ServiceUnavailableError extends AddonError {}
 export class UnsupportedCapabilityError extends AddonError {}
 
 // A SIDECAR'S OWN FAILURE, built directly from a response's status and its raw text — see
-// serviceErrorFrom below for why it is kept OUT of the host's error table entirely. There is no
-// `code` here worth naming, because the SDK cannot know a sidecar's error shape, only that it
-// failed and what it said.
+// serviceErrorFrom below for why it is kept OUT of the host's error table entirely. `body` here is
+// RAW TEXT, not AddonError's usual "parsed payload" (see its comment above): a sidecar's failure
+// response may not be JSON at all (see serviceErrorFrom's own examples), so there is nothing to
+// parse and nothing gained by pretending otherwise — and no `code` worth naming beyond
+// "service_error", for the same reason.
 export class ServiceError extends AddonError {
   constructor(status, text) {
     super("service_error", text || `Service request failed (${status})`, text, status)
@@ -124,10 +130,14 @@ async function errorFrom(res) {
 // SIDECAR ERRORS NEVER GO THROUGH errorFrom/ERROR_CLASSES — a sidecar's error body is not one of
 // ours to interpret. boxes.py answers {"error": "argument --height: invalid value"}, where "error"
 // is a HUMAN MESSAGE, not a code: errorFrom would put that prose in `.code` and a generic "Request
-// failed" filler in `.message`, the opposite of useful. openscad answers text/plain, which errorFrom's
-// `res.json()` would fail to parse and DISCARD ENTIRELY — exactly the message §14c kept
-// application/json on the proxy's content-type allowlist to preserve. ServiceError instead carries
-// the response verbatim: raw status, raw text, no guessing at a shape the SDK cannot know.
+// failed" filler in `.message`, the opposite of useful. Non-JSON (or body-less) responses through
+// this proxy are not hypothetical either — the service route is `via: %i[get post]` while boxes'
+// /generate is POST-only, so a plain GET reaches Werkzeug's own HTML 405 page (§14c); and this
+// controller's own refusals (addons_controller.rb:138, :153) answer a body-less `head :not_found`.
+// errorFrom's `res.json()` would fail to parse either and DISCARD IT ENTIRELY — exactly the message
+// §14c kept application/json on the proxy's content-type allowlist to preserve. ServiceError instead
+// carries the response verbatim: raw status, raw text (empty if there was none), no guessing at a
+// shape the SDK cannot know.
 async function serviceErrorFrom(res) {
   let text = ""
   try { text = await res.text() } catch { /* a body-less failure still has a status worth keeping */ }
@@ -143,8 +153,27 @@ async function serviceErrorFrom(res) {
 // a route that does not exist. Encoding PER SEGMENT means a "#" or "?" inside a single segment
 // cannot start a fragment/query CLIENT-SIDE and truncate the URL — for a GET, that would silently
 // drop the real query string the template literal appends after it.
+//
+// REJECTS ".", "..", AND EMPTY SEGMENTS RATHER THAN ENCODING THEM. encodeURIComponent("..") leaves
+// ".." untouched, so `service.get("boxes", "../../secret")` used to build a URL the BROWSER ITSELF
+// normalizes away before the request is even sent — the traversal never reached the service route,
+// so the server's own guard never got a chance to refuse it either; it misrouted silently instead of
+// failing loudly. §14a's key_for and §14c's validate_asset_path! both already hold this line: REJECT
+// a path, never normalize one. (An empty segment — e.g. from a leading "/" — is refused for the same
+// reason: left alone it would build "boxes//generate".)
+//
+// Callers pass RAW segments, never pre-encoded ones: encodeURIComponent("%2E") re-escapes the "%"
+// and double-encodes.
 function encodePathSegments(path) {
-  return path.split("/").map(encodeURIComponent).join("/")
+  return path.split("/").map((segment) => {
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new AddonError(
+        "invalid_argument",
+        `Invalid path segment ${JSON.stringify(segment)} in ${JSON.stringify(path)}.`,
+      )
+    }
+    return encodeURIComponent(segment)
+  }).join("/")
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +250,12 @@ class Host {
     // truthy on every successful POST regardless of outcome — `if (await host.files.save(...))`
     // would report success on a save the user just cancelled. Read `.cancelled`, never the
     // returned object's mere presence.
+    //
+    // `data` IS STRUCTURALLY EMPTY TODAY — EXPECTED, NOT A BUG TO CHASE. #create has no JSON success
+    // branch: every success exits via `redirect_to`, fetch FOLLOWS that redirect, and the response it
+    // follows to is HTML — so `res.json()` always falls through to the `.catch(() => ({}))` below. A
+    // bundle reading `result.data.node_id` gets `undefined` today not because it asked wrong, but
+    // because there is nothing there yet: `data` stays `{}` until the save door grows a JSON branch.
     //
     // `folderNodeId` IS REQUIRED, NOT DEFAULTED. pickFolder (below) returns null for a cancelled
     // chooser, and null is deliberately not the same folder as "" (the library root) — defaulting a
