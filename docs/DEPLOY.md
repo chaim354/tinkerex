@@ -317,9 +317,47 @@ missing backup is a good one aged out by a broken run. Verified by planting fore
 (`notes.txt`, another deployment's archive, an unrelated tarball) and confirming a `--keep 1` run
 pruned its own destination to one and touched nothing else.
 
-**`bin/backup-status` fails loud on staleness** rather than printing a date. Nothing on the box
-mails anyone, so a nightly that stops is silent and looks exactly like one that works — right up
-until the restore.
+**`bin/backup-status` fails loud on staleness** rather than printing a date — but it only speaks
+when asked, which is what the push monitors below are for.
+
+### Monitoring — Uptime Kuma push monitors
+
+**RUN UPTIME KUMA ON THE UNRAID HOST, NOT THE KAMAL VM.** A monitor sharing a host with the thing
+it monitors cannot report the failures that matter most — VM off, Docker wedged — because it is off
+too, and its silence is indistinguishable from everything being fine. It is the same argument that
+put the archives on the array instead of `/dev/vda2`, applied one level up.
+
+Install from Community Apps (default port 3001), then add **one Push monitor per deployment** —
+`tinkerex backup (chunk)`, `(share)`, `(s3)`. Heartbeat Interval **90000** (25 h, so the 03:30 run
+has an hour of slack), Retries **0**. Copy each push URL, then:
+
+```sh
+PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 \
+PING_SHARE=http://192.168.1.146:3001/api/push/cD2 \
+PING_S3=http://192.168.1.146:3001/api/push/eF3 \
+  bin/backup-cron-install
+```
+
+**A PUSH MONITOR IS A DEAD-MAN'S SWITCH — it alerts on the ABSENCE of a ping.** That is the whole
+reason to prefer it over anything the job reports about itself: cron unloaded, the VM powered off,
+the script killed before reaching its own error handler. None of those can send a message, and all
+of them stop the heartbeat.
+
+Four behaviours are deliberate, and each was mutation-checked by breaking the thing it guards:
+
+- **A failing run sends `status=down` immediately** rather than waiting out the 25-hour window. A
+  backup that runs and fails is knowable in seconds; making you wait a day discards the one case
+  the job *can* report on itself. The vanished-container arm pings too.
+- **A failed ping NEVER fails the backup.** The backup is the product, the ping is telemetry about
+  it. Letting curl's exit status through would turn "Uptime Kuma is rebooting" into "last night's
+  backup failed" — and, since a nonzero exit skips the prune, into a slow disk leak as well.
+- **An ad-hoc `bin/backup-db` does NOT ping.** A manual backup to someone's laptop is not the
+  nightly; if it touched the heartbeat, a nightly dead for a week would read healthy for exactly as
+  long as someone kept rescuing it by hand.
+- **`bin/backup-cron-install` MERGES `ping.env`, it does not overwrite it.** That installer is what
+  you re-run to push a script change, so a merge that dropped unmentioned keys would silently
+  unwire every monitor the next time anyone fixed a typo — and they would sit green until their
+  windows lapsed. Tokens live only on the box (`~/tinkerex-ops/ping.env`, chmod 600), never in git.
 
 **`docker cp`, `cp` and a raw volume tarball ALL PRODUCE A TORN DATABASE HERE.** These run in WAL
 mode (`PRAGMA journal_mode` → `wal`), so committed state is split between `production.sqlite3` and

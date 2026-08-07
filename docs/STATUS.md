@@ -160,12 +160,39 @@ against 5.8 TB free. Whole run: 11 seconds.
 `//192.168.1.146/3D Printing`; chunk's SeaweedFS). What this preserves is the **catalog** — the part
 that exists only in that volume.
 
-**Left open:** nothing alerts. `bin/backup-status` fails loud on staleness, but only when someone
-runs it — the box mails nobody, so a nightly that stops is silent until asked. A real notification
-(healthchecks.io ping, or a Solid Queue job that checks the volume) is the obvious next slice and
-was not built. The 03:30 run also has no interlock with a deploy landing at the same minute; the
-snapshot is WAL-safe either way, so the worst case is a backup of a half-migrated schema, which is
-a *correct* backup of a bad moment.
+**MONITORING IS AN UPTIME KUMA PUSH MONITOR PER DEPLOYMENT — a DEAD-MAN'S SWITCH, which is the
+point.** It alerts on the ABSENCE of a ping, so it catches cron unloaded, the VM powered off, and
+the script killed before reaching its own error handler — none of which can send a message, and
+all of which stop the heartbeat. Home Assistant was the other candidate (already running, already
+the notification hub) and would have worked via a `timer` helper with `restore: true`, whose
+`timer.finished` event is the same idea expressed natively; Uptime Kuma won on keeping backup
+monitoring beside the monitoring for everything else rather than inside home automation.
+**It must run on the UNRAID HOST, not the VM** — a monitor sharing a host with what it watches is
+off exactly when the worst failures happen, and its silence then reads as health. Same argument as
+the archives, one level up.
+
+Four behaviours, each mutation-checked by breaking the thing it guards:
+
+- **A failing run pings `status=down` immediately**, rather than waiting out the 25-hour window — a
+  backup that runs and fails is knowable in seconds. Forcing the worker to `return 7` produced
+  `status=down&msg=backup+failed…` and exit 1; pointing the container lookup at a nonexistent name
+  produced `status=down&msg=no+container+matching+this+deployment`. **That second arm was missing
+  until the test was written** — it set a failure status and pinged nothing.
+- **A failed ping never fails the backup.** Pointed at a dead port, the run still wrote its archive,
+  pruned, and exited 0 with a warning on stderr. Letting curl's status through would turn "Uptime
+  Kuma is rebooting" into "the backup failed" and — since a nonzero exit skips the prune — into a
+  slow disk leak.
+- **`--to-stdout` (the ad-hoc Mac backup) deliberately does not ping.** Otherwise a nightly dead for
+  a week reads healthy for as long as someone keeps rescuing it by hand.
+- **`ping.env` is MERGED, never overwritten.** The installer is what you re-run to push a script
+  change; dropping unmentioned keys would unwire every monitor the next time someone fixed a typo,
+  and they would sit green until their windows lapsed. Tokens stay on the box, chmod 600.
+
+**Left open:** Uptime Kuma itself is not installed — it needs an admin account created in a browser
+on first run, so the install and the three push monitors are a console job. Everything on this side
+is done and verified against a stub listener; wiring is one `PING_*=… bin/backup-cron-install`. The
+03:30 run also has no interlock with a deploy landing the same minute; the snapshot is WAL-safe
+regardless, so the worst case is a *correct* backup of a half-migrated schema.
 
 ---
 

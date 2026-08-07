@@ -81,6 +81,41 @@ ssh "$HOST" "mkdir -p $OPS_DIR"
 scp -q "$(dirname "$0")/../ops/backup-db.sh" "$HOST:$OPS_DIR/backup-db.sh"
 ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
 
+# ---- Uptime Kuma push URLs -------------------------------------------------------------------
+# Supply as environment variables, once:
+#   PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 PING_SHARE=... PING_S3=... bin/backup-cron-install
+#
+# VALUES NOT SUPPLIED ARE PRESERVED, not cleared. This installer is the thing you re-run to push a
+# script change, so a merge that dropped unmentioned keys would quietly unwire every monitor the
+# next time anyone fixed a typo — and the monitors would then sit green, because a push monitor
+# that is never pinged is indistinguishable from one that was never configured until its heartbeat
+# window lapses. Tokens live only on the box, chmod 600, never in git.
+echo "==> Uptime Kuma push URLs"
+UPDATES=""
+for k in PING_CHUNK PING_SHARE PING_S3; do
+  v="${!k:-}"
+  [ -n "$v" ] && UPDATES="${UPDATES}${k}=${v}"$'\n'
+done
+printf '%s' "$UPDATES" | ssh "$HOST" "cat > $OPS_DIR/ping.updates"
+ssh "$HOST" bash -s <<'REMOTE'
+set -euo pipefail
+cd "$HOME/tinkerex-ops"
+touch ping.env
+while IFS='=' read -r k v; do
+  [ -n "${k:-}" ] || continue
+  { grep -v "^$k=" ping.env || true; echo "$k=$v"; } > ping.env.tmp
+  mv ping.env.tmp ping.env
+done < ping.updates
+rm -f ping.updates
+chmod 600 ping.env
+if [ -s ping.env ]; then
+  sed -E 's#(/api/push/).*#\1********#' ping.env | sed 's/^/    /'
+else
+  echo "    none configured — the nightly will run but nothing will notice if it stops."
+  echo "    Set PING_CHUNK / PING_SHARE / PING_S3 and re-run this installer."
+fi
+REMOTE
+
 echo "==> installing the crontab entry"
 LINE="$AT * * * \$HOME/$OPS_DIR/backup-db.sh --to-volume $VOLUME --keep $KEEP $DESTS >> \$HOME/$OPS_DIR/backup.log 2>&1 $MARKER"
 # Replace rather than append: a second run must not leave two entries racing each other over one

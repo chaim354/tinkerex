@@ -42,6 +42,33 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ ${#DESTS[@]} -gt 0 ] || { echo "no destinations given" >&2; exit 64; }
+
+# ---- Uptime Kuma push monitors ---------------------------------------------------------------
+# One push URL per destination, in ~/tinkerex-ops/ping.env (written by bin/backup-cron-install,
+# never committed — the tokens are the whole authentication):
+#
+#   PING_CHUNK=http://192.168.1.146:3001/api/push/aBcD1234
+#
+# A PUSH MONITOR IS A DEAD-MAN'S SWITCH: Uptime Kuma alerts on the ABSENCE of a ping, which is the
+# only thing that catches the failures that matter here — cron unloaded, the VM off, the script
+# never reaching its own error handler. A monitor that only reports failures it was told about
+# cannot see any of those.
+PING_FILE="${PING_FILE:-$HOME/tinkerex-ops/ping.env}"
+# shellcheck disable=SC1090
+[ -f "$PING_FILE" ] && . "$PING_FILE"
+
+# A FAILED PING MUST NEVER FAIL THE BACKUP. The backup is the product; the ping is telemetry about
+# it. Letting curl's exit status reach `status` would turn "Uptime Kuma is rebooting" into "last
+# night's backup failed", and — because a nonzero exit skips the prune — into a slow leak too.
+ping_kuma() {  # dest up|down msg seconds
+  local var="PING_$(echo "$1" | tr '[:lower:]' '[:upper:]')" url
+  url="${!var:-}"
+  [ -n "$url" ] || return 0
+  curl -fsS --max-time 10 --get \
+       --data-urlencode "status=$2" --data-urlencode "msg=$3" --data-urlencode "ping=$4" \
+       "$url" >/dev/null 2>&1 \
+    || echo "    (uptime-kuma ping failed for $1 — the backup itself was fine)" >&2
+}
 if $TO_STDOUT && [ ${#DESTS[@]} -ne 1 ]; then
   echo "--to-stdout takes exactly one destination (two archives cannot share one stream)" >&2; exit 64
 fi
@@ -109,16 +136,29 @@ $TO_STDOUT || echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) starting: ${DESTS[*]}"
 
 for dest in "${DESTS[@]}"; do
   cid=$(container_for "$dest") || true
-  if [ -z "$cid" ]; then echo "!! $dest: no container found — skipped" >&2; status=1; continue; fi
+  # This arm pings too. A vanished container is a REAL failure of that destination's backup and is
+  # knowable right now — leaving it to the heartbeat window would report the one failure the job
+  # can name precisely as a generic 25-hour silence.
+  if [ -z "$cid" ]; then
+    echo "!! $dest: no container found — skipped" >&2; status=1
+    ping_kuma "$dest" down "no container matching this deployment" ""
+    continue
+  fi
   image=$(docker inspect --format '{{.Config.Image}}' "$cid")
   src=$(volume_for "$dest")
 
   if $TO_STDOUT; then
+    # DELIBERATELY NO PING. An ad-hoc backup to someone's laptop is not the nightly, and letting it
+    # touch the heartbeat would let a manual run paper over a nightly that has been dead for a
+    # week — the monitor would read healthy for exactly as long as someone kept rescuing it by hand.
     docker run --rm --user 0 -v "$src:/src" "$image" sh -c "$WORKER" _ ""
   else
     echo "==> $dest"
-    if docker run --rm --user 0 -v "$src:/src" -v "$OUT_VOLUME:/dst" "$image" \
-         sh -c "$WORKER" _ "/dst/tinkerex-$dest-$STAMP.tar.gz"; then
+    began=$(date +%s)
+    if summary=$(docker run --rm --user 0 -v "$src:/src" -v "$OUT_VOLUME:/dst" "$image" \
+         sh -c "$WORKER" _ "/dst/tinkerex-$dest-$STAMP.tar.gz"); then
+      echo "$summary"
+      ping_kuma "$dest" up "$(echo "$summary" | tr -s ' ' | sed 's/^ //')" "$(( ($(date +%s) - began) * 1000 ))"
       # PRUNE ONLY AFTER A VERIFIED WRITE, and only ever files this script names. `ls -t | tail -n
       # +N+1` keeps the N newest; with fewer than N present it selects nothing, so a fresh install
       # cannot delete its own first backup. A failed run above skips this entirely — the one thing
@@ -132,7 +172,11 @@ for dest in "${DESTS[@]}"; do
         rm -f "tinkerex-$dest-"*.tar.gz.partial
       ' _ "$KEEP" "$dest"
     else
+      # `status=down` NOW rather than waiting for the heartbeat window to lapse: a backup that runs
+      # and fails is knowable within seconds, and making you wait 25 hours to hear about it would
+      # throw away the one case the job can actually report on itself.
       echo "!! $dest: FAILED" >&2; status=1
+      ping_kuma "$dest" down "backup failed — see ~/tinkerex-ops/backup.log" ""
     fi
   fi
 done
