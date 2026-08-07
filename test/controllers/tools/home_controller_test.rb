@@ -60,5 +60,24 @@ module Tools
         assert_select ":match('title', ?)", /Needs a newer version of this host/
       end
     end
+
+    # WHAT THE OPERATOR SEES AT PUBLISH TIME. The point of rendering these is scope drift: a
+    # republished bundle that quietly starts asking for more shows up on the card, in a deployment
+    # where publishing the bundle IS the deploy and Rails is never rebuilt.
+    test "a card lists the permissions its manifest declares, by label" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        MANIFEST.merge("permissions" => [ { "name" => "library:write" }, { "name" => "service:boxes" } ])
+      ])
+      get tools_path
+      assert_response :success
+      assert_select ".addon-permissions", text: /Write files to your library/
+      assert_select ".addon-permissions", text: /Call the boxes service/
+    end
+
+    test "a card with no declared permissions renders no permission list at all" do
+      get tools_path
+      assert_response :success
+      assert_select ".addon-permissions", count: 0
+    end
   end
 end

@@ -232,6 +232,22 @@ module Tools
       assert_match %r{/maker/addon_sdk}, json["imports"]["@maker/addon-sdk"]
     end
 
+    # THE REASONING STRING IS SHOWN WHERE THERE IS ROOM FOR IT. A gallery card has space for a
+    # label; the addon's own page has space for the author's justification, which is the part that
+    # tells an operator whether the ask is proportionate.
+    test "the addon page lists declared permissions with their reasoning" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge(
+          "permissions" => [ { "name" => "library:write", "reasoning" => "to save your box" } ]
+        ) ],
+        assets: { "#{FIXTURE_KEY}/generators.js" => "export default { mount() {} }" }
+      )
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert_select ".addon-permissions", text: /Write files to your library/
+      assert_select ".addon-permissions", text: /to save your box/
+    end
+
     test "serves an addon asset as JavaScript" do
       get tools_addon_asset_path("widgetkit", "generators.js")
       assert_response :success
