@@ -14,6 +14,7 @@ export default class extends Controller {
   }
 
   async connect() {
+    this.disposed = false
     try {
       const chooser = (options = {}) => chooseFolder({
         childrenUrl: this.childrenUrlValue,
@@ -28,9 +29,28 @@ export default class extends Controller {
       // top-level code runs at import time, so `host` must already be bound by then. The two
       // members added here are the ones the server cannot serialize — a function, and a token
       // that already lives in a meta tag and must not be duplicated into a second DOM node.
-      initHost({ ...this.ctxValue, chooseFolder: chooser, csrfToken })
+      //
+      // CAUGHT ON ITS OWN, SEPARATE FROM THE IMPORT/MOUNT BELOW: this.ctxValue re-parses the
+      // data-addon-ctx-value JSON attribute on every read, and everything initHost can throw is
+      // about the HOST's own wiring, not the bundle. Falling through to the outer catch would
+      // blame a malformed ctx blob on the addon — "This tool failed to load" — when the bundle
+      // never got a chance to be the problem.
+      try {
+        initHost({ ...this.ctxValue, chooseFolder: chooser, csrfToken })
+      } catch (e) {
+        this.mountTarget.textContent = `The host failed to initialize: ${e.message}`
+        return
+      }
 
       const module = await import(this.entryValue)
+      // A Turbo navigation can disconnect() this controller while the import above is still in
+      // flight — disconnect() has already torn down the host (every host read throws again) by
+      // the time this resolves. Calling mount() anyway would hand the bundle a torn-down host: if
+      // the bundle registers a window/document listener or timer BEFORE its first host touch,
+      // mount() aborts on that host-read error before the bundle ever reaches
+      // host.on("teardown", …) to remove it — an orphaned listener with nothing left to clean it
+      // up. Bail before mount() ever runs.
+      if (this.disposed) return
       await module.default.mount(this.mountTarget, {
         saveUrl: this.saveUrlValue,
         serviceUrl: this.serviceUrlValue,
@@ -69,6 +89,7 @@ export default class extends Controller {
   }
 
   disconnect() {
+    this.disposed = true
     teardownHost()
   }
 }

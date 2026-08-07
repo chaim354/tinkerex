@@ -24,6 +24,15 @@
 // dereferenced pages later with no clue where it went wrong. THE ONE HONEST COST: this is still an
 // OBJECT, so `if (host)` is truthy whether or not initHost() has run — `capabilities()` is the
 // supported way to ask "is a real host here", never a truthiness check on the binding itself.
+
+// SET ONCE initHost() HAS EVER RUN, AND NEVER BACK TO false — teardownHost() puts `host` right back
+// on this same Proxy, so the trap below sees ONE object for two different developers: one who read
+// `host` too early (an ordering bug in connect()) and one holding a closure that outlived its mount
+// (a stale reference, not an ordering bug at all — e.g. a callback captured before disconnect()).
+// Wording the message for only the first case sends the second developer hunting connect() for a
+// bug that is not there.
+let everInitialized = false
+
 const UNINITIALIZED_HOST = new Proxy({}, {
   get(_target, prop) {
     // Only SYMBOL-KEYED reads pass silently — console.log/util.inspect genuinely work, because they
@@ -33,8 +42,12 @@ const UNINITIALIZED_HOST = new Proxy({}, {
     if (typeof prop === "symbol") return undefined
     throw new AddonError(
       "host_not_initialized",
-      `host.${String(prop)} was read before initHost() ran. addon_controller.js calls initHost(ctx) ` +
-        "before dynamic-importing a bundle — this module ran before that had happened.",
+      everInitialized
+        ? `host.${String(prop)} was read after this addon's host was torn down. A closure that ` +
+            "outlived its mount is the usual cause — a listener or callback that captured host " +
+            "before disconnect() ran. Read host fresh at call time instead of holding onto it."
+        : `host.${String(prop)} was read before initHost() ran. addon_controller.js calls initHost(ctx) ` +
+            "before dynamic-importing a bundle — this module ran before that had happened.",
     )
   },
 })
@@ -395,6 +408,7 @@ export function initHost(ctx) {
   // teardown, they would sit forever referencing a host nobody can reach any more, never firing.
   teardownHost()
   host = new Host(ctx)
+  everInitialized = true
   return host
 }
 
