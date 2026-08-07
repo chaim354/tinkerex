@@ -188,11 +188,31 @@ Four behaviours, each mutation-checked by breaking the thing it guards:
   change; dropping unmentioned keys would unwire every monitor the next time someone fixed a typo,
   and they would sit green until their windows lapsed. Tokens stay on the box, chmod 600.
 
-**Left open:** Uptime Kuma itself is not installed — it needs an admin account created in a browser
-on first run, so the install and the three push monitors are a console job. Everything on this side
-is done and verified against a stub listener; wiring is one `PING_*=… bin/backup-cron-install`. The
-03:30 run also has no interlock with a deploy landing the same minute; the snapshot is WAL-safe
-regardless, so the worst case is a *correct* backup of a half-migrated schema.
+**TWO BUGS LIVED IN THE URL UPTIME KUMA HANDS YOU, and both were found by wiring the real thing
+rather than by reading.** Its UI shows the push URL as
+`…/api/push/TOKEN?status=up&msg=OK&ping=`, so pasting it verbatim is the natural move:
+
+- **That URL contains `&`, and `ping.env` was being SOURCED.** Bash read the `&` as a **job
+  separator**: the assignment ran in a background subshell, the variable was never set in the
+  calling shell, and the ping silently did not happen. Found because the stub received *nothing* on
+  a test that had passed minutes earlier with a query-free URL. Now parsed with an explicit
+  three-key whitelist, which also stops the file being executable shell.
+- **`curl --get` would then append a SECOND `status`.** Express/qs parses duplicate keys into an
+  **array**, and Kuma's `req.query.status === "down"` compares against an array and is false — so
+  **every failure would have been recorded as UP**, a monitor staying green exactly when it must
+  not, which is strictly worse than no monitor. `ping_kuma` strips any query string; mutation-checked
+  by configuring the verbatim UI URL, forcing a failure, and asserting exactly one `status=down`
+  reached the listener.
+
+**Live.** Uptime Kuma is installed on the Unraid host with three push monitors (`chunk.tinkerex`,
+`share.tinkerex`, `s3.tinkerex`), all three reachable from the VM (`{"ok":true}`) and pinged with
+real data by the install run: chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0
+nodes. `ping.env` is chmod 600 on the box; the installed script is byte-identical to the repo.
+
+**Left open:** the 03:30 run has no interlock with a deploy landing the same minute. The snapshot is
+WAL-safe regardless, so the worst case is a *correct* backup of a half-migrated schema. Nothing
+verifies the notification channel out of Uptime Kuma itself — proving that end would mean flapping
+a monitor and firing a real alert.
 
 ---
 

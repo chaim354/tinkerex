@@ -54,8 +54,23 @@ done
 # never reaching its own error handler. A monitor that only reports failures it was told about
 # cannot see any of those.
 PING_FILE="${PING_FILE:-$HOME/tinkerex-ops/ping.env}"
-# shellcheck disable=SC1090
-[ -f "$PING_FILE" ] && . "$PING_FILE"
+
+# PARSED, NEVER SOURCED — and this is not defensiveness, it is a bug that was already caught.
+# A Kuma push URL copied out of its UI contains `&` (`…?status=up&msg=OK&ping=`). `. ping.env` on
+# an unquoted line like that makes bash read the `&` as a JOB SEPARATOR: the assignment runs in a
+# background subshell, the variable is never set in this shell, and the ping silently does not
+# happen. Sourcing also means any value in that file is executable shell. Reading it with an
+# explicit whitelist takes every value literally and cannot do either.
+if [ -f "$PING_FILE" ]; then
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      PING_CHUNK) PING_CHUNK=$_v ;;
+      PING_SHARE) PING_SHARE=$_v ;;
+      PING_S3)    PING_S3=$_v ;;
+    esac
+  done < "$PING_FILE"
+  unset _k _v
+fi
 
 # A FAILED PING MUST NEVER FAIL THE BACKUP. The backup is the product; the ping is telemetry about
 # it. Letting curl's exit status reach `status` would turn "Uptime Kuma is rebooting" into "last
@@ -64,6 +79,14 @@ ping_kuma() {  # dest up|down msg seconds
   local var="PING_$(echo "$1" | tr '[:lower:]' '[:upper:]')" url
   url="${!var:-}"
   [ -n "$url" ] || return 0
+
+  # STRIP ANY QUERY STRING, because Uptime Kuma's own UI hands you the push URL with one already
+  # attached — `…/api/push/TOKEN?status=up&msg=OK&ping=` — and copying it verbatim is the obvious
+  # thing to do. `curl --get` would then append a SECOND status, Express/qs parses the duplicate
+  # into an ARRAY, and Kuma's `req.query.status === "down"` test compares against an array and is
+  # false. Every failure would be recorded as UP: the monitor stays green precisely when it should
+  # not, which is worse than having no monitor at all.
+  url="${url%%\?*}"
   curl -fsS --max-time 10 --get \
        --data-urlencode "status=$2" --data-urlencode "msg=$3" --data-urlencode "ping=$4" \
        "$url" >/dev/null 2>&1 \

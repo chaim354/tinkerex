@@ -359,6 +359,21 @@ Four behaviours are deliberate, and each was mutation-checked by breaking the th
   unwire every monitor the next time anyone fixed a typo — and they would sit green until their
   windows lapsed. Tokens live only on the box (`~/tinkerex-ops/ping.env`, chmod 600), never in git.
 
+**Two traps live in the URL Uptime Kuma hands you, which is `…/api/push/TOKEN?status=up&msg=OK&ping=`
+— the natural thing to do is paste it verbatim, and both were real bugs before they were guards.**
+
+- **`ping.env` is PARSED, NEVER SOURCED.** That URL contains `&`, so `. ping.env` on an unquoted
+  line makes bash read it as a **job separator**: the assignment runs in a background subshell, the
+  variable is never set in this shell, and the ping silently does not happen. Sourcing also makes
+  every value in that file executable shell. `ops/backup-db.sh` reads it with an explicit
+  three-key whitelist, which takes values literally and can do neither.
+- **`ping_kuma` STRIPS ANY QUERY STRING** (`url="${url%%\?*}"`). Left on, `curl --get` appends a
+  **second** `status`, Express/qs parses the duplicate into an **array**, and Kuma's
+  `req.query.status === "down"` compares against an array and is false — so **every failure is
+  recorded as UP**. The monitor stays green exactly when it must not, which is worse than having no
+  monitor. Mutation-checked by configuring the verbatim UI URL, forcing a failure, and asserting
+  the request carried exactly one `status=down`.
+
 **`docker cp`, `cp` and a raw volume tarball ALL PRODUCE A TORN DATABASE HERE.** These run in WAL
 mode (`PRAGMA journal_mode` → `wal`), so committed state is split between `production.sqlite3` and
 its `-wal` sidecar, and Puma + Solid Queue are writing throughout. A non-atomic copy of the pair
