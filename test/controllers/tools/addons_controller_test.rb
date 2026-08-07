@@ -134,6 +134,53 @@ module Tools
       assert_select "[data-addon-states-url-value=?]", tools_addon_states_path("widgetkit")
     end
 
+    # ONE ctx BLOB, PARSED — not a `assert_match` on a substring. A data attribute that contains the
+    # right characters is not one that parses: the value is HTML-escaped JSON, and the escaping is
+    # exactly what a substring assertion cannot see going wrong.
+    def rendered_ctx
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      value = css_select("[data-addon-ctx-value]").first["data-addon-ctx-value"]
+      JSON.parse(value)
+    end
+
+    test "the shell renders a ctx blob carrying the host level and capability map" do
+      ctx = rendered_ctx
+      assert_equal Maker::Addons::Registry::API_VERSION, ctx["apiVersion"]
+      assert_equal Maker::Addons::Host::LEVEL, ctx["hostLevel"]
+      assert_equal Maker::Addons::Host.capabilities, ctx["capabilities"]
+      assert_equal FIXTURE_KEY, ctx.dig("addon", "key")
+    end
+
+    test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do
+      ctx = rendered_ctx
+      assert_equal tools_addon_path(FIXTURE_KEY),        ctx.dig("urls", "save")
+      assert_equal tools_addon_states_path(FIXTURE_KEY), ctx.dig("urls", "states")
+      assert_equal library_children_path,                ctx.dig("urls", "children")
+      assert_equal library_folders_path,                 ctx.dig("urls", "create")
+      # A BASE that a bundle appends "<service>/<path>" to — it must keep its trailing slash, which
+      # is the one property of this value a bundle depends on and the easiest to lose.
+      assert ctx.dig("urls", "service").end_with?("/")
+    end
+
+    # THE COMPATIBILITY RULE, WITH TEETH (spec §10.1). The two repos deploy independently: a bundle
+    # built against the old ctx may be running against a host built against the new one at any
+    # moment. Dropping any of these is invisible to every other test in this suite and breaks
+    # production silently, which is precisely why it is asserted as a list rather than trusted.
+    test "every pre-SDK data attribute is still emitted" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      mount = css_select("[data-controller=addon]").first
+      %w[
+        data-addon-entry-value data-addon-save-url-value data-addon-service-url-value
+        data-addon-states-url-value data-addon-folders-value data-addon-default-folder-value
+        data-addon-default-folder-label-value data-addon-children-url-value
+        data-addon-create-url-value
+      ].each do |attribute|
+        assert mount[attribute], "#{attribute} is gone — a published bundle reads it"
+      end
+    end
+
     test "an unknown addon key is a 404, not a 500" do
       get tools_addon_path("nope")
       assert_response :not_found

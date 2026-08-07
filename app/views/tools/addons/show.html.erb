@@ -23,6 +23,7 @@
     the real route rather than a hand-duplicated literal). `states-url` is a complete URL on its own
     (GET it directly) — it has no per-call path to append, unlike `service-url`. %>
 <div data-controller="addon"
+     data-addon-ctx-value="<%= @ctx.to_json %>"
      data-addon-entry-value="<%= tools_addon_asset_path(@addon.key, @addon.entry) %>"
      data-addon-save-url-value="<%= tools_addon_path(@addon.key) %>"
      data-addon-service-url-value="<%= @service_url %>"
