@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-07 (**the addon host SDK — `@maker/addon-sdk`, a server-side capability map, typed errors, and an SDK-only fixture that proves it in a real browser**)
+**Updated:** 2026-08-07 (**two SDK follow-ups: the service name gets `path`'s rejection, and the `NotFound` rescue comment is replaced with the condition that actually reaches it**)
 
 ## What this file is
 
@@ -60,7 +60,93 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-07): an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
+## Latest (2026-08-07): the service name gets the guard its sibling already had, and a rescue comment stops lying (branch `claude/addon-sdk-service-name-guard`)
+
+**The two follow-ups the SDK PR (the entry below) recorded as open and left out of scope.** Stacked on
+`claude/todo-list-review-6beccc`, not on `main`.
+
+**1. `serviceName` is now rejected the way `path` beside it already was.** `service.get`/`post` build
+ONE URL out of TWO arguments and only the second was guarded, so `host.service.get("../../evil", "x")`
+built `/tools/<key>/service/../../evil/x` — which the **browser's own URL parser normalizes to
+`/tools/evil/x` before the request is sent** (verified against WHATWG normalization, not assumed), so
+`sidecar_url_for`'s refusal was never asked and the call misrouted silently rather than failing.
+`encodeServiceName` rejects `""`, `"."`, `".."` and **any `/`**, then encodes.
+
+The `/` is the only real design choice, and it is **rejected outright rather than split into segments**:
+`:service` is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"`
+cannot name a service on any host; splitting would normalize a structural error (§14a's `key_for` rule)
+and would leave the contract incoherent — `"../.."` refused while `"a/b"` is accepted, for a value that
+is one segment by definition. Measured rather than assumed: `encodeURIComponent` already defuses `\`,
+`#`, `?` and `%`, and only `.`, `..` and `""` survive it — which is exactly the clause list.
+
+**Proven in a browser, because nothing else can see it.** The normalization is the URL parser's, so a
+request test would be asserting about a URL the browser never sends. A fifth test in
+`test/system/addon_sdk_test.rb` clicks a fixture button that calls both the bad name and the bad path
+and renders `class:code` for each. **Mutation-checked:** reverting `encodeServiceName(serviceName)` to
+`${serviceName}` at both call sites turns it red — *"expected … exact text
+name=AddonError:invalid_argument path=AddonError:invalid_argument … Also found
+`name=ServiceError:service_error path=AddonError:invalid_argument`"* — so the assertion isolates the
+half that regressed instead of merely noticing that something did.
+
+**2. The `rescue_from FileLayer::NotFound` comment described a condition that cannot happen.** It read
+*"NotFound here means the save named a destination folder that no longer exists"*. It cannot:
+`chosen_parent_node_id` resolves an unknown, stale or foreign `parent_node_id` to `nil` = the library
+ROOT **before any port call**, so that save answers **302 and succeeds**, probed on all three backends
+(the node lands with `parent_node_id: nil`). `docs/addon-api-v1.md` §5 was corrected for this same
+false claim in the previous PR; the code comment was not.
+
+**What actually reaches the arm** — found by probing every candidate through the real door, one save
+per name, rather than by reading the adapters:
+
+| output name | chunk | share | s3 |
+|---|---|---|---|
+| `ok.txt` | 302 | 302 | 302 |
+| `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash` | **302** | **422 `not_found`** | **422 `not_found`** |
+| `.maker-tmp-x` | **302** | **422 `not_found`** | **302** |
+
+It is `observable!`, §14b's skip-list rule. `#parse_files` vets names with
+`Maker::MoveNode.valid_leaf_name?`, which refuses `/`, `\`, NUL, `.`, `..` and over-long names — but
+every name above is a perfectly good *leaf*. The `.maker-tmp-x` split is deliberate and documented in
+place: `S3#observable!` omits `TEMP_PREFIX` because that adapter writes no temp keys.
+
+**So the arm is reachable from `#create`, on share/s3 only.** Chunk cannot reach it —
+`LibraryOutput#write_chunk` never calls the port — and `#show`/`#asset`/`#service`/`#states` never
+touch `FileLayer` at all, so the class-level arm covers those four vacuously. Every other `NotFound`
+inside `#write` is closed upstream: `leaf!` by the stricter `valid_leaf_name?`, the path-escape guard
+by `leaf!` in turn, `read_capped!` by `MAX_FILE_BYTES` (4 MB) sitting far under `FileLayer::MAX_BYTES`
+(256 MB), and *"parent is not a live directory"* by `chosen_parent_node_id` having just resolved that
+id — which leaves it reachable only as a **TOCTOU**, a folder tombstoned between the two lookups.
+Nothing after the write reaches it either: `attach_addon_files_to_current_project` and
+`intake_project_folder` both rescue `StandardError`, and `Maker::ProjectIntake#place` already rescues
+`FileLayer::NotFound` into a `:not_found` skip.
+
+**The one behaviour change, called out because the brief asked for none.** The response *message* was
+false in the same way the comment was — *"That destination folder no longer exists."* for a file named
+`.DS_Store` — so it now names both surviving causes and prescribes for each, since they want opposite
+remedies (renaming fixes the name and does nothing for the race; retrying fixes the race and never the
+name). Nothing asserted the old string. **The silent-write-to-root is untouched**, as instructed: that
+is a product decision, and `docs/addon-api-v1.md` §5 already documents it for authors.
+
+**Left open on purpose: `.DS_Store` is refused on share/s3 and accepted on chunk** — one condition with
+two answers across backends, the shape §14a calls the port's whole job. Out of scope here (this branch
+was scoped to make the guard and the comment true, not to change behaviour); recorded in CLAUDE.md §14c
+so it is not rediscovered from scratch.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0** (46.36 s). The three backend legs report
+**identical** counts — **2181 runs, 7867 assertions, 0 failures, 0 errors, 9 skips** — unchanged from
+the entry below, since this branch adds no Rails-leg test. System (real browser): **75 runs, 465
+assertions, 0 failures**, up from 74/461. That delta cross-checks against the file on its own:
+`addon_sdk_test.rb` goes **4 runs / 22 assertions → 5 / 26**, measured by stashing the two test files
+rather than inferred from the total.
+
+**Invariants recorded** in CLAUDE.md §14c: the reject-never-normalize bullet is **extended** to the
+service name (carrying the argument for rejecting `/` rather than splitting it), and **one new bullet**
+records the `rescue_from FileLayer::NotFound` reachability — a comment naming the wrong cause costs the
+next reader exactly what a stale open-list does.
+
+---
+
+## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
 
 **PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
 §12, amended in this branch per §15's close-out rule. Until now an addon author's reference *was*
@@ -196,13 +282,11 @@ The four browser tests drive a fixture, and the `generators` migration — the t
 
 Three more, recorded as known and deliberate so a later reader does not find them the hard way:
 
-- **`serviceName` is neither validated nor encoded, while `path` beside it is rigorously rejected**
-  (`addon_sdk.js:383,393`). `host.service.get("../../evil", "x")` builds a URL the browser normalizes
-  before sending, so `sidecar_url_for`'s guard is never asked — the same silent misroute
-  `encodePathSegments` and the new §14c reject-never-normalize bullet exist to prevent. The input is
-  addon-authored so the risk is low, but **the invariant as written does not hold for the first
-  segment of the same URL**. A follow-up, deliberately not widened during a documentation-only
-  review pass.
+- **~~`serviceName` is neither validated nor encoded, while `path` beside it is rigorously
+  rejected.~~ CLOSED by the entry above** (`claude/addon-sdk-service-name-guard`), which also
+  replaced this controller's false `rescue_from FileLayer::NotFound` comment. Left here rather than
+  deleted because the two entries are one arc and the follow-up is only legible beside what it
+  followed.
 - **Two-thirds of the SDK is unexercised by `bin/ci`.** The four browser tests cover the mount path,
   `capabilities()` and `files.save`. Nothing touches `state.list`, `service.*`, `files.pickFolder`,
   `files.url`, the uninitialised-host proxy, or the typed errors — and most pointedly
