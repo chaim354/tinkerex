@@ -1,5 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { chooseFolder } from "lib/file_chooser"
+import { initHost, teardownHost } from "@maker/addon-sdk"
 
 // Loads an addon bundle and hands it the host context. Addon-AGNOSTIC by construction: it never
 // names an addon, and the bundle's only contract is a default export with mount(element, context).
@@ -9,11 +10,26 @@ export default class extends Controller {
   static values = {
     entry: String, saveUrl: String, serviceUrl: String, statesUrl: String,
     folders: Array, defaultFolder: String, defaultFolderLabel: String,
-    childrenUrl: String, createUrl: String,
+    childrenUrl: String, createUrl: String, ctx: Object,
   }
 
   async connect() {
     try {
+      const chooser = (options = {}) => chooseFolder({
+        childrenUrl: this.childrenUrlValue,
+        createUrl: this.createUrlValue,
+        value: this.defaultFolderValue,
+        label: this.defaultFolderLabelValue,
+        ...options,
+      })
+      const csrfToken = document.querySelector("meta[name=csrf-token]")?.content
+
+      // INITIALIZED BEFORE THE BUNDLE IS IMPORTED, and the order is the contract: a bundle's
+      // top-level code runs at import time, so `host` must already be bound by then. The two
+      // members added here are the ones the server cannot serialize — a function, and a token
+      // that already lives in a meta tag and must not be duplicated into a second DOM node.
+      initHost({ ...this.ctxValue, chooseFolder: chooser, csrfToken })
+
       const module = await import(this.entryValue)
       await module.default.mount(this.mountTarget, {
         saveUrl: this.saveUrlValue,
@@ -44,17 +60,15 @@ export default class extends Controller {
         //
         // Absent on an older host, which is exactly why it is worth feature-detecting in the bundle
         // (`typeof ctx.chooseFolder === "function"`) rather than assuming.
-        chooseFolder: (options = {}) => chooseFolder({
-          childrenUrl: this.childrenUrlValue,
-          createUrl: this.createUrlValue,
-          value: this.defaultFolderValue,
-          label: this.defaultFolderLabelValue,
-          ...options,
-        }),
-        csrfToken: document.querySelector("meta[name=csrf-token]")?.content,
+        chooseFolder: chooser,
+        csrfToken,
       })
     } catch (e) {
       this.mountTarget.textContent = `This tool failed to load: ${e.message}`
     }
+  }
+
+  disconnect() {
+    teardownHost()
   }
 }
