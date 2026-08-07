@@ -269,6 +269,54 @@ mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styli
 
 ---
 
+## 6. Backup & restore
+
+```sh
+bin/backup-db share                              # → ~/tinkerex-backups/tinkerex-share-<stamp>.tar.gz
+bin/restore-db share <archive> --into rehearsal  # restore into a THROWAWAY volume; live untouched
+bin/restore-db share <archive>                   # the real thing (prompts; backs up first)
+```
+
+`share` is the default; `chunk` and `s3` take the same arguments. Both scripts talk to the running
+container, so **no deploy, no downtime for a backup** — `bin/restore-db` is the only one that stops
+anything, and only for the seconds it takes to swap the files in.
+
+**`docker cp`, `cp` and a raw volume tarball ALL PRODUCE A TORN DATABASE HERE.** These run in WAL
+mode (`PRAGMA journal_mode` → `wal`), so committed state is split between `production.sqlite3` and
+its `-wal` sidecar, and Puma + Solid Queue are writing throughout. A non-atomic copy of the pair
+still **opens** and mostly answers queries — the corruption surfaces later, on one row, with nothing
+to tie it back. `bin/backup-db` drives `sqlite3 .backup` (SQLite's online-backup API, defined
+against concurrent writers) instead, which is the entire reason the script exists rather than a
+one-line `scp`.
+
+**THE ARCHIVE CARRIES THE ACTIVE STORAGE BLOBS TOO, AND THAT IS NOT PADDING.**
+`config.active_storage.service = :local`, so every preview asset sits on the *same* volume under
+`/rails/storage/<xx>/<yy>/`. They are **not** rebuildable from a restored database:
+`Maker::Previews::MissingBackfill` skips any node that already HAS a preview row, so a DB-only
+restore leaves every row at `ready` pointing at a file that no longer exists — blank thumbnails
+across every surface, no error, no job, nothing to notice. Share's archive is ~34 MB for 1872 nodes
+and 1326 blobs; there is nothing to be gained by splitting them.
+
+Not in the archive, and not missing: the **library bytes**. On share they live on the NAS
+(`//192.168.1.146/3D Printing`) and on chunk in SeaweedFS. What this backs up is the **catalog** —
+nodes, projects, models, attachments, tags, print log, users — which is the part that only exists
+here.
+
+**REHEARSE THE RESTORE BEFORE YOU NEED IT.** `--into <suffix>` restores into `<volume>-<suffix>` and
+reads it back with the deployment's own image, so extraction, file ownership and the app's own view
+of the data are all exercised against real bytes while the live container keeps serving. Verified
+this way on share: four databases restored `rails:rails`, 1326 blob files, 1872 nodes readable. Drop
+the scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+
+Both scripts verify rather than assume — `PRAGMA integrity_check` on every snapshot **in the
+container before the transfer is paid for**, then again locally on what actually landed; and
+`bin/restore-db` checks the archive **before** it stops anything, because taking a deployment down
+and only then discovering the tarball is short is the one failure that ordering removes. It also
+runs `bin/backup-db` first, since restoring the wrong archive is an ordinary mistake and making it
+unrecoverable is a choice.
+
+---
+
 ## Migrating off the old on-box build
 
 The Unraid box was originally set up to build *on the VM* and serve from a local

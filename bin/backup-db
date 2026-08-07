@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Pull a consistent, OFF-BOX backup of one deployment's SQLite databases AND its Active Storage
+# blobs, from the live container, without stopping it.
+#
+#   bin/backup-db                 # share  (the backend in daily use)
+#   bin/backup-db chunk
+#   bin/backup-db s3
+#   BACKUP_DIR=/Volumes/x bin/backup-db share
+#
+# WHY NOT `docker cp` / `cp` / a volume tarball. These databases run in WAL mode (verify with
+# `PRAGMA journal_mode`), so the committed state is SPLIT between `production.sqlite3` and its
+# `-wal` sidecar. Copying the two non-atomically out from under a running Puma+SolidQueue yields
+# a torn database that still OPENS and mostly answers queries — the failure is silent and shows
+# up only on the row you needed. `sqlite3 .backup` drives SQLite's online-backup API instead,
+# which is defined against concurrent writers. That is the whole reason this script exists rather
+# than a one-line `scp`.
+#
+# WHY THE BLOBS TOO. `config.active_storage.service = :local` (production.rb), so every preview
+# asset lives on the SAME volume at /rails/storage/<xx>/<yy>/<key>. They are NOT rebuildable from
+# a restored database: `Maker::Previews::MissingBackfill` skips any node that already HAS a
+# preview row, so a DB-only restore leaves every row sitting at `ready` pointing at a file that
+# is gone, and nothing ever re-renders it. Blank thumbnails, no error, no job. The volume is
+# ~64 MB total — there is no reason to split them.
+#
+# The library BYTES are not in here and do not need to be: on the share backend they live on the
+# NAS at //192.168.1.146/3D Printing, which is the user's own storage. This backs up the CATALOG
+# (nodes, projects, models, attachments, tags, print log) that points at them.
+
+set -euo pipefail
+
+DEST="${1:-share}"
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+OUTDIR="${BACKUP_DIR:-$HOME/tinkerex-backups}"
+
+# Container name patterns, per docs/DEPLOY.md. Chunk is the base deployment, so its name is
+# `tinkerex-web-<sha>` — the `[0-9a-f]` is what stops that prefix from also matching the
+# `-share-`/`-s3-` containers running beside it on the same box.
+case "$DEST" in
+  chunk) FILTER='^tinkerex-web-[0-9a-f]' ;;
+  share) FILTER='^tinkerex-web-share-'   ;;
+  s3)    FILTER='^tinkerex-web-s3-'      ;;
+  *) echo "usage: bin/backup-db [chunk|share|s3]" >&2; exit 64 ;;
+esac
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE="$OUTDIR/tinkerex-$DEST-$STAMP.tar.gz"
+STAGING="/rails/storage/db-snapshot"   # inside the volume, so the snapshot and the blobs are one tar
+
+mkdir -p "$OUTDIR"
+
+# Always sweep the staging dir, including on a failed/interrupted transfer — a half-written
+# snapshot left in the volume would be picked up whole by the NEXT run's tar.
+cleanup() {
+  ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER') rm -rf '$STAGING'" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "==> $DEST on $HOST"
+
+# ---- 1. snapshot the databases, and verify them BEFORE spending the transfer -----------------
+ssh "$HOST" bash -s -- "$FILTER" "$STAGING" <<'REMOTE'
+set -euo pipefail
+filter=$1; staging=$2
+cid=$(docker ps -qf name="$filter" | head -1)
+[ -n "$cid" ] || { echo "no running container matching $filter" >&2; exit 1; }
+
+docker exec "$cid" sh -eu -c '
+  staging=$1
+  rm -rf "$staging"; mkdir -p "$staging"
+  for db in production production_cache production_queue production_cable; do
+    [ -f "/rails/storage/$db.sqlite3" ] || continue
+    sqlite3 "/rails/storage/$db.sqlite3" ".backup $staging/$db.sqlite3"
+    printf "    %-24s %s\n" "$db.sqlite3" "$(sqlite3 "$staging/$db.sqlite3" "PRAGMA integrity_check;" | head -1)"
+  done
+' _ "$staging"
+REMOTE
+
+# ---- 2. stream ONE archive: the snapshots + every Active Storage blob ------------------------
+# --anchored is load-bearing. Without it these patterns are matched against any trailing part of
+# a member name, so `production*.sqlite3*` would also exclude db-snapshot/production.sqlite3 —
+# i.e. the archive would silently contain the blobs and NO DATABASE AT ALL.
+#   ./production*.sqlite3*  the LIVE db files (+ -wal/-shm): superseded by the snapshot, and the
+#                           torn copy this script exists to avoid.
+#   ./backup-*              an older ad-hoc snapshot someone left in the volume; not ours to ship.
+echo "--> archiving"
+ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) \
+  tar -cz -C /rails/storage --anchored --exclude='./production*.sqlite3*' --exclude='./backup-*' ." \
+  > "$ARCHIVE"
+
+# ---- 3. verify what actually LANDED, not what we think we sent -------------------------------
+echo "--> verifying $ARCHIVE"
+WORK="$(mktemp -d)"; trap 'cleanup; rm -rf "$WORK"' EXIT
+tar -xzf "$ARCHIVE" -C "$WORK" ./db-snapshot/production.sqlite3
+PRIMARY="$WORK/db-snapshot/production.sqlite3"
+
+echo "    integrity_check          $(sqlite3 "$PRIMARY" 'PRAGMA integrity_check;' | head -1)"
+sqlite3 "$PRIMARY" <<'SQL' | sed 's/^/    /'
+.mode list
+.separator '  '
+SELECT 'users', count(*) FROM users
+UNION ALL SELECT 'nodes', count(*) FROM nodes
+UNION ALL SELECT 'maker_projects', count(*) FROM maker_projects
+UNION ALL SELECT 'maker_models', count(*) FROM maker_models
+UNION ALL SELECT 'maker_previews', count(*) FROM maker_previews
+UNION ALL SELECT 'blobs (rows)', count(*) FROM active_storage_blobs;
+SQL
+echo "    blobs (files)            $(tar -tzf "$ARCHIVE" | awk '!/\/$/ && !/^\.\/db-snapshot\//' | wc -l | tr -d ' ')"
+echo "    size                     $(du -h "$ARCHIVE" | cut -f1)"
+
+echo
+echo "==> $ARCHIVE"
+echo
+echo "Restore (stops the container, replaces the volume contents, starts it):"
+echo "  bin/restore-db $DEST $ARCHIVE"

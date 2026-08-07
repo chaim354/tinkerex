@@ -60,7 +60,65 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-06): each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
+## Latest (2026-08-06): a backup of the share deployment that has actually been restored (branch `claude/share-version-sqlite-98e3cc`)
+
+**The question that started it:** *"right now the share version uses sqlite?"* — then *"i want to
+backup that current db because i am actively using the share version while we develop and i dont
+want to lose my data if something breaks."*
+
+**Yes, and not only share.** `DATABASE_URL` is set nowhere in `config/deploy*.yml` or `.kamal/`, so
+`database.yml`'s production block takes the self-host arm on all three Unraid backends: primary plus
+the three Solid stores as separate SQLite files on each destination's own volume
+(`tinkerex_storage{,_share,_s3}`). Postgres is the managed/SaaS profile (§7) and nothing on the box
+uses it. `LIBRARY_BACKEND` and the DB adapter are independent knobs — "the share version" names the
+CIFS-mounted *library*, not the database.
+
+**What landed:** `bin/backup-db [chunk|share|s3]` and `bin/restore-db`, plus `docs/DEPLOY.md` §6.
+Both drive the *running* container, so a backup costs no deploy and no downtime.
+
+**`docker cp`/`cp`/a volume tarball all produce a TORN DATABASE, and it opens fine.** These run in
+WAL mode (`PRAGMA journal_mode` → `wal`, verified live), so committed state is split between
+`production.sqlite3` and its `-wal` while Puma and Solid Queue write throughout — on share the queue
+was carrying a **5 MB WAL** at the moment of measurement. A non-atomic copy of the pair still opens
+and mostly answers; the corruption surfaces later, on one row, with nothing to tie it back.
+`sqlite3 .backup` (the online-backup API, defined against concurrent writers) is the whole reason
+these are scripts rather than an `scp`.
+
+**THE ARCHIVE MUST CARRY THE ACTIVE STORAGE BLOBS, AND THE REASON IS NOT SIZE.**
+`config.active_storage.service = :local`, so preview assets sit on the *same* volume under
+`/rails/storage/<xx>/<yy>/`. They are **not** rebuildable from a restored database:
+`Maker::Previews::MissingBackfill` skips any node that already HAS a preview row, so a DB-only
+restore leaves all 1383 rows at `ready` pointing at files that no longer exist — blank thumbnails on
+every surface, no error, no job, nothing to notice. Same shape as the §14b staleness bug: the repair
+sweep declines to look at exactly the rows that are broken.
+
+**Two traps found by probing, not reading.**
+- **`tar --anchored` is load-bearing.** GNU tar matches `--exclude` patterns *unanchored* by default,
+  against any trailing part of a member name. The exclude that drops the live, torn `.sqlite3` files
+  therefore also matched the staged snapshot at `db-snapshot/production.sqlite3` — the archive would
+  have contained every blob and **no database at all**, at full plausible size.
+- **`ssh bash -s` already owns stdin**, so the tarball cannot also travel down it; the two race and
+  the script itself gets eaten. `bin/restore-db` `scp`s the archive over as a file first.
+
+**Verified by rehearsal, against real bytes.** `bin/restore-db share <archive> --into rehearsal`
+restores into a throwaway volume and reads it back with the deployment's own image, while the live
+container keeps serving: four databases `integrity_check ok` and owned `rails:rails`, **1326 blob
+files** (matching `active_storage_blobs` exactly), **1872 nodes** readable, no `db-snapshot/` left
+behind. Scratch volume dropped afterwards. First real backup:
+`~/tinkerex-backups/tinkerex-share-20260807T003955Z.tar.gz`, **34 MB** — 2 users, 1872 nodes,
+4 projects, 3 models, 1383 previews, 1326 blobs.
+
+**Not in the archive, and not missing:** the library bytes (share's NAS at
+`//192.168.1.146/3D Printing`; chunk's SeaweedFS). What this preserves is the **catalog** — the part
+that exists only in that volume.
+
+**Left open:** nothing schedules this. It is a command to run before anything risky, not a backup
+*system*, and `chunk`/`s3` are supported by the same scripts but have never been run. Retention is
+manual on purpose — a script that deletes old backups to save 34 MB is a bad trade.
+
+---
+
+## 2026-08-06: each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
 
 **The question that started it:** *"is there a way for me to access the unraid share version
 website through my tailscale network?"* Yes — and the obstacle was never the network. All three
