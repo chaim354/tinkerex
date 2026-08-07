@@ -7,8 +7,24 @@ module Maker
     # `available?` is retained from the frozen-hash design and still earns its place: an addon whose
     # source is unreachable, whose api_version we don't speak, or whose manifest is malformed greys
     # out rather than 500ing. One bad addon must never take /tools down.
-    Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout, :states_key) do
-      def available? = true # a registered addon is by definition fetchable; see Registry#manifests
+    Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout,
+                        :states_key, :version, :author, :license, :homepage, :permissions,
+                        :min_host, :shares_states_with) do
+      # NO LONGER HARDCODED TRUE. It was, for as long as a registered addon was by definition
+      # fetchable; `min_host` gives it a second, real answer — an addon can be perfectly fetchable
+      # and still ask for a host this deployment does not have. The gallery already had the
+      # unavailable branch waiting.
+      def available? = unavailable_reason.nil?
+
+      # A REASON, NOT A BOOLEAN, because the gallery previously hardcoded "Not configured on this
+      # deployment" as the only explanation there could be. A too-new addon greying out under that
+      # label would send an operator to check env vars that are fine.
+      def unavailable_reason
+        return unless min_host > Maker::Addons::Host::LEVEL
+
+        "Needs a newer version of this host (asks for level #{min_host}, this host is level " \
+          "#{Maker::Addons::Host::LEVEL})"
+      end
     end
 
     module Registry
@@ -63,7 +79,22 @@ module Maker
           # with. If that trust model ever widens — third-party addon sources, manifests we don't
           # author ourselves — this line stops being safe and needs a real constraint (e.g. the host
           # asserting states_key == key unless explicitly allow-listed), not a comment.
-          states_key: manifest["states_key"].presence || manifest["key"].to_s
+          states_key: manifest["states_key"].presence || manifest["key"].to_s,
+          # ALL OPTIONAL, ALL DEGRADING — the rule `layout` already follows. A manifest comes from a
+          # source this process does not control.
+          version: manifest["version"].presence&.to_s,
+          author: manifest["author"].presence&.to_s,
+          license: manifest["license"].presence&.to_s,
+          homepage: manifest["homepage"].presence&.to_s,
+          # Kept as an array of hashes rather than a richer object: the only consumers are a view and
+          # an operator reading a card. An entry without a `name` is dropped rather than coerced —
+          # coercion would invent a `reasoning` the author never wrote.
+          permissions: Array(manifest["permissions"]).select { |p| p.is_a?(Hash) && p["name"].present? },
+          # AN INTEGER OR NOTHING. `"2".to_i` is 2, which would silently honour a string a JSON
+          # manifest should not contain; refusing it leaves the addon available, which is the
+          # failure direction an operator can actually diagnose.
+          min_host: manifest["min_host"].is_a?(Integer) ? manifest["min_host"] : 0,
+          shares_states_with: Array(manifest["shares_states_with"]).map(&:to_s)
         )
       end
     end

@@ -136,6 +136,87 @@ module Maker
         Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
         assert_equal 1, Registry.all.size, "a transient outage must not grey addons out for the TTL"
       end
+
+      # The metadata keys are all OPTIONAL and all degrade. A manifest is fetched from a source this
+      # process does not control, so a malformed value must never take /tools down — the same rule
+      # `layout` already follows.
+      test "the metadata keys carry onto the Addon when the manifest declares them" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "version" => "2.1.0", "author" => "Chaim", "license" => "MIT",
+          "homepage" => "https://example.com/gen"
+        ) ])
+        addon = Registry.find("generators")
+        assert_equal "2.1.0", addon.version
+        assert_equal "Chaim", addon.author
+        assert_equal "MIT", addon.license
+        assert_equal "https://example.com/gen", addon.homepage
+      end
+
+      test "the metadata keys default to nil when the manifest omits them" do
+        addon = Registry.find("generators")
+        assert_nil addon.version
+        assert_nil addon.author
+        assert_nil addon.license
+        assert_nil addon.homepage
+      end
+
+      test "permissions carry onto the Addon as name/reasoning pairs" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "permissions" => [
+            { "name" => "library:write", "reasoning" => "to save your drawing" },
+            { "name" => "service:boxes" }
+          ]
+        ) ])
+        addon = Registry.find("generators")
+        assert_equal 2, addon.permissions.size
+        assert_equal "library:write", addon.permissions.first["name"]
+        assert_equal "to save your drawing", addon.permissions.first["reasoning"]
+        assert_nil addon.permissions.second["reasoning"]
+      end
+
+      # A MALFORMED ENTRY IS DROPPED, NOT RAISED ON, AND NOT RENDERED AS A BLANK ROW. A bare string
+      # is the likeliest authoring mistake (the key reads like a list of names), so it is worth
+      # naming: it is dropped rather than coerced, because coercing invents a `reasoning` the author
+      # never wrote and the card would then vouch for it.
+      test "permission entries that are not name-bearing hashes are dropped" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "permissions" => [ { "name" => "state" }, "library:write", { "reasoning" => "no name" }, nil ]
+        ) ])
+        assert_equal [ "state" ], Registry.find("generators").permissions.map { |p| p["name"] }
+      end
+
+      test "permissions defaults to [] when the manifest omits it" do
+        assert_equal [], Registry.find("generators").permissions
+      end
+
+      test "shares_states_with defaults to [] when the manifest omits it" do
+        assert_equal [], Registry.find("generators").shares_states_with
+      end
+
+      test "a manifest's declared shares_states_with carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "shares_states_with" => [ "boxes-next" ]
+        ) ])
+        assert_equal [ "boxes-next" ], Registry.find("generators").shares_states_with
+      end
+
+      test "min_host defaults to 0 when the manifest omits it" do
+        assert_equal 0, Registry.find("generators").min_host
+      end
+
+      # NON-INTEGER min_host DEGRADES TO NO FLOOR, WHICH IS THE SAFER DIRECTION. A typo that made an
+      # addon vanish from the gallery would read as "the deploy broke"; a typo that leaves it
+      # available reads as "the floor did not apply", which is what actually happened. `"2".to_i` is
+      # 2, so coercion would silently honour a value a JSON manifest should not contain.
+      test "a non-integer min_host is ignored rather than coerced" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => "2") ])
+        assert_equal 0, Registry.find("generators").min_host
+      end
+
+      test "an integer min_host carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => 2) ])
+        assert_equal 2, Registry.find("generators").min_host
+      end
     end
   end
 end
