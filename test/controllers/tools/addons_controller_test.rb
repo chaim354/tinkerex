@@ -163,6 +163,33 @@ module Tools
       assert ctx.dig("urls", "service").end_with?("/")
     end
 
+    # THE TWO REPRESENTATIONS MUST NOT DRIFT. Every value in the ctx blob also reaches the browser
+    # as a legacy data attribute, and both must keep answering the same thing for the life of
+    # api_version 1 — a bundle built against either one may be running against this host. Asserting
+    # each against a separately recomputed expectation cannot see them disagree with each other;
+    # reading both out of ONE rendered response is what can.
+    #
+    # NODEID NEEDS A NORMALISATION, NOT A COINCIDENCE: an HTML data attribute can only ever hold a
+    # string, so an absent default folder renders as "" there; the JSON side can and does say
+    # `null`. `.to_s` on the ctx side turns that `null` into "" to match — the HTML side has no
+    # third option to move toward instead. Both are read by their own consumer as "no folder / use
+    # the library root" (the legacy picker treats a blank `parent_node_id` the same as a missing
+    # one via `.presence`), so this is the two formats' own ceiling, not a bug being hidden.
+    test "the ctx blob and the legacy attributes it duplicates agree, in one render" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      mount = css_select("[data-controller=addon]").first
+      ctx = JSON.parse(mount["data-addon-ctx-value"])
+
+      assert_equal mount["data-addon-save-url-value"],             ctx.dig("urls", "save")
+      assert_equal mount["data-addon-states-url-value"],           ctx.dig("urls", "states")
+      assert_equal mount["data-addon-service-url-value"],          ctx.dig("urls", "service")
+      assert_equal mount["data-addon-children-url-value"],         ctx.dig("urls", "children")
+      assert_equal mount["data-addon-create-url-value"],           ctx.dig("urls", "create")
+      assert_equal mount["data-addon-default-folder-value"],       ctx.dig("defaultFolder", "nodeId").to_s
+      assert_equal mount["data-addon-default-folder-label-value"], ctx.dig("defaultFolder", "label")
+    end
+
     # THE COMPATIBILITY RULE, WITH TEETH (spec §10.1). The two repos deploy independently: a bundle
     # built against the old ctx may be running against a host built against the new one at any
     # moment. Dropping any of these is invisible to every other test in this suite and breaks

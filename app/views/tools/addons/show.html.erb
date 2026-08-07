@@ -21,7 +21,12 @@
     `${ctx.serviceUrl}${service}/${path}` — e.g. `${ctx.serviceUrl}boxes/generate`. It ends in "/"
     for exactly that reason (see `service_base_url` in Tools::AddonsController, which derives it from
     the real route rather than a hand-duplicated literal). `states-url` is a complete URL on its own
-    (GET it directly) — it has no per-call path to append, unlike `service-url`. %>
+    (GET it directly) — it has no per-call path to append, unlike `service-url`.
+
+    `data-addon-ctx-value` carries the SAME information as one parsed JSON blob — plus the host
+    level and capability map, which have no attribute of their own — built by `addon_ctx` in
+    Tools::AddonsController. It is an ADDITION, not a replacement: the per-attribute values below it
+    stay, because a bundle built against either shape may be running against this host. %>
 <div data-controller="addon"
      data-addon-ctx-value="<%= @ctx.to_json %>"
      data-addon-entry-value="<%= tools_addon_asset_path(@addon.key, @addon.entry) %>"
