@@ -1075,9 +1075,28 @@ class FilesController < ApplicationController
     crumbs
   end
 
+  # Extensions whose detail page offers the interactive Measure view (measure_controller.js).
+  #
+  # THE SET IS THE FORMATS A GEOMETRY PAYLOAD CAN BE BUILT FOR, and it is written out rather than
+  # derived from `Registry` — a renderer being registered says only that it makes a THUMBNAIL, and
+  # ten of them do exactly that. Asking `payload_revision` instead would be no better: every
+  # renderer answers it (via `Enqueue.revision_for`'s fallback), so the question it answers is not
+  # the one being asked. Pinned by a test that drives the real `render(..., kind: "geometry")` for
+  # each entry, so the list cannot claim a format the renderers do not actually measure.
+  MEASURABLE_EXTS = %w[lbrn lbrn2 mage dxf svg].freeze
+
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
-    return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
+    # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
+    # at rest — the Measure branch uses it as its own poster (see _measure.html.erb) — so this
+    # reorders which branch OWNS the page, not what the page displays when nothing is clicked.
+    #
+    # Measure SUPERSEDES the static preview the way :model3d does for meshes, and for the same
+    # reason: it is a button, not a replacement. The resting picture stays whatever the format's
+    # own render is (LightBurn's and MillMage's are in colour; ours are outlines).
+    return :measure if MEASURABLE_EXTS.include?(ext)
+
+    return :image if %w[png jpg jpeg gif webp bmp ico].include?(ext)
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
@@ -1087,12 +1106,7 @@ class FilesController < ApplicationController
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
     return :model3d if %w[stl 3mf obj].include?(ext)
-    # LightBurn -> the interactive Measure view (lbrnmeasure_controller.js), which supersedes the
-    # static thumbnail the way :model3d does for meshes. The thumbnail is still generated and is
-    # still what the page shows at rest — Measure is a button, not a replacement, because
-    # LightBurn's own embedded render is in colour and ours is black outlines.
-    return :lbrn if %w[lbrn lbrn2].include?(ext)
-    # A file we can render a server-side thumbnail for (dxf, step, stp, iges, igs, ...) but
+    # A file we can render a server-side thumbnail for (step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

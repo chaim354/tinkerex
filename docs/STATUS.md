@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-06 (**Each Unraid backend gets a second hostname, reachable over Tailscale**)
+**Updated:** 2026-08-07 (**Measure works on .mage, .dxf and .svg, not only LightBurn**)
 
 ## What this file is
 
@@ -60,7 +60,121 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-06): each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
+## Latest (2026-08-07): Measure stops being a LightBurn feature — .mage, .dxf and .svg too (branch `claude/measure-feature-mage-svg-dxf-0111cj`)
+
+**The ask:** *"i want to add the measure feature we just did from lbrn2 to mage files and svg and
+dxf."* The entry below shipped it for `.lbrn/.lbrn2`. This generalises it to the other three vector
+formats the library already thumbnails.
+
+**Shipped:** the **Measure** button now appears on `.mage`, `.dxf` and `.svg` file pages as well.
+Same surface, same interactions, same readout — `80 × 40 mm`, or `⌀10 mm` when the contour is round.
+
+**The seam turned out to be almost entirely server-side, and that is the result rather than a
+convenience.** `FilesController#geometry`, the `geometry` preview kind, `Enqueue`'s revision check
+and `measure_controller.js` were already format-agnostic: the client reads a wire contract — job
+box, shapes, colours — and branches on nothing. **Not one line of JavaScript changed for the three
+new formats.** What each needed was a traversal of its own file and a way to turn its numbers into
+millimetres.
+
+**`Maker::Previews::Geometry` — one payload definition, four traversals.** `LbrnGeometry` held the
+schema, the RDP thinning, the circularity test and the job box; copying it three times would have
+put four implementations of `simplify` and `diameter` in the tree, which is §14b's `LbrnMetadata`
+second-copy bug with two extra copies. A ⌀ that means one thing on a LightBurn file and another on
+a DXF is worse than no ⌀. Each format now supplies only a traversal and a colour policy.
+
+- **`.mage` was nearly free — and the reason exposed a live bug.** `Mage` already renders through
+  `Lbrn2`'s walker verbatim (the geometry dialect *is* LightBurn's), so the payload came for free.
+  But **a MillMage `<Shape>` carries `OpIndex`, not `CutIndex`** — measured on `real-export.mage`:
+  `CutIndex` uniq `[nil]`, `OpIndex` uniq `["0"]`. The thumbnail never noticed, because a MillMage
+  file has no `<CutSetting>` either, so a nil index and a real one both fall through to
+  `DEFAULT_STROKE` and draw the same black. The Measure view is where it surfaces: the layer key is
+  what groups shapes and keys the colour map, so **every `.mage` contour landed in one nameless
+  layer**. `Lbrn2.layer_index` now reads either.
+- **MillMage gets no colours, deliberately.** `LAYER_PALETTE` is defensible only because its values
+  were *recovered* from 58 real LightBurn exports. MillMage is a different application with its own
+  layer bar and no colour field in `<Operation>`, so painting OpIndex 2 in LightBurn's red would be
+  a claim nothing supports — the same mistake §14h names in the other direction. The client draws
+  black, which claims nothing.
+- **`.dxf` needed the traversal split out of the drawing.** `Dxf` built SVG strings straight from
+  entities, so there was no geometry to reuse. It now has `each_geometry`, and **`to_svg` consumes
+  it** — verified byte-identical to the previous implementation across four input shapes, which is
+  the evidence the refactor moved plumbing and not the picture. `CIRCLE`/`ARC` still emit exact SVG
+  primitives via a `curve` descriptor alongside the flattened points, the same "richer rendering of
+  the same points" contract `Lbrn2.each_geometry` uses for ellipses and bitmaps.
+- **`$INSUNITS` is where a DXF's numbers become physical**, and `0`/absent resolves to **mm** — a
+  choice, not a reading. A DXF from a maker tool routinely has no `HEADER` at all (`sample.dxf`
+  does not), and mm is the corpus. A file in inches with no header reads 25.4× small; nothing in
+  the format lets us know that. Colours come from the **`LAYER` table**, not the entity — an
+  entity's own code 62 is usually absent or `BYLAYER` — and a **negative table colour means the
+  layer is off**, so its geometry is neither drawn nor folded into the measured extent.
+- **`.svg` is the one leg with no shared traversal, and the entry says so rather than papering
+  over it.** An SVG thumbnail is rasterized by **resvg**, which we do not reimplement, so this
+  parser is necessarily a second independent reading of the file. The honest consequence: resvg
+  understands the whole format and `SvgGeometry` understands its geometry subset, so a file using
+  something outside it measures fewer shapes than the picture shows. `<text>` (needs font metrics),
+  `<use>` (needs href resolution) and clip paths are **not** parsed — each named in the module with
+  the reason. Refusing to measure SVG at all was the worse answer for the most common laser source
+  there is.
+- **`SvgPath` is its own module** because `d` is the densest part of the format and the part most
+  likely to be wrong in a way nothing notices — a mis-parsed path still draws *something*. Full
+  M/L/H/V/C/S/Q/T/A/Z, arc endpoint→centre conversion per SVG 1.1 F.6.5 including the
+  radius-growth correction, and **adaptive flattening bounded by a tolerance rather than a fixed
+  sample count** — a fixed count undersamples a large curve, whose bbox and diameter then both read
+  small, silently. Units resolve from `width`/`height` over the `viewBox`, falling back to **CSS px
+  at 96 dpi**, which is what makes a viewBox-only file measurable at all. `preserveAspectRatio`
+  `meet` uses **min(sx, sy)**, because taking them per-axis reports a stretch the renderer never
+  applies.
+
+**Two bugs found on the way, neither in scope, both on this feature's own path.**
+
+**`available?` gated the wrong thing.** It answers "is resvg on this box", because the *thumbnail*
+is a rasterized SVG — but the measure payload is Nokogiri and arithmetic and needs nothing external.
+A single gate marked a perfectly measurable `.svg`/`.dxf`/`.lbrn2` **`unsupported`**, while `.mage`
+— whose `available?` is unconditionally true — measured fine, making the feature silently
+format-dependent on exactly the boxes least likely to have the binary. `GeneratePreviewJob` now asks
+`available_for?(kind)`, defaulting to `available?` for the ten renderers that only make thumbnails.
+**This was observable, not theoretical: it is why two geometry tests failed on a rasterizer-less box
+before the fix and pass after.**
+
+**A 1-second regex timeout on every file with an embedded photo.** `BITMAP_DATA` validated the
+base64 of an inlined image — the attribute that is the reason `parse_document` needs `huge`, and
+routinely 10–25 MB — with `\A[A-Za-z0-9+/=\s]+\z`, against Rails' `Regexp.timeout` of **1.0 s**.
+Measured here: **0.467 s standalone and over the limit through the real Nokogiri path**, so it fell
+on either side depending on the machine. `Regexp::TimeoutError` *is* a `StandardError`, so
+`LbrnMetadata.parse`'s blanket rescue swallowed it and returned nil metadata, while `to_svg` and the
+Measure payload — which have no such rescue — would have failed the whole preview. Replaced with a
+`String#count` set: same semantics, no engine to time out, **45× faster on the same 11 MB (0.0104 s)**.
+Two pre-existing red tests went green.
+
+**A dead skip-list, deleted rather than kept as decoration.** `SvgGeometry` started with a `SKIPPED`
+list naming `defs`/`symbol`/`clipPath`/…; removing an entry from it left every test green, because
+the walk only ever recursed into an **allowlist** of containers. §14b records the skip-list blind
+spot as this repo's own recurring bug, four instances deep — an allowlist cannot have it, so the
+allowlist stayed and the constant went. Caught by mutation-checking, not by reading.
+
+**Measured.** Payload cost stays trivial on the new legs — `plate.dxf` 495 B gzipped for 2 shapes,
+`plate.svg` 447 B, `real-export.mage` 292 B. The renaming sweep: `lbrnmeasure_controller.js` →
+`measure_controller.js` and the `.lbrn-measure*`/`.lbrn-contour*` CSS → `.measure-*`, because the
+surface is no longer LightBurn's. The LightBurn *settings panel* classes (`.lbrn-layers`,
+`.lbrn-swatch`, …) are untouched — those really are LightBurn-specific.
+
+**Verification.** All three backend legs identical: **2107 runs, 7445 assertions**. System:
+**69 runs, 434 assertions, 0 failures**, run against a real headless Chrome. Style and Brakeman
+clean. **21 guards mutation-checked** — each broken, confirmed RED, restored — including the two
+that were false-greens on the first attempt: the `available_for?` test passed trivially on a box
+that *has* resvg until the rasterizer was stubbed absent, and the `defs` test was passing for a
+different reason than the guard it claimed to check. Both are the shape §15 names: an assertion that
+holds whether or not the code is right.
+
+**Not verified:** the 6 pre-existing failures in `Library::Scanner`'s unreadable-directory tests
+are **environment, not this branch** — identical on the merge-base, and they `chmod 000` a directory
+while the container runs as **root**, which reads it anyway. They pass on the macOS CI runner.
+
+Invariants: **CLAUDE.md §14h**.
+
+---
+
+## 2026-08-06: each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
 
 **The question that started it:** *"is there a way for me to access the unraid share version
 website through my tailscale network?"* Yes — and the obstacle was never the network. All three

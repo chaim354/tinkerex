@@ -1,0 +1,54 @@
+<%#
+  The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
+
+  Mirrors the 3D viewer's lazy pattern: nothing is fetched until the user clicks Measure, which
+  matters because the payload reaches 281 KB gzipped on the densest real files and most pages are
+  never measured.
+
+  ONE PARTIAL FOR ALL FOUR FORMATS, with only the POSTER differing (below). The controller is
+  format-agnostic — it reads a wire contract, not a file type — so a per-format partial would be
+  four copies of one surface differing in a single <img>, which is the shape §14d's five
+  `port_writable?` copies warn about.
+%>
+<div class="measure-view"
+     data-controller="measure"
+     data-measure-url-value="<%= geometry_file_path(@node.node_id) %>">
+  <div class="measure-stage" data-measure-target="stage"></div>
+  <div class="measure-bar">
+    <span class="measure-dims" data-measure-target="dims"></span>
+    <span class="measure-launch">
+      <button type="button" class="btn small" data-action="measure#load">Measure</button>
+    </span>
+    <span class="measure-actions">
+      <button type="button" class="btn small ghost" data-action="measure#reset">Reset view</button>
+      <button type="button" class="btn small ghost" aria-label="Return to image"
+              data-action="measure#showPoster">✕ Image</button>
+    </span>
+  </div>
+  <div class="measure-fallback" data-measure-target="fallback">
+    <%#
+      THE POSTER: what the page shows at rest, before Measure is clicked, and what ✕ Image
+      returns to.
+
+      AN SVG IS ITS OWN POSTER — served from the blob endpoint into an <img>, exactly as the
+      :image branch does. That is NOT a relaxation of the rule that this app never inlines user
+      SVG (§15): an <img> src is a replaced element, so scripts in the document do not run and it
+      cannot reach this page's DOM. Inlining the markup is what is forbidden, and nothing here
+      does that — the Measure drawing itself is built from parsed coordinates, never from the
+      file's own markup.
+
+      Every other format posts its server-rendered thumbnail, reproducing ALL THREE states the
+      :thumbnail branch handles, because these extensions no longer reach it.
+    %>
+    <% if File.extname(@node.name).downcase == ".svg" %>
+      <img src="<%= blob_file_path(@node.node_id) %>" alt="<%= @node.name %>" class="preview-image">
+    <% elsif @thumbnail&.status == "ready" && @thumbnail.asset.attached? %>
+      <img src="<%= url_for(@thumbnail.asset) %>" alt="Preview of <%= @node.name %>" class="preview-image">
+    <% elsif %w[pending processing].include?(@thumbnail&.status) %>
+      <p class="muted">Generating preview…</p>
+    <% else %>
+      <p class="muted">No inline preview for this file.</p>
+      <%= link_to "Download #{@node.name}", blob_file_path(@node.node_id, download: 1), class: "btn" %>
+    <% end %>
+  </div>
+</div>

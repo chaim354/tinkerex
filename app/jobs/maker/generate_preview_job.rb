@@ -86,7 +86,7 @@ module Maker
 
         ext = File.extname(name.to_s).downcase.delete_prefix(".")
         raise Unsupported, "no preview renderer for .#{ext}" if renderer.nil?
-        raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless renderer.available?
+        raise Unsupported, "renderer toolchain unavailable for .#{ext}" unless available_for?(renderer, preview.kind)
         refuse_if_oversized!(node, ext)
 
         bytes  = Maker::FileBytes.read(preview.user, node_id: preview.node_id, version_id: preview.version_id)
@@ -155,6 +155,25 @@ module Maker
       yield
     rescue ActiveRecord::RecordNotFound
       nil # the row was deleted mid-render; nothing to write and nothing wrong
+    end
+
+    # IS THIS RENDERER ABLE TO BUILD **THIS KIND** ON THIS BOX?
+    #
+    # `available?` asks about the TOOLCHAIN, and for the 2D vector formats that toolchain is resvg
+    # — because their THUMBNAIL is a rasterized SVG. The Measure payload from the same renderers is
+    # Nokogiri and arithmetic and needs nothing external, so a single `available?` gate marks a
+    # perfectly measurable .svg/.dxf/.lbrn2 `unsupported` on any box without the rasterizer. That
+    # reads to a user as "we cannot handle this file", which is false, and it would have made the
+    # measure feature silently backend-dependent: `Mage.available?` is unconditionally true, so
+    # .mage would measure on such a box while the other three did not.
+    #
+    # `respond_to?` WITH A FALLBACK TO `available?`, the same shape `Enqueue.revision_for` already
+    # uses for `payload_revision` — so the ten renderers that produce only a thumbnail are
+    # untouched and the registry's published contract (available?/render/EXTENSIONS) still holds.
+    def available_for?(renderer, kind)
+      return renderer.available_for?(kind) if renderer.respond_to?(:available_for?)
+
+      renderer.available?
     end
 
     # Renderers share a `render(bytes, size:)` contract; some (e.g. Mesh/F3D) also accept

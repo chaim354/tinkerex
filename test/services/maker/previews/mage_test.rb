@@ -58,6 +58,68 @@ module Maker
           assert_equal 2, meta["shape_count"]
         end
 
+        # --- Measure ------------------------------------------------------------------------
+
+        test "renders a geometry payload for the Measure view" do
+          result = Maker::Previews::Mage.render(@real, kind: "geometry")
+          payload = JSON.parse(result[:bytes])
+
+          assert_equal "application/json", result[:content_type]
+          assert_equal Maker::Previews::Geometry::SCHEMA_VERSION, payload["v"]
+          assert_equal 2, payload["shapes"].length
+          assert_in_delta 20.0, payload["shapes"].last["d"], 0.05, "the fixture's circle must measure"
+        end
+
+        # THE GUARD THAT TIES THE PAYLOAD TO THE PANEL. Both read the SAME walker, so the Measure
+        # view and the CNC panel cannot report different sizes — §14b's LbrnMetadata second-copy
+        # bug is the precedent. job_size rounds to 1dp and the payload carries 2, so round ONCE
+        # then demand equality; a tolerance band would let a real divergence hide inside it.
+        test "the payload's bboxes union to exactly the reported job size" do
+          expected = Maker::Previews::MageMetadata.parse(@real)["job"]
+          boxes = JSON.parse(Maker::Previews::Mage.render(@real, kind: "geometry")[:bytes])["shapes"]
+                      .map { |s| s["b"] }
+
+          w = boxes.map { |b| b[2] }.max - boxes.map { |b| b[0] }.min
+          h = boxes.map { |b| b[3] }.max - boxes.map { |b| b[1] }.min
+          assert_equal expected["width"],  w.round(1)
+          assert_equal expected["height"], h.round(1)
+        end
+
+        # A MillMage Shape carries `OpIndex`, NOT `CutIndex` — measured on this fixture:
+        # CutIndex uniq [nil], OpIndex uniq ["0"]. The thumbnail never noticed, because a
+        # MillMage file has no <CutSetting> either, so both a nil and a real index fall through
+        # to DEFAULT_STROKE and draw the same black. The Measure view is where it surfaces: the
+        # layer key groups shapes and keys the colour map, so every contour landed in one
+        # nameless layer.
+        test "a shape's layer comes from OpIndex, which is where MillMage records it" do
+          payload = JSON.parse(Maker::Previews::Mage.render(@real, kind: "geometry")[:bytes])
+
+          assert_equal [ "0" ], payload["shapes"].map { |s| s["c"] }.uniq
+          assert_not_includes payload["shapes"].map { |s| s["c"] }, nil
+        end
+
+        # MILLMAGE GETS NO COLOURS, DELIBERATELY. LightBurn's LAYER_PALETTE was recovered from
+        # the embedded thumbnails of 58 real LightBurn exports; MillMage is a different
+        # application with its own layer bar, and its <Operation> elements carry no colour field.
+        # Painting OpIndex 2 in LightBurn's red would be a claim about MillMage that nothing
+        # supports — the same mistake §14h names in the other direction, where a recoloured
+        # LightBurn layer gets no name because "Blue" beside a green swatch contradicts itself.
+        # The client falls back to black, which claims nothing.
+        test "MillMage layers borrow no colours from LightBurn's palette" do
+          payload = JSON.parse(Maker::Previews::Mage.render(@real, kind: "geometry")[:bytes])
+
+          assert_equal({}, payload["colors"])
+          assert Maker::Previews::Lbrn2.layer_color("0"),
+                 "LightBurn DOES define a colour for this index — so an empty map is a refusal, not an absence"
+        end
+
+        test "geometry and thumbnail revisions move independently" do
+          assert_equal Maker::Previews::LbrnGeometry::PAYLOAD_REVISION,
+                       Maker::Previews::Mage.payload_revision("geometry")
+          assert_equal Maker::Previews::Mage::THUMBNAIL_REVISION,
+                       Maker::Previews::Mage.payload_revision("thumbnail")
+        end
+
         test "reads the project header" do
           meta = Maker::Previews::MageMetadata.parse(@real)
           assert_equal "0.8.01", meta["app_version"]

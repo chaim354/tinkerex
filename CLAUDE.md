@@ -1018,10 +1018,85 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
   from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
 
-### 14h. LightBurn shape measurement
+### 14h. Shape measurement (the Measure view)
 
+> **FOUR FORMATS, ONE PAYLOAD.** `.lbrn/.lbrn2`, `.mage`, `.dxf` and `.svg` all measure, through
+> `Maker::Previews::Geometry` — which owns the wire shape, the thinning, the circularity test and
+> the job box. A format supplies **a traversal and a colour policy, nothing else**. Most rules
+> below were written for LightBurn and now bind on all four; the ones that are format-specific say
+> so. `measure_controller.js` branches on NO file type — a fifth format is a server-side traversal
+> and not a line of JavaScript, and it should stay that way.
+
+- **A CHANGE IN `Geometry` MUST BUMP EVERY FORMAT'S `PAYLOAD_REVISION`, NOT ONE.** Each format
+  declares its own and `Enqueue` compares it per row, so a fix to the shared `simplify` that bumps
+  only `LbrnGeometry` leaves every already-measured `.dxf` and `.svg` serving the old algorithm
+  **forever** — a finished design's content never changes. That is exactly how four LightBurn files
+  kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
+  and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
+  format cannot be added without appearing there.
+- **`available?` IS ABOUT THE THUMBNAIL, `available_for?(kind)` IS WHAT THE JOB ASKS.** The 2D
+  vector renderers gate `available?` on **resvg**, because their thumbnail is a rasterized SVG; the
+  measure payload is Nokogiri and arithmetic and needs nothing external. One gate marked a
+  perfectly measurable `.svg`/`.dxf`/`.lbrn2` **`unsupported`** on a box without the binary, while
+  `.mage` (unconditionally `available?`) measured fine — the feature silently format-dependent on
+  exactly the boxes least likely to have it. A test asking `available_for?("geometry")` on a box
+  that HAS resvg passes however it is implemented; **stub the rasterizer absent or it proves
+  nothing**.
+- **A MillMage `<Shape>` CARRIES `OpIndex`, A LIGHTBURN ONE `CutIndex`** — `Lbrn2.layer_index`
+  reads either, and the `||` is unambiguous because no file writes both. The thumbnail cannot see
+  the difference (a MillMage file has no `<CutSetting>`, so a nil index and a real one both fall
+  through to `DEFAULT_STROKE` and draw the same black), so this surfaced only in the payload, where
+  the layer key groups shapes and keys the colour map: **every `.mage` contour landed in one
+  nameless layer**.
+- **MILLMAGE LAYERS GET NO COLOURS, AND THAT IS A REFUSAL RATHER THAN AN ABSENCE.** `LAYER_PALETTE`
+  is defensible only because its values were RECOVERED from 58 real LightBurn exports; MillMage is
+  a different application with its own layer bar and no colour field in `<Operation>`. Reusing
+  LightBurn's palette would be the mistake this section already names in the other direction (a
+  file-supplied colour gets no name, because "Blue" beside a green swatch contradicts itself).
+  Detected by ROOT ELEMENT, not extension, so a future MillMage emitting `<CutSetting>`-shaped
+  elements cannot silently acquire the palette.
+- **`Dxf.to_svg` AND THE DXF PAYLOAD SHARE `each_geometry`; THE SVG LEG CANNOT AND SAYS SO.** For
+  the three formats OUR parser draws, a second parse for measuring is §14b's `LbrnMetadata` bug —
+  so DXF's drawing was rewritten onto the traversal (verified byte-identical across four inputs).
+  An SVG thumbnail is rasterized by **resvg**, which we do not reimplement, so `SvgGeometry` is
+  necessarily an independent second reading: resvg understands the whole format, this parser its
+  geometry subset, and a file using something outside it measures fewer shapes than the picture
+  shows. `<text>`, `<use>` and clip paths are deliberately unparsed. Do not "fix" that asymmetry by
+  giving the other three a second parser.
+- **`$INSUNITS` IS WHERE A DXF BECOMES PHYSICAL, AND `0`/ABSENT MEANS MILLIMETRES BY CHOICE.** The
+  file genuinely does not say; mm is this corpus and it makes a header-less mm file correct, which
+  is the common case (`sample.dxf` has no HEADER at all). An inches file with no header reads 25.4×
+  small and nothing in the format lets us know. **Colours come from the `LAYER` TABLE, not the
+  entity** — an entity's own code 62 is usually absent or `BYLAYER`, so reading only the entity
+  leaves nearly every real file colourless — and a **NEGATIVE table colour means the layer is OFF**,
+  so its geometry is neither drawn nor folded into the measured extent.
+- **SVG IS ALREADY Y-DOWN; DXF IS Y-UP AND MUST BE FLIPPED.** Adding a flip to SVG "for symmetry
+  with Dxf" turns every SVG upside down, and it still draws a plausible picture. Only a positional
+  assertion catches either direction.
+- **AN SVG'S UNITS COME FROM `width`/`height` OVER THE `viewBox`, FALLING BACK TO CSS px AT 96 dpi**
+  — which is by definition, and is what makes a viewBox-only file measurable at all. `%`, `em` and
+  `ex` are **refused** rather than read as bare numbers. `preserveAspectRatio` `meet` uses
+  **min(sx, sy) on both axes**; per-axis reports a stretch the renderer never applies.
+- **CURVE FLATTENING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY A FIXED SAMPLE COUNT** — the same rule
+  as the thinning below, one stage earlier. A fixed count undersamples a large curve, and an
+  undersampled curve's chord sits INSIDE the true curve, so its bbox and its `d` both read small,
+  silently. `SvgPath` subdivides adaptively; `Dxf.arc_samples` bounds relative sagitta and **rounds
+  up to a multiple of 4** so a circle's axis extents are sampled exactly and `d` is the diameter
+  rather than a chord.
+- **`SvgGeometry` RECURSES INTO AN ALLOWLIST OF CONTAINERS, NOT PAST A SKIP-LIST.** It started as
+  the latter, naming `defs`/`symbol`/`clipPath`/…, and that list was **dead code** — nothing
+  recursed into them either way, so removing an entry left every test green. §14b records the
+  skip-list blind spot as this repo's recurring bug, four instances deep; an allowlist excludes a
+  template element the day it is invented, with nobody remembering to add it.
+- **`BITMAP_ALPHABET` IS A `String#count` SET, NOT A REGEX, AND THAT IS A FIX NOT A STYLE CHOICE.**
+  The inlined-photo attribute is routinely 10–25 MB and Rails sets `Regexp.timeout` to **1.0 s**;
+  the old `%r{\A[A-Za-z0-9+/=\s]+\z}` measured **0.467 s standalone and over the limit through the
+  real Nokogiri path**, so it failed by machine speed. `Regexp::TimeoutError` **is** a
+  `StandardError`, so `LbrnMetadata.parse`'s blanket rescue swallowed it into nil metadata while
+  `to_svg` and the payload — which have no rescue — would have failed the whole preview. `count` is
+  45× faster and has no engine to time out; the `+`'s non-empty requirement moved to the caller.
 - **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; THINNING IS DRAWING-ONLY.**
-  `LbrnGeometry` simplifies contours to keep the payload small (the worst real file drops
+  `Geometry` simplifies contours to keep the payload small (the worst real file drops
   728 KB → 200 KB gzipped) and computes `b` and `d` **before** thinning. Measure after thinning and
   every curve under-reports, silently, while every "does it draw" test stays green. `d` is the
   sharper case: a 0.2 mm hole thins to 9 points, below `MIN_CIRCLE_POINTS`, so measuring after
@@ -1150,10 +1225,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   the layers a file uses, rather than the client looking indices up in a copy — §14d's third
   extension→role table is the precedent for what a second copy does. It also means a file that DOES
   override a layer's colour is honoured without the client knowing that is possible.
-- **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.lbrn-contour` MUST
+- **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.measure-contour` MUST
   NOT DECLARE A STROKE.** Presentation attributes sit BELOW every CSS rule, which is exactly what
   lets `--hover`/`--selected` recolour a contour. Set it inline instead and selection silently stops
-  changing colour (only width moves); give `.lbrn-contour` a stroke and every layer flattens to one
+  changing colour (only width moves); give `.measure-contour` a stroke and every layer flattens to one
   colour. Both directions are mutation-checked, and both need the COMPUTED style asserted — reading
   the attribute reports what we wrote even when a rule outranks it.
 - **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a

@@ -1,0 +1,172 @@
+require "application_system_test_case"
+
+# The Measure view on the formats that are NOT LightBurn: .mage, .dxf and .svg.
+#
+# WHY A SECOND SYSTEM FILE RATHER THAN MORE CASES IN lbrn_measure_test.rb. That file's whole
+# design is one fixture pair chosen to make paint order and diameter-vs-bbox observable, and its
+# setup indexes exactly those two files. This one asks a different question — does a format OTHER
+# than the one the view was built for reach the browser and measure correctly — and answering it
+# needs its own fixtures. The hit-testing, panning and selection behaviour is NOT re-tested here;
+# it lives in measure_controller.js, is format-agnostic by construction, and is already covered.
+#
+# SHARE BACKEND, ASSIGNED DIRECTLY, for the reason lbrn_measure_test.rb documents at length: the
+# geometry job must read REAL BYTES back through the port, and a tmpdir plus one scan is the
+# cheapest way to get there. `FileLayer.reset!` in teardown is load-bearing, not decoration — a
+# direct assignment does not set @file_layer_backend_pinned, so test_helper's teardown will not
+# clean up after it and a Share adapter pointing at a deleted tmpdir would leak into the next test
+# in this forked worker. This is not a backend-coverage test and must not become one.
+class MeasureFormatsTest < ApplicationSystemTestCase
+  # Each fixture is a plate with a round feature, sized so the two readouts are DIFFERENT numbers —
+  # a view that reported the job box for everything, or the same shape twice, could not pass.
+  #
+  #   plate.dxf   80 x 40 mm plate (LWPOLYLINE, layer Cut) + a 10 mm hole (CIRCLE, layer Engrave)
+  #   plate.svg   the same sizes in a 1:1 mm document, as a <rect> and a <circle>
+  #   real-export.mage  100 x 60 job: an open toolpath and a 20 mm circle
+  FIXTURES = %w[plate.dxf plate.svg real-export.mage].freeze
+
+  HOLE_READOUT  = "⌀10 mm".freeze
+  PLATE_READOUT = "80 × 40 mm".freeze
+  MAGE_READOUT  = "⌀20 mm".freeze
+
+  setup do
+    @root = Pathname.new(Dir.mktmpdir("measure-formats"))
+    # The fixtures land BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
+    # root as an unmounted mount point, and sign_in_as ends on /files, which renders through the port.
+    FIXTURES.each do |f|
+      File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
+    end
+    FileLayer.current = FileLayer::Share.new(root: @root.to_s)
+
+    @user = sign_in_as("measure-formats@example.com")
+    Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+    @nodes = FIXTURES.to_h { |f| [ f, @user.nodes.find_by!(storage_path: f).node_id ] }
+    FIXTURES.each { |f| render_geometry!(@nodes[f], f) }
+  end
+
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
+  end
+
+  # THE HEADLINE: a DXF's numbers reach the browser as MILLIMETRES. The plate is 80 x 40 in the
+  # file's own units with $INSUNITS=4, so a scale bug reports a plausible-looking wrong number
+  # rather than failing — which is why the assertion is on the literal size, not on "some text".
+  test "a dxf measures its plate and its hole in mm" do
+    open_measure_view("plate.dxf")
+
+    click_plate_away_from_the_hole
+    assert_selector ".measure-dims", text: PLATE_READOUT
+
+    # The hole sits at the plate's centre, so the stage's own centre is where the two overlap —
+    # and paint order must hand it to the smaller shape.
+    stage_svg.click
+    assert_selector ".measure-dims", text: HOLE_READOUT
+  end
+
+  test "an svg measures the same shapes at the same sizes" do
+    open_measure_view("plate.svg")
+
+    click_plate_away_from_the_hole
+    assert_selector ".measure-dims", text: PLATE_READOUT
+
+    stage_svg.click
+    assert_selector ".measure-dims", text: HOLE_READOUT
+  end
+
+  test "a mage file measures through the shared LightBurn walker" do
+    open_measure_view("real-export.mage")
+
+    contour_with_min_x(40.0).click
+    assert_selector ".measure-dims", text: MAGE_READOUT
+  end
+
+  # A DXF LAYER'S COLOUR REACHES THE DRAWING, from the file's own LAYER table rather than a
+  # client-side copy. Asserted on the COMPUTED style: reading the attribute reports what we wrote
+  # even when a CSS rule outranks it, which is the failure mode `.measure-contour` declaring a
+  # stroke would produce.
+  test "a dxf layer's own colour reaches the drawing" do
+    open_measure_view("plate.dxf")
+
+    plate = contour_with_min_x(0.0)
+    hole = contour_with_min_x(35.0)
+    assert_equal "rgb(255, 0, 0)", plate.style("stroke")["stroke"], "layer Cut is ACI 1 (red)"
+    assert_equal "rgb(0, 0, 255)", hole.style("stroke")["stroke"], "layer Engrave is ACI 5 (blue)"
+  end
+
+  # AN SVG'S POSTER IS THE FILE ITSELF, and the Measure view still supersedes it on click. This is
+  # the one measurable format the browser can display raw, so it is the one place the poster is
+  # not a server-rendered thumbnail.
+  test "an svg posters itself and still opens the measure view" do
+    visit file_path(@nodes["plate.svg"])
+
+    assert_selector ".measure-fallback img"
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+    assert_no_selector ".measure-fallback img", visible: true
+  end
+
+  # THE BROWSER IS THE ONLY THING THAT KNOWS. A payload the client cannot read, a CSP that drops a
+  # directive, an exception mid-draw — none is visible from a request test, and all of them leave
+  # a SEVERE line in the console.
+  test "every format draws without logging a console error" do
+    FIXTURES.each do |f|
+      open_measure_view(f)
+      assert_selector "svg .measure-contour", minimum: 1, wait: 5
+
+      severe = page.driver.browser.logs.get(:browser).select { |l| l.level == "SEVERE" }
+      assert_empty severe.map(&:message), "#{f} logged a console error while drawing"
+    end
+  end
+
+  private
+
+    # The geometry preview, rendered through the REAL renderer against the REAL fixture bytes, in
+    # this process rather than by the job runner — see lbrn_measure_test.rb for why `perform_now`
+    # rather than `perform_enqueued_jobs`.
+    def render_geometry!(node_id, filename)
+      token = FileLayer.current.stat(@user, node_id: node_id).content_token
+      preview = Maker::Previews::Enqueue.call(user: @user, node_id: node_id, name: filename,
+                                              version_id: token, kind: "geometry")
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: filename)
+      assert_equal "ready", preview.reload.status, "#{filename}: the geometry payload must be ready"
+    end
+
+    # Scoped to the measure stage: the page carries a dozen other <svg> icons, and a bare
+    # find("svg") is ambiguous.
+    def stage_svg = find(".measure-stage svg")
+
+    # 30% OF THE ELEMENT'S WIDTH RIGHT OF CENTRE — computed from the fixtures, not guessed, the
+    # same way lbrn_measure_test's "still selectable away from the hole" does it.
+    #
+    # Both plate fixtures are an 80 x 40 job, so `draw` pads by max(w,h)*0.02 = 1.6 and the viewBox
+    # is 83.2 x 43.2 in a SQUARE stage. With `meet` the horizontal axis is the binding one
+    # (83.2 > 43.2), so 1 mm is width/83.2 px and the element's centre is the job's centre — which
+    # is exactly where the hole is. The plate reaches +-40 mm from there (+-0.48 of the width) and
+    # the hole only +-5 mm (+-0.06), so 0.30 is comfortably inside the plate and clear of the hole.
+    def click_plate_away_from_the_hole
+      svg = stage_svg
+      svg.click(x: (svg.native.size.width * 0.30).to_i, y: 0)
+    end
+
+    def open_measure_view(fixture)
+      visit file_path(@nodes.fetch(fixture))
+      click_on "Measure"
+      # The --ready class is what reveals the stage and hides the poster; without waiting for it
+      # the clicks below race the fetch and land on a display:none SVG.
+      assert_selector ".measure-view--ready"
+    end
+
+    # DOCUMENT ORDER CANNOT IDENTIFY A CONTOUR — `draw` appends in DESCENDING bbox-area order, so
+    # the order is a property of the drawing rather than of the file. The minimum x of the rendered
+    # `points` attribute names each shape regardless of ordering, the same way lbrn_measure_test
+    # does it.
+    def contour_with_min_x(expected)
+      match = all("svg .measure-contour").find { |c| (min_x(c) - expected).abs < 0.5 }
+      assert match, "no contour whose points start at x=#{expected} — the fixture or the draw changed"
+      match
+    end
+
+    def min_x(contour)
+      contour[:points].to_s.split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min
+    end
+end
