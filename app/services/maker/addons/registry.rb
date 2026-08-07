@@ -115,15 +115,46 @@ module Maker
       # on an addon that is not in the index at all — see the test for why the permissive reading is
       # the dangerous one.
       #
+      # THE TARGET MUST ALSO BUILD, NOT MERELY APPEAR IN THE RAW INDEX. Finding the entry by key is
+      # not enough: an entry `build` itself REJECTS — missing a REQUIRED key, or declaring an
+      # api_version this host doesn't speak — would still CONFER a grant on its behalf, and
+      # transitively too (A claims B, B claims C unreciprocated, C is malformed: A would still be
+      # admitted, pointed at a B that nobody agreed was legitimate). That entry never appears in
+      # `Registry.all`, so an operator has no surface on which to even see it, let alone audit what
+      # it granted — a grant from an entry nobody can see is a grant nobody can audit. `build` is
+      # pure and reads only the one manifest handed to it, so calling it again here costs nothing and
+      # introduces no ordering dependency on `index`.
+      #
+      # SKIP, NOT GREY OUT — DELIBERATELY THE OPPOSITE OF `min_host`'S CHOICE ABOVE, and the two do
+      # not generalise to each other. `min_host` leaves a too-new addon LISTED with an
+      # `unavailable_reason`, on the grounds that an addon which silently never appears reads as a
+      # broken deploy. That argument does not reach here, because `Tools::AddonsController` never
+      # gates on `available?` at all — its only consumers are the three lines in
+      # `app/views/tools/home/index.html.erb` that decide how a gallery card renders. A
+      # listed-but-unavailable addon is still `Registry.find`-able, `load_addon` still succeeds, and
+      # `#states`/`#create` still serve `@addon.states_key` exactly as if nothing were wrong. Greying
+      # this out would leave the hole wide open while LOOKING closed. A future editor harmonising the
+      # two decisions is the mistake to watch for — don't.
+      #
       # A refusal SKIPS the addon, exactly as an unsupported api_version does, rather than raising:
       # one bad manifest must never take /tools down. The consequence is worth stating because it is
       # silent — an addon that gets this wrong simply does not appear, and the operator's only clue
       # is the log line below.
+      #
+      # A↔B CYCLES ARE ADMITTED, NOT A BUG. Two addons each naming the other in both `states_key` AND
+      # `shares_states_with` are both admitted, and their saved-state namespaces SWAP rather than one
+      # inheriting the other. It cannot loop — this method reads the raw TARGET HASH directly and
+      # never calls itself (or `states_key_permitted?`) on the target — and it requires both manifest
+      # authors to deliberately opt in. Nothing downstream keys a foreign key, a route, or an
+      # authorization decision on `addon_key`; the one cosmetic consequence is
+      # `Tools::AddonParamsController#show` falling back to `state.addon_key` for a download filename
+      # when the state's own name parameterizes to blank.
       def states_key_permitted?(addon, index)
         return true if addon.states_key == addon.key
 
         target = index.find { |m| m.is_a?(Hash) && m["key"].to_s == addon.states_key }
-        permitted = Array(target && target["shares_states_with"]).map(&:to_s).include?(addon.key)
+        permitted = target && build(target) &&
+                    Array(target["shares_states_with"]).map(&:to_s).include?(addon.key)
         unless permitted
           Rails.logger.warn("addon #{addon.key.inspect} claims states_key #{addon.states_key.inspect} " \
                             "without a matching shares_states_with — skipping it")

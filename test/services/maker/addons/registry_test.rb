@@ -246,6 +246,19 @@ module Maker
         assert_equal "generators", Registry.find("generators").states_key
       end
 
+      # THE TARGET MUST ITSELF BUILD, NOT MERELY APPEAR IN THE RAW INDEX. "broken" is present in the
+      # index and even declares shares_states_with back — but its api_version is one `build` refuses,
+      # so it never appears in `Registry.all`. Honouring its claim anyway would grant "claimant"
+      # access on behalf of an addon no operator can see in the gallery to audit that grant against.
+      test "a states_key naming an addon present in the index but rejected by build is refused" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("key" => "claimant", "title" => "Claimant", "states_key" => "broken"),
+          MANIFEST.merge("key" => "broken", "title" => "Broken", "api_version" => "99",
+                         "shares_states_with" => [ "claimant" ])
+        ])
+        assert_nil Registry.find("claimant")
+      end
+
       test "min_host defaults to 0 when the manifest omits it" do
         assert_equal 0, Registry.find("generators").min_host
       end
