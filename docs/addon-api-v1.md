@@ -102,7 +102,18 @@ check the required keys and the exact string `"1"` first.
 | `pins` | object | Bare-specifier → asset path. Each entry is added to the page's import map, pointing at your addon's own asset, so `import geometry from "geometry"` resolves inside your bundle. Paths are relative to your addon's directory. |
 | `services` | array of strings | Sidecar services this addon may talk to through `host.service.*`. **The host will only proxy a service your manifest names** *and* for which the operator has configured a URL — both, never either. |
 | `layout` | string | `"wide"` opts the page into the wide container. Any other value — including a typo — is treated exactly like the key being absent. |
-| `states_key` | string | The scope your saved states are read and written under. Defaults to `key`. Setting it to another addon's key shares that addon's saved states, in both directions. |
+| `states_key` | string | The scope your saved states are read and written under. Defaults to `key`. Naming **another** addon's key requires that addon's written consent — see below. |
+| `shares_states_with` | array of strings | The addon keys you consent to sharing *your* saved states with. The other half of `states_key`; on its own it grants nothing. |
+| `min_host` | integer | The lowest `host.level` your bundle works against. A host below it lists your addon **greyed out with a reason** rather than running it. Must be a JSON integer. |
+| `permissions` | array of objects | What your addon asks for, as `{ "name": …, "reasoning": … }`. **Shown to the operator; not enforced** — see below. |
+| `version` | string | Your bundle's own version string. Read onto the addon, displayed nowhere yet. |
+| `author` | string | Who wrote it. Read, displayed nowhere yet. |
+| `license` | string | The bundle's licence. Read, displayed nowhere yet. |
+| `homepage` | string | A URL for the addon. Read, displayed nowhere yet. |
+
+The last four are parsed, carried on the addon the host builds, and **surfaced on no page today**.
+Write them anyway — they cost nothing, and they are what a future gallery will render — but do not
+expect to see them.
 
 ```json
 {
@@ -115,22 +126,122 @@ check the required keys and the exact string `"1"` first.
   "pins": { "geometry": "vendor/geometry.js" },
   "services": [ "boxes" ],
   "layout": "wide",
-  "states_key": "hole-jig"
+  "states_key": "hole-jig",
+  "min_host": 1,
+  "version": "1.2.0",
+  "author": "Your Name",
+  "license": "MIT",
+  "homepage": "https://example.com/hole-jig",
+  "permissions": [
+    { "name": "library:write", "reasoning": "Saves the drilling template into your library." },
+    { "name": "service:boxes", "reasoning": "Renders the template." }
+  ]
 }
 ```
 
 You do not need to pin `@maker/addon-sdk`. The host pins it for every addon page.
 
+#### `min_host` — a version floor, and a gallery decision
+
+`min_host` is compared against `host.level` (§3). If it is **higher** than this host's level, your
+addon is still built and still **listed** — greyed out, with a reason naming both numbers
+("asks for level 2, this host is level 1"). It is deliberately not hidden: an addon that silently
+never appears reads as a broken deploy, which sends an operator looking in the wrong place.
+
+Two things to know before you rely on it:
+
+- **A non-integer is ignored, not coerced.** `"min_host": "2"` — the string — is treated exactly
+  like the key being absent, so the floor you thought you set **does not apply** and your addon
+  stays available on a host that is too old. No warning, no log line. Write it as a bare JSON
+  number.
+- **Greying out is the gallery's decision, not a gate on your endpoints.** The host does not refuse
+  a request because of `min_host`: navigating straight to `/tools/<key>` still renders the addon
+  page, and `/tools/<key>/states` still answers. `min_host` keeps a user from *launching* your
+  addon out of the gallery; it is not a runtime kill switch. Feature-detect with
+  `host.capabilities()` (§4) for anything that must actually not run.
+
+#### `permissions` — declared and displayed, never enforced
+
+Each entry is an object with a **`name`** and an optional **`reasoning`**. The names your addon
+declares are rendered on its gallery card and, with the reasoning, on its own page.
+
+| Name | Rendered as |
+|---|---|
+| `library:read` | Read files from your library |
+| `library:write` | Write files to your library |
+| `state` | Save and reload its own settings |
+| `project:read` | See which project you are working in |
+| `service:<name>` | Call the `<name>` service |
+
+A name this host has never heard of is displayed **as you spelled it**, rather than being dropped —
+a card that silently understates what an addon asked for would be worse than one showing a
+developer-facing string.
+
+**An entry that is not an object with a non-empty `name` is dropped, silently.** The bare-string
+form — `"permissions": ["library:write"]` — is the easy mistake, and it does not error: the entry
+is discarded, and a manifest whose permissions are *all* bare strings renders no permission block
+at all, indistinguishable from omitting the key.
+
+**These names are their own vocabulary and are not the capability names in §4.** They overlap
+(`library:write` is in both) and they diverge on purpose: this list has `state` and `project:read`
+where the capability map has `state:list`, `state:crud` and `project:current`. Declaring a
+permission does not grant a capability, and a capability answered `true` does not require a
+declaration.
+
+> **Nothing on the server refuses a request because your manifest did or did not declare
+> something.** A declared permission is a statement of intent, shown to the operator at publish
+> time — which is the point, in a deployment where republishing a bundle *is* the deploy and Rails
+> is never rebuilt: the card is where scope drift becomes visible. It is **not** a sandbox, not an
+> allowlist, and not a thing to design a security argument around. See §4.
+
+#### `states_key` and `shares_states_with` — both sides, or neither
+
+By default your saved states live under your own `key`. `states_key` points them at a different
+scope — the reason it exists is a **successor** addon (`boxes-next`) that needs to keep reading and
+writing what its predecessor (`boxes`) saved.
+
+Claiming another addon's key **requires that addon to name you back**:
+
+```json
+[
+  { "key": "boxes",      "shares_states_with": [ "boxes-next" ], "…": "…" },
+  { "key": "boxes-next", "states_key": "boxes",                  "…": "…" }
+]
+```
+
+**If the claim is not reciprocated, your addon disappears from the gallery entirely.** Not greyed
+out — absent, exactly as if a required key were missing, with only a line in the server log to say
+why. Three cases all produce that same silence:
+
+- the target addon does not name you in `shares_states_with`;
+- the target addon **is not in the index at all** (a typo in the key — the permissive reading, "no
+  target, no harm", would let a typo quietly reserve a namespace and start colliding the day the
+  real addon shipped);
+- the target addon exists but is **itself invalid** — missing a required key, or declaring an
+  `api_version` this host does not speak. An entry that never appears in the gallery cannot confer
+  a grant on its own behalf.
+
+Setting `states_key` to your own key, or omitting it, is the ordinary case and is never checked.
+
+Two addons that each name the other in **both** keys are both admitted, and their state namespaces
+swap. That is legal and requires both authors to opt in.
+
+**This is not a runtime boundary between addons, and it never was.** Your bundle runs same-origin in
+the signed-in session and can `fetch("/tools/<other-key>/states")` directly — the host resolves
+whatever key is in the URL, with no `states_key` involved. What the mutual declaration stops is
+narrower and worth stating exactly: **a manifest can no longer, by declaration alone, redirect its
+own saves into another addon's namespace.** The real protection on that endpoint is, and remains,
+per-user scoping.
+
 ### Not yet accepted — coming in a later host level
 
 The design for this API reserves the keys below. **This host does not read any of them yet.**
 
-`version`, `author`, `license`, `homepage`, `min_host`, `permissions`, `collections`,
-`contributes`, `integrity`, `service_timeouts`, `shares_states_with`.
+`collections`, `contributes`, `integrity`, `service_timeouts`.
 
 **Unknown keys are ignored in silence.** The manifest reader takes only the keys it knows and never
-complains about the rest, so writing `"min_host": 3` today produces no warning, no log line and no
-refusal — it simply has no effect, and an addon that depends on one of these behaving will run
+complains about the rest, so writing `"integrity": {…}` today produces no warning, no log line and
+no refusal — it simply has no effect, and an addon that depends on one of these behaving will run
 against a host that ignores it. If you write them now, write them as forward-compatible decoration
 only, and gate real behaviour on `host.capabilities()` (§4) instead.
 
@@ -475,6 +586,35 @@ told apart. Test the value, not the key's presence:
 ```js
 if (caps["maker:read"]) { showInventoryPanel() }     // false today, true later, no code change
 ```
+
+### Capabilities gate what you can call. Declared permissions do not.
+
+These are two different things and it matters which one you are looking at:
+
+| | The capability map (this section) | `permissions` in your manifest (§2) |
+|---|---|---|
+| Where it lives | The host, one definition, served to every addon | Your own manifest |
+| What it does | The SDK refuses a call whose capability is `false`, before any request | Renders on your gallery card and your addon page |
+| Refuses a request? | Yes — `UnsupportedCapabilityError` | **No. Never.** |
+
+**A declared permission is displayed, not enforced.** Nothing on the server checks a manifest before
+answering a request, and nothing refuses one because a permission was not declared. Removing
+`library:write` from your manifest does not stop `host.files.save` from working, and adding
+`maker:read` does not make anything readable.
+
+Declaring is still worth doing, for a reason that is about the operator rather than about you: in
+this deployment **republishing a bundle *is* the deploy** — Rails is never rebuilt, there is no
+review step and no CI in between — so the gallery card is the one place where an addon that quietly
+starts asking for more becomes visible to the person running the server. That is the job the list
+does.
+
+What it is **not**: a sandbox, an allowlist, a capability grant, or a boundary between one addon and
+another. A bundle runs same-origin in the signed-in session, so it can already reach any host
+endpoint the user can, including another addon's `/tools/<key>/states` (§2). The boundaries that
+actually hold today are elsewhere — the same-origin sidecar proxy (a sidecar has no published port,
+so a browser cannot reach it directly), the rule that a manifest names a *service* and never a URL,
+`script_src 'self'`, the content-type allowlist on the proxy, and per-user scoping on every query.
+Do not build a security argument on top of the permission list.
 
 ---
 

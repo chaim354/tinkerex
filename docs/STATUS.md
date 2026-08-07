@@ -60,7 +60,148 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-07): an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
+## Latest (2026-08-07): the manifest learns to describe itself — and a `states_key` claim now needs the other addon's consent (branch `claude/addon-api-pr2-manifest-metadata`)
+
+**PR 2 of the Addon API v1 arc**, stacked on PR 1 (`claude/todo-list-review-6beccc`) — row 2 of
+`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §12, amended in this branch per §15's
+close-out rule. PR 1 gave the host a surface an addon can call; this one gives the **manifest** a
+vocabulary for describing what it is and what it wants, and turns the one thing a manifest could
+already grant itself into something the other side has to agree to.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Permissions`** — the permission vocabulary with one definition. Four table
+  entries (`library:read`, `library:write`, `state`, `project:read`), `service:<name>` by pattern,
+  and **an unknown name falls back to its own raw spelling** rather than rendering blank: a card
+  that silently understates what an addon asked for is worse than one showing a developer-facing
+  string. Deliberately **not** the same vocabulary as `Host::CAPABILITIES` — a capability is what
+  the host *can* do, a permission is what an addon *says* it wants, and they already diverge
+  (`state` / `project:read` here against `state:list` / `state:crud` / `project:current` there).
+- **Seven metadata keys parsed onto the `Addon`** — `version`, `author`, `license`, `homepage`,
+  `permissions`, `min_host`, `shares_states_with` — all optional, all **degrading** rather than
+  raising, which is the rule `layout` already followed: a manifest comes from a source this process
+  does not control. Two degradations are worth knowing because they are silent: a `permissions`
+  entry that is not a hash with a present `name` is **dropped** (the bare-string form
+  `["library:write"]` renders nothing at all), and a non-integer `min_host` is **ignored, not
+  coerced** — `"2".to_i` is 2, which would honour a value a JSON manifest should not contain, so
+  refusing it leaves the addon *available*, the failure direction an operator can diagnose.
+- **`min_host` makes `available?` a real answer.** It was hardcoded `true` for as long as
+  "registered" meant "fetchable". A too-new addon is still **built** and still **listed**, greyed
+  out, with `unavailable_reason` naming both levels — the gallery's old hardcoded "Not configured on
+  this deployment" pointed an operator at env vars that were fine. Skipping it instead is the easy
+  wrong answer: an addon that silently never appears reads as a broken deploy, not as a version
+  floor.
+- **The `states_key` mutual constraint — audit §2.1, closed.** `Registry.states_key_permitted?`
+  refuses a `states_key` pointing at another addon unless that addon names the claimant back in
+  `shares_states_with`. It lives in `Registry.all`, **not `build`**, because it is a question about a
+  **pair** of manifests and `build` is handed one. Three refusals, all skipping the addon rather
+  than raising: no reciprocation; a target **absent from the index** (the permissive "no target, no
+  harm" reading would let a typo reserve a namespace and collide the day the real addon shipped);
+  and — the reviewer's own counterexample — a target that is present but **itself rejected by
+  `build`**, since an entry that never appears in the gallery would otherwise confer a grant nobody
+  can audit, transitively.
+- **Permission display** on the gallery card (names, `to_sentence`) and on the addon's own page
+  (names plus each entry's optional `reasoning`).
+
+**Why the refusal SKIPS rather than greying out — the opposite choice from `min_host`, one method
+away.** `Tools::AddonsController` never gates on `available?` at all; its only consumers are three
+lines in `app/views/tools/home/index.html.erb`. So a listed-but-unavailable addon is still
+`Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key` from
+`#states` and `#create` — greying an unreciprocated claim out would **look closed while leaving the
+hole open**. The two decisions must not be harmonised, and both are now recorded in §14c saying so.
+
+**What audit §2.1 closes, exactly, and what it does not.** A manifest can no longer, **by
+declaration alone**, redirect its own saves and state reads into another addon's namespace. That is
+the whole of it. `states_key` was never an inter-addon *runtime* boundary and this does not make it
+one: a bundle runs same-origin in the authenticated session and can call
+`/tools/<other-key>/states` directly — the controller resolves whatever key is in the URL, no
+`states_key` involved. The audit's **other** §2.1 ("a malicious or compromised addon bundle owns the
+account") states that same fact inside its own evidence and **remains open**. A pre-existing comment
+in `#states` and its `routes.rb` counterpart claimed the `addon_key` scope was "the only thing
+standing between one addon's saves and another's"; that was false when written, and is now corrected
+to describe what it is — a data-scoping rule.
+
+**Closing the constraint broke four pre-existing tests, and that is the evidence it has teeth.**
+Three in `addons_controller_test.rb` and one in `registry_test.rb` were asserting the *old
+permissive behaviour* — a manifest unilaterally claiming another addon's `states_key` with nothing
+reciprocating — so `Registry.find` began returning nil and the three controller tests turned into
+404s. A constraint that could be added without a single existing assertion noticing would be a
+constraint over a case nothing exercised. The fix adds a **`RECIPROCATING_MANIFEST` beside**
+`MANIFEST` rather than editing `MANIFEST` itself, so the "FIXTURE_KEY declares no `states_key`
+anywhere in this suite" guarantee its comment makes stays true for that file's other 45 tests — and
+it was made in **its own commit (`da75f34`)**, out of the states_key task's assigned file scope, so
+the collateral stays isolated and revertible. The new constraint's own five tests were
+mutation-checked: reverting only the `&& build(target)` clause turned **exactly one** of them red
+while the other four stayed green.
+
+**Permissions are DISPLAYED, NOT ENFORCED — a deliberate scope decision, recorded because the spec
+said otherwise.** Spec §8.1 describes permissions as "checked server-side on every request"; what
+shipped is the display half, and §8.1 now carries an as-built marker pointing at §12 row 2's scope
+correction. Three reasons: the vocabulary is unfinished (`data:read:<addon>/<collection>` does not
+exist until PR 4, so a check written now is a check PR 4 redesigns); **`service:<name>` would be a
+second spelling of a check that already exists and already works** — `sidecar_url_for` refuses any
+service the manifest's `services` key does not name, and a `permissions` check over the same
+condition is §14a's one-condition-two-answers drift unless the two keys are reconciled first; and
+§8.1's own next paragraph already concedes the check is not a security boundary, since a Ring 1
+bundle runs same-origin and can call any endpoint the user can. A gate that *looks* like a boundary
+and is not is this repo's dominant failure shape. The honest interim is a card the operator reads at
+publish time — which is worth real money in a deployment where **republishing a bundle IS the
+deploy**, Rails is never rebuilt, and there is no review step in between: the card is the one place
+an addon that quietly starts asking for more becomes visible. `docs/addon-api-v1.md` §2 and §4 now
+say all of this in those words, twice, because §4 is where an author goes looking for the boundary.
+
+**The `assert_select` trap, recorded so the next person does not spend the same round on it.**
+`assert_select "[attr=?]", /regex/` **does not regex-match** — rails-dom-testing's
+`SubstitutionContext#matcher_for` interpolates a Regexp straight into the selector, so `[title=?]`
+with `/Needs a newer…/` compiles to `[title="(?-mix:Needs a newer…)"]`, an exact-equality CSS
+selector that can never match real text. Regex matching on an **attribute** needs the gem's own
+`:match('attr', ?)` pseudo-class; `[attr*=?]` with a plain String is the simpler alternative.
+(`text: /…/` is a different code path and does match — this is attributes only.) Verified directly
+against rails-dom-testing **2.3.0**: `[title=?]` finds 0 elements where `:match('title', ?)` finds
+1. It fails as a test that **can never go green** rather than as a false green — the better
+direction, but only once you know why. Now in §14e, beside the other testing lessons, because it is
+not an addon fact.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0**. The three backend legs report
+**identical** counts — **2206 runs, 7923 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **74 runs, 461 assertions, 0 failures** — unchanged, this PR
+adds no browser test. Against PR 1's measured 2181 runs / 7867 assertions, this branch adds **25
+Rails-leg tests** and 56 assertions, which matches the **25** `test` blocks the diff adds and the
+**0** it removes — the two counts cross-check rather than one being read off the other.
+
+**A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
+DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
+asserted that no published manifest declares any of the new keys, so nothing here is exercised
+against a real bundle. That is true of the seven **new** keys and **false of the constraint**:
+`chaim354/tinkerex-addons`, on `main` since `4862f48` (2026-08-03, *"boxes-next: declare
+`states_key: "boxes"` so the trial shares the legacy saved-box rail"*), publishes three addons, and
+`boxes-next` declares `states_key: "boxes"` while `boxes` declares **no `shares_states_with`**. That
+is exactly the unreciprocated claim `states_key_permitted?` now refuses — so deploying this branch
+**silently drops `boxes-next` from the gallery**, log line only, which is the failure mode §14c
+records as the price of skipping rather than greying out. The fix is one line **in the bundles
+repo** — `boxes` adds `"shares_states_with": ["boxes-next"]` — and it must land **before or with**
+the Rails deploy, not after. Deliberately not made here: that is a different repo, a different
+deploy, and publishing its image is its own release. **Do not deploy this branch until it is done.**
+
+**What this does NOT prove, stated plainly.** **No published manifest declares any of the seven new
+keys** (`version`, `author`, `license`, `homepage`, `permissions`, `min_host`,
+`shares_states_with`) — verified by parsing `addons/manifests.json` on the bundles repo's `main` —
+so the metadata half is exercised only by stubbed `Maker::Addons::Source` fixtures, never by a real
+bundle. Permissions are displayed and not enforced; `states_key` is not an inter-addon runtime
+boundary and this PR does not make it one. Nothing here has been deployed. The four purely
+descriptive keys are parsed onto the `Addon` and **rendered on no page at all** — documented as such
+rather than advertised.
+
+**Invariants recorded** in CLAUDE.md — six in §14c (the mutual `states_key` declaration and its
+valid-target requirement; skip-not-grey-out and why it is deliberately unlike `min_host`;
+`available?` no longer hardcoded and the gallery showing a reason; non-integer `min_host` ignored not
+coerced; displayed-not-enforced for permissions *and* for `states_key`; one definition for the
+permission vocabulary with a raw-name fallback) and **one in §14e** for the `assert_select` attribute
+trap, which belongs with the testing lessons rather than with the addons.
+
+---
+
+## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
 
 **PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
 §12, amended in this branch per §15's close-out rule. Until now an addon author's reference *was*
