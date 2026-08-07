@@ -217,6 +217,48 @@ the right-click menu's three entries with the correct blob URL, a task added wit
 events, `camera.up === [0,0,1]` with a 4×4×16 column standing upright and dims still reading
 "4 × 4 × 16 mm", and the rebuilt thumbnailer's own PNG of the same column.
 
+### Follow-up, same arc: the sweep that was supposed to fix the library reported zero
+
+Shipping revision 2 corrects every STL/3MF thumbnail **rendered from then on**, and self-heals an
+existing one the moment someone opens a page that draws it. A library nobody browses stays sideways.
+The obvious remedy — `rake previews:backfill_missing` — **did not work, and said so in the most
+misleading way available: "Enqueued 0."**
+
+`MissingBackfill`'s `seen` set was keyed on the **(node_id, version_id) pair**. A row built by an
+older renderer sits at the *current* content, so it satisfied that check and was skipped — while
+`FilesController#thumbnails_for` and `#current_thumbnail`, which do compare `renderer_revision`,
+treated the very same row as absent and re-enqueued it. **Two answers to one question, and the sweep
+held the wrong one.** That is this repo's recorded failure shape (§14a's five `port_writable?`
+copies, §14b's skip-list) in a new place: not a missing feature, a second implementation of a lookup
+that had already been fixed elsewhere.
+
+The fix is one column: `seen` now plucks and compares the **(node_id, version_id, renderer_revision)
+triple**, the same one the read path resolves on. The revision is asked of the RENDERER per node
+(`Enqueue.revision_for`), not held as a constant, because it depends on the file's own extension —
+the same reason `thumbnails_for` filters in Ruby rather than SQL.
+
+Two details that are not decoration:
+
+- **A name nothing renders is skipped in the sweep, not left to `Enqueue`'s nil return.**
+  `revision_for_name` answers `BASE_REVISION` for one, so leaving it would mark every `.xyzzy` in
+  the library stale on every run — a dry-run number that never reaches zero on a library where
+  nothing is wrong. Mutation-checked.
+- **`dry_run:` was added because this sweep can now cost a full-library re-render.** Before the
+  revision check it only ever found a backlog someone was already missing; after it, a bump makes
+  every file of that format eligible at once. Deliberately **not** capped the way
+  `ProjectIntake::MAX_MOVES` is — there a cap bounds unattended churn, here doing all of them IS the
+  task, so a cap would guard against success. The report is asserted to equal what a real run
+  enqueues, because a number that does not match is worse than no number when it is what an operator
+  decides on.
+
+Scope held: `kind` stays `thumbnail`. Geometry payloads carry their own revisions but are built on
+demand by a polling client, so sweeping them would render measurement data for every measurable file
+whether or not anyone measures it.
+
+Mutation checks: restoring the pair key reddens the older-renderer and idempotence tests; dropping
+the renderer skip reddens the non-renderable one. Suite **2177 runs / 7811 assertions**, identical on
+all three legs.
+
 ### Left open
 
 - **`Maker::AttachmentReaper` sweeps model attachments too** (it reads `user.maker_file_attachments`,
