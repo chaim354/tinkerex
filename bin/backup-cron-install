@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# Install (or refresh) the nightly backup on the Unraid VM. Idempotent — run it again after any
+# change to ops/backup-db.sh and it re-pushes the script and rewrites the crontab entry.
+#
+#   bin/backup-cron-install                       # 03:30 nightly, chunk+share+s3, keep 14
+#   BACKUP_KEEP=30 bin/backup-cron-install        # keep 30
+#   BACKUP_AT="0 4" bin/backup-cron-install       # 04:00  (crontab "minute hour")
+#   bin/backup-cron-install --uninstall
+#
+# WHERE THE ARCHIVES GO, AND WHY NOT THE VM. Backups land on the Unraid host's `appdata` share
+# (356 GB free) over CIFS, using the same Docker-CIFS-volume mechanism deploy.share.yml already
+# uses for the library — so no host-level `sudo mount`, no fstab, no cifs-utils. The VM's own disk
+# would have been simpler and is the wrong answer: it is 31 GB with 12 GB free, and it is the SAME
+# virtual disk the live databases sit on, so it protects against a bad migration or a bad deploy
+# and not against losing the VM. A backup that shares a failure domain with its source is half a
+# backup.
+#
+# THE CIFS VOLUME IS CREATED OUT-OF-BAND AND MUST NOT BE `docker volume rm`'d. Kamal only ensures
+# a volume EXISTS; if this one were removed, the next thing to reference it would recreate it as a
+# PLAIN EMPTY LOCAL volume on the VM — the nightly would keep reporting success while writing
+# 34 MB a night into the very disk this arrangement exists to avoid, and the real archives on the
+# array would simply stop being visible. Same warning, same reason, as the library volume's.
+
+set -euo pipefail
+
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+NAS="${BACKUP_NAS:-//192.168.1.146/appdata}"
+SUBDIR="${BACKUP_SUBDIR:-tinkerex-backups}"
+VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
+KEEP="${BACKUP_KEEP:-14}"
+AT="${BACKUP_AT:-30 3}"
+DESTS="${BACKUP_DESTS:-chunk share s3}"
+OPS_DIR="tinkerex-ops"
+MARKER="# tinkerex-nightly-backup"
+
+if [ "${1:-}" = --uninstall ]; then
+  echo "==> removing the crontab entry (archives and the volume are left alone)"
+  ssh "$HOST" "crontab -l 2>/dev/null | grep -v '$MARKER' | crontab - || true; crontab -l"
+  exit 0
+fi
+
+echo "==> ensuring $NAS/$SUBDIR exists"
+# ssh FLATTENS its arguments into a single command string the remote shell then re-splits, so an
+# unquoted share name containing a space — `//host/3D Printing`, which this very box has — would
+# arrive as two arguments and mount something else, or nothing. printf %q is the quoting.
+printf -v Q_NAS '%q' "$NAS"; printf -v Q_SUBDIR '%q' "$SUBDIR"; printf -v Q_VOLUME '%q' "$VOLUME"
+# Mounting the whole share ONCE, only to mkdir the subdirectory, then mounting the subdirectory
+# itself for real: cifs can mount a path below a share, but the path has to exist first, and the
+# narrower mount is what keeps a backup job from having the rest of appdata in reach.
+ssh "$HOST" bash -s -- "$Q_NAS" "$Q_SUBDIR" "$Q_VOLUME" <<'REMOTE'
+set -euo pipefail
+nas=$1; subdir=$2; volume=$3
+image=$(docker inspect --format '{{.Config.Image}}' "$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)")
+opts="guest,uid=1000,gid=1000,vers=3.0,file_mode=0664,dir_mode=0775"
+
+tmp="bootstrap-appdata-$$"
+docker volume create --driver local --opt type=cifs --opt device="$nas" --opt o="$opts" "$tmp" >/dev/null
+trap 'docker volume rm "$tmp" >/dev/null 2>&1 || true' EXIT
+docker run --rm -v "$tmp:/m" --user 0 "$image" mkdir -p "/m/$subdir"
+
+if docker volume inspect "$volume" >/dev/null 2>&1; then
+  current=$(docker volume inspect --format '{{.Options.device}}' "$volume")
+  if [ "$current" != "$nas/$subdir" ]; then
+    echo "!! volume $volume already points at '$current', not '$nas/$subdir'" >&2
+    echo "!! refusing to repoint it — inspect it, then 'docker volume rm $volume' if it is a stray" >&2
+    exit 1
+  fi
+  echo "    volume $volume already present"
+else
+  docker volume create --driver local --opt type=cifs \
+    --opt device="$nas/$subdir" --opt o="$opts" "$volume" >/dev/null
+  echo "    created volume $volume -> $nas/$subdir"
+fi
+docker run --rm -v "$volume:/m" --user 0 "$image" sh -c 'touch /m/.writable && rm /m/.writable' \
+  || { echo "!! $volume is not writable" >&2; exit 1; }
+echo "    write probe ok"
+REMOTE
+
+echo "==> installing ops/backup-db.sh"
+ssh "$HOST" "mkdir -p $OPS_DIR"
+scp -q "$(dirname "$0")/../ops/backup-db.sh" "$HOST:$OPS_DIR/backup-db.sh"
+ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
+
+echo "==> installing the crontab entry"
+LINE="$AT * * * \$HOME/$OPS_DIR/backup-db.sh --to-volume $VOLUME --keep $KEEP $DESTS >> \$HOME/$OPS_DIR/backup.log 2>&1 $MARKER"
+# Replace rather than append: a second run must not leave two entries racing each other over one
+# set of volumes. grep -v then re-add is the whole update.
+ssh "$HOST" "{ crontab -l 2>/dev/null | grep -v '$MARKER' || true; echo '$LINE'; } | crontab -"
+ssh "$HOST" "crontab -l | sed 's/^/    /'"
+
+echo
+echo "==> proving it works: running the job once, now"
+ssh "$HOST" "\$HOME/$OPS_DIR/backup-db.sh --to-volume $VOLUME --keep $KEEP $DESTS"
+
+echo
+echo "Check on it any time with:  bin/backup-status"

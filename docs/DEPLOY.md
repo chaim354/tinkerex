@@ -271,15 +271,55 @@ mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styli
 
 ## 6. Backup & restore
 
+**A nightly runs on the box at 03:30 America/New_York**, backing up all three deployments to the
+Unraid array and keeping 14 per deployment. Day to day you only need:
+
 ```sh
-bin/backup-db share                              # → ~/tinkerex-backups/tinkerex-share-<stamp>.tar.gz
-bin/restore-db share <archive> --into rehearsal  # restore into a THROWAWAY volume; live untouched
-bin/restore-db share <archive>                   # the real thing (prompts; backs up first)
+bin/backup-status                                # schedule, last run, inventory, staleness
 ```
 
-`share` is the default; `chunk` and `s3` take the same arguments. Both scripts talk to the running
-container, so **no deploy, no downtime for a backup** — `bin/restore-db` is the only one that stops
-anything, and only for the seconds it takes to swap the files in.
+```sh
+bin/backup-cron-install                          # install/refresh the nightly (idempotent)
+bin/backup-cron-install --uninstall              # remove just the crontab entry
+bin/backup-db share                              # ad-hoc, pulled down to this Mac
+bin/restore-db share box:latest --into rehearsal # rehearse the newest nightly; live untouched
+bin/restore-db share box:latest                  # the real thing (prompts; backs up first)
+```
+
+`share` is `bin/backup-db`'s default; `chunk` and `s3` take the same arguments. Everything talks to
+the *volumes*, not through the app, so **a backup needs no deploy and no downtime** —
+`bin/restore-db` is the only one that stops anything, and only for the seconds it takes to swap the
+files in.
+
+**`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION; the rest are callers.** It runs on the VM (the
+nightly invokes it from cron, `bin/backup-db` scp's the current copy up and calls it with
+`--to-stdout`). Two copies of this would eventually be two copies with different bugs — that is
+this repo's recorded failure shape, not a hypothetical. Change `ops/backup-db.sh` and re-run
+`bin/backup-cron-install` to push it.
+
+**Where the archives live:** `//192.168.1.146/backups/tinkerex-backups`, mounted into the helper
+container as the Docker CIFS volume `tinkerex_backups` — the same driverless mechanism
+`deploy.share.yml` uses for the library, so no host `sudo mount`, no fstab, no cifs-utils. Note
+`appdata` is **read-only to guest** and cannot be used; the `backups` share was created for this.
+The VM's own disk was rejected deliberately: it is 31 GB with 12 GB free and it is the *same*
+virtual disk the live databases sit on, so it would protect against a bad migration and not against
+losing the VM. **A backup that shares a failure domain with its source is half a backup.**
+
+**DO NOT `docker volume rm tinkerex_backups`.** Kamal only ensures a volume EXISTS; if this one were
+removed, the next reference would recreate it as a **plain empty local volume on the VM** — the
+nightly would go on reporting success while writing into the very disk this arrangement avoids, and
+the real archives on the array would simply stop being visible. Same warning, same reason, as the
+library volume's.
+
+**Retention prunes only after a verified write, and only files it named.** `--keep N` keeps the N
+newest *per deployment*; a failed run skips pruning entirely, because the one thing worse than a
+missing backup is a good one aged out by a broken run. Verified by planting foreign files
+(`notes.txt`, another deployment's archive, an unrelated tarball) and confirming a `--keep 1` run
+pruned its own destination to one and touched nothing else.
+
+**`bin/backup-status` fails loud on staleness** rather than printing a date. Nothing on the box
+mails anyone, so a nightly that stops is silent and looks exactly like one that works — right up
+until the restore.
 
 **`docker cp`, `cp` and a raw volume tarball ALL PRODUCE A TORN DATABASE HERE.** These run in WAL
 mode (`PRAGMA journal_mode` → `wal`), so committed state is split between `production.sqlite3` and
@@ -305,8 +345,20 @@ here.
 **REHEARSE THE RESTORE BEFORE YOU NEED IT.** `--into <suffix>` restores into `<volume>-<suffix>` and
 reads it back with the deployment's own image, so extraction, file ownership and the app's own view
 of the data are all exercised against real bytes while the live container keeps serving. Verified
-this way on share: four databases restored `rails:rails`, 1326 blob files, 1872 nodes readable. Drop
-the scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+this way on share, from both sources: four databases restored `rails:rails`, 1326 blob files, 1872
+nodes readable. Drop the scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+
+**`box:` restores in place, without a round trip.** A nightly archive lives inside a CIFS volume, so
+it is not a path on the VM's filesystem at all — fetching 34 MB down to the Mac only to push the
+same 34 MB back would be the obvious and wrong way to use one. `box:latest` resolves to the newest
+archive for that deployment; `box:<filename>` names one from `bin/backup-status`.
+
+**Three of these scripts got bitten by the same thing: `ssh` flattens its arguments into one command
+string that the remote shell re-splits.** An empty trailing argument vanishes into whitespace (so
+`$4` is unset and `set -u` kills the script on line 2); a share name containing a space —
+`//host/3D Printing`, which this box has — arrives as two arguments; and `"-v vol:/backups:ro"`
+passed as one argument becomes two, shifting every positional after it. Pass space-free values, use
+`${4:-}` for optionals, and `printf %q` anything that could contain a space.
 
 Both scripts verify rather than assume — `PRAGMA integrity_check` on every snapshot **in the
 container before the transfer is paid for**, then again locally on what actually landed; and

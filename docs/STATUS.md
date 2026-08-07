@@ -73,8 +73,17 @@ the three Solid stores as separate SQLite files on each destination's own volume
 uses it. `LIBRARY_BACKEND` and the DB adapter are independent knobs — "the share version" names the
 CIFS-mounted *library*, not the database.
 
-**What landed:** `bin/backup-db [chunk|share|s3]` and `bin/restore-db`, plus `docs/DEPLOY.md` §6.
-Both drive the *running* container, so a backup costs no deploy and no downtime.
+**What landed:** `ops/backup-db.sh` (the implementation, runs on the VM), `bin/backup-db` (ad-hoc,
+pulls to the Mac), `bin/restore-db`, `bin/backup-cron-install`, `bin/backup-status`, plus
+`docs/DEPLOY.md` §6. A **nightly at 03:30 America/New_York** covers all three deployments and keeps
+14 each on the Unraid array. Nothing drives the app to do it, so a backup costs no deploy and no
+downtime — and, deliberately, does not require the app container to be UP: a nightly whose whole
+job is to run when things are broken must not depend on the thing that is broken.
+
+**ONE IMPLEMENTATION, TWO CALLERS.** The nightly and the ad-hoc Mac command differ only in where
+bytes land, so `bin/backup-db` scp's the current `ops/backup-db.sh` up on every run and calls it
+with `--to-stdout`. A second copy would eventually be a second copy with different bugs — §14b's
+Reconciler and §14d's file-type vocabulary are both in this file for that reason.
 
 **`docker cp`/`cp`/a volume tarball all produce a TORN DATABASE, and it opens fine.** These run in
 WAL mode (`PRAGMA journal_mode` → `wal`, verified live), so committed state is split between
@@ -92,29 +101,71 @@ restore leaves all 1383 rows at `ready` pointing at files that no longer exist �
 every surface, no error, no job, nothing to notice. Same shape as the §14b staleness bug: the repair
 sweep declines to look at exactly the rows that are broken.
 
-**Two traps found by probing, not reading.**
+**WHERE THE ARCHIVES GO — the VM was rejected on purpose.** `//192.168.1.146/backups/tinkerex-backups`,
+mounted as the Docker CIFS volume `tinkerex_backups`, the same driverless mechanism
+`deploy.share.yml` uses for the library (no host `sudo mount`, no fstab, no cifs-utils). The VM's own
+disk is 31 GB with 12 GB free and is the **same virtual disk the live databases sit on**, so it would
+protect against a bad migration and not against losing the VM — a backup sharing a failure domain
+with its source is half a backup. Probing the host found `appdata` **read-only to guest** (the
+conventional choice, and unusable), `system` off-limits, and `3D Printing` unusable for a different
+reason: it *is* the share library, so tarballs there would be indexed as library files by the scan.
+The user created a `backups` share for this. **`docker volume rm tinkerex_backups` must not happen** —
+the next reference recreates it as a plain empty LOCAL volume and the nightly reports success while
+writing into the disk this whole arrangement avoids.
+
+**Four traps, all found by probing, none by reading.**
 - **`tar --anchored` is load-bearing.** GNU tar matches `--exclude` patterns *unanchored* by default,
   against any trailing part of a member name. The exclude that drops the live, torn `.sqlite3` files
   therefore also matched the staged snapshot at `db-snapshot/production.sqlite3` — the archive would
   have contained every blob and **no database at all**, at full plausible size.
+- **`ssh` FLATTENS its arguments into one command string the remote shell re-splits, and this bit
+  three separate scripts.** An empty trailing argument does not arrive as an empty positional, it
+  vanishes into whitespace — `set -u` then killed `bin/backup-status` on line 2. A share name
+  containing a space (`//host/3D Printing`, which this box has) arrives as two arguments. And
+  `"-v vol:/backups:ro"` passed as one argument becomes two, shifting every positional after it so
+  the worker read the mount spec as the archive path. Pass space-free values, `${4:-}` for
+  optionals, `printf %q` for anything that might contain a space.
 - **`ssh bash -s` already owns stdin**, so the tarball cannot also travel down it; the two race and
   the script itself gets eaten. `bin/restore-db` `scp`s the archive over as a file first.
+- **crontab treats a bare `%` as a newline.** The obvious `{ date -u +'%FT%TZ'; …; }` timestamp
+  wrapper *in the cron line* does not fail loudly — it silently truncates the command at the first
+  `%` and feeds the remainder to the job as stdin. The header/footer live inside
+  `ops/backup-db.sh` instead.
 
-**Verified by rehearsal, against real bytes.** `bin/restore-db share <archive> --into rehearsal`
+**Verified by rehearsal, against real bytes.** `bin/restore-db share box:latest --into rehearsal`
 restores into a throwaway volume and reads it back with the deployment's own image, while the live
 container keeps serving: four databases `integrity_check ok` and owned `rails:rails`, **1326 blob
 files** (matching `active_storage_blobs` exactly), **1872 nodes** readable, no `db-snapshot/` left
-behind. Scratch volume dropped afterwards. First real backup:
-`~/tinkerex-backups/tinkerex-share-20260807T003955Z.tar.gz`, **34 MB** — 2 users, 1872 nodes,
-4 projects, 3 models, 1383 previews, 1326 blobs.
+behind. Done from both sources — an archive on the Mac and one the nightly wrote to the array.
+Scratch volumes dropped afterwards.
+
+**The cron entry was watched firing, not merely installed.** Rescheduled two minutes out; it ran at
+`01:11:01Z`, logged its own header/footer, wrote all three archives and exited `status=0`; the
+03:30 schedule was then put back. Installing a crontab line and calling the nightly done is the
+same class of claim as a green suite over something that never ran.
+
+**Retention mutation-checked, because it DELETES.** Four successive `--keep 2` runs into a scratch
+volume: 1 file, 2 files, then 2 with the oldest gone, then 2 again — so it neither prunes below the
+floor nor accumulates. Then foreign files (`notes.txt`, an unrelated tarball, and *another
+deployment's* archive, deliberately the oldest file present) were planted and a `--keep 1` run
+pruned its own destination to one and **touched none of them**. Pruning happens only after a
+verified write; a failed run skips it, because the one thing worse than a missing backup is a good
+one aged out by a broken run.
+
+**Measured:** chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0 nodes (that
+deployment's library is genuinely empty) — 44 MB a night, ~0.6 GB for the full 14-day history
+against 5.8 TB free. Whole run: 11 seconds.
 
 **Not in the archive, and not missing:** the library bytes (share's NAS at
 `//192.168.1.146/3D Printing`; chunk's SeaweedFS). What this preserves is the **catalog** — the part
 that exists only in that volume.
 
-**Left open:** nothing schedules this. It is a command to run before anything risky, not a backup
-*system*, and `chunk`/`s3` are supported by the same scripts but have never been run. Retention is
-manual on purpose — a script that deletes old backups to save 34 MB is a bad trade.
+**Left open:** nothing alerts. `bin/backup-status` fails loud on staleness, but only when someone
+runs it — the box mails nobody, so a nightly that stops is silent until asked. A real notification
+(healthchecks.io ping, or a Solid Queue job that checks the volume) is the obvious next slice and
+was not built. The 03:30 run also has no interlock with a deploy landing at the same minute; the
+snapshot is WAL-safe either way, so the worst case is a backup of a half-migrated schema, which is
+a *correct* backup of a bad moment.
 
 ---
 

@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# What the nightly has actually been doing.
+#
+#   bin/backup-status          # schedule, last run, inventory, staleness
+#   bin/backup-status --log    # ...and the last 40 lines of the job log
+#
+# THIS EXISTS BECAUSE A NIGHTLY THAT STOPS IS SILENT. Nothing on the box mails anyone, the app is
+# unaffected, and the archives simply stop appearing — so the failure looks exactly like success
+# right up until the restore. That is this repo's dominant failure shape (§15: "a green suite over
+# something that never worked"), and the cheap defence is a command that answers "when did this
+# last actually work" in one line. It fails LOUD on staleness rather than printing a date and
+# leaving the arithmetic to a reader who is probably here in a hurry.
+
+set -euo pipefail
+
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
+OPS_DIR="tinkerex-ops"
+STALE_HOURS="${BACKUP_STALE_HOURS:-30}"   # a nightly is late, not broken, until it misses a night
+
+# `want_log=${4:-}`, not `$4`. ssh FLATTENS its arguments into one command string, so an empty
+# trailing argument does not arrive as an empty positional — it vanishes into trailing whitespace,
+# and `set -u` then kills the remote script on line 2 before it does anything.
+ssh "$HOST" bash -s -- "$VOLUME" "$OPS_DIR" "$STALE_HOURS" "${1:-}" <<'REMOTE'
+set -uo pipefail
+volume=$1; ops=$2; stale_hours=$3; want_log=${4:-}
+
+echo "== schedule"
+if crontab -l 2>/dev/null | grep -q tinkerex-nightly-backup; then
+  crontab -l | grep tinkerex-nightly-backup | sed 's/^/    /'
+else
+  echo "    NOT INSTALLED — run bin/backup-cron-install"
+fi
+
+echo
+echo "== last run"
+if [ -f "$HOME/$ops/backup.log" ]; then
+  grep '^== ' "$HOME/$ops/backup.log" | tail -2 | sed 's/^/    /'
+else
+  echo "    no log yet at ~/$ops/backup.log"
+fi
+
+echo
+echo "== archives on $volume"
+cid=$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)
+image=$(docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null)
+if [ -z "${image:-}" ] || ! docker volume inspect "$volume" >/dev/null 2>&1; then
+  echo "    volume $volume does not exist — run bin/backup-cron-install"
+  exit 1
+fi
+echo "    -> $(docker volume inspect --format '{{.Options.device}}' "$volume")"
+
+docker run --rm -v "$volume:/b" --user 0 "$image" sh -eu -c '
+  stale_hours=$1
+  cd /b
+  now=$(date +%s); worst=0
+  for dest in chunk share s3; do
+    set -- $(ls -1t "tinkerex-$dest-"*.tar.gz 2>/dev/null || true)
+    if [ $# -eq 0 ]; then printf "    %-6s  none\n" "$dest"; worst=99999; continue; fi
+    newest=$1; count=$#
+    age=$(( (now - $(date -r "$newest" +%s)) / 3600 ))
+    # `[ x ] && y` as a bare statement returns the test'"'"'s status, which under `set -e` exits the
+    # script the first time an archive is NOT the oldest. An if-block is not styling here.
+    if [ "$age" -gt "$worst" ]; then worst=$age; fi
+    printf "    %-6s  %2d kept  newest %s (%sh ago, %s)\n" \
+      "$dest" "$count" "$newest" "$age" "$(du -h "$newest" | cut -f1)"
+  done
+  echo "    total    $(du -sh /b | cut -f1)   free $(df -h /b | tail -1 | awk "{print \$4}")"
+  if [ "$worst" -gt "$stale_hours" ]; then
+    echo
+    echo "!! STALE: the newest archive is ${worst}h old (threshold ${stale_hours}h)." >&2
+    echo "!! Check ~/tinkerex-ops/backup.log — the nightly is not running, or it is failing." >&2
+    exit 1
+  fi
+' _ "$stale_hours"
+rc=$?
+
+if [ "$want_log" = --log ] && [ -f "$HOME/$ops/backup.log" ]; then
+  echo
+  echo "== ~/$ops/backup.log (last 40)"
+  tail -40 "$HOME/$ops/backup.log" | sed 's/^/    /'
+fi
+exit $rc
+REMOTE
