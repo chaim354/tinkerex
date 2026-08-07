@@ -33,8 +33,6 @@ module Maker
       }.freeze
 
       def capabilities = CAPABILITIES
-
-      def level = LEVEL
     end
   end
 end
