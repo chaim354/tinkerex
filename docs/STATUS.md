@@ -151,6 +151,26 @@ Two more, from the same passes and both about coverage rather than code:
   eight lines above it in the same file**; both were corrected, and the rule ("read through `host` at
   call time; never capture it") now has the true reason attached to it.
 
+**The final whole-branch review found no code defects — and three documentation ones, which is the
+right ratio for a PR whose product IS a contract.** The reviewer drove the whole SDK out-of-tree
+through node (**71 assertions, all passing**), checked the ctx→SDK seam in both directions and found
+no key emitted-but-unread or read-but-unemitted, and re-ran both suites to the same numbers recorded
+below. It also **closed the Turbo lifecycle hazard by reading Stimulus rather than reasoning about
+it**: `stimulus.js:489-490` processes `removedNodes` before `addedNodes`, so
+`disconnect()`→`teardownHost()` always precedes the next `connect()`→`initHost()` and the
+interleaving that would have left a new host torn down by an old controller **cannot occur**. (The
+`this.disposed` guard still earns its keep — it covers a *pending dynamic import* resolving after a
+disconnect, a different window from the connect/disconnect ordering.) The three documentation
+defects: an error row in `docs/addon-api-v1.md` whose trigger cannot fire and which **hid the real
+behaviour** (a save naming a folder that no longer exists resolves to `nil` in
+`Tools::LibraryFolders#chosen_parent_node_id` *before* any port call, so it answers **302 and writes
+to the library ROOT** — verified on chunk and share, host behaviour that predates this branch and is
+now described rather than changed); the spec still showing `host.ctx.defaultFolder` and
+`Maker::Addons::HOST_LEVEL`, neither of which exists — the first being precisely what the new §14c
+bullet forbids, sitting in the example an agent implementing PR 5 would copy; and two new bare
+"spec §N" citations that are ambiguous because `source.rb`, one file over, uses the same shorthand
+for the **2026-08-02** bundle design, which has a §4 of its own.
+
 **Rejected on the way.** Publishing the raw context as `host.ctx`: the module's whole Ring-2 argument
 is that a bundle talks only through `host`'s methods, and a public `ctx` hands back the raw
 `csrfToken` and `chooseFolder` the SDK exists to wrap — the two claims cannot both be true, so it is
@@ -173,6 +193,25 @@ adds, so the two counts cross-check rather than one being read off the other.
 The four browser tests drive a fixture, and the `generators` migration — the thing that would delete
 `saveWithOverwrite` from a bundle a user actually opens — is a follow-up PR in
 `chaim354/tinkerex-addons`. Nothing here has been deployed.
+
+Three more, recorded as known and deliberate so a later reader does not find them the hard way:
+
+- **`serviceName` is neither validated nor encoded, while `path` beside it is rigorously rejected**
+  (`addon_sdk.js:383,393`). `host.service.get("../../evil", "x")` builds a URL the browser normalizes
+  before sending, so `sidecar_url_for`'s guard is never asked — the same silent misroute
+  `encodePathSegments` and the new §14c reject-never-normalize bullet exist to prevent. The input is
+  addon-authored so the risk is low, but **the invariant as written does not hold for the first
+  segment of the same URL**. A follow-up, deliberately not widened during a documentation-only
+  review pass.
+- **Two-thirds of the SDK is unexercised by `bin/ci`.** The four browser tests cover the mount path,
+  `capabilities()` and `files.save`. Nothing touches `state.list`, `service.*`, `files.pickFolder`,
+  `files.url`, the uninitialised-host proxy, or the typed errors — and most pointedly
+  **`host.on("teardown")`, the SDK's only lifecycle event, has never fired in this repo**: the Turbo
+  test reaches `teardownHost()`, but the fixture registers no handler, so `_fireTeardown` iterates an
+  empty list. The reviewer's node harness proves all of it works today; **nothing in CI would notice
+  if it stopped** — this repo's dominant failure shape, recorded rather than closed.
+- **`apiVersion` is emitted in the ctx blob and read by nothing** — no consumer today, and none named
+  in any later PR.
 
 **Invariants recorded** in CLAUDE.md §14c — nine, which is spec §15's items 1 and 5 (the two of its
 five that PR 1 makes true) plus the seven this PR's own defects earned: the ctx blob is an addition

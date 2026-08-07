@@ -541,11 +541,28 @@ only when you did not.
 |---|---|---|---|
 | `would_replace` | 409 | `WouldReplaceError` | The save would replace files this addon wrote before. `.files` is `[{name, folder}]`. |
 | `unsupported_operation` | 422 | `NameTakenError` | An output name is already taken in the folder you picked. |
-| `not_found` | 422 | `AddonError` | The destination folder no longer exists. (422, not 404 — the endpoint is fine; the request was refused.) |
+| `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** The host maps a port-level `FileLayer::NotFound` here, and 422 rather than 404 because the endpoint is fine and the request was refused; but no request shape described in this document is known to raise one today. Handle it via the `AddonError` fallback; do not build a flow around it. |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
 | `request_failed` | any | `AddonError` | The fallback when a failure response carries no code at all. A save rejected for a malformed or oversized payload answers a body-less 422 and arrives this way. |
 | `name_taken` | — | `NameTakenError` | **Reserved.** The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. |
 | `service_unavailable` | — | `ServiceUnavailableError` | **Reserved**, in the same way. The SDK already maps it; this host does not emit it yet — an unreachable library arrives as `fetch_error`. |
+
+> **A save aimed at a folder that has gone SUCCEEDS, and writes to the library ROOT.** This is the
+> one refusal this document previously promised and the host does not perform. `parent_node_id` is
+> resolved against your own live folders, and an id that matches nothing **falls back to `nil`, which
+> means the library root** — *before* any storage call, so there is nothing left to raise. The save
+> then answers **302, a success**, and your file lands somewhere the user did not choose. Verified
+> against a running host on both the chunk and share backends.
+>
+> There is no error to catch and no response field that reports it, so **an addon cannot detect this
+> after the fact** — `save` has no JSON success branch to name the folder it actually used. What you
+> can do is not trust a `folderNodeId` you did not just obtain: one persisted in an `AddonState` from
+> an earlier session may name a folder the user has since deleted or that the library scan has
+> tombstoned. Re-confirm with `files.pickFolder()` when the destination matters, and remember that
+> `""` and a stale id are indistinguishable in the outcome.
+>
+> This is host behaviour, not SDK behaviour, and it predates the SDK — recorded here because a
+> document that describes a refusal which never happens is worse than one that says nothing.
 
 The two reserved codes are why you should **branch on the error class, not on the code string**. Each
 reserved code maps to the same class as the code the host emits for that condition today

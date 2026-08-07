@@ -13,7 +13,9 @@ module Maker
     # LEVEL is the integer a manifest's `min_host` is compared against (added in PR 2). BUMP IT IN
     # THE SAME COMMIT that flips a capability to true, never afterwards: an addon that requires a
     # capability has no other way to say so, and `api_version` equality cannot express "needs host
-    # >= X" (the VS Code `engines` lesson, spec §4).
+    # >= X" (the VS Code `engines` lesson, docs/superpowers/specs/2026-08-07-addon-api-v1-design.md
+    # §4 — NAMED, because source.rb one file over cites the 2026-08-02 bundle design as a bare
+    # "spec §" and that document has a §4 of its own).
     module Host
       module_function
 

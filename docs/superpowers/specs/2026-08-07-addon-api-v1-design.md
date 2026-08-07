@@ -142,7 +142,7 @@ must never take `/tools` down.
 |---|---|---|
 | `version` | string | The addon's own version. Gallery display, and the cache key that closes the stale-bundle trap (today a republished bundle is distinguishable only by TTL expiry). |
 | `author`, `license`, `homepage` | string | Display + audit. `license` is the §9 posture the day sources widen. |
-| `min_host` | integer | Floor against `Maker::Addons::HOST_LEVEL`, which the host bumps when the SDK gains a capability. Equality on `api_version` alone cannot express "needs host ≥ X" (the VS Code `engines` lesson). A too-new addon **greys out with a reason** instead of failing at runtime. |
+| `min_host` | integer | Floor against `Maker::Addons::Host::LEVEL` (**the shipped constant** — an earlier draft of this document said `Maker::Addons::HOST_LEVEL`, which does not exist), which the host bumps when the SDK gains a capability. Equality on `api_version` alone cannot express "needs host ≥ X" (the VS Code `engines` lesson). A too-new addon **greys out with a reason** instead of failing at runtime. |
 | `permissions` | array of `{name, reasoning}` | `library:read`, `library:write`, `state`, `project:read`, `data:read:<addon>/<collection>`, `service:<name>`. `reasoning` is mandatory for any cross-addon or read permission. |
 | `collections` | hash | Addon-owned record types: `{name: {schema?, shared_read: [addon keys]}}`. See §7. |
 | `shares_states_with` | array | The mutual counterpart to `states_key`. See §4.1. |
@@ -172,7 +172,7 @@ const caps = await host.capabilities();         // { "library:read": true, "make
 
 // ---- files
 await host.files.save({ name, folderNodeId, files: [{ name, blob, role }] });
-const folder = await host.files.pickFolder({ default: host.ctx.defaultFolder });
+const folder = await host.files.pickFolder();   // already opens at the host's default folder
 const file   = await host.files.pickFile({ extensions: [".scad", ".svg"] });
 const bytes  = await host.files.read(file.nodeId);      // ArrayBuffer
 host.files.url(nodeId);                                  // for <img src> / a download link
@@ -400,7 +400,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | # | PR | Unblocks | Risk |
 |---|---|---|---|
 | 1 | **SHIPPED** (branch `claude/todo-list-review-6beccc`) — spec + SDK v1 over today's transport + `capabilities()` + typed errors, proved in a browser by an **SDK-only fixture bundle**; `generators`' adoption is a follow-up PR in `chaim354/tinkerex-addons` (see below) | Everything downstream; deletes per-bundle fetch code | low |
-| 2 | Manifest metadata, `min_host` / `HOST_LEVEL`, `states_key` constraint, permission display | Closes audit §2.1 while every manifest is first-party | low |
+| 2 | Manifest metadata, `min_host` / `Host::LEVEL`, `states_key` constraint, permission display | Closes audit §2.1 while every manifest is first-party | low |
 | 3 | Error contract completion + state CRUD + keyset paging | States stop accumulating unboundedly | low |
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
 | 5 | File plane — multipart + binary save, gated read, `pickFile`; `folders` moves behind `pickFolder` | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |

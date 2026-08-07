@@ -3,8 +3,10 @@
 // WHY IT EXISTS RATHER THAN A DOCUMENTED ctx. Every bundle today hand-rolls the same fetch + CSRF +
 // error handling, and each copy reads only the HTTP status, so a save that failed for a nameable
 // reason reports "Save failed." More importantly: this module is the HINGE for the sandbox (Ring 2,
-// spec §8.2). Today its transport is same-origin fetch; under a null-origin iframe the identical
-// surface is implemented over postMessage. Addon code does not change. Talking to the transport
+// docs/superpowers/specs/2026-08-07-addon-api-v1-design.md §8.2 — NAMED rather than a bare "spec §",
+// which elsewhere in the addon code means the 2026-08-02 bundle design). Today its transport is
+// same-origin fetch; under a null-origin iframe the identical surface is implemented over
+// postMessage. Addon code does not change. Talking to the transport
 // directly forfeits that — which is why the constructor's context is kept on `_ctx` (underscored,
 // never a public `host.ctx`) instead of published as a semi-supported escape hatch: a name that
 // reads as supported gets used.
