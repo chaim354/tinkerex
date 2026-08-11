@@ -1446,10 +1446,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 ### 14i. Backup and restore
 
 > **NOTHING IN `bin/ci` CAN GO RED FOR ANY LINE BELOW** — this is shell, cron and docs, and the five
-> scripts have no gate at all. Their shared failure mode is *you find out when you need a restore*,
-> which is why these are invariants rather than preferences. `docs/DEPLOY.md` §6 is the
-> operator-facing copy; `docs/STATUS.md` carries the arc, the stubbed-box harness and the measured
-> before/after. Prove a change to any of them against stubs, never the live NAS or a real volume.
+> scripts have no gate at all. Their shared failure mode is *you find out when you need a restore*.
+> **Only CROSS-FILE rules are here.** The single-site ones (`tar --anchored`, `docker ps -a`,
+> `--keep` ≥ 1 and its deliberate divergence from §14a, `ping.env` parsed-never-sourced, the Active
+> Storage blobs in the archive) carry their whole argument *inside `ops/backup-db.sh` itself* — beside
+> the line you must edit to break them, or in that file's header — so loading them every session buys
+> nothing that opening the file does not. They are not weaker for it; `docs/DEPLOY.md` §6 restates
+> them for operators. Below spans two files or more, where no one comment can be the guard.
+> `docs/STATUS.md` has the arc and the stubbed-box harness. Prove a change against stubs, never the
+> live NAS or a real volume.
 
 - **`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION, AND `bin/backup-cron-install` IS THE ONLY THING
   THAT WRITES THE INSTALLED COPY.** `bin/backup-db` pushes to a per-run temp path; it used to `scp`
@@ -1469,15 +1474,11 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   installer compares the EXACT device (it knows `BACKUP_NAS`); the nightly is handed only a name and
   asks the weaker sufficient question — do **not** thread the path through the crontab line, where a
   bare `%` is a newline and this box has a share whose name contains a space.
-- **THE `--keep` GUARD EXITS BEFORE ANY PING; THE VOLUME GUARD PINGS `down`. Do not harmonise them.**
-  A bad `--keep` is a typo from someone still at the keyboard. A volume that has stopped pointing at
-  the array is box state that fails unattended at 03:30, like the vanished container.
-- **`--keep` MUST BE AN INTEGER ≥ 1, AND `0` IS REFUSED RATHER THAN REINTERPRETED — the deliberate
-  opposite of §14a's `LIBRARY_TRASH_DAYS=0` meaning "keep forever".** That one is a DURATION, where
-  the generous reading is safe; this is a COUNT, where `0` plainly reads as "keep zero" and silently
-  keeping everything is the same surprise pointing the other way. `0` and negatives both select
-  *every* archive including the one just written, a non-number prunes nothing for ever, and the prune
-  runs AFTER that destination's success ping.
+- **THE ARGUMENT GUARDS EXIT BEFORE ANY PING; THE VOLUME GUARD PINGS `down`. Do not harmonise them.**
+  A bad `--keep` is a typo from someone still at the keyboard, and a monitor event for a run that
+  never started is noise. A volume that has stopped pointing at the array is box state that will fail
+  unattended at 03:30 with nobody watching — knowable now, like the vanished container, so it is said
+  now.
 - **THE REHEARSAL VERIFY RUNS AS THE CONTAINER'S OWN `Config.User`, NEVER `--user 0`.** Root reads a
   file whatever its mode, so the root version could not fail for the one reason `--into` exists — it
   shipped advertising "file ownership" it structurally could not test. It does **not** boot the app
@@ -1493,29 +1494,6 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   it (busybox; it is not POSIX) parses the line as an ordinary environment assignment and ignores it
   — a guard that silently does nothing. The installer reads the zone back and refuses *before*
   touching anything; `bin/backup-status` re-reads it, so drift AFTER install cannot hide either.
-- **`tar --anchored` IS LOAD-BEARING.** GNU tar matches `--exclude` unanchored by default, against any
-  trailing part of a member name, so the pattern that drops the live torn `.sqlite3` files also
-  matches the staged snapshot — an archive containing every blob and **no database at all**, at a
-  completely plausible size.
-- **`ping.env` IS PARSED, NEVER SOURCED, AND `ping_kuma` STRIPS THE QUERY STRING.** A Kuma push URL
-  contains `&`, which `.` reads as a JOB SEPARATOR — the assignment runs in a background subshell and
-  the ping silently never happens. And a second `status` appended by `curl --get` makes Express/qs
-  parse an ARRAY, so Kuma's `=== "down"` is false and **every failure records as UP** — a monitor
-  green exactly when it must not be, which is worse than no monitor.
-- **THE ARCHIVE CARRIES THE ACTIVE STORAGE BLOBS, AND SLIMMING IT IS SILENT DATA LOSS.**
-  `service = :local`, so preview assets sit on the same volume, and `Maker::Previews::MissingBackfill`
-  skips any node whose preview row already matches the current `(content_token, renderer_revision)` —
-  which after a DB-only restore is *every* one of them, since the restored rows match the unchanged
-  library. Each stays `ready` pointing at a blob file that is gone: blank thumbnails on every surface,
-  no error, no job, nothing to notice, and the repair sweep declining to look at exactly the rows that
-  are broken (§14b's staleness bug, same shape).
-- **`docker ps -a`, NOT `docker ps`, IN EVERY LOOKUP THAT HAS TO WORK ON A DOWN DEPLOYMENT.** A
-  stopped container still names the image and the volume, and both the nightly and the restore are
-  most wanted when the deployment is already down — a lookup that only sees RUNNING containers
-  refuses precisely when it is needed. **The one bare `docker ps` is deliberate and must stay:**
-  `bin/restore-db`'s post-restore `docker exec` check runs *after* `docker start`, and `exec` cannot
-  enter a stopped container anyway, so `-a` there would swap a clear "no container" for a confusing
-  "container is not running".
 - **The archives are UNENCRYPTED on a guest-writable CIFS share, and that is a recorded decision, not
   an oversight** — readable *and deletable* by anyone on the LAN. Accepted for a home LAN; the
   catalog and every preview blob are in the clear (the digests are the least of it). Revisit before

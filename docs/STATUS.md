@@ -1451,9 +1451,14 @@ nodes. `ping.env` is chmod 600 on the box; the installed script is byte-identica
 
 ### Six review findings from the merge, closed on `claude/backup-review-followups`
 
-**The rules that came out of this arc now live in CLAUDE.md §14i** — the arc's own invariants had no
-home in that file, so every one of them was only as durable as whoever last read `docs/DEPLOY.md`
-§6. `ops/` was also missing from §10's repo layout entirely.
+**The arc's CROSS-FILE rules now live in CLAUDE.md §14i** — they had no home in that file, so each was
+only as durable as whoever last read `docs/DEPLOY.md` §6. `ops/` was also missing from §10's repo
+layout entirely. **The single-site rules were deliberately left out of it**: `tar --anchored`,
+`docker ps -a`, `--keep` ≥ 1, `ping.env` parsed-never-sourced and the blobs in the archive each carry
+their whole argument inside `ops/backup-db.sh` itself — beside the line you must edit to break them,
+or in that file's header — so hoisting them into a file loaded every session buys nothing that opening
+the file does not, and CLAUDE.md's own header says length there is a tax on every future task. §14i's framing names them so the omission cannot be
+misread as their having been dropped.
 
 PR #155's Critical defect and the `--keep 0` guard were fixed before merge; six further findings were
 deliberately left as separate decisions and are closed here. **`bin/ci` covers none of this code** —
