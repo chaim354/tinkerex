@@ -100,7 +100,60 @@ class BoxSectionsTest < ApplicationSystemTestCase
   end
 
   def open_generator(key)
-    find(".addon-card", text: key).click
+    open_addon_card(key)
+  end
+
+  # Sample-photo responses that arrive LATE. Nothing else is slowed: the generators list still lands
+  # at once, so the cards render and become clickable while their four thumbnails are still in
+  # flight — the exact state the gallery is in on a loaded CI box, and the one that made the click
+  # race reachable there and not here.
+  class SlowSamples < FakeServiceProxy
+    def call(method:, url:, path:, params: {})
+      sleep 0.3 if path.to_s.start_with?("sample/")
+      super
+    end
+  end
+
+  # THE GALLERY MOVES UNDER THE POINTER, AND A MISSED CLICK IS SILENT. Each card's
+  # `<img class="addon-thumb">` is a real request through the sidecar proxy, and
+  # `.addon-thumb.is-missing { display: none }` removes a 120px box the moment one fails — so every
+  # card below it jumps up ~126px. Measured for TrayLayout, the last of the four: 1002px -> 624px.
+  # Chromedriver computes ONE click coordinate and then dispatches pointerMove/pointerDown at it, so
+  # a thumbnail resolving in between drops the click into the dead space below the shrunken grid,
+  # where nothing raises and nothing happens. `system-test` was red on main for exactly this (run
+  # 31188332739), and its failure screenshot shows a perfectly healthy gallery.
+  #
+  # ASSERTED AS THE HELPER'S CONTRACT, NOT AS THE RACE'S OUTCOME, and that is deliberate: the real
+  # window is sub-100ms, so a test that clicked and hoped would be a coin flip in both directions —
+  # green with the bug present often enough to prove nothing. What IS deterministic is the property
+  # that closes the window: by the time open_addon_card clicks, no thumbnail is still loading and
+  # the collapse has already been applied, so nothing is left that could move the target.
+  #
+  # MUTATION-CHECKED (2026-08-10): dropped the `i.complete` clause from settle_addon_cards' probe —
+  # red here on both assertions ("4 thumbnails were still loading"), restored, green again.
+  test "the gallery is not clicked until its thumbnails have stopped moving" do
+    FakeBoxesSidecar.install!(proxy: SlowSamples.new)
+    visit tools_addon_path("boxes")
+
+    settle_addon_cards
+
+    still_loading = page.evaluate_script(
+      'Array.prototype.slice.call(document.querySelectorAll("img.addon-thumb")).filter(function (i) { return !i.complete }).length'
+    )
+    assert_equal 0, still_loading, "#{still_loading} thumbnails were still loading — the cards can still collapse under the click"
+
+    # And the collapse is not merely finished but APPLIED: re-asserting it must move nothing. This is
+    # the half that would still catch a settle that waited on the requests but clicked before the
+    # reflow those requests trigger.
+    positions = 'Array.prototype.slice.call(document.querySelectorAll(".addon-card")).map(function (c) { return Math.round(c.getBoundingClientRect().top) }).join(",")'
+    before = page.evaluate_script(positions)
+    page.execute_script('document.querySelectorAll("img.addon-thumb").forEach(function (i) { i.classList.add("is-missing") })')
+    assert_equal before, page.evaluate_script(positions), "the cards were still going to move after settle_addon_cards returned"
+
+    # The click itself, through the real helper, on the card with the most travel to lose.
+    open_generator("TrayLayout")
+    assert_selector ".box-editor"
+    assert_selector "[data-role=key]", text: "TrayLayout"
   end
 
   # MUTATION: made `jump` fall through to the browser's default #hash navigation (dropped the
