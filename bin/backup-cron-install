@@ -7,13 +7,20 @@
 #   BACKUP_AT="0 4" bin/backup-cron-install       # 04:00  (crontab "minute hour")
 #   bin/backup-cron-install --uninstall
 #
-# WHERE THE ARCHIVES GO, AND WHY NOT THE VM. Backups land on the Unraid host's `appdata` share
-# (356 GB free) over CIFS, using the same Docker-CIFS-volume mechanism deploy.share.yml already
-# uses for the library — so no host-level `sudo mount`, no fstab, no cifs-utils. The VM's own disk
-# would have been simpler and is the wrong answer: it is 31 GB with 12 GB free, and it is the SAME
+# WHERE THE ARCHIVES GO, AND WHY NOT THE VM. Backups land on the Unraid host's `backups` share
+# over CIFS, using the same Docker-CIFS-volume mechanism deploy.share.yml already uses for the
+# library — so no host-level `sudo mount`, no fstab, no cifs-utils. It sits on the array (5.8 TB
+# free when this was measured, against ~0.6 GB for a full 14-day history). The VM's own disk would
+# have been simpler and is the wrong answer: it is 31 GB with 12 GB free, and it is the SAME
 # virtual disk the live databases sit on, so it protects against a bad migration or a bad deploy
 # and not against losing the VM. A backup that shares a failure domain with its source is half a
 # backup.
+#
+# NOT `appdata`, THOUGH THAT IS THE CONVENTIONAL UNRAID CHOICE AND WAS THIS SCRIPT'S DEFAULT UNTIL
+# A REVIEW CAUGHT IT. It is READ-ONLY TO GUEST on this host, so the bootstrap `mkdir` below cannot
+# even create the subdirectory; the `backups` share was created for this instead. docs/DEPLOY.md §6
+# recorded that in the same commit that shipped `appdata` as the default here — so the rule and the
+# code contradicted each other from the first day, and the default is the half nobody reads.
 #
 # THE CIFS VOLUME IS CREATED OUT-OF-BAND AND MUST NOT BE `docker volume rm`'d. Kamal only ensures
 # a volume EXISTS; if this one were removed, the next thing to reference it would recreate it as a
@@ -24,7 +31,7 @@
 set -euo pipefail
 
 HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
-NAS="${BACKUP_NAS:-//192.168.1.146/appdata}"
+NAS="${BACKUP_NAS:-//192.168.1.146/backups}"
 SUBDIR="${BACKUP_SUBDIR:-tinkerex-backups}"
 VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
 KEEP="${BACKUP_KEEP:-14}"
@@ -46,14 +53,14 @@ echo "==> ensuring $NAS/$SUBDIR exists"
 printf -v Q_NAS '%q' "$NAS"; printf -v Q_SUBDIR '%q' "$SUBDIR"; printf -v Q_VOLUME '%q' "$VOLUME"
 # Mounting the whole share ONCE, only to mkdir the subdirectory, then mounting the subdirectory
 # itself for real: cifs can mount a path below a share, but the path has to exist first, and the
-# narrower mount is what keeps a backup job from having the rest of appdata in reach.
+# narrower mount is what keeps a backup job from having the rest of the share in reach.
 ssh "$HOST" bash -s -- "$Q_NAS" "$Q_SUBDIR" "$Q_VOLUME" <<'REMOTE'
 set -euo pipefail
 nas=$1; subdir=$2; volume=$3
 image=$(docker inspect --format '{{.Config.Image}}' "$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)")
 opts="guest,uid=1000,gid=1000,vers=3.0,file_mode=0664,dir_mode=0775"
 
-tmp="bootstrap-appdata-$$"
+tmp="tinkerex-bootstrap-$$"
 docker volume create --driver local --opt type=cifs --opt device="$nas" --opt o="$opts" "$tmp" >/dev/null
 trap 'docker volume rm "$tmp" >/dev/null 2>&1 || true' EXIT
 docker run --rm -v "$tmp:/m" --user 0 "$image" mkdir -p "/m/$subdir"
@@ -61,8 +68,34 @@ docker run --rm -v "$tmp:/m" --user 0 "$image" mkdir -p "/m/$subdir"
 if docker volume inspect "$volume" >/dev/null 2>&1; then
   current=$(docker volume inspect --format '{{.Options.device}}' "$volume")
   if [ "$current" != "$nas/$subdir" ]; then
-    echo "!! volume $volume already points at '$current', not '$nas/$subdir'" >&2
-    echo "!! refusing to repoint it — inspect it, then 'docker volume rm $volume' if it is a stray" >&2
+    # THE ADVICE HERE USED TO BE `docker volume rm`, WHICH IS THE ONE MOVE THIS FILE'S OWN HEADER
+    # AND docs/DEPLOY.md §6 BOTH FORBID. It is also most likely to be aimed at the RIGHT volume:
+    # the commonest way to reach this branch is a run whose BACKUP_NAS/BACKUP_SUBDIR are wrong,
+    # in which case the volume is correct and deleting it is what loses the archives.
+    cat >&2 <<EOF
+!! refusing to repoint volume $volume. It points at
+!!     $current
+!! but this run composed
+!!     $nas/$subdir
+!!
+!! DO NOT 'docker volume rm $volume'. Per docs/DEPLOY.md §6, Kamal only ensures a volume
+!! EXISTS, so the next reference recreates the name as a plain EMPTY LOCAL volume on the VM.
+!! The nightly then goes on reporting success while writing into the very disk this whole
+!! arrangement exists to avoid, and the real archives on the array simply stop being visible.
+!! Every other step here can be undone by re-running this installer. That one cannot.
+!!
+!! Find out which volume you are actually looking at, on the box:
+!!   docker volume inspect $volume
+!!   docker run --rm --user 0 -v $volume:/m $image ls -la /m
+!!
+!! Then, whichever it turns out to be:
+!!   * it is the real backups volume and THIS RUN is what is wrong (the usual case) — re-run with
+!!     BACKUP_NAS and BACKUP_SUBDIR set so they compose to the path it already points at. The
+!!     volume itself is then never touched.
+!!   * you are deliberately moving to a different share — re-run with BACKUP_VOLUME=<new-name> to
+!!     build the new one alongside the old, then copy the archives across and retire the old
+!!     volume only once a nightly has been seen writing into the new one.
+EOF
     exit 1
   fi
   echo "    volume $volume already present"

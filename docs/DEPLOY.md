@@ -311,11 +311,28 @@ nightly would go on reporting success while writing into the very disk this arra
 the real archives on the array would simply stop being visible. Same warning, same reason, as the
 library volume's.
 
+**If the installer refuses because the volume points somewhere unexpected, deleting it is the wrong
+move** — and it is the move most likely to be aimed at the *right* volume, because the commonest way
+to reach that branch is a run whose `BACKUP_NAS`/`BACKUP_SUBDIR` are wrong rather than a genuinely
+stray volume. Inspect it (`docker volume inspect`, and `ls` it through a container), then either
+re-run with those two set to compose the path it already points at, or — if you really are moving to
+a different share — re-run with `BACKUP_VOLUME=<new-name>` to build the new one alongside, and
+retire the old only once a nightly has been seen writing into it. Every other step the installer
+takes is undone by re-running it; that one is not.
+
 **Retention prunes only after a verified write, and only files it named.** `--keep N` keeps the N
 newest *per deployment*; a failed run skips pruning entirely, because the one thing worse than a
 missing backup is a good one aged out by a broken run. Verified by planting foreign files
 (`notes.txt`, another deployment's archive, an unrelated tarball) and confirming a `--keep 1` run
 pruned its own destination to one and touched nothing else.
+
+**`--keep` (and so `BACKUP_KEEP`) must be an integer ≥ 1; anything else is refused before the run
+starts.** There is no value meaning "keep everything". `0` and negatives both select *every* archive
+including the one just written, and a non-number silently prunes nothing for ever — and since the
+prune runs *after* the success ping, either would be a monitor reporting green over the loss. Note
+this deliberately **diverges from `LIBRARY_TRASH_DAYS`, where `0` means "keep forever"**
+(CLAUDE.md §14a): that is a duration, where the generous reading is safe, and this is a count, where
+`0` reads as "keep zero" and the only honest response to a typo is to refuse it.
 
 **`bin/backup-status` fails loud on staleness** rather than printing a date — but it only speaks
 when asked, which is what the push monitors below are for.

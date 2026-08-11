@@ -1301,6 +1301,23 @@ The user created a `backups` share for this. **`docker volume rm tinkerex_backup
 the next reference recreates it as a plain empty LOCAL volume and the nightly reports success while
 writing into the disk this whole arrangement avoids.
 
+**AND THE INSTALLER SHIPPED DEFAULTING TO `appdata` ANYWAY — the paragraph above and the code
+contradicted each other in the same commit** (review of this PR, fixed here). `bin/backup-cron-install`
+read `BACKUP_NAS:-//192.168.1.146/appdata` with a header still advertising appdata's "356 GB free",
+while `docs/DEPLOY.md` §6 and this entry both already recorded appdata as read-only to guest and
+unusable. **The default is the half nobody reads**, so the docs being right bought nothing.
+Reproduced against a stubbed box, both branches:
+- run as documented, no env override → it aborts at the bootstrap `mkdir` (exit 1), so *"re-run this
+  after any change to `ops/backup-db.sh`"* silently stops being a working way to push a script change;
+- counterfactually, with appdata writable → it reaches the volume check, sees the live volume pointing
+  at the real `backups` path, and **advises `docker volume rm tinkerex_backups`** — the one act the
+  line above and its own header both forbid, and the one most likely to be aimed at the *correct*
+  volume, since a wrong `BACKUP_NAS` is the commonest way to land in that branch.
+Fixed in three places: the default is now `//192.168.1.146/backups`, the header says so and says why
+not appdata, and the advice is replaced with *inspect it, then either fix `BACKUP_NAS`/`BACKUP_SUBDIR`
+to match what it already points at, or build a new one alongside with `BACKUP_VOLUME=`* — never
+delete. `docs/DEPLOY.md` §6 carries the same remedy beside the rule the message cites.
+
 **Four traps, all found by probing, none by reading.**
 - **`tar --anchored` is load-bearing.** GNU tar matches `--exclude` patterns *unanchored* by default,
   against any trailing part of a member name. The exclude that drops the live, torn `.sqlite3` files
@@ -1339,6 +1356,38 @@ deployment's* archive, deliberately the oldest file present) were planted and a 
 pruned its own destination to one and **touched none of them**. Pruning happens only after a
 verified write; a failed run skips it, because the one thing worse than a missing backup is a good
 one aged out by a broken run.
+
+**`--keep` WAS UNVALIDATED, AND `--keep 0` DELETED THE ENTIRE ARCHIVE SET AFTER PINGING SUCCESS**
+(review of this PR, fixed here). The prune is `tail -n +$((keep + 1))`, so `0` selects **every**
+archive — including the one written and integrity-checked seconds earlier — and it runs *after* that
+destination's `up` ping has gone out, so Uptime Kuma records the run green over the loss. Measured in
+the real app image (`/bin/sh` is dash, GNU coreutils 9.7) against four stub archives, with only the
+CIFS volume swapped for a scratch bind mount:
+
+| `--keep` | before | after |
+|---|---|---|
+| `0` | pruned **all four**, newest included, `exit 0` | refused, `exit 64`, **0 pings sent** |
+| `-1` | `tail -n +0` → the same **all four** | refused, `exit 64` |
+| `abc` | dash `Illegal number`, **nothing pruned, `exit 0`** | refused, `exit 64` |
+| `14` | correct (4 < 14, nothing pruned) | unchanged — passes the guard and runs |
+
+**The non-numeric case is quieter than the review that found it assumed, and the correction matters
+for how it would have been noticed.** The arithmetic does abort — but inside a **pipeline element**,
+which is a subshell, so the pipeline's status is the `while` loop's and `sh -eu -c` still exits **0**.
+It therefore does *not* kill the run mid-loop: later destinations are backed up and pinged normally,
+and the only symptom is that pruning silently never happens again — an unbounded leak reported as
+success, with the one-line `Illegal number` buried in `backup.log`. Verified by exit code, not by
+reading. The guard is a single `case` before any backup work and before any ping; proved so by
+pointing `PING_SHARE` at a local listener and confirming a refused run sends **zero** requests while
+a valid one sends exactly one.
+
+**`0` is REFUSED, not reinterpreted, and that diverges from its sibling on purpose.** CLAUDE.md §14a
+gives `LIBRARY_TRASH_DAYS=0` the meaning "keep forever" precisely because the obvious implementation
+purges the lot — right for a **duration**, where "0 days of history" is coherent and the generous
+reading is the safe one. It is wrong for a retention **count**: `--keep 0` plainly reads as "keep
+zero", so silently keeping everything is the same surprise pointing the other way, and a count has no
+safe reading of what is simply a typo. The comment in `ops/backup-db.sh` names §14a so the divergence
+reads as a decision rather than an oversight.
 
 **Measured:** chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0 nodes (that
 deployment's library is genuinely empty) — 44 MB a night, ~0.6 GB for the full 14-day history

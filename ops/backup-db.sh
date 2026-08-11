@@ -43,6 +43,39 @@ while [ $# -gt 0 ]; do
 done
 [ ${#DESTS[@]} -gt 0 ] || { echo "no destinations given" >&2; exit 64; }
 
+# --keep IS VALIDATED HERE — BEFORE ANY BACKUP WORK AND BEFORE ANY PING — because the prune it
+# feeds runs AFTER that destination's `up` ping has already gone out. A bad value therefore
+# destroys the archive set on a run the monitor has already recorded as healthy, which is precisely
+# the failure this arrangement exists to make impossible. Measured in the real app image (dash +
+# GNU tail) against four stub archives, before this guard existed:
+#   --keep 0    tail -n +1  pruned ALL FOUR, including the archive written seconds earlier — exit 0
+#   --keep -1   tail -n +0  the same
+#   --keep abc  dash aborts the arithmetic, but only inside a PIPELINE ELEMENT, so the pipeline's
+#               status is the `while` loop's and sh still exits 0 — the prune silently does nothing
+#               on every run from then on, and the leak is reported as success.
+#
+# ZERO IS REFUSED, NOT REINTERPRETED, AND THE DIVERGENCE FROM ITS SIBLING IS DELIBERATE. CLAUDE.md
+# §14a gives LIBRARY_TRASH_DAYS=0 the meaning "keep forever", precisely because the obvious
+# implementation purges the lot. That is the right call for a DURATION: "0 days of history" is a
+# coherent thing to mean, and the generous reading is the safe one. It is the wrong call for a
+# retention COUNT — `--keep 0` plainly reads as "keep zero", so silently keeping everything would
+# just be the same surprise pointing the other way. A count has no safe reading of a value that is
+# simply a typo, so this one fails loudly while whoever typed it is still watching.
+case "$KEEP" in
+  ''|*[!0-9]*)
+    echo "--keep must be a positive integer, got '$KEEP'" >&2
+    echo "  Neither way of getting this wrong is loud. A negative resolves to 'tail -n +0', which" >&2
+    echo "  selects EVERY archive; anything non-numeric aborts the arithmetic inside a pipeline" >&2
+    echo "  element, so nothing is pruned on any run from then on and each one still reports OK." >&2
+    exit 64 ;;
+esac
+[ "$KEEP" -ge 1 ] || {
+  echo "--keep 0 would delete EVERY archive, including the one this run is about to write" >&2
+  echo "  — and the prune runs after the success ping, so nothing would report the loss." >&2
+  echo "  Use --keep 1 to keep only the newest. There is no value meaning 'keep everything'." >&2
+  exit 64
+}
+
 # ---- Uptime Kuma push monitors ---------------------------------------------------------------
 # One push URL per destination, in ~/tinkerex-ops/ping.env (written by bin/backup-cron-install,
 # never committed — the tokens are the whole authentication):
@@ -186,6 +219,9 @@ for dest in "${DESTS[@]}"; do
       # +N+1` keeps the N newest; with fewer than N present it selects nothing, so a fresh install
       # cannot delete its own first backup. A failed run above skips this entirely — the one thing
       # worse than a missing backup is a working one aged out by a broken run.
+      # $KEEP IS ALREADY KNOWN TO BE AN INTEGER >= 1 — see the guard at the top, which is where it
+      # belongs, since this runs after the `up` ping. Do NOT add a second check in here: one rule
+      # living in two places, and eventually disagreeing, is this file's opening argument.
       docker run --rm --user 0 -v "$OUT_VOLUME:/dst" "$image" sh -eu -c '
         keep=$1; dest=$2
         cd /dst
