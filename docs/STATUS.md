@@ -55,26 +55,23 @@ reading the last entry.
   enqueue couples this to Solid Queue's schema to save a row rather than a sweep. *(Kept in
   struck-through form rather than deleted: this bullet stood for a day after it stopped being
   true, and a reader who remembers it deserves the correction rather than silence.)*
-- **A SECOND intermittent, captured 2026-08-06 — `TrayLayoutTest`, and it is NOT the known
-  `SQLite3::BusyException` one** (§12 item 7, `Tools::GeneratorsControllerTest#setup`). Seen once
-  during a docs-only `bin/ci` run:
-  `Capybara::ElementNotFound: Unable to find css "[data-param=\"layout\"]"`
-  (`test/system/tray_layout_test.rb:46`), i.e. the addon bundle's params had not rendered.
-  **Isolated rather than assumed:** the file alone passed 5/5; the full system suite on the *same*
-  clean tree passed 55/55; the same suite with the docs diff restored passed 55/55 twice, `bin/ci`
-  **exit 0**. So it is a flake in the full-suite run, not a regression — most plausibly the addon
-  asset fetch losing a race against Capybara's several concurrent Pumas, which is the neighbourhood
-  of the `ADDON_SOURCE_PATH` reentrancy §14e records. **Not diagnosed, and deliberately not chased
-  in a docs branch** — recorded so the next person who sees it starts from "known, second one"
-  rather than re-deriving it. Assertion count is the tell: the failing run showed 325, a clean run
-  329.
-  **The OLD intermittent also recurred in the same session**, and its capture is worth more than
-  this one: `SQLite3::BusyException` in **`Sync::RestoreTest#setup`** on the **s3** leg (three
-  immediate re-runs clean at identical 1970/6869). The only prior capture was
-  `Tools::GeneratorsControllerTest#setup` on 2026-07-27, which made a hard-coded `gen@example.com`
-  look like a plausible cause. A second capture in a different class, a different suite area and a
-  different backend leg **rules that out** — and rules out "controller tests only" with it.
-  `CLAUDE.md` §12 item 7 updated accordingly.
+- **The `SQLite3::BusyException` intermittent has a SECOND capture (2026-08-06), and it kills the
+  only theory the first one supported.** `Sync::RestoreTest#setup`, on the **s3** leg, out of a
+  docs-only `bin/ci` run; three immediate re-runs came back clean at identical 1970/6869. The only
+  prior capture was `Tools::GeneratorsControllerTest#setup` (2026-07-27), whose hard-coded
+  `gen@example.com` looked like a plausible cause. A second capture in a **different class, a
+  different suite area and a different backend leg** rules that out — and rules out "controller
+  tests only" with it. Setup-time lock contention is the whole of what is known; the cross-worker
+  explanation stays disproved (each parallel worker has its own SQLite file). `CLAUDE.md` §12 item 7
+  carries the same correction.
+  **A `TrayLayoutTest` failure in that same run was a DIFFERENT thing and is NOT open** — this entry
+  first went out claiming a second, undiagnosed intermittent and guessing at an addon-asset race,
+  which was wrong. `Capybara::ElementNotFound "[data-param=\"layout\"]"` was diagnosed and fixed by
+  **PR #166** (2026-08-10, entry below): a failing `.addon-thumb` collapsed the gallery card ~126 px
+  out from under chromedriver's click, so `mountEditor` never ran and the params never rendered.
+  Six call sites across five files now go through `WebHelpers#open_addon_card`. Recorded here rather
+  than deleted because the wrong guess is the instructive part — **"isolated, so it is a flake" was
+  the error**, and a screenshot settled in one look what re-running had not.
 - **A `projects:organize` dry run cannot see a name collision a real run would hit.**
   Collision detection lives inside `Maker::MoveNode.call`, which a dry run never reaches —
   it writes nothing, on purpose — so its "would file" answer is optimistic whenever the
@@ -152,9 +149,10 @@ migration** rather than a separate pass. So the deferral is a judgement about co
 an impossibility. **The decision still stands**: all three deletes go through Active Record
 (`user.destroy` plus the three v1 controllers — no raw-SQL or `delete_all` path exists for these
 models, independently re-verified), and the harm is an Active Record validation that no DB
-constraint can lift, so the FKs are defence-in-depth rather than the fix. Tracked as ledger row 24
-in `docs/AUDIT-2026-08-03.md` — and note a cleanup pass cannot restore a deleted item's name to a
-BOM line, which is precisely why the conversion has to happen at destroy time.
+constraint can lift, so the FKs are defence-in-depth rather than the fix. Tracked as **§5 item 31**
+in `docs/AUDIT-2026-08-03.md` — it shipped here as a second "24", colliding with that section's
+product-direction item 24, and was renumbered 2026-08-10 — and note a cleanup pass cannot restore a
+deleted item's name to a BOM line, which is precisely why the conversion has to happen at destroy time.
 
 **No backfill migration either — recoverable by the owner, but the cost differs by column.** On
 `maker_inventory_items.supplier_id` and `.location_id` it is free: the validations are guarded on
