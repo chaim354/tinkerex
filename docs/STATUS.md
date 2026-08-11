@@ -317,11 +317,19 @@ test visits `/tools` at all**. The permission line this branch adds is on the **
 (`app/views/tools/home/index.html.erb`), a page the browser tier never loads. Belt and braces: both
 the card `<span>` and the addon page's `<ul>` are gated on `permissions.any?`, `build` defaults
 `permissions` to `[]`, and **none of the three fixture manifests declares `permissions`** — so the
-markup renders nowhere in the system suite even on the page those tests do load. `min_host` (default
-`0`) and `states_key_permitted?` (fixtures declare neither key) likewise leave every fixture addon
-built and listed. Recorded because the *next* addition here may not be so lucky: `open_addon_card`
-matches with Capybara's substring `text:`, so a permission label that happened to contain a
-generator's name would make the match ambiguous the day a system test does visit `/tools`.
+markup renders nowhere in the system suite even on the page those tests do load — a property this
+branch's own `home_controller_test.rb` already pins ("a card with no declared permissions renders no
+permission list at all"). `min_host` (default `0`) and `states_key_permitted?` (fixtures declare
+neither key) likewise leave every fixture addon built and listed.
+
+**And it is robust rather than lucky**, which is the part worth checking rather than assuming: even
+if a fixture manifest *did* declare permissions, the `<ul>` is server-rendered above the mount point,
+so its height is in the layout **before** the bundle mounts and before any thumbnail resolves — it is
+a constant offset, not the LATE shift `settle_addon_cards` exists to absorb. `box_sections_test.rb`'s
+guard asserts read-to-read **equality** of card positions, never pixel literals, so a constant offset
+cannot break it either. The residual to watch is a different one: `open_addon_card` matches with
+Capybara's substring `text:`, so a permission label that happened to contain a generator's name would
+make `find(".addon-card", text: key)` ambiguous the day a system test does visit `/tools`.
 
 **A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
 DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
