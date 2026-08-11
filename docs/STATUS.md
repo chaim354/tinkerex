@@ -255,6 +255,219 @@ Actual: 4`); restored → green.
 
 ---
 
+## 2026-08-07: the manifest learns to describe itself — and a `states_key` claim now needs the other addon's consent (branch `claude/addon-api-pr2-manifest-metadata`)
+
+**PR 2 of the Addon API v1 arc**, stacked on PR 1 (`claude/todo-list-review-6beccc`) — row 2 of
+`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §12, amended in this branch per §15's
+close-out rule. PR 1 gave the host a surface an addon can call; this one gives the **manifest** a
+vocabulary for describing what it is and what it wants, and turns the one thing a manifest could
+already grant itself into something the other side has to agree to.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Permissions`** — the permission vocabulary with one definition. Four table
+  entries (`library:read`, `library:write`, `state`, `project:read`), `service:<name>` by pattern,
+  and **an unknown name falls back to its own raw spelling** rather than rendering blank: a card
+  that silently understates what an addon asked for is worse than one showing a developer-facing
+  string. Deliberately **not** the same vocabulary as `Host::CAPABILITIES` — a capability is what
+  the host *can* do, a permission is what an addon *says* it wants, and they already diverge
+  (`state` / `project:read` here against `state:list` / `state:crud` / `project:current` there).
+- **Seven metadata keys parsed onto the `Addon`** — `version`, `author`, `license`, `homepage`,
+  `permissions`, `min_host`, `shares_states_with` — all optional, all **degrading** rather than
+  raising, which is the rule `layout` already followed: a manifest comes from a source this process
+  does not control. Two degradations are worth knowing because they are silent: a `permissions`
+  entry that is not a hash with a present `name` is **dropped** (the bare-string form
+  `["library:write"]` renders nothing at all), and a non-integer `min_host` is **ignored, not
+  coerced** — `"2".to_i` is 2, which would honour a value a JSON manifest should not contain, so
+  refusing it leaves the addon *available*, the failure direction an operator can diagnose.
+- **`min_host` makes `available?` a real answer.** It was hardcoded `true` for as long as
+  "registered" meant "fetchable". A too-new addon is still **built** and still **listed**, greyed
+  out, with `unavailable_reason` naming both levels — the gallery's old hardcoded "Not configured on
+  this deployment" pointed an operator at env vars that were fine. Skipping it instead is the easy
+  wrong answer: an addon that silently never appears reads as a broken deploy, not as a version
+  floor.
+- **The `states_key` mutual constraint — audit §2.1, closed.** `Registry.states_key_permitted?`
+  refuses a `states_key` pointing at another addon unless that addon names the claimant back in
+  `shares_states_with`. It lives in `Registry.all`, **not `build`**, because it is a question about a
+  **pair** of manifests and `build` is handed one. Three refusals, all skipping the addon rather
+  than raising: no reciprocation; a target **absent from the index** (the permissive "no target, no
+  harm" reading would let a typo reserve a namespace and collide the day the real addon shipped);
+  and — the reviewer's own counterexample — a target that is present but **itself rejected by
+  `build`**, since an entry the host rejects outright would otherwise confer a grant nobody can
+  audit.
+- **Permission display** on the gallery card (names, `to_sentence`) and on the addon's own page
+  (names plus each entry's optional `reasoning`).
+
+**Why the refusal SKIPS rather than greying out — the opposite choice from `min_host`, one method
+away.** `Tools::AddonsController` never gates on `available?` at all; its only consumers are three
+lines in `app/views/tools/home/index.html.erb`. So a listed-but-unavailable addon is still
+`Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key` from
+`#states` and `#create` — greying an unreciprocated claim out would **look closed while leaving the
+hole open**. The two decisions must not be harmonised, and both are now recorded in §14c saying so.
+
+**What audit §2.1 closes, exactly, and what it does not.** A manifest can no longer, **by
+declaration alone**, redirect its own saves and state reads into another addon's namespace. That is
+the whole of it. `states_key` was never an inter-addon *runtime* boundary and this does not make it
+one: a bundle runs same-origin in the authenticated session and can call
+`/tools/<other-key>/states` directly — the controller resolves whatever key is in the URL, no
+`states_key` involved. The audit's **other** §2.1 ("a malicious or compromised addon bundle owns the
+account") states that same fact inside its own evidence and **remains open**. A pre-existing comment
+in `#states` and its `routes.rb` counterpart claimed the `addon_key` scope was "the only thing
+standing between one addon's saves and another's"; that was false when written, and is now corrected
+to describe what it is — a data-scoping rule.
+
+**Closing the constraint broke four pre-existing tests, and that is the evidence it has teeth.**
+Three in `addons_controller_test.rb` and one in `registry_test.rb` were asserting the *old
+permissive behaviour* — a manifest unilaterally claiming another addon's `states_key` with nothing
+reciprocating — so `Registry.find` began returning nil and the three controller tests turned into
+404s. A constraint that could be added without a single existing assertion noticing would be a
+constraint over a case nothing exercised. The fix adds a **`RECIPROCATING_MANIFEST` beside**
+`MANIFEST` rather than editing `MANIFEST` itself, so the "FIXTURE_KEY declares no `states_key`
+anywhere in this suite" guarantee its comment makes stays true for that file's other 46 tests — and
+it was made in **its own commit (`da75f34`)**, out of the states_key task's assigned file scope, so
+the collateral stays isolated and revertible. The new constraint's own five tests were
+mutation-checked: reverting only the `&& build(target)` clause turned **exactly one** of them red
+while the other four stayed green.
+
+**THE WHOLE-BRANCH REVIEW CAUGHT A FALSE CLAIM THIS BRANCH INTRODUCED — in a comment written to
+*correct* something, which is the failure mode a correction is most prone to.** `0faffe1` justified
+the `build(target)` clause with a transitive example: *"A claims B, B claims C unreciprocated, C is
+malformed: A would still be admitted, pointed at a B that nobody agreed was legitimate."* Probed
+against that exact index: **`a` IS admitted with `states_key="b"`, and `b` is absent from
+`Registry.all`** — so the clause does not do what its own example said. The control case (target
+*directly* malformed) is correctly refused, so the clause works; only the explanation was wrong. The
+general principle stated alongside it was the wrong part: `build(target)` closes **one** of two ways
+a target can be invisible, and the other — a target skipped by `states_key_permitted?` itself —
+still confers a grant. **There is no functional consequence**, because that target still had to
+write `shares_states_with`, so no addon ever gets a namespace whose owner did not consent. The claim
+had propagated to **four** places (the comment, CLAUDE.md §14c, `docs/addon-api-v1.md` §2, this
+entry); all four now state the residual plainly rather than deleting the sentence, because "this
+closes the `build`-rejects case, and a target skipped by this same check still confers a grant,
+harmlessly, because it consented" is more useful to the next reader than silence. **Consent, not
+gallery visibility, is the property being enforced** — that sentence is the invariant the four
+copies had drifted away from.
+
+**The one non-documentation item: the branch shipped visible UI with no styling.** `.addon-card`,
+`.addon-desc`, `.addon-icon` and `.addon-title` all had rules; `.addon-permissions` had none. So the
+card's permission line rendered at body **15px — larger than the 13px description above it** — and
+the addon page's list was a bare `<ul>` with UA bullets and a 40px indent. One class serves two
+elements (a `<span>` on the card, a `<ul>` on the page), so the rule is `.addon-permissions {
+font-size: 13px }` plus a `ul.addon-permissions` list reset. **Checked in a real browser rather than
+assumed**, since the system suite covers neither page: computed `font-size` is now 13px on both and
+matches `.addon-desc` exactly, `list-style-type: none`, `padding-left: 0px`. That check also
+confirmed the raw-name fallback end to end — an unknown `totally:unknown` renders as itself — and
+that `reasoning` appears on the page and not on the card. The temporary test was deleted after it
+reported, so the suite counts below are unchanged.
+
+**Two smaller corrections from the same review.** The warn line for a refused claim fires **once per
+`Registry.all`, i.e. once per request** — only `manifests` is cached, `.all` re-filters on every
+call — not once per deploy as its comment claimed (measured: 5 calls, 5 lines, index cached). With
+the unreciprocated `boxes-next` below still live in production that is one line per request until
+the bundles repo lands its fix; the comment is corrected and the behaviour deliberately left alone.
+And `docs/addon-api-v1.md`'s permission table is a **hand-maintained second copy** of
+`Permissions::LABELS` with nothing keeping them in sync — named in the doc, with the code marked
+authoritative, which is worth stating out loud on a branch whose selling point is that the
+vocabulary has one definition. The mitigation is that these labels are cosmetic: nothing measures,
+gates or decides anything from them.
+
+**Permissions are DISPLAYED, NOT ENFORCED — a deliberate scope decision, recorded because the spec
+said otherwise.** Spec §8.1 describes permissions as "checked server-side on every request"; what
+shipped is the display half, and §8.1 now carries an as-built marker pointing at §12 row 2's scope
+correction. Three reasons: the vocabulary is unfinished (`data:read:<addon>/<collection>` does not
+exist until PR 4, so a check written now is a check PR 4 redesigns); **`service:<name>` would be a
+second spelling of a check that already exists and already works** — `sidecar_url_for` refuses any
+service the manifest's `services` key does not name, and a `permissions` check over the same
+condition is §14a's one-condition-two-answers drift unless the two keys are reconciled first; and
+§8.1's own next paragraph already concedes the check is not a security boundary, since a Ring 1
+bundle runs same-origin and can call any endpoint the user can. A gate that *looks* like a boundary
+and is not is this repo's dominant failure shape. The honest interim is a card the operator reads at
+publish time — which is worth real money in a deployment where **republishing a bundle IS the
+deploy**, Rails is never rebuilt, and there is no review step in between: the card is the one place
+an addon that quietly starts asking for more becomes visible. `docs/addon-api-v1.md` §2 and §4 now
+say all of this in those words, twice, because §4 is where an author goes looking for the boundary.
+
+**The `assert_select` trap, recorded so the next person does not spend the same round on it.**
+`assert_select "[attr=?]", /regex/` **does not regex-match** — rails-dom-testing's
+`SubstitutionContext#matcher_for` interpolates a Regexp straight into the selector, so `[title=?]`
+with `/Needs a newer…/` compiles to `[title="(?-mix:Needs a newer…)"]`, an exact-equality CSS
+selector that can never match real text. Regex matching on an **attribute** needs the gem's own
+`:match('attr', ?)` pseudo-class; `[attr*=?]` with a plain String is the simpler alternative.
+(`text: /…/` is a different code path and does match — this is attributes only.) Verified directly
+against rails-dom-testing **2.3.0**: `[title=?]` finds 0 elements where `:match('title', ?)` finds
+1. It fails as a test that **can never go green** rather than as a false green — the better
+direction, but only once you know why. Now in §14e, beside the other testing lessons, because it is
+not an addon fact.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0**. The three backend legs report
+**identical** counts — **2211 runs, 7944 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **75 runs, 466 assertions, 0 failures**.
+
+Those are the numbers **after** the base branch was merged back in (merge `6b95ec6`, 2026-08-10,
+which picked up the revision-aware backfill fix, the `/deploy` secrets doc fix and the `system-test`
+card-click fix). Measured alone, before that merge, this branch was **2206 runs / 7923 assertions**
+with system **74 / 461** — and the merge adds exactly **5** Rails-leg `test` blocks and **1** system
+`test` block, which is precisely the 2206 → 2211 and 74 → 75 observed: two independent counts that
+cross-check rather than one being read off the other. The pre-merge figure is what carries this
+arc's own evidence — against PR 1's measured 2181 runs / 7867 assertions this branch adds **25
+Rails-leg tests** and 56 assertions, matching the **25** `test` blocks its diff adds and the **0** it
+removes. This PR still adds **no browser test**; the +1 there is the merged-in card-click guard.
+(Per this file's own header the per-entry counts do not form a chain — the card-click arc's own
+recorded 2191/7947 was measured off `main`, a different baseline, and is not comparable to these.)
+
+**The one semantic conflict worth looking for in that merge — a card that grew a line of text under
+a click helper that computes a coordinate — DOES NOT EXIST, and the reason is that there are two
+different galleries both using `.addon-card`.** `WebHelpers#open_addon_card`/`settle_addon_cards`
+guard the **bundle's own generator gallery**, built in JS by `test/fixtures/addons/boxes/gallery.js`
+and reached only at `tools_addon_path("boxes")` — all six call sites visit that path and **no system
+test visits `/tools` at all**. The permission line this branch adds is on the **host** gallery
+(`app/views/tools/home/index.html.erb`), a page the browser tier never loads. Belt and braces: both
+the card `<span>` and the addon page's `<ul>` are gated on `permissions.any?`, `build` defaults
+`permissions` to `[]`, and **none of the three fixture manifests declares `permissions`** — so the
+markup renders nowhere in the system suite even on the page those tests do load — a property this
+branch's own `home_controller_test.rb` already pins ("a card with no declared permissions renders no
+permission list at all"). `min_host` (default `0`) and `states_key_permitted?` (fixtures declare
+neither key) likewise leave every fixture addon built and listed.
+
+**And it is robust rather than lucky**, which is the part worth checking rather than assuming: even
+if a fixture manifest *did* declare permissions, the `<ul>` is server-rendered above the mount point,
+so its height is in the layout **before** the bundle mounts and before any thumbnail resolves — it is
+a constant offset, not the LATE shift `settle_addon_cards` exists to absorb. `box_sections_test.rb`'s
+guard asserts read-to-read **equality** of card positions, never pixel literals, so a constant offset
+cannot break it either. The residual to watch is a different one: `open_addon_card` matches with
+Capybara's substring `text:`, so a permission label that happened to contain a generator's name would
+make `find(".addon-card", text: key)` ambiguous the day a system test does visit `/tools`.
+
+**A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
+DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
+asserted that no published manifest declares any of the new keys, so nothing here is exercised
+against a real bundle. That is true of the seven **new** keys and **false of the constraint**:
+`chaim354/tinkerex-addons`, on `main` since `4862f48` (2026-08-03, *"boxes-next: declare
+`states_key: "boxes"` so the trial shares the legacy saved-box rail"*), publishes three addons, and
+`boxes-next` declares `states_key: "boxes"` while `boxes` declares **no `shares_states_with`**. That
+is exactly the unreciprocated claim `states_key_permitted?` now refuses — so deploying this branch
+**silently drops `boxes-next` from the gallery**, log line only, which is the failure mode §14c
+records as the price of skipping rather than greying out. The fix is one line **in the bundles
+repo** — `boxes` adds `"shares_states_with": ["boxes-next"]` — and it must land **before or with**
+the Rails deploy, not after. Deliberately not made here: that is a different repo, a different
+deploy, and publishing its image is its own release. **Do not deploy this branch until it is done.**
+
+**What this does NOT prove, stated plainly.** **No published manifest declares any of the seven new
+keys** (`version`, `author`, `license`, `homepage`, `permissions`, `min_host`,
+`shares_states_with`) — verified by parsing `addons/manifests.json` on the bundles repo's `main` —
+so the metadata half is exercised only by stubbed `Maker::Addons::Source` fixtures, never by a real
+bundle. Permissions are displayed and not enforced; `states_key` is not an inter-addon runtime
+boundary and this PR does not make it one. Nothing here has been deployed. The four purely
+descriptive keys are parsed onto the `Addon` and **rendered on no page at all** — documented as such
+rather than advertised.
+
+**Invariants recorded** in CLAUDE.md — six in §14c (the mutual `states_key` declaration and its
+valid-target requirement; skip-not-grey-out and why it is deliberately unlike `min_host`;
+`available?` no longer hardcoded and the gallery showing a reason; non-integer `min_host` ignored not
+coerced; displayed-not-enforced for permissions *and* for `states_key`; one definition for the
+permission vocabulary with a raw-name fallback) and **one in §14e** for the `assert_select` attribute
+trap, which belongs with the testing lessons rather than with the addons.
+---
+
 ## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
 
 **PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`

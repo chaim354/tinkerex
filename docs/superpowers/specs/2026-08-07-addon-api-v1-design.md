@@ -295,6 +295,11 @@ the files are ordinary library files the user may have renamed or attached to a 
 
 ### 8.1 Ring 1 — what the permission check is, and what it is not
 
+> **AS BUILT (2026-08-07, PR 2): the display half only.** Permissions render on the gallery card and
+> the addon page; **no server-side check exists** and nothing refuses a request over a missing
+> declaration. The paragraph below describes the intended end state, not the code. Why the check was
+> scoped out — and what must be reconciled before it is built — is in §12, row 2's scope correction.
+
 Declared permissions are displayed on the gallery card and the addon page, recorded at manifest
 fetch time, and **checked server-side on every request**: the route is `/tools/:key/…`, so the host
 knows which addon is claiming what and refuses an undeclared capability.
@@ -400,7 +405,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | # | PR | Unblocks | Risk |
 |---|---|---|---|
 | 1 | **SHIPPED** (branch `claude/todo-list-review-6beccc`) — spec + SDK v1 over today's transport + `capabilities()` + typed errors, proved in a browser by an **SDK-only fixture bundle**; `generators`' adoption is a follow-up PR in `chaim354/tinkerex-addons` (see below) | Everything downstream; deletes per-bundle fetch code | low |
-| 2 | Manifest metadata, `min_host` / `Host::LEVEL`, `states_key` constraint, permission display | Closes audit §2.1 while every manifest is first-party | low |
+| 2 | **SHIPPED** (branch `claude/addon-api-pr2-manifest-metadata`, stacked on PR 1) — manifest metadata, `min_host` / `Host::LEVEL`, the `states_key` mutual constraint, permission **display**. Enforcement scoped out; see below | Closes audit §2.1 while every manifest is first-party | low |
 | 3 | Error contract completion + state CRUD + keyset paging | States stop accumulating unboundedly | low |
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
 | 5 | File plane — multipart + binary save, gated read, `pickFile`; `folders` moves behind `pickFolder` | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |
@@ -418,6 +423,27 @@ beside the existing `fixture` addon — **which deliberately stays on the raw-`c
 halves of the compatibility rules in §10 are covered by something that RUNS. `generators`' migration is
 a follow-up PR in the bundles repo; until it lands, **no real published bundle has been proven against
 the SDK.** Narrated in `docs/STATUS.md` (2026-08-07, the host SDK).
+
+**Row 2's scope correction: permission ENFORCEMENT was deliberately left out, and §8.1 above is
+ahead of the code.** §8.1 says declared permissions are "checked server-side on every request";
+what shipped is the display half only — the names render on the gallery card and the addon page,
+and **nothing on the server refuses a request because a manifest failed to declare something**.
+Three reasons, in order of weight:
+
+1. **The vocabulary is not finished, and enforcing half of one is worse than enforcing none.**
+   `data:read:<addon>/<collection>` does not exist until PR 4, so a check written now would have to
+   be redesigned by the PR that gives it its main use.
+2. **`service:<name>` would be a second spelling of a check that already exists and already
+   works.** `Tools::AddonsController#sidecar_url_for` refuses any service the manifest's `services`
+   key does not name. Adding a `permissions` check over the same condition is one condition with
+   two answers — §14a's recorded drift — unless the two keys are first reconciled into one.
+3. **§8.1's own next paragraph already says the check is not a security boundary.** A Ring 1 bundle
+   runs same-origin and can call any endpoint the user can, so enforcement buys consistency, not
+   containment. Shipping a gate that *looks* like a boundary and is not is this repo's dominant
+   failure shape; the honest interim is a card the operator reads at publish time, which is what
+   PR 2 shipped and what `docs/addon-api-v1.md` §2 and §4 now say in those words.
+
+Reconcile `services` with `service:<name>` **before** building the check, not while building it.
 
 ---
 

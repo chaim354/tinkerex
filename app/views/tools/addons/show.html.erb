@@ -13,6 +13,17 @@
   <p class="page-subtitle muted"><%= @addon.description %></p>
 </div>
 
+<% if @addon.permissions.any? %>
+  <ul class="addon-permissions muted">
+    <% @addon.permissions.each do |permission| %>
+      <li>
+        <%= Maker::Addons::Permissions.label_for(permission["name"]) %>
+        <% if permission["reasoning"].present? %>— <%= permission["reasoning"] %><% end %>
+      </li>
+    <% end %>
+  </ul>
+<% end %>
+
 <%# The whole addon UI mounts here. Every value the addon needs from the host arrives as a data
     attribute, so the bundle never has to know a Rails route or guess at context.
 
