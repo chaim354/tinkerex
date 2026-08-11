@@ -151,6 +151,17 @@ says to probe rather than trust.
 - At the branch point the same three legs read **2191 runs, 7947 assertions** (2177 before,
   +14 tests). Per this file's own header, those are not a chain: take a baseline by running the
   merge-base, not by subtracting entries.
+- **`system-test` FLAKED ONCE ON THE RUNNER after this merge, and the card-click fix does not cover
+  the shape it took** — reported rather than hidden, as that entry asks. Run 31458009152 (seed
+  52317) failed `BoxSectionsTest#test_a_table-of-contents_entry_opens_the_section_it_points_at…`
+  with **`expected to find css "#box-section-tray" but there were no matches`**; re-run of the same
+  job on the same commit **passed**, and the suite passed twice locally on this tree (76/470, 0
+  failures) both times. Note the failing selector: the section element was **absent**, not moved, so
+  this is not the pointer race `settle_addon_cards` absorbs — it is the *other* flake that entry
+  names, "~20 ESM modules and two fetches honestly take longer than 2s", hitting a test that never
+  goes through `open_addon_card` because it clicks a `<summary>` rather than a card, and so gets
+  Capybara's bare 2 s rather than `SETTLE_TIMEOUT`. The fix, if it recurs, is to give the
+  section-level entry points the same waited helper the card-level ones got, not a longer sleep.
 - **Every guard mutation-checked** (§15), and each mutation reverted after. Nine mutations: the five
   arms of `ReservedNames.reserved?` (drop trash / make it a prefix instead of exact / drop temp /
   drop clutter / drop the non-String guard) each turn exactly their own row red; dropping the
