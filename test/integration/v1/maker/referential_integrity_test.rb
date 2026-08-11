@@ -91,11 +91,67 @@ module V1
         assert_equal "B1", line.reference
       end
 
-      # WHY NO BACKFILL MIGRATION SHIPS WITH THIS FIX: rows already stranded before it are still
-      # clearable by their owner through the same API, because the validations are guarded on the
-      # id being present and clearing it skips them. Reproducing that state needs update_columns —
-      # no controller can produce it any more.
-      test "a reference stranded before this fix can still be cleared by its owner" do
+      # THE `""` ARMS OF `release_bom_lines`' FILTER ARE REACHABLE THROUGH THE PUBLIC API, which is
+      # the only reason they may exist. `exactly_one_target` counts with `present?`, so a create
+      # carrying a BLANK part_name beside an inventory item is a perfectly valid one-target line:
+      # the API accepts it and stores the blank rather than a NULL. Filter on nil alone and that
+      # line comes out of the delete with `part_name: ""` and no target at all — 422 on every
+      # subsequent save, which is A-M4 exactly. Driven end to end because the reachability is the
+      # claim; a model-level test would have to plant the row it is trying to prove occurs.
+      test "a BOM line whose part_name is blank rather than null still survives the delete" do
+        item = @user.maker_inventory_items.create!(name: "M3 bolt")
+        bom = create_bom
+
+        post "/v1/maker/boms/#{bom.id}/bom_lines",
+             params: { bom_line: { inventory_item_id: item.id, part_name: "", quantity: 4 } },
+             as: :json, headers: auth(@token)
+        assert_response :created
+        line = @user.maker_bom_lines.find(JSON.parse(response.body)["id"])
+        assert_equal "", line.part_name, "the API persists the blank; the \"\" arm exists for this row"
+
+        delete "/v1/maker/inventory_items/#{item.id}", headers: auth(@token)
+        assert_response :no_content
+
+        # The unlock is the assertion that carries the weight, so it comes first.
+        patch "/v1/maker/bom_lines/#{line.id}",
+              params: { bom_line: { notes: "any hardware store" } }, as: :json, headers: auth(@token)
+        assert_response :success
+        assert_equal "any hardware store", JSON.parse(response.body)["notes"]
+        assert_equal "free_text", JSON.parse(response.body)["target_kind"]
+        assert_equal "M3 bolt", line.reload.part_name
+      end
+
+      # The other half of the same filter, equally reachable and equally fatal on its own: a blank
+      # node_id is not a design-file target either, so a nil-only filter leaves this line targetless
+      # too. Two arms, two tests, so a regression names which one broke.
+      test "a BOM line whose node_id is blank rather than null still survives the delete" do
+        item = @user.maker_inventory_items.create!(name: "M3 bolt")
+        bom = create_bom
+
+        post "/v1/maker/boms/#{bom.id}/bom_lines",
+             params: { bom_line: { inventory_item_id: item.id, node_id: "", quantity: 4 } },
+             as: :json, headers: auth(@token)
+        assert_response :created
+        line = @user.maker_bom_lines.find(JSON.parse(response.body)["id"])
+        assert_equal "", line.node_id
+
+        delete "/v1/maker/inventory_items/#{item.id}", headers: auth(@token)
+        assert_response :no_content
+
+        patch "/v1/maker/bom_lines/#{line.id}",
+              params: { bom_line: { notes: "any hardware store" } }, as: :json, headers: auth(@token)
+        assert_response :success
+        assert_equal "M3 bolt", line.reload.part_name
+      end
+
+      # WHY NO BACKFILL MIGRATION SHIPS WITH THIS FIX: a row stranded before it is still recoverable
+      # by its owner through the same API. Reproducing that state needs update_columns — no
+      # controller can produce it any more. What recovery COSTS differs by column, and this test and
+      # the next are the two shapes.
+      #
+      # On an inventory item it is free: the validations are guarded on the id being present, so
+      # `PATCH { supplier_id: null }` skips them and saves.
+      test "a stranded inventory-item reference can be cleared by its owner" do
         item = @user.maker_inventory_items.create!(name: "M3 bolt")
         item.update_columns(supplier_id: 999_999)
 
@@ -109,6 +165,32 @@ module V1
         assert_response :success
         assert_equal "unlocked", item.reload.name
         assert_nil item.supplier_id
+      end
+
+      # On a BOM line it is NOT free, and "still clearable by their owner" is false as stated for
+      # this column: clearing `inventory_item_id` on its own leaves the line with zero targets, so
+      # `exactly_one_target` refuses it. The owner has to supply a REPLACEMENT target in the same
+      # request — and has to remember the deleted item's name themselves, which is exactly what
+      # `release_bom_lines` does for them from now on and cannot do retroactively.
+      test "a stranded BOM-line reference needs a replacement target, not just a null" do
+        bom = create_bom
+        item = @user.maker_inventory_items.create!(name: "M3 bolt")
+        line = bom.lines.create!(user: @user, inventory_item_id: item.id, quantity: 4)
+        line.update_columns(inventory_item_id: 999_999)
+
+        patch "/v1/maker/bom_lines/#{line.id}",
+              params: { bom_line: { notes: "still locked" } }, as: :json, headers: auth(@token)
+        assert_response :unprocessable_entity
+
+        patch "/v1/maker/bom_lines/#{line.id}",
+              params: { bom_line: { inventory_item_id: nil } }, as: :json, headers: auth(@token)
+        assert_response :unprocessable_entity, "clearing the pointer alone leaves no target"
+
+        patch "/v1/maker/bom_lines/#{line.id}",
+              params: { bom_line: { inventory_item_id: nil, part_name: "M3 bolt" } },
+              as: :json, headers: auth(@token)
+        assert_response :success
+        assert_equal "free_text", JSON.parse(response.body)["target_kind"]
       end
     end
   end

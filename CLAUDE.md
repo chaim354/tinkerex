@@ -793,11 +793,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   and refuses edits to unrelated fields; `Supplier`→items/bom_lines and `Location`→items therefore
   nullify. A BOM line cannot: `exactly_one_target` then sees no target and refuses the row anyway —
   the identical permanent lock with a different message — so `InventoryItem#release_bom_lines`
-  copies the item's name into `part_name` and only then drops the pointer. Never "tidy" that
-  callback into a `dependent:` on the association; the two statements must run in that order, and
-  the name is unrecoverable one moment later. The rename is user-scoped while the nullifies are
-  not, because clearing a pointer can only repair an illegal cross-tenant reference whereas writing
-  a name into someone else's row would disclose one.
+  copies the item's name into `part_name` (and its supplier, where the line names none and that
+  supplier still resolves — copying a *dangling* one recreates this very lock on the row just
+  rescued) and only then drops the pointer. Never "tidy" that callback into a `dependent:` on the
+  association; the statements must run in that order, and the name is unrecoverable one moment
+  later. **The targetless filter tests `[nil, ""]` and BOTH ARMS ARE REACHABLE** — the API accepts a
+  create carrying a blank `part_name`/`node_id` beside an inventory item, because
+  `exactly_one_target` counts with `present?` — so narrowing it to `nil` converts that line to
+  nothing and locks it. The whole method is user-scoped, unlike the *association-level* nullifies on
+  Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
+  repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
+  disclose one.
 
 ### 14e. Architecture and process
 
