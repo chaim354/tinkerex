@@ -302,6 +302,11 @@ the *volumes*, not through the app, so **a backup needs no deploy and no downtim
 `bin/restore-db` is the only one that stops anything, and only for the seconds it takes to swap the
 files in.
 
+**Before changing any of these five scripts, read CLAUDE.md §14i.** This section is the operator's
+copy; §14i is the list of things not to undo, each with the consequence named. `bin/ci` runs none of
+this code, so nothing in the suite goes red for any of it — prove a change against stubs, never the
+live NAS or a real volume.
+
 **`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION; the rest are callers.** It runs on the VM (the
 nightly invokes it from cron, `bin/backup-db` pushes the current copy up and calls it with
 `--to-stdout`). Two copies of this would eventually be two copies with different bugs — that is

@@ -1451,6 +1451,10 @@ nodes. `ping.env` is chmod 600 on the box; the installed script is byte-identica
 
 ### Six review findings from the merge, closed on `claude/backup-review-followups`
 
+**The rules that came out of this arc now live in CLAUDE.md §14i** — the arc's own invariants had no
+home in that file, so every one of them was only as durable as whoever last read `docs/DEPLOY.md`
+§6. `ops/` was also missing from §10's repo layout entirely.
+
 PR #155's Critical defect and the `--keep 0` guard were fixed before merge; six further findings were
 deliberately left as separate decisions and are closed here. **`bin/ci` covers none of this code** —
 it is shell, cron and docs — so each was reproduced *first* against a stubbed box: a scratch `$HOME`,
