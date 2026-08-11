@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-07 (**an eight-item UI pass: Back, STL axes, deleted-file propagation, the type filter, project covers, collapsible file sections, tasks without a reload, right-click download**)
+**Updated:** 2026-08-10 (**`system-test` unblocked on main: a gallery card collapsed 378px out from under Chromedriver's click, silently**)
 
 ## What this file is
 
@@ -60,7 +60,96 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-07): eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
+## Latest (2026-08-10): `system-test` was red on main because a gallery card moved out from under the click (branch `claude/system-test-card-click-race`)
+
+**The symptom.** `system-test` had been red on main since PR #160 merged (run 31188332739, commit
+096e581) — every other gate green on that run, so every new PR inherited a failure it did not cause.
+PR #164 hit it too (run 31448985204) with *different* tests failing in the same cluster, which is the
+signature of a flake rather than a break. Both runs failed in the boxes addon's tray top view:
+
+| run | test | failure |
+|---|---|---|
+| 31188332739 (main) | `TrayTopViewTest#test_a_tray_generator_draws_its_compartments_without_being_asked` | no `.box-topview svg` |
+| 31448985204 (#164) | `…#test_removing_a_wall_from_the_layout_merges_the_two_compartments_it_separated` | no `[data-topview="summary"]` |
+
+Both suites passed locally, every time, on a quiet Mac.
+
+**The screenshot was the whole diagnosis, and it took one look.** `gh run download 31188332739 -n
+screenshots` shows the **gallery** — filter box, four cards, "No saved boxes yet." — not the editor
+the test had clicked into. `mountEditor` replaces the DOM on its *first* line, synchronously, so a
+click that reached `onOpenGenerator` could not possibly leave the gallery standing. **The click never
+fired the handler.** Nothing raised, because a click that lands on nothing is not an error.
+
+**Root cause: the cards collapse under the pointer.** Every card carries an
+`<img class="addon-thumb">` fetching a sample photo through the sidecar proxy, and
+`.addon-thumb.is-missing { display: none }` (`application.css:195`) removes a **120px** box plus its
+6px flex gap the moment one fails. `FakeBoxesSidecar` registers a sample for ABox alone — and those
+bytes are deliberately a truncated JPEG — so **all four** thumbs fire `error`, and every card below
+each one jumps up ~126px. Measured in the browser rather than argued: **TrayLayout's top goes
+1002px → 624px, a 378px shift**, because it is the last of the four and inherits all three collapses.
+
+Chromedriver's click computes **one** coordinate and then dispatches pointerMove/pointerDown at it. A
+thumbnail resolving inside that window moves the card away and the click lands in the dead space
+below the shrunken grid. That is why the two failures were the tests opening the **last** card, why
+ABox's and FrontPanel's tests never failed, why load made it appear (four real HTTP round-trips
+through a 4-thread Puma pool), and why a quiet dev Mac never saw it: there, the thumbs 404 before the
+click.
+
+Reproduced deterministically before anything was changed — collapsing the thumbs on `pointermove`
+*is* that window — and the probe printed `editor opened after the click? false`, `still on the
+gallery? true`.
+
+**The fix is one helper, not six.** `find(".addon-card", text: key).click` was hand-rolled in **six**
+places across five files; all six now call `WebHelpers#open_addon_card`, which waits on
+`settle_addon_cards` first — every thumbnail request **ended** (`complete` is true for a 404 and for
+a decode failure, which is the point) *and* two consecutive reads of every card's position agreeing.
+A polled condition, not a slept interval: the shift is caused by network responses whose timing is
+exactly what nobody can guess.
+
+Its budget is `SETTLE_TIMEOUT = 10`, not Capybara's 2s, because requiring the cards to exist also
+absorbs the *other* flake this page produces under load — `Unable to find css '.addon-card'`,
+observed locally in `PlanExportTest` — where ~20 ESM modules and two fetches honestly take longer
+than 2s. It costs nothing on a quiet box; the loop returns on its second poll.
+
+**Not fixed, on purpose:** the layout shift itself is real product jank — a fast user can miss a card
+too. The bundle that renders the cards lives in `chaim354/tinkerex-addons` and the copy here is a
+**verbatim snapshot** (see `box_sections_test.rb`'s header), so fixing it here would create exactly
+the drift that file's trade-off is written about. The host-side alternative — reserving the 120px
+instead of removing it — leaves a permanent blank in every card on a gallery where most generators
+have no photo, which is a visual regression, not a fix. Flagged as a product decision.
+
+### The guard, and why it asserts the contract rather than the race
+
+`box_sections_test.rb`'s "the gallery is not clicked until its thumbnails have stopped moving" holds
+the page in the state the failure needs — `SlowSamples`, a `FakeServiceProxy` subclass that delays
+**only** `sample/*` by 0.3s, so the cards render and become clickable while the thumbs are still in
+flight. `FakeBoxesSidecar.install!` grew a `proxy:` kwarg for this rather than a second copy of its
+four registrations.
+
+It asserts the **property that closes the window** (no thumbnail still loading; re-asserting the
+collapse moves nothing), not the race's outcome. A test that clicked and hoped would be a coin flip
+in *both* directions — green with the bug present often enough to prove nothing, which is this repo's
+recorded failure shape (§15). An earlier draft did exactly that, arming the collapse on `pointermove`
+*after* settling, and it would have passed with or without the fix: a fake guard. Discarded.
+
+**Mutation-checked (§15):** dropped the `i.complete` clause from `settle_addon_cards`' probe → **red**
+("4 thumbnails were still loading — the cards can still collapse under the click", `Expected: 0 /
+Actual: 4`); restored → green.
+
+### Verification
+
+- `bin/ci` bare, **exit 0**: style 513 files/0 offenses, scan 0 errors, and the three test legs
+  **identical** — `2191 runs, 7947 assertions, 0 failures, 0 errors, 9 skips` on `test`, `test-share`
+  and `test-s3`. System: **71 runs, 444 assertions, 0 failures** (was 70/439 — one new guard, +5).
+- **Stressed under real contention**, because a green suite on a quiet box is what was *already* true
+  before the fix and proves nothing (§14e): with all 10 cores saturated, the four boxes system files
+  ran 3× back to back, `38 runs, 205 assertions, 0 failures` every time.
+- Not verified: that CI itself is green — only the macOS runner is registered, so this lands and the
+  next run on `main` is the actual proof.
+
+---
+
+## 2026-08-07: eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
 
 **The ask** was a list, verbatim: the Back button always returns to Files; STL thumbnails come out
 wrong way up; a file deleted from the share stays in the Files view and its projects; the type filter
