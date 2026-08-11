@@ -1248,6 +1248,211 @@ Invariants: **CLAUDE.md §14h**.
 
 ---
 
+## 2026-08-06: a backup of the share deployment that has actually been restored (branch `claude/share-version-sqlite-98e3cc`)
+
+**The question that started it:** *"right now the share version uses sqlite?"* — then *"i want to
+backup that current db because i am actively using the share version while we develop and i dont
+want to lose my data if something breaks."*
+
+**Yes, and not only share.** `DATABASE_URL` is set nowhere in `config/deploy*.yml` or `.kamal/`, so
+`database.yml`'s production block takes the self-host arm on all three Unraid backends: primary plus
+the three Solid stores as separate SQLite files on each destination's own volume
+(`tinkerex_storage{,_share,_s3}`). Postgres is the managed/SaaS profile (§7) and nothing on the box
+uses it. `LIBRARY_BACKEND` and the DB adapter are independent knobs — "the share version" names the
+CIFS-mounted *library*, not the database.
+
+**What landed:** `ops/backup-db.sh` (the implementation, runs on the VM), `bin/backup-db` (ad-hoc,
+pulls to the Mac), `bin/restore-db`, `bin/backup-cron-install`, `bin/backup-status`, plus
+`docs/DEPLOY.md` §6. A **nightly at 03:30 America/New_York** covers all three deployments and keeps
+14 each on the Unraid array. Nothing drives the app to do it, so a backup costs no deploy and no
+downtime — and, deliberately, does not require the app container to be UP: a nightly whose whole
+job is to run when things are broken must not depend on the thing that is broken.
+
+**ONE IMPLEMENTATION, TWO CALLERS.** The nightly and the ad-hoc Mac command differ only in where
+bytes land, so `bin/backup-db` scp's the current `ops/backup-db.sh` up on every run and calls it
+with `--to-stdout`. A second copy would eventually be a second copy with different bugs — §14b's
+Reconciler and §14d's file-type vocabulary are both in this file for that reason.
+
+**`docker cp`/`cp`/a volume tarball all produce a TORN DATABASE, and it opens fine.** These run in
+WAL mode (`PRAGMA journal_mode` → `wal`, verified live), so committed state is split between
+`production.sqlite3` and its `-wal` while Puma and Solid Queue write throughout — on share the queue
+was carrying a **5 MB WAL** at the moment of measurement. A non-atomic copy of the pair still opens
+and mostly answers; the corruption surfaces later, on one row, with nothing to tie it back.
+`sqlite3 .backup` (the online-backup API, defined against concurrent writers) is the whole reason
+these are scripts rather than an `scp`.
+
+**THE ARCHIVE MUST CARRY THE ACTIVE STORAGE BLOBS, AND THE REASON IS NOT SIZE.**
+`config.active_storage.service = :local`, so preview assets sit on the *same* volume under
+`/rails/storage/<xx>/<yy>/`. They are **not** rebuildable from a restored database:
+`Maker::Previews::MissingBackfill` skips any node that already HAS a preview row, so a DB-only
+restore leaves all 1383 rows at `ready` pointing at files that no longer exist — blank thumbnails on
+every surface, no error, no job, nothing to notice. Same shape as the §14b staleness bug: the repair
+sweep declines to look at exactly the rows that are broken.
+
+**WHERE THE ARCHIVES GO — the VM was rejected on purpose.** `//192.168.1.146/backups/tinkerex-backups`,
+mounted as the Docker CIFS volume `tinkerex_backups`, the same driverless mechanism
+`deploy.share.yml` uses for the library (no host `sudo mount`, no fstab, no cifs-utils). The VM's own
+disk is 31 GB with 12 GB free and is the **same virtual disk the live databases sit on**, so it would
+protect against a bad migration and not against losing the VM — a backup sharing a failure domain
+with its source is half a backup. Probing the host found `appdata` **read-only to guest** (the
+conventional choice, and unusable), `system` off-limits, and `3D Printing` unusable for a different
+reason: it *is* the share library, so tarballs there would be indexed as library files by the scan.
+The user created a `backups` share for this. **`docker volume rm tinkerex_backups` must not happen** —
+the next reference recreates it as a plain empty LOCAL volume and the nightly reports success while
+writing into the disk this whole arrangement avoids.
+
+**AND THE INSTALLER SHIPPED DEFAULTING TO `appdata` ANYWAY — the paragraph above and the code
+contradicted each other in the same commit** (review of this PR, fixed here). `bin/backup-cron-install`
+read `BACKUP_NAS:-//192.168.1.146/appdata` with a header still advertising appdata's "356 GB free",
+while `docs/DEPLOY.md` §6 and this entry both already recorded appdata as read-only to guest and
+unusable. **The default is the half nobody reads**, so the docs being right bought nothing.
+Reproduced against a stubbed box, both branches:
+- run as documented, no env override → it aborts at the bootstrap `mkdir` (exit 1), so *"re-run this
+  after any change to `ops/backup-db.sh`"* silently stops being a working way to push a script change;
+- counterfactually, with appdata writable → it reaches the volume check, sees the live volume pointing
+  at the real `backups` path, and **advises `docker volume rm tinkerex_backups`** — the one act the
+  line above and its own header both forbid, and the one most likely to be aimed at the *correct*
+  volume, since a wrong `BACKUP_NAS` is the commonest way to land in that branch.
+Fixed in three places: the default is now `//192.168.1.146/backups`, the header says so and says why
+not appdata, and the advice is replaced with *inspect it, then either fix `BACKUP_NAS`/`BACKUP_SUBDIR`
+to match what it already points at, or build a new one alongside with `BACKUP_VOLUME=`* — never
+delete. `docs/DEPLOY.md` §6 carries the same remedy beside the rule the message cites.
+
+**Four traps, all found by probing, none by reading.**
+- **`tar --anchored` is load-bearing.** GNU tar matches `--exclude` patterns *unanchored* by default,
+  against any trailing part of a member name. The exclude that drops the live, torn `.sqlite3` files
+  therefore also matched the staged snapshot at `db-snapshot/production.sqlite3` — the archive would
+  have contained every blob and **no database at all**, at full plausible size.
+- **`ssh` FLATTENS its arguments into one command string the remote shell re-splits, and this bit
+  three separate scripts.** An empty trailing argument does not arrive as an empty positional, it
+  vanishes into whitespace — `set -u` then killed `bin/backup-status` on line 2. A share name
+  containing a space (`//host/3D Printing`, which this box has) arrives as two arguments. And
+  `"-v vol:/backups:ro"` passed as one argument becomes two, shifting every positional after it so
+  the worker read the mount spec as the archive path. Pass space-free values, `${4:-}` for
+  optionals, `printf %q` for anything that might contain a space.
+- **`ssh bash -s` already owns stdin**, so the tarball cannot also travel down it; the two race and
+  the script itself gets eaten. `bin/restore-db` `scp`s the archive over as a file first.
+- **crontab treats a bare `%` as a newline.** The obvious `{ date -u +'%FT%TZ'; …; }` timestamp
+  wrapper *in the cron line* does not fail loudly — it silently truncates the command at the first
+  `%` and feeds the remainder to the job as stdin. The header/footer live inside
+  `ops/backup-db.sh` instead.
+
+**Verified by rehearsal, against real bytes.** `bin/restore-db share box:latest --into rehearsal`
+restores into a throwaway volume and reads it back with the deployment's own image, while the live
+container keeps serving: four databases `integrity_check ok` and owned `rails:rails`, **1326 blob
+files** (matching `active_storage_blobs` exactly), **1872 nodes** readable, no `db-snapshot/` left
+behind. Done from both sources — an archive on the Mac and one the nightly wrote to the array.
+Scratch volumes dropped afterwards.
+
+**The cron entry was watched firing, not merely installed.** Rescheduled two minutes out; it ran at
+`01:11:01Z`, logged its own header/footer, wrote all three archives and exited `status=0`; the
+03:30 schedule was then put back. Installing a crontab line and calling the nightly done is the
+same class of claim as a green suite over something that never ran.
+
+**Retention mutation-checked, because it DELETES.** Four successive `--keep 2` runs into a scratch
+volume: 1 file, 2 files, then 2 with the oldest gone, then 2 again — so it neither prunes below the
+floor nor accumulates. Then foreign files (`notes.txt`, an unrelated tarball, and *another
+deployment's* archive, deliberately the oldest file present) were planted and a `--keep 1` run
+pruned its own destination to one and **touched none of them**. Pruning happens only after a
+verified write; a failed run skips it, because the one thing worse than a missing backup is a good
+one aged out by a broken run.
+
+**`--keep` WAS UNVALIDATED, AND `--keep 0` DELETED THE ENTIRE ARCHIVE SET AFTER PINGING SUCCESS**
+(review of this PR, fixed here). The prune is `tail -n +$((keep + 1))`, so `0` selects **every**
+archive — including the one written and integrity-checked seconds earlier — and it runs *after* that
+destination's `up` ping has gone out, so Uptime Kuma records the run green over the loss. Measured in
+the real app image (`/bin/sh` is dash, GNU coreutils 9.7) against four stub archives, with only the
+CIFS volume swapped for a scratch bind mount:
+
+| `--keep` | before | after |
+|---|---|---|
+| `0` | pruned **all four**, newest included, `exit 0` | refused, `exit 64`, **0 pings sent** |
+| `-1` | `tail -n +0` → the same **all four** | refused, `exit 64` |
+| `abc` | dash `Illegal number`, **nothing pruned, `exit 0`** | refused, `exit 64` |
+| `14` | correct (4 < 14, nothing pruned) | unchanged — passes the guard and runs |
+
+**The non-numeric case is quieter than the review that found it assumed, and the correction matters
+for how it would have been noticed.** The arithmetic does abort — but inside a **pipeline element**,
+which is a subshell, so the pipeline's status is the `while` loop's and `sh -eu -c` still exits **0**.
+It therefore does *not* kill the run mid-loop: later destinations are backed up and pinged normally,
+and the only symptom is that pruning silently never happens again — an unbounded leak reported as
+success, with the one-line `Illegal number` buried in `backup.log`. Verified by exit code, not by
+reading. The guard is a single `case` before any backup work and before any ping; proved so by
+pointing `PING_SHARE` at a local listener and confirming a refused run sends **zero** requests while
+a valid one sends exactly one.
+
+**`0` is REFUSED, not reinterpreted, and that diverges from its sibling on purpose.** CLAUDE.md §14a
+gives `LIBRARY_TRASH_DAYS=0` the meaning "keep forever" precisely because the obvious implementation
+purges the lot — right for a **duration**, where "0 days of history" is coherent and the generous
+reading is the safe one. It is wrong for a retention **count**: `--keep 0` plainly reads as "keep
+zero", so silently keeping everything is the same surprise pointing the other way, and a count has no
+safe reading of what is simply a typo. The comment in `ops/backup-db.sh` names §14a so the divergence
+reads as a decision rather than an oversight.
+
+**Measured:** chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0 nodes (that
+deployment's library is genuinely empty) — 44 MB a night, ~0.6 GB for the full 14-day history
+against 5.8 TB free. Whole run: 11 seconds.
+
+**Not in the archive, and not missing:** the library bytes (share's NAS at
+`//192.168.1.146/3D Printing`; chunk's SeaweedFS). What this preserves is the **catalog** — the part
+that exists only in that volume.
+
+**MONITORING IS AN UPTIME KUMA PUSH MONITOR PER DEPLOYMENT — a DEAD-MAN'S SWITCH, which is the
+point.** It alerts on the ABSENCE of a ping, so it catches cron unloaded, the VM powered off, and
+the script killed before reaching its own error handler — none of which can send a message, and
+all of which stop the heartbeat. Home Assistant was the other candidate (already running, already
+the notification hub) and would have worked via a `timer` helper with `restore: true`, whose
+`timer.finished` event is the same idea expressed natively; Uptime Kuma won on keeping backup
+monitoring beside the monitoring for everything else rather than inside home automation.
+**It must run on the UNRAID HOST, not the VM** — a monitor sharing a host with what it watches is
+off exactly when the worst failures happen, and its silence then reads as health. Same argument as
+the archives, one level up.
+
+Four behaviours, each mutation-checked by breaking the thing it guards:
+
+- **A failing run pings `status=down` immediately**, rather than waiting out the 25-hour window — a
+  backup that runs and fails is knowable in seconds. Forcing the worker to `return 7` produced
+  `status=down&msg=backup+failed…` and exit 1; pointing the container lookup at a nonexistent name
+  produced `status=down&msg=no+container+matching+this+deployment`. **That second arm was missing
+  until the test was written** — it set a failure status and pinged nothing.
+- **A failed ping never fails the backup.** Pointed at a dead port, the run still wrote its archive,
+  pruned, and exited 0 with a warning on stderr. Letting curl's status through would turn "Uptime
+  Kuma is rebooting" into "the backup failed" and — since a nonzero exit skips the prune — into a
+  slow disk leak.
+- **`--to-stdout` (the ad-hoc Mac backup) deliberately does not ping.** Otherwise a nightly dead for
+  a week reads healthy for as long as someone keeps rescuing it by hand.
+- **`ping.env` is MERGED, never overwritten.** The installer is what you re-run to push a script
+  change; dropping unmentioned keys would unwire every monitor the next time someone fixed a typo,
+  and they would sit green until their windows lapsed. Tokens stay on the box, chmod 600.
+
+**TWO BUGS LIVED IN THE URL UPTIME KUMA HANDS YOU, and both were found by wiring the real thing
+rather than by reading.** Its UI shows the push URL as
+`…/api/push/TOKEN?status=up&msg=OK&ping=`, so pasting it verbatim is the natural move:
+
+- **That URL contains `&`, and `ping.env` was being SOURCED.** Bash read the `&` as a **job
+  separator**: the assignment ran in a background subshell, the variable was never set in the
+  calling shell, and the ping silently did not happen. Found because the stub received *nothing* on
+  a test that had passed minutes earlier with a query-free URL. Now parsed with an explicit
+  three-key whitelist, which also stops the file being executable shell.
+- **`curl --get` would then append a SECOND `status`.** Express/qs parses duplicate keys into an
+  **array**, and Kuma's `req.query.status === "down"` compares against an array and is false — so
+  **every failure would have been recorded as UP**, a monitor staying green exactly when it must
+  not, which is strictly worse than no monitor. `ping_kuma` strips any query string; mutation-checked
+  by configuring the verbatim UI URL, forcing a failure, and asserting exactly one `status=down`
+  reached the listener.
+
+**Live.** Uptime Kuma is installed on the Unraid host with three push monitors (`chunk.tinkerex`,
+`share.tinkerex`, `s3.tinkerex`), all three reachable from the VM (`{"ok":true}`) and pinged with
+real data by the install run: chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0
+nodes. `ping.env` is chmod 600 on the box; the installed script is byte-identical to the repo.
+
+**Left open:** the 03:30 run has no interlock with a deploy landing the same minute. The snapshot is
+WAL-safe regardless, so the worst case is a *correct* backup of a half-migrated schema. Nothing
+verifies the notification channel out of Uptime Kuma itself — proving that end would mean flapping
+a monitor and firing a real alert.
+
+---
+
 ## 2026-08-06: each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
 
 **The question that started it:** *"is there a way for me to access the unraid share version

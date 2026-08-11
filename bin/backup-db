@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Pull an ad-hoc backup of one deployment down to this Mac, right now.
+#
+#   bin/backup-db                 # share (the backend in daily use)
+#   bin/backup-db chunk
+#   BACKUP_DIR=/Volumes/x bin/backup-db s3
+#
+# For the unattended nightly that keeps copies ON the Unraid array, see bin/backup-cron-install.
+#
+# THIS SCRIPT DOES NOT KNOW HOW TO TAKE A BACKUP. ops/backup-db.sh does, and this pushes the
+# current copy of it to the box on every run before calling it — so the ad-hoc backup and the
+# nightly cannot drift into two implementations with two sets of bugs. Everything interesting
+# (the WAL-safe snapshot, the --anchored excludes, why the Active Storage blobs are in the
+# archive) is documented there, once.
+
+set -euo pipefail
+
+DEST="${1:-share}"
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+OUTDIR="${BACKUP_DIR:-$HOME/tinkerex-backups}"
+OPS_DIR="tinkerex-ops"
+
+case "$DEST" in
+  chunk|share|s3) ;;
+  *) echo "usage: bin/backup-db [chunk|share|s3]" >&2; exit 64 ;;
+esac
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE="$OUTDIR/tinkerex-$DEST-$STAMP.tar.gz"
+mkdir -p "$OUTDIR"
+
+echo "==> $DEST on $HOST"
+ssh "$HOST" "mkdir -p $OPS_DIR"
+scp -q "$(dirname "$0")/../ops/backup-db.sh" "$HOST:$OPS_DIR/backup-db.sh"
+
+# Only the tarball may reach stdout here — the archive IS this command's stdout. The remote
+# script keeps its progress on stderr for exactly this reason.
+ssh "$HOST" "bash $OPS_DIR/backup-db.sh --to-stdout $DEST" > "$ARCHIVE"
+
+# ---- verify what actually LANDED, not what we believe was sent -------------------------------
+echo "--> verifying $ARCHIVE"
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+tar -xzf "$ARCHIVE" -C "$WORK" ./db-snapshot/production.sqlite3
+PRIMARY="$WORK/db-snapshot/production.sqlite3"
+
+echo "    integrity_check          $(sqlite3 "$PRIMARY" 'PRAGMA integrity_check;' | head -1)"
+sqlite3 "$PRIMARY" <<'SQL' | sed 's/^/    /'
+.mode list
+.separator '  '
+SELECT 'users', count(*) FROM users
+UNION ALL SELECT 'nodes', count(*) FROM nodes
+UNION ALL SELECT 'maker_projects', count(*) FROM maker_projects
+UNION ALL SELECT 'maker_models', count(*) FROM maker_models
+UNION ALL SELECT 'maker_previews', count(*) FROM maker_previews
+UNION ALL SELECT 'blobs (rows)', count(*) FROM active_storage_blobs;
+SQL
+echo "    blobs (files)            $(tar -tzf "$ARCHIVE" | awk '!/\/$/ && !/^\.\/db-snapshot\//' | wc -l | tr -d ' ')"
+echo "    size                     $(du -h "$ARCHIVE" | cut -f1)"
+
+echo
+echo "==> $ARCHIVE"
+echo
+echo "Restore:  bin/restore-db $DEST $ARCHIVE --into rehearsal   # throwaway volume, live untouched"
+echo "          bin/restore-db $DEST $ARCHIVE                    # the real thing"

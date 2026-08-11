@@ -269,6 +269,176 @@ mistyped address. And **the heredoc is quoted (`<<'RUBY'`)**, which is not styli
 
 ---
 
+## 6. Backup & restore
+
+**A nightly runs on the box at 03:30 America/New_York**, backing up all three deployments to the
+Unraid array and keeping 14 per deployment. Day to day you only need:
+
+```sh
+bin/backup-status                                # schedule, last run, inventory, staleness
+```
+
+```sh
+bin/backup-cron-install                          # install/refresh the nightly (idempotent)
+bin/backup-cron-install --uninstall              # remove just the crontab entry
+bin/backup-db share                              # ad-hoc, pulled down to this Mac
+bin/restore-db share box:latest --into rehearsal # rehearse the newest nightly; live untouched
+bin/restore-db share box:latest                  # the real thing (prompts; backs up first)
+```
+
+`share` is `bin/backup-db`'s default; `chunk` and `s3` take the same arguments. Everything talks to
+the *volumes*, not through the app, so **a backup needs no deploy and no downtime** —
+`bin/restore-db` is the only one that stops anything, and only for the seconds it takes to swap the
+files in.
+
+**`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION; the rest are callers.** It runs on the VM (the
+nightly invokes it from cron, `bin/backup-db` scp's the current copy up and calls it with
+`--to-stdout`). Two copies of this would eventually be two copies with different bugs — that is
+this repo's recorded failure shape, not a hypothetical. Change `ops/backup-db.sh` and re-run
+`bin/backup-cron-install` to push it.
+
+**Where the archives live:** `//192.168.1.146/backups/tinkerex-backups`, mounted into the helper
+container as the Docker CIFS volume `tinkerex_backups` — the same driverless mechanism
+`deploy.share.yml` uses for the library, so no host `sudo mount`, no fstab, no cifs-utils. Note
+`appdata` is **read-only to guest** and cannot be used; the `backups` share was created for this.
+The VM's own disk was rejected deliberately: it is 31 GB with 12 GB free and it is the *same*
+virtual disk the live databases sit on, so it would protect against a bad migration and not against
+losing the VM. **A backup that shares a failure domain with its source is half a backup.**
+
+**DO NOT `docker volume rm tinkerex_backups`.** Kamal only ensures a volume EXISTS; if this one were
+removed, the next reference would recreate it as a **plain empty local volume on the VM** — the
+nightly would go on reporting success while writing into the very disk this arrangement avoids, and
+the real archives on the array would simply stop being visible. Same warning, same reason, as the
+library volume's.
+
+**If the installer refuses because the volume points somewhere unexpected, deleting it is the wrong
+move** — and it is the move most likely to be aimed at the *right* volume, because the commonest way
+to reach that branch is a run whose `BACKUP_NAS`/`BACKUP_SUBDIR` are wrong rather than a genuinely
+stray volume. Inspect it (`docker volume inspect`, and `ls` it through a container), then either
+re-run with those two set to compose the path it already points at, or — if you really are moving to
+a different share — re-run with `BACKUP_VOLUME=<new-name>` to build the new one alongside, and
+retire the old only once a nightly has been seen writing into it. Every other step the installer
+takes is undone by re-running it; that one is not.
+
+**Retention prunes only after a verified write, and only files it named.** `--keep N` keeps the N
+newest *per deployment*; a failed run skips pruning entirely, because the one thing worse than a
+missing backup is a good one aged out by a broken run. Verified by planting foreign files
+(`notes.txt`, another deployment's archive, an unrelated tarball) and confirming a `--keep 1` run
+pruned its own destination to one and touched nothing else.
+
+**`--keep` (and so `BACKUP_KEEP`) must be an integer ≥ 1; anything else is refused before the run
+starts.** There is no value meaning "keep everything". `0` and negatives both select *every* archive
+including the one just written, and a non-number silently prunes nothing for ever — and since the
+prune runs *after* the success ping, either would be a monitor reporting green over the loss. Note
+this deliberately **diverges from `LIBRARY_TRASH_DAYS`, where `0` means "keep forever"**
+(CLAUDE.md §14a): that is a duration, where the generous reading is safe, and this is a count, where
+`0` reads as "keep zero" and the only honest response to a typo is to refuse it.
+
+**`bin/backup-status` fails loud on staleness** rather than printing a date — but it only speaks
+when asked, which is what the push monitors below are for.
+
+### Monitoring — Uptime Kuma push monitors
+
+**RUN UPTIME KUMA ON THE UNRAID HOST, NOT THE KAMAL VM.** A monitor sharing a host with the thing
+it monitors cannot report the failures that matter most — VM off, Docker wedged — because it is off
+too, and its silence is indistinguishable from everything being fine. It is the same argument that
+put the archives on the array instead of `/dev/vda2`, applied one level up.
+
+Install from Community Apps (default port 3001), then add **one Push monitor per deployment** —
+`tinkerex backup (chunk)`, `(share)`, `(s3)`. Heartbeat Interval **90000** (25 h, so the 03:30 run
+has an hour of slack), Retries **0**. Copy each push URL, then:
+
+```sh
+PING_CHUNK=http://192.168.1.146:3001/api/push/aB1 \
+PING_SHARE=http://192.168.1.146:3001/api/push/cD2 \
+PING_S3=http://192.168.1.146:3001/api/push/eF3 \
+  bin/backup-cron-install
+```
+
+**A PUSH MONITOR IS A DEAD-MAN'S SWITCH — it alerts on the ABSENCE of a ping.** That is the whole
+reason to prefer it over anything the job reports about itself: cron unloaded, the VM powered off,
+the script killed before reaching its own error handler. None of those can send a message, and all
+of them stop the heartbeat.
+
+Four behaviours are deliberate, and each was mutation-checked by breaking the thing it guards:
+
+- **A failing run sends `status=down` immediately** rather than waiting out the 25-hour window. A
+  backup that runs and fails is knowable in seconds; making you wait a day discards the one case
+  the job *can* report on itself. The vanished-container arm pings too.
+- **A failed ping NEVER fails the backup.** The backup is the product, the ping is telemetry about
+  it. Letting curl's exit status through would turn "Uptime Kuma is rebooting" into "last night's
+  backup failed" — and, since a nonzero exit skips the prune, into a slow disk leak as well.
+- **An ad-hoc `bin/backup-db` does NOT ping.** A manual backup to someone's laptop is not the
+  nightly; if it touched the heartbeat, a nightly dead for a week would read healthy for exactly as
+  long as someone kept rescuing it by hand.
+- **`bin/backup-cron-install` MERGES `ping.env`, it does not overwrite it.** That installer is what
+  you re-run to push a script change, so a merge that dropped unmentioned keys would silently
+  unwire every monitor the next time anyone fixed a typo — and they would sit green until their
+  windows lapsed. Tokens live only on the box (`~/tinkerex-ops/ping.env`, chmod 600), never in git.
+
+**Two traps live in the URL Uptime Kuma hands you, which is `…/api/push/TOKEN?status=up&msg=OK&ping=`
+— the natural thing to do is paste it verbatim, and both were real bugs before they were guards.**
+
+- **`ping.env` is PARSED, NEVER SOURCED.** That URL contains `&`, so `. ping.env` on an unquoted
+  line makes bash read it as a **job separator**: the assignment runs in a background subshell, the
+  variable is never set in this shell, and the ping silently does not happen. Sourcing also makes
+  every value in that file executable shell. `ops/backup-db.sh` reads it with an explicit
+  three-key whitelist, which takes values literally and can do neither.
+- **`ping_kuma` STRIPS ANY QUERY STRING** (`url="${url%%\?*}"`). Left on, `curl --get` appends a
+  **second** `status`, Express/qs parses the duplicate into an **array**, and Kuma's
+  `req.query.status === "down"` compares against an array and is false — so **every failure is
+  recorded as UP**. The monitor stays green exactly when it must not, which is worse than having no
+  monitor. Mutation-checked by configuring the verbatim UI URL, forcing a failure, and asserting
+  the request carried exactly one `status=down`.
+
+**`docker cp`, `cp` and a raw volume tarball ALL PRODUCE A TORN DATABASE HERE.** These run in WAL
+mode (`PRAGMA journal_mode` → `wal`), so committed state is split between `production.sqlite3` and
+its `-wal` sidecar, and Puma + Solid Queue are writing throughout. A non-atomic copy of the pair
+still **opens** and mostly answers queries — the corruption surfaces later, on one row, with nothing
+to tie it back. `bin/backup-db` drives `sqlite3 .backup` (SQLite's online-backup API, defined
+against concurrent writers) instead, which is the entire reason the script exists rather than a
+one-line `scp`.
+
+**THE ARCHIVE CARRIES THE ACTIVE STORAGE BLOBS TOO, AND THAT IS NOT PADDING.**
+`config.active_storage.service = :local`, so every preview asset sits on the *same* volume under
+`/rails/storage/<xx>/<yy>/`. They are **not** rebuildable from a restored database:
+`Maker::Previews::MissingBackfill` skips any node that already HAS a preview row, so a DB-only
+restore leaves every row at `ready` pointing at a file that no longer exists — blank thumbnails
+across every surface, no error, no job, nothing to notice. Share's archive is ~34 MB for 1872 nodes
+and 1326 blobs; there is nothing to be gained by splitting them.
+
+Not in the archive, and not missing: the **library bytes**. On share they live on the NAS
+(`//192.168.1.146/3D Printing`) and on chunk in SeaweedFS. What this backs up is the **catalog** —
+nodes, projects, models, attachments, tags, print log, users — which is the part that only exists
+here.
+
+**REHEARSE THE RESTORE BEFORE YOU NEED IT.** `--into <suffix>` restores into `<volume>-<suffix>` and
+reads it back with the deployment's own image, so extraction, file ownership and the app's own view
+of the data are all exercised against real bytes while the live container keeps serving. Verified
+this way on share, from both sources: four databases restored `rails:rails`, 1326 blob files, 1872
+nodes readable. Drop the scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+
+**`box:` restores in place, without a round trip.** A nightly archive lives inside a CIFS volume, so
+it is not a path on the VM's filesystem at all — fetching 34 MB down to the Mac only to push the
+same 34 MB back would be the obvious and wrong way to use one. `box:latest` resolves to the newest
+archive for that deployment; `box:<filename>` names one from `bin/backup-status`.
+
+**Three of these scripts got bitten by the same thing: `ssh` flattens its arguments into one command
+string that the remote shell re-splits.** An empty trailing argument vanishes into whitespace (so
+`$4` is unset and `set -u` kills the script on line 2); a share name containing a space —
+`//host/3D Printing`, which this box has — arrives as two arguments; and `"-v vol:/backups:ro"`
+passed as one argument becomes two, shifting every positional after it. Pass space-free values, use
+`${4:-}` for optionals, and `printf %q` anything that could contain a space.
+
+Both scripts verify rather than assume — `PRAGMA integrity_check` on every snapshot **in the
+container before the transfer is paid for**, then again locally on what actually landed; and
+`bin/restore-db` checks the archive **before** it stops anything, because taking a deployment down
+and only then discovering the tarball is short is the one failure that ordering removes. It also
+runs `bin/backup-db` first, since restoring the wrong archive is an ordinary mistake and making it
+unrecoverable is a choice.
+
+---
+
 ## Migrating off the old on-box build
 
 The Unraid box was originally set up to build *on the VM* and serve from a local

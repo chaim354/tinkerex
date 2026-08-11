@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# Restore an archive made by bin/backup-db back into a deployment's storage volume.
+#
+#   bin/restore-db share ~/tinkerex-backups/tinkerex-share-20260807T003955Z.tar.gz
+#   bin/restore-db share <archive> --yes          # skip the prompt (unattended)
+#   bin/restore-db share <archive> --into scratch # rehearse into a THROWAWAY volume, touch nothing live
+#
+# DESTRUCTIVE: it replaces every file in the target volume — the databases AND the Active Storage
+# blobs. Three things stand in front of that, and none of them is optional:
+#
+#   1. THE ARCHIVE IS VERIFIED BEFORE THE CONTAINER IS STOPPED. Taking a live deployment down and
+#      only then discovering the tarball is short is the one failure this ordering removes.
+#   2. IT BACKS UP WHAT IT IS ABOUT TO DESTROY, by calling bin/backup-db first. Restoring the
+#      wrong archive is a normal mistake; making it unrecoverable is a choice.
+#   3. IT ASKS. --yes exists for scripts, not for saving four keystrokes.
+#
+# --into <suffix> is how you rehearse. It restores into `<volume>-<suffix>` and boots a scratch
+# container against it, so the extraction, the file ownership and the app's own boot are all
+# exercised against real bytes while the live deployment keeps serving. Rehearse before you need
+# it; a restore path nobody has ever run is a hope, not a plan.
+
+set -euo pipefail
+
+DEST="${1:-}"; ARCHIVE="${2:-}"; shift 2 2>/dev/null || true
+ASSUME_YES=false; INTO=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes)  ASSUME_YES=true; shift ;;
+    --into) INTO="${2:?--into needs a suffix}"; shift 2 ;;
+    *) echo "unknown option: $1" >&2; exit 64 ;;
+  esac
+done
+
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+
+case "$DEST" in
+  chunk) FILTER='^tinkerex-web-[0-9a-f]'; VOLUME=tinkerex_storage       ;;
+  share) FILTER='^tinkerex-web-share-';   VOLUME=tinkerex_storage_share ;;
+  s3)    FILTER='^tinkerex-web-s3-';      VOLUME=tinkerex_storage_s3    ;;
+  *) echo "usage: bin/restore-db <chunk|share|s3> <archive.tar.gz> [--yes] [--into SUFFIX]" >&2; exit 64 ;;
+esac
+REHEARSAL=false
+if [ -n "$INTO" ]; then REHEARSAL=true; VOLUME="$VOLUME-$INTO"; fi
+
+# `box:` names an archive the NIGHTLY wrote, which lives inside the tinkerex_backups CIFS volume
+# and therefore is not a path on the VM's filesystem at all (/var/lib/docker/volumes is root-only,
+# and the bytes are on the NAS regardless). Restoring one must not mean fetching 34 MB down to the
+# Mac and pushing the same 34 MB back up.
+#
+#   bin/restore-db share box:latest
+#   bin/restore-db share box:tinkerex-share-20260807T010802Z.tar.gz
+BACKUP_VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
+FROM_BOX=false
+case "$ARCHIVE" in
+  box:*)
+    FROM_BOX=true
+    NAME="${ARCHIVE#box:}"
+    if [ "$NAME" = latest ]; then
+      NAME=$(ssh "$HOST" "docker run --rm -v $BACKUP_VOLUME:/b --user 0 \
+        \$(docker inspect --format '{{.Config.Image}}' \$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)) \
+        sh -c 'ls -1t /b/tinkerex-$DEST-*.tar.gz 2>/dev/null | head -1'" | xargs -n1 basename)
+      [ -n "$NAME" ] || { echo "no archives for $DEST in $BACKUP_VOLUME" >&2; exit 66; }
+      echo "==> box:latest resolves to $NAME"
+    fi
+    ;;
+  *) [ -f "$ARCHIVE" ] || { echo "no such archive: $ARCHIVE" >&2; exit 66; } ;;
+esac
+
+# ---- 1. verify the archive BEFORE anything on the box is touched -----------------------------
+# Taking a live deployment down and only then discovering the tarball is short is the one failure
+# this ordering removes — so the check runs wherever the archive already is, never after a
+# transfer that might itself be the thing that is broken.
+echo "==> verifying $ARCHIVE"
+if $FROM_BOX; then
+  ssh "$HOST" "docker run --rm -v $BACKUP_VOLUME:/b --user 0 \
+    \$(docker inspect --format '{{.Config.Image}}' \$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)) \
+    sh -eu -c '
+      rm -rf /tmp/v && mkdir -p /tmp/v
+      tar -xzf \"/b/$NAME\" -C /tmp/v ./db-snapshot/production.sqlite3
+      c=\$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"PRAGMA integrity_check;\" | head -1)
+      [ \"\$c\" = ok ] || { echo \"integrity_check: \$c\" >&2; exit 65; }
+      echo \"    integrity_check ok — \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM nodes;\") nodes, \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM maker_projects;\") projects\"
+    '"
+else
+  WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+  tar -xzf "$ARCHIVE" -C "$WORK" ./db-snapshot/production.sqlite3 \
+    || { echo "archive has no db-snapshot/production.sqlite3 — not a bin/backup-db archive" >&2; exit 65; }
+  CHECK=$(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'PRAGMA integrity_check;' | head -1)
+  [ "$CHECK" = ok ] || { echo "integrity_check: $CHECK" >&2; exit 65; }
+  echo "    integrity_check ok — $(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'SELECT count(*) FROM nodes;') nodes, $(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'SELECT count(*) FROM maker_projects;') projects"
+fi
+
+# ---- 2. confirm --------------------------------------------------------------------------------
+echo
+if $REHEARSAL; then
+  echo "REHEARSAL: restores into the scratch volume '$VOLUME'. The live $DEST deployment is untouched."
+else
+  echo "This REPLACES every file in volume '$VOLUME' on $HOST (databases + preview blobs)"
+  echo "and restarts the $DEST container. A backup of the current state is taken first."
+fi
+if ! $ASSUME_YES; then
+  read -r -p "Type 'yes' to continue: " reply
+  [ "$reply" = yes ] || { echo "aborted"; exit 1; }
+fi
+
+# ---- 3. back up what we are about to destroy ---------------------------------------------------
+if ! $REHEARSAL; then
+  echo "==> backing up current state first"
+  "$(dirname "$0")/backup-db" "$DEST"
+fi
+
+# ---- 4. swap the bytes in --------------------------------------------------------------------
+# SRC_SPEC carries NO SPACE, and the `-v` is added on the far side. ssh flattens its arguments
+# into one command string that the remote shell re-splits, so passing "-v vol:/backups:ro" as a
+# single argument silently becomes TWO — every positional after it shifts by one, and the worker
+# reads the mount spec as the archive path. Third instance of this trap in these scripts.
+if $FROM_BOX; then
+  # Already on the array. The worker mounts the backups volume read-only and reads it in place.
+  SRC_SPEC="$BACKUP_VOLUME:/backups:ro"; ARCHIVE_IN_HELPER="/backups/$NAME"
+else
+  # The archive goes over as a FILE rather than down stdin: `ssh bash -s` already owns stdin for
+  # the script itself, so piping the tarball there would race the two against each other.
+  echo "==> uploading archive"
+  REMOTE_TAR="/tmp/tinkerex-restore-$$.tar.gz"
+  scp -q "$ARCHIVE" "$HOST:$REMOTE_TAR"
+  trap 'rm -rf "${WORK:-}"; ssh "$HOST" "rm -f $REMOTE_TAR" >/dev/null 2>&1 || true' EXIT
+  SRC_SPEC="$REMOTE_TAR:/backups/archive.tar.gz:ro"; ARCHIVE_IN_HELPER="/backups/archive.tar.gz"
+fi
+
+echo "==> restoring into $VOLUME"
+ssh "$HOST" bash -s -- "$FILTER" "$VOLUME" "$REHEARSAL" "$SRC_SPEC" "$ARCHIVE_IN_HELPER" <<'REMOTE'
+set -euo pipefail
+filter=$1; volume=$2; rehearsal=$3; src_spec=$4; archive=$5
+# `docker ps -a`: a restore is most wanted when the deployment is already down, so a lookup that
+# only sees RUNNING containers refuses precisely when it is needed. `docker stop` on an already
+# stopped container is a no-op, and `docker start` brings it back either way.
+cid=$(docker ps -a -qf name="$filter" | head -1)
+[ -n "$cid" ] || { echo "no container matching $filter" >&2; exit 1; }
+image=$(docker inspect --format '{{.Config.Image}}' "$cid")
+owner=$(docker inspect --format '{{.Config.User}}' "$cid"); owner=${owner:-root}
+
+if [ "$rehearsal" != true ]; then
+  echo "    stopping $cid"
+  docker stop "$cid" >/dev/null
+fi
+
+# The helper runs the deployment's OWN image, as root, so tar and sqlite3 are guaranteed present
+# and the chown can name the app's user. `find -delete` rather than `rm /v/*`: the glob misses
+# dotfiles (.keep) and fails outright on an empty volume under `set -e`.
+docker volume create "$volume" >/dev/null
+docker run --rm -v "$volume:/v" -v "$src_spec" --user 0 "$image" sh -eu -c '
+  find /v -mindepth 1 -delete
+  tar -xzf "$1" -C /v
+  mv /v/db-snapshot/*.sqlite3 /v/
+  rmdir /v/db-snapshot
+  chown -R '"$owner"' /v
+' _ "$archive"
+
+if [ "$rehearsal" != true ]; then
+  echo "    starting $cid"
+  docker start "$cid" >/dev/null
+fi
+REMOTE
+
+# ---- 5. prove the app can actually read what we just wrote -------------------------------------
+echo "==> verifying"
+if $REHEARSAL; then
+  ssh "$HOST" "docker run --rm -v $VOLUME:/rails/storage --user 0 \
+    \$(docker inspect --format '{{.Config.Image}}' \$(docker ps -a -qf name='$FILTER' | head -1)) \
+    sqlite3 /rails/storage/production.sqlite3 'SELECT count(*) FROM nodes;'" \
+    | sed 's/^/    nodes readable in scratch volume: /'
+  echo "    remove it with: ssh $HOST 'docker volume rm $VOLUME'"
+else
+  for _ in $(seq 30); do
+    code=$(ssh "$HOST" "curl -s -o /dev/null -w '%{http_code}' -H 'Host: $DEST.tinkerex.local' http://localhost/up" || true)
+    [ "$code" = 200 ] && break
+    sleep 2
+  done
+  echo "    /up -> ${code:-no answer}"
+  ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) bin/rails runner 'puts \"#{Node.count} nodes, #{Maker::Project.count} projects\"'" \
+    | sed 's/^/    /'
+fi
