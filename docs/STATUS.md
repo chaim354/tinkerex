@@ -293,11 +293,35 @@ direction, but only once you know why. Now in §14e, beside the other testing le
 not an addon fact.
 
 **Measured.** `bin/ci` green, **all seven gates, exit 0**. The three backend legs report
-**identical** counts — **2206 runs, 7923 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
-and s3 alike. System (real browser): **74 runs, 461 assertions, 0 failures** — unchanged, this PR
-adds no browser test. Against PR 1's measured 2181 runs / 7867 assertions, this branch adds **25
-Rails-leg tests** and 56 assertions, which matches the **25** `test` blocks the diff adds and the
-**0** it removes — the two counts cross-check rather than one being read off the other.
+**identical** counts — **2211 runs, 7944 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **75 runs, 466 assertions, 0 failures**.
+
+Those are the numbers **after** the base branch was merged back in (merge `6b95ec6`, 2026-08-10,
+which picked up the revision-aware backfill fix, the `/deploy` secrets doc fix and the `system-test`
+card-click fix). Measured alone, before that merge, this branch was **2206 runs / 7923 assertions**
+with system **74 / 461** — and the merge adds exactly **5** Rails-leg `test` blocks and **1** system
+`test` block, which is precisely the 2206 → 2211 and 74 → 75 observed: two independent counts that
+cross-check rather than one being read off the other. The pre-merge figure is what carries this
+arc's own evidence — against PR 1's measured 2181 runs / 7867 assertions this branch adds **25
+Rails-leg tests** and 56 assertions, matching the **25** `test` blocks its diff adds and the **0** it
+removes. This PR still adds **no browser test**; the +1 there is the merged-in card-click guard.
+(Per this file's own header the per-entry counts do not form a chain — the card-click arc's own
+recorded 2191/7947 was measured off `main`, a different baseline, and is not comparable to these.)
+
+**The one semantic conflict worth looking for in that merge — a card that grew a line of text under
+a click helper that computes a coordinate — DOES NOT EXIST, and the reason is that there are two
+different galleries both using `.addon-card`.** `WebHelpers#open_addon_card`/`settle_addon_cards`
+guard the **bundle's own generator gallery**, built in JS by `test/fixtures/addons/boxes/gallery.js`
+and reached only at `tools_addon_path("boxes")` — all six call sites visit that path and **no system
+test visits `/tools` at all**. The permission line this branch adds is on the **host** gallery
+(`app/views/tools/home/index.html.erb`), a page the browser tier never loads. Belt and braces: both
+the card `<span>` and the addon page's `<ul>` are gated on `permissions.any?`, `build` defaults
+`permissions` to `[]`, and **none of the three fixture manifests declares `permissions`** — so the
+markup renders nowhere in the system suite even on the page those tests do load. `min_host` (default
+`0`) and `states_key_permitted?` (fixtures declare neither key) likewise leave every fixture addon
+built and listed. Recorded because the *next* addition here may not be so lucky: `open_addon_card`
+matches with Capybara's substring `text:`, so a permission label that happened to contain a
+generator's name would make the match ambiguous the day a system test does visit `/tools`.
 
 **A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
 DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
