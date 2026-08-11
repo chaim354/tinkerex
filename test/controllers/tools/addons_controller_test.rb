@@ -232,6 +232,22 @@ module Tools
       assert_match %r{/maker/addon_sdk}, json["imports"]["@maker/addon-sdk"]
     end
 
+    # THE REASONING STRING IS SHOWN WHERE THERE IS ROOM FOR IT. A gallery card has space for a
+    # label; the addon's own page has space for the author's justification, which is the part that
+    # tells an operator whether the ask is proportionate.
+    test "the addon page lists declared permissions with their reasoning" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge(
+          "permissions" => [ { "name" => "library:write", "reasoning" => "to save your box" } ]
+        ) ],
+        assets: { "#{FIXTURE_KEY}/generators.js" => "export default { mount() {} }" }
+      )
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert_select ".addon-permissions", text: /Write files to your library/
+      assert_select ".addon-permissions", text: /to save your box/
+    end
+
     test "serves an addon asset as JavaScript" do
       get tools_addon_asset_path("widgetkit", "generators.js")
       assert_response :success
@@ -876,8 +892,14 @@ module Tools
     # `state.addon_key == "widgetkit"` (the routing key) on both the read and the write path.
     STATES_KEY_MANIFEST = MANIFEST.merge("key" => "widgetkit-next", "states_key" => "widgetkit").freeze
 
+    # Reciprocates STATES_KEY_MANIFEST's claim (Maker::Addons::Registry now refuses an unreciprocated
+    # states_key — audit §2.1, Maker::Addons::Registry.states_key_permitted?). A SEPARATE constant
+    # rather than changing MANIFEST itself, so the "FIXTURE_KEY declares no states_key anywhere in
+    # this suite" guarantee the comment above makes stays true for the other tests in this file.
+    RECIPROCATING_MANIFEST = MANIFEST.merge("shares_states_with" => [ "widgetkit-next" ]).freeze
+
     test "an addon declaring states_key reads states stored under that key, not its own routing key" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
       under_declared_key = @user.maker_addon_states.create!(
         addon_key: "widgetkit", name: "Under widgetkit", data: {}
       )
@@ -892,7 +914,7 @@ module Tools
     end
 
     test "a save from an addon declaring states_key creates a state under the declared key, not its routing key" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
 
       # A filename NOT reused from any other test in this file: LibraryOutput writes flat to the
       # library root with no clobber-dedup, and on the share backend that write is a REAL filesystem
@@ -912,7 +934,7 @@ module Tools
     end
 
     test "states_key does not widen access to another user's rows" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
       mine = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "Mine", data: {})
       stranger = User.create!(email: "states-key-stranger@example.com", password: PASSWORD, confirmed_at: Time.current)
       stranger.maker_addon_states.create!(addon_key: "widgetkit", name: "Theirs", data: {})

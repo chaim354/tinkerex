@@ -777,6 +777,47 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
   clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
   parser's and no server-side test can observe it.
+- **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
+  the target, the target names the claimant back in `shares_states_with`, **and the target must
+  itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
+  grant nobody can audit. Anything else is SKIPPED, **including a claim on an addon absent from the
+  index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
+  colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
+  `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
+  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
+  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
+  the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
+  not gallery visibility, is the property being enforced.
+- **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
+  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
+  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
+  `unavailable_reason`), so a listed-but-unavailable addon is still
+  `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
+  from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
+  leaving the hole open**. Do not harmonise the two.
+- **`Addon#available?` IS NO LONGER HARDCODED TRUE, AND THE GALLERY SHOWS A REASON RATHER THAN A
+  FIXED SENTENCE.** It was true for as long as "registered" meant "fetchable"; `min_host` gives it a
+  second real answer. A too-new addon is still **BUILT** and still **LISTED** — skipping it is the
+  easy wrong answer, because an addon that silently never appears reads as a broken deploy rather
+  than as a version floor, and the old hardcoded "Not configured on this deployment" would send an
+  operator to check env vars that are fine.
+- **A NON-INTEGER `min_host` IS IGNORED, NOT COERCED.** `"2".to_i` is 2, which would honour a value
+  a JSON manifest should not contain. Ignoring it leaves the addon **AVAILABLE** — the failure
+  direction an operator can diagnose, rather than one that makes an addon vanish.
+- **DECLARED PERMISSIONS ARE DISPLAYED, NOT ENFORCED**, and `states_key` is not an inter-addon
+  boundary either — a bundle runs same-origin in the session and can call another addon's
+  `/tools/<key>/states` directly, so what the mutual declaration closes is only that a manifest can
+  no longer redirect **its own saves** into another addon's namespace by declaration alone. Do not
+  describe either as a boundary (spec §8.1 says so in those words; this repo's recorded failure
+  shape is a guard everyone believed in that never worked). **Do not add enforcement without the
+  finished vocabulary:** `data:read:<addon>/<collection>` does not exist until PR 4, and
+  `service:<name>` must reconcile with today's `services` key.
+- **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from
+  `Host::CAPABILITIES` — a capability is what the host CAN do, a permission is what an addon SAYS it
+  wants, and they already diverge (`state` / `project:read` here against `state:list` /
+  `state:crud` / `project:current` there). **An unknown name falls back to its own raw spelling**
+  rather than rendering blank: a card that silently understates what an addon asked for is worse
+  than one showing a developer-facing string.
 - **`rescue_from FileLayer::NotFound` IN `Tools::AddonsController` IS REACHABLE ON SHARE/S3 ONLY,
   AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
   resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
@@ -853,6 +894,23 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Maker::DeadNodes` owns the one definition of `reapable?`, shared with the preview reaper; its index
   reads `user.nodes`, **NOT `.present`**, because a tombstone is exactly what tells "revivable" from
   "gone for good" and filtering it out reaps every tombstone with no grace at all.
+- **A `*_belongs_to_user` VALIDATION GUARDED ON `if: <fk>.present?` MAKES A DANGLING ID LOCK THE
+  WHOLE ROW, SO EVERY REFERENCED MODEL NEEDS A `dependent:` — AND `:nullify` IS THE WRONG ONE FOR
+  `Maker::BomLine#inventory_item_id`.** A dangling id *is* present, so the check runs on every save
+  and refuses edits to unrelated fields; `Supplier`→items/bom_lines and `Location`→items therefore
+  nullify. A BOM line cannot: `exactly_one_target` then sees no target and refuses the row anyway —
+  the identical permanent lock with a different message — so `InventoryItem#release_bom_lines`
+  copies the item's name into `part_name` (and its supplier, where the line names none and that
+  supplier still resolves — copying a *dangling* one recreates this very lock on the row just
+  rescued) and only then drops the pointer. Never "tidy" that callback into a `dependent:` on the
+  association; the statements must run in that order, and the name is unrecoverable one moment
+  later. **The targetless filter tests `[nil, ""]` and BOTH ARMS ARE REACHABLE** — the API accepts a
+  create carrying a blank `part_name`/`node_id` beside an inventory item, because
+  `exactly_one_target` counts with `present?` — so narrowing it to `nil` converts that line to
+  nothing and locks it. The whole method is user-scoped, unlike the *association-level* nullifies on
+  Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
+  repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
+  disclose one.
 
 ### 14e. Architecture and process
 
@@ -941,6 +999,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
   the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
   `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
+- **`assert_select "[attr=?]", /regex/` DOES NOT REGEX-MATCH — it builds an EQUALITY selector and
+  can never pass.** rails-dom-testing's `SubstitutionContext#matcher_for` interpolates a Regexp
+  straight into the selector (`"\"#{value}\""`), so `[title=?]` with `/Needs a newer…/` compiles to
+  `[title="(?-mix:Needs a newer…)"]` and matches an attribute whose literal text is that. Regex
+  matching on an **ATTRIBUTE** needs the gem's own `:match('attr', ?)` pseudo-class; `[attr*=?]`
+  with a plain String is the simpler alternative. (`text: /…/` is a different code path and does
+  match — this is about attributes only.) Verified against rails-dom-testing **2.3.0**: `[title=?]`
+  finds 0 elements where `:match('title', ?)` finds 1. It fails as a test that **can never go
+  green** rather than as a false green — the better direction, but only once you know why.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.

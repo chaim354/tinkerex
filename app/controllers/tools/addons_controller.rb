@@ -193,11 +193,18 @@ module Tools
 
     # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
     # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
-    # by addon_key AND by current_user, in that order below — because a bundle is browser code and
-    # this scoping is the only thing standing between one addon's saves and another's, or one user's
-    # and a stranger's. Scoped by `states_key`, not `key`: they're the same value unless the manifest
-    # says otherwise (Maker::Addons::Registry#build), which is how one addon can read another's saves
-    # (see the `states_key` comment there for what that widens and why it's fine here).
+    # by addon_key AND by current_user, in that order below.
+    #
+    # THE addon_key SCOPE IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
+    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
+    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
+    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
+    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
+    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). The
+    # current_user scope is the real protection here, keeping one user's rows from a stranger's.
+    # Scoped by `states_key`, not `key`: they're the same value unless the manifest says otherwise
+    # (Maker::Addons::Registry#build), which is how one addon can read another's saves — see the
+    # `states_key` comment there for what that widens, and `states_key_permitted?` for who may ask.
     def states
       states = current_user.maker_addon_states.for_addon(@addon.states_key)
                             .includes(:files).order(updated_at: :desc, id: :desc)
