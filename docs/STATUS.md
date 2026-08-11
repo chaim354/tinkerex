@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-10 (**`system-test` unblocked on main: a gallery card collapsed 378px out from under Chromedriver's click, silently**)
+**Updated:** 2026-08-10 (**audit A-M4: deleting a supplier, location or inventory item no longer strands — and permanently locks — the rows that referenced it**)
 
 ## What this file is
 
@@ -60,7 +60,113 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-10): `system-test` was red on main because a gallery card moved out from under the click (branch `claude/system-test-card-click-race`)
+## Latest (2026-08-10): audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
+
+`Maker::Supplier` had no `has_many` at all and `Maker::Location` had one only for its own
+`children`, so `DELETE /v1/maker/suppliers/:id`, `locations/:id` and `inventory_items/:id` left
+dangling ids behind. The dangling id was not the harm. `InventoryItem` and `BomLine` run their
+`*_belongs_to_user` validations `if: <fk>.present?`, and a dangling id **is** present — so the
+check ran, found nothing, and refused **every** subsequent save of that row. Renaming an item,
+adjusting a min quantity, fixing a typo in a BOM line's notes: all rejected, permanently, with an
+error naming a field the form need not even show. Confirmed by probe before any fix, on all three
+referring columns.
+
+**Blast radius** — four referring columns, one more than the finding named:
+`maker_inventory_items.supplier_id` and `.location_id`, `maker_bom_lines.inventory_item_id`, and
+`maker_bom_lines.supplier_id` (that last one is not in A-M4's text). Everything else already had
+an answer: `InventoryItem`→`transactions` is `dependent: :delete_all`, `Location`→`children` is
+`dependent: :nullify`. Two dangling pointers were found and deliberately left alone because
+neither locks anything: `maker_bom_lines.node_id` after a node is reaped, and
+`maker_inventory_transactions.project_id` after a project is destroyed — the latter is an
+append-only ledger that no code may update anyway.
+
+**`dependent: :nullify` is right for three of the four and WRONG for the fourth.** Nullifying
+`BomLine#inventory_item_id` leaves the line with no target, so `exactly_one_target` refuses it —
+the identical permanent lock, wearing a different error message. Measured: with the nullify-only
+implementation, the unlock test fails with `a line must link exactly one of: inventory item,
+design file, or free-text part`. `dependent: :destroy` is worse — a BOM records what a project
+needs, and deleting a stock row is a statement about the shelf, not about the design. So
+`InventoryItem#release_bom_lines` **converts the line to a free-text part**, copying the item's
+name into `part_name` before dropping the pointer: a valid, editable line still reading "4 × M3
+bolt", in a shape `resolved_target` already renders. The whole method is scoped to the owning user,
+unlike the *association-level* `dependent: :nullify` on `Supplier`/`Location`, because it *writes*
+this user's data into a row rather than only clearing a pointer — clearing can at worst repair an
+illegal cross-tenant reference, copying would disclose one.
+
+**The conversion carries the supplier too, which the first round dropped.** `maker_bom_lines` has
+its own `supplier_id` and `resolved_target`'s free-text shape already renders
+`supplier_id`/`supplier_name`, so leaving it nil discarded half of what makes a line orderable into
+a column that was sitting there waiting for it (measured through the roll-up: before the destroy a
+line rendered `{name, part_number, unit, quantity_cached}`, after it `{part_name, supplier_id: nil,
+supplier_name: nil}`). Three qualifiers on the carry, each with its own mutation check: only onto
+lines actually being **converted** (a line keeping its own design-file target is not becoming a
+free-text part, and nothing renders a supplier for that shape); never over a supplier the line
+**already names** (that one is the user's annotation about this line; the item's is a fallback);
+and only if that supplier **still resolves**, because an item stranded by the pre-fix bug can
+itself hold a dangling `supplier_id` and copying it across would hand the line
+`supplier_belongs_to_user` failing on every save — this method's own bug, reintroduced on the row
+it just rescued. **`part_number` is not carried: `maker_bom_lines` has no column for it.** The line
+also loses the item's live stock figures, which is honest — there is no stock row any more.
+
+**No DB foreign keys, decided rather than forgotten — and the recorded reason was half wrong.**
+The SQLite measurement stands: `add_foreign_key ... on_delete: :nullify` over data that already
+violates it is **ACCEPTED** at migration time and the violating row survives (re-probed directly —
+`pragma_foreign_key_check` lists it afterwards). The *consequence* first recorded here — "then
+raises `ActiveRecord::InvalidForeignKey` on the next write to the bad row" — **does not hold for
+the ordinary path**, and the sentence that followed it was therefore false. SQLite re-checks a
+child row only when the statement names a child key column, and Rails' partial UPDATE does not name
+`supplier_id`; the save is refused earlier and identically to today, by `*_belongs_to_user` →
+`RecordInvalid` → **422**, not 500. `InvalidForeignKey` appears only on a write that names the FK
+column while skipping validations — measured on the same probe, `UPDATE ... SET supplier_id = 999`
+errors while `SET supplier_id = NULL` does not — and this app has no such write for these columns.
+
+**What actually blocks the FKs is the other half:** Postgres validates existing rows on
+`ADD CONSTRAINT` and errors, so one migration aborts the managed deploy (reasoned, not measured —
+no local libpq). Two things the first pass did not mention, in fairness to whoever picks this up:
+`NOT VALID` is the standard opt-out from that validation, and the violating rows could be cleared
+by a two-line `UPDATE ... SET fk = NULL WHERE fk NOT IN (SELECT id FROM ...)` prelude **in the same
+migration** rather than a separate pass. So the deferral is a judgement about cost and timing, not
+an impossibility. **The decision still stands**: all three deletes go through Active Record
+(`user.destroy` plus the three v1 controllers — no raw-SQL or `delete_all` path exists for these
+models, independently re-verified), and the harm is an Active Record validation that no DB
+constraint can lift, so the FKs are defence-in-depth rather than the fix. Tracked as ledger row 24
+in `docs/AUDIT-2026-08-03.md` — and note a cleanup pass cannot restore a deleted item's name to a
+BOM line, which is precisely why the conversion has to happen at destroy time.
+
+**No backfill migration either — recoverable by the owner, but the cost differs by column.** On
+`maker_inventory_items.supplier_id` and `.location_id` it is free: the validations are guarded on
+the id being *present*, so `PATCH { supplier_id: null }` skips the check and saves. On
+`maker_bom_lines.inventory_item_id` it is **not** — clearing the pointer alone leaves the line with
+zero targets, so `PATCH { inventory_item_id: null }` is itself a 422 and the owner must supply a
+replacement target in the same request, having remembered the deleted item's name themselves. That
+is exactly the work `release_bom_lines` now does for them and cannot do retroactively. Both shapes
+are pinned by tests that plant the pre-fix state with `update_columns` and drive the real PATCHes.
+
+**Verification.** Bare `bin/ci` green by exit code, all seven gates; the three test legs report
+identical counts — **2200 runs / 7883 assertions / 0 failures / 0 errors / 9 skips** on each of
+chunk, share and s3, plus 71 system runs / 444 assertions. (Re-measured after `origin/main` was
+merged in at `945d8b1`: the unit legs are unchanged, and the system count is 70/439 + the one
+thumbnail-settling guard the entry below added.) **Twelve mutation checks** (§15),
+every one RED. Seven from the first round: dropping each of the three `dependent: :nullify`s;
+dropping `before_destroy :release_bom_lines`; reducing `release_bom_lines` to a plain nullify;
+renaming every line instead of only the targetless ones; and dropping the per-user scope, which
+needed a *planted* cross-tenant row to be catchable at all, since the validations make one
+unreachable. Five more from the review round: narrowing the targetless filter to `nil`-only (RED on
+both blank arms, with exactly the A-M4 message — `Validation failed: a line must link exactly one
+of: inventory item, design file, or free-text part`); dropping the supplier carry; dropping its
+no-clobber clause; swapping its `Supplier.exists?` guard for a bare `supplier_id.present?`; and
+widening it from the converted lines to every line the item touched.
+
+**One of those five started GREEN, which is the part worth recording.** The "widen it to every
+line" mutation was invisible until the test that should have caught it grew a second, *convertible*
+BOM line beside the design-file one — with nothing convertible, `converting.any?` is false and the
+entire write block is skipped, so the mutated statement never executed. The qualifier was written,
+commented and untested. Found by mutation-checking, not by reading: exactly the failure shape §15
+names, in the round whose whole job was closing another instance of it.
+
+---
+
+## 2026-08-10: `system-test` was red on main because a gallery card moved out from under the click (branch `claude/system-test-card-click-race`)
 
 **The symptom.** `system-test` had been red on main since PR #160 merged (run 31188332739, commit
 096e581) — every other gate green on that run, so every new PR inherited a failure it did not cause.
