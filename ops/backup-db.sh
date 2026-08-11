@@ -130,6 +130,50 @@ if $TO_STDOUT && [ ${#DESTS[@]} -ne 1 ]; then
 fi
 [ -n "$OUT_VOLUME" ] || $TO_STDOUT || { echo "need --to-volume or --to-stdout" >&2; exit 64; }
 
+# ---- the output volume must actually be the array ---------------------------------------------
+# A DOCKER VOLUME NAME THAT DOES NOT RESOLVE IS NOT AN ERROR — `docker run -v name:/dst` CREATES
+# IT, as a plain local volume under /var/lib/docker/volumes on the VM's own 31 GB disk. So the
+# failure this guards is silent by construction: `docker volume rm tinkerex_backups`, or a Kamal
+# run that re-ensures the name, and from that night on the job writes ~44 MB into the very disk
+# the array was chosen to avoid, verifies its own archive there quite happily, and pings green.
+# The archives on the NAS simply stop being added to, which nothing reports and `bin/backup-status`
+# reads as healthy because it inspects the same recreated name.
+#
+# `bin/backup-cron-install` has always compared this against the path it composed. That check runs
+# when a human is watching; this one runs at 03:30 for months. The DIVISION IS DELIBERATE: the
+# installer knows BACKUP_NAS/BACKUP_SUBDIR and so can insist on the exact device, while this script
+# is handed only a volume name and asks the weaker, sufficient question — *is there a device at
+# all*, i.e. is this a driver-opt volume rather than a local directory. Do not "improve" it into an
+# exact match by threading the path through the crontab line: a bare `%` in a cron command is a
+# newline (see the header/footer note below), and this box has a share whose name contains a space.
+#
+# THIS PINGS `down` WHERE THE `--keep` GUARD ABOVE DELIBERATELY DOES NOT, and the two are not in
+# tension. A bad `--keep` is a typo arriving from a human who is still at the keyboard. A volume
+# that has stopped pointing at the array is box state that will fail unattended, exactly like the
+# vanished-container arm below — so it gets the same treatment, for the same reason.
+if [ -n "$OUT_VOLUME" ]; then
+  out_device=""
+  if docker volume inspect "$OUT_VOLUME" >/dev/null 2>&1; then
+    # `<no value>` is what a Go template prints for the missing key on a volume with no options at
+    # all, which is precisely the plain-local case; treat it as the empty string it means.
+    out_device=$(docker volume inspect --format '{{.Options.device}}' "$OUT_VOLUME" 2>/dev/null || true)
+    [ "$out_device" = "<no value>" ] && out_device=""
+  fi
+  if [ -z "$out_device" ]; then
+    echo "!! $OUT_VOLUME is not a CIFS volume — refusing to run" >&2
+    echo "   It has no device option, so it is either absent (and this run would CREATE it) or a" >&2
+    echo "   plain local volume on the VM's own disk — the one place a backup must never live." >&2
+    echo "   Nothing would have failed: the archives would be written and verified, and every" >&2
+    echo "   monitor would go green, while the array stopped receiving backups." >&2
+    echo "   Fix it with bin/backup-cron-install, which owns the NAS path. Do NOT 'docker volume" >&2
+    echo "   rm' anything first — see docs/DEPLOY.md §6." >&2
+    for dest in "${DESTS[@]}"; do
+      ping_kuma "$dest" down "output volume $OUT_VOLUME is not on the array" ""
+    done
+    exit 1
+  fi
+fi
+
 # `docker ps -a`, not `docker ps`: a STOPPED app container still names the image and the volume,
 # and a nightly that skips a deployment because it happens to be down is a nightly that goes
 # quiet exactly when it matters. Chunk is the base deployment, so its container is
@@ -192,12 +236,17 @@ $TO_STDOUT || echo "== $(date -u +%Y-%m-%dT%H:%M:%SZ) starting: ${DESTS[*]}"
 
 for dest in "${DESTS[@]}"; do
   cid=$(container_for "$dest") || true
-  # This arm pings too. A vanished container is a REAL failure of that destination's backup and is
-  # knowable right now — leaving it to the heartbeat window would report the one failure the job
-  # can name precisely as a generic 25-hour silence.
+  # THE NIGHTLY ARM PINGS AND THE AD-HOC ONE MUST NOT — AND THIS GUARD SITS *ABOVE* THE
+  # `if $TO_STDOUT` BRANCH BELOW, SO IT IS THE ONE PLACE THAT HAS TO SAY SO ITSELF. A vanished
+  # container is a REAL failure of the nightly's backup and is knowable right now; leaving it to
+  # the heartbeat window would report the one failure the job can name precisely as a generic
+  # 25-hour silence. But `bin/backup-db` reaches this same line, and a manual run to someone's
+  # laptop that pushes `status=down` marks the NIGHTLY as failing over a backup the nightly had
+  # nothing to do with — the exact mirror of the rule 30 lines below, where an ad-hoc `up` would
+  # paper over a nightly dead for a week. Both directions corrupt the same signal; both are refused.
   if [ -z "$cid" ]; then
     echo "!! $dest: no container found — skipped" >&2; status=1
-    ping_kuma "$dest" down "no container matching this deployment" ""
+    $TO_STDOUT || ping_kuma "$dest" down "no container matching this deployment" ""
     continue
   fi
   image=$(docker inspect --format '{{.Config.Image}}' "$cid")

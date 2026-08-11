@@ -2,8 +2,9 @@
 # Restore an archive made by bin/backup-db back into a deployment's storage volume.
 #
 #   bin/restore-db share ~/tinkerex-backups/tinkerex-share-20260807T003955Z.tar.gz
-#   bin/restore-db share <archive> --yes          # skip the prompt (unattended)
-#   bin/restore-db share <archive> --into scratch # rehearse into a THROWAWAY volume, touch nothing live
+#   bin/restore-db share <archive> --yes            # skip the prompt (unattended)
+#   bin/restore-db share <archive> --into scratch   # rehearse into a THROWAWAY volume, touch nothing live
+#   bin/restore-db share <archive> --no-pre-backup  # when the thing you would back up is the problem
 #
 # DESTRUCTIVE: it replaces every file in the target volume — the databases AND the Active Storage
 # blobs. Three things stand in front of that, and none of them is optional:
@@ -11,22 +12,36 @@
 #   1. THE ARCHIVE IS VERIFIED BEFORE THE CONTAINER IS STOPPED. Taking a live deployment down and
 #      only then discovering the tarball is short is the one failure this ordering removes.
 #   2. IT BACKS UP WHAT IT IS ABOUT TO DESTROY, by calling bin/backup-db first. Restoring the
-#      wrong archive is a normal mistake; making it unrecoverable is a choice.
+#      wrong archive is a normal mistake; making it unrecoverable is a choice. --no-pre-backup
+#      exists because that safety net could otherwise BLOCK THE EMERGENCY IT EXISTS FOR: the
+#      commonest reasons to be restoring — a corrupt database, a container that will not start —
+#      are exactly the reasons bin/backup-db fails, and `set -e` then aborted the restore. The
+#      default is unchanged (a failed pre-backup still stops the restore); what is new is that
+#      the refusal names the way past itself.
 #   3. IT ASKS. --yes exists for scripts, not for saving four keystrokes.
 #
-# --into <suffix> is how you rehearse. It restores into `<volume>-<suffix>` and boots a scratch
-# container against it, so the extraction, the file ownership and the app's own boot are all
-# exercised against real bytes while the live deployment keeps serving. Rehearse before you need
+# --into <suffix> is how you rehearse. It restores into `<volume>-<suffix>` and reads the result
+# back through the deployment's own image AS THE USER THAT IMAGE RUNS AS, so the extraction, the
+# file ownership the chown just set, and SQLite's own view of the restored database are exercised
+# against real bytes while the live deployment keeps serving.
+#
+# WHAT IT DOES NOT DO IS BOOT THE APP, though this comment used to claim it did while the check
+# ran as `--user 0` — root, which bypasses the very ownership the sentence was advertising. A bare
+# `docker run` of the image has none of the environment Kamal supplies: no RAILS_MASTER_KEY (boot
+# dies on `secret_key_base`) and no LIBRARY_BACKEND/LIBRARY_PATH, which LibraryBackendCheck
+# refuses to start without (CLAUDE.md §14a). A "boot" here would therefore fail for reasons that
+# have nothing to do with the archive, and teach you nothing about it. Rehearse before you need
 # it; a restore path nobody has ever run is a hope, not a plan.
 
 set -euo pipefail
 
 DEST="${1:-}"; ARCHIVE="${2:-}"; shift 2 2>/dev/null || true
-ASSUME_YES=false; INTO=""
+ASSUME_YES=false; INTO=""; PRE_BACKUP=true
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes)  ASSUME_YES=true; shift ;;
     --into) INTO="${2:?--into needs a suffix}"; shift 2 ;;
+    --no-pre-backup) PRE_BACKUP=false; shift ;;
     *) echo "unknown option: $1" >&2; exit 64 ;;
   esac
 done
@@ -37,7 +52,7 @@ case "$DEST" in
   chunk) FILTER='^tinkerex-web-[0-9a-f]'; VOLUME=tinkerex_storage       ;;
   share) FILTER='^tinkerex-web-share-';   VOLUME=tinkerex_storage_share ;;
   s3)    FILTER='^tinkerex-web-s3-';      VOLUME=tinkerex_storage_s3    ;;
-  *) echo "usage: bin/restore-db <chunk|share|s3> <archive.tar.gz> [--yes] [--into SUFFIX]" >&2; exit 64 ;;
+  *) echo "usage: bin/restore-db <chunk|share|s3> <archive.tar.gz> [--yes] [--into SUFFIX] [--no-pre-backup]" >&2; exit 64 ;;
 esac
 REHEARSAL=false
 if [ -n "$INTO" ]; then REHEARSAL=true; VOLUME="$VOLUME-$INTO"; fi
@@ -96,7 +111,14 @@ if $REHEARSAL; then
   echo "REHEARSAL: restores into the scratch volume '$VOLUME'. The live $DEST deployment is untouched."
 else
   echo "This REPLACES every file in volume '$VOLUME' on $HOST (databases + preview blobs)"
-  echo "and restarts the $DEST container. A backup of the current state is taken first."
+  echo "and restarts the $DEST container."
+  # The prompt must describe the run it is actually about to do. Leaving the old sentence in place
+  # under --no-pre-backup would have the confirmation promise a safety net that was just switched off.
+  if $PRE_BACKUP; then
+    echo "A backup of the current state is taken first."
+  else
+    echo "--no-pre-backup: NOTHING is backed up first. The volume's current contents are gone for good."
+  fi
 fi
 if ! $ASSUME_YES; then
   read -r -p "Type 'yes' to continue: " reply
@@ -104,9 +126,26 @@ if ! $ASSUME_YES; then
 fi
 
 # ---- 3. back up what we are about to destroy ---------------------------------------------------
-if ! $REHEARSAL; then
+# THE SAFETY NET MUST NOT BLOCK THE EMERGENCY IT EXISTS FOR. A pre-backup failure is still fatal by
+# default — restoring over a state nobody preserved is exactly what step 2 of the header refuses —
+# but the failure is now REPORTED rather than merely propagated. Under a bare `set -e` this exited
+# with backup-db's own message and no indication that the restore had been abandoned, let alone
+# that continuing was an option, in a situation whose whole premise is that something is broken.
+if ! $REHEARSAL && $PRE_BACKUP; then
   echo "==> backing up current state first"
-  "$(dirname "$0")/backup-db" "$DEST"
+  if ! "$(dirname "$0")/backup-db" "$DEST"; then
+    echo >&2
+    echo "!! the pre-restore backup FAILED, so nothing has been restored." >&2
+    echo "   That backup is what makes restoring the wrong archive recoverable, so this is fatal" >&2
+    echo "   by default. But the reasons it fails — a corrupt database, a container that will not" >&2
+    echo "   start — are the same reasons you are here, so it can be skipped deliberately:" >&2
+    echo >&2
+    echo "     bin/restore-db $DEST $ARCHIVE --no-pre-backup" >&2
+    echo >&2
+    echo "   That REPLACES the volume with nothing kept. If any of the current state is still" >&2
+    echo "   readable, copy it out first — bin/backup-status shows what the nightly already has." >&2
+    exit 1
+  fi
 fi
 
 # ---- 4. swap the bytes in --------------------------------------------------------------------
@@ -165,10 +204,17 @@ REMOTE
 # ---- 5. prove the app can actually read what we just wrote -------------------------------------
 echo "==> verifying"
 if $REHEARSAL; then
-  ssh "$HOST" "docker run --rm -v $VOLUME:/rails/storage --user 0 \
+  # AS THE CONTAINER'S OWN USER, NOT `--user 0`. Root can read a file whatever its mode, so the
+  # root version of this check could not fail for the one reason a rehearsal is run — a chown that
+  # did not take — and the header's claim to exercise "file ownership" was therefore untestable by
+  # construction. An empty Config.User means the image genuinely runs as root, in which case 0 is
+  # the honest answer here rather than a bypass.
+  owner=$(ssh "$HOST" "docker inspect --format '{{.Config.User}}' \$(docker ps -a -qf name='$FILTER' | head -1)")
+  owner=${owner:-0}
+  ssh "$HOST" "docker run --rm -v $VOLUME:/rails/storage --user $owner \
     \$(docker inspect --format '{{.Config.Image}}' \$(docker ps -a -qf name='$FILTER' | head -1)) \
     sqlite3 /rails/storage/production.sqlite3 'SELECT count(*) FROM nodes;'" \
-    | sed 's/^/    nodes readable in scratch volume: /'
+    | sed "s/^/    nodes readable in scratch volume as $owner: /"
   echo "    remove it with: ssh $HOST 'docker volume rm $VOLUME'"
 else
   for _ in $(seq 30); do

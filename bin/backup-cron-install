@@ -39,11 +39,72 @@ AT="${BACKUP_AT:-30 3}"
 DESTS="${BACKUP_DESTS:-chunk share s3}"
 OPS_DIR="tinkerex-ops"
 MARKER="# tinkerex-nightly-backup"
+TZ_EXPECT="${BACKUP_TZ:-America/New_York}"
+TZ_DECLARED=false; [ -n "${BACKUP_TZ:-}" ] && TZ_DECLARED=true
+# BACKUP_AT is crontab's "minute hour", so render it back as a clock time for the messages below
+# rather than hard-coding 03:30 — which stops being true the moment anyone sets BACKUP_AT.
+AT_CLOCK=$(printf '%02d:%02d' "${AT##* }" "${AT%% *}" 2>/dev/null || echo "'$AT'")
 
 if [ "${1:-}" = --uninstall ]; then
   echo "==> removing the crontab entry (archives and the volume are left alone)"
   ssh "$HOST" "crontab -l 2>/dev/null | grep -v '$MARKER' | crontab - || true; crontab -l"
   exit 0
+fi
+
+# ---- the schedule is a LOCAL time, so the box's clock is part of the contract -------------------
+# `30 3` means 03:30 in whatever zone the cron daemon is running in, and docs/DEPLOY.md §6 states
+# that as 03:30 America/New_York. Nothing made that true: a stock Ubuntu server VM is Etc/UTC, in
+# which case the same crontab line fires at 23:30 or 22:30 Eastern depending on the season, and
+# the only symptom is archives with unexpected timestamps that nobody reads closely.
+#
+# ASSERTED RATHER THAN PINNED, deliberately. Emitting `CRON_TZ=America/New_York` above the entry
+# looks like the stronger move, but a cron that does not implement CRON_TZ — busybox, and it is
+# not required by POSIX — parses that line as an ordinary environment assignment and ignores it.
+# That is a guard that silently does nothing, which is this repo's dominant failure shape (§15).
+# Reading the zone back and refusing to install on a mismatch cannot fail that way: it either
+# confirms the documented claim or stops.
+#
+# This check runs FIRST, before the volume bootstrap and the crontab write, so a refusal leaves
+# the box exactly as it found it.
+echo "==> checking the box's clock"
+BOX_TZ=$(ssh "$HOST" bash -s <<'REMOTE'
+set -uo pipefail
+tz=""
+# if-blocks, not `[ x ] && y`: a bare test-and-assign returns the TEST's status, which under
+# `set -e` exits the script the moment a probe does not apply. Same trap as bin/backup-status:62.
+if command -v timedatectl >/dev/null 2>&1; then
+  tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+fi
+if [ -z "$tz" ] && [ -r /etc/timezone ]; then
+  tz=$(cat /etc/timezone)
+fi
+if [ -z "$tz" ] && [ -L /etc/localtime ]; then
+  tz=$(readlink /etc/localtime | sed 's#.*/zoneinfo/##')
+fi
+echo "${tz:-UNKNOWN}"
+REMOTE
+)
+if [ "$BOX_TZ" = UNKNOWN ]; then
+  if ! $TZ_DECLARED; then
+    echo "!! cannot read the timezone on $HOST, so the schedule cannot be verified." >&2
+    echo "   $AT_CLOCK is a LOCAL time and docs/DEPLOY.md §6 claims $TZ_EXPECT; unverified, that is" >&2
+    echo "   a doc claim rather than a fact. Re-run with BACKUP_TZ=<zone> to state it deliberately." >&2
+    exit 1
+  fi
+  echo "    timezone unreadable — proceeding on your BACKUP_TZ=$TZ_EXPECT"
+elif [ "$BOX_TZ" != "$TZ_EXPECT" ]; then
+  echo "!! $HOST is on $BOX_TZ, but this schedule is written for $TZ_EXPECT." >&2
+  echo "   '$AT * * *' is a LOCAL time, so the nightly would fire at $AT_CLOCK $BOX_TZ while" >&2
+  echo "   docs/DEPLOY.md §6 goes on claiming $TZ_EXPECT. Nothing would look broken." >&2
+  echo >&2
+  echo "   Either point the box's clock at the documented zone:" >&2
+  echo "     ssh $HOST 'sudo timedatectl set-timezone $TZ_EXPECT'" >&2
+  echo "   or accept the box's zone and say so, which is then what gets asserted from now on:" >&2
+  echo "     BACKUP_TZ=$BOX_TZ bin/backup-cron-install" >&2
+  echo "   (update docs/DEPLOY.md §6 to match if you take the second route.)" >&2
+  exit 1
+else
+  echo "    $HOST is on $BOX_TZ — the nightly fires at $AT_CLOCK there, as documented"
 fi
 
 echo "==> ensuring $NAS/$SUBDIR exists"
