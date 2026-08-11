@@ -1420,7 +1420,10 @@ Four behaviours, each mutation-checked by breaking the thing it guards:
   Kuma is rebooting" into "the backup failed" and — since a nonzero exit skips the prune — into a
   slow disk leak.
 - **`--to-stdout` (the ad-hoc Mac backup) deliberately does not ping.** Otherwise a nightly dead for
-  a week reads healthy for as long as someone keeps rescuing it by hand.
+  a week reads healthy for as long as someone keeps rescuing it by hand. *(True of the success path
+  only. The vanished-container arm in the first bullet sits ABOVE the `$TO_STDOUT` branch and pinged
+  unconditionally — so these two bullets, written in the same commit, contradicted each other from
+  the first day. Closed in the follow-up below.)*
 - **`ping.env` is MERGED, never overwritten.** The installer is what you re-run to push a script
   change; dropping unmentioned keys would unwire every monitor the next time someone fixed a typo,
   and they would sit green until their windows lapsed. Tokens stay on the box, chmod 600.
@@ -1446,10 +1449,98 @@ rather than by reading.** Its UI shows the push URL as
 real data by the install run: chunk 11 MB / 2192 nodes, share 34 MB / 1872 nodes, s3 92 KB / 0
 nodes. `ping.env` is chmod 600 on the box; the installed script is byte-identical to the repo.
 
+### Six review findings from the merge, closed on `claude/backup-review-followups`
+
+**The arc's CROSS-FILE rules now live in CLAUDE.md §14i** — they had no home in that file, so each was
+only as durable as whoever last read `docs/DEPLOY.md` §6. `ops/` was also missing from §10's repo
+layout entirely. **The single-site rules were deliberately left out of it**: `tar --anchored`,
+`docker ps -a`, `--keep` ≥ 1, `ping.env` parsed-never-sourced and the blobs in the archive each carry
+their whole argument inside `ops/backup-db.sh` itself — beside the line you must edit to break them,
+or in that file's header — so hoisting them into a file loaded every session buys nothing that opening
+the file does not, and CLAUDE.md's own header says length there is a tax on every future task. §14i's framing names them so the omission cannot be
+misread as their having been dropped.
+
+PR #155's Critical defect and the `--keep 0` guard were fixed before merge; six further findings were
+deliberately left as separate decisions and are closed here. **`bin/ci` covers none of this code** —
+it is shell, cron and docs — so each was reproduced *first* against a stubbed box: a scratch `$HOME`,
+a container table, docker "volumes" as directories carrying a device marker, real `sqlite3`/`tar`
+archives, and fake `ssh`/`scp`/`docker`/`curl`/`crontab`/`timedatectl`. Nothing touched the NAS or a
+live volume. Baseline **12 passed / 17 failed**, after **38 / 0**, and every guard was then
+mutation-checked by breaking the thing it guards — **7 of 7 went red**.
+
+**One harness fact worth keeping:** `ops/backup-db.sh` resets `PATH` on its second line (deliberate,
+cron's PATH is minimal), which wipes any stub directory. Exported bash **functions** survive a `PATH`
+reset where a stub directory does not, so `docker` and `curl` are shimmed that way — a PATH-based
+fake cannot test that file at all.
+
+1. **An ad-hoc backup marked the NIGHTLY's monitor down.** The vanished-container arm pings and sits
+   *above* the `$TO_STDOUT` branch, so `bin/backup-db` against a missing container pushed
+   `status=down` at the nightly's own push monitor — including the pre-restore backup inside
+   `bin/restore-db`, i.e. precisely mid-incident. Both `ops/backup-db.sh` and `docs/DEPLOY.md`
+   asserted the opposite. One `$TO_STDOUT ||`; the failure is still reported by exit status to the
+   person standing there.
+2. **The nightly never checked it was writing to the array.** It mounted `$OUT_VOLUME` blind, and a
+   volume name that does not resolve is not an error to Docker — `docker run -v name:/dst` **creates**
+   it, as a plain local volume on the VM's own disk. So a `docker volume rm` (or any Kamal run
+   re-ensuring the name) would have sent ~44 MB a night into the very disk the array was chosen to
+   avoid, verified its own archives there, and pinged green — while `bin/backup-status` read the same
+   recreated name and called it healthy. Now refuses unless the volume has a device option, pinging
+   `down`. Handles both `""` and `<no value>`, which different Docker versions print for an
+   options-less volume; dropping that normalisation is its own mutation check. The installer keeps
+   the exact-path comparison (it knows `BACKUP_NAS`); the nightly asks the weaker sufficient question,
+   because threading a path through a crontab line means a bare `%` is a newline and this box has a
+   share whose name contains a space.
+3. **The restore rehearsal proved less than it claimed.** `--into` advertised "extraction, file
+   ownership and the app's own boot", but ran `sqlite3` with `--user 0` and booted nothing. Root reads
+   a file whatever its mode, so **the check could not fail for the one reason a rehearsal exists**.
+   Now runs as the container's own `Config.User`, which does go red on a broken `chown` (verified both
+   directions). The boot half was **narrowed, not built**: a bare `docker run` of the image has no
+   `RAILS_MASTER_KEY` (boot dies on `secret_key_base`) and no `LIBRARY_BACKEND`/`LIBRARY_PATH`, which
+   `LibraryBackendCheck` refuses to start without (§14a) — a "boot" would fail for reasons unrelated
+   to the archive and teach nothing.
+4. **Any ad-hoc backup silently replaced the nightly's implementation.** `bin/backup-db` scp'd
+   `ops/backup-db.sh` straight onto `~/tinkerex-ops/backup-db.sh` on every run, so whatever was in the
+   last person's checkout became what cron executed that night. The "one implementation, two callers"
+   intent is right; two unsynchronised writers to one remote file is not it. Now pushed to a per-run
+   temp path and removed afterwards — **`bin/backup-cron-install` is the only writer of the installed
+   copy.**
+5. **The safety backup blocked the emergency it exists for.** `bin/restore-db` runs `bin/backup-db`
+   first; when the database is corrupt or the container is gone — the usual reasons to restore — that
+   fails and `set -e` aborted the restore with backup-db's error and no sign the restore had been
+   abandoned. Added `--no-pre-backup`. **The default is unchanged** (a failed pre-backup is still
+   fatal); what is new is that the refusal names the way past itself, and the confirmation prompt no
+   longer promises a backup that was switched off.
+6. **`CRON_TZ` was never set and the timezone was never asserted.** A crontab time is a *local* time,
+   so "03:30 America/New_York" held only if the VM's clock happened to agree — and a stock Ubuntu
+   server is `Etc/UTC`, firing the same line at 23:30 Eastern with nothing looking wrong.
+   **Asserted rather than pinned, on purpose:** a cron that does not implement `CRON_TZ` (busybox; it
+   is not POSIX) parses that line as an ordinary environment assignment and ignores it — a guard that
+   silently does nothing, this repo's dominant failure shape. `bin/backup-cron-install` now reads the
+   zone back and refuses *before* touching anything, `BACKUP_TZ` accepts a different one deliberately,
+   and `bin/backup-status` re-reads it on every run so a zone changed after install cannot go on
+   contradicting the doc. Adding that argument to `backup-status` also shifted its ssh positionals —
+   the trap its own line 21 warns about — so a scenario drives it end to end.
+
+**Recorded rather than fixed: the archives are unencrypted on a guest-writable CIFS share.** Anyone
+on the LAN can read *and delete* 14 nights of every deployment's full production database. The
+digests are the least of it — bcrypt is offline-crackable but slow, and the device/share-link
+digests are SHA-256 of 256-bit randoms — while the **catalog and every preview blob are in the
+clear**, and `dir_mode=0775` on a guest share means a stranger can delete the backups with nothing
+reporting it until staleness trips 30 hours later. Accepted for a home LAN, now written down in
+`docs/DEPLOY.md` §6 with what each alternative costs, because an unstated trade-off is
+indistinguishable from one nobody noticed.
+
 **Left open:** the 03:30 run has no interlock with a deploy landing the same minute. The snapshot is
 WAL-safe regardless, so the worst case is a *correct* backup of a half-migrated schema. Nothing
 verifies the notification channel out of Uptime Kuma itself — proving that end would mean flapping
-a monitor and firing a real alert.
+a monitor and firing a real alert. **And these five scripts still have no gate.** The stubbed harness
+that found all six findings was deliberately not committed: a gate in `config/ci.rb` requires a
+matching job in `ci.yml` (`test/ci_hygiene_test.rb` asserts the two lists cannot drift), which means
+a new job on the single registered self-hosted runner — and the harness leans on macOS/GNU
+differences it papers over with a `date` shim, so it would not behave the same there. Committing it
+*without* a gate is the worse option: an unrun fake rots into §14e's trap, where a fake that shares
+the code's misunderstanding confirms it. Worth revisiting as one gate covering all of `ops/` if a
+Linux runner is ever registered (§12.6).
 
 ---
 

@@ -17,19 +17,38 @@ HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
 VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
 OPS_DIR="tinkerex-ops"
 STALE_HOURS="${BACKUP_STALE_HOURS:-30}"   # a nightly is late, not broken, until it misses a night
+TZ_EXPECT="${BACKUP_TZ:-America/New_York}"
 
-# `want_log=${4:-}`, not `$4`. ssh FLATTENS its arguments into one command string, so an empty
+# `want_log=${5:-}`, not `$5`. ssh FLATTENS its arguments into one command string, so an empty
 # trailing argument does not arrive as an empty positional — it vanishes into trailing whitespace,
-# and `set -u` then kills the remote script on line 2 before it does anything.
-ssh "$HOST" bash -s -- "$VOLUME" "$OPS_DIR" "$STALE_HOURS" "${1:-}" <<'REMOTE'
+# and `set -u` then kills the remote script on line 2 before it does anything. Anything new goes
+# BEFORE it for that reason; the optional one has to stay last.
+ssh "$HOST" bash -s -- "$VOLUME" "$OPS_DIR" "$STALE_HOURS" "$TZ_EXPECT" "${1:-}" <<'REMOTE'
 set -uo pipefail
-volume=$1; ops=$2; stale_hours=$3; want_log=${4:-}
+volume=$1; ops=$2; stale_hours=$3; tz_expect=$4; want_log=${5:-}
 
 echo "== schedule"
 if crontab -l 2>/dev/null | grep -q tinkerex-nightly-backup; then
   crontab -l | grep tinkerex-nightly-backup | sed 's/^/    /'
 else
   echo "    NOT INSTALLED — run bin/backup-cron-install"
+fi
+# THE CRONTAB LINE IS A LOCAL TIME, so it says nothing on its own about when the job actually runs.
+# bin/backup-cron-install asserts this at install time; re-reading it here means a timezone changed
+# on the box afterwards cannot go on quietly contradicting docs/DEPLOY.md §6 — the installer's
+# check is a moment, and this one is every time anyone looks.
+box_tz=""
+if command -v timedatectl >/dev/null 2>&1; then
+  box_tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+fi
+if [ -z "$box_tz" ] && [ -r /etc/timezone ]; then
+  box_tz=$(cat /etc/timezone)
+fi
+if [ "${box_tz:-UNKNOWN}" = "$tz_expect" ]; then
+  echo "    timezone $box_tz  ($(date '+%H:%M %Z'))"
+else
+  echo "    !! timezone is ${box_tz:-unreadable}, but the schedule is documented as $tz_expect"
+  echo "       the nightly is firing at a different hour than docs/DEPLOY.md §6 claims."
 fi
 
 echo

@@ -284,18 +284,43 @@ bin/backup-cron-install --uninstall              # remove just the crontab entry
 bin/backup-db share                              # ad-hoc, pulled down to this Mac
 bin/restore-db share box:latest --into rehearsal # rehearse the newest nightly; live untouched
 bin/restore-db share box:latest                  # the real thing (prompts; backs up first)
+bin/restore-db share box:latest --no-pre-backup  # ...when the state you'd back up is the problem
 ```
+
+**That 03:30 America/New_York is ASSERTED, not assumed.** A crontab time is a *local* time, so the
+claim only holds if the VM's clock agrees — and a stock Ubuntu server is `Etc/UTC`, which would fire
+the same line at 23:30 Eastern with nothing looking wrong. `bin/backup-cron-install` now reads the
+box's zone back and **refuses to install on a mismatch**, before it touches anything; `bin/backup-status`
+re-reads it on every run, so a zone changed *after* install cannot go on quietly contradicting this
+page. `BACKUP_TZ=<zone>` is how you accept a different one deliberately (update this section to match
+if you do). Deliberately **not** `CRON_TZ=`: a cron that does not implement it — busybox, and it is
+not required by POSIX — parses that line as an ordinary environment assignment and ignores it, which
+is a guard that silently does nothing.
 
 `share` is `bin/backup-db`'s default; `chunk` and `s3` take the same arguments. Everything talks to
 the *volumes*, not through the app, so **a backup needs no deploy and no downtime** —
 `bin/restore-db` is the only one that stops anything, and only for the seconds it takes to swap the
 files in.
 
+**Before changing any of these five scripts, read CLAUDE.md §14i** — the CROSS-FILE things not to
+undo, each with the consequence named. The single-site rules are not there and are not weaker for it:
+they live in a comment on the very line you would have to edit, and in this section. `bin/ci` runs
+none of this code, so nothing in the suite goes red for any of it — prove a change against stubs,
+never the live NAS or a real volume.
+
 **`ops/backup-db.sh` IS THE ONLY IMPLEMENTATION; the rest are callers.** It runs on the VM (the
-nightly invokes it from cron, `bin/backup-db` scp's the current copy up and calls it with
+nightly invokes it from cron, `bin/backup-db` pushes the current copy up and calls it with
 `--to-stdout`). Two copies of this would eventually be two copies with different bugs — that is
 this repo's recorded failure shape, not a hypothetical. Change `ops/backup-db.sh` and re-run
 `bin/backup-cron-install` to push it.
+
+**`bin/backup-cron-install` IS THE ONLY THING THAT WRITES `~/tinkerex-ops/backup-db.sh`.** An ad-hoc
+`bin/backup-db` pushes to a **per-run temp path** and deletes it afterwards. It used to `scp` straight
+onto the installed copy, which meant every ad-hoc run — including the pre-restore one fired from
+inside `bin/restore-db`, in the middle of an incident — silently replaced the implementation cron
+would execute that night with whatever happened to be in that person's checkout. Two unsynchronised
+writers to one remote file is not "one implementation, two callers"; it is a way for an unrelated
+command to change the nightly. One source file in git, one installer, one installed copy.
 
 **Where the archives live:** `//192.168.1.146/backups/tinkerex-backups`, mounted into the helper
 container as the Docker CIFS volume `tinkerex_backups` — the same driverless mechanism
@@ -310,6 +335,19 @@ removed, the next reference would recreate it as a **plain empty local volume on
 nightly would go on reporting success while writing into the very disk this arrangement avoids, and
 the real archives on the array would simply stop being visible. Same warning, same reason, as the
 library volume's.
+
+**AND THE NIGHTLY NOW CHECKS THAT FOR ITSELF, because the warning above is only as good as whoever
+read it.** `ops/backup-db.sh --to-volume` inspects the volume first and **refuses to run** unless it
+has a device option — i.e. is a driver-opt volume rather than a local directory — pinging
+`status=down` so the monitor goes red instead of green. Note a missing volume is not an error to
+Docker: `docker run -v tinkerex_backups:/dst` **creates** it, so the job would have written ~44 MB a
+night to the VM's own disk, verified its own archives there quite happily, and reported success,
+while `bin/backup-status` read the same recreated name and called it healthy. `bin/backup-cron-install`
+has always compared the exact path, but that check runs while a human is watching and this one runs
+at 03:30 for months. The division is deliberate: the installer knows `BACKUP_NAS`/`BACKUP_SUBDIR` and
+insists on the exact device; the nightly is handed only a volume name and asks the weaker, sufficient
+question. Do not thread the path through the crontab line to make it exact — a bare `%` in a cron
+command is a newline, and this box has a share whose name contains a space.
 
 **If the installer refuses because the volume points somewhere unexpected, deleting it is the wrong
 move** — and it is the move most likely to be aimed at the *right* volume, because the commonest way
@@ -364,13 +402,19 @@ Four behaviours are deliberate, and each was mutation-checked by breaking the th
 
 - **A failing run sends `status=down` immediately** rather than waiting out the 25-hour window. A
   backup that runs and fails is knowable in seconds; making you wait a day discards the one case
-  the job *can* report on itself. The vanished-container arm pings too.
+  the job *can* report on itself. The vanished-container arm and the wrong-output-volume refusal
+  both ping too — **but only under `--to-volume`**, see the bullet below.
 - **A failed ping NEVER fails the backup.** The backup is the product, the ping is telemetry about
   it. Letting curl's exit status through would turn "Uptime Kuma is rebooting" into "last night's
   backup failed" — and, since a nonzero exit skips the prune, into a slow disk leak as well.
-- **An ad-hoc `bin/backup-db` does NOT ping.** A manual backup to someone's laptop is not the
-  nightly; if it touched the heartbeat, a nightly dead for a week would read healthy for exactly as
-  long as someone kept rescuing it by hand.
+- **An ad-hoc `bin/backup-db` does NOT ping, in EITHER direction.** A manual backup to someone's
+  laptop is not the nightly; if an ad-hoc `up` touched the heartbeat, a nightly dead for a week would
+  read healthy for exactly as long as someone kept rescuing it by hand. The mirror image was a real
+  bug: the vanished-container arm sits *above* the `--to-stdout` branch, so it pinged unconditionally
+  and an ad-hoc run against a missing container marked the **nightly's** monitor `down` — including
+  the pre-restore backup inside `bin/restore-db`, i.e. exactly when someone is already dealing with
+  an incident. Both directions corrupt the same signal. A `--to-stdout` failure is still reported,
+  by exit status, to the person who is standing right there.
 - **`bin/backup-cron-install` MERGES `ping.env`, it does not overwrite it.** That installer is what
   you re-run to push a script change, so a merge that dropped unmentioned keys would silently
   unwire every monitor the next time anyone fixed a typo — and they would sit green until their
@@ -412,11 +456,57 @@ Not in the archive, and not missing: the **library bytes**. On share they live o
 nodes, projects, models, attachments, tags, print log, users — which is the part that only exists
 here.
 
+### The archives are unencrypted on a guest-writable share — a decision, not an oversight
+
+Recording this because it was nowhere written down, and an unstated trade-off is indistinguishable
+from one nobody noticed. **Accepted for a home LAN; revisit before this box is reachable from
+anywhere else, and before `plan-encryption.md` lands** (CLAUDE.md §12.2 — at-rest chunk encryption is
+deliberately last, and this is the same question one layer up).
+
+The volume is mounted `guest,…,file_mode=0664,dir_mode=0775` against a share with guest access, so
+**anyone on the LAN can read and delete 14 nights of every deployment's full production database**.
+What that exposes, precisely:
+
+- **Every user's `encrypted_password`** — bcrypt, so not readable, but offline-crackable at leisure
+  once the file is copied. A weak password does not survive that; a strong one does.
+- **`devices.token_digest` and `share_links.token_digest`** — SHA-256 of 256-bit random tokens. Not
+  meaningfully crackable, and not usable as-is (the API compares against the digest of a presented
+  token, so possessing the digest is not possessing the token).
+- **The catalog itself, in the clear** — email addresses, sign-in IPs, every project, model and file
+  name — plus **every preview blob**, which are thumbnails of the user's actual designs. This, not
+  the digests, is the part with no cryptographic protection at all.
+- **Deletion.** `dir_mode=0775` on a guest share means the archives can be removed by anyone who can
+  reach it. A backup that a stranger can delete is not much of a backup, and nothing would report it
+  until `bin/backup-status` went stale 30 hours later.
+
+Not fixed here because every fix has a cost that wants deciding rather than assuming: an SMB user
+with a real credential means a secret on the VM and in `bin/backup-cron-install`'s volume options;
+`age`/`gpg` encryption of the tarball means a key that must itself survive the disaster the backup is
+for, and a restore path that fails closed if it does not. Neither belongs in a review-follow-up commit.
+
 **REHEARSE THE RESTORE BEFORE YOU NEED IT.** `--into <suffix>` restores into `<volume>-<suffix>` and
-reads it back with the deployment's own image, so extraction, file ownership and the app's own view
-of the data are all exercised against real bytes while the live container keeps serving. Verified
-this way on share, from both sources: four databases restored `rails:rails`, 1326 blob files, 1872
-nodes readable. Drop the scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+reads it back with the deployment's own image **as the user that image runs as**, so extraction, the
+file ownership the `chown` just set, and SQLite's own view of the restored database are exercised
+against real bytes while the live container keeps serving. Verified this way on share, from both
+sources: four databases restored `rails:rails`, 1326 blob files, 1872 nodes readable. Drop the
+scratch volume afterwards with `docker volume rm <volume>-<suffix>`.
+
+**What the rehearsal does NOT do is boot the app, and this page used to say it did** while the check
+ran as `--user 0` — root, which can read a file whatever its mode, so the root version could not fail
+for the one reason a rehearsal exists. A bare `docker run` of the image has none of the environment
+Kamal supplies: no `RAILS_MASTER_KEY` (boot dies on `secret_key_base`) and no `LIBRARY_BACKEND`/
+`LIBRARY_PATH`, which `LibraryBackendCheck` refuses to start without (CLAUDE.md §14a). A "boot" here
+would fail for reasons that have nothing to do with the archive. Running as the app's own user is
+the strongest check available without reconstructing the deployment's whole environment, and unlike
+the old one it can actually go red.
+
+**`--no-pre-backup` exists because the safety net could block the emergency it is there for.**
+`bin/restore-db` backs up the current state first, which is right — restoring the wrong archive is an
+ordinary mistake and making it unrecoverable is a choice. But the commonest reasons to be restoring at
+all (a corrupt database, a container that will not start) are exactly the reasons `bin/backup-db`
+fails, and under `set -e` that aborted the restore with backup-db's own error and no hint that the
+restore had been abandoned or that continuing was possible. **The default is unchanged** — a failed
+pre-backup is still fatal — what is new is that the refusal names the way past itself.
 
 **`box:` restores in place, without a round trip.** A nightly archive lives inside a CIFS volume, so
 it is not a path on the VM's filesystem at all — fetching 34 MB down to the Mac only to push the
