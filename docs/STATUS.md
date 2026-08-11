@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-07 (**an eight-item UI pass: Back, STL axes, deleted-file propagation, the type filter, project covers, collapsible file sections, tasks without a reload, right-click download**)
+**Updated:** 2026-08-10 (**audit A-M4: deleting a supplier, location or inventory item no longer strands — and permanently locks — the rows that referenced it**)
 
 ## What this file is
 
@@ -60,7 +60,66 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-07): eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
+## Latest (2026-08-10): audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
+
+`Maker::Supplier` had no `has_many` at all and `Maker::Location` had one only for its own
+`children`, so `DELETE /v1/maker/suppliers/:id`, `locations/:id` and `inventory_items/:id` left
+dangling ids behind. The dangling id was not the harm. `InventoryItem` and `BomLine` run their
+`*_belongs_to_user` validations `if: <fk>.present?`, and a dangling id **is** present — so the
+check ran, found nothing, and refused **every** subsequent save of that row. Renaming an item,
+adjusting a min quantity, fixing a typo in a BOM line's notes: all rejected, permanently, with an
+error naming a field the form need not even show. Confirmed by probe before any fix, on all three
+referring columns.
+
+**Blast radius** — four referring columns, one more than the finding named:
+`maker_inventory_items.supplier_id` and `.location_id`, `maker_bom_lines.inventory_item_id`, and
+`maker_bom_lines.supplier_id` (that last one is not in A-M4's text). Everything else already had
+an answer: `InventoryItem`→`transactions` is `dependent: :delete_all`, `Location`→`children` is
+`dependent: :nullify`. Two dangling pointers were found and deliberately left alone because
+neither locks anything: `maker_bom_lines.node_id` after a node is reaped, and
+`maker_inventory_transactions.project_id` after a project is destroyed — the latter is an
+append-only ledger that no code may update anyway.
+
+**`dependent: :nullify` is right for three of the four and WRONG for the fourth.** Nullifying
+`BomLine#inventory_item_id` leaves the line with no target, so `exactly_one_target` refuses it —
+the identical permanent lock, wearing a different error message. Measured: with the nullify-only
+implementation, the unlock test fails with `a line must link exactly one of: inventory item,
+design file, or free-text part`. `dependent: :destroy` is worse — a BOM records what a project
+needs, and deleting a stock row is a statement about the shelf, not about the design. So
+`InventoryItem#release_bom_lines` **converts the line to a free-text part**, copying the item's
+name into `part_name` before dropping the pointer: a valid, editable line still reading "4 × M3
+bolt", in a shape `resolved_target` already renders. The rename half is scoped to the owning user
+(the nullifies are not) because it *writes* a name rather than clearing a pointer — clearing can
+only repair an illegal cross-tenant reference, copying would disclose one.
+
+**No DB foreign keys, decided rather than forgotten.** Measured on this box (Rails 8.1.3.1,
+SQLite): `add_foreign_key ... on_delete: :nullify` over data that already violates it is
+**ACCEPTED** at migration time and then raises `ActiveRecord::InvalidForeignKey` on the next write
+to the bad row. Postgres would refuse the `ALTER TABLE` outright (reasoned, not measured — no
+local libpq). So the same migration aborts the deploy on managed and, on self-host, silently
+converts A-M4's 422 lock into a **500** on rows the live bug has already stranded. There is also
+nothing for a FK to catch: all three deletes go through Active Record (`user.destroy` plus the
+three v1 controllers — no raw-SQL or `delete_all` path exists for these models), and the harm is
+an Active Record validation, which no DB constraint can lift. FKs remain worth having, but as
+their own change, preceded by a cleanup pass — and note that pass cannot restore a deleted item's
+name to a BOM line, which is precisely why the conversion has to happen at destroy time.
+
+**No backfill migration either, for the same reason plus an escape hatch.** Rows stranded before
+this fix stay stranded, but their owner can clear them through the existing API: the validations
+are guarded on the id being *present*, so `PATCH { supplier_id: null }` skips the check and saves.
+Pinned by a test that plants the pre-fix state with `update_columns` and drives both PATCHes.
+
+**Verification.** Bare `bin/ci` green by exit code, all seven gates; the three test legs report
+identical counts — **2194 runs / 7859 assertions / 0 failures / 9 skips** on each of chunk, share
+and s3, plus 70 system runs / 439 assertions. Seven mutation checks
+(§15), every one RED: dropping each of the three `dependent: :nullify`s; dropping
+`before_destroy :release_bom_lines`; reducing `release_bom_lines` to a plain nullify; renaming
+every line instead of only the targetless ones; and dropping the per-user scope, which needed a
+*planted* cross-tenant row to be catchable at all, since the validations make one unreachable.
+
+---
+
+## 2026-08-07: eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
 
 **The ask** was a list, verbatim: the Back button always returns to Files; STL thumbnails come out
 wrong way up; a file deleted from the share stays in the Files view and its projects; the type filter

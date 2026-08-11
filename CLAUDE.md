@@ -787,6 +787,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Maker::DeadNodes` owns the one definition of `reapable?`, shared with the preview reaper; its index
   reads `user.nodes`, **NOT `.present`**, because a tombstone is exactly what tells "revivable" from
   "gone for good" and filtering it out reaps every tombstone with no grace at all.
+- **A `*_belongs_to_user` VALIDATION GUARDED ON `if: <fk>.present?` MAKES A DANGLING ID LOCK THE
+  WHOLE ROW, SO EVERY REFERENCED MODEL NEEDS A `dependent:` — AND `:nullify` IS THE WRONG ONE FOR
+  `Maker::BomLine#inventory_item_id`.** A dangling id *is* present, so the check runs on every save
+  and refuses edits to unrelated fields; `Supplier`→items/bom_lines and `Location`→items therefore
+  nullify. A BOM line cannot: `exactly_one_target` then sees no target and refuses the row anyway —
+  the identical permanent lock with a different message — so `InventoryItem#release_bom_lines`
+  copies the item's name into `part_name` and only then drops the pointer. Never "tidy" that
+  callback into a `dependent:` on the association; the two statements must run in that order, and
+  the name is unrecoverable one moment later. The rename is user-scoped while the nullifies are
+  not, because clearing a pointer can only repair an illegal cross-tenant reference whereas writing
+  a name into someone else's row would disclose one.
 
 ### 14e. Architecture and process
 

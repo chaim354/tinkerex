@@ -35,6 +35,25 @@ module Maker
       assert_nil bin.reload.parent_id
     end
 
+    # The unlock, not the nil, is the point — see the equivalent test in supplier_test.rb.
+    test "destroying a location leaves the items that sat there still editable" do
+      shelf = @user.maker_locations.create!(name: "Shelf A")
+      item = @user.maker_inventory_items.create!(name: "M3 bolt", location: shelf)
+      shelf.destroy!
+
+      item.reload.min_quantity = 25
+      assert item.save, item.errors.full_messages.to_sentence
+      assert_equal 25, item.reload.min_quantity
+    end
+
+    test "destroying a location nullifies its inventory items' location_id" do
+      shelf = @user.maker_locations.create!(name: "Shelf A")
+      item = @user.maker_inventory_items.create!(name: "M3 bolt", location: shelf)
+      shelf.destroy!
+      assert_nil item.reload.location_id
+      assert Maker::InventoryItem.exists?(item.id), "the item itself must survive"
+    end
+
     test "scoped to the user via the association" do
       @user.maker_locations.create!(name: "mine")
       other = User.create!(email: "o2@example.com")
