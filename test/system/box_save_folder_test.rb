@@ -14,10 +14,18 @@ require_relative "../support/fake_boxes_sidecar"
 # bin/check-fixture-drift, which refuses to publish a bundle whose fixture has not been updated).
 # Same hermetic-snapshot trade-off box_sections_test.rb's header sets out at length.
 #
-# THE FEATURE DETECT IS THE POINT OF THE SECOND TEST. folder_field.js picks its shape from whether
-# `ctx.chooseFolder` exists, because a bundle image can be published — or rolled back with
-# bin/rollback — against a Rails that predates that key. Both arms therefore have to work, and the
-# one that is NOT the current host's is the one no ordinary run will ever execute.
+# THERE IS NO LONGER A FEATURE DETECT, AND THE TEST THAT DROVE ITS OTHER ARM WENT WITH IT.
+# folder_field.js used to pick its shape from whether `ctx.chooseFolder` existed, and a second test
+# here mounted the `ctx.folders` <select> arm directly, on the grounds that a bundle image can be
+# published — or rolled back with bin/rollback — against a Rails that predates that key. That
+# argument does not survive the bundle's move onto @maker/addon-sdk: a host old enough to lack
+# `chooseFolder` is a host that does not pin the SDK either, so boxes.js fails to resolve its
+# import, mount() never runs, and folder_field.js is never reached. The deleted test could only
+# reach that arm by dynamic-importing folder_field.js directly, and that module now imports the SDK
+# itself — so it fails to resolve for the same reason. What was left was a branch nothing can take
+# and nothing can honestly exercise, which tinkerex CLAUDE.md §15 warns about in as many words. The
+# recovery for a genuinely old host is `bin/rollback <sha>` in the bundles repo, restoring the
+# pre-SDK image whole — not a dead branch carried inside the new one.
 class BoxSaveFolderTest < ApplicationSystemTestCase
   SAMPLE_404 = %r{/tools/boxes/service/boxes/sample/\w+ - Failed to load resource.+404}
 
@@ -62,36 +70,6 @@ class BoxSaveFolderTest < ApplicationSystemTestCase
     harbor = @user.nodes.present.find_by!(name: "harbor", kind: "dir")
     node = wait_for_node("harbor-sign.svg")
     assert_equal harbor.node_id, node.parent_node_id
-    assert_no_console_errors ignoring: [ SAMPLE_404 ]
-  end
-
-  # THE ROLLBACK ARM — the branch no ordinary run reaches, and the reason it exists.
-  #
-  # A context with no `chooseFolder` is EXACTLY what an older Rails looks like from inside the
-  # bundle; there is no other difference the feature detect can see. So this mounts the real
-  # folder_field.js — fetched through the real same-origin asset proxy, in the real page — against
-  # that context, rather than asserting the fallback exists by reading the source. Without it, the
-  # arm that protects a `bin/rollback` is the one arm nothing ever executes.
-  test "against a host with no chooser, the bundle falls back to the flat select" do
-    open_editor
-    page.execute_script(<<~JS)
-      window.__ffDone = false
-      ;(async () => {
-        const entry = document.querySelector("[data-controller=addon]").dataset.addonEntryValue
-        const mod = await import(entry.replace(/boxes\\.js$/, "folder_field.js"))
-        const slot = document.createElement("span")
-        slot.id = "ff-fallback"
-        document.body.appendChild(slot)
-        mod.mountFolderField(slot, {
-          folders: [ [ "/ (library root)", "" ], [ "/Projects", "p1" ] ], defaultFolder: "p1",
-        })
-        window.__ffDone = true
-      })()
-    JS
-
-    assert_selector "#ff-fallback select"
-    assert_no_selector "#ff-fallback .folder-field-btn"
-    assert_equal "p1", find("#ff-fallback select").value, "defaultFolder must still preselect"
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 

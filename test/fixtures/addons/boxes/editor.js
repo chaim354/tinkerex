@@ -4,10 +4,49 @@ import { mountTopView } from "./top_view.js"
 import { mountPreview, generateSvg } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
 import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
-import { saveWithOverwrite } from "./save.js"
 import { mountFolderField } from "./folder_field.js"
+// See boxes.js's import for why this is a static import of the host pin and never a vendored copy.
+// `host` is a LIVE BINDING — read through it at call time, never captured at module top level.
+import {
+  host, AddonError, NameTakenError, ServiceUnavailableError, WouldReplaceError,
+} from "@maker/addon-sdk"
 
 const PAPER_KEY = "boxes.paper"
+
+// WHAT A FAILED SAVE SAYS, PER REFUSAL — the actual win of moving onto the SDK. Every failure used
+// to collapse into one string, "Save failed.", because the hand-rolled POST read `res.ok` and
+// nothing else. The host has answered a typed, nameable refusal on each of these since its save
+// door grew its rescue_from block; the SDK turns each one into a class, so `instanceof` is all it
+// takes to say WHICH — and the user finally learns whether to rename, retry, or wait.
+//
+// 409 AND 422 STAY APART, and that is the one distinction here that is not cosmetic: a 409 is a
+// QUESTION (resend with overwrite and it succeeds — onReplace below answers it) while a 422 NEVER
+// succeeds on retry. Collapsing them offers an Overwrite button for a save that can never take one.
+// This is the same table generators.js carries, and deliberately the same wording where the
+// conditions are the same — two bundles disagreeing about what a 503 means would be worse than
+// either wording.
+const saveFailure = (e) => {
+  // 422 unsupported_operation — the name is taken in the folder the user picked. The host's own
+  // message already names the file and says what to do ("Rename the save or pick another folder."),
+  // so adding advice here would only be a second copy of it, free to drift.
+  if (e instanceof NameTakenError) return `Not saved. ${e.message}`
+  // 409 would_replace, reachable ONLY on the overwrite re-send: the SDK answers the first one
+  // through onReplace, so arriving here means the user already said yes and the host refused again.
+  // Naming the files is the useful part; asking the same question a second time is not.
+  if (e instanceof WouldReplaceError) {
+    return `Not saved: this would still replace ${e.files.map((f) => f.name).join(", ")}.`
+  }
+  // 503 fetch_error from an unmounted share, or the SDK's own network_error raised before any
+  // response existed. Both read the same way to a user: the request was fine, the library was not.
+  if (e instanceof ServiceUnavailableError) {
+    return "Couldn't reach your library — nothing was saved. Try again in a moment."
+  }
+  // Everything else the host or the SDK can name: a reserved output name, an oversized payload, a
+  // capability this host does not have. `message` carries the host's own sentence where there is
+  // one, and the SDK's own where there is not.
+  if (e instanceof AddonError) return `Save failed: ${e.message}`
+  return `Save failed: ${e.message || e}`
+}
 
 // The per-generator editor: the param form (grouped, collapsible), the live preview, the top-view
 // compartment plan, and "made with this generator" prior boxes. Ported from the tinkerex repo's
@@ -16,8 +55,10 @@ const PAPER_KEY = "boxes.paper"
 //
 // root: element to render into. generator: {key, title, group, param_groups}. states: the full
 // saved-states array (filtered here to this generator for the prior-boxes list). ctx: the mount
-// context (serviceUrl, saveUrl, csrfToken, and the destination keys folder_field.js reads:
-// chooseFolder/defaultFolderLabel on a current host, folders/defaultFolder on an older one).
+// context, now forwarded rather than picked apart — folder_field.js reads its two DESTINATION keys
+// (`defaultFolder`, `defaultFolderLabel`) and preview.js reads `serviceUrl`/`csrfToken` for the one
+// call the SDK cannot yet carry (see the gap block in preview.js). `saveUrl` and the hand-rolled
+// CSRF header are gone entirely — `host.files.save` owns the save door now.
 // prefillValues: a saved box's
 // `params`, when opened via "Load"/"Duplicate & tweak", or null for a fresh generator.
 // onBack(): return to the gallery. onSaved(): a save completed — the caller re-fetches states.
@@ -99,7 +140,12 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   $("key").textContent = generator.key
   $("title").textContent = generator.title
 
-  const folderField = mountFolderField($("folder-field"), ctx)
+  // The third argument is where the chooser reports a failure it cannot handle itself (a host that
+  // advertises pick:folder and wired up no chooser, a capability answered false). Without it the
+  // rejection would be uncaught and the button would simply do nothing, which is visually identical
+  // to the user pressing Esc. `setSaveStatus` is declared further down and is in its temporal dead
+  // zone right now — safe because this closure is only ever CALLED from a click, long after.
+  const folderField = mountFolderField($("folder-field"), ctx, (msg) => setSaveStatus(msg, true))
 
   $("groups").appendChild(buildParamGroups(generator.param_groups, prefillValues))
   renderPrior($("prior-wrap"), states, generator, onOpenGenerator)
@@ -148,8 +194,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   destroyers.push({ destroy: () => root.removeEventListener("click", onExport) })
 
   const preview = mountPreview({
-    serviceUrl: ctx.serviceUrl,
-    csrfToken: ctx.csrfToken,
+    ctx,
     paramsRoot: $("groups"),
     image: $("preview-image"),
     status: $("status"),
@@ -175,35 +220,68 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     // A FRESH render, not whatever the debounced live preview last drew — the box's params may
     // have changed since that request landed, and this mirrors what the retired
     // Tools::BoxesController#create did (its own separate `client.generate` call at save time).
-    const result = await generateSvg({ serviceUrl: ctx.serviceUrl, csrfToken: ctx.csrfToken, generator: generator.key, params })
+    let result
+    try {
+      result = await generateSvg({ ctx, generator: generator.key, params })
+    } catch (e) {
+      // generateSvg returns {ok: false} for a sidecar's own refusal and only THROWS for a genuine
+      // transport failure, so this arm must not say anything about parameters. Previously an
+      // unhandled rejection: the save silently stopped at "Saving…" forever.
+      setSaveStatus(`Couldn't reach the box generator — nothing was saved. ${e.message}`, true)
+      return
+    }
     if (!result.ok) { setSaveStatus(result.message, true); return }
 
     const base = name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "box"
-    const body = new FormData()
-    body.append("name", name)
-    body.append("parent_node_id", folderField.value())
-    body.append("data", JSON.stringify({ generator: generator.key, params }))
     // The plan goes in UNTILED and full size: tiling is a property of the printer, not of the
     // drawing, and an archival artifact should not arrive pre-chopped into sheets. SVG rather than
     // PDF because parse_files requires a String body over JSON — binary cannot round-trip, and a
     // base64 path would cost a Rails redeploy for something the PDF download already gives.
     // MAX_FILES is 8, so a second output needs no host change.
-    const outputs = [ { name: `${base}.svg`, content_type: "image/svg+xml", body: result.svg } ]
+    //
+    // camelCase `contentType`, not the wire's `content_type` — the SDK does that rename. A part
+    // without one throws invalid_argument rather than letting the key vanish during serialisation
+    // (JSON.stringify DROPS an undefined value) and writing a file with no content type at all.
+    const outputs = [ { name: `${base}.svg`, contentType: "image/svg+xml", body: result.svg } ]
     const planModel = topView.getPlan?.()
     if (planModel) {
       outputs.push({
-        name: `${base}-plan.svg`, content_type: "image/svg+xml", body: planSvgFor(planModel),
+        name: `${base}-plan.svg`, contentType: "image/svg+xml", body: planSvgFor(planModel),
       })
     }
-    body.append("files", JSON.stringify(outputs))
 
-    // Through saveWithOverwrite, not a bare fetch. A re-save under the same name is the ORDINARY
-    // way to iterate on a design, and BOTH outputs collide on it (<base>.svg and
-    // <base>-plan.svg) — which used to strand a second copy of each at the project root.
-    // See save.js for the 409 contract.
-    const { res, cancelled } = await saveWithOverwrite(ctx.saveUrl, body, ctx.csrfToken)
-    setSaveStatus(cancelled ? "Not saved." : res.ok ? "Saved." : "Save failed.", !cancelled && !res.ok)
-    if (res.ok) onSaved()
+    try {
+      const saved = await host.files.save({
+        name,
+        // REQUIRED AND NEVER DEFAULTED: null/undefined throws invalid_argument before any request,
+        // because a cancelled pickFolder() resolves null and must not silently become the library
+        // root. Safe here by construction — folderField.value() always answers a string, "" being
+        // the root, and a cancelled chooser leaves the previous choice in place.
+        folderNodeId: folderField.value(),
+        data: { generator: generator.key, params },
+        files: outputs,
+        // THE 409 ANSWERED IN PLACE. A re-save under the same name is the ORDINARY way to iterate
+        // on a design, and BOTH outputs collide on it (<base>.svg and <base>-plan.svg) — which used
+        // to strand a second copy of each at the project root, silently. Omit onReplace and the SDK
+        // throws WouldReplaceError instead — overwriting is never implicit.
+        onReplace: (files) => window.confirm(
+          `This will replace ${files.length === 1 ? "a file" : "files"} you already saved:\n\n` +
+            `${files.map((f) => `  ${f.name}  (in ${f.folder}/)`).join("\n")}\n\n` +
+            "Replace with this version?",
+        ),
+      })
+      // TAGGED, AND BOTH SHAPES ARE TRUTHY — `{cancelled: false, data}` and `{cancelled: true}`.
+      // Read `.cancelled`; testing the returned object itself reports "Saved." over a save the user
+      // just declined. (`data` is `{}` today: the save door redirects rather than answering JSON.)
+      setSaveStatus(saved.cancelled ? "Not saved." : "Saved.")
+      if (!saved.cancelled) onSaved()
+    } catch (e) {
+      setSaveStatus(saveFailure(e), true)
+      // Anything that is not an AddonError is a bug in THIS bundle rather than a refusal from the
+      // host. Say so in the status line and still let the stack reach the console, instead of
+      // swallowing it into a tidy message.
+      if (!(e instanceof AddonError)) throw e
+    }
   }
   $("save").addEventListener("click", onSaveClick)
 

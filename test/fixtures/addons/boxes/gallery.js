@@ -109,6 +109,19 @@ function buildCard(generator, ctx, onOpenGenerator) {
   img.className = "addon-thumb"
   img.alt = ""
   img.loading = "lazy"
+  // DELIBERATELY STILL RAW `ctx.serviceUrl`, AND THE ONE PLACE IN THIS BUNDLE THAT IS — NOT AN
+  // OVERSIGHT LEFT BEHIND BY THE SDK MIGRATION. The SDK has no accessor returning a URL an
+  // <img src> can take: `host.service.get` PERFORMS the request and resolves a Response, which
+  // cannot feed an attribute the BROWSER must fetch itself. Both ways of reaching around that are
+  // worse than the gap. Fetching and building an object URL would download every sample photo
+  // eagerly — this is a grid of lazy tiles, so `loading="lazy"` is doing real work here — and would
+  // need a matching revokeObjectURL on teardown to avoid leaking one blob per card. Reconstructing
+  // the URL from anything else the SDK exposes is just this line with extra steps.
+  //
+  // The host's proxy keeps `image/jpeg` INLINE on its content-type allowlist precisely for this
+  // call site (tinkerex CLAUDE.md §14c), so the raw URL is a supported path rather than a loophole.
+  // The real fix is an SDK addition — a `host.service.url(name, path)` that BUILDS a string and
+  // requests nothing — and until that exists this stays as it is, named rather than quietly left.
   img.src = `${ctx.serviceUrl}boxes/sample/${encodeURIComponent(generator.key)}`
   // Replaces the host's thumbfallback Stimulus controller for this addon: this bundle isn't
   // Stimulus, so a missing sample photo (most generators have none — 404) is hidden by hand rather
