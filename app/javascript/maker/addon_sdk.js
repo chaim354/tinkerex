@@ -199,6 +199,49 @@ function encodePathSegments(path) {
   }).join("/")
 }
 
+// THE SERVICE NAME SITS IN THE SAME URL, ONE SEGMENT EARLIER, AND GETS THE SAME REFUSAL. It had
+// none of the above: `service.get("../../evil", "x")` built `/tools/<key>/service/../../evil/x`,
+// which THE BROWSER NORMALIZES AWAY BEFORE THE REQUEST IS SENT — so `sidecar_url_for`, the server
+// guard whose whole job is to refuse a service the manifest does not name, was never asked, and the
+// call misrouted silently rather than failing loudly. That is verbatim the defect encodePathSegments
+// exists for; leaving the first segment out of it made the invariant true of only part of one URL.
+// An empty name is refused for encodePathSegments' own reason: left alone it builds a double slash.
+//
+// A "/" IS REJECTED OUTRIGHT RATHER THAN SPLIT INTO SEGMENTS, which is the one real design choice
+// here, and it is a rejection on all three counts:
+//   1. A service name is ONE segment by construction. The route is `tools/:key/service/:service/*path`
+//      (`:service` is a single Rails dynamic segment) and the server matches the name VERBATIM
+//      against the manifest's own `services` list (AddonsController#sidecar_url_for), so "a/b" cannot
+//      name a service on any host — splitting it only defers a nameable mistake into a 404 that reads
+//      as a missing or unconfigured sidecar.
+//   2. Splitting would NORMALIZE a structural error into a differently-shaped URL. §14a's key_for and
+//      §14c's validate_asset_path! both reject rather than normalize, for exactly this reason.
+//   3. Split, the contract would be incoherent: "../.." refused while "a/b" is accepted, for a value
+//      that is one segment by definition.
+// Note the "/" clause is NOT what makes this safe — encodeURIComponent("/") is "%2F", so encoding
+// alone already defuses it. It is what makes the SDK honest about an input it cannot serve.
+//
+// WHAT IS DELIBERATELY *NOT* LISTED: "\", "#", "?" and "%" need no clause, because encodeURIComponent
+// escapes all four. The backslash is the one worth naming — a browser treats it as a path separator
+// in a special-scheme URL, so `"..\\..\\evil"` would normalize like the slash form — but the encoding
+// runs while we are still building a string, before any URL parser sees it, so "%5C" is what ships.
+// Only ".", ".." and "" survive encodeURIComponent untouched, and those are exactly the clauses here.
+//
+// The type check earns its place rather than mirroring encodePathSegments (which throws a bare
+// TypeError off `.split`): `encodeURIComponent(undefined)` is the STRING "undefined", so a missing
+// argument would otherwise request a service literally named "undefined" and 404 for a reason that
+// names nothing.
+function encodeServiceName(name) {
+  if (typeof name !== "string" || name === "" || name === "." || name === ".." || name.includes("/")) {
+    throw new AddonError(
+      "invalid_argument",
+      `Invalid service name ${JSON.stringify(name)}: a service name is a single path segment — it ` +
+        'cannot be empty, "." or "..", or contain "/".',
+    )
+  }
+  return encodeURIComponent(name)
+}
+
 // ---------------------------------------------------------------------------
 // The host
 // ---------------------------------------------------------------------------
@@ -382,7 +425,7 @@ class Host {
     get: async (serviceName, path, params = {}) => {
       this._require("service")
       const qs = new URLSearchParams(params).toString()
-      const url = `${this._ctx.urls.service}${serviceName}/${encodePathSegments(path)}${qs ? `?${qs}` : ""}`
+      const url = `${this._ctx.urls.service}${encodeServiceName(serviceName)}/${encodePathSegments(path)}${qs ? `?${qs}` : ""}`
       const res = await this._fetch(url)
       if (!res.ok) throw await serviceErrorFrom(res)
       return res
@@ -392,7 +435,9 @@ class Host {
       this._require("service")
       const body = new FormData()
       Object.entries(params).forEach(([ k, v ]) => body.append(k, v))
-      const res = await this._post(`${this._ctx.urls.service}${serviceName}/${encodePathSegments(path)}`, body)
+      const res = await this._post(
+        `${this._ctx.urls.service}${encodeServiceName(serviceName)}/${encodePathSegments(path)}`, body,
+      )
       if (!res.ok) throw await serviceErrorFrom(res)
       return res
     },

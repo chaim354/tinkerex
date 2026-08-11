@@ -509,6 +509,11 @@ whichever fits. `post` sends `params` as form data; `get` sends them as a query 
 segments and `.` / `..` are **rejected** with `invalid_argument` rather than normalised away, so a
 mistake fails loudly instead of quietly requesting the wrong thing.
 
+`name` gets the same refusal, and one more: it is **a single segment**, so alongside empty, `.` and
+`..` it also rejects any `/`. Both arguments land in the same URL, and a `..` in either is removed
+by the browser's own URL parser *before the request is sent* — so the host never sees it, and the
+call would otherwise misroute silently instead of failing.
+
 The host answers **404** if your manifest does not name the service, or if the operator has
 configured no URL for it. The sidecar's URL never comes from your manifest.
 
@@ -694,7 +699,7 @@ only when you did not.
 |---|---|---|---|
 | `would_replace` | 409 | `WouldReplaceError` | The save would replace files this addon wrote before. `.files` is `[{name, folder}]`. |
 | `unsupported_operation` | 422 | `NameTakenError` | An output name is already taken in the folder you picked. |
-| `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** The host maps a port-level `FileLayer::NotFound` here, and 422 rather than 404 because the endpoint is fine and the request was refused; but no request shape described in this document is known to raise one today. Handle it via the `AddonError` fallback; do not build a flow around it. |
+| `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** What does: an output `name` the library cannot index — `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, or `.trash` at the library root (plus `.maker-tmp-*` on a share-backed host). Rename the output. Raised only on a share/S3-backed host; a chunk-backed host accepts those names. 422 rather than 404 because the endpoint is fine and the request was refused. |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
 | `request_failed` | any | `AddonError` | The fallback when a failure response carries no code at all. A save rejected for a malformed or oversized payload answers a body-less 422 and arrives this way. |
 | `name_taken` | — | `NameTakenError` | **Reserved.** The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. |
@@ -729,7 +734,7 @@ host starts emitting the newer spelling, and a `e.code === "…"` check quietly 
 |---|---|---|
 | `host_not_initialized` | `AddonError` | You read `host` before the host was ready (module top-level code) or after your addon was torn down (a stale closure). The message says which. |
 | `host_misconfigured` | `AddonError` | The capability map advertises `pick:folder` but the host provided no chooser. Not a user cancel. |
-| `invalid_argument` | `AddonError` | A missing `folderNodeId`, a file part with no `contentType`, or an empty / `.` / `..` segment in a service path. |
+| `invalid_argument` | `AddonError` | A missing `folderNodeId`, a file part with no `contentType`, an empty / `.` / `..` segment in a service path, or a service **name** that is empty, `.`, `..`, or contains `/`. |
 | `unsupported_capability` | `UnsupportedCapabilityError` | The capability is in the map and false. |
 | `unknown_capability` | `UnsupportedCapabilityError` | The capability is not in the map at all. |
 | `network_error` | `ServiceUnavailableError` | The request never reached the host — offline, DNS failure, a dropped connection. Reads the same way as a 503: retry later. |

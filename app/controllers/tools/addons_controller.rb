@@ -86,13 +86,51 @@ module Tools
              status: :service_unavailable
     end
 
-    # 422, NOT 404. NotFound here means the save named a destination folder that no longer exists
-    # (the leaf-name arm that used to raise it is closed in #parse_files, before any write is
-    # attempted). A 404 on a POST to the save endpoint reads as "this endpoint is gone", which
-    # would send an addon author looking in entirely the wrong place; the honest answer is that the
-    # request was refused.
+    # 422, NOT 404 — AND NOT FOR THE REASON THIS COMMENT USED TO GIVE. It said "NotFound here means
+    # the save named a destination folder that no longer exists", which this door cannot produce:
+    # Tools::LibraryFolders#chosen_parent_node_id resolves an unknown, stale or foreign
+    # parent_node_id to nil BEFORE any port call, and nil means the library ROOT. That save answers
+    # 302, succeeds, and quietly writes to the root — probed on all three backends, and documented
+    # for addon authors in docs/addon-api-v1.md §5, which carries the consequence (a folderNodeId
+    # persisted in an AddonState can name a folder that is gone, and nothing reports it).
+    #
+    # WHAT ACTUALLY REACHES HERE IS AN OUTPUT NAME THE LIBRARY SCAN COULD NEVER OBSERVE — the
+    # `observable!` guard in FileLayer::Share and FileLayer::S3, which is §14b's skip-list rule.
+    # #parse_files vets every name with Maker::MoveNode.valid_leaf_name?, which refuses "/", "\",
+    # NUL, "." , ".." and over-long names — but ".DS_Store", "._x", "__MACOSX", ".Trashes" and (at
+    # the library root) ".trash" are all perfectly good LEAF names, and the port refuses them
+    # because a file written to a path the scan skips is a ghost the Reconciler can never pair.
+    # Probed, one save per name: each of those answers this 422 on share and on s3;
+    # ".maker-tmp-x" does on share and does NOT on s3, because S3#observable! omits TEMP_PREFIX
+    # deliberately (that adapter writes no temp keys).
+    #
+    # SO: REACHABLE FROM #create, ON SHARE/S3 ONLY. On chunk it is unreachable — the write goes
+    # through Maker::Addons::LibraryOutput#write_chunk, which never calls the port — and chunk
+    # therefore ACCEPTS those names. That divergence is recorded, not fixed here. And none of #show,
+    # #asset, #service or #states touches FileLayer at all, so this class-level arm — which does
+    # cover every action, not just the save — covers those four vacuously.
+    #
+    # EVERY OTHER NotFound INSIDE #write IS CLOSED BEFORE IT, which is why this arm is narrow rather
+    # than a catch-all: `leaf!` by valid_leaf_name? (strictly stricter), the path-escape guard by
+    # `leaf!` in turn, `read_capped!` by MAX_FILE_BYTES (4 MB) sitting far under FileLayer::MAX_BYTES
+    # (256 MB), and "parent is not a live directory" by chosen_parent_node_id having just resolved
+    # that id against the user's own live dirs — which leaves it reachable only as a TOCTOU, a folder
+    # tombstoned between those two lookups (a real window on share/s3, where Library::ScanJob
+    # tombstones a folder removed on the NAS). Nothing AFTER the write can reach here either:
+    # #attach_addon_files_to_current_project and #intake_project_folder both rescue StandardError,
+    # and Maker::ProjectIntake#place already rescues FileLayer::NotFound into a :not_found skip.
+    #
+    # THE MESSAGE NAMES BOTH SURVIVING CAUSES and prescribes for each, because they want opposite
+    # remedies: renaming fixes the reserved name and does nothing for the race, retrying fixes the
+    # race and never the name. It used to name only the cause that cannot happen.
+    #
+    # A 404 on a POST to the save endpoint would read as "this endpoint is gone", which sends an
+    # addon author looking in entirely the wrong place; the honest answer is that the request was
+    # refused.
     rescue_from FileLayer::NotFound do
-      render json: { error: "not_found", message: "That destination folder no longer exists." },
+      render json: { error: "not_found",
+                     message: "Your library refused that write. Rename the output if it is named " \
+                              "like a system file, or try again." },
              status: :unprocessable_entity
     end
 

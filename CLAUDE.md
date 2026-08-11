@@ -768,7 +768,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
   is sent and it never reaches the route the server guards: it misroutes **silently** instead of
   being refused. Same rule as §14a's `key_for` and `validate_asset_path!` above: **reject, never
-  normalize.**
+  normalize.** **THE SERVICE NAME IS THE SAME URL AND GETS THE SAME REFUSAL** — it went unguarded
+  while the `path` beside it did, which made the invariant true of only part of one URL. It
+  additionally rejects a `/` **outright rather than splitting it into segments**, because `:service`
+  is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"` cannot
+  name a service on any host; splitting would normalize a structural error, and would leave the
+  contract incoherent (`"../.."` refused, `"a/b"` accepted) for a value that is one segment by
+  definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
+  clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
+  parser's and no server-side test can observe it.
 - **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
   the target, the target names the claimant back in `shares_states_with`, **and the target must
   itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
@@ -810,6 +818,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `state:crud` / `project:current` there). **An unknown name falls back to its own raw spelling**
   rather than rendering blank: a card that silently understates what an addon asked for is worse
   than one showing a developer-facing string.
+- **`rescue_from FileLayer::NotFound` IN `Tools::AddonsController` IS REACHABLE ON SHARE/S3 ONLY,
+  AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
+  resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
+  save answers **302 and succeeds** (probed on all three; `docs/addon-api-v1.md` §5 carries the
+  author-facing consequence). What does reach it is an output NAME the scan can never observe —
+  `observable!`, §14b's skip-list rule: `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash`,
+  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose).
+  **Chunk accepts all of them** — `write_chunk` never calls the port — which is one condition with
+  two answers across backends, recorded here rather than fixed.
 
 ### 14d. The maker web layer
 

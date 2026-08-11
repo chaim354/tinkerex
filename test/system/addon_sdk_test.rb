@@ -73,6 +73,29 @@ class AddonSdkTest < ApplicationSystemTestCase
     assert_no_console_errors ignoring: [ /status of 409 \(Conflict\)/ ]
   end
 
+  # THE TRAVERSAL REFUSAL, IN THE ONE PLACE IT CAN BE OBSERVED. Both arguments of `service.get` land
+  # in the same URL — the service NAME and then the PATH — and a `..` in either is normalized out by
+  # the BROWSER'S OWN URL PARSER before the request is sent (`/tools/sdk-fixture/service/../../evil/x`
+  # leaves as `/tools/evil/x`, verified against WHATWG normalization). So the server's guard is never
+  # asked, no server-side test can see the defect, and the refusal has to happen in the SDK. This is
+  # the SDK's half of §14a's key_for and §14c's validate_asset_path! rule: REJECT a path, never
+  # normalize one.
+  #
+  # EXACT TEXT, NOT A SUBSTRING — this file's own onReplace assertion records why. A substring match
+  # would pass just as happily on "name=AddonError:invalid_argument path=ServiceError:service_error",
+  # asserting nothing about the half that regressed.
+  test "service refuses a traversing service name and a traversing path before any request" do
+    visit "/tools/sdk-fixture"
+    click_button "Probe service"
+    assert_selector "[data-role=sdk-service]",
+                    exact_text: "name=AddonError:invalid_argument path=AddonError:invalid_argument"
+    # A SECOND, INDEPENDENT DETECTOR, and deliberately not the primary one: nothing reached the
+    # network, so there is no failed fetch for Chrome to log SEVERE. With either guard removed a 404
+    # appears here too — but a console check alone would be a weaker guard than the assertion above,
+    # which names exactly which of the two halves broke.
+    assert_no_console_errors
+  end
+
   # THE CONNECT -> DISCONNECT -> CONNECT LIFECYCLE, THROUGH A REAL TURBO SOFT NAVIGATION. `visit` is
   # a hard browser load: it tears down the whole JS runtime and re-fetches every module fresh, so
   # addon_sdk.js's module-level `host` binding and `everInitialized` flag start over every time — a
