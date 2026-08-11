@@ -36,7 +36,7 @@ class BoxSaveFolderTest < ApplicationSystemTestCase
 
   def open_editor
     visit tools_addon_path("boxes")
-    find(".addon-card", text: "ABox").click
+    open_addon_card("ABox")
     assert_selector "[data-role=folder-field]"
   end
 

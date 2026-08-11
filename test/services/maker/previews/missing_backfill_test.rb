@@ -23,6 +23,11 @@ module Maker
         FileLayer.current.stat_all(user, node_ids: [ node.node_id ]).fetch(node.node_id).content_token
       end
 
+      # Read from the renderer, never written as a literal: these fixtures must keep meaning the
+      # same thing after the next revision bump, and a hard-coded 2 would quietly stop testing the
+      # condition it names the day someone ships a 3.
+      def current_revision(name) = Maker::Previews::Enqueue.revision_for_name(name, "thumbnail")
+
       test "enqueues for a file whose CURRENT content has no preview row" do
         saved = node!("saved.stl", "tok-new")
         # The bug's fingerprint: a row keyed to content this file no longer holds.
@@ -36,14 +41,98 @@ module Maker
                                            version_id: token_for(saved))
       end
 
+      # THE FIXTURE CARRIES THE RENDERER'S CURRENT REVISION, and it has to: this test is about the
+      # CONTENT axis, and a row left at the column default is stale on the OTHER axis, so it would
+      # be enqueued for a reason that has nothing to do with what is being asserted. It went red
+      # the moment `.stl` first declared a revision — the mechanism working, not a regression.
       test "skips a file that already has a row for its current content" do
         fine = node!("fine.stl", "tok-cur")
         Maker::Preview.create!(user:, node_id: fine.node_id, version_id: token_for(fine),
-                               kind: "thumbnail", status: "ready")
+                               kind: "thumbnail", status: "ready",
+                               renderer_revision: current_revision("fine.stl"))
 
         assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
           assert_equal 0, Maker::Previews::MissingBackfill.call
         end
+      end
+
+      # --- the renderer-revision axis -------------------------------------------
+
+      # THE GAP THIS SWEEP HAD. A row built by an OLDER build sits at the current content, so a
+      # check keyed on (node_id, version_id) alone called it covered — while `thumbnails_for` and
+      # `current_thumbnail`, which DO compare revisions, treated the very same row as absent. Two
+      # answers to one question, and the sweep held the wrong one: `rake previews:backfill_missing`
+      # reported "Enqueued 0" over a library whose every STL thumbnail was drawn by the pre-Z-up
+      # camera.
+      test "enqueues a row built by an older renderer, at the current content" do
+        stale = node!("old-build.stl", "tok-cur")
+        Maker::Preview.create!(user:, node_id: stale.node_id, version_id: token_for(stale),
+                               kind: "thumbnail", status: "ready", renderer_revision: 1)
+        assert_operator current_revision("old-build.stl"), :>, 1,
+                        "this fixture needs a renderer that has actually moved past revision 1"
+
+        assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
+          assert_equal 1, Maker::Previews::MissingBackfill.call
+        end
+        assert_equal current_revision("old-build.stl"),
+                     user.maker_previews.find_by!(node_id: stale.node_id).renderer_revision
+      end
+
+      # THE SWEEP AND THE READ PATH MUST RESOLVE ON THE SAME TRIPLE. Asserted as an AGREEMENT
+      # rather than by restating the columns, so the two cannot be "fixed" apart: whatever
+      # `Enqueue` considers current is what this sweep must consider covered.
+      test "what the sweep considers covered is exactly what Enqueue would not re-enqueue" do
+        n = node!("agree.stl", "tok-cur")
+        Maker::Preview.create!(user:, node_id: n.node_id, version_id: token_for(n),
+                               kind: "thumbnail", status: "ready",
+                               renderer_revision: current_revision("agree.stl"))
+
+        # Enqueue leaves it alone...
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user:, node_id: n.node_id, name: n.name,
+                                        version_id: token_for(n))
+        end
+        # ...and so does the sweep.
+        assert_equal 0, Maker::Previews::MissingBackfill.call
+      end
+
+      # `dry_run` COUNTS EXACTLY WHAT A REAL RUN WOULD DO, and both halves are asserted: a report
+      # that enqueues is a bug, and a report whose number does not match the real run is worse than
+      # no report — an operator uses it to decide whether to trigger a full-library re-render.
+      test "dry_run reports the same number it would enqueue, and enqueues nothing" do
+        3.times { |i| node!("m#{i}.stl", "tok-cur") }
+
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          assert_equal 3, Maker::Previews::MissingBackfill.call(dry_run: true)
+        end
+        assert_equal 0, user.maker_previews.count, "a dry run must not create rows either"
+
+        assert_enqueued_jobs 3, only: Maker::GeneratePreviewJob do
+          assert_equal 3, Maker::Previews::MissingBackfill.call
+        end
+      end
+
+      # A NAME NOTHING RENDERS MUST NOT BE COUNTED FOREVER. `revision_for_name` answers
+      # BASE_REVISION for one, so a sweep that left the renderer check to Enqueue's nil return
+      # would count it as stale on every run — a dry-run number that never reaches zero, on a
+      # library where nothing is wrong.
+      test "a non-renderable file is never counted, however many times the sweep runs" do
+        node!("notes.xyzzy", "tok-cur")
+
+        assert_equal 0, Maker::Previews::MissingBackfill.call(dry_run: true)
+        assert_equal 0, Maker::Previews::MissingBackfill.call
+        assert_equal 0, Maker::Previews::MissingBackfill.call(dry_run: true)
+      end
+
+      # Idempotence across the revision axis: the first run clears the backlog, the second finds
+      # nothing. Without it a bumped revision would re-enqueue the whole library on every run.
+      test "a second run after a revision bump enqueues nothing" do
+        n = node!("once.stl", "tok-cur")
+        Maker::Preview.create!(user:, node_id: n.node_id, version_id: token_for(n),
+                               kind: "thumbnail", status: "ready", renderer_revision: 1)
+
+        assert_equal 1, Maker::Previews::MissingBackfill.call
+        assert_equal 0, Maker::Previews::MissingBackfill.call
       end
 
       # An `unsupported` row IS a row for the current content, so this sweep leaves it alone —

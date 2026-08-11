@@ -35,7 +35,7 @@ class TrayLayoutTest < ApplicationSystemTestCase
     @proxy = FakeBoxesSidecar.install!
     sign_in_as "tray@example.com"
     visit tools_addon_path("boxes")
-    find(".addon-card", text: "TrayLayout").click
+    open_addon_card("TrayLayout")
   end
 
   teardown do
