@@ -348,6 +348,60 @@ module Web
       assert_empty JSON.parse(response.body)["put_urls"]
     end
 
+    # ---- begin_upload: the name is a name ------------------------------------------------
+    #
+    # THE CHUNK WEB UPLOAD DOOR HAD NO NAME CHECK OF ANY KIND — not the reserved-namespace one, and
+    # not even the traversal one §14c records as closed at the addon door. `#begin_upload` took
+    # `params.require(:name)` and handed it straight to Sync::Commit.begin, which validates the
+    # MANIFEST exhaustively and the name not at all; Node validates `name` for presence only. So on
+    # the product's MAIN deployment this door was strictly weaker than the addon door beside it.
+    #
+    # PROBED THROUGH THE REAL TWO-PHASE FLOW, not reasoned about: begin=200, finalize=200, and a
+    # live node named "../../escape.txt" — in the changelog and bound for every device's real
+    # mount. That is the same defect the addon door's own test calls "the main deployment created a
+    # live node called '../../escape.txt'", still open one controller over.
+    #
+    # THE GUARD IS AT `begin`, NOT `finalize`, because that is where the name enters: finalize is
+    # handed a commit_id and never sees a name at all. A check there would be validating a decision
+    # already recorded.
+    #
+    # Whole suite pins chunk (see setup) — and chunk is exactly the exposed backend here, since
+    # begin_upload is `syncable`-gated and does not exist on share/s3 at all. There is no other leg
+    # for this door, which is why nothing cross-backend could have caught it.
+    #
+    # Mutation-checked (§15): dropping either guard from #begin_upload turns its own rows red — the
+    # traversal rows for valid_leaf_name?, the reserved rows for Library::ReservedNames.
+    test "begin_upload refuses a name that is not a storable leaf" do
+      sign_in
+      [ "../../escape.txt", "a/b.txt", "a\\b.txt", "..", ".", "nul\0byte", "x" * 300 ].each do |bad|
+        assert_no_difference -> { PendingCommit.count }, "#{bad.inspect} began a commit" do
+          post begin_upload_files_path,
+               params: { name: bad, size: 1, manifest: [] }, as: :json
+        end
+        assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
+      end
+    end
+
+    test "begin_upload refuses a name the library scan will never index" do
+      sign_in
+      %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
+        assert_no_difference -> { PendingCommit.count }, "#{bad.inspect} began a commit" do
+          post begin_upload_files_path,
+               params: { name: bad, size: 1, manifest: [] }, as: :json
+        end
+        assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
+      end
+    end
+
+    # The positive control, driven through the WHOLE two-phase flow rather than begin alone: a
+    # near-miss name must still upload end to end. Without this, a guard widened to a prefix match
+    # would pass every row above and quietly refuse real files.
+    test "begin_upload accepts a name that merely starts with a reserved prefix" do
+      user = sign_in
+      node_id = upload(".trashcan.svg", "<svg/>".b)
+      assert user.nodes.present.exists?(node_id:, name: ".trashcan.svg")
+    end
+
     test "image preview renders an <img> to the blob endpoint" do
       sign_in
       png = "\x89PNG\r\n\x1a\nfake-image-bytes".b

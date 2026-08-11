@@ -33,16 +33,51 @@ module Maker
       # — and buy nothing, since a box without resvg is exactly where the fallback cannot run.
       def available? = true
 
-      def render(mage_bytes, size: 512)
+      # Which build of this renderer produced a stored artifact — see `Enqueue.revision_for`.
+      #
+      # PER KIND, NOT PER RENDERER, for the same reason as Lbrn2's: this renderer emits two
+      # unrelated artifacts from one file and they version independently, so bumping the geometry
+      # payload must not re-render every MillMage thumbnail as a side effect.
+      #
+      # The geometry arm DELEGATES to LbrnGeometry's number rather than declaring one of its own,
+      # because it delegates the payload itself — a .mage payload is byte-for-byte whatever that
+      # module builds. A second constant here would be free to drift from the code that actually
+      # produces the bytes it claims to version, which is the failure this whole mechanism exists
+      # to prevent.
+      #
+      #   1  original (thumbnail)
+      THUMBNAIL_REVISION = 1
+
+      def payload_revision(kind)
+        kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
+      end
+
+      # `kind` selects the ARTIFACT, mirroring Lbrn2's branch. "geometry" is a JSON payload of
+      # coordinates for the browser's Measure view — deliberately NOT an image, which is why
+      # RendererContractTest still passes: that test never passes `kind`, so it exercises the
+      # thumbnail path and its "must be an inline-safe raster" assertion stays true of it.
+      #
+      # NO `available_for?` HERE, unlike Svg/Dxf/Lbrn2, and the absence is the point: `available?`
+      # is already unconditionally true for this renderer (the embedded-PNG path needs no
+      # toolchain), so there is nothing for a kind-aware override to relax. The SVG FALLBACK is
+      # the only part that needs resvg and it checks for itself, in `outline_thumbnail` below.
+      def render(mage_bytes, size: 512, kind: "thumbnail")
+        return Maker::Previews::LbrnGeometry.render(mage_bytes) if kind == "geometry"
+
         meta = Maker::Previews::MageMetadata.parse(mage_bytes)
-        img = Maker::Previews::EmbeddedThumbnail.extract(mage_bytes) || geometry(mage_bytes, size:)
+        img = Maker::Previews::EmbeddedThumbnail.extract(mage_bytes) || outline_thumbnail(mage_bytes, size:)
         img.merge(metadata: meta)
       end
 
       # The fallback IS the SVG path, so where resvg is absent this stays the terminal
       # `NoThumbnail` it has always been, rather than raising something else the job would have
       # to classify.
-      def geometry(mage_bytes, size:)
+      #
+      # NAMED FOR WHAT IT PRODUCES (a raster of the outlines), not for what it reads. It was
+      # `geometry` until `render` grew a `kind: "geometry"` arm that returns something else
+      # entirely — a JSON coordinate payload — and two things called "geometry" in one file, one
+      # of them a PNG, is how the wrong one gets called.
+      def outline_thumbnail(mage_bytes, size:)
         raise NoThumbnail, "MillMage file has no embedded thumbnail" unless Maker::Previews::Svg.available?
 
         Maker::Previews::Svg.render(Maker::Previews::Lbrn2.to_svg(mage_bytes, size:), size:)

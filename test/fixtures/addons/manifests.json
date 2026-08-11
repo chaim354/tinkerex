@@ -19,5 +19,13 @@
     "api_version": "1",
     "entry": "boxes.js",
     "services": [ "boxes" ]
+  },
+  {
+    "key": "sdk-fixture",
+    "title": "SDK Fixture",
+    "icon": "🔌",
+    "description": "Hermetic fixture that touches the host ONLY through @maker/addon-sdk — no raw ctx, no hand-rolled fetch. Owned by test/system/addon_sdk_test.rb. The sibling `fixture` addon deliberately stays on the raw-ctx path so both halves of the compatibility rule are covered by something that runs.",
+    "api_version": "1",
+    "entry": "sdk.js"
   }
 ]

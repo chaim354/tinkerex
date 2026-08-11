@@ -1,18 +1,31 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Measure view for LightBurn files: click a contour, read its size in mm.
+// Measure view: click a contour, read its size in mm.
 //
-// The page shows LightBurn's own colour PNG at rest. That render is a raster with no mapping back
-// to millimetres, so measuring needs a vector surface — this controller fetches the server's
-// geometry payload (GET /files/:id/geometry -> a blob URL) and builds an SVG from the coordinates.
+// Serves .lbrn/.lbrn2, .mage, .dxf and .svg — every format Maker::Previews::Geometry can build a
+// payload for. The page shows a picture at rest (the app's own embedded render for LightBurn and
+// MillMage, a server thumbnail for DXF, the file itself for SVG); each of those is a raster or an
+// opaque document with no mapping back to millimetres, so measuring needs a vector surface. This
+// controller fetches the server's geometry payload (GET /files/:id/geometry -> a blob URL) and
+// builds an SVG from the coordinates.
+//
+// FORMAT-AGNOSTIC BY CONSTRUCTION, and worth keeping that way: nothing below branches on file
+// type. It reads only the wire contract — job box, shapes, colours — so a fifth format needs a
+// server-side traversal and NOT a line of JavaScript. That is why the shared payload builder
+// exists; see the Geometry module.
 //
 // BUILT WITH createElementNS FROM NUMBERS, NEVER innerHTML. Maker::Previews::Svg rasterizes user
 // SVG precisely because the web layer refuses to inline it; constructing elements from parsed
-// coordinates sidesteps that rule instead of carving an exception into it.
+// coordinates sidesteps that rule instead of carving an exception into it. That reasoning binds
+// hardest on the .svg leg, where the bytes we are measuring ARE an SVG the layer refuses to
+// inline — the payload is parsed coordinates, so nothing of the user's markup reaches the DOM.
 //
 // Lazy by design: nothing is fetched until Measure is clicked. The payload reaches 281 KB gzipped
-// on the densest real files, and most .lbrn2 pages are never measured.
+// on the densest real files, and most pages are never measured.
 const SVG_NS = "http://www.w3.org/2000/svg"
+
+// Must match Maker::Previews::Geometry::SCHEMA_VERSION — ONE number for all four formats, since
+// this parser is one parser.
 const SCHEMA_VERSION = 1
 
 // The job's retry_on uses polynomial backoff over 5 attempts, which can run for minutes — far
@@ -53,13 +66,13 @@ export default class extends Controller {
       if (this.aborted || !payload) return
       this.draw(payload)
     } catch (e) {
-      console.warn("[lbrnmeasure] keeping the thumbnail:", e)
+      console.warn("[measure] keeping the thumbnail:", e)
       this.setStatus(e.message || "Could not load geometry.")
     }
   }
 
   showPoster() {
-    this.element.classList.remove("lbrn-measure--ready")
+    this.element.classList.remove("measure-view--ready")
     this.stageTarget.replaceChildren()
     this.setStatus("")
     this.selected = this.hovered = this.svg = null
@@ -124,7 +137,7 @@ export default class extends Controller {
 
     this.stageTarget.replaceChildren(svg)
     this.svg = svg
-    this.element.classList.add("lbrn-measure--ready")
+    this.element.classList.add("measure-view--ready")
     this.setStatus(`${payload.shapes.length} shapes · click one to measure`)
     this.bindInteractions(svg)
   }
@@ -140,16 +153,16 @@ export default class extends Controller {
     const node = document.createElementNS(SVG_NS, shape.k ? "polygon" : "polyline")
     const points = shape.p.map(([x, y]) => `${x},${y}`).join(" ")
     node.setAttribute("points", points)
-    node.setAttribute("class", shape.i ? "lbrn-bitmap" : (shape.k ? "lbrn-contour" : "lbrn-contour lbrn-contour--open"))
+    node.setAttribute("class", shape.i ? "measure-bitmap" : (shape.k ? "measure-contour" : "measure-contour measure-contour--open"))
     // LightBurn's own layer colour, sent by the server so the palette has ONE definition (see
     // LbrnGeometry#layer_colors).
     //
     // A PRESENTATION ATTRIBUTE, NOT node.style — and the difference is the whole highlight
     // mechanism. An inline style beats a stylesheet, so setting style.stroke here would make
-    // .lbrn-contour--hover and --selected unable to recolour anything: clicking a contour would
+    // .measure-contour--hover and --selected unable to recolour anything: clicking a contour would
     // change its width and nothing else. A presentation attribute sits BELOW every CSS rule in
     // the cascade, so the layer colour shows at rest and the highlight classes still win. For the
-    // same reason .lbrn-contour must not declare a stroke of its own — a class rule would beat
+    // same reason .measure-contour must not declare a stroke of its own — a class rule would beat
     // this attribute and every layer would draw identically.
     if (!shape.i) node.setAttribute("stroke", this.colors[shape.c] || "#000000")
     node.__shape = shape
@@ -160,7 +173,7 @@ export default class extends Controller {
     const group = document.createElementNS(SVG_NS, "g")
     const hit = document.createElementNS(SVG_NS, "polyline")
     hit.setAttribute("points", points)
-    hit.setAttribute("class", "lbrn-contour--hit")
+    hit.setAttribute("class", "measure-contour--hit")
     hit.__shape = shape
     hit.__visible = node // so hover/selection colours the drawn line, not the invisible twin
     group.appendChild(hit)
@@ -215,13 +228,13 @@ export default class extends Controller {
     if (this.panOrigin) return
     const node = this.shapeAt(event)
     if (node === this.hovered) return
-    if (this.hovered) this.styleNode(this.hovered).classList.remove("lbrn-contour--hover")
+    if (this.hovered) this.styleNode(this.hovered).classList.remove("measure-contour--hover")
     this.hovered = node
-    if (this.hovered) this.styleNode(this.hovered).classList.add("lbrn-contour--hover")
+    if (this.hovered) this.styleNode(this.hovered).classList.add("measure-contour--hover")
   }
 
   clearHover() {
-    if (this.hovered) this.styleNode(this.hovered).classList.remove("lbrn-contour--hover")
+    if (this.hovered) this.styleNode(this.hovered).classList.remove("measure-contour--hover")
     this.hovered = null
   }
 
@@ -230,9 +243,9 @@ export default class extends Controller {
     const node = this.shapeAt(event)
     if (!node) return
 
-    if (this.selected) this.styleNode(this.selected).classList.remove("lbrn-contour--selected")
+    if (this.selected) this.styleNode(this.selected).classList.remove("measure-contour--selected")
     this.selected = node
-    this.styleNode(node).classList.add("lbrn-contour--selected")
+    this.styleNode(node).classList.add("measure-contour--selected")
 
     const shape = node.__shape
     const siblings = this.byObject.get(shape.o) || [shape]

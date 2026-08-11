@@ -1,67 +1,87 @@
 <%#
-  Filter the library by file type. Clicking a chip switches to a FLAT, whole-library list of that
-  type; chips compose, so "all my STLs and 3MFs" is two clicks. Rendered in both modes, so a
-  filter can be started from inside a folder (and immediately leaves it — see #index).
+  Filter the library by file type. Choosing a type switches to a FLAT, whole-library list of it;
+  types compose, so "all my STLs and 3MFs" is two choices. Rendered in both modes, so a filter can
+  be started from inside a folder (and immediately leaves it — see #index).
+
+  A DROPDOWN OF WHAT THE LIBRARY ACTUALLY HOLDS, NOT A WALL OF WHAT THE VOCABULARY KNOWS. The chip
+  row this replaces rendered every extension in `ROLE_BY_EXT` — ~35 chips, most of them types the
+  user has never owned — plus a free-text box for the ones it had never heard of. The options here
+  come from `FilesController#ext_facets`, so everything offered exists and everything that exists is
+  offered, counts included. The free-text box is gone with the wall it stood beside: there is
+  nothing left for it to reach.
+
+  TWO CONTROLS, ONE JOB EACH. The select ADDS a type; the chips REMOVE one; "Clear filter" removes
+  all. An active type is therefore absent from the select (see ext_facet_groups) — offering it would
+  be an option whose selection changes nothing, since `add_ext` unions into `ext`.
 %>
 <div class="ext-filter">
-  <% FilesHelper::EXT_FAMILIES.each do |family, exts| %>
-    <span class="ext-family" aria-label="<%= family %>">
-      <span class="muted family-label"><%= family %></span>
-      <% exts.each do |ext| %>
-        <% active = @exts.include?(ext) %>
-        <% if active || ext_slots_left?(@exts) %>
-          <%# aria-current, NOT aria-pressed. These chips are LINKS (a GET, a shareable URL), and
-              aria-pressed is only supported on role=button — on a link it is invalid ARIA that a
-              screen reader is free to ignore, which would leave the active state announced by
-              nothing but a colour. aria-current is valid here and is what the breadcrumb above
-              already uses. %>
-          <%= link_to ".#{ext}", ext_toggle_path(ext, @exts),
-                      class: "chip#{' active' if active}",
-                      "aria-current": (active ? "true" : nil) %>
-        <% else %>
-          <%# THE SET IS FULL. Linking this would produce a URL that appends a 9th extension the
-              controller then drops (resolve_exts keeps the first MAX_EXTS) — the chip would look
-              live, navigate, and change nothing. A span with aria-disabled says why instead. %>
-          <span class="chip disabled" aria-disabled="true"
-                title="<%= ext_limit_title %>">.<%= ext %></span>
-        <% end %>
-      <% end %>
-    </span>
-  <% end %>
-
-  <%# Anything the curated list has never heard of (.f3d, .scad). One GET field; the controller
-      joins add_ext onto ext, so there is still exactly one filter param. `pattern` is a hint to
-      the browser, never the guard — FilesController::EXT_RE is, because a GET URL reaches the
-      action without ever passing through this form.
-
-      IT GOES INERT WITH THE CHIPS, and for their reason rather than for symmetry: resolve_exts
-      keeps only the first MAX_EXTS, so with the set full this field appends a value the controller
-      then drops. Reproduced before the fix — `?ext=stl,3mf,obj,step,stp,svg,dxf,pdf&add_ext=lbrn2`
-      returned the same eight chips and no .lbrn2, while the `.lbrn2` CHIP two inches away was
-      already correctly rendered as an inert span saying why. A control that renders, accepts input
-      and silently does nothing is the exact condition ext_slots_left? was written to prevent; it
-      was fixed for the chips and missed for the escape hatch beside them.
-
-      DISABLED BEFORE THE SUBMIT, NOT EXPLAINED AFTER IT. The only thing a user can do about this is
-      turn one off, which is the sentence the chips already carry (ext_limit_title, one string for
-      both) — and saying it up front costs no round-trip to tell them what the row could have said
-      before they typed. `disabled` also keeps the value out of the query string entirely, so there
-      is no dropped param to explain. A HAND-EDITED URL IS STILL DROPPED SILENTLY, deliberately:
-      that is EXT_RE's standing rule for everything arriving in a URL ("anything else is dropped,
-      not rejected"), and this finding is about a control, not about input. %>
   <% slots_left = ext_slots_left?(@exts) %>
-  <form method="get" action="<%= files_path %>" class="ext-other">
+  <% groups = ext_facet_groups(@ext_facets, @exts) %>
+
+  <%#
+    A plain GET form with an inline `onchange`, exactly like the grid's sort form above — no
+    Stimulus controller for what a native form already does, and the result is a shareable URL.
+
+    THE PLACEHOLDER IS `disabled`, WHICH IS WHAT MAKES THIS A ONE-WAY CONTROL. Left selectable it
+    would be an option that submits `add_ext=`, which `compact_blank` drops — the form would post,
+    the page would reload, and nothing would change. Clearing is the "Clear filter" link's job.
+
+    IT GOES INERT WHEN THE TYPE SET IS FULL, for the reason `ext_slots_left?` exists: `resolve_exts`
+    keeps only the first MAX_EXTS, so with the set full this control would append a value the
+    controller then drops. Disabling also keeps the param out of the query string entirely, so there
+    is no dropped value to explain afterwards. The sentence is the helper's one string
+    (`ext_limit_title`), shared with nothing now but kept there because it is the answer to a
+    condition, not to a control.
+  %>
+  <form method="get" action="<%= files_path %>" class="ext-picker">
     <% if @exts.any? %><input type="hidden" name="ext" value="<%= @exts.join(',') %>"><% end %>
-    <%= tag.input type: "text", name: "add_ext", placeholder: "or an extension…", size: 12,
-                  "aria-label": "Filter by another extension", pattern: "[A-Za-z0-9]{1,8}",
-                  disabled: !slots_left, title: (ext_limit_title unless slots_left) %>
-    <%= tag.button "Filter", type: "submit", class: "linkbtn", disabled: !slots_left,
-                             title: (ext_limit_title unless slots_left) %>
+    <label class="muted" for="ext-add">Type</label>
+    <% if groups.any? %>
+      <%# The bare word or nothing, NEVER an interpolated true/false. `disabled` is a BOOLEAN
+          attribute: any value at all turns it on, so writing it as disabled="[interpolation]"
+          renders disabled="false" and disables the control permanently. (An ERB comment cannot
+          show you the wrong spelling, because the closing brace inside it would end the comment
+          and print the remainder onto the page — which is exactly what an earlier draft of this
+          comment did, invisibly to every assert_select in the suite and glaringly to anyone who
+          opened the page.) %>
+      <select name="add_ext" id="ext-add" onchange="this.form.requestSubmit()"
+              <%= "disabled" unless slots_left %> title="<%= ext_limit_title unless slots_left %>">
+        <option value="" disabled selected><%= @exts.any? ? "Add a type…" : "All types" %></option>
+        <% groups.each do |label, entries| %>
+          <optgroup label="<%= label %>">
+            <% entries.each do |ext, count| %>
+              <option value="<%= ext %>">.<%= ext %> (<%= number_with_delimiter(count) %>)</option>
+            <% end %>
+          </optgroup>
+        <% end %>
+      </select>
+      <%# NO SUBMIT BUTTON — and therefore a `<noscript>` one, because `onchange` is the only thing
+          that submits this form. Without JavaScript the select would be a control that visibly
+          accepts a choice and never acts on it. %>
+      <noscript><button type="submit" class="linkbtn">Filter</button></noscript>
+    <% else %>
+      <%# Not "no types" — an empty library, or one whose every remaining type is already active.
+          A select with only a disabled placeholder in it is a control that cannot be used. %>
+      <span class="muted" id="ext-add"><%= @exts.any? ? "no other types" : "no files yet" %></span>
+    <% end %>
   </form>
 
   <% if @exts.any? %>
-    <%# No sort params, for the reason ext_toggle_path gives: the sort is in a cookie, so pinning
+    <%# The active set. aria-current, NOT aria-pressed: these are LINKS (a GET, a shareable URL),
+        and aria-pressed is only supported on role=button — on a link it is invalid ARIA a screen
+        reader is free to ignore, which would leave the active state announced by nothing but a
+        colour. aria-current is valid here and is what the breadcrumb already uses.
+
+        No sort params, for the reason ext_toggle_path gives: the sort lives in a cookie, so pinning
         it here only bakes a stale choice into a URL someone copies. %>
-    <%= link_to "Clear filter", files_path, class: "muted clear-filter" %>
+    <span class="ext-active">
+      <% @exts.each do |ext| %>
+        <%= link_to ext_toggle_path(ext, @exts), class: "chip active", "aria-current": "true",
+                    title: "Remove .#{ext} from the filter" do %>
+          .<%= ext %><span class="chip-x" aria-hidden="true">×</span>
+        <% end %>
+      <% end %>
+      <%= link_to "Clear filter", files_path, class: "muted clear-filter" %>
+    </span>
   <% end %>
 </div>

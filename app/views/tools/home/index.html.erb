@@ -9,12 +9,18 @@
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>
         <span class="addon-desc muted"><%= addon.description %></span>
+        <% if addon.permissions.any? %>
+          <span class="addon-permissions muted">
+            This tool can:
+            <%= addon.permissions.map { |p| Maker::Addons::Permissions.label_for(p["name"]) }.to_sentence %>
+          </span>
+        <% end %>
       <% end %>
     <% else %>
-      <div class="addon-card disabled" title="Not configured on this deployment">
+      <div class="addon-card disabled" title="<%= addon.unavailable_reason %>">
         <span class="addon-icon"><%= addon.icon %></span>
         <span class="addon-title"><%= addon.title %></span>
-        <span class="addon-desc muted">Unavailable here</span>
+        <span class="addon-desc muted"><%= addon.unavailable_reason %></span>
       </div>
     <% end %>
   <% end %>

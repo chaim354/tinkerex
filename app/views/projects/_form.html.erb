@@ -20,6 +20,54 @@
     <%= f.text_area :description, rows: 5, placeholder: "What are you building?" %>
   </label>
 
+  <%#
+    THE COVER IMAGE, choosable here rather than only inferred. `Maker::Project#cover_node_id` falls
+    back to the derived pick (first image, else first model, else first attachment) whenever the
+    column is blank, so a project nobody has chosen one for looks exactly as it always did — this
+    field only makes the choice expressible.
+
+    THE EXISTING CHOOSER IN FILE MODE, NOT A NEW PICKER. `shared/_folder_field` + the `filechooser`
+    controller already do native-OS Miller-columns browsing and have supported `mode: "file"` since
+    they were written; this is the first caller to use it. Browsing the LIBRARY rather than the
+    project's own attachments is deliberate and is what makes the field work on `new`, where the
+    project has no attachments yet — and an image you are about to attach is already in the library
+    either way.
+
+    `project[:cover_node_id]`, NOT `project.cover_node_id`: the reader is overridden to fall back to
+    the DERIVED pick, so the method would pre-fill this field with a file the user never chose,
+    turning "no choice yet" into an explicit choice the moment they saved anything else on the form.
+  %>
+  <% chosen = project[:cover_node_id].presence %>
+  <% chosen_node = chosen && current_user.nodes.present.find_by(node_id: chosen, kind: "file") %>
+  <div class="field">
+    <span>Cover image</span>
+    <%= render "shared/folder_field",
+               name: "project[cover_node_id]",
+               mode: "file",
+               children_url: library_children_path,
+               create_url: library_folders_path,
+               value: chosen,
+               root_label: "Choose automatically",
+               label: (chosen_node&.name || "Choose automatically") %>
+    <%#
+      THE WAY BACK. Without it, choosing a cover is a one-way door — there would be no value the
+      chooser can produce that means "none", so a user who picked one could never return to the
+      automatic pick. Rendered ONLY when a cover is actually stored, which is what keeps the two
+      controls from being ambiguous in the common case: with nothing chosen there is just the
+      chooser.
+
+      IF BOTH ARE USED IN ONE SUBMIT, CLEARING WINS — see ProjectsController#project_params. That is
+      stated rather than left to be discovered, because it is the one combination whose outcome the
+      form cannot show.
+    %>
+    <% if chosen %>
+      <label class="field-inline muted">
+        <%= check_box_tag "project[cover_clear]", "1", false %>
+        Clear it and go back to picking automatically
+      </label>
+    <% end %>
+  </div>
+
   <div class="form-actions">
     <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>
     <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path), class: "linkbtn" %>

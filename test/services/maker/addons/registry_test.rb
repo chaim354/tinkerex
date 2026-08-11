@@ -77,8 +77,16 @@ module Maker
         assert_equal "generators", addon.states_key
       end
 
+      # Predates the mutual-declaration constraint below (states_key was added in d000c76, the
+      # constraint in the audit-§2.1 fix), so the claimed addon must now reciprocate — otherwise
+      # this is exactly the unreciprocated claim the constraint refuses, and `Registry.find` would
+      # return nil instead of the addon this test means to inspect.
       test "a manifest's declared states_key carries onto the Addon" do
-        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "legacy-generators") ])
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("states_key" => "legacy-generators"),
+          MANIFEST.merge("key" => "legacy-generators", "title" => "Legacy Generators",
+                         "shares_states_with" => [ "generators" ])
+        ])
         Rails.cache.clear
         addon = Registry.find("generators")
         assert_equal "legacy-generators", addon.states_key
@@ -135,6 +143,159 @@ module Maker
 
         Source.stub = FakeAddonSource.new(manifests: [ MANIFEST ])
         assert_equal 1, Registry.all.size, "a transient outage must not grey addons out for the TTL"
+      end
+
+      # The metadata keys are all OPTIONAL and all degrade. A manifest is fetched from a source this
+      # process does not control, so a malformed value must never take /tools down — the same rule
+      # `layout` already follows.
+      test "the metadata keys carry onto the Addon when the manifest declares them" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "version" => "2.1.0", "author" => "Chaim", "license" => "MIT",
+          "homepage" => "https://example.com/gen"
+        ) ])
+        addon = Registry.find("generators")
+        assert_equal "2.1.0", addon.version
+        assert_equal "Chaim", addon.author
+        assert_equal "MIT", addon.license
+        assert_equal "https://example.com/gen", addon.homepage
+      end
+
+      test "the metadata keys default to nil when the manifest omits them" do
+        addon = Registry.find("generators")
+        assert_nil addon.version
+        assert_nil addon.author
+        assert_nil addon.license
+        assert_nil addon.homepage
+      end
+
+      test "permissions carry onto the Addon as name/reasoning pairs" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "permissions" => [
+            { "name" => "library:write", "reasoning" => "to save your drawing" },
+            { "name" => "service:boxes" }
+          ]
+        ) ])
+        addon = Registry.find("generators")
+        assert_equal 2, addon.permissions.size
+        assert_equal "library:write", addon.permissions.first["name"]
+        assert_equal "to save your drawing", addon.permissions.first["reasoning"]
+        assert_nil addon.permissions.second["reasoning"]
+      end
+
+      # A MALFORMED ENTRY IS DROPPED, NOT RAISED ON, AND NOT RENDERED AS A BLANK ROW. A bare string
+      # is the likeliest authoring mistake (the key reads like a list of names), so it is worth
+      # naming: it is dropped rather than coerced, because coercing invents a `reasoning` the author
+      # never wrote and the card would then vouch for it.
+      test "permission entries that are not name-bearing hashes are dropped" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "permissions" => [ { "name" => "state" }, "library:write", { "reasoning" => "no name" }, nil ]
+        ) ])
+        assert_equal [ "state" ], Registry.find("generators").permissions.map { |p| p["name"] }
+      end
+
+      test "permissions defaults to [] when the manifest omits it" do
+        assert_equal [], Registry.find("generators").permissions
+      end
+
+      test "shares_states_with defaults to [] when the manifest omits it" do
+        assert_equal [], Registry.find("generators").shares_states_with
+      end
+
+      test "a manifest's declared shares_states_with carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge(
+          "shares_states_with" => [ "boxes-next" ]
+        ) ])
+        assert_equal [ "boxes-next" ], Registry.find("generators").shares_states_with
+      end
+
+      # AUDIT §2.1, CLOSED. `states_key` let a manifest declare itself the reader AND WRITER of
+      # another addon's saved states — for every user, unconditionally, with nothing checking that
+      # the other addon agreed or even existed. It was safe only because every manifest was
+      # first-party. The constraint is MUTUAL: the claimant names the target, and the target must
+      # name the claimant back.
+      test "an addon claiming another's states_key is skipped unless that addon shares back" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST,
+          MANIFEST.merge("key" => "thief", "title" => "Thief", "states_key" => "generators")
+        ])
+        assert_nil Registry.find("thief"), "an unreciprocated states_key claim must not be registered"
+        assert_not_nil Registry.find("generators"), "the target addon is unaffected"
+      end
+
+      test "a mutual declaration is honoured" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("shares_states_with" => [ "boxes-next" ]),
+          MANIFEST.merge("key" => "boxes-next", "title" => "Boxes Next", "states_key" => "generators")
+        ])
+        assert_equal "generators", Registry.find("boxes-next").states_key
+      end
+
+      # A CLAIM ON AN ADDON THAT IS NOT THERE IS STILL REFUSED. The target might appear later, or
+      # might be a typo; either way nothing has agreed to the sharing, so the permissive reading
+      # ("no target, no harm") would let a typo silently grant itself a private namespace and then
+      # start colliding the day the real addon shipped.
+      test "a states_key naming an addon that does not exist is refused" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("key" => "orphan", "title" => "Orphan", "states_key" => "nobody")
+        ])
+        assert_nil Registry.find("orphan")
+      end
+
+      test "the ordinary case — states_key equal to the addon's own key — is untouched" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("states_key" => "generators") ])
+        assert_equal "generators", Registry.find("generators").states_key
+      end
+
+      # THE TARGET MUST ITSELF BUILD, NOT MERELY APPEAR IN THE RAW INDEX. "broken" is present in the
+      # index and even declares shares_states_with back — but its api_version is one `build` refuses,
+      # so it never appears in `Registry.all`. Honouring its claim anyway would grant "claimant"
+      # access on behalf of an addon no operator can see in the gallery to audit that grant against.
+      test "a states_key naming an addon present in the index but rejected by build is refused" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("key" => "claimant", "title" => "Claimant", "states_key" => "broken"),
+          MANIFEST.merge("key" => "broken", "title" => "Broken", "api_version" => "99",
+                         "shares_states_with" => [ "claimant" ])
+        ])
+        assert_nil Registry.find("claimant")
+      end
+
+      test "min_host defaults to 0 when the manifest omits it" do
+        assert_equal 0, Registry.find("generators").min_host
+      end
+
+      # NON-INTEGER min_host DEGRADES TO NO FLOOR, WHICH IS THE SAFER DIRECTION. A typo that made an
+      # addon vanish from the gallery would read as "the deploy broke"; a typo that leaves it
+      # available reads as "the floor did not apply", which is what actually happened. `"2".to_i` is
+      # 2, so coercion would silently honour a value a JSON manifest should not contain.
+      test "a non-integer min_host is ignored rather than coerced" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => "2") ])
+        assert_equal 0, Registry.find("generators").min_host
+      end
+
+      test "an integer min_host carries onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => 2) ])
+        assert_equal 2, Registry.find("generators").min_host
+      end
+
+      # THE ADDON IS STILL BUILT AND STILL LISTED. Skipping it would be the easy implementation and
+      # the wrong one: an operator who published an addon needs to see WHY it is not usable, and an
+      # addon that silently never appears reads as a broken deploy.
+      test "an addon asking for a newer host is listed but unavailable, with a reason naming both levels" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1)
+        ])
+        addon = Registry.find("generators")
+        assert_not_nil addon, "the addon must still be listed"
+        assert_not addon.available?
+        assert_match(/level #{Maker::Addons::Host::LEVEL + 1}/, addon.unavailable_reason)
+        assert_match(/level #{Maker::Addons::Host::LEVEL}/, addon.unavailable_reason)
+      end
+
+      test "an addon asking for exactly this host level is available" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL)
+        ])
+        assert Registry.find("generators").available?
       end
     end
   end

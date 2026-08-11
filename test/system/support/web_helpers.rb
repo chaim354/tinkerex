@@ -4,6 +4,10 @@
 module WebHelpers
   PASSWORD = "correct horse battery staple".freeze
 
+  # See settle_addon_cards. Deliberately larger than Capybara.default_max_wait_time: this one wait
+  # covers a whole ESM bundle's load, not a single DOM mutation.
+  SETTLE_TIMEOUT = 10
+
   # Creates a confirmed user and signs in THROUGH THE FORM, then waits for Turbo to actually follow
   # the redirect.
   #
@@ -38,6 +42,71 @@ module WebHelpers
     # class method on this service — verified against app/services/maker/library_folder.rb.
     folder_node = Maker::LibraryFolder.ensure_path!(user, [ folder ])
     [ project, folder_node ]
+  end
+
+  # Clicks a Box Generator gallery card. SIX call sites hand-rolled `find(".addon-card", text: key)
+  # .click` before this existed, so this is the fourth copy's worth of duplication the file header
+  # already warns about — but it is here for correctness, not tidiness.
+  #
+  # THE `settle_addon_cards` IS NOT DECORATION — do not collapse this back to a bare click. Every
+  # card carries an `<img class="addon-thumb">` asking the sidecar proxy for a sample photo, and
+  # `.addon-thumb.is-missing { display: none }` removes a 120px-tall box (plus its 6px flex gap) the
+  # moment one fails. FakeBoxesSidecar registers a sample for ABox alone, and even that one is
+  # deliberately truncated JPEG bytes — so ALL FOUR thumbs fire `error`, and every card below the
+  # one that failed jumps up ~126px. Measured for TrayLayout, the last of the four: 1002px -> 624px,
+  # a 378px shift, arriving whenever four real HTTP round-trips happen to land.
+  #
+  # Chromedriver's click computes ONE coordinate and then dispatches pointerMove/pointerDown at it.
+  # A thumb resolving inside that window moves the card out from under the pointer, the click lands
+  # in the dead space below the shrunken grid, and NOTHING RAISES — it is a silent no-op, after
+  # which the test waits out its whole timeout on a gallery page that looks perfectly healthy. That
+  # is what had `system-test` red on main (run 31188332739): the failure screenshot shows the
+  # gallery, not the editor, and the tests that failed are exactly the ones opening the LAST card.
+  #
+  # MUTATION-CHECKED (2026-08-10) — see box_sections_test.rb's "a gallery card that shifts under the
+  # pointer is still opened", which reproduces that window deterministically and goes red without
+  # this call.
+  def open_addon_card(key)
+    settle_addon_cards
+    find(".addon-card", text: key).click
+  end
+
+  # Waits until the gallery has stopped moving: every thumbnail request has ENDED (`complete` is
+  # true for a 404 and for a decode failure, not just for a successful load, which is the whole
+  # point) and two consecutive reads of every card's position agree. Polling a condition, not
+  # sleeping a guessed interval — the shift is caused by network responses whose timing is exactly
+  # what nobody can guess.
+  #
+  # Requiring the cards to exist also absorbs the other flake this page produces on a loaded box:
+  # `find(".addon-card")` racing the bundle's own `await`ed generators fetch. That is why the budget
+  # is SETTLE_TIMEOUT and not Capybara's 2s default — reaching this gallery means ~20 ESM modules
+  # plus two fetches through a 4-thread Puma pool, which on a loaded runner honestly takes longer
+  # than 2s (observed: "Unable to find css '.addon-card'" in PlanExportTest). It costs nothing on a
+  # quiet box, where the loop returns on its second poll.
+  def settle_addon_cards(timeout: SETTLE_TIMEOUT)
+    probe = <<~JS
+      (function () {
+        var thumbs = Array.prototype.slice.call(document.querySelectorAll("img.addon-thumb"))
+        if (!thumbs.every(function (i) { return i.complete })) return null
+        var cards = Array.prototype.slice.call(document.querySelectorAll(".addon-card"))
+        if (!cards.length) return null
+        return cards.map(function (c) { return Math.round(c.getBoundingClientRect().top) }).join(",")
+      })()
+    JS
+
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    previous = nil
+    loop do
+      current = page.evaluate_script(probe)
+      return current if current && current == previous
+
+      previous = current
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        raise Capybara::ExpectationNotMet,
+              "the gallery cards were still moving after #{timeout}s (last positions: #{current.inspect})"
+      end
+      sleep 0.05
+    end
   end
 
   # Fails the test if the browser logged an error. Cheap, and it catches the whole class of bug

@@ -176,9 +176,9 @@ module Maker
       # laser's positional accuracy; anything at or above that is visible in the terms this
       # file's readers measure in, and is a decision to argue for here rather than to slip past.
       test "the tolerance stays below what a laser can actually resolve" do
-        assert_operator LbrnGeometry::SIMPLIFY_TOLERANCE, :>, 0,
+        assert_operator Geometry::SIMPLIFY_TOLERANCE, :>, 0,
                         "a zero tolerance disables thinning entirely"
-        assert_operator LbrnGeometry::SIMPLIFY_TOLERANCE, :<=, 0.05
+        assert_operator Geometry::SIMPLIFY_TOLERANCE, :<=, 0.05
       end
 
       test "simplification never moves the drawn line further than the tolerance" do
@@ -191,7 +191,7 @@ module Maker
 
           full.zip(drawn).each_with_index do |(original, kept), i|
             dev = max_deviation(original, kept)
-            assert_operator dev, :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 0.011,
+            assert_operator dev, :<=, Geometry::SIMPLIFY_TOLERANCE + 0.011,
                             "#{name} contour #{i}: drawn line is #{dev.round(3)} mm off the real one"
           end
         end
@@ -222,7 +222,7 @@ module Maker
         # apply() flips Y, so the shape's rightmost corner (40, 10) arrives as (40.0, -10.0).
         assert_includes drawn, [ 40.0, -10.0 ],
                         "the rightmost corner must survive — dropping it cuts the shape open"
-        assert_operator max_deviation(original, drawn), :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 0.011
+        assert_operator max_deviation(original, drawn), :<=, Geometry::SIMPLIFY_TOLERANCE + 0.011
       end
 
       # Thinning must still HAPPEN — an implementation that returns every point trivially satisfies
@@ -237,14 +237,14 @@ module Maker
       # 200 KB gzipped. `rake lbrn:geometry_report` is what observes that; a 2 KB fixture cannot.
       test "simplify collapses points that carry no shape" do
         straight = (0..49).map { |i| [ i * 0.1, 0.0 ] }
-        assert_equal [ [ 0.0, 0.0 ], [ 4.9, 0.0 ] ], LbrnGeometry.simplify(straight),
+        assert_equal [ [ 0.0, 0.0 ], [ 4.9, 0.0 ] ], Geometry.simplify(straight),
                      "50 collinear points describe one segment"
 
         # A curve sampled far finer than the tolerance needs: 200 points around a 0.5 mm circle.
         fine = (0..200).map { |i| t = i * 2 * Math::PI / 200; [ 0.5 * Math.cos(t), 0.5 * Math.sin(t) ] }
-        kept = LbrnGeometry.simplify(fine)
+        kept = Geometry.simplify(fine)
         assert_operator kept.length, :<, fine.length / 4, "an oversampled arc must collapse"
-        assert_operator max_deviation(fine, kept), :<=, LbrnGeometry::SIMPLIFY_TOLERANCE + 1e-9
+        assert_operator max_deviation(fine, kept), :<=, Geometry::SIMPLIFY_TOLERANCE + 1e-9
       end
 
       # `d` COMES FROM FULL-RESOLUTION POINTS, and this is the case that can prove it. A 0.2 mm
@@ -268,8 +268,8 @@ module Maker
         Lbrn2.each_geometry(Lbrn2.parse_document(xml)) { |_c, pts, *| full = pts }
         shape = JSON.parse(LbrnGeometry.render(xml)[:bytes])["shapes"].first
 
-        assert_operator full.length, :>=, LbrnGeometry::MIN_CIRCLE_POINTS
-        assert_operator shape["p"].length, :<, LbrnGeometry::MIN_CIRCLE_POINTS,
+        assert_operator full.length, :>=, Geometry::MIN_CIRCLE_POINTS
+        assert_operator shape["p"].length, :<, Geometry::MIN_CIRCLE_POINTS,
                         "the thinned outline must fall below the circularity floor, or this proves nothing"
         # Asserted before the delta so a regression reads as "no diameter at all" rather than as a
         # TypeError from assert_in_delta trying to coerce nil.

@@ -29,10 +29,28 @@ module Maker
     # serializes explicit fields / #id), only URL generation.
     def to_param = slug
 
-    # The node_id whose thumbnail represents this project on the list: first image, else first
-    # model, else the first attachment by position, else nil. Reads the loaded/queried
-    # file_attachments; callers that render many cards should include(:file_attachments).
+    # The node_id whose thumbnail represents this project on the list.
+    #
+    # THE USER'S CHOICE WINS; THE DERIVED PICK IS THE FALLBACK. The column is nullable and a blank
+    # value means "nobody has chosen", which is the state every project was in before the column
+    # existed — so adding it changed no project's appearance, it only made the choice expressible.
+    # Overriding the generated attribute reader (rather than naming the method something else) is
+    # what keeps `ProjectsController#index`, `ThumbnailMap` and every view working unchanged.
+    #
+    # A CHOSEN COVER WHOSE NODE HAS SINCE BEEN DELETED IS NOT CHECKED HERE, deliberately: liveness
+    # is a query, and this is called once per card on the index, so asking would turn one page into
+    # an N+1. It degrades honestly instead — `Maker::Previews::ThumbnailMap` is best-effort and a
+    # dead node simply yields no thumbnail, so the card falls back to its placeholder — and
+    # `Maker::AttachmentReaper` NULLs the column once the node's undo window has closed, at which
+    # point the derived pick takes over again.
     def cover_node_id
+      self[:cover_node_id].presence || derived_cover_node_id
+    end
+
+    # First image, else first model, else the first attachment by position, else nil. Reads the
+    # loaded/queried file_attachments; callers that render many cards should
+    # include(:file_attachments).
+    def derived_cover_node_id
       atts = file_attachments.sort_by { |a| [ a.position, a.id ] }
       pick = atts.find { |a| a.role == "image" } ||
              atts.find { |a| a.role == "model" } ||

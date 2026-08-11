@@ -122,6 +122,11 @@ module Maker
 
       def available? = Maker::Previews::Svg.available?
 
+      # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — it is this file's parser plus arithmetic, and
+      # the embedded-thumbnail path it would otherwise fall back to is irrelevant to it. See
+      # `GeneratePreviewJob#available_for?`.
+      def available_for?(kind) = kind == "geometry" || available?
+
       # Which build of this renderer produced a stored artifact — see
       # `Maker::Previews::Enqueue.revision_for`, which compares it against the row's
       # `renderer_revision` and re-renders whatever no longer matches.
@@ -311,7 +316,7 @@ module Maker
           end
 
           # Before the BackupPath below, so hiding a Text hides its outline too.
-          next if hidden.include?(cut_key(shape["Type"], shape["CutIndex"]))
+          next if hidden.include?(cut_key(shape["Type"], layer_index(shape)))
 
           object_id = counter.succ!
           emit_shape(shape, world, index, object_id, &block)
@@ -337,7 +342,7 @@ module Maker
       end
 
       def emit_shape(shape, world, index, object_id)
-        cut = shape["CutIndex"]
+        cut = layer_index(shape)
 
         case shape["Type"]
         when "Rect", "Bitmap"
@@ -370,8 +375,45 @@ module Maker
         end
       end
 
-      # Base64's alphabet, plus the whitespace an XML attribute may wrap it with. Anchored.
-      BITMAP_DATA = %r{\A[A-Za-z0-9+/=\s]+\z}
+      # WHICH LAYER A SHAPE BELONGS TO. LightBurn writes `CutIndex`; MillMage writes `OpIndex`,
+      # naming the `<Operation>` that cuts the shape.
+      #
+      # THIS IS WHY .mage GEOMETRY REPORTED LAYER nil FOR EVERY SHAPE. `Mage` renders through this
+      # walker verbatim (the dialect is LightBurn's), but `shape["CutIndex"]` is absent on every
+      # MillMage shape — measured on real-export.mage: CutIndex uniq [nil], OpIndex uniq ["0"]. The
+      # thumbnail never noticed, because a MillMage file has no `<CutSetting>` either, so
+      # `cut_colors` returns {} and both a nil and a real index fall through to DEFAULT_STROKE and
+      # draw the same black. The Measure view is where it surfaced: the payload's layer key is what
+      # groups shapes and keys the colour map, so every .mage contour landed in one nameless layer.
+      #
+      # AN `||`, NOT A FORMAT BRANCH, and it is unambiguous rather than merely convenient: the two
+      # attributes are written by different applications and no file carries both. A branch on the
+      # root element would have to be threaded down two levels of recursion to reach here, and
+      # would answer the same question with more moving parts.
+      def layer_index(shape) = shape["CutIndex"] || shape["OpIndex"]
+
+      # Base64's alphabet, plus the whitespace an XML attribute may wrap it with.
+      #
+      # A `String#count` SET, NOT A REGEX, AND THAT IS A BUG FIX RATHER THAN A STYLE CHOICE. This
+      # was `%r{\A[A-Za-z0-9+/=\s]+\z}`, and `Regexp.timeout` is 1.0 s under Rails' loaded
+      # defaults — but this attribute is the inlined PHOTO (the reason `parse_document` needs
+      # `huge`), routinely 10-25 MB. Matching a character class across that much UTF-8 runs close
+      # enough to the limit to fall on either side of it depending on the machine: measured here
+      # at 0.467 s standalone and OVER the timeout through the real Nokogiri path, so the two
+      # 11 MB-attribute tests failed on this box and pass on a faster one. `Regexp::TimeoutError`
+      # is not a `StandardError` subclass problem — it IS one, so `LbrnMetadata.parse`'s blanket
+      # rescue swallowed it and returned nil metadata, while `to_svg` and the Measure payload,
+      # which have no such rescue, would have failed the whole preview.
+      #
+      # `count` with a negated set is C-level, has no engine to time out, and measured 45x faster
+      # on the same 11 MB (0.0104 s). Semantics are identical — "every character is in the
+      # alphabet" — with the `+`'s non-empty requirement restored explicitly by the caller, since
+      # `count` on an empty string is 0 and would otherwise let a missing `Data` through.
+      #
+      # The whitespace here is the same set Ruby's `\s` matches: space, tab, CR, LF, FF, VT.
+      BITMAP_ALPHABET = "^A-Za-z0-9+/= \t\r\n\f\v".freeze
+
+      def base64ish?(data) = !data.empty? && data.count(BITMAP_ALPHABET).zero?
 
       # A placed photo, ready to emit as an `<image>` — or nil, meaning "draw the outline
       # instead", which is what this shape did in every case before.
@@ -398,7 +440,7 @@ module Maker
         return nil unless axis_aligned?(world)
 
         data = shape["Data"].to_s
-        return nil unless data.match?(BITMAP_DATA)
+        return nil unless base64ish?(data)
 
         b64 = data.gsub(/\s/, "")
         return nil unless Base64.decode64(b64[0, 16].to_s)[0, 8] == Maker::Previews::EmbeddedThumbnail::PNG_MAGIC

@@ -35,6 +35,14 @@ class LibraryBrowseController < ApplicationController
     # only), so a private, weaker spelling here means `..`, a backslash, a NUL byte and an
     # unbounded length all become live dir nodes bound for the changelog and every device mount.
     return folder_error("That folder name isn't allowed.") unless Maker::MoveNode.valid_leaf_name?(name)
+    # THE SECOND HALF OF THE SAME CHECK — syntax above, the library's own reserved NAMESPACE here,
+    # always asked together. Same asymmetry, same reason it survived: share and s3 refuse these in
+    # `observable!` (reached via Maker::LibraryFolder's port mkdir, and surfacing as the
+    # FileLayer::NotFound already rescued at the bottom of this action), while chunk's `chunk_mkdir`
+    # writes the dir row itself with nothing ahead of it. A `.trash` DIRECTORY at the library root
+    # is the worst of these — FileLayer::Share#observable! documents it as wedging every delete in
+    # the library, permanently, and needing someone to remove it on the NAS by hand.
+    return folder_error("That folder name isn't allowed.") if Library::ReservedNames.reserved?(name)
     if current_user.nodes.present.exists?(parent_node_id: parent&.node_id, name:, kind: "dir")
       return folder_error("A folder named “#{name}” already exists here.")
     end
@@ -42,7 +50,14 @@ class LibraryBrowseController < ApplicationController
     node = Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent&.node_id, name:)
     render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created
   rescue FileLayer::NotFound
-    folder_error("That folder name isn't allowed.") # a share/s3 backend rejected a reserved name
+    # KEPT, BUT NO LONGER FOR THE REASON IT WAS WRITTEN. This used to be the reserved-name answer on
+    # share/s3 — and it was the ONLY one, which is what let chunk have no answer at all. The door
+    # check above now refuses those before any backend is asked, so what still reaches here is the
+    # port failing to resolve the DESTINATION (a parent whose path went away between the lookup and
+    # the mkdir). Same wording either way: from the modal's side both are "that folder can't be made
+    # there". It stays rather than being narrowed to a 404, because a mkdir that cannot place its
+    # parent is a refusal, not a missing endpoint.
+    folder_error("That folder name isn't allowed.")
   end
 
   private

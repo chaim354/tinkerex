@@ -243,19 +243,52 @@ module Web
       get file_path(@node_id)
 
       assert_response :success
-      assert_select "[data-controller='lbrnmeasure']", 1
+      assert_select "[data-controller='measure']", 1
       # VALUE, not just presence — an attribute pointing at the wrong URL is exactly the bug a
       # presence check misses.
-      assert_select "[data-lbrnmeasure-url-value='#{geometry_file_path(@node_id)}']", 1
-      assert_select "button[data-action='lbrnmeasure#load']", 1
+      assert_select "[data-measure-url-value='#{geometry_file_path(@node_id)}']", 1
+      assert_select "button[data-action='measure#load']", 1
     end
 
-    test "a non-lbrn file page does not" do
-      other = upload("drawing.dxf", file_fixture_bytes("sample.dxf"))
-      get file_path(other)
+    # EVERY MEASURABLE FORMAT OFFERS IT, not just the one it was built for. Driven through the
+    # real page for each extension rather than asserted against MEASURABLE_EXTS, which would only
+    # prove the list equals itself.
+    test "the other measurable formats offer it too" do
+      { "part.mage" => "sample.mage", "drawing.dxf" => "sample.dxf",
+        "logo.svg" => "square.svg" }.each do |name, fixture|
+        node = upload(name, file_fixture_bytes(fixture))
+        get file_path(node)
+
+        assert_response :success
+        assert_select "[data-controller='measure']", 1, "#{name} should offer the Measure surface"
+        assert_select "[data-measure-url-value='#{geometry_file_path(node)}']", 1,
+                      "#{name}: the Measure surface must point at its OWN geometry endpoint"
+      end
+    end
+
+    # THE OTHER DIRECTION, and it is the assertion that carries the weight here: without it,
+    # "offers Measure" passes trivially if the partial were rendered for every file type. A .stl
+    # has its own 3D viewer and a .step only a thumbnail; neither is measurable, and neither may
+    # sprout the surface just because the branch moved.
+    test "a file we cannot build geometry for does not" do
+      %w[model.stl notes.txt].each do |name|
+        node = upload(name, "not really #{name}")
+        get file_path(node)
+
+        assert_response :success
+        assert_select "[data-controller='measure']", 0, "#{name} must not offer Measure"
+      end
+    end
+
+    # AN SVG POSTS ITSELF rather than a server-rendered thumbnail — it is the one measurable
+    # format the browser can display raw. Asserted on the SRC, because "an <img> is present" is
+    # equally true of the thumbnail branch this must NOT be taking.
+    test "an svg page posters the file itself, not a rendered thumbnail" do
+      node = upload("logo.svg", file_fixture_bytes("square.svg"))
+      get file_path(node)
 
       assert_response :success
-      assert_select "[data-controller='lbrnmeasure']", 0
+      assert_select ".measure-fallback img[src=?]", blob_file_path(node), 1
     end
 
     # The :lbrn branch REPLACES the :thumbnail branch for these files, so everything that branch
@@ -279,14 +312,14 @@ module Web
       get file_path(@node_id)
 
       assert_response :success
-      assert_select ".lbrn-measure-fallback img", 1
+      assert_select ".measure-fallback img", 1
     end
 
     test "the lbrn page says so while the thumbnail is still generating" do
       get file_path(@node_id)
 
       assert_response :success
-      assert_select ".lbrn-measure-fallback", text: /Generating preview/
+      assert_select ".measure-fallback", text: /Generating preview/
     end
   end
 end

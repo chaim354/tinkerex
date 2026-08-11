@@ -8,7 +8,7 @@
 
      That containment is the entire point, and it is what bezier-circle.lbrn2 cannot provide: its
      circle and square are equal-area AND disjoint, so neither ever covers the other and the paint
-     order that decides which one a click selects is unobservable. lbrnmeasure_controller.js
+     order that decides which one a click selects is unobservable. measure_controller.js
      appends contours in DESCENDING bbox-area order precisely so the browser's own topmost-wins
      dispatch picks the SMALLEST shape containing the pointer — sort the other way and a hole
      inside a plate becomes unclickable, silently, with every existing test still green.

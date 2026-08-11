@@ -236,6 +236,10 @@ class FilesController < ApplicationController
     # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
     # covers an ensure failure, same as ProjectsController#show's).
     @current_project_folder_node_id = current_project_folder_node_id
+    # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
+    # the control for choosing a whole-library type view, so scoping it to the folder you happen to
+    # be standing in would hide the types the filter exists to reach.
+    @ext_facets = ext_facets
   end
 
   # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
@@ -421,6 +425,28 @@ class FilesController < ApplicationController
   # Reuses Sync::Commit.begin: records the pending commit + presigns ONLY missing chunks.
   def begin_upload
     name = params.require(:name)
+    # THE NAME CHECK THIS DOOR NEVER HAD — both halves of it, and it was the WEAKEST of the three
+    # web doors that mint a name rather than the strongest. `name` went straight to
+    # Sync::Commit.begin, which validates the MANIFEST exhaustively and the name not at all, and
+    # Node validates `name` for presence only. Probed through the real two-phase flow: begin=200,
+    # finalize=200, and a live node called "../../escape.txt" in the changelog, bound for every
+    # device's real mount — the exact defect §14c records as closed at the addon door, still open
+    # here. `.DS_Store` / `.trash` / `.maker-tmp-x` went the same way.
+    #
+    # THIS DOOR IS CHUNK-ONLY (`syncable`-gated), which is why nothing cross-backend could catch
+    # it: there is no share/s3 leg whose port `leaf!`/`observable!` would have refused these and
+    # made the divergence visible. The one guard is the one written here.
+    #
+    # AT `begin`, NOT `finalize`, because this is where a name enters the system — #finalize_upload
+    # is handed a commit_id and never sees a name. Refusing before Sync::Commit.begin also means no
+    # PendingCommit row is written for a name that can never become a legal node.
+    #
+    # Same pairing as Tools::AddonsController#parse_files and LibraryBrowseController#create_folder:
+    # syntax first, then the library's own reserved namespace. See Library::ReservedNames.
+    unless Maker::MoveNode.valid_leaf_name?(name) && !Library::ReservedNames.reserved?(name)
+      return render json: { error: "#{name.inspect} is not a valid file name" },
+                    status: :unprocessable_entity
+    end
     manifest = (params[:manifest] || []).map { |c| c.permit(:hash, :offset, :length).to_h }
     commit_id = SecureRandom.uuid
     node_id   = SecureRandom.uuid
@@ -918,10 +944,51 @@ class FilesController < ApplicationController
   # mistaken for a snapshot. Pagination is the follow-up if a real library hits this.
   FLAT_LIMIT = 2000
 
-  # `add_ext` is the free-text field beside the chips; it simply joins the list, so there is one
-  # filter param and one code path rather than two ways to say the same thing. `.to_s` on each,
-  # because `?ext[]=a` and `?ext[x]=y` hand us an Array and a Parameters -- both stringify into
-  # something the whitelist below then drops, which is the point.
+  # EVERY EXTENSION THE USER'S LIBRARY ACTUALLY HOLDS, with how many files carry it:
+  # { "stl" => 42, "lbrn2" => 17, ... }. This is what the type filter offers.
+  #
+  # THE CONTROL IT REPLACED LISTED THE VOCABULARY, NOT THE LIBRARY. `FilesHelper::EXT_FAMILIES`
+  # is derived from `ROLE_BY_EXT`, so the chip row offered `.sldasm`, `.ngc` and `.fcstd` to
+  # someone who has never owned one, in a wall of ~35 chips, while a `.kicad`-shaped extension the
+  # user really did have appeared nowhere and had to be typed into a free-text box beside it. A
+  # dropdown built from this hash has the opposite property in both directions: everything offered
+  # exists, and everything that exists is offered.
+  #
+  # IN RUBY, AND §5.2 IS WHY: there is no expression for "the file's extension" portable across
+  # SQLite and Postgres (substr/instr vs substring/position), and a denormalised `ext` column would
+  # have to be written by Sync::Commit and Sync::Mutation — the maker/file-layer §10 tripwire, to
+  # serve a filter. So this is ONE query returning N short strings, tallied here.
+  #
+  # THE COST IS UNBOUNDED IN N, stated because it is a real property of this page rather than a
+  # hypothetical. MEASURED on this box (SQLite, one user, 13 extensions):
+  #
+  #     20,000 files -> 14.4 ms total, of which 3.1 ms is the query
+  #    100,000 files -> 86.2 ms total, of which 11.3 ms is the query
+  #
+  # So the database is not the cost — the per-row `File.extname` in Ruby is, ~7/8ths of it. For
+  # scale, the same page already spends 175-278 ms of ERB rendering 2000 rows (see FOLDER_PAGE),
+  # which is why this is not cached: a cache would add a second query and a staleness window to
+  # shave a tenth of what the render costs. It is ONE query whatever N is, which is the property
+  # page_query_budget_test.rb actually asserts. A library big enough for the milliseconds to matter
+  # will have hit CLAUDE.md §12 item 8 (the render cost) long before it notices this.
+  #
+  # FILTERED BY EXT_RE, so the options can only ever be extensions #resolve_exts will accept. A
+  # `.tar.gz` or a name ending in a 30-character suffix is simply not offered, rather than
+  # rendering an option that links and silently does nothing — the exact defect `ext_slots_left?`
+  # exists to prevent one control over.
+  def ext_facets
+    current_user.nodes.present.where(kind: "file").pluck(:name)
+                .each_with_object(Hash.new(0)) do |name, tally|
+      ext = File.extname(name.to_s).downcase.delete(".")
+      tally[ext] += 1 if ext.match?(EXT_RE)
+    end
+  end
+
+  # `add_ext` is the type dropdown's own param; it simply joins the list, so there is one filter
+  # param and one code path rather than two ways to say the same thing. (It was the free-text field
+  # beside the chips before the dropdown replaced both.) `.to_s` on each, because `?ext[]=a` and
+  # `?ext[x]=y` hand us an Array and a Parameters -- both stringify into something the whitelist
+  # below then drops, which is the point.
   def resolve_exts
     [ params[:ext], params[:add_ext] ].compact_blank.map(&:to_s).join(",")
       .downcase.split(",").map(&:strip).select { |e| e.match?(EXT_RE) }.uniq.first(MAX_EXTS)
@@ -1075,9 +1142,28 @@ class FilesController < ApplicationController
     crumbs
   end
 
+  # Extensions whose detail page offers the interactive Measure view (measure_controller.js).
+  #
+  # THE SET IS THE FORMATS A GEOMETRY PAYLOAD CAN BE BUILT FOR, and it is written out rather than
+  # derived from `Registry` — a renderer being registered says only that it makes a THUMBNAIL, and
+  # ten of them do exactly that. Asking `payload_revision` instead would be no better: every
+  # renderer answers it (via `Enqueue.revision_for`'s fallback), so the question it answers is not
+  # the one being asked. Pinned by a test that drives the real `render(..., kind: "geometry")` for
+  # each entry, so the list cannot claim a format the renderers do not actually measure.
+  MEASURABLE_EXTS = %w[lbrn lbrn2 mage dxf svg].freeze
+
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
-    return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
+    # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
+    # at rest — the Measure branch uses it as its own poster (see _measure.html.erb) — so this
+    # reorders which branch OWNS the page, not what the page displays when nothing is clicked.
+    #
+    # Measure SUPERSEDES the static preview the way :model3d does for meshes, and for the same
+    # reason: it is a button, not a replacement. The resting picture stays whatever the format's
+    # own render is (LightBurn's and MillMage's are in colour; ours are outlines).
+    return :measure if MEASURABLE_EXTS.include?(ext)
+
+    return :image if %w[png jpg jpeg gif webp bmp ico].include?(ext)
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
@@ -1087,12 +1173,7 @@ class FilesController < ApplicationController
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
     return :model3d if %w[stl 3mf obj].include?(ext)
-    # LightBurn -> the interactive Measure view (lbrnmeasure_controller.js), which supersedes the
-    # static thumbnail the way :model3d does for meshes. The thumbnail is still generated and is
-    # still what the page shows at rest — Measure is a button, not a replacement, because
-    # LightBurn's own embedded render is in colour and ours is black outlines.
-    return :lbrn if %w[lbrn lbrn2].include?(ext)
-    # A file we can render a server-side thumbnail for (dxf, step, stp, iges, igs, ...) but
+    # A file we can render a server-side thumbnail for (step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

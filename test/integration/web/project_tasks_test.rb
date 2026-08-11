@@ -101,5 +101,81 @@ module Web
       patch task_path(task), params: { task: { status: "todo" } }
       assert_nil task.reload.completed_at
     end
+
+    # --- Turbo Streams: adding a task must not repaint the whole page --------------
+
+    # THE COMPLAINT: adding one row re-ran the ENTIRE show action — build log rich text, the Files
+    # panel, every attachment thumbnail, the sheets — and repainted the page, losing the scroll
+    # position. Now the response is one element.
+    test "a turbo_stream add replaces only the tasks panel, and does not redirect" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post project_tasks_path(project), params: { task: { title: "Print base" } }, as: :turbo_stream
+
+      assert_response :success
+      assert_equal "text/vnd.turbo-stream.html", response.media_type
+      assert_select "turbo-stream[action=replace][target=project-tasks]", count: 1
+      assert_match(/Print base/, response.body)
+      # The rest of the page is genuinely absent — not merely not asserted.
+      assert_no_match(/attachments-panel/, response.body)
+      assert_no_match(/build-log/, response.body)
+    end
+
+    # THE DRIFT THIS PINS IS SILENT IN BOTH DIRECTIONS: rename the partial's root id and the stream
+    # matches no element — the request still succeeds, the response is still 200, and the list just
+    # stops updating with nothing in any log. Read from the response itself rather than from a
+    # literal, so the two halves cannot be "fixed" apart.
+    test "the stream target is the id the tasks partial actually renders" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post project_tasks_path(project), params: { task: { title: "Print base" } }, as: :turbo_stream
+
+      target = css_select("turbo-stream").first["target"]
+      rendered_id = Nokogiri::HTML5.fragment(css_select("turbo-stream template").first.inner_html)
+                                   .at_css("section")["id"]
+      assert_equal target, rendered_id,
+                   "the stream replaces ##{target} but the partial renders ##{rendered_id}"
+    end
+
+    test "status changes and deletes stream too, rather than reloading" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "Print base", status: "todo", position: 0)
+
+      patch task_path(task), params: { task: { status: "done" } }, as: :turbo_stream
+      assert_select "turbo-stream[action=replace][target=project-tasks]", count: 1
+      assert_equal "done", task.reload.status
+
+      delete task_path(task), as: :turbo_stream
+      assert_select "turbo-stream[action=replace][target=project-tasks]", count: 1
+      assert_equal 0, project.tasks.count
+    end
+
+    # A turbo_stream response replaces the panel and NOTHING ELSE, so `redirect_to ... alert:` would
+    # set a flash no response ever draws: the user submits an invalid task, watches the panel redraw
+    # unchanged, and is told nothing. The error renders inside the replaced element.
+    test "an invalid task reports itself inside the replaced panel, not into a flash nobody draws" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      assert_no_difference "project.tasks.count" do
+        post project_tasks_path(project), params: { task: { title: "" } }, as: :turbo_stream
+      end
+      assert_select "turbo-stream[target=project-tasks]"
+      assert_match(/task-error/, response.body)
+    end
+
+    # THE NO-JS PATH IS NOT A COURTESY — everything the panel renders is plain form markup, so the
+    # feature works with Turbo absent. An ordinary HTML post still redirects, exactly as before.
+    test "without turbo_stream the redirect is unchanged" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post project_tasks_path(project), params: { task: { title: "Print base" } }
+      assert_redirected_to project_path(project)
+      assert_equal "Task added.", flash[:notice]
+    end
   end
 end

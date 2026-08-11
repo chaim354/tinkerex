@@ -1,9 +1,14 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Right-click a file → a small menu (Add note / Open). "Add note" opens a popover with a textarea
-// that POSTs to the file's notes endpoint (JSON), then reloads so the server-rendered badge is
-// correct. Progressive enhancement: with no JS, right-click is the browser's own menu and notes
+// Right-click a file → a small menu (Add note / Open / Download). "Add note" opens a popover with a
+// textarea that POSTs to the file's notes endpoint (JSON), then reloads so the server-rendered badge
+// is correct. Progressive enhancement: with no JS, right-click is the browser's own menu and notes
 // stay fully usable from the file detail page.
+//
+// EVERY ENTRY IS BUILT FROM A `data-` ATTRIBUTE ON THE CELL, never from a URL assembled here. The
+// cell already carries `data-note-url` and now `data-download-url`, both written by the server's own
+// route helpers — so this controller cannot get a path shape wrong, and a surface that does not want
+// an entry simply omits the attribute rather than needing a flag.
 export default class extends Controller {
   connect() {
     this.onDocClick = () => this.close()
@@ -43,6 +48,20 @@ export default class extends Controller {
       open.href = href
       open.textContent = "Open"
       this.menu.appendChild(open)
+    }
+
+    // The URL already carries ?download=1, so FilesController#blob answers
+    // `Content-Disposition: attachment` whatever the content type would otherwise allow inline.
+    // NO `download` ATTRIBUTE HERE, deliberately: on chunk and s3 the blob endpoint 302s to a
+    // presigned, CROSS-ORIGIN storage URL, and the HTML `download` attribute is IGNORED on a
+    // cross-origin navigation — so it would work on share and silently open-in-tab on the app's
+    // main deployment. The server-set header is the one mechanism that holds on all three.
+    const downloadUrl = cell.dataset.downloadUrl
+    if (downloadUrl) {
+      const dl = document.createElement("a")
+      dl.href = downloadUrl
+      dl.textContent = "Download"
+      this.menu.appendChild(dl)
     }
     document.body.appendChild(this.menu)
   }
