@@ -425,6 +425,28 @@ class FilesController < ApplicationController
   # Reuses Sync::Commit.begin: records the pending commit + presigns ONLY missing chunks.
   def begin_upload
     name = params.require(:name)
+    # THE NAME CHECK THIS DOOR NEVER HAD — both halves of it, and it was the WEAKEST of the three
+    # web doors that mint a name rather than the strongest. `name` went straight to
+    # Sync::Commit.begin, which validates the MANIFEST exhaustively and the name not at all, and
+    # Node validates `name` for presence only. Probed through the real two-phase flow: begin=200,
+    # finalize=200, and a live node called "../../escape.txt" in the changelog, bound for every
+    # device's real mount — the exact defect §14c records as closed at the addon door, still open
+    # here. `.DS_Store` / `.trash` / `.maker-tmp-x` went the same way.
+    #
+    # THIS DOOR IS CHUNK-ONLY (`syncable`-gated), which is why nothing cross-backend could catch
+    # it: there is no share/s3 leg whose port `leaf!`/`observable!` would have refused these and
+    # made the divergence visible. The one guard is the one written here.
+    #
+    # AT `begin`, NOT `finalize`, because this is where a name enters the system — #finalize_upload
+    # is handed a commit_id and never sees a name. Refusing before Sync::Commit.begin also means no
+    # PendingCommit row is written for a name that can never become a legal node.
+    #
+    # Same pairing as Tools::AddonsController#parse_files and LibraryBrowseController#create_folder:
+    # syntax first, then the library's own reserved namespace. See Library::ReservedNames.
+    unless Maker::MoveNode.valid_leaf_name?(name) && !Library::ReservedNames.reserved?(name)
+      return render json: { error: "#{name.inspect} is not a valid file name" },
+                    status: :unprocessable_entity
+    end
     manifest = (params[:manifest] || []).map { |c| c.permit(:hash, :offset, :length).to_h }
     commit_id = SecureRandom.uuid
     node_id   = SecureRandom.uuid

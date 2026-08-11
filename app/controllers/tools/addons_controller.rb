@@ -91,6 +91,15 @@ module Tools
     # attempted). A 404 on a POST to the save endpoint reads as "this endpoint is gone", which
     # would send an addon author looking in entirely the wrong place; the honest answer is that the
     # request was refused.
+    #
+    # THAT CLAIM IS ONLY NOW TRUE, AND THE GAP IS WORTH RECORDING because the message below asserts
+    # it to the user. A RESERVED name (`.DS_Store`, `.trash`, `.maker-tmp-x`) also reached here, via
+    # share/s3's `observable!` inside #write — so this arm answered "That destination folder no
+    # longer exists." about a perfectly good folder, for a save refused on its FILENAME. It was the
+    # visible half of a defect whose other half was silent: chunk never calls the port, so the same
+    # save simply succeeded there and created a live node bound for every device's mount. Both
+    # halves are closed in #parse_files now, which is what leaves this arm with the single meaning
+    # its message claims.
     rescue_from FileLayer::NotFound do
       render json: { error: "not_found", message: "That destination folder no longer exists." },
              status: :unprocessable_entity
@@ -362,6 +371,14 @@ module Tools
       # live node with that name, bound for every device's mount. See Maker::MoveNode.valid_leaf_name?
       # for the full argument and why the guard belongs here rather than in the chunk adapter.
       return nil unless parsed.all? { |f| Maker::MoveNode.valid_leaf_name?(f["name"]) }
+      # THE SECOND HALF OF THE SAME DOOR CHECK, and the two are always asked together: the line
+      # above is SYNTAX ("is this a storable leaf at all"), this one is the library's own reserved
+      # NAMESPACE. Identical asymmetry, identical reason it survived — share and s3 refuse these in
+      # their own `observable!` inside #write, and chunk never calls the port at all, so a
+      # `.DS_Store` / `.trash` / `.maker-tmp-x` output was a live node on the main deployment and a
+      # 422 on the other two. See Library::ReservedNames for the probe table and for why the door
+      # enforces the UNION of the two adapters' guards rather than their intersection.
+      return nil unless parsed.none? { |f| Library::ReservedNames.reserved?(f["name"]) }
       # Within ONE save, too: #refuse_taken_names! asks the database, which cannot see two files
       # in this same batch claiming the same name — neither exists yet, so both pass and chunk
       # writes the duplicate pair itself.
