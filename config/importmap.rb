@@ -39,6 +39,14 @@ pin "lib/chunk_upload", to: "lib/chunk_upload.js"
 # ctx function, so that this path stays the host's to change without republishing a bundle.
 pin "lib/file_chooser", to: "lib/file_chooser.js"
 
+# THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
+# the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
+# and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a
+# bundle must NOT import — its contract is the ctx function), this specifier IS the public contract:
+# it is what docs/addon-api-v1.md tells authors to import, so the SPECIFIER may never change while
+# api_version 1 lives, even though the file behind it may move freely.
+pin "@maker/addon-sdk", to: "maker/addon_sdk.js"
+
 # Three.js r0.185.1 (MIT) — the interactive 3D viewer (modelviewer_controller.js), DYNAMIC-imported
 # so the payload ships only on pages with a 3D file. Vendored from unpkg (the official ES build),
 # NOT `bin/importmap pin three` (jspm): jspm splits the core into an internal `../_/…` chunk and

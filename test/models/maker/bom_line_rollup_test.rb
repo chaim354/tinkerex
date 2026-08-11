@@ -19,11 +19,15 @@ module Maker
       assert_equal "step-uuid", resolved[:node_id]
     end
 
-    test "resolved_target of an inventory line whose item was deleted degrades gracefully (nil item, no crash)" do
+    # `item.destroy!` no longer produces this state — `InventoryItem#release_bom_lines` converts the
+    # line to a free-text part instead (audit A-M4; asserted in inventory_item_test.rb). The state is
+    # still reachable on data stranded BEFORE that fix, so the graceful degradation still has to
+    # hold; it is planted here rather than produced, because producing it is exactly what the fix
+    # stopped doing.
+    test "a dangling inventory ref resolves to a nil item rather than crashing" do
       line = @bom.lines.create!(user: @user, inventory_item_id: @inv.id, quantity: 4)
-      @inv.destroy!
-      line.reload
-      resolved = line.resolved_target
+      line.update_columns(inventory_item_id: 999_999)
+      resolved = line.reload.resolved_target
       assert_equal :inventory_item, resolved[:kind]
       assert_nil resolved[:inventory_item], "a dangling inventory ref resolves to nil, not a crash"
     end

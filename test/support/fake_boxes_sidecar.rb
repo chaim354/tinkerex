@@ -94,9 +94,14 @@ class FakeBoxesSidecar
   # FakeServiceProxy answering the three endpoints the bundle calls: GET generators, POST generate,
   # GET sample/:key. Returns the FakeServiceProxy so a test can inspect `.calls` afterward — e.g. to
   # read what a save actually sent, mirroring the deleted FakeBoxes#last_generate.
-  def self.install!(generate_svg: DEFAULT_SVG)
+  #
+  # `proxy:` takes a substitute FakeServiceProxy — the seam box_sections_test uses to make the
+  # sample-photo responses arrive LATE, which is the only way to hold the gallery in the state its
+  # click race needs (cards rendered and clickable, thumbnails still in flight). Registering the
+  # responses on the caller's object rather than a private one keeps that from meaning a second copy
+  # of the four registrations below.
+  def self.install!(generate_svg: DEFAULT_SVG, proxy: FakeServiceProxy.new)
     ENV["BOXES_SIDECAR_URL"] = BASE_URL
-    proxy = FakeServiceProxy.new
     proxy.ok("#{BASE_URL}/generators", body: GENERATORS.to_json, content_type: "application/json")
     proxy.ok("#{BASE_URL}/generate", body: generate_svg, content_type: "image/svg+xml")
     proxy.ok("#{BASE_URL}/sample/ABox", body: SAMPLE_JPEG, content_type: "image/jpeg")

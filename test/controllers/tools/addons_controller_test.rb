@@ -134,6 +134,80 @@ module Tools
       assert_select "[data-addon-states-url-value=?]", tools_addon_states_path("widgetkit")
     end
 
+    # ONE ctx BLOB, PARSED — not a `assert_match` on a substring. A data attribute that contains the
+    # right characters is not one that parses: the value is HTML-escaped JSON, and the escaping is
+    # exactly what a substring assertion cannot see going wrong.
+    def rendered_ctx
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      value = css_select("[data-addon-ctx-value]").first["data-addon-ctx-value"]
+      JSON.parse(value)
+    end
+
+    test "the shell renders a ctx blob carrying the host level and capability map" do
+      ctx = rendered_ctx
+      assert_equal Maker::Addons::Registry::API_VERSION, ctx["apiVersion"]
+      assert_equal Maker::Addons::Host::LEVEL, ctx["hostLevel"]
+      assert_equal Maker::Addons::Host.capabilities, ctx["capabilities"]
+      assert_equal FIXTURE_KEY, ctx.dig("addon", "key")
+    end
+
+    test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do
+      ctx = rendered_ctx
+      assert_equal tools_addon_path(FIXTURE_KEY),        ctx.dig("urls", "save")
+      assert_equal tools_addon_states_path(FIXTURE_KEY), ctx.dig("urls", "states")
+      assert_equal library_children_path,                ctx.dig("urls", "children")
+      assert_equal library_folders_path,                 ctx.dig("urls", "create")
+      # A BASE that a bundle appends "<service>/<path>" to — it must keep its trailing slash, which
+      # is the one property of this value a bundle depends on and the easiest to lose.
+      assert ctx.dig("urls", "service").end_with?("/")
+    end
+
+    # THE TWO REPRESENTATIONS MUST NOT DRIFT. Every value in the ctx blob also reaches the browser
+    # as a legacy data attribute, and both must keep answering the same thing for the life of
+    # api_version 1 — a bundle built against either one may be running against this host. Asserting
+    # each against a separately recomputed expectation cannot see them disagree with each other;
+    # reading both out of ONE rendered response is what can.
+    #
+    # NODEID NEEDS A NORMALISATION, NOT A COINCIDENCE: an HTML data attribute can only ever hold a
+    # string, so an absent default folder renders as "" there; the JSON side can and does say
+    # `null`. `.to_s` on the ctx side turns that `null` into "" to match — the HTML side has no
+    # third option to move toward instead. Both are read by their own consumer as "no folder / use
+    # the library root" (the legacy picker treats a blank `parent_node_id` the same as a missing
+    # one via `.presence`), so this is the two formats' own ceiling, not a bug being hidden.
+    test "the ctx blob and the legacy attributes it duplicates agree, in one render" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      mount = css_select("[data-controller=addon]").first
+      ctx = JSON.parse(mount["data-addon-ctx-value"])
+
+      assert_equal mount["data-addon-save-url-value"],             ctx.dig("urls", "save")
+      assert_equal mount["data-addon-states-url-value"],           ctx.dig("urls", "states")
+      assert_equal mount["data-addon-service-url-value"],          ctx.dig("urls", "service")
+      assert_equal mount["data-addon-children-url-value"],         ctx.dig("urls", "children")
+      assert_equal mount["data-addon-create-url-value"],           ctx.dig("urls", "create")
+      assert_equal mount["data-addon-default-folder-value"],       ctx.dig("defaultFolder", "nodeId").to_s
+      assert_equal mount["data-addon-default-folder-label-value"], ctx.dig("defaultFolder", "label")
+    end
+
+    # THE COMPATIBILITY RULE, WITH TEETH (spec §10.1). The two repos deploy independently: a bundle
+    # built against the old ctx may be running against a host built against the new one at any
+    # moment. Dropping any of these is invisible to every other test in this suite and breaks
+    # production silently, which is precisely why it is asserted as a list rather than trusted.
+    test "every pre-SDK data attribute is still emitted" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      mount = css_select("[data-controller=addon]").first
+      %w[
+        data-addon-entry-value data-addon-save-url-value data-addon-service-url-value
+        data-addon-states-url-value data-addon-folders-value data-addon-default-folder-value
+        data-addon-default-folder-label-value data-addon-children-url-value
+        data-addon-create-url-value
+      ].each do |attribute|
+        assert mount[attribute], "#{attribute} is gone — a published bundle reads it"
+      end
+    end
+
     test "an unknown addon key is a 404, not a 500" do
       get tools_addon_path("nope")
       assert_response :not_found
@@ -143,6 +217,35 @@ module Tools
       get tools_addon_path("widgetkit")
       assert_response :success
       assert_includes response.body, tools_addon_asset_path("widgetkit", "makerjs.js")
+    end
+
+    # THE SDK IS A HOST PIN, WHICH IS WHAT MAKES IT FREE TO AN ADDON. merged_importmap draws every
+    # host pin before the addon's own, so a bundle can `import { host } from "@maker/addon-sdk"`
+    # without declaring anything in its manifest. If this pin is ever dropped, every SDK-based
+    # bundle fails in the browser with a bare specifier error and nothing server-side notices.
+    test "the merged importmap resolves the SDK specifier for every addon" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      json = JSON.parse(css_select("script[type='importmap']").first.text)
+      assert json["imports"].key?("@maker/addon-sdk"),
+             "@maker/addon-sdk is not in the merged importmap: #{json["imports"].keys.sort.inspect}"
+      assert_match %r{/maker/addon_sdk}, json["imports"]["@maker/addon-sdk"]
+    end
+
+    # THE REASONING STRING IS SHOWN WHERE THERE IS ROOM FOR IT. A gallery card has space for a
+    # label; the addon's own page has space for the author's justification, which is the part that
+    # tells an operator whether the ask is proportionate.
+    test "the addon page lists declared permissions with their reasoning" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge(
+          "permissions" => [ { "name" => "library:write", "reasoning" => "to save your box" } ]
+        ) ],
+        assets: { "#{FIXTURE_KEY}/generators.js" => "export default { mount() {} }" }
+      )
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert_select ".addon-permissions", text: /Write files to your library/
+      assert_select ".addon-permissions", text: /to save your box/
     end
 
     test "serves an addon asset as JavaScript" do
@@ -834,8 +937,14 @@ module Tools
     # `state.addon_key == "widgetkit"` (the routing key) on both the read and the write path.
     STATES_KEY_MANIFEST = MANIFEST.merge("key" => "widgetkit-next", "states_key" => "widgetkit").freeze
 
+    # Reciprocates STATES_KEY_MANIFEST's claim (Maker::Addons::Registry now refuses an unreciprocated
+    # states_key — audit §2.1, Maker::Addons::Registry.states_key_permitted?). A SEPARATE constant
+    # rather than changing MANIFEST itself, so the "FIXTURE_KEY declares no states_key anywhere in
+    # this suite" guarantee the comment above makes stays true for the other tests in this file.
+    RECIPROCATING_MANIFEST = MANIFEST.merge("shares_states_with" => [ "widgetkit-next" ]).freeze
+
     test "an addon declaring states_key reads states stored under that key, not its own routing key" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
       under_declared_key = @user.maker_addon_states.create!(
         addon_key: "widgetkit", name: "Under widgetkit", data: {}
       )
@@ -850,7 +959,7 @@ module Tools
     end
 
     test "a save from an addon declaring states_key creates a state under the declared key, not its routing key" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
 
       # A filename NOT reused from any other test in this file: LibraryOutput writes flat to the
       # library root with no clobber-dedup, and on the share backend that write is a REAL filesystem
@@ -870,7 +979,7 @@ module Tools
     end
 
     test "states_key does not widen access to another user's rows" do
-      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST, STATES_KEY_MANIFEST ])
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ RECIPROCATING_MANIFEST, STATES_KEY_MANIFEST ])
       mine = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "Mine", data: {})
       stranger = User.create!(email: "states-key-stranger@example.com", password: PASSWORD, confirmed_at: Time.current)
       stranger.maker_addon_states.create!(addon_key: "widgetkit", name: "Theirs", data: {})

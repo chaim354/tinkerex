@@ -734,16 +734,128 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   main deployment, bound for the changelog and every device mount. A guard that exists on two
   backends and silently does not on the third is this repo's recorded failure shape — the fix is
   the door, never a third copy in the chunk adapter. **The same door asks a SECOND question beside
-  it, `Library::ReservedNames.reserved?`** (§14b): the reserved-namespace half diverged identically
-  and one arm of it was *visible* the whole time — a reserved name reached `rescue_from
-  FileLayer::NotFound` on share/s3, so that arm answered **"That destination folder no longer
-  exists."** about a perfectly good folder, for a save refused on its FILENAME. The save also
-  pre-checks destination names
+  it, `Library::ReservedNames.reserved?`** (§14b): the reserved-namespace half diverged identically,
+  and unlike the traversal half one arm of it was never silent — it reached this controller's
+  `rescue_from FileLayer::NotFound` on share/s3, which is the bullet at the end of this section.
+  The save also pre-checks destination names
   (a CHECK, not a lock) so chunk stops creating two same-named siblings in one directory, and
   `Tools::AddonsController` maps `UnsupportedOperation`/`FetchError`/`NotFound` **once** via
   `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
   is a `fetch()` that branches on `res.ok` and **fetch follows a 302**, so answering an error the
   way success is answered reports "Saved." over a save that never happened.
+- **THE CTX BLOB IS AN ADDITION; THE NINE LEGACY DATA ATTRIBUTES STAY FOR THE LIFE OF
+  `api_version: "1"`.** Publishing a bundle *is* the deploy and Rails is never rebuilt, so bundles
+  written against **both** shapes are live against one host at the same time — the host may never
+  assume they moved with it. Guarded by reading both representations out of **ONE** rendered
+  response and comparing them to each other, not by recomputing an expectation each could drift
+  away from independently; mutation-checked by deleting an attribute.
+- **`@maker/addon-sdk` IS A HOST PIN, AND ITS SPECIFIER IS PUBLIC API.** `merged_importmap` draws
+  every host pin before the addon's own, which is what lets a bundle import it having declared
+  nothing in its manifest. The FILE behind the pin may move freely; the **SPECIFIER may not change
+  while `api_version: "1"` lives** — every published bundle names it, and **Rails is never rebuilt
+  when a bundle is**, so nothing in this repo would notice: the failure is an addon 404ing in a
+  browser against a deployment whose suite is green.
+- **`initHost(ctx)` RUNS BEFORE THE BUNDLE IS IMPORTED, AND THE ORDER IS THE CONTRACT** — a
+  bundle's top-level code executes at import time, so `host` must already be bound by then. The
+  corollary is the part that bit twice, and it is **silent rather than loud**: an ES module is
+  evaluated **ONCE PER URL PER PAGE**, so on a Turbo re-mount `initHost` builds a NEW `Host` while
+  the cached module's top level does **not** re-run — a reference captured at top level
+  (`const { files } = host`) then goes on serving the PREVIOUS, torn-down host's context and CSRF
+  token, with nothing thrown and nothing logged. **Read through `host` at call time; never capture
+  it.**
+- **THE CAPABILITY MAP IS SERVER-SIDE AND HAS ONE DEFINITION** (`Maker::Addons::Host`) — §14d's
+  third extension→role table is what a second copy becomes. **Every value must be a real boolean**:
+  a missing key reads as `undefined` in JS and a nil reads as `false`, and neither is
+  distinguishable from a deliberate "off". A capability is **NAMED BEFORE IT IS BUILT, ANSWERED
+  `false`** — that is the whole compatibility mechanism, and what lets an addon be authored against
+  a host level it has not met.
+- **BUMP `Host::LEVEL` IN THE SAME COMMIT THAT FLIPS A CAPABILITY TO TRUE.** A manifest's
+  `min_host` is the only way an addon can say "I need this", and `api_version` **equality** cannot
+  express it — flip without bumping and an addon requiring the new capability has no way to name
+  the host that has it.
+- **A 409 `would_replace` IS A QUESTION; A 422 `name_taken` IS NOT** — the SDK throws
+  `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
+  distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
+  save that can never succeed on retry.
+- **`defaultFolder` NAMES TWO DIFFERENT SHAPES, DELIBERATELY.** The raw `ctx.defaultFolder` handed
+  to `mount` is a **STRING node id**; the server's ctx blob carries `defaultFolder: {nodeId,
+  label}`. Harmless only because the SDK never exposes its copy — so **never add a
+  `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
+  a string.
+- **A SIDECAR'S ERROR NEVER RUNS THROUGH THE HOST'S ERROR TABLE.** A sidecar answers **prose** in
+  its `error` key, not a code, so `errorFrom` would put the message in `.code` and generic filler
+  in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
+  consumed by the failing `res.json()` and lost entirely. `service.*` raises `ServiceError`, built
+  from the status and the raw text.
+- **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
+  `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
+  is sent and it never reaches the route the server guards: it misroutes **silently** instead of
+  being refused. Same rule as §14a's `key_for` and `validate_asset_path!` above: **reject, never
+  normalize.** **THE SERVICE NAME IS THE SAME URL AND GETS THE SAME REFUSAL** — it went unguarded
+  while the `path` beside it did, which made the invariant true of only part of one URL. It
+  additionally rejects a `/` **outright rather than splitting it into segments**, because `:service`
+  is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"` cannot
+  name a service on any host; splitting would normalize a structural error, and would leave the
+  contract incoherent (`"../.."` refused, `"a/b"` accepted) for a value that is one segment by
+  definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
+  clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
+  parser's and no server-side test can observe it.
+- **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
+  the target, the target names the claimant back in `shares_states_with`, **and the target must
+  itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
+  grant nobody can audit. Anything else is SKIPPED, **including a claim on an addon absent from the
+  index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
+  colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
+  `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
+  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
+  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
+  the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
+  not gallery visibility, is the property being enforced.
+- **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
+  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
+  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
+  `unavailable_reason`), so a listed-but-unavailable addon is still
+  `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
+  from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
+  leaving the hole open**. Do not harmonise the two.
+- **`Addon#available?` IS NO LONGER HARDCODED TRUE, AND THE GALLERY SHOWS A REASON RATHER THAN A
+  FIXED SENTENCE.** It was true for as long as "registered" meant "fetchable"; `min_host` gives it a
+  second real answer. A too-new addon is still **BUILT** and still **LISTED** — skipping it is the
+  easy wrong answer, because an addon that silently never appears reads as a broken deploy rather
+  than as a version floor, and the old hardcoded "Not configured on this deployment" would send an
+  operator to check env vars that are fine.
+- **A NON-INTEGER `min_host` IS IGNORED, NOT COERCED.** `"2".to_i` is 2, which would honour a value
+  a JSON manifest should not contain. Ignoring it leaves the addon **AVAILABLE** — the failure
+  direction an operator can diagnose, rather than one that makes an addon vanish.
+- **DECLARED PERMISSIONS ARE DISPLAYED, NOT ENFORCED**, and `states_key` is not an inter-addon
+  boundary either — a bundle runs same-origin in the session and can call another addon's
+  `/tools/<key>/states` directly, so what the mutual declaration closes is only that a manifest can
+  no longer redirect **its own saves** into another addon's namespace by declaration alone. Do not
+  describe either as a boundary (spec §8.1 says so in those words; this repo's recorded failure
+  shape is a guard everyone believed in that never worked). **Do not add enforcement without the
+  finished vocabulary:** `data:read:<addon>/<collection>` does not exist until PR 4, and
+  `service:<name>` must reconcile with today's `services` key.
+- **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from
+  `Host::CAPABILITIES` — a capability is what the host CAN do, a permission is what an addon SAYS it
+  wants, and they already diverge (`state` / `project:read` here against `state:list` /
+  `state:crud` / `project:current` there). **An unknown name falls back to its own raw spelling**
+  rather than rendering blank: a card that silently understates what an addon asked for is worse
+  than one showing a developer-facing string.
+- **`rescue_from FileLayer::NotFound` IN `Tools::AddonsController` IS REACHABLE ON SHARE/S3 ONLY,
+  AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
+  resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
+  save answers **302 and succeeds** (probed on all three; `docs/addon-api-v1.md` §5 carries the
+  author-facing consequence). What used to reach it was an output NAME the scan can never observe —
+  `observable!`, §14b's skip-list rule: `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash`,
+  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose) —
+  while **chunk accepted all of them**, because `write_chunk` never calls the port. That arm is
+  **now closed one layer earlier**, by `Library::ReservedNames.reserved?` in `#parse_files` (§14b),
+  which refuses those names at the door on every backend before a backend is even chosen. **So the
+  arm's one remaining cause is the TOCTOU** — a destination folder tombstoned between
+  `chosen_parent_node_id`'s lookup and the port write, a real window on share/s3 where
+  `Library::ScanJob` tombstones a folder removed on the NAS. Its message still names the
+  reserved-name cause too, deliberately wider than the arm: trimming a user-facing sentence on the
+  strength of an unreachability argument is the move §14e says to probe rather than trust.
 
 ### 14d. The maker web layer
 
@@ -811,6 +923,23 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Maker::DeadNodes` owns the one definition of `reapable?`, shared with the preview reaper; its index
   reads `user.nodes`, **NOT `.present`**, because a tombstone is exactly what tells "revivable" from
   "gone for good" and filtering it out reaps every tombstone with no grace at all.
+- **A `*_belongs_to_user` VALIDATION GUARDED ON `if: <fk>.present?` MAKES A DANGLING ID LOCK THE
+  WHOLE ROW, SO EVERY REFERENCED MODEL NEEDS A `dependent:` — AND `:nullify` IS THE WRONG ONE FOR
+  `Maker::BomLine#inventory_item_id`.** A dangling id *is* present, so the check runs on every save
+  and refuses edits to unrelated fields; `Supplier`→items/bom_lines and `Location`→items therefore
+  nullify. A BOM line cannot: `exactly_one_target` then sees no target and refuses the row anyway —
+  the identical permanent lock with a different message — so `InventoryItem#release_bom_lines`
+  copies the item's name into `part_name` (and its supplier, where the line names none and that
+  supplier still resolves — copying a *dangling* one recreates this very lock on the row just
+  rescued) and only then drops the pointer. Never "tidy" that callback into a `dependent:` on the
+  association; the statements must run in that order, and the name is unrecoverable one moment
+  later. **The targetless filter tests `[nil, ""]` and BOTH ARMS ARE REACHABLE** — the API accepts a
+  create carrying a blank `part_name`/`node_id` beside an inventory item, because
+  `exactly_one_target` counts with `present?` — so narrowing it to `nil` converts that line to
+  nothing and locks it. The whole method is user-scoped, unlike the *association-level* nullifies on
+  Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
+  repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
+  disclose one.
 
 ### 14e. Architecture and process
 
@@ -899,6 +1028,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
   the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
   `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
+- **`assert_select "[attr=?]", /regex/` DOES NOT REGEX-MATCH — it builds an EQUALITY selector and
+  can never pass.** rails-dom-testing's `SubstitutionContext#matcher_for` interpolates a Regexp
+  straight into the selector (`"\"#{value}\""`), so `[title=?]` with `/Needs a newer…/` compiles to
+  `[title="(?-mix:Needs a newer…)"]` and matches an attribute whose literal text is that. Regex
+  matching on an **ATTRIBUTE** needs the gem's own `:match('attr', ?)` pseudo-class; `[attr*=?]`
+  with a plain String is the simpler alternative. (`text: /…/` is a different code path and does
+  match — this is about attributes only.) Verified against rails-dom-testing **2.3.0**: `[title=?]`
+  finds 0 elements where `:match('title', ?)` finds 1. It fails as a test that **can never go
+  green** rather than as a false green — the better direction, but only once you know why.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.

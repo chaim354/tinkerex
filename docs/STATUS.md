@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-07 (**an eight-item UI pass: Back, STL axes, deleted-file propagation, the type filter, project covers, collapsible file sections, tasks without a reload, right-click download**)
+**Updated:** 2026-08-10 (**a reserved output filename was a live node on chunk and a 422 on share/s3 — the door guard three web doors never had**)
 
 ## What this file is
 
@@ -122,16 +122,35 @@ order to close a hole about **minting** a new name. Renaming stays available eit
 ### A wrong message that had been visible the whole time
 
 One arm of this was never silent. A reserved name reached `Tools::AddonsController`'s
-`rescue_from FileLayer::NotFound`, whose message is **"That destination folder no longer exists."** —
-asserted about a perfectly good folder, for a save refused on its *filename*. That handler's own
-comment claimed the arm could only mean a missing destination folder; it was incomplete, and is only
-now true. Corrected in place.
+`rescue_from FileLayer::NotFound`, whose message at this branch point was **"That destination folder
+no longer exists."** — asserted about a perfectly good folder, for a save refused on its *filename*.
+That handler's own comment claimed the arm could only mean a missing destination folder; it was
+incomplete, and is only now true. Corrected in place.
+
+**Merge note (`main` @ `d0175d2`).** PR #163 reached the same handler independently from the other
+side, and its correction is the stronger one: the "missing destination folder" cause it named cannot
+happen *at all*, because `chosen_parent_node_id` resolves a stale or foreign id to `nil` = the library
+root before any port call. Its rewritten message ("Your library refused that write. Rename the output
+if it is named like a system file, or try again.") is what survives the merge — this branch changed
+only the comment above it, so there was no behaviour to reconcile. Putting the two together: the
+reserved-name cause is now refused at the door by `#parse_files`, and the arm's **one** remaining
+cause is the TOCTOU — a destination folder tombstoned between `chosen_parent_node_id`'s lookup and
+the port write. The message is left naming the reserved-name cause as well, deliberately wider than
+the arm: trimming a user-facing sentence on the strength of an unreachability argument is what §14e
+says to probe rather than trust.
 
 ### Verification
 
-- `bin/ci` **exit 0**, all gates: style, three gem/importmap/brakeman scans, three test legs, system.
-- The three test legs report **identical** counts: **2191 runs, 7947 assertions, 0 failures, 0
-  errors, 9 skips** (2177 before, +14 tests).
+- **Measured on the merged tree**, `main` @ `d0175d2` merged in — those are the numbers below,
+  because that is what ships. `bin/ci` bare, **all seven gates, exit 0** (54.22 s): style **519
+  files / 0 offenses**, gem audit **no vulnerabilities**, importmap audit and Brakeman clean. The
+  three backend legs are **identical** — **2248 runs, 8152 assertions, 0 failures, 0 errors, 9
+  skips**, against `main`'s **2234 / 8016**: a delta of exactly the **+14** tests this branch adds
+  and no other movement. System (real browser) **76 runs, 470 assertions, 0 failures**, unchanged
+  from `main` — this branch adds no system test.
+- At the branch point the same three legs read **2191 runs, 7947 assertions** (2177 before,
+  +14 tests). Per this file's own header, those are not a chain: take a baseline by running the
+  merge-base, not by subtracting entries.
 - **Every guard mutation-checked** (§15), and each mutation reverted after. Nine mutations: the five
   arms of `ReservedNames.reserved?` (drop trash / make it a prefix instead of exact / drop temp /
   drop clutter / drop the non-String guard) each turn exactly their own row red; dropping the
@@ -154,6 +173,716 @@ now true. Corrected in place.
 - **A device push (`Sync::Commit#finalize`) is untouched**, and should be: that is the sync protocol,
   where the client is authoritative, not a web door. It is also how `.DS_Store` nodes legitimately
   arrive.
+
+### Found in review of this branch, PROBED not argued — four residuals it does not close
+
+The three doors above are the three that MINT a name on chunk. A review pass drove the remaining
+write doors with a reserved name and found four more answers to the same condition. None is a
+regression from this branch; all four are pre-existing and none is fixed here. Recorded so the next
+reader does not have to rediscover them, per §14e's *"a stale open-list is worse than none"*.
+
+- **`Projects::UploadsController#create` is an uncaught 500 on share/s3.** It rescues
+  `UnsupportedOperation` and `FetchError` but not `NotFound`, and `ApplicationController` has no
+  `rescue_from` at all — so `observable!` raising for `Projects/<slug>/.DS_Store` propagates.
+  Probed: `FileLayer::NotFound: "Projects/probe-p/.DS_Store" is a reserved path…`, uncaught. The
+  door is `require_port_writable!`-gated, so it does not exist on chunk. **The cheapest fix is the
+  missing `rescue_from`, not another `ReservedNames` call.**
+- **`FilesController#create` still answers "File not found."** for a reserved filename on share/s3
+  — `observable!` → `NotFound` → the class-level rescue → `302` + that flash. Probed: `status=302
+  flash="File not found."`. That is the same wrong-message defect this branch fixed at the addon
+  door, still live at the app's main upload door, and it means the *upload* verb still has two
+  answers across deployments: chunk `begin_upload` now 422s with a real reason, share/s3 302 to a
+  flash about a file the user never asked about.
+- **`ModelsController#ensure_folders` holds a FOURTH private spelling of the rule** —
+  `segs.any? { |s| s.start_with?(".") }` — which is exactly the second copy `Library::ReservedNames`
+  exists to prevent, and it has a real gap: `__MACOSX` has no leading dot. Probed with a forged
+  `dirs` param (nothing else validates it): **chunk `201` + a live `__MACOSX` dir node; share `422
+  invalid_path`**. The same divergence, at a door this branch did not touch. Real macOS zips do not
+  reach it — the importer skips dot-prefixed leaves client-side and every `__MACOSX` entry is a
+  `._` file — so the trigger is a forged request, not the ordinary import.
+- **The door is now STRICTER than either adapter for a nested `.trash`.** `reserved?` tests a LEAF
+  name, but both adapters anchor `TRASH_PREFIX` at the library ROOT on purpose — *"a nested
+  `cad/.trash` is the user's own folder, is indexed, and is none of our business"*
+  (`Share#observable!`). Probed: `POST /library/folders {name: ".trash", parent: cad}` is now `422`,
+  while `FileLayer.current.mkdir(user, parent: cad, name: ".trash")` is still **allowed** by the
+  adapter underneath it. Uniform across all three backends, so it breaks no §14a rule and it fails
+  safe — but it contradicts an explicit adapter comment and was not a stated goal. A door that knew
+  its parent's rel path could ask the adapters' actual question.
+
+---
+
+## 2026-08-10: audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
+
+`Maker::Supplier` had no `has_many` at all and `Maker::Location` had one only for its own
+`children`, so `DELETE /v1/maker/suppliers/:id`, `locations/:id` and `inventory_items/:id` left
+dangling ids behind. The dangling id was not the harm. `InventoryItem` and `BomLine` run their
+`*_belongs_to_user` validations `if: <fk>.present?`, and a dangling id **is** present — so the
+check ran, found nothing, and refused **every** subsequent save of that row. Renaming an item,
+adjusting a min quantity, fixing a typo in a BOM line's notes: all rejected, permanently, with an
+error naming a field the form need not even show. Confirmed by probe before any fix, on all three
+referring columns.
+
+**Blast radius** — four referring columns, one more than the finding named:
+`maker_inventory_items.supplier_id` and `.location_id`, `maker_bom_lines.inventory_item_id`, and
+`maker_bom_lines.supplier_id` (that last one is not in A-M4's text). Everything else already had
+an answer: `InventoryItem`→`transactions` is `dependent: :delete_all`, `Location`→`children` is
+`dependent: :nullify`. Two dangling pointers were found and deliberately left alone because
+neither locks anything: `maker_bom_lines.node_id` after a node is reaped, and
+`maker_inventory_transactions.project_id` after a project is destroyed — the latter is an
+append-only ledger that no code may update anyway.
+
+**`dependent: :nullify` is right for three of the four and WRONG for the fourth.** Nullifying
+`BomLine#inventory_item_id` leaves the line with no target, so `exactly_one_target` refuses it —
+the identical permanent lock, wearing a different error message. Measured: with the nullify-only
+implementation, the unlock test fails with `a line must link exactly one of: inventory item,
+design file, or free-text part`. `dependent: :destroy` is worse — a BOM records what a project
+needs, and deleting a stock row is a statement about the shelf, not about the design. So
+`InventoryItem#release_bom_lines` **converts the line to a free-text part**, copying the item's
+name into `part_name` before dropping the pointer: a valid, editable line still reading "4 × M3
+bolt", in a shape `resolved_target` already renders. The whole method is scoped to the owning user,
+unlike the *association-level* `dependent: :nullify` on `Supplier`/`Location`, because it *writes*
+this user's data into a row rather than only clearing a pointer — clearing can at worst repair an
+illegal cross-tenant reference, copying would disclose one.
+
+**The conversion carries the supplier too, which the first round dropped.** `maker_bom_lines` has
+its own `supplier_id` and `resolved_target`'s free-text shape already renders
+`supplier_id`/`supplier_name`, so leaving it nil discarded half of what makes a line orderable into
+a column that was sitting there waiting for it (measured through the roll-up: before the destroy a
+line rendered `{name, part_number, unit, quantity_cached}`, after it `{part_name, supplier_id: nil,
+supplier_name: nil}`). Three qualifiers on the carry, each with its own mutation check: only onto
+lines actually being **converted** (a line keeping its own design-file target is not becoming a
+free-text part, and nothing renders a supplier for that shape); never over a supplier the line
+**already names** (that one is the user's annotation about this line; the item's is a fallback);
+and only if that supplier **still resolves**, because an item stranded by the pre-fix bug can
+itself hold a dangling `supplier_id` and copying it across would hand the line
+`supplier_belongs_to_user` failing on every save — this method's own bug, reintroduced on the row
+it just rescued. **`part_number` is not carried: `maker_bom_lines` has no column for it.** The line
+also loses the item's live stock figures, which is honest — there is no stock row any more.
+
+**No DB foreign keys, decided rather than forgotten — and the recorded reason was half wrong.**
+The SQLite measurement stands: `add_foreign_key ... on_delete: :nullify` over data that already
+violates it is **ACCEPTED** at migration time and the violating row survives (re-probed directly —
+`pragma_foreign_key_check` lists it afterwards). The *consequence* first recorded here — "then
+raises `ActiveRecord::InvalidForeignKey` on the next write to the bad row" — **does not hold for
+the ordinary path**, and the sentence that followed it was therefore false. SQLite re-checks a
+child row only when the statement names a child key column, and Rails' partial UPDATE does not name
+`supplier_id`; the save is refused earlier and identically to today, by `*_belongs_to_user` →
+`RecordInvalid` → **422**, not 500. `InvalidForeignKey` appears only on a write that names the FK
+column while skipping validations — measured on the same probe, `UPDATE ... SET supplier_id = 999`
+errors while `SET supplier_id = NULL` does not — and this app has no such write for these columns.
+
+**What actually blocks the FKs is the other half:** Postgres validates existing rows on
+`ADD CONSTRAINT` and errors, so one migration aborts the managed deploy (reasoned, not measured —
+no local libpq). Two things the first pass did not mention, in fairness to whoever picks this up:
+`NOT VALID` is the standard opt-out from that validation, and the violating rows could be cleared
+by a two-line `UPDATE ... SET fk = NULL WHERE fk NOT IN (SELECT id FROM ...)` prelude **in the same
+migration** rather than a separate pass. So the deferral is a judgement about cost and timing, not
+an impossibility. **The decision still stands**: all three deletes go through Active Record
+(`user.destroy` plus the three v1 controllers — no raw-SQL or `delete_all` path exists for these
+models, independently re-verified), and the harm is an Active Record validation that no DB
+constraint can lift, so the FKs are defence-in-depth rather than the fix. Tracked as ledger row 24
+in `docs/AUDIT-2026-08-03.md` — and note a cleanup pass cannot restore a deleted item's name to a
+BOM line, which is precisely why the conversion has to happen at destroy time.
+
+**No backfill migration either — recoverable by the owner, but the cost differs by column.** On
+`maker_inventory_items.supplier_id` and `.location_id` it is free: the validations are guarded on
+the id being *present*, so `PATCH { supplier_id: null }` skips the check and saves. On
+`maker_bom_lines.inventory_item_id` it is **not** — clearing the pointer alone leaves the line with
+zero targets, so `PATCH { inventory_item_id: null }` is itself a 422 and the owner must supply a
+replacement target in the same request, having remembered the deleted item's name themselves. That
+is exactly the work `release_bom_lines` now does for them and cannot do retroactively. Both shapes
+are pinned by tests that plant the pre-fix state with `update_columns` and drive the real PATCHes.
+
+**Verification.** Bare `bin/ci` green by exit code, all seven gates; the three test legs report
+identical counts — **2200 runs / 7883 assertions / 0 failures / 0 errors / 9 skips** on each of
+chunk, share and s3, plus 71 system runs / 444 assertions. (Re-measured after `origin/main` was
+merged in at `945d8b1`: the unit legs are unchanged, and the system count is 70/439 + the one
+thumbnail-settling guard the entry below added.) **Twelve mutation checks** (§15),
+every one RED. Seven from the first round: dropping each of the three `dependent: :nullify`s;
+dropping `before_destroy :release_bom_lines`; reducing `release_bom_lines` to a plain nullify;
+renaming every line instead of only the targetless ones; and dropping the per-user scope, which
+needed a *planted* cross-tenant row to be catchable at all, since the validations make one
+unreachable. Five more from the review round: narrowing the targetless filter to `nil`-only (RED on
+both blank arms, with exactly the A-M4 message — `Validation failed: a line must link exactly one
+of: inventory item, design file, or free-text part`); dropping the supplier carry; dropping its
+no-clobber clause; swapping its `Supplier.exists?` guard for a bare `supplier_id.present?`; and
+widening it from the converted lines to every line the item touched.
+
+**One of those five started GREEN, which is the part worth recording.** The "widen it to every
+line" mutation was invisible until the test that should have caught it grew a second, *convertible*
+BOM line beside the design-file one — with nothing convertible, `converting.any?` is false and the
+entire write block is skipped, so the mutated statement never executed. The qualifier was written,
+commented and untested. Found by mutation-checking, not by reading: exactly the failure shape §15
+names, in the round whose whole job was closing another instance of it.
+
+---
+
+## 2026-08-10: `system-test` was red on main because a gallery card moved out from under the click (branch `claude/system-test-card-click-race`)
+
+**The symptom.** `system-test` had been red on main since PR #160 merged (run 31188332739, commit
+096e581) — every other gate green on that run, so every new PR inherited a failure it did not cause.
+PR #164 hit it too (run 31448985204) with *different* tests failing in the same cluster, which is the
+signature of a flake rather than a break. Both runs failed in the boxes addon's tray top view:
+
+| run | test | failure |
+|---|---|---|
+| 31188332739 (main) | `TrayTopViewTest#test_a_tray_generator_draws_its_compartments_without_being_asked` | no `.box-topview svg` |
+| 31448985204 (#164) | `…#test_removing_a_wall_from_the_layout_merges_the_two_compartments_it_separated` | no `[data-topview="summary"]` |
+
+Both suites passed locally, every time, on a quiet Mac.
+
+**The screenshot was the whole diagnosis, and it took one look.** `gh run download 31188332739 -n
+screenshots` shows the **gallery** — filter box, four cards, "No saved boxes yet." — not the editor
+the test had clicked into. `mountEditor` replaces the DOM on its *first* line, synchronously, so a
+click that reached `onOpenGenerator` could not possibly leave the gallery standing. **The click never
+fired the handler.** Nothing raised, because a click that lands on nothing is not an error.
+
+**Root cause: the cards collapse under the pointer.** Every card carries an
+`<img class="addon-thumb">` fetching a sample photo through the sidecar proxy, and
+`.addon-thumb.is-missing { display: none }` (`application.css:195`) removes a **120px** box plus its
+6px flex gap the moment one fails. `FakeBoxesSidecar` registers a sample for ABox alone — and those
+bytes are deliberately a truncated JPEG — so **all four** thumbs fire `error`, and every card below
+each one jumps up ~126px. Measured in the browser rather than argued: **TrayLayout's top goes
+1002px → 624px, a 378px shift**, because it is the last of the four and inherits all three collapses.
+
+Chromedriver's click computes **one** coordinate and then dispatches pointerMove/pointerDown at it. A
+thumbnail resolving inside that window moves the card away and the click lands in the dead space
+below the shrunken grid. That is why the two failures were the tests opening the **last** card, why
+ABox's and FrontPanel's tests never failed, why load made it appear (four real HTTP round-trips
+through a 4-thread Puma pool), and why a quiet dev Mac never saw it: there, the thumbs 404 before the
+click.
+
+Reproduced deterministically before anything was changed — collapsing the thumbs on `pointermove`
+*is* that window — and the probe printed `editor opened after the click? false`, `still on the
+gallery? true`.
+
+**The fix is one helper, not six.** `find(".addon-card", text: key).click` was hand-rolled in **six**
+places across five files; all six now call `WebHelpers#open_addon_card`, which waits on
+`settle_addon_cards` first — every thumbnail request **ended** (`complete` is true for a 404 and for
+a decode failure, which is the point) *and* two consecutive reads of every card's position agreeing.
+A polled condition, not a slept interval: the shift is caused by network responses whose timing is
+exactly what nobody can guess.
+
+Its budget is `SETTLE_TIMEOUT = 10`, not Capybara's 2s, because requiring the cards to exist also
+absorbs the *other* flake this page produces under load — `Unable to find css '.addon-card'`,
+observed locally in `PlanExportTest` — where ~20 ESM modules and two fetches honestly take longer
+than 2s. It costs nothing on a quiet box; the loop returns on its second poll.
+
+**Not fixed, on purpose:** the layout shift itself is real product jank — a fast user can miss a card
+too. The bundle that renders the cards lives in `chaim354/tinkerex-addons` and the copy here is a
+**verbatim snapshot** (see `box_sections_test.rb`'s header), so fixing it here would create exactly
+the drift that file's trade-off is written about. The host-side alternative — reserving the 120px
+instead of removing it — leaves a permanent blank in every card on a gallery where most generators
+have no photo, which is a visual regression, not a fix. Flagged as a product decision.
+
+### The guard, and why it asserts the contract rather than the race
+
+`box_sections_test.rb`'s "the gallery is not clicked until its thumbnails have stopped moving" holds
+the page in the state the failure needs — `SlowSamples`, a `FakeServiceProxy` subclass that delays
+**only** `sample/*` by 0.3s, so the cards render and become clickable while the thumbs are still in
+flight. `FakeBoxesSidecar.install!` grew a `proxy:` kwarg for this rather than a second copy of its
+four registrations.
+
+It asserts the **property that closes the window** (no thumbnail still loading; re-asserting the
+collapse moves nothing), not the race's outcome. A test that clicked and hoped would be a coin flip
+in *both* directions — green with the bug present often enough to prove nothing, which is this repo's
+recorded failure shape (§15). An earlier draft did exactly that, arming the collapse on `pointermove`
+*after* settling, and it would have passed with or without the fix: a fake guard. Discarded.
+
+**Mutation-checked (§15):** dropped the `i.complete` clause from `settle_addon_cards`' probe → **red**
+("4 thumbnails were still loading — the cards can still collapse under the click", `Expected: 0 /
+Actual: 4`); restored → green.
+
+### Verification
+
+- `bin/ci` bare, **exit 0**: style 513 files/0 offenses, scan 0 errors, and the three test legs
+  **identical** — `2191 runs, 7947 assertions, 0 failures, 0 errors, 9 skips` on `test`, `test-share`
+  and `test-s3`. System: **71 runs, 444 assertions, 0 failures** (was 70/439 — one new guard, +5).
+- **Stressed under real contention**, because a green suite on a quiet box is what was *already* true
+  before the fix and proves nothing (§14e): with all 10 cores saturated, the four boxes system files
+  ran 3× back to back, `38 runs, 205 assertions, 0 failures` every time.
+- Not verified: that CI itself is green — only the macOS runner is registered, so this lands and the
+  next run on `main` is the actual proof.
+
+---
+
+## 2026-08-07: the manifest learns to describe itself — and a `states_key` claim now needs the other addon's consent (branch `claude/addon-api-pr2-manifest-metadata`)
+
+**PR 2 of the Addon API v1 arc**, stacked on PR 1 (`claude/todo-list-review-6beccc`) — row 2 of
+`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §12, amended in this branch per §15's
+close-out rule. PR 1 gave the host a surface an addon can call; this one gives the **manifest** a
+vocabulary for describing what it is and what it wants, and turns the one thing a manifest could
+already grant itself into something the other side has to agree to.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Permissions`** — the permission vocabulary with one definition. Four table
+  entries (`library:read`, `library:write`, `state`, `project:read`), `service:<name>` by pattern,
+  and **an unknown name falls back to its own raw spelling** rather than rendering blank: a card
+  that silently understates what an addon asked for is worse than one showing a developer-facing
+  string. Deliberately **not** the same vocabulary as `Host::CAPABILITIES` — a capability is what
+  the host *can* do, a permission is what an addon *says* it wants, and they already diverge
+  (`state` / `project:read` here against `state:list` / `state:crud` / `project:current` there).
+- **Seven metadata keys parsed onto the `Addon`** — `version`, `author`, `license`, `homepage`,
+  `permissions`, `min_host`, `shares_states_with` — all optional, all **degrading** rather than
+  raising, which is the rule `layout` already followed: a manifest comes from a source this process
+  does not control. Two degradations are worth knowing because they are silent: a `permissions`
+  entry that is not a hash with a present `name` is **dropped** (the bare-string form
+  `["library:write"]` renders nothing at all), and a non-integer `min_host` is **ignored, not
+  coerced** — `"2".to_i` is 2, which would honour a value a JSON manifest should not contain, so
+  refusing it leaves the addon *available*, the failure direction an operator can diagnose.
+- **`min_host` makes `available?` a real answer.** It was hardcoded `true` for as long as
+  "registered" meant "fetchable". A too-new addon is still **built** and still **listed**, greyed
+  out, with `unavailable_reason` naming both levels — the gallery's old hardcoded "Not configured on
+  this deployment" pointed an operator at env vars that were fine. Skipping it instead is the easy
+  wrong answer: an addon that silently never appears reads as a broken deploy, not as a version
+  floor.
+- **The `states_key` mutual constraint — audit §2.1, closed.** `Registry.states_key_permitted?`
+  refuses a `states_key` pointing at another addon unless that addon names the claimant back in
+  `shares_states_with`. It lives in `Registry.all`, **not `build`**, because it is a question about a
+  **pair** of manifests and `build` is handed one. Three refusals, all skipping the addon rather
+  than raising: no reciprocation; a target **absent from the index** (the permissive "no target, no
+  harm" reading would let a typo reserve a namespace and collide the day the real addon shipped);
+  and — the reviewer's own counterexample — a target that is present but **itself rejected by
+  `build`**, since an entry the host rejects outright would otherwise confer a grant nobody can
+  audit.
+- **Permission display** on the gallery card (names, `to_sentence`) and on the addon's own page
+  (names plus each entry's optional `reasoning`).
+
+**Why the refusal SKIPS rather than greying out — the opposite choice from `min_host`, one method
+away.** `Tools::AddonsController` never gates on `available?` at all; its only consumers are three
+lines in `app/views/tools/home/index.html.erb`. So a listed-but-unavailable addon is still
+`Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key` from
+`#states` and `#create` — greying an unreciprocated claim out would **look closed while leaving the
+hole open**. The two decisions must not be harmonised, and both are now recorded in §14c saying so.
+
+**What audit §2.1 closes, exactly, and what it does not.** A manifest can no longer, **by
+declaration alone**, redirect its own saves and state reads into another addon's namespace. That is
+the whole of it. `states_key` was never an inter-addon *runtime* boundary and this does not make it
+one: a bundle runs same-origin in the authenticated session and can call
+`/tools/<other-key>/states` directly — the controller resolves whatever key is in the URL, no
+`states_key` involved. The audit's **other** §2.1 ("a malicious or compromised addon bundle owns the
+account") states that same fact inside its own evidence and **remains open**. A pre-existing comment
+in `#states` and its `routes.rb` counterpart claimed the `addon_key` scope was "the only thing
+standing between one addon's saves and another's"; that was false when written, and is now corrected
+to describe what it is — a data-scoping rule.
+
+**Closing the constraint broke four pre-existing tests, and that is the evidence it has teeth.**
+Three in `addons_controller_test.rb` and one in `registry_test.rb` were asserting the *old
+permissive behaviour* — a manifest unilaterally claiming another addon's `states_key` with nothing
+reciprocating — so `Registry.find` began returning nil and the three controller tests turned into
+404s. A constraint that could be added without a single existing assertion noticing would be a
+constraint over a case nothing exercised. The fix adds a **`RECIPROCATING_MANIFEST` beside**
+`MANIFEST` rather than editing `MANIFEST` itself, so the "FIXTURE_KEY declares no `states_key`
+anywhere in this suite" guarantee its comment makes stays true for that file's other 46 tests — and
+it was made in **its own commit (`da75f34`)**, out of the states_key task's assigned file scope, so
+the collateral stays isolated and revertible. The new constraint's own five tests were
+mutation-checked: reverting only the `&& build(target)` clause turned **exactly one** of them red
+while the other four stayed green.
+
+**THE WHOLE-BRANCH REVIEW CAUGHT A FALSE CLAIM THIS BRANCH INTRODUCED — in a comment written to
+*correct* something, which is the failure mode a correction is most prone to.** `0faffe1` justified
+the `build(target)` clause with a transitive example: *"A claims B, B claims C unreciprocated, C is
+malformed: A would still be admitted, pointed at a B that nobody agreed was legitimate."* Probed
+against that exact index: **`a` IS admitted with `states_key="b"`, and `b` is absent from
+`Registry.all`** — so the clause does not do what its own example said. The control case (target
+*directly* malformed) is correctly refused, so the clause works; only the explanation was wrong. The
+general principle stated alongside it was the wrong part: `build(target)` closes **one** of two ways
+a target can be invisible, and the other — a target skipped by `states_key_permitted?` itself —
+still confers a grant. **There is no functional consequence**, because that target still had to
+write `shares_states_with`, so no addon ever gets a namespace whose owner did not consent. The claim
+had propagated to **four** places (the comment, CLAUDE.md §14c, `docs/addon-api-v1.md` §2, this
+entry); all four now state the residual plainly rather than deleting the sentence, because "this
+closes the `build`-rejects case, and a target skipped by this same check still confers a grant,
+harmlessly, because it consented" is more useful to the next reader than silence. **Consent, not
+gallery visibility, is the property being enforced** — that sentence is the invariant the four
+copies had drifted away from.
+
+**The one non-documentation item: the branch shipped visible UI with no styling.** `.addon-card`,
+`.addon-desc`, `.addon-icon` and `.addon-title` all had rules; `.addon-permissions` had none. So the
+card's permission line rendered at body **15px — larger than the 13px description above it** — and
+the addon page's list was a bare `<ul>` with UA bullets and a 40px indent. One class serves two
+elements (a `<span>` on the card, a `<ul>` on the page), so the rule is `.addon-permissions {
+font-size: 13px }` plus a `ul.addon-permissions` list reset. **Checked in a real browser rather than
+assumed**, since the system suite covers neither page: computed `font-size` is now 13px on both and
+matches `.addon-desc` exactly, `list-style-type: none`, `padding-left: 0px`. That check also
+confirmed the raw-name fallback end to end — an unknown `totally:unknown` renders as itself — and
+that `reasoning` appears on the page and not on the card. The temporary test was deleted after it
+reported, so the suite counts below are unchanged.
+
+**Two smaller corrections from the same review.** The warn line for a refused claim fires **once per
+`Registry.all`, i.e. once per request** — only `manifests` is cached, `.all` re-filters on every
+call — not once per deploy as its comment claimed (measured: 5 calls, 5 lines, index cached). With
+the unreciprocated `boxes-next` below still live in production that is one line per request until
+the bundles repo lands its fix; the comment is corrected and the behaviour deliberately left alone.
+And `docs/addon-api-v1.md`'s permission table is a **hand-maintained second copy** of
+`Permissions::LABELS` with nothing keeping them in sync — named in the doc, with the code marked
+authoritative, which is worth stating out loud on a branch whose selling point is that the
+vocabulary has one definition. The mitigation is that these labels are cosmetic: nothing measures,
+gates or decides anything from them.
+
+**Permissions are DISPLAYED, NOT ENFORCED — a deliberate scope decision, recorded because the spec
+said otherwise.** Spec §8.1 describes permissions as "checked server-side on every request"; what
+shipped is the display half, and §8.1 now carries an as-built marker pointing at §12 row 2's scope
+correction. Three reasons: the vocabulary is unfinished (`data:read:<addon>/<collection>` does not
+exist until PR 4, so a check written now is a check PR 4 redesigns); **`service:<name>` would be a
+second spelling of a check that already exists and already works** — `sidecar_url_for` refuses any
+service the manifest's `services` key does not name, and a `permissions` check over the same
+condition is §14a's one-condition-two-answers drift unless the two keys are reconciled first; and
+§8.1's own next paragraph already concedes the check is not a security boundary, since a Ring 1
+bundle runs same-origin and can call any endpoint the user can. A gate that *looks* like a boundary
+and is not is this repo's dominant failure shape. The honest interim is a card the operator reads at
+publish time — which is worth real money in a deployment where **republishing a bundle IS the
+deploy**, Rails is never rebuilt, and there is no review step in between: the card is the one place
+an addon that quietly starts asking for more becomes visible. `docs/addon-api-v1.md` §2 and §4 now
+say all of this in those words, twice, because §4 is where an author goes looking for the boundary.
+
+**The `assert_select` trap, recorded so the next person does not spend the same round on it.**
+`assert_select "[attr=?]", /regex/` **does not regex-match** — rails-dom-testing's
+`SubstitutionContext#matcher_for` interpolates a Regexp straight into the selector, so `[title=?]`
+with `/Needs a newer…/` compiles to `[title="(?-mix:Needs a newer…)"]`, an exact-equality CSS
+selector that can never match real text. Regex matching on an **attribute** needs the gem's own
+`:match('attr', ?)` pseudo-class; `[attr*=?]` with a plain String is the simpler alternative.
+(`text: /…/` is a different code path and does match — this is attributes only.) Verified directly
+against rails-dom-testing **2.3.0**: `[title=?]` finds 0 elements where `:match('title', ?)` finds
+1. It fails as a test that **can never go green** rather than as a false green — the better
+direction, but only once you know why. Now in §14e, beside the other testing lessons, because it is
+not an addon fact.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0**. The three backend legs report
+**identical** counts — **2211 runs, 7944 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **75 runs, 466 assertions, 0 failures**.
+
+Those are the numbers **after** the base branch was merged back in (merge `6b95ec6`, 2026-08-10,
+which picked up the revision-aware backfill fix, the `/deploy` secrets doc fix and the `system-test`
+card-click fix). Measured alone, before that merge, this branch was **2206 runs / 7923 assertions**
+with system **74 / 461** — and the merge adds exactly **5** Rails-leg `test` blocks and **1** system
+`test` block, which is precisely the 2206 → 2211 and 74 → 75 observed: two independent counts that
+cross-check rather than one being read off the other. The pre-merge figure is what carries this
+arc's own evidence — against PR 1's measured 2181 runs / 7867 assertions this branch adds **25
+Rails-leg tests** and 56 assertions, matching the **25** `test` blocks its diff adds and the **0** it
+removes. This PR still adds **no browser test**; the +1 there is the merged-in card-click guard.
+(Per this file's own header the per-entry counts do not form a chain — the card-click arc's own
+recorded 2191/7947 was measured off `main`, a different baseline, and is not comparable to these.)
+
+**The one semantic conflict worth looking for in that merge — a card that grew a line of text under
+a click helper that computes a coordinate — DOES NOT EXIST, and the reason is that there are two
+different galleries both using `.addon-card`.** `WebHelpers#open_addon_card`/`settle_addon_cards`
+guard the **bundle's own generator gallery**, built in JS by `test/fixtures/addons/boxes/gallery.js`
+and reached only at `tools_addon_path("boxes")` — all six call sites visit that path and **no system
+test visits `/tools` at all**. The permission line this branch adds is on the **host** gallery
+(`app/views/tools/home/index.html.erb`), a page the browser tier never loads. Belt and braces: both
+the card `<span>` and the addon page's `<ul>` are gated on `permissions.any?`, `build` defaults
+`permissions` to `[]`, and **none of the three fixture manifests declares `permissions`** — so the
+markup renders nowhere in the system suite even on the page those tests do load — a property this
+branch's own `home_controller_test.rb` already pins ("a card with no declared permissions renders no
+permission list at all"). `min_host` (default `0`) and `states_key_permitted?` (fixtures declare
+neither key) likewise leave every fixture addon built and listed.
+
+**And it is robust rather than lucky**, which is the part worth checking rather than assuming: even
+if a fixture manifest *did* declare permissions, the `<ul>` is server-rendered above the mount point,
+so its height is in the layout **before** the bundle mounts and before any thumbnail resolves — it is
+a constant offset, not the LATE shift `settle_addon_cards` exists to absorb. `box_sections_test.rb`'s
+guard asserts read-to-read **equality** of card positions, never pixel literals, so a constant offset
+cannot break it either. The residual to watch is a different one: `open_addon_card` matches with
+Capybara's substring `text:`, so a permission label that happened to contain a generator's name would
+make `find(".addon-card", text: key)` ambiguous the day a system test does visit `/tools`.
+
+**A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
+DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
+asserted that no published manifest declares any of the new keys, so nothing here is exercised
+against a real bundle. That is true of the seven **new** keys and **false of the constraint**:
+`chaim354/tinkerex-addons`, on `main` since `4862f48` (2026-08-03, *"boxes-next: declare
+`states_key: "boxes"` so the trial shares the legacy saved-box rail"*), publishes three addons, and
+`boxes-next` declares `states_key: "boxes"` while `boxes` declares **no `shares_states_with`**. That
+is exactly the unreciprocated claim `states_key_permitted?` now refuses — so deploying this branch
+**silently drops `boxes-next` from the gallery**, log line only, which is the failure mode §14c
+records as the price of skipping rather than greying out. The fix is one line **in the bundles
+repo** — `boxes` adds `"shares_states_with": ["boxes-next"]` — and it must land **before or with**
+the Rails deploy, not after. Deliberately not made here: that is a different repo, a different
+deploy, and publishing its image is its own release. **Do not deploy this branch until it is done.**
+
+**What this does NOT prove, stated plainly.** **No published manifest declares any of the seven new
+keys** (`version`, `author`, `license`, `homepage`, `permissions`, `min_host`,
+`shares_states_with`) — verified by parsing `addons/manifests.json` on the bundles repo's `main` —
+so the metadata half is exercised only by stubbed `Maker::Addons::Source` fixtures, never by a real
+bundle. Permissions are displayed and not enforced; `states_key` is not an inter-addon runtime
+boundary and this PR does not make it one. Nothing here has been deployed. The four purely
+descriptive keys are parsed onto the `Addon` and **rendered on no page at all** — documented as such
+rather than advertised.
+
+**Invariants recorded** in CLAUDE.md — six in §14c (the mutual `states_key` declaration and its
+valid-target requirement; skip-not-grey-out and why it is deliberately unlike `min_host`;
+`available?` no longer hardcoded and the gallery showing a reason; non-integer `min_host` ignored not
+coerced; displayed-not-enforced for permissions *and* for `states_key`; one definition for the
+permission vocabulary with a raw-name fallback) and **one in §14e** for the `assert_select` attribute
+trap, which belongs with the testing lessons rather than with the addons.
+
+---
+
+## 2026-08-07: the service name gets the guard its sibling already had, and a rescue comment stops lying (branch `claude/addon-sdk-service-name-guard`)
+
+**The two follow-ups the SDK PR (the entry below) recorded as open and left out of scope.** Written as
+a stack on `claude/todo-list-review-6beccc`; that branch merged as **PR #161** while this one was in
+review, so **this PR now targets `main`** and carries a merge of it — which brings PR #165's
+referential-integrity fixes and PR #162's manifest metadata along too, both having landed in the same
+window.
+
+**1. `serviceName` is now rejected the way `path` beside it already was.** `service.get`/`post` build
+ONE URL out of TWO arguments and only the second was guarded, so `host.service.get("../../evil", "x")`
+built `/tools/<key>/service/../../evil/x` — which the **browser's own URL parser normalizes to
+`/tools/evil/x` before the request is sent** (verified against WHATWG normalization, not assumed), so
+`sidecar_url_for`'s refusal was never asked and the call misrouted silently rather than failing.
+`encodeServiceName` rejects `""`, `"."`, `".."` and **any `/`**, then encodes.
+
+The `/` is the only real design choice, and it is **rejected outright rather than split into segments**:
+`:service` is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"`
+cannot name a service on any host; splitting would normalize a structural error (§14a's `key_for` rule)
+and would leave the contract incoherent — `"../.."` refused while `"a/b"` is accepted, for a value that
+is one segment by definition. Measured rather than assumed: `encodeURIComponent` already defuses `\`,
+`#`, `?` and `%`, and only `.`, `..` and `""` survive it — which is exactly the clause list.
+
+**Proven in a browser, because nothing else can see it.** The normalization is the URL parser's, so a
+request test would be asserting about a URL the browser never sends. A fifth test in
+`test/system/addon_sdk_test.rb` clicks a fixture button that calls both the bad name and the bad path
+and renders `class:code` for each. **Mutation-checked:** reverting `encodeServiceName(serviceName)` to
+`${serviceName}` at both call sites turns it red — *"expected … exact text
+name=AddonError:invalid_argument path=AddonError:invalid_argument … Also found
+`name=ServiceError:service_error path=AddonError:invalid_argument`"* — so the assertion isolates the
+half that regressed instead of merely noticing that something did.
+
+**2. The `rescue_from FileLayer::NotFound` comment described a condition that cannot happen.** It read
+*"NotFound here means the save named a destination folder that no longer exists"*. It cannot:
+`chosen_parent_node_id` resolves an unknown, stale or foreign `parent_node_id` to `nil` = the library
+ROOT **before any port call**, so that save answers **302 and succeeds**, probed on all three backends
+(the node lands with `parent_node_id: nil`). `docs/addon-api-v1.md` §5 was corrected for this same
+false claim in the previous PR; the code comment was not.
+
+**What actually reaches the arm** — found by probing every candidate through the real door, one save
+per name, rather than by reading the adapters:
+
+| output name | chunk | share | s3 |
+|---|---|---|---|
+| `ok.txt` | 302 | 302 | 302 |
+| `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash` | **302** | **422 `not_found`** | **422 `not_found`** |
+| `.maker-tmp-x` | **302** | **422 `not_found`** | **302** |
+
+It is `observable!`, §14b's skip-list rule. `#parse_files` vets names with
+`Maker::MoveNode.valid_leaf_name?`, which refuses `/`, `\`, NUL, `.`, `..` and over-long names — but
+every name above is a perfectly good *leaf*. The `.maker-tmp-x` split is deliberate and documented in
+place: `S3#observable!` omits `TEMP_PREFIX` because that adapter writes no temp keys.
+
+**So the arm is reachable from `#create`, on share/s3 only.** Chunk cannot reach it —
+`LibraryOutput#write_chunk` never calls the port — and `#show`/`#asset`/`#service`/`#states` never
+touch `FileLayer` at all, so the class-level arm covers those four vacuously. Every other `NotFound`
+inside `#write` is closed upstream: `leaf!` by the stricter `valid_leaf_name?`, the path-escape guard
+by `leaf!` in turn, `read_capped!` by `MAX_FILE_BYTES` (4 MB) sitting far under `FileLayer::MAX_BYTES`
+(256 MB), and *"parent is not a live directory"* by `chosen_parent_node_id` having just resolved that
+id — which leaves it reachable only as a **TOCTOU**, a folder tombstoned between the two lookups.
+Nothing after the write reaches it either: `attach_addon_files_to_current_project` and
+`intake_project_folder` both rescue `StandardError`, and `Maker::ProjectIntake#place` already rescues
+`FileLayer::NotFound` into a `:not_found` skip.
+
+**The one behaviour change, called out because the brief asked for none.** The response *message* was
+false in the same way the comment was — *"That destination folder no longer exists."* for a file named
+`.DS_Store` — so it now names both surviving causes and prescribes for each, since they want opposite
+remedies (renaming fixes the name and does nothing for the race; retrying fixes the race and never the
+name). Nothing asserted the old string. **The silent-write-to-root is untouched**, as instructed: that
+is a product decision, and `docs/addon-api-v1.md` §5 already documents it for authors.
+
+**Left open on purpose: `.DS_Store` is refused on share/s3 and accepted on chunk** — one condition with
+two answers across backends, the shape §14a calls the port's whole job. Out of scope here (this branch
+was scoped to make the guard and the comment true, not to change behaviour); recorded in CLAUDE.md §14c
+so it is not rediscovered from scratch. **Closed by the `claude/reserved-name-door-guard` arc (the
+Latest entry), which found the same divergence at two further doors** — `LibraryBrowseController
+#create_folder` and `FilesController#begin_upload`.
+
+**Measured on the merged tree**, `main` @ `a5838f3` merged in — the numbers below are that tree's, not
+the branch point's, because that is what ships. `bin/ci` bare, **all seven gates, exit 0** (52.20 s):
+style **517 files / 0 offenses**, scan **no vulnerabilities**, and the three backend legs **identical**
+— **2234 runs, 8016 assertions, 0 failures, 0 errors, 9 skips**, the same as `main`, since this branch
+adds no Rails-leg test. System (real browser): **76 runs, 470 assertions, 0 failures**, against main's
+**75 / 466**. That delta is exactly one `test` block and four assertions — the whole of what this
+branch adds — and cross-checks against the file on its own: `addon_sdk_test.rb` goes **4 runs / 22
+assertions → 5 / 26**, measured by stashing the two test files rather than inferred from the total.
+
+**The semantic conflict the merge invited, and did not produce.** `main` arrived carrying
+`WebHelpers#open_addon_card` / `#settle_addon_cards` (the entry two above), which exist because a
+gallery card collapsed out from under Chromedriver's click — and this branch adds a fifth browser test
+plus a button to the SDK fixture bundle. They do not meet, and not by luck: the collapse is caused by
+`img.addon-thumb`, which is created in exactly **one** place, the boxes bundle's own client-built
+gallery (`test/fixtures/addons/boxes/gallery.js`), and `addon_sdk_test.rb` never opens it. Its new test
+goes straight to `/tools/sdk-fixture`; the soft-navigation test's `click_link "SDK Fixture"` lands on
+the HOST gallery (`app/views/tools/home/index.html.erb`), whose cards are three server-rendered spans
+with no image and therefore nothing asynchronous to shift them. Checked by grepping for the class
+rather than by reading the two tests side by side.
+
+**Invariants recorded** in CLAUDE.md §14c: the reject-never-normalize bullet is **extended** to the
+service name (carrying the argument for rejecting `/` rather than splitting it), and **one new bullet**
+records the `rescue_from FileLayer::NotFound` reachability — a comment naming the wrong cause costs the
+next reader exactly what a stale open-list does.
+
+---
+
+## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
+
+**PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
+§12, amended in this branch per §15's close-out rule. Until now an addon author's reference *was*
+another bundle: `save.js` gets copied verbatim out of `boxes` into every new generator, and each copy
+reads only the HTTP status, so a save refused for a nameable reason reports **"Save failed."** This
+PR gives the host a surface of its own.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Host`** — a frozen server-side capability map (ten keys) plus `LEVEL = 1`. Six of
+  the ten answer `false` today, **named before they are built**, which is the whole compatibility
+  mechanism: an addon can be authored against `library:read` now and degrade until a host answers
+  true. Every value is a real boolean, because a missing key reads as `undefined` in JS and a nil as
+  `false`, and neither is distinguishable from a deliberate "off".
+- **One `data-addon-ctx-value` JSON blob** in the addon shell, beside the **nine** legacy data
+  attributes — an addition, never a replacement, because a bundle built against either shape may be
+  running against this host. `addon_ctx` carries the host level and the capability map, which have no
+  attribute of their own.
+- **`app/javascript/maker/addon_sdk.js`, pinned as `@maker/addon-sdk`** — a **host** pin, so a bundle
+  imports it having declared nothing. `capabilities()`, typed errors (`WouldReplaceError`,
+  `NameTakenError`, `ServiceUnavailableError`, `UnsupportedCapabilityError`, `ServiceError`),
+  `files.save` / `files.pickFolder` / `files.url`, `state.list`, `service.get` / `service.post`, and
+  one `teardown` event. **One transport seam** (`_fetch`): Ring 2's null-origin iframe replaces that
+  function, not every call site.
+- **`addon_controller.js` calls `initHost(ctx)` before dynamic-importing the bundle** — the order is
+  the contract, since a bundle's top-level code runs at import time — and `disconnect()` calls
+  `teardownHost()`. A `this.disposed` guard (the idiom already used by `modelviewer_controller.js`
+  and `measure_controller.js`) covers the disconnect-during-import race.
+- **A second hermetic fixture, `sdk-fixture`,** that touches the host **only** through the SDK, plus
+  four browser tests.
+- **`docs/addon-api-v1.md`** — the author-facing normative reference, extracted from the spec so an
+  author never reads the design document.
+
+**The scope correction that shaped the whole PR.** The spec's row 1 said *"`generators` adopts it"*.
+**`generators` is not in this repo** — bundles live in `chaim354/tinkerex-addons` and are deployed by
+republishing the accessory image, so that migration spans two repos and is a follow-up PR **there**.
+The in-repo proof is instead a **second** hermetic fixture using only the SDK, added beside the
+existing `fixture` addon, **which deliberately stays on the raw-`ctx` path**: both halves of the
+compatibility rule — old bundles keep working, new bundles need only the SDK — are then covered by
+something that *runs*, rather than by an assertion about intent. Row 1 of the spec is amended to say
+so.
+
+**Two findings from reading the tree, both of which made PR 1 cheaper than the spec assumed.**
+`ctx.chooseFolder` **already existed** as a host-supplied function (the Miller-columns picker), so
+`files.pickFolder` is a wrapper and a capability name, not new work. And `saveWithOverwrite` — the
+409 dance — is **copied verbatim into every real bundle**, which makes `files.save` absorbing it the
+most concrete "the SDK deletes per-bundle code" win available in this PR, and the one the fixture's
+third browser test exercises end to end.
+
+**What review caught, which is the part worth reading.** The plan specified the SDK's surface; the
+SDK's own *code* shipped four defects that reviewers found, all of them the quiet kind:
+
+- **`files.url` pointed at the HTML file page while its comment promised an `<img src>`.**
+  `/files/:id` is `resources :files`' detail page; the bytes are at `/files/:id/blob`. The method and
+  path were kept — that is what shipped bundles use it for — and the comment fixed. No `blobUrl` yet:
+  that is PR 5's, and it needs the SVG-forced-to-attachment caveat (§14c) stated properly rather than
+  bolted on here.
+- **`save`'s return was an untagged union whose arms were both truthy.** `#create` redirects on
+  success and `fetch` **follows** redirects, so `res.ok` and a parsed body are truthy on every
+  successful POST regardless of outcome — `if (await host.files.save(...))` reported success on a save
+  the user had just **cancelled**. Now always `{cancelled: false, data}` or `{cancelled: true}`.
+- **A cancelled `pickFolder` composed into a silent save to the library ROOT** —
+  `folderNodeId: (await host.files.pickFolder())?.nodeId` yields `null` on Esc, and `save` defaulted a
+  missing folder to `""`. That is exactly the null-vs-root conflation the neighbouring comment warned
+  against, two members apart in the same object. `folderNodeId` is now **required**; pass `""` when the
+  root really is the destination.
+- **`ERROR_CLASSES[code]` reached `Object.prototype`.** `code` comes straight off a response body, so
+  a body of `{error: "toString"}` resolved through the prototype chain to something that is not a class
+  and `new Klass(...)` threw a bare `TypeError` **from inside `errorFrom`** — discarding the original
+  HTTP failure the function exists to describe. Now `Object.hasOwn`.
+
+Two more, from the same passes and both about coverage rather than code:
+
+- **A mutation check proved the ctx blob's `defaultFolder` was entirely unguarded** — both values could
+  be replaced with garbage and the whole file stayed green. The fix reads both representations out of
+  **one** rendered response and compares them directly, rather than recomputing an expectation the
+  duplicate could drift away from. The same shape recurred one commit later in the fixture's
+  `onReplace` assertion, where a substring match was satisfied by the filename alone, so the
+  **folder** half of the 409 payload — the part that lets a real prompt name a real destination — was
+  never asserted; `sdk-dup.svg@undefined` would have passed.
+- **The doc's own live-binding example was FALSE.** It claimed a top-level `const { files } = host`
+  throws `host_not_initialized`. It does not: `initHost(ctx)` runs six lines before
+  `await import(entry)`, so top-level code always sees a real host and the destructure **succeeds**.
+  The real hazard is the opposite one and is **silent** — an ES module is evaluated once per URL per
+  page, so on a Turbo re-mount `initHost` builds a new `Host` while the cached module's top level does
+  not re-run, and the captured reference goes on serving the previous, **torn-down** host's context and
+  CSRF token with nothing thrown. Traced to a **stale SDK comment that contradicted another comment
+  eight lines above it in the same file**; both were corrected, and the rule ("read through `host` at
+  call time; never capture it") now has the true reason attached to it.
+
+**The final whole-branch review found no code defects — and three documentation ones, which is the
+right ratio for a PR whose product IS a contract.** The reviewer drove the whole SDK out-of-tree
+through node (**71 assertions, all passing**), checked the ctx→SDK seam in both directions and found
+no key emitted-but-unread or read-but-unemitted, and re-ran both suites to the same numbers recorded
+below. It also **closed the Turbo lifecycle hazard by reading Stimulus rather than reasoning about
+it**: `stimulus.js:489-490` processes `removedNodes` before `addedNodes`, so
+`disconnect()`→`teardownHost()` always precedes the next `connect()`→`initHost()` and the
+interleaving that would have left a new host torn down by an old controller **cannot occur**. (The
+`this.disposed` guard still earns its keep — it covers a *pending dynamic import* resolving after a
+disconnect, a different window from the connect/disconnect ordering.) The three documentation
+defects: an error row in `docs/addon-api-v1.md` whose trigger cannot fire and which **hid the real
+behaviour** (a save naming a folder that no longer exists resolves to `nil` in
+`Tools::LibraryFolders#chosen_parent_node_id` *before* any port call, so it answers **302 and writes
+to the library ROOT** — verified on chunk and share, host behaviour that predates this branch and is
+now described rather than changed); the spec still showing `host.ctx.defaultFolder` and
+`Maker::Addons::HOST_LEVEL`, neither of which exists — the first being precisely what the new §14c
+bullet forbids, sitting in the example an agent implementing PR 5 would copy; and two new bare
+"spec §N" citations that are ambiguous because `source.rb`, one file over, uses the same shorthand
+for the **2026-08-02** bundle design, which has a §4 of its own.
+
+**Rejected on the way.** Publishing the raw context as `host.ctx`: the module's whole Ring-2 argument
+is that a bundle talks only through `host`'s methods, and a public `ctx` hands back the raw
+`csrfToken` and `chooseFolder` the SDK exists to wrap — the two claims cannot both be true, so it is
+`_ctx`. Letting a sidecar's error through the host's error table: `boxes.py` answers **prose** in its
+`error` key, so `errorFrom` would put the message in `.code` and filler in `.message`, and a non-JSON
+body (Werkzeug's HTML 405, the proxy's own body-less 404) would be eaten by the failing `res.json()`
+— `service.*` raises `ServiceError` from the status and the raw text instead. And *normalizing* a
+`..` path segment: `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the URL before
+the request is sent and the server's guard never gets asked — it is now rejected, per §14a's `key_for`
+rule, which this was the one spot in the tree departing from.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0** (53.76 s). The three backend legs report
+**identical** counts — **2181 runs, 7867 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **74 runs, 461 assertions, 0 failures**. Against the merge-base
+`de46dc2` (2172 runs / 7790 assertions; 70 system runs / 439 assertions, measured at `b3f4b78`) this
+arc added **9 Rails-leg tests and 4 browser tests** — which matches the 13 `test` blocks the diff
+adds, so the two counts cross-check rather than one being read off the other.
+
+**What this does NOT prove, stated plainly.** No **real published bundle** runs against the SDK yet.
+The four browser tests drive a fixture, and the `generators` migration — the thing that would delete
+`saveWithOverwrite` from a bundle a user actually opens — is a follow-up PR in
+`chaim354/tinkerex-addons`. Nothing here has been deployed.
+
+Three more, recorded as known and deliberate so a later reader does not find them the hard way:
+
+- **~~`serviceName` is neither validated nor encoded, while `path` beside it is rigorously
+  rejected.~~ CLOSED by the entry above** (`claude/addon-sdk-service-name-guard`), which also
+  replaced this controller's false `rescue_from FileLayer::NotFound` comment. Left here rather than
+  deleted because the two entries are one arc and the follow-up is only legible beside what it
+  followed.
+- **Two-thirds of the SDK is unexercised by `bin/ci`.** The four browser tests cover the mount path,
+  `capabilities()` and `files.save`. Nothing touches `state.list`, `service.*`, `files.pickFolder`,
+  `files.url`, the uninitialised-host proxy, or the typed errors — and most pointedly
+  **`host.on("teardown")`, the SDK's only lifecycle event, has never fired in this repo**: the Turbo
+  test reaches `teardownHost()`, but the fixture registers no handler, so `_fireTeardown` iterates an
+  empty list. The reviewer's node harness proves all of it works today; **nothing in CI would notice
+  if it stopped** — this repo's dominant failure shape, recorded rather than closed.
+- **`apiVersion` is emitted in the ctx blob and read by nothing** — no consumer today, and none named
+  in any later PR.
+
+**Invariants recorded** in CLAUDE.md §14c — nine, which is spec §15's items 1 and 5 (the two of its
+five that PR 1 makes true) plus the seven this PR's own defects earned: the ctx blob is an addition
+and the nine legacy attributes stay, the specifier-is-public-API rule for the host pin, the
+init-before-import ordering and its module-cache corollary, the one-definition boolean capability map,
+the bump-`LEVEL`-with-the-capability rule, 409-is-a-question / 422-is-not, the two `defaultFolder`
+shapes, sidecar errors staying out of the host's error table, and reject-never-normalize for path
+segments. Spec §15's items 2, 3 and 4 belong to PRs 3, 4 and 8 and are deliberately not recorded yet
+— a rule for code that does not exist is a rule nobody can check.
 
 ---
 

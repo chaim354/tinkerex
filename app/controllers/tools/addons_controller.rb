@@ -86,22 +86,54 @@ module Tools
              status: :service_unavailable
     end
 
-    # 422, NOT 404. NotFound here means the save named a destination folder that no longer exists
-    # (the leaf-name arm that used to raise it is closed in #parse_files, before any write is
-    # attempted). A 404 on a POST to the save endpoint reads as "this endpoint is gone", which
-    # would send an addon author looking in entirely the wrong place; the honest answer is that the
-    # request was refused.
+    # 422, NOT 404 — AND NOT FOR THE REASON THIS COMMENT USED TO GIVE. It said "NotFound here means
+    # the save named a destination folder that no longer exists", which this door cannot produce:
+    # Tools::LibraryFolders#chosen_parent_node_id resolves an unknown, stale or foreign
+    # parent_node_id to nil BEFORE any port call, and nil means the library ROOT. That save answers
+    # 302, succeeds, and quietly writes to the root — probed on all three backends, and documented
+    # for addon authors in docs/addon-api-v1.md §5, which carries the consequence (a folderNodeId
+    # persisted in an AddonState can name a folder that is gone, and nothing reports it).
     #
-    # THAT CLAIM IS ONLY NOW TRUE, AND THE GAP IS WORTH RECORDING because the message below asserts
-    # it to the user. A RESERVED name (`.DS_Store`, `.trash`, `.maker-tmp-x`) also reached here, via
-    # share/s3's `observable!` inside #write — so this arm answered "That destination folder no
-    # longer exists." about a perfectly good folder, for a save refused on its FILENAME. It was the
-    # visible half of a defect whose other half was silent: chunk never calls the port, so the same
-    # save simply succeeded there and created a live node bound for every device's mount. Both
-    # halves are closed in #parse_files now, which is what leaves this arm with the single meaning
-    # its message claims.
+    # THE OTHER CAUSE WAS AN OUTPUT NAME THE LIBRARY SCAN COULD NEVER OBSERVE, AND IT IS NOW CLOSED
+    # ONE LAYER EARLIER — read the two paragraphs together, because the second retires the first.
+    # The `observable!` guard in FileLayer::Share and FileLayer::S3 (§14b's skip-list rule) refuses
+    # ".DS_Store", "._x", "__MACOSX", ".Trashes", (at the library root) ".trash" and — on share only
+    # — ".maker-tmp-x", because a file written to a path the scan skips is a ghost the Reconciler
+    # can never pair. Those are all perfectly good LEAF names, so Maker::MoveNode.valid_leaf_name?
+    # passed them, and each answered this 422 on share and s3 while CHUNK ACCEPTED THEM — the write
+    # goes through Maker::Addons::LibraryOutput#write_chunk, which never calls the port at all. One
+    # condition, two answers across backends, with the main deployment on the wrong side.
+    #
+    # #parse_files now asks Library::ReservedNames.reserved? beside valid_leaf_name?, at the door,
+    # before any backend is chosen — so a reserved name is a routine `head :unprocessable_entity`
+    # from #create on EVERY backend and no longer reaches this rescue on any of them. What that
+    # leaves here is the TOCTOU below, alone.
+    #
+    # EVERY OTHER NotFound INSIDE #write IS CLOSED BEFORE IT, which is why this arm is narrow rather
+    # than a catch-all: `leaf!` by valid_leaf_name? (strictly stricter), the path-escape guard by
+    # `leaf!` in turn, `read_capped!` by MAX_FILE_BYTES (4 MB) sitting far under FileLayer::MAX_BYTES
+    # (256 MB), and "parent is not a live directory" by chosen_parent_node_id having just resolved
+    # that id against the user's own live dirs — which leaves it reachable only as a TOCTOU, a folder
+    # tombstoned between those two lookups (a real window on share/s3, where Library::ScanJob
+    # tombstones a folder removed on the NAS). Nothing AFTER the write can reach here either:
+    # #attach_addon_files_to_current_project and #intake_project_folder both rescue StandardError,
+    # and Maker::ProjectIntake#place already rescues FileLayer::NotFound into a :not_found skip.
+    #
+    # THE MESSAGE STILL NAMES THE RESERVED-NAME CAUSE, DELIBERATELY LEFT WIDER THAN THE ARM. Its
+    # "rename the output" clause is now belt-and-braces for this door — #parse_files gets there
+    # first — but the sentence costs nothing, and narrowing it to the race alone would be a
+    # user-facing change made on the strength of an unreachability argument, which is the kind of
+    # argument §14e says to probe rather than trust. Prefer widening the arm's own test over
+    # trimming the sentence. None of #show, #asset, #service or #states touches FileLayer at all,
+    # so this class-level arm covers those four vacuously.
+    #
+    # A 404 on a POST to the save endpoint would read as "this endpoint is gone", which sends an
+    # addon author looking in entirely the wrong place; the honest answer is that the request was
+    # refused.
     rescue_from FileLayer::NotFound do
-      render json: { error: "not_found", message: "That destination folder no longer exists." },
+      render json: { error: "not_found",
+                     message: "Your library refused that write. Rename the output if it is named " \
+                              "like a system file, or try again." },
              status: :unprocessable_entity
     end
 
@@ -116,6 +148,7 @@ module Tools
       @folders = folder_options
       @default_folder_label = folder_path_label(@default_parent_node_id)
       @service_url = service_base_url
+      @ctx = addon_ctx
     end
 
     # Same-origin proxy for the addon's bundle and its pinned modules. Same-origin is not a
@@ -163,11 +196,18 @@ module Tools
 
     # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
     # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
-    # by addon_key AND by current_user, in that order below — because a bundle is browser code and
-    # this scoping is the only thing standing between one addon's saves and another's, or one user's
-    # and a stranger's. Scoped by `states_key`, not `key`: they're the same value unless the manifest
-    # says otherwise (Maker::Addons::Registry#build), which is how one addon can read another's saves
-    # (see the `states_key` comment there for what that widens and why it's fine here).
+    # by addon_key AND by current_user, in that order below.
+    #
+    # THE addon_key SCOPE IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
+    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
+    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
+    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
+    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
+    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). The
+    # current_user scope is the real protection here, keeping one user's rows from a stranger's.
+    # Scoped by `states_key`, not `key`: they're the same value unless the manifest says otherwise
+    # (Maker::Addons::Registry#build), which is how one addon can read another's saves — see the
+    # `states_key` comment there for what that widens, and `states_key_permitted?` for who may ask.
     def states
       states = current_user.maker_addon_states.for_addon(@addon.states_key)
                             .includes(:files).order(updated_at: :desc, id: :desc)
@@ -253,6 +293,32 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # THE SDK's VIEW OF THE HOST, AS ONE SERIALIZED VALUE. Everything here is data the SERVER knows;
+    # the two browser-side members of ctx (`chooseFolder`, which is a function, and the CSRF token,
+    # which lives in a meta tag) are added by addon_controller.js. Splitting it that way keeps this
+    # hash JSON-serializable and keeps the token out of a second place in the DOM.
+    #
+    # The nine legacy data attributes are NOT removed and this does not replace them — see the
+    # compatibility rule in docs/addon-api-v1.md §6. This is an addition.
+    def addon_ctx
+      {
+        apiVersion: Maker::Addons::Registry::API_VERSION,
+        hostLevel: Maker::Addons::Host::LEVEL,
+        capabilities: Maker::Addons::Host.capabilities,
+        addon: { key: @addon.key },
+        urls: {
+          save: tools_addon_path(@addon.key),
+          states: tools_addon_states_path(@addon.key),
+          # A BASE, ending in "/" — a bundle builds `${service}/${path}` onto it. Derived from the
+          # real route by service_base_url, never a literal.
+          service: @service_url,
+          children: library_children_path,
+          create: library_folders_path
+        },
+        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label }
+      }
     end
 
     # The base URL a bundle can reach its sidecar(s) through: append `service_name/path` and fetch.

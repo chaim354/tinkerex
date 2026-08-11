@@ -308,7 +308,7 @@ class PlanExportTest < ApplicationSystemTestCase
 
   def open_generator(key)
     visit tools_addon_path("boxes")
-    find(".addon-card", text: key).click
+    open_addon_card(key)
     assert_selector ".box-topview svg", wait: 5
   end
 
@@ -373,7 +373,7 @@ class PlanExportTest < ApplicationSystemTestCase
   # that keeps FrontPanel's very different `layout` DSL out.
   test "a generator with no compartments offers no export controls" do
     visit tools_addon_path("boxes")
-    find(".addon-card", text: "ABox").click
+    open_addon_card("ABox")
     assert_selector ".box-preview"
 
     assert page.has_no_selector?('[data-export="print"]')
