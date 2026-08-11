@@ -149,6 +149,170 @@ Actual: 4`); restored → green.
 
 ---
 
+## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
+
+**PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
+§12, amended in this branch per §15's close-out rule. Until now an addon author's reference *was*
+another bundle: `save.js` gets copied verbatim out of `boxes` into every new generator, and each copy
+reads only the HTTP status, so a save refused for a nameable reason reports **"Save failed."** This
+PR gives the host a surface of its own.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Host`** — a frozen server-side capability map (ten keys) plus `LEVEL = 1`. Six of
+  the ten answer `false` today, **named before they are built**, which is the whole compatibility
+  mechanism: an addon can be authored against `library:read` now and degrade until a host answers
+  true. Every value is a real boolean, because a missing key reads as `undefined` in JS and a nil as
+  `false`, and neither is distinguishable from a deliberate "off".
+- **One `data-addon-ctx-value` JSON blob** in the addon shell, beside the **nine** legacy data
+  attributes — an addition, never a replacement, because a bundle built against either shape may be
+  running against this host. `addon_ctx` carries the host level and the capability map, which have no
+  attribute of their own.
+- **`app/javascript/maker/addon_sdk.js`, pinned as `@maker/addon-sdk`** — a **host** pin, so a bundle
+  imports it having declared nothing. `capabilities()`, typed errors (`WouldReplaceError`,
+  `NameTakenError`, `ServiceUnavailableError`, `UnsupportedCapabilityError`, `ServiceError`),
+  `files.save` / `files.pickFolder` / `files.url`, `state.list`, `service.get` / `service.post`, and
+  one `teardown` event. **One transport seam** (`_fetch`): Ring 2's null-origin iframe replaces that
+  function, not every call site.
+- **`addon_controller.js` calls `initHost(ctx)` before dynamic-importing the bundle** — the order is
+  the contract, since a bundle's top-level code runs at import time — and `disconnect()` calls
+  `teardownHost()`. A `this.disposed` guard (the idiom already used by `modelviewer_controller.js`
+  and `measure_controller.js`) covers the disconnect-during-import race.
+- **A second hermetic fixture, `sdk-fixture`,** that touches the host **only** through the SDK, plus
+  four browser tests.
+- **`docs/addon-api-v1.md`** — the author-facing normative reference, extracted from the spec so an
+  author never reads the design document.
+
+**The scope correction that shaped the whole PR.** The spec's row 1 said *"`generators` adopts it"*.
+**`generators` is not in this repo** — bundles live in `chaim354/tinkerex-addons` and are deployed by
+republishing the accessory image, so that migration spans two repos and is a follow-up PR **there**.
+The in-repo proof is instead a **second** hermetic fixture using only the SDK, added beside the
+existing `fixture` addon, **which deliberately stays on the raw-`ctx` path**: both halves of the
+compatibility rule — old bundles keep working, new bundles need only the SDK — are then covered by
+something that *runs*, rather than by an assertion about intent. Row 1 of the spec is amended to say
+so.
+
+**Two findings from reading the tree, both of which made PR 1 cheaper than the spec assumed.**
+`ctx.chooseFolder` **already existed** as a host-supplied function (the Miller-columns picker), so
+`files.pickFolder` is a wrapper and a capability name, not new work. And `saveWithOverwrite` — the
+409 dance — is **copied verbatim into every real bundle**, which makes `files.save` absorbing it the
+most concrete "the SDK deletes per-bundle code" win available in this PR, and the one the fixture's
+third browser test exercises end to end.
+
+**What review caught, which is the part worth reading.** The plan specified the SDK's surface; the
+SDK's own *code* shipped four defects that reviewers found, all of them the quiet kind:
+
+- **`files.url` pointed at the HTML file page while its comment promised an `<img src>`.**
+  `/files/:id` is `resources :files`' detail page; the bytes are at `/files/:id/blob`. The method and
+  path were kept — that is what shipped bundles use it for — and the comment fixed. No `blobUrl` yet:
+  that is PR 5's, and it needs the SVG-forced-to-attachment caveat (§14c) stated properly rather than
+  bolted on here.
+- **`save`'s return was an untagged union whose arms were both truthy.** `#create` redirects on
+  success and `fetch` **follows** redirects, so `res.ok` and a parsed body are truthy on every
+  successful POST regardless of outcome — `if (await host.files.save(...))` reported success on a save
+  the user had just **cancelled**. Now always `{cancelled: false, data}` or `{cancelled: true}`.
+- **A cancelled `pickFolder` composed into a silent save to the library ROOT** —
+  `folderNodeId: (await host.files.pickFolder())?.nodeId` yields `null` on Esc, and `save` defaulted a
+  missing folder to `""`. That is exactly the null-vs-root conflation the neighbouring comment warned
+  against, two members apart in the same object. `folderNodeId` is now **required**; pass `""` when the
+  root really is the destination.
+- **`ERROR_CLASSES[code]` reached `Object.prototype`.** `code` comes straight off a response body, so
+  a body of `{error: "toString"}` resolved through the prototype chain to something that is not a class
+  and `new Klass(...)` threw a bare `TypeError` **from inside `errorFrom`** — discarding the original
+  HTTP failure the function exists to describe. Now `Object.hasOwn`.
+
+Two more, from the same passes and both about coverage rather than code:
+
+- **A mutation check proved the ctx blob's `defaultFolder` was entirely unguarded** — both values could
+  be replaced with garbage and the whole file stayed green. The fix reads both representations out of
+  **one** rendered response and compares them directly, rather than recomputing an expectation the
+  duplicate could drift away from. The same shape recurred one commit later in the fixture's
+  `onReplace` assertion, where a substring match was satisfied by the filename alone, so the
+  **folder** half of the 409 payload — the part that lets a real prompt name a real destination — was
+  never asserted; `sdk-dup.svg@undefined` would have passed.
+- **The doc's own live-binding example was FALSE.** It claimed a top-level `const { files } = host`
+  throws `host_not_initialized`. It does not: `initHost(ctx)` runs six lines before
+  `await import(entry)`, so top-level code always sees a real host and the destructure **succeeds**.
+  The real hazard is the opposite one and is **silent** — an ES module is evaluated once per URL per
+  page, so on a Turbo re-mount `initHost` builds a new `Host` while the cached module's top level does
+  not re-run, and the captured reference goes on serving the previous, **torn-down** host's context and
+  CSRF token with nothing thrown. Traced to a **stale SDK comment that contradicted another comment
+  eight lines above it in the same file**; both were corrected, and the rule ("read through `host` at
+  call time; never capture it") now has the true reason attached to it.
+
+**The final whole-branch review found no code defects — and three documentation ones, which is the
+right ratio for a PR whose product IS a contract.** The reviewer drove the whole SDK out-of-tree
+through node (**71 assertions, all passing**), checked the ctx→SDK seam in both directions and found
+no key emitted-but-unread or read-but-unemitted, and re-ran both suites to the same numbers recorded
+below. It also **closed the Turbo lifecycle hazard by reading Stimulus rather than reasoning about
+it**: `stimulus.js:489-490` processes `removedNodes` before `addedNodes`, so
+`disconnect()`→`teardownHost()` always precedes the next `connect()`→`initHost()` and the
+interleaving that would have left a new host torn down by an old controller **cannot occur**. (The
+`this.disposed` guard still earns its keep — it covers a *pending dynamic import* resolving after a
+disconnect, a different window from the connect/disconnect ordering.) The three documentation
+defects: an error row in `docs/addon-api-v1.md` whose trigger cannot fire and which **hid the real
+behaviour** (a save naming a folder that no longer exists resolves to `nil` in
+`Tools::LibraryFolders#chosen_parent_node_id` *before* any port call, so it answers **302 and writes
+to the library ROOT** — verified on chunk and share, host behaviour that predates this branch and is
+now described rather than changed); the spec still showing `host.ctx.defaultFolder` and
+`Maker::Addons::HOST_LEVEL`, neither of which exists — the first being precisely what the new §14c
+bullet forbids, sitting in the example an agent implementing PR 5 would copy; and two new bare
+"spec §N" citations that are ambiguous because `source.rb`, one file over, uses the same shorthand
+for the **2026-08-02** bundle design, which has a §4 of its own.
+
+**Rejected on the way.** Publishing the raw context as `host.ctx`: the module's whole Ring-2 argument
+is that a bundle talks only through `host`'s methods, and a public `ctx` hands back the raw
+`csrfToken` and `chooseFolder` the SDK exists to wrap — the two claims cannot both be true, so it is
+`_ctx`. Letting a sidecar's error through the host's error table: `boxes.py` answers **prose** in its
+`error` key, so `errorFrom` would put the message in `.code` and filler in `.message`, and a non-JSON
+body (Werkzeug's HTML 405, the proxy's own body-less 404) would be eaten by the failing `res.json()`
+— `service.*` raises `ServiceError` from the status and the raw text instead. And *normalizing* a
+`..` path segment: `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the URL before
+the request is sent and the server's guard never gets asked — it is now rejected, per §14a's `key_for`
+rule, which this was the one spot in the tree departing from.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0** (53.76 s). The three backend legs report
+**identical** counts — **2181 runs, 7867 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **74 runs, 461 assertions, 0 failures**. Against the merge-base
+`de46dc2` (2172 runs / 7790 assertions; 70 system runs / 439 assertions, measured at `b3f4b78`) this
+arc added **9 Rails-leg tests and 4 browser tests** — which matches the 13 `test` blocks the diff
+adds, so the two counts cross-check rather than one being read off the other.
+
+**What this does NOT prove, stated plainly.** No **real published bundle** runs against the SDK yet.
+The four browser tests drive a fixture, and the `generators` migration — the thing that would delete
+`saveWithOverwrite` from a bundle a user actually opens — is a follow-up PR in
+`chaim354/tinkerex-addons`. Nothing here has been deployed.
+
+Three more, recorded as known and deliberate so a later reader does not find them the hard way:
+
+- **`serviceName` is neither validated nor encoded, while `path` beside it is rigorously rejected**
+  (`addon_sdk.js:383,393`). `host.service.get("../../evil", "x")` builds a URL the browser normalizes
+  before sending, so `sidecar_url_for`'s guard is never asked — the same silent misroute
+  `encodePathSegments` and the new §14c reject-never-normalize bullet exist to prevent. The input is
+  addon-authored so the risk is low, but **the invariant as written does not hold for the first
+  segment of the same URL**. A follow-up, deliberately not widened during a documentation-only
+  review pass.
+- **Two-thirds of the SDK is unexercised by `bin/ci`.** The four browser tests cover the mount path,
+  `capabilities()` and `files.save`. Nothing touches `state.list`, `service.*`, `files.pickFolder`,
+  `files.url`, the uninitialised-host proxy, or the typed errors — and most pointedly
+  **`host.on("teardown")`, the SDK's only lifecycle event, has never fired in this repo**: the Turbo
+  test reaches `teardownHost()`, but the fixture registers no handler, so `_fireTeardown` iterates an
+  empty list. The reviewer's node harness proves all of it works today; **nothing in CI would notice
+  if it stopped** — this repo's dominant failure shape, recorded rather than closed.
+- **`apiVersion` is emitted in the ctx blob and read by nothing** — no consumer today, and none named
+  in any later PR.
+
+**Invariants recorded** in CLAUDE.md §14c — nine, which is spec §15's items 1 and 5 (the two of its
+five that PR 1 makes true) plus the seven this PR's own defects earned: the ctx blob is an addition
+and the nine legacy attributes stay, the specifier-is-public-API rule for the host pin, the
+init-before-import ordering and its module-cache corollary, the one-definition boolean capability map,
+the bump-`LEVEL`-with-the-capability rule, 409-is-a-question / 422-is-not, the two `defaultFolder`
+shapes, sidecar errors staying out of the host's error table, and reject-never-normalize for path
+segments. Spec §15's items 2, 3 and 4 belong to PRs 3, 4 and 8 and are deliberately not recorded yet
+— a rule for code that does not exist is a rule nobody can check.
+
+---
+
 ## 2026-08-07: eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
 
 **The ask** was a list, verbatim: the Back button always returns to Files; STL thumbnails come out

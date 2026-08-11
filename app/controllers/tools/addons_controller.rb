@@ -107,6 +107,7 @@ module Tools
       @folders = folder_options
       @default_folder_label = folder_path_label(@default_parent_node_id)
       @service_url = service_base_url
+      @ctx = addon_ctx
     end
 
     # Same-origin proxy for the addon's bundle and its pinned modules. Same-origin is not a
@@ -244,6 +245,32 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # THE SDK's VIEW OF THE HOST, AS ONE SERIALIZED VALUE. Everything here is data the SERVER knows;
+    # the two browser-side members of ctx (`chooseFolder`, which is a function, and the CSRF token,
+    # which lives in a meta tag) are added by addon_controller.js. Splitting it that way keeps this
+    # hash JSON-serializable and keeps the token out of a second place in the DOM.
+    #
+    # The nine legacy data attributes are NOT removed and this does not replace them — see the
+    # compatibility rule in docs/addon-api-v1.md §6. This is an addition.
+    def addon_ctx
+      {
+        apiVersion: Maker::Addons::Registry::API_VERSION,
+        hostLevel: Maker::Addons::Host::LEVEL,
+        capabilities: Maker::Addons::Host.capabilities,
+        addon: { key: @addon.key },
+        urls: {
+          save: tools_addon_path(@addon.key),
+          states: tools_addon_states_path(@addon.key),
+          # A BASE, ending in "/" — a bundle builds `${service}/${path}` onto it. Derived from the
+          # real route by service_base_url, never a literal.
+          service: @service_url,
+          children: library_children_path,
+          create: library_folders_path
+        },
+        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label }
+      }
     end
 
     # The base URL a bundle can reach its sidecar(s) through: append `service_name/path` and fetch.

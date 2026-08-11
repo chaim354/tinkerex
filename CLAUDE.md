@@ -720,6 +720,55 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
   is a `fetch()` that branches on `res.ok` and **fetch follows a 302**, so answering an error the
   way success is answered reports "Saved." over a save that never happened.
+- **THE CTX BLOB IS AN ADDITION; THE NINE LEGACY DATA ATTRIBUTES STAY FOR THE LIFE OF
+  `api_version: "1"`.** Publishing a bundle *is* the deploy and Rails is never rebuilt, so bundles
+  written against **both** shapes are live against one host at the same time — the host may never
+  assume they moved with it. Guarded by reading both representations out of **ONE** rendered
+  response and comparing them to each other, not by recomputing an expectation each could drift
+  away from independently; mutation-checked by deleting an attribute.
+- **`@maker/addon-sdk` IS A HOST PIN, AND ITS SPECIFIER IS PUBLIC API.** `merged_importmap` draws
+  every host pin before the addon's own, which is what lets a bundle import it having declared
+  nothing in its manifest. The FILE behind the pin may move freely; the **SPECIFIER may not change
+  while `api_version: "1"` lives** — every published bundle names it, and **Rails is never rebuilt
+  when a bundle is**, so nothing in this repo would notice: the failure is an addon 404ing in a
+  browser against a deployment whose suite is green.
+- **`initHost(ctx)` RUNS BEFORE THE BUNDLE IS IMPORTED, AND THE ORDER IS THE CONTRACT** — a
+  bundle's top-level code executes at import time, so `host` must already be bound by then. The
+  corollary is the part that bit twice, and it is **silent rather than loud**: an ES module is
+  evaluated **ONCE PER URL PER PAGE**, so on a Turbo re-mount `initHost` builds a NEW `Host` while
+  the cached module's top level does **not** re-run — a reference captured at top level
+  (`const { files } = host`) then goes on serving the PREVIOUS, torn-down host's context and CSRF
+  token, with nothing thrown and nothing logged. **Read through `host` at call time; never capture
+  it.**
+- **THE CAPABILITY MAP IS SERVER-SIDE AND HAS ONE DEFINITION** (`Maker::Addons::Host`) — §14d's
+  third extension→role table is what a second copy becomes. **Every value must be a real boolean**:
+  a missing key reads as `undefined` in JS and a nil reads as `false`, and neither is
+  distinguishable from a deliberate "off". A capability is **NAMED BEFORE IT IS BUILT, ANSWERED
+  `false`** — that is the whole compatibility mechanism, and what lets an addon be authored against
+  a host level it has not met.
+- **BUMP `Host::LEVEL` IN THE SAME COMMIT THAT FLIPS A CAPABILITY TO TRUE.** A manifest's
+  `min_host` is the only way an addon can say "I need this", and `api_version` **equality** cannot
+  express it — flip without bumping and an addon requiring the new capability has no way to name
+  the host that has it.
+- **A 409 `would_replace` IS A QUESTION; A 422 `name_taken` IS NOT** — the SDK throws
+  `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
+  distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
+  save that can never succeed on retry.
+- **`defaultFolder` NAMES TWO DIFFERENT SHAPES, DELIBERATELY.** The raw `ctx.defaultFolder` handed
+  to `mount` is a **STRING node id**; the server's ctx blob carries `defaultFolder: {nodeId,
+  label}`. Harmless only because the SDK never exposes its copy — so **never add a
+  `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
+  a string.
+- **A SIDECAR'S ERROR NEVER RUNS THROUGH THE HOST'S ERROR TABLE.** A sidecar answers **prose** in
+  its `error` key, not a code, so `errorFrom` would put the message in `.code` and generic filler
+  in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
+  consumed by the failing `res.json()` and lost entirely. `service.*` raises `ServiceError`, built
+  from the status and the raw text.
+- **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
+  `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
+  is sent and it never reaches the route the server guards: it misroutes **silently** instead of
+  being refused. Same rule as §14a's `key_for` and `validate_asset_path!` above: **reject, never
+  normalize.**
 
 ### 14d. The maker web layer
 
