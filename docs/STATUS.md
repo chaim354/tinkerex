@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-10 (**audit A-M4: deleting a supplier, location or inventory item no longer strands — and permanently locks — the rows that referenced it**)
+**Updated:** 2026-08-10 (**a reserved output filename was a live node on chunk and a 422 on share/s3 — the door guard three web doors never had**)
 
 ## What this file is
 
@@ -60,7 +60,169 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-10): audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
+## Latest (2026-08-10): the reserved-name guard three web doors never had (branch `claude/reserved-name-door-guard`)
+
+**The ask** was one recorded divergence, carried over from PR #163 which was scoped to comments and
+deliberately did not fix it: an addon save (`POST /tools/:key`) answered differently per
+`LIBRARY_BACKEND` for reserved output filenames. Probed one save per name, through the real door,
+before any change:
+
+| name | chunk | share | s3 |
+|---|---|---|---|
+| `ok.txt` | 302 | 302 | 302 |
+| `.DS_Store` `._x` `__MACOSX` `.Trashes` root `.trash` | **302** | 422 | 422 |
+| `.maker-tmp-x` | **302** | 422 | **302** |
+
+On share/s3 the port's `observable!` raises `FileLayer::NotFound` → the controller's `rescue_from` →
+422. Chunk never calls the port at all (`Maker::Addons::LibraryOutput#write_chunk` drives
+`Sync::Commit` directly), so there was no guard anywhere on the path and the file became a live node
+bound for the changelog and every device mount. §14a's one-condition-two-answers, with the product's
+**main** deployment on the wrong side.
+
+### It was three doors, and the reported one was the least bad
+
+Probing the sibling doors first — rather than fixing the reported one and moving on — turned up two
+more instances and one that is strictly worse than the bug that started this:
+
+- **`LibraryBrowseController#create_folder`** — same shape, `201` and a live **dir** node on chunk
+  for every reserved name, including a `.trash` **directory at the library root**. That is the case
+  `FileLayer::Share#observable!` documents as wedging *every delete in the library*, permanently,
+  needing someone to remove the folder on the NAS by hand.
+- **`FilesController#begin_upload`** — had **neither** guard. Not the reserved check, and not even
+  the `valid_leaf_name?` traversal check that §14c records as closed at the addon door. Driven
+  through the real two-phase flow: `begin=200`, `finalize=200`, and a live node named
+  `"../../escape.txt"` in the changelog. It is `syncable`-gated, so it exists **only** on chunk —
+  there is no share/s3 leg whose port `leaf!` would have refused it and made the divergence visible.
+  Nothing cross-backend could ever have caught this one.
+
+All three now ask the same two questions in the same breath: `Maker::MoveNode.valid_leaf_name?`
+(syntax) then the new `Library::ReservedNames.reserved?` (the library's own namespace).
+
+### The one real design choice: the union, not the intersection
+
+`FileLayer::S3#observable!` deliberately omits `Scanner::TEMP_PREFIX` — that adapter writes no temp
+keys, so a `.maker-tmp-x` object genuinely *is* observable in its store, and that comment stays true
+and untouched. A door cannot know which backend is deployed, so it had two options: refuse everything
+*any* adapter would refuse (union), or only what *all* would (intersection). The intersection leaves
+`.maker-tmp-x` at chunk 302 / share 422 / s3 302 — the reported bug narrowed rather than closed, the
+same divergence with the sign flipped. So: the union, and a name accepted at the door is accepted by
+whichever adapter is actually deployed. The cost is that an addon may not name its output with this
+app's own internal temp-file prefix.
+
+### Deliberately NOT folded into `valid_leaf_name?`
+
+Folding would have been one call per door instead of two, and it was the first instinct. It is wrong:
+`valid_leaf_name?` is also called by `Maker::MoveNode#call`, which validates `new_name.presence ||
+node.name` — a name that usually **already exists**. On chunk, `.DS_Store` nodes are a legitimate and
+common artifact, because a real macOS device syncing its mount pushes them through
+`Sync::Commit#finalize` (the sync protocol, §6, where the client is authoritative — not a web door).
+Folding would therefore make a population the product creates *by design* permanently unmovable, in
+order to close a hole about **minting** a new name. Renaming stays available either way.
+
+### A wrong message that had been visible the whole time
+
+One arm of this was never silent. A reserved name reached `Tools::AddonsController`'s
+`rescue_from FileLayer::NotFound`, whose message at this branch point was **"That destination folder
+no longer exists."** — asserted about a perfectly good folder, for a save refused on its *filename*.
+That handler's own comment claimed the arm could only mean a missing destination folder; it was
+incomplete, and is only now true. Corrected in place.
+
+**Merge note (`main` @ `d0175d2`).** PR #163 reached the same handler independently from the other
+side, and its correction is the stronger one: the "missing destination folder" cause it named cannot
+happen *at all*, because `chosen_parent_node_id` resolves a stale or foreign id to `nil` = the library
+root before any port call. Its rewritten message ("Your library refused that write. Rename the output
+if it is named like a system file, or try again.") is what survives the merge — this branch changed
+only the comment above it, so there was no behaviour to reconcile. Putting the two together: the
+reserved-name cause is now refused at the door by `#parse_files`, and the arm's **one** remaining
+cause is the TOCTOU — a destination folder tombstoned between `chosen_parent_node_id`'s lookup and
+the port write. The message is left naming the reserved-name cause as well, deliberately wider than
+the arm: trimming a user-facing sentence on the strength of an unreachability argument is what §14e
+says to probe rather than trust.
+
+### Verification
+
+- **Measured on the merged tree**, `main` @ `d0175d2` merged in — those are the numbers below,
+  because that is what ships. `bin/ci` bare, **all seven gates, exit 0** (54.22 s): style **519
+  files / 0 offenses**, gem audit **no vulnerabilities**, importmap audit and Brakeman clean. The
+  three backend legs are **identical** — **2248 runs, 8152 assertions, 0 failures, 0 errors, 9
+  skips**, against `main`'s **2234 / 8016**: a delta of exactly the **+14** tests this branch adds
+  and no other movement. System (real browser) **76 runs, 470 assertions, 0 failures**, unchanged
+  from `main` — this branch adds no system test.
+- At the branch point the same three legs read **2191 runs, 7947 assertions** (2177 before,
+  +14 tests). Per this file's own header, those are not a chain: take a baseline by running the
+  merge-base, not by subtracting entries.
+- **`system-test` FLAKED ONCE ON THE RUNNER after this merge, and the card-click fix does not cover
+  the shape it took** — reported rather than hidden, as that entry asks. Run 31458009152 (seed
+  52317) failed `BoxSectionsTest#test_a_table-of-contents_entry_opens_the_section_it_points_at…`
+  with **`expected to find css "#box-section-tray" but there were no matches`**; re-run of the same
+  job on the same commit **passed**, and the suite passed twice locally on this tree (76/470, 0
+  failures) both times. Note the failing selector: the section element was **absent**, not moved, so
+  this is not the pointer race `settle_addon_cards` absorbs — it is the *other* flake that entry
+  names, "~20 ESM modules and two fetches honestly take longer than 2s", hitting a test that never
+  goes through `open_addon_card` because it clicks a `<summary>` rather than a card, and so gets
+  Capybara's bare 2 s rather than `SETTLE_TIMEOUT`. The fix, if it recurs, is to give the
+  section-level entry points the same waited helper the card-level ones got, not a longer sleep.
+- **Every guard mutation-checked** (§15), and each mutation reverted after. Nine mutations: the five
+  arms of `ReservedNames.reserved?` (drop trash / make it a prefix instead of exact / drop temp /
+  drop clutter / drop the non-String guard) each turn exactly their own row red; dropping the
+  predicate from each of the three doors reddens that door's case and no other; and at
+  `begin_upload` the two guards were mutated **independently** to confirm they fail *different*
+  tests — `valid_leaf_name?` the traversal case, `ReservedNames` the reserved case — so neither is
+  riding on the other.
+- The delegation to `Library::OsClutter` is asserted by **stubbing OsClutter false and watching
+  `.DS_Store` become writable**, not by reading the implementation — a private copy of the names
+  would pass a value-based test and then drift the day OsClutter grows an entry.
+- Near-miss positive controls at every door (`.trashcan.svg`, `.trashcan`), so a guard widened from
+  exact-match to prefix-match cannot pass. `begin_upload`'s runs the **whole** two-phase flow.
+
+### Left open, on purpose
+
+- **`Maker::MoveNode#call` still permits a move to a reserved name on chunk** while share/s3 refuse
+  it in `port_move`. Same divergence, different verb — and the `.DS_Store`-from-the-mount argument
+  above is exactly why it is not a copy-paste of this fix. Deciding it needs a product call on what
+  should happen to the reserved-named nodes a device mount legitimately creates.
+- **A device push (`Sync::Commit#finalize`) is untouched**, and should be: that is the sync protocol,
+  where the client is authoritative, not a web door. It is also how `.DS_Store` nodes legitimately
+  arrive.
+
+### Found in review of this branch, PROBED not argued — four residuals it does not close
+
+The three doors above are the three that MINT a name on chunk. A review pass drove the remaining
+write doors with a reserved name and found four more answers to the same condition. None is a
+regression from this branch; all four are pre-existing and none is fixed here. Recorded so the next
+reader does not have to rediscover them, per §14e's *"a stale open-list is worse than none"*.
+
+- **`Projects::UploadsController#create` is an uncaught 500 on share/s3.** It rescues
+  `UnsupportedOperation` and `FetchError` but not `NotFound`, and `ApplicationController` has no
+  `rescue_from` at all — so `observable!` raising for `Projects/<slug>/.DS_Store` propagates.
+  Probed: `FileLayer::NotFound: "Projects/probe-p/.DS_Store" is a reserved path…`, uncaught. The
+  door is `require_port_writable!`-gated, so it does not exist on chunk. **The cheapest fix is the
+  missing `rescue_from`, not another `ReservedNames` call.**
+- **`FilesController#create` still answers "File not found."** for a reserved filename on share/s3
+  — `observable!` → `NotFound` → the class-level rescue → `302` + that flash. Probed: `status=302
+  flash="File not found."`. That is the same wrong-message defect this branch fixed at the addon
+  door, still live at the app's main upload door, and it means the *upload* verb still has two
+  answers across deployments: chunk `begin_upload` now 422s with a real reason, share/s3 302 to a
+  flash about a file the user never asked about.
+- **`ModelsController#ensure_folders` holds a FOURTH private spelling of the rule** —
+  `segs.any? { |s| s.start_with?(".") }` — which is exactly the second copy `Library::ReservedNames`
+  exists to prevent, and it has a real gap: `__MACOSX` has no leading dot. Probed with a forged
+  `dirs` param (nothing else validates it): **chunk `201` + a live `__MACOSX` dir node; share `422
+  invalid_path`**. The same divergence, at a door this branch did not touch. Real macOS zips do not
+  reach it — the importer skips dot-prefixed leaves client-side and every `__MACOSX` entry is a
+  `._` file — so the trigger is a forged request, not the ordinary import.
+- **The door is now STRICTER than either adapter for a nested `.trash`.** `reserved?` tests a LEAF
+  name, but both adapters anchor `TRASH_PREFIX` at the library ROOT on purpose — *"a nested
+  `cad/.trash` is the user's own folder, is indexed, and is none of our business"*
+  (`Share#observable!`). Probed: `POST /library/folders {name: ".trash", parent: cad}` is now `422`,
+  while `FileLayer.current.mkdir(user, parent: cad, name: ".trash")` is still **allowed** by the
+  adapter underneath it. Uniform across all three backends, so it breaks no §14a rule and it fails
+  safe — but it contradicts an explicit adapter comment and was not a stated goal. A door that knew
+  its parent's rel path could ask the adapters' actual question.
+
+---
+
+## 2026-08-10: audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
 
 `Maker::Supplier` had no `has_many` at all and `Maker::Location` had one only for its own
 `children`, so `DELETE /v1/maker/suppliers/:id`, `locations/:id` and `inventory_items/:id` left
@@ -542,7 +704,9 @@ is a product decision, and `docs/addon-api-v1.md` §5 already documents it for a
 **Left open on purpose: `.DS_Store` is refused on share/s3 and accepted on chunk** — one condition with
 two answers across backends, the shape §14a calls the port's whole job. Out of scope here (this branch
 was scoped to make the guard and the comment true, not to change behaviour); recorded in CLAUDE.md §14c
-so it is not rediscovered from scratch.
+so it is not rediscovered from scratch. **Closed by the `claude/reserved-name-door-guard` arc (the
+Latest entry), which found the same divergence at two further doors** — `LibraryBrowseController
+#create_folder` and `FilesController#begin_upload`.
 
 **Measured on the merged tree**, `main` @ `a5838f3` merged in — the numbers below are that tree's, not
 the branch point's, because that is what ships. `bin/ci` bare, **all seven gates, exit 0** (52.20 s):

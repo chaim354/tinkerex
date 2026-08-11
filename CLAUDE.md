@@ -553,6 +553,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   retracted: *"delete is uniquely exposed, because a move leaves the bytes observable at the
   new path"* — false; a move is self-healing only when its **destination** is observable.
   **Assume every path that writes is exposed until you have checked it** (`observable!`).
+- **`observable!` CANNOT COVER CHUNK, SO THE DOOR DOES — `Library::ReservedNames.reserved?`.**
+  The bullet above says "every path that writes"; on chunk there **is no path through an
+  adapter** (not `port_writable`), so `Sync::Commit` is driven directly and no `observable!`
+  exists to reach. Probed through the real doors: a `.DS_Store`/`.trash`/`.maker-tmp-x` output
+  was **302 + a live node on chunk** and **422 on share/s3** — §14a's one-condition-two-answers,
+  with the main deployment on the wrong side. **THREE web doors mint a leaf name and all three
+  now ask two questions in the same breath**: `Maker::MoveNode.valid_leaf_name?` (syntax) then
+  `ReservedNames.reserved?` (the library's own namespace) — `Tools::AddonsController#parse_files`,
+  `LibraryBrowseController#create_folder`, `FilesController#begin_upload`. The last had **neither**
+  and was the weakest door in the app: `begin=200, finalize=200`, a live node named
+  `"../../escape.txt"` in the changelog. It is `syncable`-gated (chunk-only), so **no cross-backend
+  leg could ever have caught it**. Three things not to undo: the predicate is the **UNION** of the
+  two adapters' guards, because a door cannot know which backend is deployed and the intersection
+  is the same divergence with the sign flipped (it leaves `.maker-tmp-x` at share 422 / s3 302);
+  it is **composed from `Scanner::TRASH_PREFIX`/`TEMP_PREFIX`/`OsClutter`, never a fourth copy of
+  the strings**; and it is **NOT folded into `valid_leaf_name?`**, because that one is also called
+  by `Maker::MoveNode#call` on a name that usually **already exists**, and a real macOS device
+  mount pushes `.DS_Store` nodes through `Sync::Commit#finalize` by design — folding would make a
+  population the product creates permanently unmovable to close a hole about *minting* a name.
 - **A LISTING IS NOT A SNAPSHOT.** `list_objects_v2` paginates, and a failure on page 7 of
   40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library.
   It is the `EACCES` problem again minus the escape hatch: `unreadable_dirs` scopes a gap to
@@ -714,7 +733,11 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   validates `name` for **presence only**), so `"../../escape.txt"` created a live node on the
   main deployment, bound for the changelog and every device mount. A guard that exists on two
   backends and silently does not on the third is this repo's recorded failure shape — the fix is
-  the door, never a third copy in the chunk adapter. The save also pre-checks destination names
+  the door, never a third copy in the chunk adapter. **The same door asks a SECOND question beside
+  it, `Library::ReservedNames.reserved?`** (§14b): the reserved-namespace half diverged identically,
+  and unlike the traversal half one arm of it was never silent — it reached this controller's
+  `rescue_from FileLayer::NotFound` on share/s3, which is the bullet at the end of this section.
+  The save also pre-checks destination names
   (a CHECK, not a lock) so chunk stops creating two same-named siblings in one directory, and
   `Tools::AddonsController` maps `UnsupportedOperation`/`FetchError`/`NotFound` **once** via
   `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
@@ -822,11 +845,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
   resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
   save answers **302 and succeeds** (probed on all three; `docs/addon-api-v1.md` §5 carries the
-  author-facing consequence). What does reach it is an output NAME the scan can never observe —
+  author-facing consequence). What used to reach it was an output NAME the scan can never observe —
   `observable!`, §14b's skip-list rule: `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash`,
-  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose).
-  **Chunk accepts all of them** — `write_chunk` never calls the port — which is one condition with
-  two answers across backends, recorded here rather than fixed.
+  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose) —
+  while **chunk accepted all of them**, because `write_chunk` never calls the port. That arm is
+  **now closed one layer earlier**, by `Library::ReservedNames.reserved?` in `#parse_files` (§14b),
+  which refuses those names at the door on every backend before a backend is even chosen. **So the
+  arm's one remaining cause is the TOCTOU** — a destination folder tombstoned between
+  `chosen_parent_node_id`'s lookup and the port write, a real window on share/s3 where
+  `Library::ScanJob` tombstones a folder removed on the NAS. Its message still names the
+  reserved-name cause too, deliberately wider than the arm: trimming a user-facing sentence on the
+  strength of an unreachability argument is the move §14e says to probe rather than trust.
 
 ### 14d. The maker web layer
 

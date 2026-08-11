@@ -410,6 +410,51 @@ module Tools
       assert_response :unprocessable_entity
     end
 
+    # ---- save: the library's own reserved names ------------------------------------------
+    #
+    # THE SAME ASYMMETRY AS THE TRAVERSAL TEST ABOVE, ONE LIST LATER, AND IT SURVIVED FOR THE SAME
+    # REASON. Share and S3 each call `observable!` inside #write and refuse a name the library scan
+    # will never index (-> FileLayer::NotFound -> this controller's rescue_from -> 422). Chunk never
+    # calls the port at all — Maker::Addons::LibraryOutput#write_chunk drives Sync::Commit directly
+    # — so there was no guard on the path whatsoever, and the main deployment created a live node
+    # bound for the changelog and every device's real mount. Probed through this door before the
+    # fix: chunk 302 for every name below, share 422, s3 422 (except `.maker-tmp-x`, 302).
+    #
+    # RUNS ON ALL THREE LEGS AND ASSERTS THE SAME ANSWER ON EACH — which is the actual fix, exactly
+    # as for the traversal case: the refusal is at the door, before any backend is asked.
+    #
+    # `.maker-tmp-x` IS IN THIS LIST ON PURPOSE and is the one row S3 alone would have allowed
+    # (FileLayer::S3#observable! omits TEMP_PREFIX because that adapter writes no temp keys). The
+    # door enforces the UNION so a name accepted here is accepted by whichever backend is deployed;
+    # see Library::ReservedNames for the full argument. On the s3 leg this row is the one that fails
+    # if the door ever narrows to the intersection.
+    test "save refuses a reserved library name on every backend" do
+      %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
+        assert_no_difference -> { @user.maker_addon_states.count }, "#{bad.inspect} was accepted" do
+          assert_no_difference -> { @user.nodes.count }, "#{bad.inspect} created a node" do
+            post tools_addon_path("widgetkit"), params: {
+              name: "reserved", data: "{}",
+              files: [ { name: bad, content_type: "text/plain", body: "x" } ].to_json
+            }
+          end
+        end
+        assert_response :unprocessable_entity, "#{bad.inspect} should be a routine refusal"
+      end
+    end
+
+    # THE NEAR MISS, so the guard above is pinned as EXACT-match on `.trash` rather than a prefix.
+    # `.trashcan.svg` is an ordinary file the Scanner indexes (`rel == TRASH_PREFIX`), and a save of
+    # it must keep working on every backend — a widened guard would refuse a legitimate output and
+    # nothing else in this suite would notice.
+    test "save accepts a name that merely starts with a reserved prefix" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "near miss", data: "{}",
+        files: [ { name: ".trashcan.svg", content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert @user.nodes.present.exists?(name: ".trashcan.svg"), "the near miss should have saved"
+    end
+
     # ---- save: one name, one file --------------------------------------------------------
     #
     # The mirror-image defect of the traversal one, and again chunk was the exposed backend: share

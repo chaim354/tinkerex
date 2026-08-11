@@ -94,21 +94,20 @@ module Tools
     # for addon authors in docs/addon-api-v1.md §5, which carries the consequence (a folderNodeId
     # persisted in an AddonState can name a folder that is gone, and nothing reports it).
     #
-    # WHAT ACTUALLY REACHES HERE IS AN OUTPUT NAME THE LIBRARY SCAN COULD NEVER OBSERVE — the
-    # `observable!` guard in FileLayer::Share and FileLayer::S3, which is §14b's skip-list rule.
-    # #parse_files vets every name with Maker::MoveNode.valid_leaf_name?, which refuses "/", "\",
-    # NUL, "." , ".." and over-long names — but ".DS_Store", "._x", "__MACOSX", ".Trashes" and (at
-    # the library root) ".trash" are all perfectly good LEAF names, and the port refuses them
-    # because a file written to a path the scan skips is a ghost the Reconciler can never pair.
-    # Probed, one save per name: each of those answers this 422 on share and on s3;
-    # ".maker-tmp-x" does on share and does NOT on s3, because S3#observable! omits TEMP_PREFIX
-    # deliberately (that adapter writes no temp keys).
+    # THE OTHER CAUSE WAS AN OUTPUT NAME THE LIBRARY SCAN COULD NEVER OBSERVE, AND IT IS NOW CLOSED
+    # ONE LAYER EARLIER — read the two paragraphs together, because the second retires the first.
+    # The `observable!` guard in FileLayer::Share and FileLayer::S3 (§14b's skip-list rule) refuses
+    # ".DS_Store", "._x", "__MACOSX", ".Trashes", (at the library root) ".trash" and — on share only
+    # — ".maker-tmp-x", because a file written to a path the scan skips is a ghost the Reconciler
+    # can never pair. Those are all perfectly good LEAF names, so Maker::MoveNode.valid_leaf_name?
+    # passed them, and each answered this 422 on share and s3 while CHUNK ACCEPTED THEM — the write
+    # goes through Maker::Addons::LibraryOutput#write_chunk, which never calls the port at all. One
+    # condition, two answers across backends, with the main deployment on the wrong side.
     #
-    # SO: REACHABLE FROM #create, ON SHARE/S3 ONLY. On chunk it is unreachable — the write goes
-    # through Maker::Addons::LibraryOutput#write_chunk, which never calls the port — and chunk
-    # therefore ACCEPTS those names. That divergence is recorded, not fixed here. And none of #show,
-    # #asset, #service or #states touches FileLayer at all, so this class-level arm — which does
-    # cover every action, not just the save — covers those four vacuously.
+    # #parse_files now asks Library::ReservedNames.reserved? beside valid_leaf_name?, at the door,
+    # before any backend is chosen — so a reserved name is a routine `head :unprocessable_entity`
+    # from #create on EVERY backend and no longer reaches this rescue on any of them. What that
+    # leaves here is the TOCTOU below, alone.
     #
     # EVERY OTHER NotFound INSIDE #write IS CLOSED BEFORE IT, which is why this arm is narrow rather
     # than a catch-all: `leaf!` by valid_leaf_name? (strictly stricter), the path-escape guard by
@@ -120,9 +119,13 @@ module Tools
     # #attach_addon_files_to_current_project and #intake_project_folder both rescue StandardError,
     # and Maker::ProjectIntake#place already rescues FileLayer::NotFound into a :not_found skip.
     #
-    # THE MESSAGE NAMES BOTH SURVIVING CAUSES and prescribes for each, because they want opposite
-    # remedies: renaming fixes the reserved name and does nothing for the race, retrying fixes the
-    # race and never the name. It used to name only the cause that cannot happen.
+    # THE MESSAGE STILL NAMES THE RESERVED-NAME CAUSE, DELIBERATELY LEFT WIDER THAN THE ARM. Its
+    # "rename the output" clause is now belt-and-braces for this door — #parse_files gets there
+    # first — but the sentence costs nothing, and narrowing it to the race alone would be a
+    # user-facing change made on the strength of an unreachability argument, which is the kind of
+    # argument §14e says to probe rather than trust. Prefer widening the arm's own test over
+    # trimming the sentence. None of #show, #asset, #service or #states touches FileLayer at all,
+    # so this class-level arm covers those four vacuously.
     #
     # A 404 on a POST to the save endpoint would read as "this endpoint is gone", which sends an
     # addon author looking in entirely the wrong place; the honest answer is that the request was
@@ -434,6 +437,14 @@ module Tools
       # live node with that name, bound for every device's mount. See Maker::MoveNode.valid_leaf_name?
       # for the full argument and why the guard belongs here rather than in the chunk adapter.
       return nil unless parsed.all? { |f| Maker::MoveNode.valid_leaf_name?(f["name"]) }
+      # THE SECOND HALF OF THE SAME DOOR CHECK, and the two are always asked together: the line
+      # above is SYNTAX ("is this a storable leaf at all"), this one is the library's own reserved
+      # NAMESPACE. Identical asymmetry, identical reason it survived — share and s3 refuse these in
+      # their own `observable!` inside #write, and chunk never calls the port at all, so a
+      # `.DS_Store` / `.trash` / `.maker-tmp-x` output was a live node on the main deployment and a
+      # 422 on the other two. See Library::ReservedNames for the probe table and for why the door
+      # enforces the UNION of the two adapters' guards rather than their intersection.
+      return nil unless parsed.none? { |f| Library::ReservedNames.reserved?(f["name"]) }
       # Within ONE save, too: #refuse_taken_names! asks the database, which cannot see two files
       # in this same batch claiming the same name — neither exists yet, so both pass and chunk
       # writes the duplicate pair itself.

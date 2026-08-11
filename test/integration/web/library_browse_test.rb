@@ -141,5 +141,39 @@ module Web
         assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
       end
     end
+
+    # PINNED TO CHUNK FOR THE SAME REASON AS THE CASE ABOVE, and it is again the point rather than
+    # the idiom. Share and S3 refuse these inside their own `observable!` (reached here through
+    # Maker::LibraryFolder's port mkdir, surfacing as the FileLayer::NotFound this action already
+    # rescues), so on those two legs the case passes whether or not the door checks anything. Chunk
+    # is the one backend where the door is the only guard — `chunk_mkdir` writes the dir row itself
+    # and Node validates `name` for presence only — and it is the main deployment. Probed before the
+    # fix: 201 and a live dir node for every name below, including a `.trash` DIRECTORY at the
+    # library root, which is the shape FileLayer::Share#observable! documents as wedging every
+    # delete in the library.
+    #
+    # A DIR, NOT A FILE, is what makes this worth its own case: the addon-save guard covers file
+    # leaves, and a folder is the other half of the same namespace.
+    #
+    # Mutation-checked (§15): dropping the Library::ReservedNames call from #create_folder turns
+    # every row here red while the syntax case above stays green.
+    test "create_folder rejects a name the library scan will never index" do
+      pin_file_layer_backend("chunk")
+      %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
+        assert_no_difference -> { @user.nodes.present.where(kind: "dir").count }, "created #{bad.inspect}" do
+          post library_folders_path, params: { name: bad }
+        end
+        assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
+      end
+    end
+
+    # The near miss, so the guard is pinned as EXACT-match on `.trash` rather than a prefix — a
+    # folder called `.trashcan` is an ordinary folder the Scanner indexes.
+    test "create_folder accepts a name that merely starts with a reserved prefix" do
+      pin_file_layer_backend("chunk")
+      post library_folders_path, params: { name: ".trashcan" }
+      assert_response :created
+      assert @user.nodes.present.exists?(name: ".trashcan", kind: "dir")
+    end
   end
 end
