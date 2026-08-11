@@ -47,7 +47,7 @@ class TrayTopViewTest < ApplicationSystemTestCase
 
   def open_generator(key)
     visit tools_addon_path("boxes")
-    find(".addon-card", text: key).click
+    open_addon_card(key)
   end
 
   def summary = find('[data-topview="summary"]')
