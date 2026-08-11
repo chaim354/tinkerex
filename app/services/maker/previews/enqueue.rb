@@ -14,10 +14,13 @@ module Maker
     # growing ~17.6/day with editing. Repointing removes the leak at its source instead of adding
     # a reaper to chase it, and ActiveStorage purges the replaced blob by itself.
     #
-    # `status = "pending"` on a repoint is deliberate and is what keeps the page honest: the row
-    # still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an image
-    # only when `ready`, so the user sees a spinner rather than the old picture labelled as the new
-    # content. Same thing they saw before, when the superseded row simply was not found.
+    # `status = "pending"` ON A CONTENT REPOINT is deliberate and is what keeps the page honest: the
+    # row still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an
+    # image only when `ready`, so the user sees a spinner rather than the old picture labelled as
+    # the new content. Same thing they saw before, when the superseded row simply was not found.
+    #
+    # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
+    # depicts this exact file; only the code that built it moved on.
     #
     # This is deliberately a DIFFERENT policy from V1::Maker::PreviewsController#create, which DOES
     # create a row for a non-renderable name so an API client can poll and observe the terminal
@@ -29,18 +32,68 @@ module Maker
     module Enqueue
       module_function
 
-      def call(user:, node_id:, name:, version_id:, kind: "thumbnail")
-        return nil if Maker::Previews::Registry.for_filename(name).nil?
+      # What a renderer that declares no revision of its own is taken to be. Every artifact that
+      # existed before `renderer_revision` was introduced is stamped 1 by the migration, so a
+      # renderer only invalidates its cache by bumping PAST this — silence changes nothing.
+      BASE_REVISION = 1
 
-        preview = user.maker_previews.find_or_initialize_by(node_id:, kind:)
-        stale   = preview.version_id != version_id
-        return preview unless preview.new_record? || stale || preview.status == "failed"
+      def call(user:, node_id:, name:, version_id:, kind: "thumbnail")
+        renderer = Maker::Previews::Registry.for_filename(name)
+        return nil if renderer.nil?
+
+        revision = revision_for(renderer, kind)
+        preview  = user.maker_previews.find_or_initialize_by(node_id:, kind:)
+        # TWO INDEPENDENT REASONS A STORED ARTIFACT IS OUT OF DATE, and they are not the same
+        # question. `version_id` asks "was this made from the file's CURRENT CONTENT?";
+        # `renderer_revision` asks "was it made by the CURRENT CODE?". Only the first was checked
+        # until a thinning fix shipped for the .lbrn2 Measure view and every already-measured file
+        # kept serving output from the old algorithm, because its content had not changed and
+        # nothing else was being compared.
+        content_moved = preview.version_id != version_id
+        rebuilt       = preview.renderer_revision != revision
+        return preview unless preview.new_record? || content_moved || rebuilt || preview.status == "failed"
 
         preview.version_id = version_id
-        preview.status = "pending"
+        preview.renderer_revision = revision
+        # BLANKED ONLY WHEN THE CONTENT MOVED — the two staleness axes deserve different answers.
+        #
+        # `pending` exists so a user never sees an artifact of the PREVIOUS CONTENT labelled as the
+        # current file; that is a lie and the spinner is the honest replacement. A RENDERER bump is
+        # not that case: the stored artifact still depicts exactly this file, it was merely built by
+        # older code. Blanking it replaces a correct picture with a spinner for as long as the job
+        # takes — and the detail page does not poll, so it stays a spinner until someone reloads.
+        # Shipped that way briefly and it read as "generating preview is broken", which is fair.
+        #
+        # Leaving `ready` alone means the old artifact stays visible until the job swaps it. The
+        # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,
+        # and both are written here before it is enqueued, so a run that started under an older
+        # revision still cannot stamp its output onto this row.
+        preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
         preview.save!
         Maker::GeneratePreviewJob.perform_later(preview.id, filename: name)
         preview
+      end
+
+      # The revision a renderer claims for one kind, or BASE_REVISION when it claims none.
+      #
+      # ASKED OF THE RENDERER RATHER THAN HELD IN A TABLE HERE, so the number lives beside the code
+      # whose output it describes — someone changing a payload sees the constant they need to bump
+      # in the file they are already editing, which is the entire point of having it.
+      #
+      # PER KIND, NOT PER RENDERER: Lbrn2 produces both a thumbnail and a geometry payload, and
+      # bumping one must not re-render the other. A geometry change that also rebuilt every
+      # LightBurn thumbnail would be a silent full-library rebuild attached to an unrelated fix.
+      def revision_for(renderer, kind)
+        return BASE_REVISION unless renderer.respond_to?(:payload_revision)
+
+        renderer.payload_revision(kind) || BASE_REVISION
+      end
+
+      # The same answer, for a caller that holds a filename rather than a renderer — the shape a
+      # controller has when deciding whether a row it already found is worth serving.
+      def revision_for_name(name, kind)
+        renderer = Maker::Previews::Registry.for_filename(name)
+        renderer.nil? ? BASE_REVISION : revision_for(renderer, kind)
       end
     end
   end

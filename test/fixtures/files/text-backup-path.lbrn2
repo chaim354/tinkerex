@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A Text and its rendered outline, in the real dialect, PLUS a second Shape (a Rect) that
+     exists purely to make object-id assignment observable. Four facts this pins:
+       1. <BackupPath> carries Type="Path" (74/74 in the real corpus). Without it,
+          emit_shape matches no arm and this fixture emits zero contours from the Text —
+          caught loudly here by the three-contours assertion below. It stays load-bearing
+          past this task: Task 3's union guard skips a geometry-less shape
+          (`next if expected.nil?`) instead of asserting a count, so the same
+          mistake there would pass silently.
+       2. A Text itself emits NO geometry — the BackupPath is the only outline.
+       3. The BackupPath's PrimList yields TWO disjoint contours (two "letters"),
+          which is what makes this the object-grouping fixture: both contours must
+          share the Text's object id, so alt-click reports the whole word.
+       4. THE RECT IS NOT DECORATION — it is the second reference point that makes the
+          Text's counter tick observable at all; with only the Text in this file, "reuses
+          its parent's tick" and "burns a fresh one" are indistinguishable from outside.
+          Full argument, both id sequences: the "groups a Text with its BackupPath" test.
+     Positioned at local (-3..3, -3..3) + XForm (+15, +5) = document x 12..18, y 2..8, so it
+     sits INSIDE the Text's own 30 x 10 mm span and changes no span or job-size assertion.
+     Contours: A x 0..10 y 0..10, B x 20..30 y 0..10.  Object bbox: 30 x 10 mm.
+-->
+<LightBurnProject AppVersion="1.6.00" FormatVersion="1" MaterialHeight="0">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <speed Value="20"/>
+        <maxPower Value="80"/>
+    </CutSetting>
+    <Shape Type="Text" CutIndex="0" Str="AB" HasBackupPath="1">
+        <XForm>1 0 0 1 0 0</XForm>
+        <BackupPath Type="Path" CutIndex="0">
+            <XForm>1 0 0 1 0 0</XForm>
+            <VertList>V0 0c0x1c1x1V10 0c0x1c1x1V10 10c0x1c1x1V0 10c0x1c1x1V20 0c0x1c1x1V30 0c0x1c1x1V30 10c0x1c1x1V20 10c0x1c1x1</VertList>
+            <PrimList>L0 1L1 2L2 3L3 0L4 5L5 6L6 7L7 4</PrimList>
+        </BackupPath>
+    </Shape>
+    <Shape Type="Rect" CutIndex="0" W="6" H="6" Cr="0">
+        <XForm>1 0 0 1 15 5</XForm>
+    </Shape>
+</LightBurnProject>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A measuring fixture with REAL PHYSICAL UNITS and a nested feature.
+
+  width/height are millimetres and the viewBox is 1:1 with them, so every number below IS its
+  own measurement: the plate is exactly 80 x 40 mm and the hole exactly 10 mm across. That is
+  what lets the tests assert literals instead of whatever the parser happened to produce.
+
+  THE HOLE SITS INSIDE THE PLATE, sharing no edge with it, so paint order (not geometry) decides
+  which one a click at their shared point selects — the same property nested-plate.lbrn2 pins for
+  LightBurn. Two distinct stroke colours, so the layer grouping has something to group.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="60mm" viewBox="0 0 100 60">
+  <g transform="translate(10,10)">
+    <rect x="0" y="0" width="80" height="40" fill="none" stroke="#ff0000"/>
+    <circle cx="40" cy="20" r="5" fill="none" stroke="#0000ff"/>
+  </g>
+</svg>

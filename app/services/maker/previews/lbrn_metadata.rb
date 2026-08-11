@@ -42,12 +42,40 @@ module Maker
           {
             "index"     => idx.to_s,
             "name"      => val(cs, "name"),
-            "color"     => (c = val(cs, "color")) && Lbrn2.normalize_color(c),
+            # The file's own colour if it has one, else LightBurn's built-in palette for this
+            # index — which is the ordinary case, since no real export writes <color> at all.
+            # Without the fallback the panel's swatch was invisible on every real file.
+            "color"     => (c = val(cs, "color")).present? ? Lbrn2.normalize_color(c) : Lbrn2.layer_color(idx),
+            # The colour's name, for a panel that would otherwise label every layer "C01". Carried
+            # SEPARATELY from "name" rather than substituted into it, because the two answer
+            # different questions and only the view knows which it wants — the raw file name still
+            # has to be available to anything that cares what LightBurn actually wrote.
+            #
+            # ONLY WHEN THE COLOUR CAME FROM THE PALETTE. A file may override a layer's colour, and
+            # `Lbrn2.layer_name` names the PALETTE entry for that index — so on a file that recolours
+            # C01 to green, naming it anyway would print "Blue" beside a green swatch: a label
+            # contradicting the very thing it labels. No name is better than a wrong one; the view
+            # falls back to the index.
+            "color_name" => (c.present? ? nil : Lbrn2.layer_name(idx)),
             "mode"      => mode(cs["type"]),
             "speed"     => Lbrn2.num(val(cs, "speed")),
             "power_max" => Lbrn2.num(val(cs, "maxPower")),
             "power_min" => Lbrn2.num(val(cs, "minPower")),
-            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) && p.to_i
+            # AN ABSENT `numPasses` MEANS ONE PASS, NOT "UNKNOWN" — LightBurn writes only values
+            # that differ from its defaults. Measured over the 58 real exports: 135 CutSetting
+            # blocks, and just 5 carry the field, every one of them saying 4. Everything else runs
+            # a single pass and says nothing about it.
+            #
+            # Reporting nil rendered an EMPTY Passes cell on almost every layer of every real file,
+            # which reads as "we could not parse this" for a number the file states perfectly
+            # clearly by omission. Note `.compact` below, which is why nil vanished silently rather
+            # than showing up as an obvious hole: the key was dropped from the hash entirely.
+            #
+            # Deliberately NOT extended to the other sometimes-absent fields. `minPower` (6 of 135)
+            # has no such flat default — it tracks maxPower unless a layer uses power ramping — and
+            # the panel already handles its absence correctly by showing one power figure instead
+            # of two. Guessing a value there would invent data; here it recovers a stated one.
+            "passes"    => (p = Lbrn2.num(val(cs, "numPasses"))) ? p.to_i : 1
           }.compact
         end.sort_by { |l| l["index"].to_i }
       end

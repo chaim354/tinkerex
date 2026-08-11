@@ -36,6 +36,81 @@ module Maker
 
       DEFAULT_STROKE = "#000000".freeze
 
+      # LIGHTBURN'S BUILT-IN LAYER PALETTE, by CutIndex. The file never carries it (see
+      # `cut_colors`), and it is not in LightBurn's prefs either — it is compiled into the app —
+      # so this table is the only way a layer's real colour reaches our own drawing.
+      #
+      # PROVENANCE MATTERS HERE, because CLAUDE.md previously refused this table on the grounds
+      # that it would mean "hard-coding 30 colours guessed from thumbnails". Two things changed:
+      # the Measure view now draws our OWN outlines (where the thumbnail's colours are unavailable
+      # and the alternative is flat black), and these are no longer guesses.
+      #
+      #   MEASURED — recovered from the embedded thumbnails of the 58 real exports by mapping each
+      #   contour into thumbnail pixel space and reading the colour LightBurn painted. These are
+      #   the indices that actually occur in that corpus, and the clean hex steps they land on
+      #   (ff/e0/c0/a0/80) are themselves evidence the reading is right rather than an
+      #   anti-aliasing artifact.
+      #
+      #   FROM THE PALETTE STRIP — read off a screenshot of LightBurn's own layer bar for indices
+      #   that appear nowhere in the corpus. Hue is reliable, the exact byte less so. Wrong only
+      #   in shade, never in identity, and correcting one is a single line here.
+      #
+      # THE NAMES ARE OURS, NOT LIGHTBURN'S. LightBurn identifies a layer only by its number, so
+      # "Blue" is a label this app invents to make the settings panel readable — which is why a
+      # user's OWN layer name always wins over it (see LbrnMetadata#layers). Naming them is only
+      # defensible because the colours beside them are evidence-backed; a made-up name over a
+      # made-up colour would be two guesses stacked.
+      #
+      # Cosmetic by construction: nothing measures or decides anything from these. Getting index
+      # 19 a shade off tints one outline; it cannot move a number.
+      LAYER_PALETTE = [
+        [ "#000000", "Black" ],        # 00 measured
+        [ "#0000ff", "Blue" ],         # 01 measured
+        [ "#ff0000", "Red" ],          # 02 measured
+        [ "#00e000", "Green" ],        # 03 measured
+        [ "#d0d000", "Yellow" ],       # 04 measured
+        [ "#ff8000", "Orange" ],       # 05 measured
+        [ "#00e0e0", "Cyan" ],         # 06 measured
+        [ "#ff00ff", "Magenta" ],      # 07 measured
+        [ "#b4b4b4", "Light grey" ],   # 08 palette strip
+        [ "#0000a0", "Navy" ],         # 09 measured
+        [ "#a00000", "Dark red" ],     # 10 measured
+        [ "#00a000", "Dark green" ],   # 11 measured
+        [ "#a0a000", "Olive" ],        # 12 palette strip
+        [ "#c08000", "Amber" ],        # 13 measured
+        [ "#00a0ff", "Azure" ],        # 14 palette strip
+        [ "#a000a0", "Purple" ],       # 15 measured
+        [ "#808080", "Grey" ],         # 16 palette strip
+        [ "#868dbb", "Periwinkle" ],   # 17 measured (few samples; matches the strip)
+        [ "#c08080", "Dusty rose" ],   # 18 palette strip
+        [ "#6070c0", "Slate blue" ],   # 19 palette strip
+        [ "#c04060", "Crimson" ],      # 20 palette strip
+        [ "#80c080", "Sage" ],         # 21 palette strip
+        [ "#f0b98d", "Peach" ],        # 22 measured
+        [ "#f6c4e1", "Pale pink" ],    # 23 measured
+        [ "#ffa0d0", "Pink" ],         # 24 palette strip
+        [ "#602080", "Dark purple" ],  # 25 palette strip
+        [ "#a05000", "Brown" ],        # 26 palette strip
+        [ "#004754", "Dark teal" ],    # 27 measured
+        [ "#a0f0a0", "Mint" ],         # 28 palette strip
+        [ "#fff2c8", "Cream" ]         # 29 measured (few samples; matches the strip)
+      ].freeze
+
+      # The palette colour for a CutIndex, or nil when it is outside the palette. Out of range is
+      # ORDINARY, not corrupt: LightBurn's tool layers (T1/T2) sit past the 30 numbered ones, and
+      # a caller should fall back to DEFAULT_STROKE rather than treat it as an error.
+      def layer_color(cut_index) = layer_entry(cut_index)&.first
+
+      # The colour's NAME, e.g. "Dark teal" — see LAYER_PALETTE on why this app names them at all.
+      def layer_name(cut_index) = layer_entry(cut_index)&.last
+
+      # ONE TABLE, TWO READERS. Parallel arrays for colour and name would be free to drift; this
+      # cannot, because there is only ever one row per layer.
+      def layer_entry(cut_index)
+        i = Integer(cut_index.to_s, exception: false)
+        LAYER_PALETTE[i] if i && i >= 0 && i < LAYER_PALETTE.length
+      end
+
       IDENTITY = [ 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 ].freeze
 
       # Curves are flattened for rendering. Even (so t=0.5, a curve's usual extreme, is sampled)
@@ -47,11 +122,45 @@ module Maker
 
       def available? = Maker::Previews::Svg.available?
 
+      # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — it is this file's parser plus arithmetic, and
+      # the embedded-thumbnail path it would otherwise fall back to is irrelevant to it. See
+      # `GeneratePreviewJob#available_for?`.
+      def available_for?(kind) = kind == "geometry" || available?
+
+      # Which build of this renderer produced a stored artifact — see
+      # `Maker::Previews::Enqueue.revision_for`, which compares it against the row's
+      # `renderer_revision` and re-renders whatever no longer matches.
+      #
+      # PER KIND, NOT PER RENDERER, and that distinction is the whole reason this takes an
+      # argument. This renderer emits two unrelated artifacts from one file, and they version
+      # independently: bumping the geometry payload must not re-render every LightBurn thumbnail
+      # in the library as a side effect. On the live share backend that would be ~1400 rebuilds
+      # attached to a fix that had nothing to do with them.
+      # The thumbnail artifact carries `LbrnMetadata` alongside its image, so this bumps when the
+      # PANEL's numbers change and not only when the picture does.
+      #
+      #   1  original
+      #   2  an absent <numPasses> reports 1 pass rather than nothing (see LbrnMetadata#layers)
+      #   3  layers carry their LightBurn palette colour, so the panel can show a swatch
+      #   4  layers carry a colour NAME, so an unnamed layer reads "Blue" not "C01"
+      THUMBNAIL_REVISION = 4
+
+      def payload_revision(kind)
+        kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
+      end
+
       # Embedded thumbnail FIRST — a LightBurn file carries its own full-colour render in a
       # <Thumbnail Source="base64png"> attribute, which is far better than re-drawing the geometry
       # as outlines. Fall back to the hand-rolled geometry parser (-> SVG -> PNG) only when a file
       # has no embedded thumbnail (older LightBurn versions, or a hand-authored file).
-      def render(lbrn2_bytes, size: 512)
+      #
+      # `kind` selects the ARTIFACT, mirroring Mesh's branch. "geometry" is a JSON payload of
+      # coordinates for the browser's Measure view — deliberately NOT an image, which is why
+      # RendererContractTest still passes: that test never passes `kind`, so it exercises the
+      # thumbnail path and its "must be an inline-safe raster" assertion stays true of it.
+      def render(lbrn2_bytes, size: 512, kind: "thumbnail")
+        return Maker::Previews::LbrnGeometry.render(lbrn2_bytes) if kind == "geometry"
+
         meta = Maker::Previews::LbrnMetadata.parse(lbrn2_bytes)
         img = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes) ||
               Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
@@ -105,17 +214,30 @@ module Maker
 
       # THE one traversal, shared with LbrnMetadata so the thumbnail and the reported job size
       # can never disagree. Yields every drawable leaf as
-      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil)
+      #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id)
       # with the points already transformed into SVG space (composed affine, then Y-flipped).
       #
       # The last two are RICHER RENDERINGS OF THE SAME POINTS, never a substitute for them: a
       # measuring caller (`job_size`) reads only the points and is correct ignoring both, which is
       # what lets an ellipse stay exact and a bitmap show its photo without either of them
       # changing what the file measures.
+      #
+      # `object_id` counts NON-GROUP `<Shape>` elements in document order. A Group emits nothing
+      # of its own — walk_shapes recurses into <Children> and `next`s — so it consumes no id. A
+      # Text's <BackupPath> deliberately REUSES its parent Text's id rather than taking a fresh
+      # one: the outline IS the text, so the two must group as one object (why a fresh id here is
+      # a real bug, not just untidy: the "groups a Text with its BackupPath" test).
+      #
+      # IDS ARE DISTINCT PER OBJECT, NOT DENSE — never assume 1..N. The counter ticks in
+      # `walk_shapes` BEFORE `emit_shape` is called, and `emit_shape` returns without yielding for
+      # a Rect/Bitmap missing W/H, an Ellipse missing Rx/Ry, or a Text with no BackupPath — each
+      # such shape still spends an id nothing ever uses. A real document can yield ids as sparse
+      # as `[3]`. A caller that groups by object_id (Task 3) may rely on equality only, never on
+      # contiguity.
       def each_geometry(doc, &block)
         return if doc.root.nil?
 
-        walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), &block)
+        walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), Counter.new, &block)
       end
 
       # The drawn extent in mm, or nil when there is no geometry. Lives HERE, beside the walk it
@@ -128,6 +250,20 @@ module Maker
         each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
         w, h = bbox.dimensions
         w && { "width" => w.round(1), "height" => h.round(1) }
+      end
+
+      # A mutable counter threaded through the recursive walk, `walk_shapes`' only user. A plain
+      # Integer would be COPIED into each recursive frame: a Group's children would correctly
+      # CONTINUE numbering from the parent's current value, but every increment they make is
+      # invisible to the parent once the recursive call returns — Ruby integers are immutable, and
+      # the return value goes unused. So the PARENT'S OWN counter REWINDS to its pre-Group value,
+      # and the next sibling after the Group reuses an id already spent inside it: [1, 2, 2], not
+      # [1, 2, 3]. Pinned by "a shape after a Group keeps counting where the group left off" —
+      # real-export.lbrn2 cannot catch this at all, because its Group is the LAST shape and
+      # nothing ever yields after one returns.
+      class Counter
+        def initialize = @n = 0
+        def succ! = (@n += 1)
       end
 
       # Layers LightBurn itself does not draw. Two things here are easy to get wrong, and each
@@ -169,40 +305,44 @@ module Maker
       # usually identity-transformed coordinates. A flat `//Shape` sweep sees the children but
       # drops the transform that positions them, and separately hands the Group itself every
       # descendant vertex (via `.//VertList` or `shape.text`), drawing a scribble through them.
-      def walk_shapes(parent, parent_xform, index, hidden, &block)
+      def walk_shapes(parent, parent_xform, index, hidden, counter, &block)
         parent.xpath("./Shape").each do |shape|
           world = compose(parent_xform, shape_xform(shape))
 
           if shape["Type"] == "Group"
             kids = shape.at_xpath("./Children")
-            walk_shapes(kids, world, index, hidden, &block) if kids
+            walk_shapes(kids, world, index, hidden, counter, &block) if kids
             next
           end
 
           # Before the BackupPath below, so hiding a Text hides its outline too.
-          next if hidden.include?(cut_key(shape["Type"], shape["CutIndex"]))
+          next if hidden.include?(cut_key(shape["Type"], layer_index(shape)))
 
-          emit_shape(shape, world, index, &block)
+          object_id = counter.succ!
+          emit_shape(shape, world, index, object_id, &block)
 
           # A Text stores its rendered outline in `<BackupPath>`. Two things about it:
           #
           # It is NOT a `<Shape>`, so a `//Shape` sweep never sees text at all — all 74 Text
           # shapes in this corpus contributed nothing to any bounding box.
           #
-          # And its `<XForm>` is already in DOCUMENT space: it composes with nothing, not the
+          # Its `<XForm>` is already in DOCUMENT space: it composes with nothing, not the
           # Text's own transform and not the groups around it. 64 of the 74 write the very
           # same matrix as their Text, so composing the pair doubles the translation — that
           # is what threw "Polster Library" clean off its sign. The other 10 settle what the
           # value actually is: in logo.lbrn2 a Text at (99.216, -127.493) sits inside a group
           # scaled 0.825 at (249.244, 245.2), and 0.825 * 99.216 + 249.244 = 331.09 is
           # exactly the BackupPath's own e — it is group ∘ text, already flattened.
+          #
+          # It also reuses its Text's object_id here rather than taking a fresh one — see
+          # each_geometry's doc comment above for why.
           bp = shape.at_xpath("./BackupPath")
-          emit_shape(bp, shape_xform(bp), index, &block) if bp
+          emit_shape(bp, shape_xform(bp), index, object_id, &block) if bp
         end
       end
 
-      def emit_shape(shape, world, index)
-        cut = shape["CutIndex"]
+      def emit_shape(shape, world, index, object_id)
+        cut = layer_index(shape)
 
         case shape["Type"]
         when "Rect", "Bitmap"
@@ -213,7 +353,7 @@ module Maker
           corners = [ [ -w / 2, -h / 2 ], [ w / 2, -h / 2 ], [ w / 2, h / 2 ], [ -w / 2, h / 2 ] ]
           pts = corners.map { |(x, y)| apply(world, x, y) }
           image = shape["Type"] == "Bitmap" ? bitmap_image(shape, world, pts) : nil
-          yield cut, pts + [ pts.first ], true, nil, image
+          yield cut, pts + [ pts.first ], true, nil, image, object_id
         when "Ellipse"
           rx = num(shape["Rx"]); ry = num(shape["Ry"])
           return if rx.nil? || ry.nil?
@@ -226,17 +366,54 @@ module Maker
             t = i * (2 * Math::PI / ELLIPSE_SAMPLES)
             apply(world, rx * Math.cos(t), ry * Math.sin(t))
           end
-          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil)
+          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil), nil, object_id
         when "Path", "Line"
           verts, prims = index.geometry_for(shape)
           polylines(verts, prims).each do |pts, closed|
-            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil
+            yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil, nil, object_id
           end
         end
       end
 
-      # Base64's alphabet, plus the whitespace an XML attribute may wrap it with. Anchored.
-      BITMAP_DATA = %r{\A[A-Za-z0-9+/=\s]+\z}
+      # WHICH LAYER A SHAPE BELONGS TO. LightBurn writes `CutIndex`; MillMage writes `OpIndex`,
+      # naming the `<Operation>` that cuts the shape.
+      #
+      # THIS IS WHY .mage GEOMETRY REPORTED LAYER nil FOR EVERY SHAPE. `Mage` renders through this
+      # walker verbatim (the dialect is LightBurn's), but `shape["CutIndex"]` is absent on every
+      # MillMage shape — measured on real-export.mage: CutIndex uniq [nil], OpIndex uniq ["0"]. The
+      # thumbnail never noticed, because a MillMage file has no `<CutSetting>` either, so
+      # `cut_colors` returns {} and both a nil and a real index fall through to DEFAULT_STROKE and
+      # draw the same black. The Measure view is where it surfaced: the payload's layer key is what
+      # groups shapes and keys the colour map, so every .mage contour landed in one nameless layer.
+      #
+      # AN `||`, NOT A FORMAT BRANCH, and it is unambiguous rather than merely convenient: the two
+      # attributes are written by different applications and no file carries both. A branch on the
+      # root element would have to be threaded down two levels of recursion to reach here, and
+      # would answer the same question with more moving parts.
+      def layer_index(shape) = shape["CutIndex"] || shape["OpIndex"]
+
+      # Base64's alphabet, plus the whitespace an XML attribute may wrap it with.
+      #
+      # A `String#count` SET, NOT A REGEX, AND THAT IS A BUG FIX RATHER THAN A STYLE CHOICE. This
+      # was `%r{\A[A-Za-z0-9+/=\s]+\z}`, and `Regexp.timeout` is 1.0 s under Rails' loaded
+      # defaults — but this attribute is the inlined PHOTO (the reason `parse_document` needs
+      # `huge`), routinely 10-25 MB. Matching a character class across that much UTF-8 runs close
+      # enough to the limit to fall on either side of it depending on the machine: measured here
+      # at 0.467 s standalone and OVER the timeout through the real Nokogiri path, so the two
+      # 11 MB-attribute tests failed on this box and pass on a faster one. `Regexp::TimeoutError`
+      # is not a `StandardError` subclass problem — it IS one, so `LbrnMetadata.parse`'s blanket
+      # rescue swallowed it and returned nil metadata, while `to_svg` and the Measure payload,
+      # which have no such rescue, would have failed the whole preview.
+      #
+      # `count` with a negated set is C-level, has no engine to time out, and measured 45x faster
+      # on the same 11 MB (0.0104 s). Semantics are identical — "every character is in the
+      # alphabet" — with the `+`'s non-empty requirement restored explicitly by the caller, since
+      # `count` on an empty string is 0 and would otherwise let a missing `Data` through.
+      #
+      # The whitespace here is the same set Ruby's `\s` matches: space, tab, CR, LF, FF, VT.
+      BITMAP_ALPHABET = "^A-Za-z0-9+/= \t\r\n\f\v".freeze
+
+      def base64ish?(data) = !data.empty? && data.count(BITMAP_ALPHABET).zero?
 
       # A placed photo, ready to emit as an `<image>` — or nil, meaning "draw the outline
       # instead", which is what this shape did in every case before.
@@ -263,7 +440,7 @@ module Maker
         return nil unless axis_aligned?(world)
 
         data = shape["Data"].to_s
-        return nil unless data.match?(BITMAP_DATA)
+        return nil unless base64ish?(data)
 
         b64 = data.gsub(/\s/, "")
         return nil unless Base64.decode64(b64[0, 16].to_s)[0, 8] == Maker::Previews::EmbeddedThumbnail::PNG_MAGIC
@@ -280,22 +457,23 @@ module Maker
       # `<CutSetting_Img type="Image">`, so an exact-name match silently drops its colour and
       # leaves it out of the laser-settings panel.
       #
-      # EXPECT THIS TO FIND NOTHING on a real file, and do not read that as a bug: not one of
-      # the 150 CutSetting blocks across this corpus carries a `<color>` at all. LightBurn keys
-      # a layer's colour off its INDEX, from a fixed built-in palette it never writes into the
-      # document, so the geometry SVG draws in `DEFAULT_STROKE`. That costs almost nothing in
-      # practice — `render` prefers the file's own embedded thumbnail, which is LightBurn's
-      # full-colour render, and 57 of 58 files here carry one. Reproducing the palette would
-      # mean hard-coding 30 colours guessed from thumbnails, which is not worth being wrong
-      # about; the parse below stays for files that do carry the field.
+      # EXPECT THIS TO FIND NOTHING IN THE FILE, and do not read that as a bug: not one of the
+      # 150 CutSetting blocks across this corpus carries a `<color>`. LightBurn keys a layer's
+      # colour off its INDEX, from a built-in palette it never writes into the document — so the
+      # per-file parse below is for the rare file that does carry the field, and everything else
+      # falls back to `LAYER_PALETTE`.
       def cut_colors(doc)
         out = {}
         cut_settings(doc).each do |cs|
           idx = cs["index"] || cs.at_xpath("index")&.[]("Value") || cs.at_xpath("index")&.text
+          next if idx.nil?
+
           raw = cs.at_xpath("color")&.[]("Value") || cs.at_xpath("color")&.text || cs["color"]
-          out[idx.to_s] = normalize_color(raw) if idx
+          # The file's own value wins where it exists — a user CAN recolour a layer — but that is
+          # the rare case; every real export here relies on the built-in palette instead.
+          out[idx.to_s] = raw.present? ? normalize_color(raw) : layer_color(idx)
         end
-        out
+        out.compact
       end
 
       def cut_settings(doc)
@@ -487,8 +665,25 @@ module Maker
           end
         end
 
+        # THE INDEX IS CONSULTED BEFORE A SHAPE'S OWN INLINE LIST, and the order is a measured
+        # performance fix rather than a preference. Parsing a `<VertList>` is a regex scan over
+        # what is routinely megabytes; the constructor above has already parsed every one of them.
+        # Asking `Lbrn2.vertices(shape)` first — as this did — re-scanned each inline list a
+        # SECOND time at emit. On `reference card.lbrn2` (2.69 MB, 641 inline lists) that was the
+        # same 2.5 MB of text parsed twice, and the walk it sits in was 98% of the time to build a
+        # Measure view. Reversing the order cuts ~9% off every file that instances (35 of the 58
+        # real exports) and ~20% off the worst one.
+        #
+        # SAFE BECAUSE A VertID IDENTIFIES A VERTEX LIST — that is what instancing means — so the
+        # index can never shadow a shape's own geometry with someone else's. Verified rather than
+        # assumed: across the 58 real exports, zero VertIDs carry more than one inline
+        # `<VertList>`. If that ever stops holding, this order silently draws the wrong shape.
+        #
+        # PRIMS ARE DELIBERATELY LEFT INLINE-FIRST, and the asymmetry is the point: a `<PrimList>`
+        # is read with `.text` and never parsed, so reading one twice costs nothing — and leaving
+        # it alone means no one has to establish that PrimIDs are unique the way VertIDs are.
         def geometry_for(shape)
-          verts = Lbrn2.vertices(shape) || @verts[shape["VertID"]]
+          verts = @verts[shape["VertID"]] || Lbrn2.vertices(shape)
           prims = shape.at_xpath("./PrimList")&.text || @prims[shape["PrimID"]]
           [ verts, prims ]
         end

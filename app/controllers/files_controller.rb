@@ -236,6 +236,10 @@ class FilesController < ApplicationController
     # explicitly and hands the view an ivar. nil when no project is current (its own rescue already
     # covers an ensure failure, same as ProjectsController#show's).
     @current_project_folder_node_id = current_project_folder_node_id
+    # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
+    # the control for choosing a whole-library type view, so scoping it to the folder you happen to
+    # be standing in would hide the types the filter exists to reach.
+    @ext_facets = ext_facets
   end
 
   # GET /files/thumbnails?ids=a,b,c (JSON) — the current-version thumbnail state for each node id,
@@ -258,6 +262,76 @@ class FilesController < ApplicationController
     render json: out
   end
 
+  # GET /files/:id/geometry (JSON) — the coordinate payload behind the .lbrn2 Measure view.
+  #
+  # Enqueue-and-report, NOT render-and-wait. Parsing means reading the whole file out of the
+  # file layer, and the biggest .lbrn2 files are photo engravings — 24 MB on disk for two shapes —
+  # so doing it inline would block a browser request on a multi-megabyte fetch. The job already
+  # owns that work, along with the MAX_PREVIEW_BYTES ceiling, the FetchError retry policy, and
+  # commit_if_current's version-race guard.
+  #
+  # Same response shape as #thumbnails so the client's polling code is a known quantity — INCLUDING
+  # never redirecting. The class-level `rescue_from ActiveRecord::RecordNotFound` a few lines up
+  # branches on request format and answers a plain `get` (html, the default with no Accept header)
+  # with a 302 to files_path — right for #show/#blob, which render a page, and wrong here: a JSON
+  # poller reading a redirect's body would see neither a status key nor a 404. Caught locally so
+  # this action's shape holds regardless of what the caller's Accept header happens to be.
+  #
+  # LOOKS UP THE EXISTING ROW BEFORE CALLING Enqueue, RATHER THAN CALLING IT UNCONDITIONALLY. This
+  # is not the same shape as #enqueue_preview's eager, upload-time call: Enqueue.call resets a
+  # `failed` row to "pending" and re-enqueues WHENEVER it is called (documented — "when it
+  # previously `failed`"), which is exactly right for a one-shot nudge at upload time and exactly
+  # wrong for a passive poll. Calling it on every GET would mean a client polling a permanently
+  # broken file (the parse will fail again, unchanged) re-enqueues a doomed render on every poll —
+  # the retry storm `Unsupported` exists elsewhere in this file to avoid — and would make the
+  # "failed" branch below DEAD CODE, since preview.status could never still read "failed" by the
+  # time this method reads it. Reading the row first and only falling through to Enqueue when
+  # nothing exists YET for the current content_token keeps Enqueue as the one-time trigger for the
+  # first render (or a re-render after content genuinely changes, via Enqueue's own staleness
+  # check) while leaving a terminal ready/failed/unsupported status alone to be reported as is.
+  def geometry
+    node = current_user.nodes.present.find_by!(node_id: params[:id])
+    token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
+    return render json: { status: "pending" } if token.nil?
+
+    # SCOPED BY renderer_revision AS WELL AS version_id, and the second half is load-bearing. This
+    # lookup exists to stop a poll re-enqueueing a TERMINAL row (see the comment above), but a row
+    # made by an OLDER BUILD is not terminal — it is stale, and finding it here would serve its
+    # payload back unchanged forever, because a file's content never has to change for the code
+    # that renders it to. That is exactly what happened when the thinning fix deployed: four
+    # already-measured files kept serving mangled curves until they were destroyed by hand.
+    # Missing the row sends this through Enqueue, which repoints it and re-renders. It also means
+    # bumping a revision un-sticks a `failed` row — right, because the code that failed is not the
+    # code running now.
+    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "geometry")
+    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
+                                                  kind: "geometry", renderer_revision: revision)
+    # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
+    # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
+    # rebuild, because a thumbnail is a PICTURE of this same file and the detail page does not poll
+    # — blanking it would strand a spinner there. Geometry is the opposite on both counts: it is
+    # the DATA the client measures and draws from, so an older build's payload is wrong rather than
+    # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
+    # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
+    # the revision check exists to stop.
+    if preview.nil?
+      Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                    name: node.name, version_id: token, kind: "geometry")
+      return render json: { status: "pending" }
+    end
+    case preview.status
+    when "ready"
+      render json: { status: "ready",
+                     url: (url_for(preview.asset) if preview.asset.attached?) }
+    when "failed", "unsupported"
+      render json: { status: preview.status, error: preview.error }
+    else
+      render json: { status: "pending" }
+    end
+  rescue ActiveRecord::RecordNotFound
+    head :not_found
+  end
+
   # GET /files/:node_id — view/preview a single file + metadata.
   #
   # THE PORT, NOT Version, AND THAT IS THE SAME FIX AS #blob RATHER THAN SCOPE CREEP. `Version`
@@ -273,8 +347,7 @@ class FilesController < ApplicationController
     @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
     @kind = preview_kind(@node.name)
     token = @info&.content_token
-    @thumbnail = token && current_user.maker_previews
-                            .find_by(node_id: @node.node_id, version_id: token, kind: "thumbnail")
+    @thumbnail = token && current_thumbnail(@node, token)
     # THE ATTACH CONTROL'S TWO HALVES. `@attached_projects` is what the file is already in — a
     # file can be in several projects, and until now the page gave no sign it was in any. The
     # dropdown then offers the REST: re-attaching to a project it is already in is a no-op, so
@@ -534,9 +607,47 @@ class FilesController < ApplicationController
     tokens = nodes.filter_map { |n| info[n.node_id]&.content_token }
     return {} if tokens.empty?
 
+    # A ROW FROM AN OLDER RENDERER IS NOT "EXISTING", and leaving that out is what made the whole
+    # renderer_revision mechanism unreachable for thumbnails. `Enqueue` compares revisions
+    # correctly — but the only thing that CALLS it for a thumbnail is backfill_thumbnails, which
+    # skips any node this method reports a row for. So a stale row satisfied the check, nothing
+    # re-enqueued, and 172 of 174 LightBurn thumbnails sat at revision 1 through two deploys that
+    # had bumped it. The mechanism was right and simply never asked.
+    #
+    # FILTERED IN RUBY, NOT SQL, because the current revision depends on the RENDERER and so on
+    # each node's filename — there is no single value to put in a WHERE. Still one query, which is
+    # what page_query_budget_test.rb asserts; this only drops rows from its result.
+    name_by_node = nodes.to_h { |n| [ n.node_id, n.name ] }
     current_user.maker_previews
                 .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
+                .select { |p| current_revision?(p, name_by_node[p.node_id]) }
                 .index_by { |p| [ p.node_id, p.version_id ] }
+  end
+
+  # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
+  #
+  # #show USED TO ONLY READ, and that is why a bumped revision never reached the detail page: the
+  # only thing enqueueing thumbnails is the index's backfill, so a file whose page you opened
+  # directly kept rendering an older build's metadata until you happened to visit the list. The
+  # Laser Settings panel is drawn from that metadata, which is how a deploy that added layer
+  # colours left them invisible on 172 of 174 files.
+  #
+  # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
+  # rather than an older artifact labelled as current) or nil when nothing can render this name.
+  def current_thumbnail(node, token)
+    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail")
+    row = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
+                                              kind: "thumbnail", renderer_revision: revision)
+    return row if row
+
+    Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
+                                  name: node.name, version_id: token, kind: "thumbnail")
+  end
+
+  def current_revision?(preview, name)
+    return false if name.blank?
+
+    preview.renderer_revision == Maker::Previews::Enqueue.revision_for_name(name, preview.kind)
   end
 
   # How many missing thumbnails ONE page load may enqueue.
@@ -811,10 +922,51 @@ class FilesController < ApplicationController
   # mistaken for a snapshot. Pagination is the follow-up if a real library hits this.
   FLAT_LIMIT = 2000
 
-  # `add_ext` is the free-text field beside the chips; it simply joins the list, so there is one
-  # filter param and one code path rather than two ways to say the same thing. `.to_s` on each,
-  # because `?ext[]=a` and `?ext[x]=y` hand us an Array and a Parameters -- both stringify into
-  # something the whitelist below then drops, which is the point.
+  # EVERY EXTENSION THE USER'S LIBRARY ACTUALLY HOLDS, with how many files carry it:
+  # { "stl" => 42, "lbrn2" => 17, ... }. This is what the type filter offers.
+  #
+  # THE CONTROL IT REPLACED LISTED THE VOCABULARY, NOT THE LIBRARY. `FilesHelper::EXT_FAMILIES`
+  # is derived from `ROLE_BY_EXT`, so the chip row offered `.sldasm`, `.ngc` and `.fcstd` to
+  # someone who has never owned one, in a wall of ~35 chips, while a `.kicad`-shaped extension the
+  # user really did have appeared nowhere and had to be typed into a free-text box beside it. A
+  # dropdown built from this hash has the opposite property in both directions: everything offered
+  # exists, and everything that exists is offered.
+  #
+  # IN RUBY, AND §5.2 IS WHY: there is no expression for "the file's extension" portable across
+  # SQLite and Postgres (substr/instr vs substring/position), and a denormalised `ext` column would
+  # have to be written by Sync::Commit and Sync::Mutation — the maker/file-layer §10 tripwire, to
+  # serve a filter. So this is ONE query returning N short strings, tallied here.
+  #
+  # THE COST IS UNBOUNDED IN N, stated because it is a real property of this page rather than a
+  # hypothetical. MEASURED on this box (SQLite, one user, 13 extensions):
+  #
+  #     20,000 files -> 14.4 ms total, of which 3.1 ms is the query
+  #    100,000 files -> 86.2 ms total, of which 11.3 ms is the query
+  #
+  # So the database is not the cost — the per-row `File.extname` in Ruby is, ~7/8ths of it. For
+  # scale, the same page already spends 175-278 ms of ERB rendering 2000 rows (see FOLDER_PAGE),
+  # which is why this is not cached: a cache would add a second query and a staleness window to
+  # shave a tenth of what the render costs. It is ONE query whatever N is, which is the property
+  # page_query_budget_test.rb actually asserts. A library big enough for the milliseconds to matter
+  # will have hit CLAUDE.md §12 item 8 (the render cost) long before it notices this.
+  #
+  # FILTERED BY EXT_RE, so the options can only ever be extensions #resolve_exts will accept. A
+  # `.tar.gz` or a name ending in a 30-character suffix is simply not offered, rather than
+  # rendering an option that links and silently does nothing — the exact defect `ext_slots_left?`
+  # exists to prevent one control over.
+  def ext_facets
+    current_user.nodes.present.where(kind: "file").pluck(:name)
+                .each_with_object(Hash.new(0)) do |name, tally|
+      ext = File.extname(name.to_s).downcase.delete(".")
+      tally[ext] += 1 if ext.match?(EXT_RE)
+    end
+  end
+
+  # `add_ext` is the type dropdown's own param; it simply joins the list, so there is one filter
+  # param and one code path rather than two ways to say the same thing. (It was the free-text field
+  # beside the chips before the dropdown replaced both.) `.to_s` on each, because `?ext[]=a` and
+  # `?ext[x]=y` hand us an Array and a Parameters -- both stringify into something the whitelist
+  # below then drops, which is the point.
   def resolve_exts
     [ params[:ext], params[:add_ext] ].compact_blank.map(&:to_s).join(",")
       .downcase.split(",").map(&:strip).select { |e| e.match?(EXT_RE) }.uniq.first(MAX_EXTS)
@@ -968,9 +1120,28 @@ class FilesController < ApplicationController
     crumbs
   end
 
+  # Extensions whose detail page offers the interactive Measure view (measure_controller.js).
+  #
+  # THE SET IS THE FORMATS A GEOMETRY PAYLOAD CAN BE BUILT FOR, and it is written out rather than
+  # derived from `Registry` — a renderer being registered says only that it makes a THUMBNAIL, and
+  # ten of them do exactly that. Asking `payload_revision` instead would be no better: every
+  # renderer answers it (via `Enqueue.revision_for`'s fallback), so the question it answers is not
+  # the one being asked. Pinned by a test that drives the real `render(..., kind: "geometry")` for
+  # each entry, so the list cannot claim a format the renderers do not actually measure.
+  MEASURABLE_EXTS = %w[lbrn lbrn2 mage dxf svg].freeze
+
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
-    return :image if %w[png jpg jpeg gif webp svg bmp ico].include?(ext)
+    # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
+    # at rest — the Measure branch uses it as its own poster (see _measure.html.erb) — so this
+    # reorders which branch OWNS the page, not what the page displays when nothing is clicked.
+    #
+    # Measure SUPERSEDES the static preview the way :model3d does for meshes, and for the same
+    # reason: it is a button, not a replacement. The resting picture stays whatever the format's
+    # own render is (LightBurn's and MillMage's are in colour; ours are outlines).
+    return :measure if MEASURABLE_EXTS.include?(ext)
+
+    return :image if %w[png jpg jpeg gif webp bmp ico].include?(ext)
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
@@ -980,7 +1151,7 @@ class FilesController < ApplicationController
     # (modelviewer_controller.js), which supersedes the static thumbnail on the detail page. The
     # thumbnail is still generated (Registry has these) and serves as the viewer's fallback poster.
     return :model3d if %w[stl 3mf obj].include?(ext)
-    # A file we can render a server-side thumbnail for (dxf, lbrn2, step, stp, iges, igs, ...) but
+    # A file we can render a server-side thumbnail for (step, stp, iges, igs, ...) but
     # that the browser can't display raw. The :thumbnail branch in show.html.erb reads @thumbnail.
     return :thumbnail if Maker::Previews::Registry.for(ext)
     :other

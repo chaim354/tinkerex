@@ -78,6 +78,10 @@ Rails.application.routes.draw do
     end
     member do
       get "blob"
+      # The .lbrn2 Measure view's coordinate payload. A SECOND preview kind for the same node
+      # (kind: "geometry"), so this neither replaces nor disturbs the thumbnail. The payload
+      # itself leaves via the blob URL, off Rails — this action only reports where it is.
+      get "geometry"
     end
   end
 
@@ -213,8 +217,10 @@ Rails.application.routes.draw do
 
   # An addon's own saved states (Maker::AddonState rows), as JSON — a bundle has no database access
   # of its own, so this is how it lists a user's prior saves. Scoped BOTH by addon_key and by
-  # current_user in the controller; that scoping is the only thing between one addon and another's
-  # (or another user's) saved work, so it lives above the tools/:key wildcard for the same reason
+  # current_user in the controller — a DATA-SCOPING rule, not a boundary between one addon and
+  # another's saved work (a bundle can call another addon's own /tools/<other-key>/states directly,
+  # no states_key required — audit §2.1, docs/AUDIT-2026-08-03.md); current_user is what actually
+  # keeps one user's rows from a stranger's. Lives above the tools/:key wildcard for the same reason
   # the service route does.
   get "tools/:key/states", to: "tools/addons#states", as: :tools_addon_states
 

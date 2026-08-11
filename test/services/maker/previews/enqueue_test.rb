@@ -15,8 +15,15 @@ module Maker
         assert_equal "pending", p.status
       end
 
+      # THE FIXTURE CARRIES THE RENDERER'S CURRENT REVISION, and it has to: this test is about the
+      # CONTENT axis (same node, same version -> no rebuild), and a row left at the column default
+      # would be stale on the OTHER axis, so it re-enqueues for a reason that has nothing to do with
+      # what is being asserted. It went red the moment `.stl` first declared a revision — the
+      # mechanism working, not a regression.
       test "is idempotent: re-enqueuing a ready (node, version) does not enqueue again" do
-        p = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "ready")
+        p = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                         status: "ready",
+                                         renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
         assert_no_enqueued_jobs do
           result = Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
           assert_equal p.id, result.id
@@ -61,6 +68,93 @@ module Maker
           assert_nil result
         end
         assert_not @user.maker_previews.exists?(node_id: "n1")
+      end
+
+      # THE SECOND STALENESS AXIS. `version_id` asks whether an artifact was made from the file's
+      # current CONTENT; `renderer_revision` asks whether it was made by the current CODE. Only the
+      # first existed, so when the .lbrn2 geometry thinning was fixed, every already-measured file
+      # went on serving the old algorithm's output — its content had not changed and nothing else
+      # was compared. Four had to be found and destroyed by hand on the live box.
+      test "a renderer revision bump makes an otherwise current preview stale" do
+        current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                     status: "ready", renderer_revision: current - 1)
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "geometry")
+        end
+        row = @user.maker_previews.find_by!(node_id: "n1", kind: "geometry")
+        assert_equal current, row.renderer_revision
+        # STATUS IS LEFT ALONE on a renderer-only rebuild — the artifact still depicts this exact
+        # file, and blanking it strands a spinner on the (non-polling) file page. Consumers that
+        # cannot tolerate an older build's output say so themselves: FilesController#geometry
+        # answers "pending" whenever it had to enqueue, without reading this status at all.
+        assert_equal "ready", row.status,
+                     "a renderer rebuild must not blank an artifact that is still of this file"
+      end
+
+      test "a preview already at the current revision is left alone" do
+        current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                     status: "ready", renderer_revision: current)
+
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "geometry")
+        end
+      end
+
+      # REVISIONS ARE PER KIND, and this is what keeps a fix to one artifact from becoming an
+      # unannounced rebuild of another. Lbrn2 renders both a thumbnail and a geometry payload from
+      # one file, and they must be able to move independently.
+      #
+      # ASSERTED THROUGH A STAND-IN RENDERER RATHER THAN AGAINST Lbrn2's OWN NUMBERS, and the
+      # reason is worth stating because the obvious version of this test is worthless right now:
+      # Lbrn2's two revisions BOTH happen to be 2, so code that ignored `kind` entirely and
+      # returned one revision for both would satisfy every value-based assertion. A double whose
+      # two kinds differ is the only thing that can tell dispatch from coincidence.
+      test "revision_for asks the renderer for the specific kind" do
+        two_kinds = Class.new do
+          def self.payload_revision(kind) = kind == "geometry" ? 7 : 3
+        end
+
+        assert_equal 7, Maker::Previews::Enqueue.revision_for(two_kinds, "geometry")
+        assert_equal 3, Maker::Previews::Enqueue.revision_for(two_kinds, "thumbnail")
+      end
+
+      # And the consequence at the door: a thumbnail already at ITS revision is left alone, whatever
+      # geometry's happens to be.
+      test "a thumbnail at its own current revision is not re-enqueued" do
+        thumb = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "thumbnail")
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                     status: "ready", renderer_revision: thumb)
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
+                                        version_id: "v1", kind: "thumbnail")
+        end
+      end
+
+      # A renderer declaring no revision sits at the base — which is exactly what the migration
+      # stamped every pre-existing row with, so installing this mechanism invalidated nothing.
+      #
+      # `.obj` (Mesh), NOT `.stl`: this test named a real extension, and the extension it named
+      # acquired a revision when the STL camera was fixed — at which point the test failed for the
+      # right reason and had to move rather than be relaxed. If Mesh ever declares one too, MOVE THE
+      # FIXTURE AGAIN to whatever still declares nothing (Pdf, ImageThumb, TextThumb); do not delete
+      # the assertion, because "silence means BASE_REVISION" is what makes a renderer's cache
+      # invalidate only when someone deliberately says so.
+      test "a renderer with no declared revision sits at the base" do
+        assert_not Maker::Previews::Mesh.respond_to?(:payload_revision),
+                   "this fixture needs a renderer that declares NOTHING — pick another one"
+        assert_equal Maker::Previews::Enqueue::BASE_REVISION,
+                     Maker::Previews::Enqueue.revision_for_name("part.obj", "thumbnail")
+
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                     status: "ready", renderer_revision: 1)
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.obj", version_id: "v1")
+        end
       end
     end
   end

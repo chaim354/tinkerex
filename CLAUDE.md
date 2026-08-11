@@ -730,6 +730,113 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `rescue_from` — as JSON with a real status, NOT a redirect-with-flash, because the only caller
   is a `fetch()` that branches on `res.ok` and **fetch follows a 302**, so answering an error the
   way success is answered reports "Saved." over a save that never happened.
+- **THE CTX BLOB IS AN ADDITION; THE NINE LEGACY DATA ATTRIBUTES STAY FOR THE LIFE OF
+  `api_version: "1"`.** Publishing a bundle *is* the deploy and Rails is never rebuilt, so bundles
+  written against **both** shapes are live against one host at the same time — the host may never
+  assume they moved with it. Guarded by reading both representations out of **ONE** rendered
+  response and comparing them to each other, not by recomputing an expectation each could drift
+  away from independently; mutation-checked by deleting an attribute.
+- **`@maker/addon-sdk` IS A HOST PIN, AND ITS SPECIFIER IS PUBLIC API.** `merged_importmap` draws
+  every host pin before the addon's own, which is what lets a bundle import it having declared
+  nothing in its manifest. The FILE behind the pin may move freely; the **SPECIFIER may not change
+  while `api_version: "1"` lives** — every published bundle names it, and **Rails is never rebuilt
+  when a bundle is**, so nothing in this repo would notice: the failure is an addon 404ing in a
+  browser against a deployment whose suite is green.
+- **`initHost(ctx)` RUNS BEFORE THE BUNDLE IS IMPORTED, AND THE ORDER IS THE CONTRACT** — a
+  bundle's top-level code executes at import time, so `host` must already be bound by then. The
+  corollary is the part that bit twice, and it is **silent rather than loud**: an ES module is
+  evaluated **ONCE PER URL PER PAGE**, so on a Turbo re-mount `initHost` builds a NEW `Host` while
+  the cached module's top level does **not** re-run — a reference captured at top level
+  (`const { files } = host`) then goes on serving the PREVIOUS, torn-down host's context and CSRF
+  token, with nothing thrown and nothing logged. **Read through `host` at call time; never capture
+  it.**
+- **THE CAPABILITY MAP IS SERVER-SIDE AND HAS ONE DEFINITION** (`Maker::Addons::Host`) — §14d's
+  third extension→role table is what a second copy becomes. **Every value must be a real boolean**:
+  a missing key reads as `undefined` in JS and a nil reads as `false`, and neither is
+  distinguishable from a deliberate "off". A capability is **NAMED BEFORE IT IS BUILT, ANSWERED
+  `false`** — that is the whole compatibility mechanism, and what lets an addon be authored against
+  a host level it has not met.
+- **BUMP `Host::LEVEL` IN THE SAME COMMIT THAT FLIPS A CAPABILITY TO TRUE.** A manifest's
+  `min_host` is the only way an addon can say "I need this", and `api_version` **equality** cannot
+  express it — flip without bumping and an addon requiring the new capability has no way to name
+  the host that has it.
+- **A 409 `would_replace` IS A QUESTION; A 422 `name_taken` IS NOT** — the SDK throws
+  `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
+  distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
+  save that can never succeed on retry.
+- **`defaultFolder` NAMES TWO DIFFERENT SHAPES, DELIBERATELY.** The raw `ctx.defaultFolder` handed
+  to `mount` is a **STRING node id**; the server's ctx blob carries `defaultFolder: {nodeId,
+  label}`. Harmless only because the SDK never exposes its copy — so **never add a
+  `host.defaultFolder` accessor**, which would silently hand an object to every bundle that expects
+  a string.
+- **A SIDECAR'S ERROR NEVER RUNS THROUGH THE HOST'S ERROR TABLE.** A sidecar answers **prose** in
+  its `error` key, not a code, so `errorFrom` would put the message in `.code` and generic filler
+  in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
+  consumed by the failing `res.json()` and lost entirely. `service.*` raises `ServiceError`, built
+  from the status and the raw text.
+- **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
+  `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
+  is sent and it never reaches the route the server guards: it misroutes **silently** instead of
+  being refused. Same rule as §14a's `key_for` and `validate_asset_path!` above: **reject, never
+  normalize.** **THE SERVICE NAME IS THE SAME URL AND GETS THE SAME REFUSAL** — it went unguarded
+  while the `path` beside it did, which made the invariant true of only part of one URL. It
+  additionally rejects a `/` **outright rather than splitting it into segments**, because `:service`
+  is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"` cannot
+  name a service on any host; splitting would normalize a structural error, and would leave the
+  contract incoherent (`"../.."` refused, `"a/b"` accepted) for a value that is one segment by
+  definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
+  clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
+  parser's and no server-side test can observe it.
+- **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
+  the target, the target names the claimant back in `shares_states_with`, **and the target must
+  itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a
+  grant nobody can audit. Anything else is SKIPPED, **including a claim on an addon absent from the
+  index** (the permissive "no target, no harm" reading lets a typo reserve a namespace and start
+  colliding the day the real addon ships). Closes the 2026-08-03 audit's §2.1. The check lives in
+  `Registry.all`, **not `build`**, because it is a question about a PAIR of manifests and `build` is
+  handed one. **It is NOT recursive, and an earlier comment claiming otherwise was false:** a target
+  skipped by this same check still confers a grant (probed — A admitted, B absent). Harmless, and
+  the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
+  not gallery visibility, is the property being enforced.
+- **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
+  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
+  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
+  `unavailable_reason`), so a listed-but-unavailable addon is still
+  `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
+  from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
+  leaving the hole open**. Do not harmonise the two.
+- **`Addon#available?` IS NO LONGER HARDCODED TRUE, AND THE GALLERY SHOWS A REASON RATHER THAN A
+  FIXED SENTENCE.** It was true for as long as "registered" meant "fetchable"; `min_host` gives it a
+  second real answer. A too-new addon is still **BUILT** and still **LISTED** — skipping it is the
+  easy wrong answer, because an addon that silently never appears reads as a broken deploy rather
+  than as a version floor, and the old hardcoded "Not configured on this deployment" would send an
+  operator to check env vars that are fine.
+- **A NON-INTEGER `min_host` IS IGNORED, NOT COERCED.** `"2".to_i` is 2, which would honour a value
+  a JSON manifest should not contain. Ignoring it leaves the addon **AVAILABLE** — the failure
+  direction an operator can diagnose, rather than one that makes an addon vanish.
+- **DECLARED PERMISSIONS ARE DISPLAYED, NOT ENFORCED**, and `states_key` is not an inter-addon
+  boundary either — a bundle runs same-origin in the session and can call another addon's
+  `/tools/<key>/states` directly, so what the mutual declaration closes is only that a manifest can
+  no longer redirect **its own saves** into another addon's namespace by declaration alone. Do not
+  describe either as a boundary (spec §8.1 says so in those words; this repo's recorded failure
+  shape is a guard everyone believed in that never worked). **Do not add enforcement without the
+  finished vocabulary:** `data:read:<addon>/<collection>` does not exist until PR 4, and
+  `service:<name>` must reconcile with today's `services` key.
+- **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from
+  `Host::CAPABILITIES` — a capability is what the host CAN do, a permission is what an addon SAYS it
+  wants, and they already diverge (`state` / `project:read` here against `state:list` /
+  `state:crud` / `project:current` there). **An unknown name falls back to its own raw spelling**
+  rather than rendering blank: a card that silently understates what an addon asked for is worse
+  than one showing a developer-facing string.
+- **`rescue_from FileLayer::NotFound` IN `Tools::AddonsController` IS REACHABLE ON SHARE/S3 ONLY,
+  AND NOT FOR THE FOLDER REASON ITS COMMENT USED TO CLAIM.** A stale/foreign `parent_node_id`
+  resolves to `nil` = the library ROOT in `chosen_parent_node_id` **before any port call**, so that
+  save answers **302 and succeeds** (probed on all three; `docs/addon-api-v1.md` §5 carries the
+  author-facing consequence). What does reach it is an output NAME the scan can never observe —
+  `observable!`, §14b's skip-list rule: `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash`,
+  and `.maker-tmp-*` **on share but not s3** (`S3#observable!` omits `TEMP_PREFIX` on purpose).
+  **Chunk accepts all of them** — `write_chunk` never calls the port — which is one condition with
+  two answers across backends, recorded here rather than fixed.
 
 ### 14d. The maker web layer
 
@@ -774,6 +881,46 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   is safe (flat `name="title"`); **`fields_for` is what interpolates brackets**. Both were
   invisible to a green suite because the tests POSTed `params: { x: {...} }` as a Ruby hash,
   which bypasses the form entirely. **Assert the rendered field name.**
+- **AN ERB COMMENT ENDS AT ITS FIRST `%>`, SO ONE THAT QUOTES A SNIPPET CONTAINING ONE PRINTS ITS
+  OWN PROSE INTO THE PAGE** — and **no `assert_select` in this suite can see it**, because the
+  defect produces a TEXT NODE and every assertion here asks about ELEMENTS. Shipped once, in
+  `files/_ext_filter.html.erb`; three lines of a code comment sat in the middle of the Files page
+  through a fully green run and were found by opening the page. Never write `<%= … %>` or a bare
+  `%>` inside a `<%# … %>`; describe the wrong spelling in words. Guarded on the RENDERED OUTPUT by
+  `test/integration/web/template_hygiene_test.rb` (a static template scan was tried first and is
+  weaker — it has to guess whether the text after a terminator was meant to be markup or prose).
+- **`back_target_path` COMPARES THE REFERER'S ORIGIN AND THEN DISCARDS IT** — only a root-relative
+  path ever reaches an `href`, so a cross-origin referer is DROPPED, never sanitised and re-emitted.
+  Do not "improve" it into accepting a URL param: the referer is chosen precisely because a file
+  page has seven entry points and a param would be seven call sites that must agree plus an eighth
+  that silently reverts to `files_path`. A referer equal to the current page must keep falling back —
+  notes and move conflicts both redirect to the page they came from.
+- **A DELETED FILE IS HIDDEN FROM A PROJECT IMMEDIATELY AND ITS ROW DESTROYED ONLY AFTER THE GRACE
+  WINDOW, AND THE ASYMMETRY IS THE POINT.** `Library::Reconciler` tombstones rather than destroys, so
+  a tombstone is one undo away from returning with the **same `node_id`** — which is what every
+  attachment, BOM link and tag is keyed on. Hiding is reversible, so `ProjectsController#show` does it
+  at once; destroying is not, so `Maker::AttachmentReaper` waits. Collapsing the two — destroying on
+  sight — turns "restore from Trash" into "restore, then re-file it into every project by hand".
+  `Maker::DeadNodes` owns the one definition of `reapable?`, shared with the preview reaper; its index
+  reads `user.nodes`, **NOT `.present`**, because a tombstone is exactly what tells "revivable" from
+  "gone for good" and filtering it out reaps every tombstone with no grace at all.
+- **A `*_belongs_to_user` VALIDATION GUARDED ON `if: <fk>.present?` MAKES A DANGLING ID LOCK THE
+  WHOLE ROW, SO EVERY REFERENCED MODEL NEEDS A `dependent:` — AND `:nullify` IS THE WRONG ONE FOR
+  `Maker::BomLine#inventory_item_id`.** A dangling id *is* present, so the check runs on every save
+  and refuses edits to unrelated fields; `Supplier`→items/bom_lines and `Location`→items therefore
+  nullify. A BOM line cannot: `exactly_one_target` then sees no target and refuses the row anyway —
+  the identical permanent lock with a different message — so `InventoryItem#release_bom_lines`
+  copies the item's name into `part_name` (and its supplier, where the line names none and that
+  supplier still resolves — copying a *dangling* one recreates this very lock on the row just
+  rescued) and only then drops the pointer. Never "tidy" that callback into a `dependent:` on the
+  association; the statements must run in that order, and the name is unrecoverable one moment
+  later. **The targetless filter tests `[nil, ""]` and BOTH ARMS ARE REACHABLE** — the API accepts a
+  create carrying a blank `part_name`/`node_id` beside an inventory item, because
+  `exactly_one_target` counts with `present?` — so narrowing it to `nil` converts that line to
+  nothing and locks it. The whole method is user-scoped, unlike the *association-level* nullifies on
+  Supplier/Location, because it writes this user's data into a row: clearing a pointer can only
+  repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
+  disclose one.
 
 ### 14e. Architecture and process
 
@@ -862,6 +1009,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
   the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
   `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
+- **`assert_select "[attr=?]", /regex/` DOES NOT REGEX-MATCH — it builds an EQUALITY selector and
+  can never pass.** rails-dom-testing's `SubstitutionContext#matcher_for` interpolates a Regexp
+  straight into the selector (`"\"#{value}\""`), so `[title=?]` with `/Needs a newer…/` compiles to
+  `[title="(?-mix:Needs a newer…)"]` and matches an attribute whose literal text is that. Regex
+  matching on an **ATTRIBUTE** needs the gem's own `:match('attr', ?)` pseudo-class; `[attr*=?]`
+  with a plain String is the simpler alternative. (`text: /…/` is a different code path and does
+  match — this is about attributes only.) Verified against rails-dom-testing **2.3.0**: `[title=?]`
+  finds 0 elements where `:match('title', ?)` finds 1. It fails as a test that **can never go
+  green** rather than as a false green — the better direction, but only once you know why.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.
@@ -1028,6 +1184,244 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
   from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
 
+### 14h. Shape measurement (the Measure view)
+
+> **FOUR FORMATS, ONE PAYLOAD.** `.lbrn/.lbrn2`, `.mage`, `.dxf` and `.svg` all measure, through
+> `Maker::Previews::Geometry` — which owns the wire shape, the thinning, the circularity test and
+> the job box. A format supplies **a traversal and a colour policy, nothing else**. Most rules
+> below were written for LightBurn and now bind on all four; the ones that are format-specific say
+> so. `measure_controller.js` branches on NO file type — a fifth format is a server-side traversal
+> and not a line of JavaScript, and it should stay that way.
+
+- **A CHANGE IN `Geometry` MUST BUMP EVERY FORMAT'S `PAYLOAD_REVISION`, NOT ONE.** Each format
+  declares its own and `Enqueue` compares it per row, so a fix to the shared `simplify` that bumps
+  only `LbrnGeometry` leaves every already-measured `.dxf` and `.svg` serving the old algorithm
+  **forever** — a finished design's content never changes. That is exactly how four LightBurn files
+  kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
+  and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
+  format cannot be added without appearing there.
+- **`available?` IS ABOUT THE THUMBNAIL, `available_for?(kind)` IS WHAT THE JOB ASKS.** The 2D
+  vector renderers gate `available?` on **resvg**, because their thumbnail is a rasterized SVG; the
+  measure payload is Nokogiri and arithmetic and needs nothing external. One gate marked a
+  perfectly measurable `.svg`/`.dxf`/`.lbrn2` **`unsupported`** on a box without the binary, while
+  `.mage` (unconditionally `available?`) measured fine — the feature silently format-dependent on
+  exactly the boxes least likely to have it. A test asking `available_for?("geometry")` on a box
+  that HAS resvg passes however it is implemented; **stub the rasterizer absent or it proves
+  nothing**.
+- **A MillMage `<Shape>` CARRIES `OpIndex`, A LIGHTBURN ONE `CutIndex`** — `Lbrn2.layer_index`
+  reads either, and the `||` is unambiguous because no file writes both. The thumbnail cannot see
+  the difference (a MillMage file has no `<CutSetting>`, so a nil index and a real one both fall
+  through to `DEFAULT_STROKE` and draw the same black), so this surfaced only in the payload, where
+  the layer key groups shapes and keys the colour map: **every `.mage` contour landed in one
+  nameless layer**.
+- **MILLMAGE LAYERS GET NO COLOURS, AND THAT IS A REFUSAL RATHER THAN AN ABSENCE.** `LAYER_PALETTE`
+  is defensible only because its values were RECOVERED from 58 real LightBurn exports; MillMage is
+  a different application with its own layer bar and no colour field in `<Operation>`. Reusing
+  LightBurn's palette would be the mistake this section already names in the other direction (a
+  file-supplied colour gets no name, because "Blue" beside a green swatch contradicts itself).
+  Detected by ROOT ELEMENT, not extension, so a future MillMage emitting `<CutSetting>`-shaped
+  elements cannot silently acquire the palette.
+- **`Dxf.to_svg` AND THE DXF PAYLOAD SHARE `each_geometry`; THE SVG LEG CANNOT AND SAYS SO.** For
+  the three formats OUR parser draws, a second parse for measuring is §14b's `LbrnMetadata` bug —
+  so DXF's drawing was rewritten onto the traversal (verified byte-identical across four inputs).
+  An SVG thumbnail is rasterized by **resvg**, which we do not reimplement, so `SvgGeometry` is
+  necessarily an independent second reading: resvg understands the whole format, this parser its
+  geometry subset, and a file using something outside it measures fewer shapes than the picture
+  shows. `<text>`, `<use>` and clip paths are deliberately unparsed. Do not "fix" that asymmetry by
+  giving the other three a second parser.
+- **`$INSUNITS` IS WHERE A DXF BECOMES PHYSICAL, AND `0`/ABSENT MEANS MILLIMETRES BY CHOICE.** The
+  file genuinely does not say; mm is this corpus and it makes a header-less mm file correct, which
+  is the common case (`sample.dxf` has no HEADER at all). An inches file with no header reads 25.4×
+  small and nothing in the format lets us know. **Colours come from the `LAYER` TABLE, not the
+  entity** — an entity's own code 62 is usually absent or `BYLAYER`, so reading only the entity
+  leaves nearly every real file colourless — and a **NEGATIVE table colour means the layer is OFF**,
+  so its geometry is neither drawn nor folded into the measured extent.
+- **SVG IS ALREADY Y-DOWN; DXF IS Y-UP AND MUST BE FLIPPED.** Adding a flip to SVG "for symmetry
+  with Dxf" turns every SVG upside down, and it still draws a plausible picture. Only a positional
+  assertion catches either direction.
+- **AN SVG'S UNITS COME FROM `width`/`height` OVER THE `viewBox`, FALLING BACK TO CSS px AT 96 dpi**
+  — which is by definition, and is what makes a viewBox-only file measurable at all. `%`, `em` and
+  `ex` are **refused** rather than read as bare numbers. `preserveAspectRatio` `meet` uses
+  **min(sx, sy) on both axes**; per-axis reports a stretch the renderer never applies.
+- **CURVE FLATTENING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY A FIXED SAMPLE COUNT** — the same rule
+  as the thinning below, one stage earlier. A fixed count undersamples a large curve, and an
+  undersampled curve's chord sits INSIDE the true curve, so its bbox and its `d` both read small,
+  silently. `SvgPath` subdivides adaptively; `Dxf.arc_samples` bounds relative sagitta and **rounds
+  up to a multiple of 4** so a circle's axis extents are sampled exactly and `d` is the diameter
+  rather than a chord.
+- **`SvgGeometry` RECURSES INTO AN ALLOWLIST OF CONTAINERS, NOT PAST A SKIP-LIST.** It started as
+  the latter, naming `defs`/`symbol`/`clipPath`/…, and that list was **dead code** — nothing
+  recursed into them either way, so removing an entry left every test green. §14b records the
+  skip-list blind spot as this repo's recurring bug, four instances deep; an allowlist excludes a
+  template element the day it is invented, with nobody remembering to add it.
+- **`BITMAP_ALPHABET` IS A `String#count` SET, NOT A REGEX, AND THAT IS A FIX NOT A STYLE CHOICE.**
+  The inlined-photo attribute is routinely 10–25 MB and Rails sets `Regexp.timeout` to **1.0 s**;
+  the old `%r{\A[A-Za-z0-9+/=\s]+\z}` measured **0.467 s standalone and over the limit through the
+  real Nokogiri path**, so it failed by machine speed. `Regexp::TimeoutError` **is** a
+  `StandardError`, so `LbrnMetadata.parse`'s blanket rescue swallowed it into nil metadata while
+  `to_svg` and the payload — which have no rescue — would have failed the whole preview. `count` is
+  45× faster and has no engine to time out; the `+`'s non-empty requirement moved to the caller.
+- **EVERY REPORTED NUMBER COMES FROM FULL-RESOLUTION POINTS; THINNING IS DRAWING-ONLY.**
+  `Geometry` simplifies contours to keep the payload small (the worst real file drops
+  728 KB → 200 KB gzipped) and computes `b` and `d` **before** thinning. Measure after thinning and
+  every curve under-reports, silently, while every "does it draw" test stays green. `d` is the
+  sharper case: a 0.2 mm hole thins to 9 points, below `MIN_CIRCLE_POINTS`, so measuring after
+  would drop its diameter entirely and report a bare bounding box instead of "⌀0.2 mm".
+- **THINNING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY POSITION IN THE ARRAY.** `simplify` is
+  Ramer-Douglas-Peucker against `SIMPLIFY_TOLERANCE` (0.01 mm). **Do not replace it with an index
+  stride** — that is what shipped first, and it was wrong: `Lbrn2.polylines` appends 12 points per
+  `B` (bezier) segment and exactly **ONE** per `L` (straight) segment, so a single straight edge
+  shifts every later index and no vertex lands where a stride expects. For an `L` segment that one
+  point IS a vertex, so dropping it cuts the corner off entirely. Measured over the corpus before
+  the fix: **1148 of 5259 thinned contours displaced by more than 5% of their own size, worst case
+  58.7 mm.** RDP keeps a corner by construction (a corner is the farthest point from any chord
+  spanning it) and is also *smaller* — 200 KB worst case against the stride's 281 KB.
+  - The stride's justification, `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`, was **true but only for
+    an all-bezier contour**, and `bezier-circle.lbrn2` is exactly that (`B0 1B1 2B2 3B3 0`) — so
+    the guard asserting it passed while real mixed-geometry files were being mangled. If you find
+    yourself proving a property on that fixture, check it on a contour with an `L` op too.
+- **THE PAYLOAD'S BBOXES MUST UNION TO `Lbrn2.job_size`** — one traversal, so the Measure view and
+  the Laser Settings panel cannot disagree; §14b's `LbrnMetadata` second-copy bug is the precedent.
+  But **a union is the weakest possible form of that assertion** and cannot catch a
+  measure-after-thinning bug: any per-shape error some other shape already bounds disappears into
+  it. It stayed green on three separate fixtures. The guard with teeth is **per-shape**, on a
+  fixture whose ellipse is not shadowed by a larger Rect.
+- **CIRCULARITY NEEDS THE 12-POINT FLOOR, NOT JUST THE RADIUS TEST.** A square's four corners are
+  all equidistant from its centre — as are any regular polygon's vertices — so radius variance
+  alone calls every square round. Measured: a `Rect` emits 5 points with radial spread **0.00000**
+  while a real bezier circle's 49 points spread **0.00263**, so the naive metric ranks the square
+  as *more* circular. A `Rect` emits 5, a bezier circle 49, an `Ellipse` 33. Accepted consequence:
+  a genuine 16-gon reports as round. `bezier-circle.lbrn2` pins both directions and **the square is
+  the assertion that carries the weight**.
+- **`each_geometry`'s 6th yielded value (`object_id`) counts NON-GROUP `<Shape>`s, and a Text's
+  `<BackupPath>` REUSES its parent's** — the outline *is* the text, so alt-clicking one letter must
+  report the whole word. A Group consumes no id. **Ids are DISTINCT PER OBJECT and nothing more —
+  never assume contiguity**: a shape that yields nothing (a Rect without W/H, an Ellipse without
+  Rx/Ry, a Text with no BackupPath) still spends a tick, so gaps are ordinary in a real file.
+- **Bitmap base64 is EXCLUDED from the geometry payload, deliberately.** It is the single reason
+  the payload is cheap: `metal test 5.lbrn2` is 1.45 MB gzipped as SVG and 0.1 KB as geometry JSON.
+  A measuring view needs the rectangle, not the photo. Restoring it re-inflates every
+  photo-engraving file by three orders of magnitude. `rake lbrn:geometry_report` is what notices —
+  no fixture is big enough to.
+- **A CORRUPT DOCUMENT RAISES; AN EMPTY ONE DOES NOT.** `LbrnGeometry` raises `ParseError` when
+  `doc.root` is nil, matching `to_svg`, so the job marks it `failed`. A document that parses with no
+  shapes returns the empty payload and goes `ready`. Collapse them and a corrupt file presents as a
+  working Measure view reading "No measurable geometry in this file" — a lie about the file.
+- **`geometry` IS THE FIRST KIND TO EXERCISE THE PREVIEW `kind` SEAM END TO END.** `model_glb` is
+  declared in `Preview::KINDS` but refused by `Mesh`, so nothing produced a second artifact from one
+  file until this. `RendererContractTest` still passes because its `render_with` never sends
+  `kind:` — it exercises the thumbnail path, where "must be an inline-safe raster" stays true.
+- **A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT.** `pending` exists so a user
+  never sees an artifact of the PREVIOUS CONTENT labelled as the current file — a lie the spinner
+  honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
+  file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
+  on a page that **does not poll**, so it stayed a spinner until someone reloaded, and read as
+  "generating preview is broken".
+- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
+  `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
+  row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
+  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture on a
+  page that doesn't poll. Same mechanism, opposite right answers; do not unify them.
+- **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
+  it did not.** `Enqueue` compared revisions correctly from the day it shipped, but the only things
+  that CALL it for a thumbnail are the index's `backfill_thumbnails` and (now) `#show`. Backfill
+  skips any node `thumbnails_for` reports a row for, and that query matched on `(kind, node_id,
+  version_id)` alone — so a stale row satisfied it, nothing re-enqueued, and **172 of 174 LightBurn
+  thumbnails sat at revision 1 through two deploys that had bumped it**, leaving the layer colours
+  those deploys added invisible. `thumbnails_for` now drops rows from an older renderer, and
+  `#show` enqueues instead of only reading. **Every test of the mechanism passed throughout**,
+  because they all called `Enqueue` directly and none drove the thing a user does — open a page.
+- **A PREVIEW IS STALE ON TWO INDEPENDENT AXES, AND `version_id` IS ONLY THE FIRST.** It asks
+  whether an artifact was made from the file's current CONTENT; `renderer_revision` asks whether it
+  was made by the current CODE. With only the first, a payload change invalidated **nothing** —
+  a finished design's content never changes — so the .lbrn2 thinning fix deployed and four
+  already-measured files kept serving mangled curves until they were destroyed by hand, on the one
+  backend of three that had them. **Change a payload → bump the renderer's `PAYLOAD_REVISION`.**
+  - **Revisions are PER KIND** (`Lbrn2.payload_revision(kind)`): one renderer emits both a
+    thumbnail and a geometry payload, and bumping geometry must not rebuild ~1400 thumbnails as a
+    side effect of an unrelated fix.
+  - **`renderer_revision` is `NOT NULL DEFAULT 1`, and both halves are load-bearing.** Nullable, a
+    NULL would differ from every declared revision, so adding the column would itself have
+    triggered a full-library re-render; and `Enqueue` is **not** the only creator —
+    `V1::Maker::PreviewsController` builds rows via `find_or_initialize_by`, which with no default
+    would leave them stale forever, re-enqueueing on every request.
+  - **`SCHEMA_VERSION` is NOT this**, and is the easy thing to bump by mistake. It is the wire
+    contract the JS checks; `PAYLOAD_REVISION` is the server-side cache key. Revision 2 changed
+    every coordinate while touching no key, so the schema was rightly left alone.
+  - **A RENDERER WHOSE OUTPUT IS BUILT BY ANOTHER RENDERER MUST TRACK THAT ONE'S REVISION.**
+    `ThreeMf`'s mesh fallback calls `Stl.render`, so bumping `Stl` alone leaves every CAD-exported
+    3MF (Shapr3D, Onshape, Fusion — none carry an embedded slicer thumbnail) rendering from the old
+    code forever, with nothing anywhere to say so. Pinned as a RELATIONSHIP in `stl_test.rb`, never
+    as two literals.
+  - **AND A CHANGE IN THE RUST CRATE NEEDS THE RUBY-SIDE BUMP, WHICH IS THE HALF WITH NO COMPILER
+    BEHIND IT.** `client/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
+    binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
+    re-renders everything with the old binary. **Ship both or neither.**
+- **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
+  The formats declare no orientation, but every producer and consumer in 3D printing treats +Z as up
+  (the 3MF core spec puts the build plate in the XY plane). `auto_frame` orbited **Y** and the Three.js
+  viewer used the library default, so every model rendered **tipped onto its side** — consistently
+  enough to read as a house style. Every thumbnail test asked "is the frame non-blank?", which a model
+  lying down answers exactly as well as one standing up; **only a POSITIONAL assertion catches this**,
+  and it needs BOTH directions (a tall column must render tall AND a flat slab must render wide) or a
+  fix that merely swapped which axis is wrong still passes. `.obj` stays Y-up — that is Wavefront's own
+  convention, and guessing Z there breaks the case the per-format map exists to get right.
+  - **THE VIEWER MOVES THE CAMERA, NOT THE MODEL**, and three.js's own 3MFLoader docblock suggests the
+    opposite (`object.rotation.set(-Math.PI/2, 0, 0)`). Equivalent on screen, wrong for `showDims`: the
+    bounding box is read AFTER parse, so a rotated 10×20×30 model reports "10 × 30 × 20 mm" — a
+    measurement contradicting the user's own slicer.
+- **`FilesController#geometry` READS THE EXISTING PREVIEW ROW BEFORE CALLING `Enqueue`.** `Enqueue`
+  resets a `failed` row to `pending` and re-enqueues *whenever called* — right for a one-shot nudge
+  at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
+  **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
+  geometry preview is terminal until the content changes, which is honest because a transient
+  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals.
+- **`#geometry` RESCUES `RecordNotFound` LOCALLY**, because the class-level `rescue_from` branches
+  on format and answers a plain `get` — html, the default with no Accept header — with a **302 to
+  `files_path`**. Right for `#show`/`#blob`, which render a page; wrong for a JSON poller, which
+  would read a redirect body carrying neither a status key nor a 404.
+- **The Measure view builds its SVG with `createElementNS`, never `innerHTML`.**
+  `Maker::Previews::Svg` rasterizes precisely because the web layer refuses to inline SVG;
+  constructing elements from parsed coordinates sidesteps that rule rather than excepting it.
+- **Hit-testing is PAINT ORDER, not geometry.** Contours are appended in DESCENDING bbox-area order
+  so the browser's own topmost-wins dispatch selects the hole rather than the plate around it.
+  There is no point-in-polygon code; reversing that sort silently makes every small feature inside
+  a larger one unclickable, while drawing an identical picture. Pinned by
+  `nested-plate.lbrn2` — a plate and a hole on a SHARED CENTRE, clicked at the SVG element's own
+  centre so paint order alone decides the answer. `bezier-circle.lbrn2` cannot test this and the
+  gap went unclosed for a while because of it: its two shapes are equal-area AND disjoint, so
+  neither ever covers the other.
+- **LIGHTBURN'S LAYER PALETTE IS A HARD-CODED TABLE, AND THAT WAS RELITIGATED ON PURPOSE.** §14's
+  earlier note refused one, on the grounds it would mean "30 colours guessed from thumbnails". The
+  Measure view changed the calculus — it draws OUR outlines, where the file's own render is
+  unavailable and the alternative is flat black — and the values are no longer guesses: most were
+  RECOVERED from the embedded thumbnails by mapping contours into pixel space and reading what
+  LightBurn painted. `Lbrn2::LAYER_PALETTE` marks each entry `measured` or `palette strip`. It is
+  cosmetic by construction: nothing measures or decides anything from it.
+- **THE PANEL LABELS A LAYER BY COLOUR ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX**, and the
+  precedence has three arms, all load-bearing: a name its owner CHOSE wins outright; else the
+  colour's name, since "C01" says nothing the swatch does not; else the file's own label
+  **verbatim**. That last arm is reached whenever a file OVERRIDES a layer's colour — there is then
+  no palette name — and reconstructing it as `"C#{index}"` loses LightBurn's zero padding, turning
+  `C00` into `C0`. A pre-existing flow test caught exactly that.
+- **A FILE-SUPPLIED COLOUR GETS NO NAME.** `Lbrn2.layer_name` names the PALETTE entry for an index,
+  so naming a recoloured layer prints "Blue" beside a green swatch — a label contradicting the
+  thing it labels. `LbrnMetadata` returns nil there and the view falls through. The names are ours,
+  not LightBurn's (it identifies layers only by number), which is why a user's own name outranks
+  them.
+- **THE PALETTE HAS ONE DEFINITION, SERVER-SIDE.** The geometry payload carries a `colors` map for
+  the layers a file uses, rather than the client looking indices up in a copy — §14d's third
+  extension→role table is the precedent for what a second copy does. It also means a file that DOES
+  override a layer's colour is honoured without the client knowing that is possible.
+- **THE LAYER COLOUR IS AN SVG PRESENTATION ATTRIBUTE, NEVER `node.style`, AND `.measure-contour` MUST
+  NOT DECLARE A STROKE.** Presentation attributes sit BELOW every CSS rule, which is exactly what
+  lets `--hover`/`--selected` recolour a contour. Set it inline instead and selection silently stops
+  changing colour (only width moves); give `.measure-contour` a stroke and every layer flattens to one
+  colour. Both directions are mutation-checked, and both need the COMPUTED style asserted — reading
+  the attribute reports what we wrote even when a rule outranks it.
+- **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
+  user-space threshold calls an ordinary click a drag and silently swallows the selection.
+
 ---
 
 ## 15. Working agreements for the coding agent
@@ -1075,6 +1469,13 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
   "get it reviewed".
 - State plainly in the PR what was verified and what was not.
+- **`docs/STATUS.md` IS PART OF THE WORK, IN THE SAME BRANCH AND THE SAME PR — never a tidy-up
+  afterwards.** Deferred, it does not happen: a single feature ran to eight merged PRs while its
+  STATUS entry went on describing the algorithm the second PR had already deleted, so the
+  canonical record documented code that no longer existed. The entry is also cheapest to write
+  while the numbers are still in front of you — measured figures, suite counts, what was tried and
+  rejected — and those are exactly what a later pass reconstructs badly or omits. Amend the entry
+  the arc already has rather than appending a new one per PR; one arc is one entry.
 
 ### CI
 
@@ -1108,4 +1509,6 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to
   justify, the story goes in STATUS.md and the rule comes here.
-- Update this file **and** `docs/STATUS.md` when the architecture moves.
+- Update this file **and** `docs/STATUS.md` when the architecture moves — **in the branch that
+  moves it**, per the close-out rule in §15. A STATUS entry written later is written from
+  memory, and the measured numbers that make one worth reading are the first thing lost.

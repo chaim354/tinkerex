@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-05 (**A re-save asks before it overwrites**)
+**Updated:** 2026-08-10 (**audit A-M4: deleting a supplier, location or inventory item no longer strands — and permanently locks — the rows that referenced it**)
 
 ## What this file is
 
@@ -83,7 +83,1224 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-05): a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+## Latest (2026-08-10): audit A-M4 — a deleted supplier locked every row that pointed at it (branch `claude/maker-referential-integrity`)
+
+`Maker::Supplier` had no `has_many` at all and `Maker::Location` had one only for its own
+`children`, so `DELETE /v1/maker/suppliers/:id`, `locations/:id` and `inventory_items/:id` left
+dangling ids behind. The dangling id was not the harm. `InventoryItem` and `BomLine` run their
+`*_belongs_to_user` validations `if: <fk>.present?`, and a dangling id **is** present — so the
+check ran, found nothing, and refused **every** subsequent save of that row. Renaming an item,
+adjusting a min quantity, fixing a typo in a BOM line's notes: all rejected, permanently, with an
+error naming a field the form need not even show. Confirmed by probe before any fix, on all three
+referring columns.
+
+**Blast radius** — four referring columns, one more than the finding named:
+`maker_inventory_items.supplier_id` and `.location_id`, `maker_bom_lines.inventory_item_id`, and
+`maker_bom_lines.supplier_id` (that last one is not in A-M4's text). Everything else already had
+an answer: `InventoryItem`→`transactions` is `dependent: :delete_all`, `Location`→`children` is
+`dependent: :nullify`. Two dangling pointers were found and deliberately left alone because
+neither locks anything: `maker_bom_lines.node_id` after a node is reaped, and
+`maker_inventory_transactions.project_id` after a project is destroyed — the latter is an
+append-only ledger that no code may update anyway.
+
+**`dependent: :nullify` is right for three of the four and WRONG for the fourth.** Nullifying
+`BomLine#inventory_item_id` leaves the line with no target, so `exactly_one_target` refuses it —
+the identical permanent lock, wearing a different error message. Measured: with the nullify-only
+implementation, the unlock test fails with `a line must link exactly one of: inventory item,
+design file, or free-text part`. `dependent: :destroy` is worse — a BOM records what a project
+needs, and deleting a stock row is a statement about the shelf, not about the design. So
+`InventoryItem#release_bom_lines` **converts the line to a free-text part**, copying the item's
+name into `part_name` before dropping the pointer: a valid, editable line still reading "4 × M3
+bolt", in a shape `resolved_target` already renders. The whole method is scoped to the owning user,
+unlike the *association-level* `dependent: :nullify` on `Supplier`/`Location`, because it *writes*
+this user's data into a row rather than only clearing a pointer — clearing can at worst repair an
+illegal cross-tenant reference, copying would disclose one.
+
+**The conversion carries the supplier too, which the first round dropped.** `maker_bom_lines` has
+its own `supplier_id` and `resolved_target`'s free-text shape already renders
+`supplier_id`/`supplier_name`, so leaving it nil discarded half of what makes a line orderable into
+a column that was sitting there waiting for it (measured through the roll-up: before the destroy a
+line rendered `{name, part_number, unit, quantity_cached}`, after it `{part_name, supplier_id: nil,
+supplier_name: nil}`). Three qualifiers on the carry, each with its own mutation check: only onto
+lines actually being **converted** (a line keeping its own design-file target is not becoming a
+free-text part, and nothing renders a supplier for that shape); never over a supplier the line
+**already names** (that one is the user's annotation about this line; the item's is a fallback);
+and only if that supplier **still resolves**, because an item stranded by the pre-fix bug can
+itself hold a dangling `supplier_id` and copying it across would hand the line
+`supplier_belongs_to_user` failing on every save — this method's own bug, reintroduced on the row
+it just rescued. **`part_number` is not carried: `maker_bom_lines` has no column for it.** The line
+also loses the item's live stock figures, which is honest — there is no stock row any more.
+
+**No DB foreign keys, decided rather than forgotten — and the recorded reason was half wrong.**
+The SQLite measurement stands: `add_foreign_key ... on_delete: :nullify` over data that already
+violates it is **ACCEPTED** at migration time and the violating row survives (re-probed directly —
+`pragma_foreign_key_check` lists it afterwards). The *consequence* first recorded here — "then
+raises `ActiveRecord::InvalidForeignKey` on the next write to the bad row" — **does not hold for
+the ordinary path**, and the sentence that followed it was therefore false. SQLite re-checks a
+child row only when the statement names a child key column, and Rails' partial UPDATE does not name
+`supplier_id`; the save is refused earlier and identically to today, by `*_belongs_to_user` →
+`RecordInvalid` → **422**, not 500. `InvalidForeignKey` appears only on a write that names the FK
+column while skipping validations — measured on the same probe, `UPDATE ... SET supplier_id = 999`
+errors while `SET supplier_id = NULL` does not — and this app has no such write for these columns.
+
+**What actually blocks the FKs is the other half:** Postgres validates existing rows on
+`ADD CONSTRAINT` and errors, so one migration aborts the managed deploy (reasoned, not measured —
+no local libpq). Two things the first pass did not mention, in fairness to whoever picks this up:
+`NOT VALID` is the standard opt-out from that validation, and the violating rows could be cleared
+by a two-line `UPDATE ... SET fk = NULL WHERE fk NOT IN (SELECT id FROM ...)` prelude **in the same
+migration** rather than a separate pass. So the deferral is a judgement about cost and timing, not
+an impossibility. **The decision still stands**: all three deletes go through Active Record
+(`user.destroy` plus the three v1 controllers — no raw-SQL or `delete_all` path exists for these
+models, independently re-verified), and the harm is an Active Record validation that no DB
+constraint can lift, so the FKs are defence-in-depth rather than the fix. Tracked as ledger row 24
+in `docs/AUDIT-2026-08-03.md` — and note a cleanup pass cannot restore a deleted item's name to a
+BOM line, which is precisely why the conversion has to happen at destroy time.
+
+**No backfill migration either — recoverable by the owner, but the cost differs by column.** On
+`maker_inventory_items.supplier_id` and `.location_id` it is free: the validations are guarded on
+the id being *present*, so `PATCH { supplier_id: null }` skips the check and saves. On
+`maker_bom_lines.inventory_item_id` it is **not** — clearing the pointer alone leaves the line with
+zero targets, so `PATCH { inventory_item_id: null }` is itself a 422 and the owner must supply a
+replacement target in the same request, having remembered the deleted item's name themselves. That
+is exactly the work `release_bom_lines` now does for them and cannot do retroactively. Both shapes
+are pinned by tests that plant the pre-fix state with `update_columns` and drive the real PATCHes.
+
+**Verification.** Bare `bin/ci` green by exit code, all seven gates; the three test legs report
+identical counts — **2200 runs / 7883 assertions / 0 failures / 0 errors / 9 skips** on each of
+chunk, share and s3, plus 71 system runs / 444 assertions. (Re-measured after `origin/main` was
+merged in at `945d8b1`: the unit legs are unchanged, and the system count is 70/439 + the one
+thumbnail-settling guard the entry below added.) **Twelve mutation checks** (§15),
+every one RED. Seven from the first round: dropping each of the three `dependent: :nullify`s;
+dropping `before_destroy :release_bom_lines`; reducing `release_bom_lines` to a plain nullify;
+renaming every line instead of only the targetless ones; and dropping the per-user scope, which
+needed a *planted* cross-tenant row to be catchable at all, since the validations make one
+unreachable. Five more from the review round: narrowing the targetless filter to `nil`-only (RED on
+both blank arms, with exactly the A-M4 message — `Validation failed: a line must link exactly one
+of: inventory item, design file, or free-text part`); dropping the supplier carry; dropping its
+no-clobber clause; swapping its `Supplier.exists?` guard for a bare `supplier_id.present?`; and
+widening it from the converted lines to every line the item touched.
+
+**One of those five started GREEN, which is the part worth recording.** The "widen it to every
+line" mutation was invisible until the test that should have caught it grew a second, *convertible*
+BOM line beside the design-file one — with nothing convertible, `converting.any?` is false and the
+entire write block is skipped, so the mutated statement never executed. The qualifier was written,
+commented and untested. Found by mutation-checking, not by reading: exactly the failure shape §15
+names, in the round whose whole job was closing another instance of it.
+
+---
+
+## 2026-08-10: `system-test` was red on main because a gallery card moved out from under the click (branch `claude/system-test-card-click-race`)
+
+**The symptom.** `system-test` had been red on main since PR #160 merged (run 31188332739, commit
+096e581) — every other gate green on that run, so every new PR inherited a failure it did not cause.
+PR #164 hit it too (run 31448985204) with *different* tests failing in the same cluster, which is the
+signature of a flake rather than a break. Both runs failed in the boxes addon's tray top view:
+
+| run | test | failure |
+|---|---|---|
+| 31188332739 (main) | `TrayTopViewTest#test_a_tray_generator_draws_its_compartments_without_being_asked` | no `.box-topview svg` |
+| 31448985204 (#164) | `…#test_removing_a_wall_from_the_layout_merges_the_two_compartments_it_separated` | no `[data-topview="summary"]` |
+
+Both suites passed locally, every time, on a quiet Mac.
+
+**The screenshot was the whole diagnosis, and it took one look.** `gh run download 31188332739 -n
+screenshots` shows the **gallery** — filter box, four cards, "No saved boxes yet." — not the editor
+the test had clicked into. `mountEditor` replaces the DOM on its *first* line, synchronously, so a
+click that reached `onOpenGenerator` could not possibly leave the gallery standing. **The click never
+fired the handler.** Nothing raised, because a click that lands on nothing is not an error.
+
+**Root cause: the cards collapse under the pointer.** Every card carries an
+`<img class="addon-thumb">` fetching a sample photo through the sidecar proxy, and
+`.addon-thumb.is-missing { display: none }` (`application.css:195`) removes a **120px** box plus its
+6px flex gap the moment one fails. `FakeBoxesSidecar` registers a sample for ABox alone — and those
+bytes are deliberately a truncated JPEG — so **all four** thumbs fire `error`, and every card below
+each one jumps up ~126px. Measured in the browser rather than argued: **TrayLayout's top goes
+1002px → 624px, a 378px shift**, because it is the last of the four and inherits all three collapses.
+
+Chromedriver's click computes **one** coordinate and then dispatches pointerMove/pointerDown at it. A
+thumbnail resolving inside that window moves the card away and the click lands in the dead space
+below the shrunken grid. That is why the two failures were the tests opening the **last** card, why
+ABox's and FrontPanel's tests never failed, why load made it appear (four real HTTP round-trips
+through a 4-thread Puma pool), and why a quiet dev Mac never saw it: there, the thumbs 404 before the
+click.
+
+Reproduced deterministically before anything was changed — collapsing the thumbs on `pointermove`
+*is* that window — and the probe printed `editor opened after the click? false`, `still on the
+gallery? true`.
+
+**The fix is one helper, not six.** `find(".addon-card", text: key).click` was hand-rolled in **six**
+places across five files; all six now call `WebHelpers#open_addon_card`, which waits on
+`settle_addon_cards` first — every thumbnail request **ended** (`complete` is true for a 404 and for
+a decode failure, which is the point) *and* two consecutive reads of every card's position agreeing.
+A polled condition, not a slept interval: the shift is caused by network responses whose timing is
+exactly what nobody can guess.
+
+Its budget is `SETTLE_TIMEOUT = 10`, not Capybara's 2s, because requiring the cards to exist also
+absorbs the *other* flake this page produces under load — `Unable to find css '.addon-card'`,
+observed locally in `PlanExportTest` — where ~20 ESM modules and two fetches honestly take longer
+than 2s. It costs nothing on a quiet box; the loop returns on its second poll.
+
+**Not fixed, on purpose:** the layout shift itself is real product jank — a fast user can miss a card
+too. The bundle that renders the cards lives in `chaim354/tinkerex-addons` and the copy here is a
+**verbatim snapshot** (see `box_sections_test.rb`'s header), so fixing it here would create exactly
+the drift that file's trade-off is written about. The host-side alternative — reserving the 120px
+instead of removing it — leaves a permanent blank in every card on a gallery where most generators
+have no photo, which is a visual regression, not a fix. Flagged as a product decision.
+
+### The guard, and why it asserts the contract rather than the race
+
+`box_sections_test.rb`'s "the gallery is not clicked until its thumbnails have stopped moving" holds
+the page in the state the failure needs — `SlowSamples`, a `FakeServiceProxy` subclass that delays
+**only** `sample/*` by 0.3s, so the cards render and become clickable while the thumbs are still in
+flight. `FakeBoxesSidecar.install!` grew a `proxy:` kwarg for this rather than a second copy of its
+four registrations.
+
+It asserts the **property that closes the window** (no thumbnail still loading; re-asserting the
+collapse moves nothing), not the race's outcome. A test that clicked and hoped would be a coin flip
+in *both* directions — green with the bug present often enough to prove nothing, which is this repo's
+recorded failure shape (§15). An earlier draft did exactly that, arming the collapse on `pointermove`
+*after* settling, and it would have passed with or without the fix: a fake guard. Discarded.
+
+**Mutation-checked (§15):** dropped the `i.complete` clause from `settle_addon_cards`' probe → **red**
+("4 thumbnails were still loading — the cards can still collapse under the click", `Expected: 0 /
+Actual: 4`); restored → green.
+
+### Verification
+
+- `bin/ci` bare, **exit 0**: style 513 files/0 offenses, scan 0 errors, and the three test legs
+  **identical** — `2191 runs, 7947 assertions, 0 failures, 0 errors, 9 skips` on `test`, `test-share`
+  and `test-s3`. System: **71 runs, 444 assertions, 0 failures** (was 70/439 — one new guard, +5).
+- **Stressed under real contention**, because a green suite on a quiet box is what was *already* true
+  before the fix and proves nothing (§14e): with all 10 cores saturated, the four boxes system files
+  ran 3× back to back, `38 runs, 205 assertions, 0 failures` every time.
+- Not verified: that CI itself is green — only the macOS runner is registered, so this lands and the
+  next run on `main` is the actual proof.
+
+---
+
+## 2026-08-07: the manifest learns to describe itself — and a `states_key` claim now needs the other addon's consent (branch `claude/addon-api-pr2-manifest-metadata`)
+
+**PR 2 of the Addon API v1 arc**, stacked on PR 1 (`claude/todo-list-review-6beccc`) — row 2 of
+`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §12, amended in this branch per §15's
+close-out rule. PR 1 gave the host a surface an addon can call; this one gives the **manifest** a
+vocabulary for describing what it is and what it wants, and turns the one thing a manifest could
+already grant itself into something the other side has to agree to.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Permissions`** — the permission vocabulary with one definition. Four table
+  entries (`library:read`, `library:write`, `state`, `project:read`), `service:<name>` by pattern,
+  and **an unknown name falls back to its own raw spelling** rather than rendering blank: a card
+  that silently understates what an addon asked for is worse than one showing a developer-facing
+  string. Deliberately **not** the same vocabulary as `Host::CAPABILITIES` — a capability is what
+  the host *can* do, a permission is what an addon *says* it wants, and they already diverge
+  (`state` / `project:read` here against `state:list` / `state:crud` / `project:current` there).
+- **Seven metadata keys parsed onto the `Addon`** — `version`, `author`, `license`, `homepage`,
+  `permissions`, `min_host`, `shares_states_with` — all optional, all **degrading** rather than
+  raising, which is the rule `layout` already followed: a manifest comes from a source this process
+  does not control. Two degradations are worth knowing because they are silent: a `permissions`
+  entry that is not a hash with a present `name` is **dropped** (the bare-string form
+  `["library:write"]` renders nothing at all), and a non-integer `min_host` is **ignored, not
+  coerced** — `"2".to_i` is 2, which would honour a value a JSON manifest should not contain, so
+  refusing it leaves the addon *available*, the failure direction an operator can diagnose.
+- **`min_host` makes `available?` a real answer.** It was hardcoded `true` for as long as
+  "registered" meant "fetchable". A too-new addon is still **built** and still **listed**, greyed
+  out, with `unavailable_reason` naming both levels — the gallery's old hardcoded "Not configured on
+  this deployment" pointed an operator at env vars that were fine. Skipping it instead is the easy
+  wrong answer: an addon that silently never appears reads as a broken deploy, not as a version
+  floor.
+- **The `states_key` mutual constraint — audit §2.1, closed.** `Registry.states_key_permitted?`
+  refuses a `states_key` pointing at another addon unless that addon names the claimant back in
+  `shares_states_with`. It lives in `Registry.all`, **not `build`**, because it is a question about a
+  **pair** of manifests and `build` is handed one. Three refusals, all skipping the addon rather
+  than raising: no reciprocation; a target **absent from the index** (the permissive "no target, no
+  harm" reading would let a typo reserve a namespace and collide the day the real addon shipped);
+  and — the reviewer's own counterexample — a target that is present but **itself rejected by
+  `build`**, since an entry the host rejects outright would otherwise confer a grant nobody can
+  audit.
+- **Permission display** on the gallery card (names, `to_sentence`) and on the addon's own page
+  (names plus each entry's optional `reasoning`).
+
+**Why the refusal SKIPS rather than greying out — the opposite choice from `min_host`, one method
+away.** `Tools::AddonsController` never gates on `available?` at all; its only consumers are three
+lines in `app/views/tools/home/index.html.erb`. So a listed-but-unavailable addon is still
+`Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key` from
+`#states` and `#create` — greying an unreciprocated claim out would **look closed while leaving the
+hole open**. The two decisions must not be harmonised, and both are now recorded in §14c saying so.
+
+**What audit §2.1 closes, exactly, and what it does not.** A manifest can no longer, **by
+declaration alone**, redirect its own saves and state reads into another addon's namespace. That is
+the whole of it. `states_key` was never an inter-addon *runtime* boundary and this does not make it
+one: a bundle runs same-origin in the authenticated session and can call
+`/tools/<other-key>/states` directly — the controller resolves whatever key is in the URL, no
+`states_key` involved. The audit's **other** §2.1 ("a malicious or compromised addon bundle owns the
+account") states that same fact inside its own evidence and **remains open**. A pre-existing comment
+in `#states` and its `routes.rb` counterpart claimed the `addon_key` scope was "the only thing
+standing between one addon's saves and another's"; that was false when written, and is now corrected
+to describe what it is — a data-scoping rule.
+
+**Closing the constraint broke four pre-existing tests, and that is the evidence it has teeth.**
+Three in `addons_controller_test.rb` and one in `registry_test.rb` were asserting the *old
+permissive behaviour* — a manifest unilaterally claiming another addon's `states_key` with nothing
+reciprocating — so `Registry.find` began returning nil and the three controller tests turned into
+404s. A constraint that could be added without a single existing assertion noticing would be a
+constraint over a case nothing exercised. The fix adds a **`RECIPROCATING_MANIFEST` beside**
+`MANIFEST` rather than editing `MANIFEST` itself, so the "FIXTURE_KEY declares no `states_key`
+anywhere in this suite" guarantee its comment makes stays true for that file's other 46 tests — and
+it was made in **its own commit (`da75f34`)**, out of the states_key task's assigned file scope, so
+the collateral stays isolated and revertible. The new constraint's own five tests were
+mutation-checked: reverting only the `&& build(target)` clause turned **exactly one** of them red
+while the other four stayed green.
+
+**THE WHOLE-BRANCH REVIEW CAUGHT A FALSE CLAIM THIS BRANCH INTRODUCED — in a comment written to
+*correct* something, which is the failure mode a correction is most prone to.** `0faffe1` justified
+the `build(target)` clause with a transitive example: *"A claims B, B claims C unreciprocated, C is
+malformed: A would still be admitted, pointed at a B that nobody agreed was legitimate."* Probed
+against that exact index: **`a` IS admitted with `states_key="b"`, and `b` is absent from
+`Registry.all`** — so the clause does not do what its own example said. The control case (target
+*directly* malformed) is correctly refused, so the clause works; only the explanation was wrong. The
+general principle stated alongside it was the wrong part: `build(target)` closes **one** of two ways
+a target can be invisible, and the other — a target skipped by `states_key_permitted?` itself —
+still confers a grant. **There is no functional consequence**, because that target still had to
+write `shares_states_with`, so no addon ever gets a namespace whose owner did not consent. The claim
+had propagated to **four** places (the comment, CLAUDE.md §14c, `docs/addon-api-v1.md` §2, this
+entry); all four now state the residual plainly rather than deleting the sentence, because "this
+closes the `build`-rejects case, and a target skipped by this same check still confers a grant,
+harmlessly, because it consented" is more useful to the next reader than silence. **Consent, not
+gallery visibility, is the property being enforced** — that sentence is the invariant the four
+copies had drifted away from.
+
+**The one non-documentation item: the branch shipped visible UI with no styling.** `.addon-card`,
+`.addon-desc`, `.addon-icon` and `.addon-title` all had rules; `.addon-permissions` had none. So the
+card's permission line rendered at body **15px — larger than the 13px description above it** — and
+the addon page's list was a bare `<ul>` with UA bullets and a 40px indent. One class serves two
+elements (a `<span>` on the card, a `<ul>` on the page), so the rule is `.addon-permissions {
+font-size: 13px }` plus a `ul.addon-permissions` list reset. **Checked in a real browser rather than
+assumed**, since the system suite covers neither page: computed `font-size` is now 13px on both and
+matches `.addon-desc` exactly, `list-style-type: none`, `padding-left: 0px`. That check also
+confirmed the raw-name fallback end to end — an unknown `totally:unknown` renders as itself — and
+that `reasoning` appears on the page and not on the card. The temporary test was deleted after it
+reported, so the suite counts below are unchanged.
+
+**Two smaller corrections from the same review.** The warn line for a refused claim fires **once per
+`Registry.all`, i.e. once per request** — only `manifests` is cached, `.all` re-filters on every
+call — not once per deploy as its comment claimed (measured: 5 calls, 5 lines, index cached). With
+the unreciprocated `boxes-next` below still live in production that is one line per request until
+the bundles repo lands its fix; the comment is corrected and the behaviour deliberately left alone.
+And `docs/addon-api-v1.md`'s permission table is a **hand-maintained second copy** of
+`Permissions::LABELS` with nothing keeping them in sync — named in the doc, with the code marked
+authoritative, which is worth stating out loud on a branch whose selling point is that the
+vocabulary has one definition. The mitigation is that these labels are cosmetic: nothing measures,
+gates or decides anything from them.
+
+**Permissions are DISPLAYED, NOT ENFORCED — a deliberate scope decision, recorded because the spec
+said otherwise.** Spec §8.1 describes permissions as "checked server-side on every request"; what
+shipped is the display half, and §8.1 now carries an as-built marker pointing at §12 row 2's scope
+correction. Three reasons: the vocabulary is unfinished (`data:read:<addon>/<collection>` does not
+exist until PR 4, so a check written now is a check PR 4 redesigns); **`service:<name>` would be a
+second spelling of a check that already exists and already works** — `sidecar_url_for` refuses any
+service the manifest's `services` key does not name, and a `permissions` check over the same
+condition is §14a's one-condition-two-answers drift unless the two keys are reconciled first; and
+§8.1's own next paragraph already concedes the check is not a security boundary, since a Ring 1
+bundle runs same-origin and can call any endpoint the user can. A gate that *looks* like a boundary
+and is not is this repo's dominant failure shape. The honest interim is a card the operator reads at
+publish time — which is worth real money in a deployment where **republishing a bundle IS the
+deploy**, Rails is never rebuilt, and there is no review step in between: the card is the one place
+an addon that quietly starts asking for more becomes visible. `docs/addon-api-v1.md` §2 and §4 now
+say all of this in those words, twice, because §4 is where an author goes looking for the boundary.
+
+**The `assert_select` trap, recorded so the next person does not spend the same round on it.**
+`assert_select "[attr=?]", /regex/` **does not regex-match** — rails-dom-testing's
+`SubstitutionContext#matcher_for` interpolates a Regexp straight into the selector, so `[title=?]`
+with `/Needs a newer…/` compiles to `[title="(?-mix:Needs a newer…)"]`, an exact-equality CSS
+selector that can never match real text. Regex matching on an **attribute** needs the gem's own
+`:match('attr', ?)` pseudo-class; `[attr*=?]` with a plain String is the simpler alternative.
+(`text: /…/` is a different code path and does match — this is attributes only.) Verified directly
+against rails-dom-testing **2.3.0**: `[title=?]` finds 0 elements where `:match('title', ?)` finds
+1. It fails as a test that **can never go green** rather than as a false green — the better
+direction, but only once you know why. Now in §14e, beside the other testing lessons, because it is
+not an addon fact.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0**. The three backend legs report
+**identical** counts — **2211 runs, 7944 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **75 runs, 466 assertions, 0 failures**.
+
+Those are the numbers **after** the base branch was merged back in (merge `6b95ec6`, 2026-08-10,
+which picked up the revision-aware backfill fix, the `/deploy` secrets doc fix and the `system-test`
+card-click fix). Measured alone, before that merge, this branch was **2206 runs / 7923 assertions**
+with system **74 / 461** — and the merge adds exactly **5** Rails-leg `test` blocks and **1** system
+`test` block, which is precisely the 2206 → 2211 and 74 → 75 observed: two independent counts that
+cross-check rather than one being read off the other. The pre-merge figure is what carries this
+arc's own evidence — against PR 1's measured 2181 runs / 7867 assertions this branch adds **25
+Rails-leg tests** and 56 assertions, matching the **25** `test` blocks its diff adds and the **0** it
+removes. This PR still adds **no browser test**; the +1 there is the merged-in card-click guard.
+(Per this file's own header the per-entry counts do not form a chain — the card-click arc's own
+recorded 2191/7947 was measured off `main`, a different baseline, and is not comparable to these.)
+
+**The one semantic conflict worth looking for in that merge — a card that grew a line of text under
+a click helper that computes a coordinate — DOES NOT EXIST, and the reason is that there are two
+different galleries both using `.addon-card`.** `WebHelpers#open_addon_card`/`settle_addon_cards`
+guard the **bundle's own generator gallery**, built in JS by `test/fixtures/addons/boxes/gallery.js`
+and reached only at `tools_addon_path("boxes")` — all six call sites visit that path and **no system
+test visits `/tools` at all**. The permission line this branch adds is on the **host** gallery
+(`app/views/tools/home/index.html.erb`), a page the browser tier never loads. Belt and braces: both
+the card `<span>` and the addon page's `<ul>` are gated on `permissions.any?`, `build` defaults
+`permissions` to `[]`, and **none of the three fixture manifests declares `permissions`** — so the
+markup renders nowhere in the system suite even on the page those tests do load — a property this
+branch's own `home_controller_test.rb` already pins ("a card with no declared permissions renders no
+permission list at all"). `min_host` (default `0`) and `states_key_permitted?` (fixtures declare
+neither key) likewise leave every fixture addon built and listed.
+
+**And it is robust rather than lucky**, which is the part worth checking rather than assuming: even
+if a fixture manifest *did* declare permissions, the `<ul>` is server-rendered above the mount point,
+so its height is in the layout **before** the bundle mounts and before any thumbnail resolves — it is
+a constant offset, not the LATE shift `settle_addon_cards` exists to absorb. `box_sections_test.rb`'s
+guard asserts read-to-read **equality** of card positions, never pixel literals, so a constant offset
+cannot break it either. The residual to watch is a different one: `open_addon_card` matches with
+Capybara's substring `text:`, so a permission label that happened to contain a generator's name would
+make `find(".addon-card", text: key)` ambiguous the day a system test does visit `/tools`.
+
+**A DEPLOY PREREQUISITE IN THE OTHER REPO, FOUND WHILE WRITING THIS ENTRY — `boxes-next` WILL
+DISAPPEAR FROM `/tools` UNLESS THE BUNDLES REPO IS FIXED FIRST.** The close-out brief for this task
+asserted that no published manifest declares any of the new keys, so nothing here is exercised
+against a real bundle. That is true of the seven **new** keys and **false of the constraint**:
+`chaim354/tinkerex-addons`, on `main` since `4862f48` (2026-08-03, *"boxes-next: declare
+`states_key: "boxes"` so the trial shares the legacy saved-box rail"*), publishes three addons, and
+`boxes-next` declares `states_key: "boxes"` while `boxes` declares **no `shares_states_with`**. That
+is exactly the unreciprocated claim `states_key_permitted?` now refuses — so deploying this branch
+**silently drops `boxes-next` from the gallery**, log line only, which is the failure mode §14c
+records as the price of skipping rather than greying out. The fix is one line **in the bundles
+repo** — `boxes` adds `"shares_states_with": ["boxes-next"]` — and it must land **before or with**
+the Rails deploy, not after. Deliberately not made here: that is a different repo, a different
+deploy, and publishing its image is its own release. **Do not deploy this branch until it is done.**
+
+**What this does NOT prove, stated plainly.** **No published manifest declares any of the seven new
+keys** (`version`, `author`, `license`, `homepage`, `permissions`, `min_host`,
+`shares_states_with`) — verified by parsing `addons/manifests.json` on the bundles repo's `main` —
+so the metadata half is exercised only by stubbed `Maker::Addons::Source` fixtures, never by a real
+bundle. Permissions are displayed and not enforced; `states_key` is not an inter-addon runtime
+boundary and this PR does not make it one. Nothing here has been deployed. The four purely
+descriptive keys are parsed onto the `Addon` and **rendered on no page at all** — documented as such
+rather than advertised.
+
+**Invariants recorded** in CLAUDE.md — six in §14c (the mutual `states_key` declaration and its
+valid-target requirement; skip-not-grey-out and why it is deliberately unlike `min_host`;
+`available?` no longer hardcoded and the gallery showing a reason; non-integer `min_host` ignored not
+coerced; displayed-not-enforced for permissions *and* for `states_key`; one definition for the
+permission vocabulary with a raw-name fallback) and **one in §14e** for the `assert_select` attribute
+trap, which belongs with the testing lessons rather than with the addons.
+
+---
+
+## 2026-08-07: the service name gets the guard its sibling already had, and a rescue comment stops lying (branch `claude/addon-sdk-service-name-guard`)
+
+**The two follow-ups the SDK PR (the entry below) recorded as open and left out of scope.** Written as
+a stack on `claude/todo-list-review-6beccc`; that branch merged as **PR #161** while this one was in
+review, so **this PR now targets `main`** and carries a merge of it — which brings PR #165's
+referential-integrity fixes and PR #162's manifest metadata along too, both having landed in the same
+window.
+
+**1. `serviceName` is now rejected the way `path` beside it already was.** `service.get`/`post` build
+ONE URL out of TWO arguments and only the second was guarded, so `host.service.get("../../evil", "x")`
+built `/tools/<key>/service/../../evil/x` — which the **browser's own URL parser normalizes to
+`/tools/evil/x` before the request is sent** (verified against WHATWG normalization, not assumed), so
+`sidecar_url_for`'s refusal was never asked and the call misrouted silently rather than failing.
+`encodeServiceName` rejects `""`, `"."`, `".."` and **any `/`**, then encodes.
+
+The `/` is the only real design choice, and it is **rejected outright rather than split into segments**:
+`:service` is one Rails segment matched VERBATIM against the manifest's `services` list, so `"a/b"`
+cannot name a service on any host; splitting would normalize a structural error (§14a's `key_for` rule)
+and would leave the contract incoherent — `"../.."` refused while `"a/b"` is accepted, for a value that
+is one segment by definition. Measured rather than assumed: `encodeURIComponent` already defuses `\`,
+`#`, `?` and `%`, and only `.`, `..` and `""` survive it — which is exactly the clause list.
+
+**Proven in a browser, because nothing else can see it.** The normalization is the URL parser's, so a
+request test would be asserting about a URL the browser never sends. A fifth test in
+`test/system/addon_sdk_test.rb` clicks a fixture button that calls both the bad name and the bad path
+and renders `class:code` for each. **Mutation-checked:** reverting `encodeServiceName(serviceName)` to
+`${serviceName}` at both call sites turns it red — *"expected … exact text
+name=AddonError:invalid_argument path=AddonError:invalid_argument … Also found
+`name=ServiceError:service_error path=AddonError:invalid_argument`"* — so the assertion isolates the
+half that regressed instead of merely noticing that something did.
+
+**2. The `rescue_from FileLayer::NotFound` comment described a condition that cannot happen.** It read
+*"NotFound here means the save named a destination folder that no longer exists"*. It cannot:
+`chosen_parent_node_id` resolves an unknown, stale or foreign `parent_node_id` to `nil` = the library
+ROOT **before any port call**, so that save answers **302 and succeeds**, probed on all three backends
+(the node lands with `parent_node_id: nil`). `docs/addon-api-v1.md` §5 was corrected for this same
+false claim in the previous PR; the code comment was not.
+
+**What actually reaches the arm** — found by probing every candidate through the real door, one save
+per name, rather than by reading the adapters:
+
+| output name | chunk | share | s3 |
+|---|---|---|---|
+| `ok.txt` | 302 | 302 | 302 |
+| `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, root `.trash` | **302** | **422 `not_found`** | **422 `not_found`** |
+| `.maker-tmp-x` | **302** | **422 `not_found`** | **302** |
+
+It is `observable!`, §14b's skip-list rule. `#parse_files` vets names with
+`Maker::MoveNode.valid_leaf_name?`, which refuses `/`, `\`, NUL, `.`, `..` and over-long names — but
+every name above is a perfectly good *leaf*. The `.maker-tmp-x` split is deliberate and documented in
+place: `S3#observable!` omits `TEMP_PREFIX` because that adapter writes no temp keys.
+
+**So the arm is reachable from `#create`, on share/s3 only.** Chunk cannot reach it —
+`LibraryOutput#write_chunk` never calls the port — and `#show`/`#asset`/`#service`/`#states` never
+touch `FileLayer` at all, so the class-level arm covers those four vacuously. Every other `NotFound`
+inside `#write` is closed upstream: `leaf!` by the stricter `valid_leaf_name?`, the path-escape guard
+by `leaf!` in turn, `read_capped!` by `MAX_FILE_BYTES` (4 MB) sitting far under `FileLayer::MAX_BYTES`
+(256 MB), and *"parent is not a live directory"* by `chosen_parent_node_id` having just resolved that
+id — which leaves it reachable only as a **TOCTOU**, a folder tombstoned between the two lookups.
+Nothing after the write reaches it either: `attach_addon_files_to_current_project` and
+`intake_project_folder` both rescue `StandardError`, and `Maker::ProjectIntake#place` already rescues
+`FileLayer::NotFound` into a `:not_found` skip.
+
+**The one behaviour change, called out because the brief asked for none.** The response *message* was
+false in the same way the comment was — *"That destination folder no longer exists."* for a file named
+`.DS_Store` — so it now names both surviving causes and prescribes for each, since they want opposite
+remedies (renaming fixes the name and does nothing for the race; retrying fixes the race and never the
+name). Nothing asserted the old string. **The silent-write-to-root is untouched**, as instructed: that
+is a product decision, and `docs/addon-api-v1.md` §5 already documents it for authors.
+
+**Left open on purpose: `.DS_Store` is refused on share/s3 and accepted on chunk** — one condition with
+two answers across backends, the shape §14a calls the port's whole job. Out of scope here (this branch
+was scoped to make the guard and the comment true, not to change behaviour); recorded in CLAUDE.md §14c
+so it is not rediscovered from scratch.
+
+**Measured on the merged tree**, `main` @ `a5838f3` merged in — the numbers below are that tree's, not
+the branch point's, because that is what ships. `bin/ci` bare, **all seven gates, exit 0** (52.20 s):
+style **517 files / 0 offenses**, scan **no vulnerabilities**, and the three backend legs **identical**
+— **2234 runs, 8016 assertions, 0 failures, 0 errors, 9 skips**, the same as `main`, since this branch
+adds no Rails-leg test. System (real browser): **76 runs, 470 assertions, 0 failures**, against main's
+**75 / 466**. That delta is exactly one `test` block and four assertions — the whole of what this
+branch adds — and cross-checks against the file on its own: `addon_sdk_test.rb` goes **4 runs / 22
+assertions → 5 / 26**, measured by stashing the two test files rather than inferred from the total.
+
+**The semantic conflict the merge invited, and did not produce.** `main` arrived carrying
+`WebHelpers#open_addon_card` / `#settle_addon_cards` (the entry two above), which exist because a
+gallery card collapsed out from under Chromedriver's click — and this branch adds a fifth browser test
+plus a button to the SDK fixture bundle. They do not meet, and not by luck: the collapse is caused by
+`img.addon-thumb`, which is created in exactly **one** place, the boxes bundle's own client-built
+gallery (`test/fixtures/addons/boxes/gallery.js`), and `addon_sdk_test.rb` never opens it. Its new test
+goes straight to `/tools/sdk-fixture`; the soft-navigation test's `click_link "SDK Fixture"` lands on
+the HOST gallery (`app/views/tools/home/index.html.erb`), whose cards are three server-rendered spans
+with no image and therefore nothing asynchronous to shift them. Checked by grepping for the class
+rather than by reading the two tests side by side.
+
+**Invariants recorded** in CLAUDE.md §14c: the reject-never-normalize bullet is **extended** to the
+service name (carrying the argument for rejecting `/` rather than splitting it), and **one new bullet**
+records the `rescue_from FileLayer::NotFound` reachability — a comment naming the wrong cause costs the
+next reader exactly what a stale open-list does.
+
+---
+
+## 2026-08-07: an addon is written against a contract, not against another bundle's source — the host SDK (branch `claude/todo-list-review-6beccc`)
+
+**PR 1 of the Addon API v1 arc** — row 1 of `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
+§12, amended in this branch per §15's close-out rule. Until now an addon author's reference *was*
+another bundle: `save.js` gets copied verbatim out of `boxes` into every new generator, and each copy
+reads only the HTTP status, so a save refused for a nameable reason reports **"Save failed."** This
+PR gives the host a surface of its own.
+
+**Shipped, in seven commits:**
+
+- **`Maker::Addons::Host`** — a frozen server-side capability map (ten keys) plus `LEVEL = 1`. Six of
+  the ten answer `false` today, **named before they are built**, which is the whole compatibility
+  mechanism: an addon can be authored against `library:read` now and degrade until a host answers
+  true. Every value is a real boolean, because a missing key reads as `undefined` in JS and a nil as
+  `false`, and neither is distinguishable from a deliberate "off".
+- **One `data-addon-ctx-value` JSON blob** in the addon shell, beside the **nine** legacy data
+  attributes — an addition, never a replacement, because a bundle built against either shape may be
+  running against this host. `addon_ctx` carries the host level and the capability map, which have no
+  attribute of their own.
+- **`app/javascript/maker/addon_sdk.js`, pinned as `@maker/addon-sdk`** — a **host** pin, so a bundle
+  imports it having declared nothing. `capabilities()`, typed errors (`WouldReplaceError`,
+  `NameTakenError`, `ServiceUnavailableError`, `UnsupportedCapabilityError`, `ServiceError`),
+  `files.save` / `files.pickFolder` / `files.url`, `state.list`, `service.get` / `service.post`, and
+  one `teardown` event. **One transport seam** (`_fetch`): Ring 2's null-origin iframe replaces that
+  function, not every call site.
+- **`addon_controller.js` calls `initHost(ctx)` before dynamic-importing the bundle** — the order is
+  the contract, since a bundle's top-level code runs at import time — and `disconnect()` calls
+  `teardownHost()`. A `this.disposed` guard (the idiom already used by `modelviewer_controller.js`
+  and `measure_controller.js`) covers the disconnect-during-import race.
+- **A second hermetic fixture, `sdk-fixture`,** that touches the host **only** through the SDK, plus
+  four browser tests.
+- **`docs/addon-api-v1.md`** — the author-facing normative reference, extracted from the spec so an
+  author never reads the design document.
+
+**The scope correction that shaped the whole PR.** The spec's row 1 said *"`generators` adopts it"*.
+**`generators` is not in this repo** — bundles live in `chaim354/tinkerex-addons` and are deployed by
+republishing the accessory image, so that migration spans two repos and is a follow-up PR **there**.
+The in-repo proof is instead a **second** hermetic fixture using only the SDK, added beside the
+existing `fixture` addon, **which deliberately stays on the raw-`ctx` path**: both halves of the
+compatibility rule — old bundles keep working, new bundles need only the SDK — are then covered by
+something that *runs*, rather than by an assertion about intent. Row 1 of the spec is amended to say
+so.
+
+**Two findings from reading the tree, both of which made PR 1 cheaper than the spec assumed.**
+`ctx.chooseFolder` **already existed** as a host-supplied function (the Miller-columns picker), so
+`files.pickFolder` is a wrapper and a capability name, not new work. And `saveWithOverwrite` — the
+409 dance — is **copied verbatim into every real bundle**, which makes `files.save` absorbing it the
+most concrete "the SDK deletes per-bundle code" win available in this PR, and the one the fixture's
+third browser test exercises end to end.
+
+**What review caught, which is the part worth reading.** The plan specified the SDK's surface; the
+SDK's own *code* shipped four defects that reviewers found, all of them the quiet kind:
+
+- **`files.url` pointed at the HTML file page while its comment promised an `<img src>`.**
+  `/files/:id` is `resources :files`' detail page; the bytes are at `/files/:id/blob`. The method and
+  path were kept — that is what shipped bundles use it for — and the comment fixed. No `blobUrl` yet:
+  that is PR 5's, and it needs the SVG-forced-to-attachment caveat (§14c) stated properly rather than
+  bolted on here.
+- **`save`'s return was an untagged union whose arms were both truthy.** `#create` redirects on
+  success and `fetch` **follows** redirects, so `res.ok` and a parsed body are truthy on every
+  successful POST regardless of outcome — `if (await host.files.save(...))` reported success on a save
+  the user had just **cancelled**. Now always `{cancelled: false, data}` or `{cancelled: true}`.
+- **A cancelled `pickFolder` composed into a silent save to the library ROOT** —
+  `folderNodeId: (await host.files.pickFolder())?.nodeId` yields `null` on Esc, and `save` defaulted a
+  missing folder to `""`. That is exactly the null-vs-root conflation the neighbouring comment warned
+  against, two members apart in the same object. `folderNodeId` is now **required**; pass `""` when the
+  root really is the destination.
+- **`ERROR_CLASSES[code]` reached `Object.prototype`.** `code` comes straight off a response body, so
+  a body of `{error: "toString"}` resolved through the prototype chain to something that is not a class
+  and `new Klass(...)` threw a bare `TypeError` **from inside `errorFrom`** — discarding the original
+  HTTP failure the function exists to describe. Now `Object.hasOwn`.
+
+Two more, from the same passes and both about coverage rather than code:
+
+- **A mutation check proved the ctx blob's `defaultFolder` was entirely unguarded** — both values could
+  be replaced with garbage and the whole file stayed green. The fix reads both representations out of
+  **one** rendered response and compares them directly, rather than recomputing an expectation the
+  duplicate could drift away from. The same shape recurred one commit later in the fixture's
+  `onReplace` assertion, where a substring match was satisfied by the filename alone, so the
+  **folder** half of the 409 payload — the part that lets a real prompt name a real destination — was
+  never asserted; `sdk-dup.svg@undefined` would have passed.
+- **The doc's own live-binding example was FALSE.** It claimed a top-level `const { files } = host`
+  throws `host_not_initialized`. It does not: `initHost(ctx)` runs six lines before
+  `await import(entry)`, so top-level code always sees a real host and the destructure **succeeds**.
+  The real hazard is the opposite one and is **silent** — an ES module is evaluated once per URL per
+  page, so on a Turbo re-mount `initHost` builds a new `Host` while the cached module's top level does
+  not re-run, and the captured reference goes on serving the previous, **torn-down** host's context and
+  CSRF token with nothing thrown. Traced to a **stale SDK comment that contradicted another comment
+  eight lines above it in the same file**; both were corrected, and the rule ("read through `host` at
+  call time; never capture it") now has the true reason attached to it.
+
+**The final whole-branch review found no code defects — and three documentation ones, which is the
+right ratio for a PR whose product IS a contract.** The reviewer drove the whole SDK out-of-tree
+through node (**71 assertions, all passing**), checked the ctx→SDK seam in both directions and found
+no key emitted-but-unread or read-but-unemitted, and re-ran both suites to the same numbers recorded
+below. It also **closed the Turbo lifecycle hazard by reading Stimulus rather than reasoning about
+it**: `stimulus.js:489-490` processes `removedNodes` before `addedNodes`, so
+`disconnect()`→`teardownHost()` always precedes the next `connect()`→`initHost()` and the
+interleaving that would have left a new host torn down by an old controller **cannot occur**. (The
+`this.disposed` guard still earns its keep — it covers a *pending dynamic import* resolving after a
+disconnect, a different window from the connect/disconnect ordering.) The three documentation
+defects: an error row in `docs/addon-api-v1.md` whose trigger cannot fire and which **hid the real
+behaviour** (a save naming a folder that no longer exists resolves to `nil` in
+`Tools::LibraryFolders#chosen_parent_node_id` *before* any port call, so it answers **302 and writes
+to the library ROOT** — verified on chunk and share, host behaviour that predates this branch and is
+now described rather than changed); the spec still showing `host.ctx.defaultFolder` and
+`Maker::Addons::HOST_LEVEL`, neither of which exists — the first being precisely what the new §14c
+bullet forbids, sitting in the example an agent implementing PR 5 would copy; and two new bare
+"spec §N" citations that are ambiguous because `source.rb`, one file over, uses the same shorthand
+for the **2026-08-02** bundle design, which has a §4 of its own.
+
+**Rejected on the way.** Publishing the raw context as `host.ctx`: the module's whole Ring-2 argument
+is that a bundle talks only through `host`'s methods, and a public `ctx` hands back the raw
+`csrfToken` and `chooseFolder` the SDK exists to wrap — the two claims cannot both be true, so it is
+`_ctx`. Letting a sidecar's error through the host's error table: `boxes.py` answers **prose** in its
+`error` key, so `errorFrom` would put the message in `.code` and filler in `.message`, and a non-JSON
+body (Werkzeug's HTML 405, the proxy's own body-less 404) would be eaten by the failing `res.json()`
+— `service.*` raises `ServiceError` from the status and the raw text instead. And *normalizing* a
+`..` path segment: `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the URL before
+the request is sent and the server's guard never gets asked — it is now rejected, per §14a's `key_for`
+rule, which this was the one spot in the tree departing from.
+
+**Measured.** `bin/ci` green, **all seven gates, exit 0** (53.76 s). The three backend legs report
+**identical** counts — **2181 runs, 7867 assertions, 0 failures, 0 errors, 9 skips** on chunk, share
+and s3 alike. System (real browser): **74 runs, 461 assertions, 0 failures**. Against the merge-base
+`de46dc2` (2172 runs / 7790 assertions; 70 system runs / 439 assertions, measured at `b3f4b78`) this
+arc added **9 Rails-leg tests and 4 browser tests** — which matches the 13 `test` blocks the diff
+adds, so the two counts cross-check rather than one being read off the other.
+
+**What this does NOT prove, stated plainly.** No **real published bundle** runs against the SDK yet.
+The four browser tests drive a fixture, and the `generators` migration — the thing that would delete
+`saveWithOverwrite` from a bundle a user actually opens — is a follow-up PR in
+`chaim354/tinkerex-addons`. Nothing here has been deployed.
+
+Three more, recorded as known and deliberate so a later reader does not find them the hard way:
+
+- **~~`serviceName` is neither validated nor encoded, while `path` beside it is rigorously
+  rejected.~~ CLOSED by the entry above** (`claude/addon-sdk-service-name-guard`), which also
+  replaced this controller's false `rescue_from FileLayer::NotFound` comment. Left here rather than
+  deleted because the two entries are one arc and the follow-up is only legible beside what it
+  followed.
+- **Two-thirds of the SDK is unexercised by `bin/ci`.** The four browser tests cover the mount path,
+  `capabilities()` and `files.save`. Nothing touches `state.list`, `service.*`, `files.pickFolder`,
+  `files.url`, the uninitialised-host proxy, or the typed errors — and most pointedly
+  **`host.on("teardown")`, the SDK's only lifecycle event, has never fired in this repo**: the Turbo
+  test reaches `teardownHost()`, but the fixture registers no handler, so `_fireTeardown` iterates an
+  empty list. The reviewer's node harness proves all of it works today; **nothing in CI would notice
+  if it stopped** — this repo's dominant failure shape, recorded rather than closed.
+- **`apiVersion` is emitted in the ctx blob and read by nothing** — no consumer today, and none named
+  in any later PR.
+
+**Invariants recorded** in CLAUDE.md §14c — nine, which is spec §15's items 1 and 5 (the two of its
+five that PR 1 makes true) plus the seven this PR's own defects earned: the ctx blob is an addition
+and the nine legacy attributes stay, the specifier-is-public-API rule for the host pin, the
+init-before-import ordering and its module-cache corollary, the one-definition boolean capability map,
+the bump-`LEVEL`-with-the-capability rule, 409-is-a-question / 422-is-not, the two `defaultFolder`
+shapes, sidecar errors staying out of the host's error table, and reject-never-normalize for path
+segments. Spec §15's items 2, 3 and 4 belong to PRs 3, 4 and 8 and are deliberately not recorded yet
+— a rule for code that does not exist is a rule nobody can check.
+
+---
+
+## 2026-08-07: eight UI complaints, worked as one pass (branch `claude/overnight-ui-fixes-bdc67d`)
+
+**The ask** was a list, verbatim: the Back button always returns to Files; STL thumbnails come out
+wrong way up; a file deleted from the share stays in the Files view and its projects; the type filter
+should be a dropdown of what is actually in storage; a project's main image should be choosable; the
+project file sections should collapse and hide LightBurn/MillMage backups; adding a task should not
+reload the page; files should be right-click downloadable.
+
+All eight shipped. Two of them were not the bug the sentence described, and those are the two worth
+reading.
+
+### 1. "Back" was a link to `/files` wearing the label of a back button
+
+`files/show.html.erb` hard-coded `link_to "Back", files_path`, so every route into a file page lost
+its context: six folders deep it dumped you at the root, mid-filter it cleared the filter, and reached
+from a project's Files panel it walked you out of the project.
+
+`ApplicationHelper#back_target_path(default:)` derives the target from the **referer**, not from a
+`?return_to=` param. That choice is about how many call sites have to be right: a file page is
+reachable from the list, the grid, a project panel, a model bundle, the trash, an addon-save redirect
+and any search — threading a param through all of them is seven edits that must agree plus an eighth
+that gets forgotten. **It cannot become an open redirect**: the scheme/host/port are COMPARED and then
+DISCARDED, so only a root-relative path ever reaches `href`; a cross-origin referer is dropped, not
+sanitised. A referer equal to the current page falls back to the default — not exotic, since adding a
+note, deleting a note and resolving a move conflict all redirect back to the same file page.
+
+Mutation-checked both guards: spelling the origin test as `start_with?` reddens the lookalike-host
+test; removing the self-reference guard reddens its own.
+
+### 2. The STL camera orbited the wrong axis — and the fix is worthless without a revision bump
+
+`client/stl-thumbnailer`'s `auto_frame` put the pitch on **Y** and passed `Vec3::unit_y()` as the up
+vector. STL is **Z-up** by universal convention (every slicer puts the build plate at Z=0), and the
+3MF core spec agrees — so every thumbnail in the library rendered **tipped onto its side**,
+consistently enough to read as a house style. `modelviewer_controller.js` had the identical bug from
+the other direction: Three.js's world is Y-up and **neither STLLoader nor ThreeMFLoader rotates what
+it parses** (3MFLoader's own docblock tells the caller to do it, and we were not).
+
+Measured, by restoring the old camera: an upright **4×4×16 column rendered 192×140** — wider than
+tall. Nine Rust tests, seven of which stayed green under that mutation, because they all ask "is the
+frame non-blank?" — a question a model lying down answers exactly as well as one standing up. The two
+new ones are positional and both directions are pinned (a tall column must render tall, a flat slab
+must render wide), so a fix that merely swapped which axis is wrong cannot pass.
+
+**The viewer moves the CAMERA, not the model**, and that half matters: rotating the object is the
+docblock's suggestion and is equivalent on screen, but `showDims` reads the bounding box *after*
+parse, so a rotated 10×20×30 model would report "10 × 30 × 20 mm" — a measurement disagreeing with the
+user's own slicer. `.obj` stays Y-up, which is Wavefront's convention.
+
+**THE HALF THAT IS EASY TO SHIP WITHOUT.** `Stl` and `ThreeMf` declared no `payload_revision`, so they
+sat at `BASE_REVISION`. A file's content never changes, so without a bump every STL already in a
+library keeps serving the old picture **forever** — this is CLAUDE.md §14h's recorded lesson, and it
+would have applied verbatim. Both now declare `THUMBNAIL_REVISION = 2`, and `ThreeMf` tracks `Stl`'s
+number **as a relationship, not a literal**, because its mesh fallback renders THROUGH `Stl.render`:
+bumping only `Stl` would leave every CAD-exported 3MF sideways with nothing to say so.
+
+> **DEPLOY NOTE:** the Rust fix needs the `stl-thumbnailer` binary REBUILT into the Rails image. The
+> revision bump makes Rails re-render; it cannot make an old binary draw a new picture. Ship both or
+> the library re-renders itself sideways at revision 2.
+
+### 3. A deleted file left the Files view but never left its projects
+
+Half the complaint was already right: `FilesController#index` scopes on `nodes.present`, so a
+tombstone never lists. The projects half was not — `Library::Reconciler` TOMBSTONES rather than
+destroys (deliberately; it is what makes a NAS reorganisation survivable), so no `dependent:` callback
+fires, and the panel rendered a "⚠️ (file unavailable)" tile with a Remove button, forever, once per
+project.
+
+**Split into an instant half and a graced half, because the two have opposite risk.**
+`ProjectsController#show` stops rendering a tile whose node is gone — hiding is reversible, so it is
+immediate. `Maker::AttachmentReaper` (daily) destroys the rows and NULLs a stale chosen cover — but
+only once the tombstone's undo window has closed, because a tombstone is one undo away from returning
+with the SAME node_id, and the attachment is keyed on it. Reaping inside the window would turn
+"restore from Trash" into "restore, then re-file this into every project by hand".
+
+The rule now has one home: `Maker::DeadNodes` owns `reapable?` and the 30-day window, shared with
+`Maker::Previews::DeadNodeReaper`, which previously held a private copy. Mutation-checked: swapping
+`user.nodes` for `user.nodes.present` in the shared index reddens **three** tests across both reapers
+— a tombstone would look hard-gone and be reaped with no grace at all.
+
+**Not silent.** The panel says "N attached files no longer in your library" with a link to the Trash,
+and an "empty" project is a different sentence from one whose files were all deleted.
+
+### 4. The type filter listed the vocabulary; now it lists the library
+
+The chip row was derived from `ROLE_BY_EXT`, so it offered `.sldasm`, `.ngc` and `.fcstd` — ~35 chips
+— to someone who owns none of them, while an extension they really did have appeared nowhere and had
+to be typed into a free-text box beside it. `FilesController#ext_facets` tallies what the library
+actually holds; `ext_facet_groups` uses `EXT_FAMILIES` **only for grouping and order**. Everything
+offered exists, everything that exists is offered, with counts. The free-text escape hatch is gone
+with the wall it stood beside — an unknown extension lands under "Other" and the user no longer has to
+know it exists.
+
+Measured (SQLite, 13 extensions): **20,000 files → 14.4 ms, of which 3.1 ms is the query; 100,000 →
+86.2 ms, of which 11.3 ms**. The cost is the per-row `File.extname` in Ruby, ~7/8ths of it — so it is
+NOT cached: a cache would add a second query and a staleness window to shave a tenth of what the same
+page already spends rendering (175–278 ms of ERB at 2000 rows). One query whatever N is.
+
+Three mutation checks: dropping the `kind: "file"` filter, keeping active types in the dropdown, and —
+the one worth naming — spelling the disabled state as `disabled="[interpolation]"`. `disabled` is a
+**boolean attribute**: any value at all turns it on, so that spelling renders `disabled="false"` and
+disables the control permanently.
+
+### 5–8, briefly
+
+- **Project covers.** `cover_node_id` becomes a real column; the reader keeps the derived pick (first
+  image, else first model, else first attachment) as its fallback, so **no existing project changed
+  appearance**. The form uses the EXISTING `filechooser` in `mode: "file"` — supported since it was
+  written, first caller now. The form pre-fills from `project[:cover_node_id]`, not the reader, or
+  "nobody has chosen" would silently become an explicit choice on the next save.
+- **Collapsible sections + backups.** Native `<details>`, no JS, matching `models/_file_tree`. LightBurn
+  and MillMage write `<stem>_backup.<ext>` rescue copies (confirmed against the real corpus:
+  `traymammon-1_backup.lbrn2`, `metal test 1_backup.lbrn2`); those move to a **closed** Backups
+  section rather than being dropped — the file is really in the project's folder. Both halves of the
+  rule are required, so a user's own `battery_backup.stl` is not filed as one.
+- **Tasks without a reload.** `Projects::TasksController` answers `turbo_stream` by replacing
+  `#project-tasks` only; the HTML redirect stays as the no-JS path. The error renders INSIDE the
+  replaced element — a `redirect_to ... alert:` would set a flash no response ever draws. Verified in
+  a real browser: a marker set on `window` before the add survived, `turbo:load` fired zero times, the
+  panel element was swapped, the count went to "Todo (2)" and the input cleared. Found on the way: the
+  partial's `render "task"` resolved only from `ProjectsController` — a second caller made it
+  `MissingPartial` on every stream, now fully qualified.
+- **Right-click download.** `filemenu_controller.js` gains a Download entry built from a
+  `data-download-url` the server writes, on the list, the grid and project tiles. **No HTML `download`
+  attribute**, deliberately: on chunk and s3 the blob endpoint 302s to a presigned cross-origin URL and
+  browsers ignore `download` across origins — it would work on share and silently open-in-tab on the
+  product's main deployment. `?download=1` and the server-set header is the one mechanism that holds on
+  all three. The grid needed it most: a card has no row-actions cell.
+
+### The finding that only a browser could produce
+
+**An ERB comment that quotes a snippet containing `%>` terminates early and prints its own remaining
+prose into the page.** One did, in `files/_ext_filter.html.erb`, and three lines of a code comment sat
+in the middle of the Files page. **Every test in the suite stayed green** — `assert_select` asks about
+ELEMENTS and this defect produces a TEXT NODE. It was found by opening the page, which is §15's
+"probe over an argument" in one screenshot.
+
+A static scan of the templates was written first and is the weaker guard: it has to guess whether the
+text after a comment's terminator was meant to be markup or prose. `test/integration/web/template_hygiene_test.rb`
+asserts on the RENDERED OUTPUT of eleven pages instead — no ERB delimiter, and no phrase that only
+appears in this branch's code comments. Both halves are checked (`<%` AND `%>`, since an early
+terminator leaks a CLOSER, not an opener), and mutation-checking it by reinstating the bad comment
+reddens both.
+
+### Verification
+
+`bin/ci` green, all seven gates. **2172 runs, 7790 assertions, 0 failures on each of the three backend
+legs — identical counts** (chunk / share / s3), plus 70 system tests and 9 Rust crate tests. Baseline
+at the merge-base was 2107 runs, so this arc added 65 tests.
+
+Driven in a real browser against a seeded library on `STORAGE_BACKEND=local`: the type dropdown's
+optgroups and counts, the active-chip filter row, the project panel's six sections (Laser 1, Backups 2
+closed) with the missing-file line, Back landing on `/projects/desk-lamp` from a project-opened file,
+the right-click menu's three entries with the correct blob URL, a task added with zero `turbo:load`
+events, `camera.up === [0,0,1]` with a 4×4×16 column standing upright and dims still reading
+"4 × 4 × 16 mm", and the rebuilt thumbnailer's own PNG of the same column.
+
+### Follow-up, same arc: the sweep that was supposed to fix the library reported zero
+
+Shipping revision 2 corrects every STL/3MF thumbnail **rendered from then on**, and self-heals an
+existing one the moment someone opens a page that draws it. A library nobody browses stays sideways.
+The obvious remedy — `rake previews:backfill_missing` — **did not work, and said so in the most
+misleading way available: "Enqueued 0."**
+
+`MissingBackfill`'s `seen` set was keyed on the **(node_id, version_id) pair**. A row built by an
+older renderer sits at the *current* content, so it satisfied that check and was skipped — while
+`FilesController#thumbnails_for` and `#current_thumbnail`, which do compare `renderer_revision`,
+treated the very same row as absent and re-enqueued it. **Two answers to one question, and the sweep
+held the wrong one.** That is this repo's recorded failure shape (§14a's five `port_writable?`
+copies, §14b's skip-list) in a new place: not a missing feature, a second implementation of a lookup
+that had already been fixed elsewhere.
+
+The fix is one column: `seen` now plucks and compares the **(node_id, version_id, renderer_revision)
+triple**, the same one the read path resolves on. The revision is asked of the RENDERER per node
+(`Enqueue.revision_for`), not held as a constant, because it depends on the file's own extension —
+the same reason `thumbnails_for` filters in Ruby rather than SQL.
+
+Two details that are not decoration:
+
+- **A name nothing renders is skipped in the sweep, not left to `Enqueue`'s nil return.**
+  `revision_for_name` answers `BASE_REVISION` for one, so leaving it would mark every `.xyzzy` in
+  the library stale on every run — a dry-run number that never reaches zero on a library where
+  nothing is wrong. Mutation-checked.
+- **`dry_run:` was added because this sweep can now cost a full-library re-render.** Before the
+  revision check it only ever found a backlog someone was already missing; after it, a bump makes
+  every file of that format eligible at once. Deliberately **not** capped the way
+  `ProjectIntake::MAX_MOVES` is — there a cap bounds unattended churn, here doing all of them IS the
+  task, so a cap would guard against success. The report is asserted to equal what a real run
+  enqueues, because a number that does not match is worse than no number when it is what an operator
+  decides on.
+
+Scope held: `kind` stays `thumbnail`. Geometry payloads carry their own revisions but are built on
+demand by a polling client, so sweeping them would render measurement data for every measurable file
+whether or not anyone measures it.
+
+Mutation checks: restoring the pair key reddens the older-renderer and idempotence tests; dropping
+the renderer skip reddens the non-renderable one. Suite **2177 runs / 7811 assertions**, identical on
+all three legs.
+
+### Left open
+
+- **`Maker::AttachmentReaper` sweeps model attachments too** (it reads `user.maker_file_attachments`,
+  which is all attachable types) **but only the PROJECT panel hides them.** The models page never had
+  the bug — its file tree is built from live `nodes` and `@viewable_3d` already skips missing ones — so
+  there was nothing to fix there; recorded because the reaper's scope is wider than the view fix's.
+- **Section open/closed state is not persisted.** It survives the life of the page and resets on
+  reload. Persisting it needs a cookie per section per project, and the default (everything open but
+  Backups) is right for almost every visit.
+- **`ext_facets` is unbounded in N**, by decision — the numbers and the argument are above.
+
+---
+
+## 2026-08-07: Measure stops being a LightBurn feature — .mage, .dxf and .svg too (branch `claude/measure-feature-mage-svg-dxf-0111cj`)
+
+**The ask:** *"i want to add the measure feature we just did from lbrn2 to mage files and svg and
+dxf."* The entry below shipped it for `.lbrn/.lbrn2`. This generalises it to the other three vector
+formats the library already thumbnails.
+
+**Shipped:** the **Measure** button now appears on `.mage`, `.dxf` and `.svg` file pages as well.
+Same surface, same interactions, same readout — `80 × 40 mm`, or `⌀10 mm` when the contour is round.
+
+**The seam turned out to be almost entirely server-side, and that is the result rather than a
+convenience.** `FilesController#geometry`, the `geometry` preview kind, `Enqueue`'s revision check
+and `measure_controller.js` were already format-agnostic: the client reads a wire contract — job
+box, shapes, colours — and branches on nothing. **Not one line of JavaScript changed for the three
+new formats.** What each needed was a traversal of its own file and a way to turn its numbers into
+millimetres.
+
+**`Maker::Previews::Geometry` — one payload definition, four traversals.** `LbrnGeometry` held the
+schema, the RDP thinning, the circularity test and the job box; copying it three times would have
+put four implementations of `simplify` and `diameter` in the tree, which is §14b's `LbrnMetadata`
+second-copy bug with two extra copies. A ⌀ that means one thing on a LightBurn file and another on
+a DXF is worse than no ⌀. Each format now supplies only a traversal and a colour policy.
+
+- **`.mage` was nearly free — and the reason exposed a live bug.** `Mage` already renders through
+  `Lbrn2`'s walker verbatim (the geometry dialect *is* LightBurn's), so the payload came for free.
+  But **a MillMage `<Shape>` carries `OpIndex`, not `CutIndex`** — measured on `real-export.mage`:
+  `CutIndex` uniq `[nil]`, `OpIndex` uniq `["0"]`. The thumbnail never noticed, because a MillMage
+  file has no `<CutSetting>` either, so a nil index and a real one both fall through to
+  `DEFAULT_STROKE` and draw the same black. The Measure view is where it surfaces: the layer key is
+  what groups shapes and keys the colour map, so **every `.mage` contour landed in one nameless
+  layer**. `Lbrn2.layer_index` now reads either.
+- **MillMage gets no colours, deliberately.** `LAYER_PALETTE` is defensible only because its values
+  were *recovered* from 58 real LightBurn exports. MillMage is a different application with its own
+  layer bar and no colour field in `<Operation>`, so painting OpIndex 2 in LightBurn's red would be
+  a claim nothing supports — the same mistake §14h names in the other direction. The client draws
+  black, which claims nothing.
+- **`.dxf` needed the traversal split out of the drawing.** `Dxf` built SVG strings straight from
+  entities, so there was no geometry to reuse. It now has `each_geometry`, and **`to_svg` consumes
+  it** — verified byte-identical to the previous implementation across four input shapes, which is
+  the evidence the refactor moved plumbing and not the picture. `CIRCLE`/`ARC` still emit exact SVG
+  primitives via a `curve` descriptor alongside the flattened points, the same "richer rendering of
+  the same points" contract `Lbrn2.each_geometry` uses for ellipses and bitmaps.
+- **`$INSUNITS` is where a DXF's numbers become physical**, and `0`/absent resolves to **mm** — a
+  choice, not a reading. A DXF from a maker tool routinely has no `HEADER` at all (`sample.dxf`
+  does not), and mm is the corpus. A file in inches with no header reads 25.4× small; nothing in
+  the format lets us know that. Colours come from the **`LAYER` table**, not the entity — an
+  entity's own code 62 is usually absent or `BYLAYER` — and a **negative table colour means the
+  layer is off**, so its geometry is neither drawn nor folded into the measured extent.
+- **`.svg` is the one leg with no shared traversal, and the entry says so rather than papering
+  over it.** An SVG thumbnail is rasterized by **resvg**, which we do not reimplement, so this
+  parser is necessarily a second independent reading of the file. The honest consequence: resvg
+  understands the whole format and `SvgGeometry` understands its geometry subset, so a file using
+  something outside it measures fewer shapes than the picture shows. `<text>` (needs font metrics),
+  `<use>` (needs href resolution) and clip paths are **not** parsed — each named in the module with
+  the reason. Refusing to measure SVG at all was the worse answer for the most common laser source
+  there is.
+- **`SvgPath` is its own module** because `d` is the densest part of the format and the part most
+  likely to be wrong in a way nothing notices — a mis-parsed path still draws *something*. Full
+  M/L/H/V/C/S/Q/T/A/Z, arc endpoint→centre conversion per SVG 1.1 F.6.5 including the
+  radius-growth correction, and **adaptive flattening bounded by a tolerance rather than a fixed
+  sample count** — a fixed count undersamples a large curve, whose bbox and diameter then both read
+  small, silently. Units resolve from `width`/`height` over the `viewBox`, falling back to **CSS px
+  at 96 dpi**, which is what makes a viewBox-only file measurable at all. `preserveAspectRatio`
+  `meet` uses **min(sx, sy)**, because taking them per-axis reports a stretch the renderer never
+  applies.
+
+**Two bugs found on the way, neither in scope, both on this feature's own path.**
+
+**`available?` gated the wrong thing.** It answers "is resvg on this box", because the *thumbnail*
+is a rasterized SVG — but the measure payload is Nokogiri and arithmetic and needs nothing external.
+A single gate marked a perfectly measurable `.svg`/`.dxf`/`.lbrn2` **`unsupported`**, while `.mage`
+— whose `available?` is unconditionally true — measured fine, making the feature silently
+format-dependent on exactly the boxes least likely to have the binary. `GeneratePreviewJob` now asks
+`available_for?(kind)`, defaulting to `available?` for the ten renderers that only make thumbnails.
+**This was observable, not theoretical: it is why two geometry tests failed on a rasterizer-less box
+before the fix and pass after.**
+
+**A 1-second regex timeout on every file with an embedded photo.** `BITMAP_DATA` validated the
+base64 of an inlined image — the attribute that is the reason `parse_document` needs `huge`, and
+routinely 10–25 MB — with `\A[A-Za-z0-9+/=\s]+\z`, against Rails' `Regexp.timeout` of **1.0 s**.
+Measured here: **0.467 s standalone and over the limit through the real Nokogiri path**, so it fell
+on either side depending on the machine. `Regexp::TimeoutError` *is* a `StandardError`, so
+`LbrnMetadata.parse`'s blanket rescue swallowed it and returned nil metadata, while `to_svg` and the
+Measure payload — which have no such rescue — would have failed the whole preview. Replaced with a
+`String#count` set: same semantics, no engine to time out, **45× faster on the same 11 MB (0.0104 s)**.
+Two pre-existing red tests went green.
+
+**A dead skip-list, deleted rather than kept as decoration.** `SvgGeometry` started with a `SKIPPED`
+list naming `defs`/`symbol`/`clipPath`/…; removing an entry from it left every test green, because
+the walk only ever recursed into an **allowlist** of containers. §14b records the skip-list blind
+spot as this repo's own recurring bug, four instances deep — an allowlist cannot have it, so the
+allowlist stayed and the constant went. Caught by mutation-checking, not by reading.
+
+**Measured.** Payload cost stays trivial on the new legs — `plate.dxf` 495 B gzipped for 2 shapes,
+`plate.svg` 447 B, `real-export.mage` 292 B. The renaming sweep: `lbrnmeasure_controller.js` →
+`measure_controller.js` and the `.lbrn-measure*`/`.lbrn-contour*` CSS → `.measure-*`, because the
+surface is no longer LightBurn's. The LightBurn *settings panel* classes (`.lbrn-layers`,
+`.lbrn-swatch`, …) are untouched — those really are LightBurn-specific.
+
+**Verification.** All three backend legs identical: **2107 runs, 7445 assertions**. System:
+**69 runs, 434 assertions, 0 failures**, run against a real headless Chrome. Style and Brakeman
+clean. **21 guards mutation-checked** — each broken, confirmed RED, restored — including the two
+that were false-greens on the first attempt: the `available_for?` test passed trivially on a box
+that *has* resvg until the rasterizer was stubbed absent, and the `defs` test was passing for a
+different reason than the guard it claimed to check. Both are the shape §15 names: an assertion that
+holds whether or not the code is right.
+
+**Not verified:** the 6 pre-existing failures in `Library::Scanner`'s unreadable-directory tests
+are **environment, not this branch** — identical on the merge-base, and they `chmod 000` a directory
+while the container runs as **root**, which reads it anyway. They pass on the macOS CI runner.
+
+**Deployed 2026-08-06 — and the gap between "merged" and "live" is the part worth recording.**
+This arc's PR (#156) merged *after* the previous deploy went out, so for a while all three Unraid
+backends ran `9ab3930` — the merge of #154, the commit immediately before this work. At that commit
+`MEASURABLE_EXTS` does not exist, `preview_kind` has no `:measure` branch and `_measure.html.erb`
+is not in the tree, so `.svg` fell through to `:image` and `.dxf` to `:thumbnail`: **no Measure
+button at all, which presents exactly like a broken feature** and was reported as one (*"i added the
+measure feature to svgs and dxf but it doesnt seem to have worked"*). Nothing was wrong with the
+code. **§15's close-out rule ends at "open the PR", so merged-but-never-built is the default state
+of any freshly-merged feature** — the triage is one command, `docker ps` on the box, because the
+container name *is* the git SHA. `docker images ghcr.io/chaim354/tinkerex` separates the two cases:
+no image tagged with the feature's SHA means the build never ran, rather than a deploy that failed.
+
+All three legs now run **`167d711`**, built once and rolled with `--skip-push`. Verified on the box
+rather than from an exit code: three container SHAs, six `/up` checks (both `.local` and `.home`,
+per the entry two below), and — because booting is compatible with having shipped the old code —
+`MEASURABLE_EXTS`, `_measure.html.erb` and `measure_controller.js` confirmed present *inside each
+running image*. Then the feature itself, executed in the production chunk container: an 80 × 40 mm
+SVG measured `job 80.0 × 40.0` with the circle resolved as **⌀10.0 mm**, and
+`Svg.available_for?("geometry")` / `Dxf.available_for?("geometry")` both true — the gate whose
+mis-wiring is the first of the two bugs above. **No backfill is needed**: no `geometry` row ever
+existed for these formats, so the first Measure click enqueues and the client's poll resolves it.
+
+**Not verified:** no logged-in click-through of the live web UI — that needs a browser session. The
+server-side payload is confirmed in production; the browser half rests on `measure_formats_test.rb`.
+
+Invariants: **CLAUDE.md §14h**.
+
+---
+
+## 2026-08-06: each Unraid backend gets a second hostname, because `.local` is unreachable from a phone (branch `claude/tailscale-unraid-share-access-7k4ae1`)
+
+**The question that started it:** *"is there a way for me to access the unraid share version
+website through my tailscale network?"* Yes — and the obstacle was never the network. All three
+backends sit behind one kamal-proxy that routes on the **`Host` header** (`deploy.yml`'s `proxy:`),
+so reaching the box by its Tailscale IP, or via a subnet router advertising `192.168.1.0/24`, gets
+packets to the box and then **404s** — an unregistered Host, not a connection failure. Fix the
+name and it works.
+
+**Why a second name rather than a DNS rewrite for the existing one.** With AdGuard on the box the
+obvious move is a rewrite for `share.tinkerex.local` → done. It does not work: **`.local` is
+reserved for mDNS (RFC 6762)**, and macOS/iOS resolve it through Bonjour without ever consulting
+the configured resolver — so the rewrite is silently ignored on exactly the devices that cannot
+edit `/etc/hosts`. `.home` is not mDNS-hijacked, so an ordinary DNS server can answer for it.
+
+**What changed — config only, no app code.** Each of the three destinations moves from
+`proxy.host` (singular) to `proxy.hosts` (plural) and registers both names:
+
+| destination | names registered |
+|---|---|
+| `deploy.yml` (chunk) | `chunk.tinkerex.local`, `chunk.tinkerex.home` |
+| `deploy.share.yml` | `share.tinkerex.local`, `share.tinkerex.home` |
+| `deploy.s3.yml` | `s3.tinkerex.local`, `s3.tinkerex.home` |
+
+`.local` is **kept**, not replaced — every existing client reaches these through an `/etc/hosts`
+entry, and dropping the old name would break them the moment the new one landed. `deploy.ovh.yml`
+sets no `proxy` block at all and is untouched.
+
+Plural `hosts` is the supported spelling on the pinned kamal (2.12.0), verified against the tag
+rather than assumed: `def hosts; proxy_config["hosts"] || proxy_config["host"]&.split(","); end`.
+
+**The verify probe was widened with it, and that is the load-bearing part.** `.claude/commands/
+deploy.md` health-checked `-H 'Host: $h.tinkerex.local'` only. A missing or fat-fingered `.home`
+entry deploys **perfectly green** under that probe and fails later, from a phone, as a bare 404 —
+this repo's recorded failure shape (a green check over something that never worked). It now loops
+both suffixes, six checks instead of three.
+
+**Not done here, and deliberately.** The rest of the path is box-side configuration, not repo
+state: the AdGuard rewrites, Tailscale split-DNS pointed at AdGuard, and the nginx/NPM proxy host
+(forward to `192.168.1.95:80` — kamal-proxy; Puma's 3000 is not published on the VM). Two findings
+recorded while tracing it:
+
+- **`FORCE_SSL=1` would be safe behind NPM**, which is not the usual answer for a proxy in front of
+  a proxy. The kamal config sets no `ssl:`, so kamal-proxy defaults `forward-headers` to
+  `!TLSEnabled` — **on** — and it preserves an inbound `X-Forwarded-Proto` rather than overwriting
+  it. NPM's `https` therefore reaches Rails intact and `assume_ssl` believes it, so no redirect
+  loop. Left unset for now: nothing terminates TLS yet, and no public CA will sign a `.home` name.
+- **`crypto.subtle` (`lib/chunk_upload.js:5`) is a secure-context API reached only from
+  `uploadChunkFile`.** Share is `port_writable`, so its uploads go through `uploadPortFile` — a
+  plain FormData POST — and are fully functional over plain HTTP. The same line implies browser
+  uploads on the **chunk** deployment are broken at `http://chunk.tinkerex.local` today, on the
+  LAN, independent of any of this. **Not verified in a browser** — recorded as a lead, not a fact.
+
+---
+
+## 2026-08-06: click a shape in a .lbrn2 and it tells you how big it is (branch `claude/lightburn-shape-dimensions`)
+
+**The question that started it:** *"in the lightburn parser are you calculating the size of each
+shape, and is there any way we can implement that if you click on a shape it tells you its
+dimensions?"* Answer to the first half: **no.** `Lbrn2.each_geometry` yields every drawable
+contour's points and `job_size` folds all of them into **one** `BBox` — the "Job size" row in the
+Laser Settings panel. Per-shape extents were computed and thrown away.
+
+The obstacle to the second half was never the parser. The file page shows LightBurn's **own
+embedded PNG** (57 of 58 real exports carry one) and even the fallback rasterizes our SVG via resvg,
+because `Maker::Previews::Svg` refuses to inline user SVG as an XSS rule. There was nothing on the
+page to hit-test, and a raster's pixels have no mapping back to mm.
+
+**Shipped:** a **Measure** button on `.lbrn/.lbrn2` file pages. It fetches a coordinate payload,
+draws the outlines as an SVG built in the DOM, and reports the clicked contour's size — `40 × 20 mm`,
+or `⌀6.2 mm` when it is round. Alt-click widens to the whole object. Scroll to zoom, drag to pan.
+
+**Architecture:** a new `geometry` **preview kind** through the existing pipeline — `Enqueue` →
+`GeneratePreviewJob` → `Lbrn2.render(kind: "geometry")` → `LbrnGeometry` → JSON attached as the
+Preview's asset and served from its blob URL, off Rails. It is the **first kind to exercise that
+seam end to end**: `model_glb` has been declared in `Preview::KINDS` all along but is refused by
+`Mesh`, so nothing ever produced a second artifact from one file before this.
+
+**Sized by measurement, not guesswork**, over the 58 real exports at `~/Documents/3d printing copy`
+(gzipped): bounding boxes alone are **median 0.6 KB / worst 15 KB**; full outlines **12 KB / 734 KB**;
+outlines thinned 3:1 **5 KB / 281 KB** — the scheme #145 deletes; RDP at 0.01 mm supersedes it at
+**8 KB / 208 KB**, smaller AND correct. Server parse+walk: median 7 ms, worst 436 ms. Two findings
+shaped the payload — **JSON beats shipping the SVG by up to ~4,000×** (`metal test 5.lbrn2` is
+1.45 MB gzipped as SVG and 0.1 KB as geometry, because the SVG inlines the placed photo's base64),
+and **the biggest files are the cheapest** (`pics.lbrn2` is 24 MB holding 2 shapes; its cost is
+fetching bytes, not parsing them — which is why the work belongs in a job, not a request).
+`rake lbrn:geometry_report[<dir>]` reproduces the table. Current reading: 58 files, no skips,
+median 5.7 KB / 7.9 ms, worst 284.6 KB. (Superseded by #145 and #149 below — the shipped figures
+are median 8.0 KB and a build ~32% faster on the box.)
+
+**Nine guards on this branch could not fail for the reason they existed**, and every one was found
+by mutation-checking rather than by reading. Recorded because the pattern is more useful than any
+individual bug — the full list is in
+`docs/superpowers/plans/2026-08-06-lightburn-shape-dimensions.md` under "Corrections made during
+execution":
+
+- The bezier-circle fixture was never asserted to be **round**. Its bbox is pinned by four on-axis
+  vertices, so swapping the `c0`/`c1` handles yields a **four-lobed shape with radii 4.14–10.0**
+  and all nine assertions stay green.
+- A mutation that changed **which** object id was shared rather than **whether** — with one
+  `<Shape>` in the fixture, both behaviours are indistinguishable.
+- Fixing that opened a hole in the *other* mutation: ids `[1, 2, 2]` have the same unique count
+  **and** the same density as the correct `[1, 1, 2]`. Only a positional comparison separates them.
+- The union-to-`job_size` guard could not catch a measure-after-thinning bug, for a reason worth
+  more than the gap: **`BEZIER_SAMPLES % DECIMATE_STRIDE == 0`**, so decimation drops only
+  intermediate curve samples and never an original vertex. **That reasoning was wrong in general
+  and #145 is the correction** — it holds only for an all-bezier contour, which
+  `bezier-circle.lbrn2` happens to be.
+- `CIRCLE_TOLERANCE` was settable to **1,000,000** with everything green.
+- Four payload fields (`job`'s origin, `c`, `i`, `PRECISION`) were asserted with `key?` rather than
+  by value — including `i`, the only thing standing behind the bitmap-exclusion promise.
+- A "user does not own it" test used a node id existing **nowhere**, so it 404'd either way.
+- Two bugs in the plan's own controller code, found by running it: calling `Enqueue` unconditionally
+  on a poll makes the action's `"failed"` branch **dead code** and re-enqueues a doomed render on
+  every poll; and a plain `get` defaults to `:html`, so `RecordNotFound` answered **302 to
+  `files_path`** rather than 404.
+- `perform_enqueued_jobs { get file_path(...) }` cannot make a thumbnail ready — the block form only
+  runs jobs enqueued *during* the block, and `#show` enqueues nothing.
+
+**The through-line: an aggregate assertion — count, uniq, density, sum, or a union over a whole
+document — is the shape most likely to be green over a wrong answer.** Six of the nine were one.
+Four were caught by an implementer reporting an honest *negative* result on a mutation the plan
+predicted would fail, rather than adjusting the test until it went red.
+
+### What followed, same day, and why (PRs #145, #147, #149, #150, #151, #152, #153)
+
+The feature shipped and then took **seven more PRs**, every one started by the user looking at the
+real thing. Recorded together because the pattern is the lesson: each round was found by a person
+opening a page, and none by the suite.
+
+**#145 — curves and text were being mangled.** The drawing payload thinned contours by a fixed
+INDEX STRIDE, justified by `BEZIER_SAMPLES % DECIMATE_STRIDE == 0`. True — but only for an
+all-bezier contour: `polylines` appends 12 points per `B` segment and exactly **one** per `L`, so a
+single straight edge shifts every later index and the alignment collapses. For an `L` segment that
+one point IS a vertex, so dropping it cuts the corner off. Measured: **1148 of 5259 thinned
+contours displaced by >5% of their own size, worst case 58.7 mm.** Replaced with Ramer-Douglas-
+Peucker at 0.01 mm — error-bounded by construction, corners kept by definition, and *smaller*
+(208 KB worst case against the stride's 285). `bezier-circle.lbrn2` is all-bezier, which is exactly
+why the guard asserting that coupling passed throughout.
+
+**#147 — the fix didn't reach anyone.** Four already-measured files kept serving mangled curves
+after the deploy and had to be destroyed by hand. A preview is stale on **two axes** and only
+`version_id` (content) was checked; nothing asked whether the CODE had moved. Added
+`maker_previews.renderer_revision`, `NOT NULL DEFAULT 1` so adding the column didn't itself trigger
+a full-library rebuild, and per-KIND so a geometry fix doesn't re-render ~1400 thumbnails.
+
+**#149 — first load was slow.** Profiled on the box rather than guessed: `build` was 2,763 ms of
+which the WALK was 2,123 — the existing parser, not the Measure work. `GeometryIndex` parsed every
+inline `<VertList>` up front and `geometry_for` then re-parsed each one at emit: 2.5 MB of text,
+twice. Consulting the index first cut it to 1,878 ms (**-32%** on the box). The bigger user-facing
+win was the poll schedule: `[400, 800, 1500, 2500]` checks CUMULATIVELY at 400/1200/2700/5200 ms,
+so a 3.5 s render went unnoticed until 5.2 s. **Measured and dropped:** skipping the index for
+documents that never instance paid +0% and was removed rather than carried.
+
+**#150 — paint order, and the palette.** `nested-plate.lbrn2` (a plate and a hole on a SHARED
+centre) finally made the hit-test rule testable; reversing the sort turns it red. And CLAUDE.md's
+refusal to hard-code LightBurn's palette was relitigated deliberately — the Measure view now draws
+OUR outlines, and the values are no longer guesses: 16 of 30 were RECOVERED from the embedded
+thumbnails by mapping contours into pixel space and reading what LightBurn painted. The colour
+ships in the payload (one definition) as an SVG PRESENTATION ATTRIBUTE, so `--selected` can still
+outrank it.
+
+**#151 — layers labelled by colour.** Three arms: a user's own name wins; else the colour's name;
+else the file's label VERBATIM — reconstructing it as `C#{index}` loses LightBurn's zero padding
+and turns `C00` into `C0`, which a pre-existing flow test caught.
+
+**#152 — the revision check was unreachable.** `Enqueue` compared revisions correctly from day one,
+but `thumbnails_for` matched on `(kind, node_id, version_id)` alone, so a stale row counted as
+present and backfill skipped it; `#show` never enqueued at all. **172 of 174 LightBurn thumbnails
+sat at revision 1 through two deploys that had bumped it.** Every test of the mechanism passed
+throughout — they all called `Enqueue` directly and none opened a page.
+
+**#153 — and that fix broke the preview.** Blanking a stale row to `pending` is right for a CONTENT
+change (the artifact depicts a different file) and wrong for a RENDERER one (same file, older
+code): the file page doesn't poll, so it stranded a spinner. Now only content blanks. A failing
+test then caught that geometry needs the opposite — it is DATA the client measures from, and its
+client DOES poll — so `#geometry` reports `pending` whenever it had to enqueue, without reading the
+row's status. Same mechanism, opposite right answers.
+
+**The through-line, and the reason this entry is long:** eleven guards across this arc could not
+fail for the reason they existed, and the recurring shape is an assertion that holds whether or not
+the code is right — an aggregate (count, uniq, density, a union over a document), a presence check
+where a value was meant, an attribute where the computed style was meant, or a fixture whose two
+cases are indistinguishable (a CutIndex 0 contour whose palette colour equals the fallback). The
+last three rounds reached the user because **every verification was server-side**: `rails runner`
+and headless Chrome, never a browser. Both #152 and #153 were invisible to that.
+
+Invariants: **CLAUDE.md §14h**. Spec and plan:
+`docs/superpowers/specs/2026-08-06-lightburn-shape-dimensions-design.md`,
+`docs/superpowers/plans/2026-08-06-lightburn-shape-dimensions.md`.
+
+---
+
+## 2026-08-05: a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
 
 Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
 but not v4?** Because **v4 was saved twice.** Reproduced exactly —

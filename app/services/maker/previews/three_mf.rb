@@ -25,6 +25,19 @@ module Maker
       # Slicer convention first, then anything PNG-ish under the metadata/asset dirs.
       PREFERRED_PATHS = %w[Metadata/thumbnail.png Metadata/thumbnail.jpg].freeze
 
+      # BUMPED IN LOCKSTEP WITH `Stl::THUMBNAIL_REVISION`, because the mesh fallback below RENDERS
+      # THROUGH IT — a CAD-exported 3MF (Shapr3D, Onshape, Fusion) carries no embedded thumbnail, so
+      # its picture is the STL thumbnailer's and inherited the same sideways camera. A renderer whose
+      # output is built by another renderer has to track that renderer's revision or its cache never
+      # invalidates. Verified rather than assumed: `render` calls `Stl.render` on that branch.
+      #
+      # The embedded-thumbnail branch is unaffected by the camera and gets re-extracted for nothing.
+      # Accepted: one number cannot describe two branches, and re-extracting a PNG already in the zip
+      # is cheap next to leaving every CAD-exported 3MF sideways.
+      THUMBNAIL_REVISION = 2
+
+      def payload_revision(_kind) = THUMBNAIL_REVISION
+
       # Pure-Ruby zip read → no native toolchain to gate on.
       def available? = true
 

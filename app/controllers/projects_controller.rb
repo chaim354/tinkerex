@@ -33,10 +33,28 @@ class ProjectsController < ApplicationController
   end
 
   def show
-    @attachments = @project.file_attachments.order(:position).to_a
-    att_ids = @attachments.map(&:node_id)
-    @att_nodes = current_user.nodes.present.where(node_id: att_ids).index_by(&:node_id)
-    @thumbs = Maker::Previews::ThumbnailMap.for(current_user, att_ids)
+    # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
+    # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
+    # TOMBSTONES rather than destroys (deliberately — it is what makes a NAS reorganisation
+    # survivable), so no `dependent:` callback fires and nothing swept these.
+    #
+    # HIDING IS THE INSTANT HALF; DESTROYING IS `Maker::AttachmentReaper`'s AND IT WAITS. A
+    # tombstone is one undo away from returning with the SAME node_id, and the attachment is keyed
+    # on that id — so destroying inside the undo window would turn "restore from Trash" into
+    # "restore, then re-file this into every project by hand". Hiding is reversible, so it is
+    # instant; destroying is not, so it waits out the grace window.
+    #
+    # `.present` is what makes the nil mean something: nil here is "this user has no LIVE node with
+    # that id", i.e. tombstoned or hard-gone, which is exactly the set that should not render.
+    all_attachments = @project.file_attachments.order(:position).to_a
+    @att_nodes = current_user.nodes.present
+                             .where(node_id: all_attachments.map(&:node_id)).index_by(&:node_id)
+    @attachments, missing = all_attachments.partition { |a| @att_nodes.key?(a.node_id) }
+    # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
+    # a file by accident and watched their project change otherwise has no thread to pull. It
+    # disappears on its own when the reaper clears the rows.
+    @missing_attachment_count = missing.size
+    @thumbs = Maker::Previews::ThumbnailMap.for(current_user, @attachments.map(&:node_id))
     # :rich_text_body is Action Text's association for `has_rich_text :body`. Without it, each
     # entry's body is its own query — 15 entries cost 15 extra round-trips. Pinned by
     # test/integration/web/page_query_budget_test.rb.
@@ -115,7 +133,23 @@ class ProjectsController < ApplicationController
     Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
   end
 
+  # `cover_clear` is the form's way back to the automatic pick — see `_form.html.erb`. It is NOT a
+  # column, so it is stripped here rather than permitted: `permit`ting it would hand `update` an
+  # unknown attribute and raise.
+  #
+  # CLEARING WINS OVER CHOOSING when a submit somehow carries both, and the order of these two lines
+  # is the whole of that rule. It is the safe way round: a stray blank clears a cover the user can
+  # re-pick in two clicks, where the reverse would silently ignore a Clear they explicitly ticked.
+  #
+  # `cover_node_id` IS NOT VALIDATED AGAINST A LIVE NODE, deliberately. The chooser only offers the
+  # user's own files, and a hand-posted id belonging to someone else is not a leak: every surface
+  # that renders a cover looks it up through `current_user` (`Maker::Previews::ThumbnailMap`), so a
+  # foreign id resolves to nothing and the card falls back to its placeholder. Adding a validation
+  # would buy a nicer error for a case nobody reaches through the UI, at the price of a query on
+  # every project save.
   def project_params
-    params.require(:project).permit(:name, :description, :status)
+    attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id)
+    attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
+    attrs
   end
 end

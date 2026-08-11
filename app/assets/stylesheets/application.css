@@ -112,6 +112,33 @@ dl.meta dd { margin: 0; }
 .model-viewer:fullscreen { background: var(--soft); padding: 12px; }
 .model-viewer:fullscreen .model-viewer-stage { height: calc(100vh - 64px); }
 
+/* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
+.measure-view { position: relative; }
+.measure-stage { display: none; width: 100%; aspect-ratio: 1; }
+.measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.measure-stage svg.is-panning { cursor: grabbing; }
+.measure-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.measure-launch { display: inline-flex; gap: 8px; }
+.measure-actions { display: none; gap: 4px; }
+.measure-dims { flex: 1; color: var(--muted); font-variant-numeric: tabular-nums; }
+.measure-fallback { text-align: center; padding: 24px; }
+/* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
+.measure-view--ready .measure-stage { display: block; }
+.measure-view--ready .measure-fallback { display: none; }
+.measure-view--ready .measure-launch { display: none; }
+.measure-view--ready .measure-actions { display: inline-flex; }
+/* Outline geometry drawn from the /geometry payload — see measure_controller.js (Task 8). */
+/* NO `stroke` HERE ON PURPOSE: the layer colour arrives as a presentation attribute from
+   measure_controller.js, and any class rule would outrank it and flatten every layer
+   to one colour. The --hover/--selected rules below DO declare one, which is how they
+   still win over the attribute. */
+.measure-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.measure-contour--open { fill: none; }
+.measure-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
+.measure-contour--hover { stroke: #2b7; stroke-width: 2; }
+.measure-contour--selected { stroke: #d40; stroke-width: 2.5; }
+.measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+
 /* login */
 .auth-card { max-width: 380px; margin: 80px auto; text-align: center; }
 .auth-card h1 { margin: 0; font-size: 28px; }
@@ -164,6 +191,12 @@ table.files .thumb { width: 64px; height: 64px; flex: 0 0 64px; }
 .addon-icon { font-size: 32px; }
 .addon-title { font-weight: 700; }
 .addon-desc { font-size: 13px; }
+/* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
+   13px it inherits body 15px and renders LARGER than the .addon-desc above it; without the list
+   reset the page's version carries UA bullets and a 40px indent. */
+.addon-permissions { font-size: 13px; }
+ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
+ul.addon-permissions li { margin-top: 4px; }
 .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--soft); border-radius: 6px; }
 .addon-thumb.is-missing { display: none; }
 
@@ -411,21 +444,25 @@ table.files th a:hover { text-decoration: underline; }
 .sort-form { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
 .sort-form select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; }
 
-/* --- The flat by-extension filter: a chip row + a free-text escape hatch + the bound notice --- */
+/* --- The flat by-extension filter: a dropdown of what the library holds + the active chips --- */
 .ext-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 14px; }
-.ext-family { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.ext-family .family-label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-picker { display: inline-flex; gap: 6px; align-items: center; }
+.ext-picker label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.ext-picker select { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; font-size: 13px; max-width: 260px; }
+/* The full-set state (MAX_EXTS reached) — the control goes inert rather than accepting a value
+   resolve_exts would then drop. */
+.ext-picker select:disabled { opacity: .45; cursor: not-allowed; }
+.ext-active { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ext-filter .chip { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px;
   font-size: 13px; color: var(--muted); }
 .ext-filter .chip:hover { text-decoration: none; background: var(--soft); color: var(--fg); }
 .ext-filter .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-.ext-other { display: inline-flex; gap: 4px; align-items: center; }
-.ext-other input { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; }
-/* The full-set state, matching .chip.disabled below — the two controls answer one condition. */
-.ext-other input:disabled, .ext-other button:disabled { opacity: .45; cursor: not-allowed; }
+/* The × is INSIDE the chip link, so the whole chip is one target that removes that type. */
+.ext-filter .chip .chip-x { margin-left: 6px; opacity: .75; font-weight: 700; }
+.ext-filter .chip.active:hover { background: var(--fg); border-color: var(--fg); color: #fff; }
 .truncated { margin: 0 0 12px; padding: 8px 12px; border-radius: 6px;
   background: var(--soft); color: var(--muted); font-size: 13px; }
-.ext-filter .chip.disabled { opacity: .45; cursor: not-allowed; }
 .param-group-adv > summary { cursor: pointer; }
 .param-group-adv[open] > summary { margin-bottom: 10px; }
 

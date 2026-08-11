@@ -116,6 +116,34 @@ module Maker
           assert_equal 110.0, meta["job"]["width"], "instanced geometry must contribute to the bbox"
         end
 
+        # EVERY <VertList> IS PARSED EXACTLY ONCE, and this is a guard on WORK DONE rather than
+        # on output — the only kind that can see this regression, because parsing twice produces
+        # the identical drawing at double the cost, so no assertion about the result can fail.
+        # Measured on `reference card.lbrn2` (2.69 MB, 641 inline lists): re-parsing was ~9% of
+        # every instancing file's render, ~20% of that one's.
+        #
+        # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist
+        # in this suite (requiring it is a LoadError) — same reason test_helper's
+        # `with_concurrent_file_attachment` counts calls this way.
+        test "a VertList is parsed exactly once per document" do
+          calls = 0
+          mod = Maker::Previews::Lbrn2.singleton_class
+          original = mod.instance_method(:parse_vertlist)
+          mod.define_method(:parse_vertlist) { |text| calls += 1; original.bind(self).call(text) }
+
+          begin
+            doc = Maker::Previews::Lbrn2.parse_document(@real)
+            Maker::Previews::Lbrn2.each_geometry(doc) { |*| }
+          ensure
+            mod.define_method(:parse_vertlist, original)
+          end
+
+          lists = Maker::Previews::Lbrn2.parse_document(@real).xpath("//VertList").length
+          assert_operator lists, :>, 0, "fixture precondition: the document must have inline lists"
+          assert_equal lists, calls,
+                       "expected one parse per <VertList>, got #{calls} for #{lists} lists"
+        end
+
         test "a Group's XForm places its Children" do
           # The group scales its 5x5 child by 2 and lifts it to y 100..110.
           meta = Maker::Previews::LbrnMetadata.parse(@real)
@@ -395,6 +423,167 @@ module Maker
           assert_equal 2, meta["shape_count"], "the Rect after the oversized attribute must survive"
           assert_equal 40.0, meta["job"]["width"]
         end
+
+        test "bezier-circle fixture parses as one closed circle and one closed square" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("bezier-circle.lbrn2"))
+          shapes = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, closed, *| shapes << [ pts, closed ] }
+
+          assert_equal 2, shapes.length, "expected exactly the circle and the square"
+
+          circle, square = shapes.sort_by { |(pts, _)| pts.map(&:first).min }
+          assert circle[1], "circle contour must be closed"
+          assert square[1], "square contour must be closed"
+
+          assert_operator circle[0].length, :>=, 12, "a 4-segment bezier circle must flatten to >= 12 points"
+          assert_equal 5, square[0].length, "a Rect emits 4 corners plus the closing point"
+
+          # THE ASSERTION THAT MAKES THIS FIXTURE WORTH HAVING. The bbox is pinned by the four
+          # on-axis vertices, so it stays 20x20 even if the curve between them is wrong — swapping
+          # c0/c1 yields a four-lobed shape with radii 4.14..10.0 and every other assertion here
+          # still passes. Roundness is the whole point of the fixture; assert it directly.
+          circle[0].each { |(x, y)| assert_in_delta 10.0, Math.hypot(x, y), 0.01 }
+
+          # Both are 20 x 20 mm. That is the whole point of this fixture.
+          { "circle" => circle, "square" => square }.each do |name, (pts, _)|
+            xs = pts.map(&:first); ys = pts.map(&:last)
+            assert_in_delta 20.0, xs.max - xs.min, 0.05, "#{name} width"
+            assert_in_delta 20.0, ys.max - ys.min, 0.05, "#{name} height"
+          end
+        end
+
+        test "text-backup-path fixture yields two contours from the BackupPath, plus the Rect beside it" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("text-backup-path.lbrn2"))
+          contours = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, pts, *| contours << pts }
+
+          assert_equal 3, contours.length,
+                       "2 contours from the Text's BackupPath (the Text itself emits nothing) " \
+                       "+ 1 from the Rect placed beside it for the object-id density check below"
+
+          # Measured over all THREE contours, including the Rect's — this only still reads "the
+          # two letters" because the Rect sits INSIDE their span (see the fixture's own comment).
+          # If the Rect ever moved outside it, these numbers would move and say so loudly.
+          all_x = contours.flatten(1).map(&:first)
+          all_y = contours.flatten(1).map(&:last)
+          assert_in_delta 30.0, all_x.max - all_x.min, 0.01, "the two letters span 30 mm"
+          assert_in_delta 10.0, all_y.max - all_y.min, 0.01, "the two letters share one 10mm y-span"
+        end
+
+        test "each_geometry yields an object id that groups a Text with its BackupPath" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("text-backup-path.lbrn2"))
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
+
+          # Document order: the Text's two BackupPath contours (the letters) yield first, then
+          # the Rect placed beside them.
+          assert_equal 3, ids.length
+
+          # THE GROUPING CLAIM, checked POSITIONALLY rather than via a deduplicated count. A
+          # count alone cannot tell "the two letters share one id, and the Rect gets its own"
+          # apart from "the second letter collides with the Rect's id while the first is split
+          # off alone" — both give ids.uniq.length == 2. That second, WRONG shape is exactly
+          # what a per-contour-id mutation produced here, undetected, until this was asserted
+          # positionally: [1, 2, 2] has 2 unique values and is dense from 1, same as the correct
+          # [1, 1, 2], so neither an aggregate count nor a density check catches it.
+          assert_equal ids[0], ids[1],
+                       "both BackupPath contours belong to ONE object (the Text), so alt-click reports the whole word"
+          assert_not_equal ids[0], ids[2], "the Rect beside the Text must be a different object"
+
+          # THE ASSERTION THAT CATCHES THE ORIGINAL BUG, and the reason the Rect is in this
+          # fixture at all. A Text yields no geometry of its own, so its counter tick is
+          # observable ONLY through the BackupPath reusing it. Give the BackupPath a fresh id
+          # instead and the Text's tick is burned unobserved, leaving a GAP: the ids become
+          # [2, 2, 3] rather than [1, 1, 2]. With only one Shape in the fixture, both behaviours
+          # look like "two the same" and nothing could tell them apart — which is why the Rect
+          # had to be added at all.
+          assert_equal (1..ids.uniq.length).to_a, ids.uniq.sort,
+                       "in THIS fixture the ids must be dense from 1 — a gap would mean the " \
+                       "BackupPath burned a fresh tick instead of reusing the Text's (real files " \
+                       "are NOT guaranteed dense; see each_geometry's doc comment)"
+        end
+
+        test "each_geometry gives separate shapes separate object ids, and Groups consume none" do
+          doc = Maker::Previews::Lbrn2.parse_document(fixture("real-export.lbrn2"))
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(doc) { |_c, _p, _k, _e, _i, oid| ids << oid }
+
+          # real-export.lbrn2: a Rect, two Paths (one an instance), and a Group holding one Path.
+          # The Group emits nothing itself, so four drawable shapes -> four distinct ids.
+          assert_equal 4, ids.length
+          assert_equal 4, ids.uniq.length, "each non-Group Shape gets its own object id"
+        end
+
+        test "a shape after a Group keeps counting where the group left off" do
+          # real-export.lbrn2 CANNOT catch a Counter regression: its Group is the LAST shape, so
+          # nothing ever yields after a group returns, which is the only place either bug below is
+          # observable. This fixture puts a plain Shape after the Group specifically to expose it.
+          xml = <<~XML
+            <LightBurnProject AppVersion="1.6.00">
+              <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 0 0</XForm></Shape>
+              <Shape Type="Group" CutIndex="0">
+                <XForm>1 0 0 1 0 0</XForm>
+                <Children>
+                  <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 20 0</XForm></Shape>
+                </Children>
+              </Shape>
+              <Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 40 0</XForm></Shape>
+            </LightBurnProject>
+          XML
+          ids = []
+          Maker::Previews::Lbrn2.each_geometry(Maker::Previews::Lbrn2.parse_document(xml)) { |_c, _p, _k, _e, _i, oid| ids << oid }
+          # A Group consuming a tick gives [1, 3, 4]; a plain-Integer counter gives [1, 2, 2]
+          # (the outer frame's own counter rewinds to 1 when the recursive call returns, so the
+          # Rect after the Group repeats the id already spent inside it).
+          assert_equal [ 1, 2, 3 ], ids
+        end
+
+        test "the existing callers are unaffected by the new yielded value" do
+          # job_size destructures 4 params, to_svg 5. Ruby block arity is lenient, so a 6th value
+          # must change neither — asserted as an EXACT size, not merely "truthy": a caller
+          # silently reading the wrong positional param (e.g. treating `image` as `object_id`)
+          # would still return SOME hash and pass a weaker check without ever being wrong in a
+          # way that fails it.
+          sizes = {
+            "real-export.lbrn2" => { "width" => 110.0, "height" => 110.0 },
+            "sample.lbrn2" => { "width" => 100.0, "height" => 40.0 },
+            "laser-settings.lbrn2" => { "width" => 40.0, "height" => 20.0 }
+          }
+          sizes.each do |name, expected|
+            bytes = fixture(name)
+            doc = Maker::Previews::Lbrn2.parse_document(bytes)
+            assert_equal expected, Maker::Previews::Lbrn2.job_size(doc), "#{name} job size must be unchanged"
+            assert_match(/<svg/, Maker::Previews::Lbrn2.to_svg(bytes), "#{name} must still render SVG")
+          end
+        end
+
+        # --- The `kind:` seam (Task 5) -------------------------------------------------------
+        # `kind` selects the ARTIFACT: "geometry" is the JSON coordinate payload behind the
+        # Measure view, and every other value (including the default) is the existing
+        # thumbnail/PNG path. Pinned here, beside the dialect tests, because real-export.lbrn2
+        # is the one fixture whose shape count ("geometry") and whose "still a PNG" path
+        # (default) are both already asserted elsewhere in this file.
+
+        test "render(kind: geometry) returns the JSON payload" do
+          result = Maker::Previews::Lbrn2.render(fixture("real-export.lbrn2"), kind: "geometry")
+
+          assert_equal "application/json", result[:content_type]
+          assert_equal 4, JSON.parse(result[:bytes])["shapes"].length
+        end
+
+        test "render defaults to the thumbnail and is unchanged by the new kwarg" do
+          result = Maker::Previews::Lbrn2.render(fixture("real-export.lbrn2"))
+
+          assert_equal "image/png", result[:content_type]
+          assert result[:metadata].present?, "the thumbnail path still carries LbrnMetadata"
+        end
+
+        test "geometry is an accepted preview kind and json maps to a .json asset" do
+          assert_includes Maker::Preview::KINDS, "geometry"
+          assert_equal ".json", Maker::GeneratePreviewJob.new.send(:asset_ext, "application/json")
+        end
+
+        def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
       end
     end
   end

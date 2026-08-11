@@ -25,14 +25,40 @@ ssh:
 # Don't use this when deploying to multiple web servers (then you have to terminate SSL at your load balancer).
 #
 # Host-routed: three LIBRARY_BACKEND deployments (chunk here, plus `-d s3` and `-d share`) share
-# this one box and one kamal-proxy. Each destination registers a DISTINCT hostname; without a
+# this one box and one kamal-proxy. Each destination registers DISTINCT hostnames; without a
 # host, three catch-alls would collide and the last deploy would silently win. Add to /etc/hosts
 # on any client that will reach them:
 #   192.168.1.95  chunk.tinkerex.local s3.tinkerex.local share.tinkerex.local
 # NOTE: once this host is set, the bare IP (http://192.168.1.95) no longer routes to chunk —
 # use http://chunk.tinkerex.local.
+#
+# TWO NAMES PER DEPLOYMENT, AND THE SECOND ONE IS NOT COSMETIC. `.local` is reserved for mDNS
+# (RFC 6762): macOS and iOS resolve it through Bonjour and NEVER send it to the configured
+# resolver, so a DNS rewrite for a `.local` name in AdGuard (or any other resolver) is silently
+# ignored on exactly the devices that cannot edit /etc/hosts. `.home` is not mDNS-hijacked, so it
+# is resolvable by a normal DNS server — which is what makes these reachable over Tailscale from
+# a phone. Both names are kept: `.local` + /etc/hosts is what every existing client already uses,
+# and dropping it would break them at the same moment.
+#
+# `proxy.hosts` (plural) is a list; kamal reads `proxy_config["hosts"] || proxy_config["host"]
+# &.split(",")`, so this is the supported spelling and not a comma-string hack. ALL FOUR FILES MUST
+# USE THE SAME SPELLING: kamal deep-merges the overlay over this file and then REFUSES a merged
+# proxy carrying both keys ("Specify one of 'host' or 'hosts', not both"), so leaving one overlay on
+# singular `host:` breaks that destination's deploy outright. Loud, not silent — but it means the
+# migration cannot be done one file at a time.
+#
+# `hosts` is an ARRAY, and kamal's deep_merge REPLACES arrays (it unions hashes only — the same
+# asymmetry deploy.s3.yml's env.secret comment describes). That replacement is what keeps the three
+# destinations from inheriting each other's names; if it ever unioned, every overlay would also
+# answer to chunk's names. `test/deploy_hygiene_test.rb` asserts the MERGED result for that reason.
+#
+# Each name must be registered HERE or kamal-proxy 404s it — including a name a front proxy
+# (nginx/NPM) forwards, since it passes the original Host through. Adding a name to this list is
+# inert until that destination is redeployed.
 proxy:
-  host: chunk.tinkerex.local
+  hosts:
+    - chunk.tinkerex.local
+    - chunk.tinkerex.home
 
 # Shared container registry: GitHub Container Registry (ghcr.io). The Mac builds the
 # image once and pushes here; both servers (Unraid + OVH) pull the same image. Auth is a
