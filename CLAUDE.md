@@ -876,14 +876,18 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **A NON-INTEGER `min_host` IS IGNORED, NOT COERCED.** `"2".to_i` is 2, which would honour a value
   a JSON manifest should not contain. Ignoring it leaves the addon **AVAILABLE** — the failure
   direction an operator can diagnose, rather than one that makes an addon vanish.
-- **DECLARED PERMISSIONS ARE DISPLAYED, NOT ENFORCED**, and `states_key` is not an inter-addon
-  boundary either — a bundle runs same-origin in the session and can call another addon's
-  `/tools/<key>/states` directly, so what the mutual declaration closes is only that a manifest can
-  no longer redirect **its own saves** into another addon's namespace by declaration alone. Do not
-  describe either as a boundary (spec §8.1 says so in those words; this repo's recorded failure
-  shape is a guard everyone believed in that never worked). **Do not add enforcement without the
-  finished vocabulary:** `data:read:<addon>/<collection>` does not exist until PR 4, and
-  `service:<name>` must reconcile with today's `services` key.
+- **EXACTLY ONE DECLARED PERMISSION IS CHECKED — `library:read`, BY `#file` — AND IT IS
+  DECLARATION CONSISTENCY, NOT CONTAINMENT.** Every other name is displayed only. `states_key` is
+  not an inter-addon boundary either: a bundle runs same-origin in the session and can call another
+  addon's `/tools/<key>/states` — or another addon's `/tools/<key>/file/<id>`, whose manifest may
+  well declare the permission — directly, so what the mutual declaration closes is only that a
+  manifest can no longer redirect **its own saves** into another addon's namespace by declaration
+  alone. Do not describe any of it as a boundary (spec §8.1 says so in those words; this repo's
+  recorded failure shape is a guard everyone believed in that never worked). What the one check
+  buys is that an addon which starts reading the library must SAY SO on the card the operator reads
+  at publish time, in a deployment where publishing a bundle IS the deploy. **Do not add
+  enforcement for the rest without the finished vocabulary:** `data:read:<addon>/<collection>` does
+  not exist until PR 4, and `service:<name>` must reconcile with today's `services` key.
 - **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from
   `Host::CAPABILITIES` — a capability is what the host CAN do, a permission is what an addon SAYS it
   wants, and they already diverge (`state` / `project:read` here against `state:list` /
@@ -905,6 +909,78 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Library::ScanJob` tombstones a folder removed on the NAS. Its message still names the
   reserved-name cause too, deliberately wider than the arm: trimming a user-facing sentence on the
   strength of an unreachability argument is the move §14e says to probe rather than trust.
+- **A FILE'S CONTENT NEVER CROSSES THE WIRE AS A BARE MULTIPART TEXT FIELD, AND THE SAVE DOOR'S TWO
+  SHAPES ARE SAFE FOR TWO DIFFERENT REASONS.** multipart serialization rewrites every TEXT entry's
+  newlines to CRLF inside the browser, after `append` — the §14c defect above, one door over. A
+  string `body` rides inside the JSON `files` field, where JSON ESCAPING means the serializer never
+  sees a newline; a binary body rides as a `parts[fN]` FILE part, which the same algorithm
+  transmits verbatim precisely because it is not text. Understand BOTH before adding a third shape:
+  the obvious "just append the body" is neither, and would corrupt every G-code, CSV, `.scad` and
+  SVG an addon writes — silently, since the file still saves and still opens. Pinned in a real
+  browser (`addon_sdk_test.rb` renders `<LF>`/`<CR>` explicitly, because Capybara normalizes
+  whitespace and the corruption is invisible to an ordinary text assertion).
+- **THE JSON `files` ARRAY IS THE ORDERED MANIFEST FOR BOTH SHAPES; A PART IS REFERENCED, NEVER
+  LISTED SEPARATELY.** Order is load-bearing (`AddonFile#position`, and `placements[i]` pairs a file
+  with the destination resolved for it), and a request carrying two collections has no ordering rule
+  that is not implicit. **The NAME always comes from the JSON entry and never from the part's own
+  `filename`** — one source, which is what lets `valid_leaf_name?` + `ReservedNames` cover both
+  shapes with no second copy. **The CONTENT TYPE is the opposite: from the PART, never guessed from
+  the name** (spec §6.1).
+- **A `part` IS LOOKED UP INSIDE `parts[…]` AND MUST BE AN `UploadedFile`.** The key is
+  client-supplied and indexes a params hash: at the top level `part: "name"` resolves to the state's
+  own name — a String, which answers `#size` in CHARACTERS (mis-measuring the cap) and has no
+  `#read` (a 500). Both halves are needed and are separately mutation-checked; the namespace alone
+  is what refuses a real upload posted under some *other* top-level key.
+- **`ADDON_SAVE_MAX_FILES`/`ADDON_SAVE_MAX_BYTES` DEFAULT TO 8 AND 4_000_000 AND ARE PER-REQUEST.**
+  Bytes is a TOTAL across the save, not a per-file allowance — making it per-file would LOOSEN
+  today's rule, and a cap that grows when it is made explicit is not the same cap. Sources are SIZED
+  before any is READ, so an oversized part never enters the heap. A garbage value falls back to the
+  default, never to 0: `"four".to_i` is 0 and a 0 cap refuses every save in the deployment.
+  **THE TWO WIRE SHAPES HIT DIFFERENT RACK LIMITS** (verified, rack 3.2.6): a url-encoded body dies
+  at `RACK_QUERY_PARSER_BYTESIZE_LIMIT` (4 MiB) as a bare 400 before the action runs, while
+  multipart is bound by `RACK_MULTIPART_PARSER_BYTESIZE_LIMIT` (10 GiB) — including the JSON `files`
+  field inside it, which the multipart parser handles and `each_query_pair` never sees. So a raised
+  cap means something to the SDK (always multipart) and nothing to a hand-rolled url-encoded POST.
+- **`GET /tools/:key/file/:node_id` IS ALWAYS `application/octet-stream` + `attachment`, WHATEVER
+  THE FILE IS, AND THERE IS DELIBERATELY NO BYTE-URL HELPER.** Its only caller is
+  `host.files.read`, a `fetch` reading `.arrayBuffer()`, and neither header affects a fetch body —
+  so this costs nothing and removes the inline case entirely, rather than re-deriving
+  `FilesController#blob`'s SAFE_INLINE_TYPES allowlist for a caller that is not a browser tab.
+  **Serving Marcel's type instead was a LIVE BUG, found by probing:** a `.js` in the library came
+  back `text/javascript`, and `verify_same_origin_request` (an `append_after_action` firing on any
+  non-XHR JavaScript response — and `fetch` sets no `X-Requested-With`) raised
+  `InvalidCrossOriginRequest`, so the addon got a **422 HTML page** where its bytes belonged.
+  **`skip_forgery_protection` would be the WORSE fix**, not an equivalent one: `#asset` can afford
+  that skip because its body is the same static bundle for every viewer, while this body is a
+  USER'S OWN FILE — skipped, a third-party `<script src>` would execute it in the attacker's origin
+  and read it out. Octet-stream + `nosniff` makes that structurally impossible and needs no list of
+  script-capable types to keep current (§14b's skip-list blind spot). `FilesController#blob` still
+  serves Marcel's type and has the same latent shape; out of scope, recorded. A URL here also
+  cannot back an `<img src>`, which is why `host.files.blobUrl` does not exist and must not be
+  added. Delivery is consumed exactly as `#blob` consumes it — all three variants, **no `else`**
+  (§14a). On s3 the `Redirect` is cross-origin, so a bundle reading those bytes needs the bucket's
+  CORS to allow this origin; streaming through Rails instead is what §15 forbids.
+- **THAT ENDPOINT'S `NotFound` IS RESCUED IN THE ACTION, NOT LEFT TO THE CLASS-LEVEL ARM.** The
+  class arm answers 422 "Your library refused that write." — right for the save door, a lie on a
+  read. Same shape as `FilesController#geometry` rescuing `RecordNotFound` locally (§14h). One 404
+  for four causes (unknown id, a stranger's, a tombstone, a directory) so the endpoint cannot report
+  which node ids are real.
+- **THE `current_user` SCOPE ON `#file` IS THE REAL GUARD, AND A TEST USING A REAL ADAPTER CANNOT
+  SEE IT.** All three adapters re-scope inside `live_node!`, so deleting the controller's scope
+  still answers 404 — from the port's `NotFound` — and the obvious test passes over a deleted guard.
+  The port's contract is that the CALLER has already decided the request is legitimate, so an
+  adapter may legitimately trust it. Pinned with a port double that does (`PermissiveDownloadPort`).
+- **FILE-PICKER EXTENSION FILTERING IS CLIENT-SIDE, AND FOLDERS ARE NEVER FILTERED.**
+  `/library/children` already answers one bounded folder, so a server-side filter buys no round
+  trips and costs a second definition of the extension vocabulary on an endpoint the form-field
+  chooser shares (§14d's one-vocabulary rule). Filtering folders would hide the path TO a matching
+  file. A malformed `extensions` filters NOTHING rather than everything — an addon's typo must not
+  present an empty picker. It is a convenience for the human, never a restriction on the addon: a
+  bundle can pass any node id to `read`.
+- **`pickFile` RESOLVES `null` FOR CANCEL, AND FILE MODE HAS NO "CHOSE THE ROOT" ANSWER** — a
+  directory is never a valid selection there, so `null` has exactly one meaning, unlike
+  `pickFolder`'s `{nodeId: ""}`. Both halves are driven in a browser, because a picker that simply
+  hung also renders nothing.
 
 ### 14d. The maker web layer
 

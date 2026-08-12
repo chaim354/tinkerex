@@ -28,6 +28,10 @@
     "api_version": "1",
     "entry": "sdk.js",
     "services": [ "fixture-svc" ],
-    "service_timeouts": { "fixture-svc": 90 }
+    "service_timeouts": { "fixture-svc": 90 },
+    "min_host": 1,
+    "permissions": [
+      { "name": "library:read", "reasoning": "Reads back what it just wrote, to prove the bytes survived" }
+    ]
   }
 ]

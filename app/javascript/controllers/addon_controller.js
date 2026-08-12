@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import { chooseFolder } from "lib/file_chooser"
+import { chooseFolder, chooseFile } from "lib/file_chooser"
 import { initHost, teardownHost } from "@maker/addon-sdk"
 
 // Loads an addon bundle and hands it the host context. Addon-AGNOSTIC by construction: it never
@@ -23,6 +23,15 @@ export default class extends Controller {
         label: this.defaultFolderLabelValue,
         ...options,
       })
+      // THE FILE-MODE SIBLING, AND IT SHARES NONE OF chooser's SEEDING ON PURPOSE. `value`/`label`
+      // seed a FOLDER selection; in file mode the chooser starts with nothing selected by design
+      // (lib/file_chooser.js's #open), because there is no "current file" for a picker to resume
+      // from and pre-selecting one would answer a question the user has not been asked.
+      const filePicker = (options = {}) => chooseFile({
+        childrenUrl: this.childrenUrlValue,
+        createUrl: this.createUrlValue,
+        ...options,
+      })
       const csrfToken = document.querySelector("meta[name=csrf-token]")?.content
 
       // INITIALIZED BEFORE THE BUNDLE IS IMPORTED, and the order is the contract: a bundle's
@@ -36,7 +45,7 @@ export default class extends Controller {
       // blame a malformed ctx blob on the addon — "This tool failed to load" — when the bundle
       // never got a chance to be the problem.
       try {
-        initHost({ ...this.ctxValue, chooseFolder: chooser, csrfToken })
+        initHost({ ...this.ctxValue, chooseFolder: chooser, chooseFile: filePicker, csrfToken })
       } catch (e) {
         this.mountTarget.textContent = `The host failed to initialize: ${e.message}`
         return
@@ -81,6 +90,11 @@ export default class extends Controller {
         // Absent on an older host, which is exactly why it is worth feature-detecting in the bundle
         // (`typeof ctx.chooseFolder === "function"`) rather than assuming.
         chooseFolder: chooser,
+        // ADDED, NEVER SUBSTITUTED FOR ANYTHING. §10.1's compatibility rule is about what may not
+        // be REMOVED; a new key is free, and the raw-ctx path stays a supported path (§10.2), so
+        // a bundle that never adopts the SDK still gets the picker. Same contract as chooseFolder
+        // above: -> Promise<{nodeId, kind, path} | null>, null meaning CANCEL.
+        chooseFile: filePicker,
         csrfToken,
       })
     } catch (e) {

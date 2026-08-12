@@ -242,6 +242,15 @@ function encodeServiceName(name) {
   return encodeURIComponent(name)
 }
 
+// IS THIS BODY BYTES RATHER THAN TEXT? `File extends Blob`, so the first clause covers a File the
+// user dropped on the page; `ArrayBuffer.isView` covers every TypedArray AND DataView in one test,
+// which an `instanceof Uint8Array` chain would not (a bundle emitting a 3MF through a zip library
+// is as likely to hold a `Uint8Array` as an `ArrayBuffer`, and one holding a `DataView` should not
+// silently fall through to the string branch and be refused).
+function isBytes(body) {
+  return body instanceof Blob || body instanceof ArrayBuffer || ArrayBuffer.isView(body)
+}
+
 // ---------------------------------------------------------------------------
 // The host
 // ---------------------------------------------------------------------------
@@ -365,9 +374,45 @@ class Host {
       // null` — it would simply vanish, and the write would proceed with no content type at all,
       // discovered only later by a bundle staring at a file that will not preview. Loud now beats
       // silent then.
-      const parts = outputFiles.map((f) => {
+      //
+      // TWO WIRE SHAPES, AND WHICH ONE A FILE TAKES IS DECIDED BY ITS BODY'S TYPE — NEVER BY ITS
+      // NAME OR ITS CONTENT TYPE.
+      //
+      //   a string  -> stays in the JSON `files` field, byte-identical to what every bundle has
+      //                always sent. This host has accepted it since v1 and keeps accepting it.
+      //   bytes     -> a Blob / ArrayBuffer / TypedArray / DataView becomes a REAL multipart file
+      //                part, posted as `parts[fN]`, and the JSON entry becomes `{name, part}`.
+      //
+      // THE RULE UNDERNEATH BOTH: A FILE'S CONTENT NEVER TRAVELS AS A BARE MULTIPART TEXT FIELD.
+      // multipart/form-data serialization REWRITES EVERY TEXT ENTRY'S NEWLINES TO CRLF, inside the
+      // browser, after `append` — the corruption that silently mangled a line-by-line sidecar
+      // payload once already and cannot be fixed from bundle code (see service.post below). Both
+      // shapes here are immune, for two different reasons that must both be understood before
+      // anyone adds a third: a string inside `JSON.stringify` is ESCAPED, so a "\n" is the two
+      // characters `\` and `n` on the wire and the serializer has no newline to find; and a Blob
+      // is a FILE entry, which that same algorithm transmits verbatim precisely because it is not
+      // text. Appending `f.body` straight onto the FormData would be neither, and would corrupt
+      // every G-code, CSV, .scad and SVG an addon ever writes — silently, since the file still
+      // saves and still opens.
+      //
+      // A BLOB IS ALWAYS RE-WRAPPED SO ITS `type` IS THE AUTHOR'S DECLARED contentType. The server
+      // takes a part's content type FROM THE PART and ignores the JSON entry's, so if a bundle
+      // handed us a Blob built with no type (or a different one), the declared contentType would
+      // be silently discarded in favour of `application/octet-stream`. One value, one source, and
+      // the source is the one the author wrote down.
+      const parts = outputFiles.map((f, i) => {
         if (!f.contentType) {
           throw new AddonError("invalid_argument", `File "${f.name}" has no contentType.`)
+        }
+        if (isBytes(f.body)) {
+          return { name: f.name, part: `f${i}`, blob: new Blob([ f.body ], { type: f.contentType }) }
+        }
+        if (typeof f.body !== "string") {
+          throw new AddonError(
+            "invalid_argument",
+            `File "${f.name}" has a body that is neither a string nor binary. Pass text as a ` +
+              "string, or bytes as a Blob, ArrayBuffer, TypedArray or DataView.",
+          )
         }
         return { name: f.name, content_type: f.contentType, body: f.body }
       })
@@ -377,7 +422,17 @@ class Host {
         body.append("name", name)
         body.append("data", JSON.stringify(data))
         body.append("parent_node_id", folderNodeId)
-        body.append("files", JSON.stringify(parts))
+        // THE JSON ARRAY IS THE ORDERED MANIFEST FOR BOTH SHAPES — a part entry names its part
+        // rather than carrying its bytes, so there is exactly one list and one index. The server
+        // pairs `files[i]` with the destination it resolved for `files[i]`; two collections with
+        // an implied ordering between them is how that pairing would silently slip.
+        body.append("files", JSON.stringify(parts.map(
+          (p) => (p.blob ? { name: p.name, part: p.part } : p),
+        )))
+        // The third argument is the part's `filename=`. THE SERVER IGNORES IT — the name always
+        // comes from the JSON entry, so there is only ever one source for a filename — and it is
+        // sent anyway because it costs nothing and makes the request legible in devtools.
+        for (const p of parts) if (p.blob) body.append(`parts[${p.part}]`, p.blob, p.name)
         if (overwrite) body.append("overwrite", "1")
         return body
       }
@@ -417,11 +472,61 @@ class Host {
       return this._ctx.chooseFolder(options)
     },
 
+    // THE FILE-MODE SIBLING OF pickFolder, and the same cancel contract: {nodeId, kind, path}, or
+    // null when the user cancelled. There is no "chose the root" answer in file mode — a directory
+    // is never a valid selection — so null has exactly one meaning here.
+    //
+    // `options.extensions` (["\.scad", ".svg"], or "scad" — the host normalizes both spellings)
+    // filters which FILES the picker offers. Folders are never filtered, or the path to a matching
+    // file would be unreachable. IT IS A CONVENIENCE FOR THE HUMAN, NOT A RESTRICTION ON THE ADDON:
+    // nothing stops a bundle passing any node id to `read`, so an addon that genuinely cannot
+    // handle a file type must still check what it got.
+    //
+    // SELECTION STAYS HOST-OWNED (spec §6.2). An addon never enumerates the tree — it asks the
+    // host to ask the user — which is both why there is no `files.list` and what makes Ring 2
+    // possible: a null-origin iframe cannot be handed a user's folder tree.
+    pickFile: async (options = {}) => {
+      this._require("pick:file")
+      if (typeof this._ctx.chooseFile !== "function") {
+        // The pickFolder argument, one door over: _require passed, so capabilities() says this
+        // host CAN pick a file — a missing chooseFile is the HOST failing to wire up what it
+        // advertises, not the user pressing Esc. Returning null would make those indistinguishable.
+        throw new AddonError(
+          "host_misconfigured",
+          "capabilities() advertises pick:file, but this host never provided a chooseFile function.",
+        )
+      }
+      return this._ctx.chooseFile(options)
+    },
+
+    // ONE LIBRARY FILE'S BYTES, AS AN ArrayBuffer. Bytes rather than text because the host cannot
+    // know the encoding and a bundle can: `new TextDecoder().decode(buf)` is one line for a .scad
+    // or an SVG, while a String the SDK had already decoded for you is unrecoverable if it guessed
+    // wrong. A `.dxf` in cp1252 and a `.3mf` are the same call.
+    //
+    // WHAT THE nodeId MAY BE: whatever pickFile handed back, or a node_id off `state.list()`'s
+    // `files`. There is no way to enumerate the library and no way to reach another user's file —
+    // the server scopes every lookup to the signed-in user, which is the boundary that is real
+    // here (the manifest's `library:read` declaration is NOT one; see docs/addon-api-v1.md §4).
+    read: async (nodeId) => {
+      this._require("library:read")
+      if (typeof nodeId !== "string" || nodeId === "") {
+        throw new AddonError("invalid_argument", `Invalid nodeId ${JSON.stringify(nodeId)}.`)
+      }
+      const res = await this._fetch(`${this._ctx.urls.file}${encodeURIComponent(nodeId)}`)
+      if (!res.ok) throw await errorFrom(res)
+      return await res.arrayBuffer()
+    },
+
     // A link to the file's DETAIL PAGE (`resources :files`'s `/files/:id`) — what every shipped
     // bundle actually wants this for today: "open what I just saved, in the library". NOT the raw
-    // bytes, which live at `/files/:id/blob`. No `blobUrl` helper yet, on purpose: the read surface
-    // is PR 5's, and it needs to state the SVG-forced-to-attachment caveat (§14c) properly rather
-    // than have one bolted on here first.
+    // bytes, which live at `/files/:id/blob`.
+    //
+    // STILL NO `blobUrl`, AND NOW FOR A SETTLED REASON RATHER THAN A DEFERRED ONE. The read
+    // endpoint `files.read` uses serves EVERY file as `Content-Disposition: attachment`, so a URL
+    // pointing at it cannot back an `<img src>` — the browser would download rather than render.
+    // A helper would exist only to be a trap. Use `read` + a Blob object URL if a preview is
+    // genuinely needed, and revoke it.
     url: (nodeId) => `/files/${encodeURIComponent(nodeId)}`,
   }
 

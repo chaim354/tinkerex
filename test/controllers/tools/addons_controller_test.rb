@@ -22,11 +22,22 @@ module Tools
     }.freeze
     FIXTURE_KEY = MANIFEST["key"]
 
+    # A SECOND ADDON THAT DECLARES `library:read`, BECAUSE THE GATE IS A PROPERTY OF THE MANIFEST.
+    # Keeping MANIFEST above WITHOUT the declaration is what gives the pair its teeth: the same
+    # request, against the same node, answers 200 for one key and 403 for the other, so neither
+    # test can pass for the wrong reason. Deleting the `permissions` line here reddens the read
+    # tests; deleting the controller's check reddens the refusal test.
+    READER_MANIFEST = MANIFEST.merge(
+      "key" => "readerkit", "title" => "Reader Kit", "entry" => "reader.js",
+      "permissions" => [ { "name" => "library:read", "reasoning" => "Opens a .scad you already have" } ]
+    ).freeze
+    READER_KEY = READER_MANIFEST["key"]
+
     setup do
       @prior_cache = Rails.cache
       Rails.cache = ActiveSupport::Cache::MemoryStore.new
       Maker::Addons::Source.stub = FakeAddonSource.new(
-        manifests: [ MANIFEST ],
+        manifests: [ MANIFEST, READER_MANIFEST ],
         assets: {
           "widgetkit/generators.js" => "export default { mount() {} }",
           # Seeded ONLY so the traversal test can fail for the right reason. If asset_path! ever stops
@@ -69,6 +80,34 @@ module Tools
       @fake_service_proxy ||= FakeServiceProxy.new
       Maker::Addons::ServiceProxy.stub = @fake_service_proxy
       @fake_service_proxy.ok(full_url, body: body, content_type: content_type)
+    end
+
+    # A REAL multipart file part, not a text field pretending to be one — the whole point of the
+    # binary save door is the difference between the two. `binary: true` opens the tempfile in
+    # binmode so a 0xFF byte survives the trip into the request.
+    #
+    # The Tempfiles are held on the test instance: Rack::Test::UploadedFile keeps a reference, but
+    # letting Ruby's own GC decide when the backing file is unlinked while a request is mid-parse
+    # is a flake waiting to be diagnosed as something else.
+    def upload(bytes, filename:, content_type:)
+      @uploads ||= []
+      file = Tempfile.new([ "addon-part", File.extname(filename) ])
+      file.binmode
+      file.write(bytes)
+      file.rewind
+      @uploads << file
+      Rack::Test::UploadedFile.new(file.path, content_type, true, original_filename: filename)
+    end
+
+    # Sets (or, with nil, UNSETS) env for one block and restores exactly what was there. Unsetting
+    # matters as much as setting: the defaults test has to prove the fallback, which it cannot do
+    # if the ambient environment happens to carry a value.
+    def with_env(values)
+      prior = values.keys.to_h { |k| [ k, ENV[k] ] }
+      values.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+      yield
+    ensure
+      prior.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
     end
 
     test "requires login" do
@@ -746,13 +785,13 @@ module Tools
       post tools_addon_path("widgetkit"), params: {
         name: "huge", data: "{}",
         files: [ { name: "big.svg", content_type: "image/svg+xml",
-                   body: "x" * (Tools::AddonsController::MAX_FILE_BYTES + 1) } ].to_json
+                   body: "x" * (Tools::AddonsController.max_bytes + 1) } ].to_json
       }
       assert_response :unprocessable_entity
     end
 
     test "save refuses a file count over the cap" do
-      files = Array.new(Tools::AddonsController::MAX_FILES + 1) do |i|
+      files = Array.new(Tools::AddonsController.max_files + 1) do |i|
         { name: "f#{i}.svg", content_type: "image/svg+xml", body: "<svg/>" }
       end
       post tools_addon_path("widgetkit"), params: { name: "many", data: "{}", files: files.to_json }
@@ -762,6 +801,471 @@ module Tools
     test "save refuses malformed files JSON rather than 500ing" do
       post tools_addon_path("widgetkit"), params: { name: "bad", data: "{}", files: "not json" }
       assert_response :unprocessable_entity
+    end
+
+    # ---- save: real multipart file parts (PR 5, the binary half) --------------------------
+    #
+    # BYTES THAT ARE NOT VALID UTF-8, ON PURPOSE. A test that saved ASCII through a part would pass
+    # against an implementation that decoded, re-encoded or newline-normalized the payload
+    # somewhere — exactly the class of defect this door exists to avoid (§14c's CRLF incident). A
+    # PNG signature plus a lone 0xFF/0xFE and an embedded CRLF cannot survive any of those quietly.
+    BINARY = "\x89PNG\r\n\x1a\n\x00\xFF\xFE\x0Adata".b.freeze
+
+    test "save writes a real multipart file part byte for byte" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "binary save", data: "{}",
+        files: [ { name: "cube.3mf", part: "f0" } ].to_json,
+        parts: { f0: upload(BINARY, filename: "cube.3mf", content_type: "model/3mf") }
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+
+      node = @user.nodes.present.find_by!(name: "cube.3mf")
+      assert_equal BINARY, FileLayer.current.read(@user, node_id: node.node_id).b
+    end
+
+    # FROM THE PART, NEVER GUESSED (spec §6.1) — and the JSON entry carries a DIFFERENT, wrong type
+    # so the assertion can only pass one way. Reading the name's extension would also answer
+    # "model/3mf" here, which is why the part declares something no extension implies.
+    test "a part's content type comes from the part, not from the JSON entry or the filename" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "typed", data: "{}",
+        files: [ { name: "typed-part.3mf", content_type: "text/plain", part: "f0" } ].to_json,
+        parts: { f0: upload(BINARY, filename: "typed-part.3mf", content_type: "application/vnd.custom") }
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert_equal "application/vnd.custom", @user.maker_addon_states.last.files.first.content_type
+    end
+
+    # ONE ORDERED LIST FOR BOTH SHAPES. `position` is what a bundle relinks its outputs by
+    # (AddonFile#position), and a request carrying two collections would have no ordering rule that
+    # is not implicit — so the JSON array is the order, whatever each entry's bytes travelled in.
+    test "a save mixing an inline body and a part keeps the JSON array's order" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "mixed", data: "{}",
+        files: [ { name: "mixed-plan.svg", content_type: "image/svg+xml", body: "<svg/>" },
+                 { name: "mixed-cube.3mf", part: "f0" } ].to_json,
+        parts: { f0: upload(BINARY, filename: "mixed-cube.3mf", content_type: "model/3mf") }
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+
+      files = @user.maker_addon_states.last.files.order(:position).to_a
+      assert_equal %w[image/svg+xml model/3mf], files.map(&:content_type)
+      assert_equal [ "mixed-plan.svg", "mixed-cube.3mf" ],
+                   files.map { |f| @user.nodes.find_by(node_id: f.node_id).name }
+    end
+
+    # THE NAME COMES FROM THE JSON ENTRY, NEVER THE PART'S OWN filename — one source, so the
+    # valid_leaf_name?/ReservedNames checks above cover both wire shapes with no second copy. The
+    # part here is deliberately named something else; if the part's filename ever won, this saves
+    # "whatever-the-browser-said.bin" instead and both assertions flip.
+    test "a part entry takes its name from the JSON entry, not the part's filename" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "named", data: "{}",
+        files: [ { name: "chosen.3mf", part: "f0" } ].to_json,
+        parts: { f0: upload(BINARY, filename: "whatever-the-browser-said.bin",
+                            content_type: "model/3mf") }
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert @user.nodes.present.exists?(name: "chosen.3mf")
+      assert_not @user.nodes.present.exists?(name: "whatever-the-browser-said.bin")
+    end
+
+    # …AND THEREFORE THE DOOR'S NAME CHECKS COVER A PART UNCHANGED. Without the single-source rule
+    # this would be the one shape with no filename validation — the asymmetry §14c records (chunk
+    # has no name check anywhere downstream) arriving through a new door.
+    test "a part entry's traversing name is refused like any other" do
+      assert_no_difference -> { @user.nodes.count } do
+        post tools_addon_path("widgetkit"), params: {
+          name: "traversal", data: "{}",
+          files: [ { name: "../../escape.3mf", part: "f0" } ].to_json,
+          parts: { f0: upload(BINARY, filename: "cube.3mf", content_type: "model/3mf") }
+        }
+      end
+      assert_response :unprocessable_entity
+    end
+
+    # A CLIENT-SUPPLIED KEY INDEXING A PARAMS HASH, REFUSED TWO WAYS.
+    #
+    # `part` is looked up inside `parts[…]`, its own namespace, so it cannot name a top-level param
+    # — `part: "name"` would otherwise resolve to the state's own name (a String, which answers
+    # #size in CHARACTERS and has no #read: a mis-measured cap and then a 500).
+    test "a part naming a top-level param instead of a part is refused" do
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        post tools_addon_path("widgetkit"), params: {
+          name: "sneaky", data: "{}",
+          files: [ { name: "out.txt", part: "name" } ].to_json
+        }
+      end
+      assert_response :unprocessable_entity
+    end
+
+    # …AND THE NAMESPACE IS LOAD-BEARING ON ITS OWN, WHICH THIS PROVES AND THE TEST ABOVE CANNOT.
+    # Above, `part: "name"` resolves to a String and the UploadedFile check would refuse it even
+    # without the namespace — so that test exercises the type check, not the scoping. Here the
+    # top-level param IS a real upload, so the ONLY thing refusing it is that `parts[…]` is the one
+    # place a `part` may name. Without the namespace this writes a file the addon never listed.
+    test "a part cannot name a top-level upload that is not one of the declared parts" do
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        post tools_addon_path("widgetkit"), params: {
+          name: "smuggled", data: "{}",
+          files: [ { name: "out.txt", part: "cover" } ].to_json,
+          cover: upload("smuggled bytes", filename: "cover.png", content_type: "image/png")
+        }
+      end
+      assert_response :unprocessable_entity
+    end
+
+    # …and the value inside that namespace must be a real upload, not a text field posing as one.
+    test "a parts entry that is a plain text field, not a file, is refused" do
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        post tools_addon_path("widgetkit"), params: {
+          name: "not a file", data: "{}",
+          files: [ { name: "out.txt", part: "f0" } ].to_json,
+          parts: { f0: "just a string" }
+        }
+      end
+      assert_response :unprocessable_entity
+    end
+
+    test "a part entry naming a part that was never posted is refused" do
+      post tools_addon_path("widgetkit"), params: {
+        name: "missing", data: "{}",
+        files: [ { name: "out.txt", part: "f0" } ].to_json
+      }
+      assert_response :unprocessable_entity
+    end
+
+    # ---- save: the caps are explicit and tunable -------------------------------------------
+    #
+    # THE DEFAULTS ARE TODAY'S NUMBERS (spec §10.3) — asserted so "made explicit" cannot quietly
+    # mean "changed".
+    test "the save caps default to the numbers every published bundle was built against" do
+      with_env("ADDON_SAVE_MAX_FILES" => nil, "ADDON_SAVE_MAX_BYTES" => nil) do
+        assert_equal 8, Tools::AddonsController.max_files
+        assert_equal 4_000_000, Tools::AddonsController.max_bytes
+      end
+    end
+
+    test "ADDON_SAVE_MAX_FILES bounds one save's file count" do
+      with_env("ADDON_SAVE_MAX_FILES" => "2") do
+        files = Array.new(3) { |i| { name: "f#{i}.svg", content_type: "image/svg+xml", body: "<svg/>" } }
+        assert_no_difference -> { @user.maker_addon_states.count } do
+          post tools_addon_path("widgetkit"), params: { name: "three", data: "{}", files: files.to_json }
+        end
+        assert_response :unprocessable_entity
+      end
+    end
+
+    test "ADDON_SAVE_MAX_BYTES bounds one save's TOTAL bytes, not each file's" do
+      with_env("ADDON_SAVE_MAX_BYTES" => "10") do
+        # Six bytes each: under the cap alone, over it together. A per-FILE cap would accept this,
+        # which is the reading the controller's own comment refuses.
+        files = [ { name: "a.txt", content_type: "text/plain", body: "aaaaaa" },
+                  { name: "b.txt", content_type: "text/plain", body: "bbbbbb" } ]
+        assert_no_difference -> { @user.maker_addon_states.count } do
+          post tools_addon_path("widgetkit"), params: { name: "pair", data: "{}", files: files.to_json }
+        end
+        assert_response :unprocessable_entity
+      end
+    end
+
+    # THE CAP COUNTS A PART'S BYTES TOO — and it must, or accepting parts is a way around it.
+    # Sized from the upload's own stat, before anything is read.
+    test "a multipart part's bytes count toward the byte cap" do
+      with_env("ADDON_SAVE_MAX_BYTES" => "8") do
+        assert_no_difference -> { @user.maker_addon_states.count } do
+          post tools_addon_path("widgetkit"), params: {
+            name: "big part", data: "{}",
+            files: [ { name: "cube.3mf", part: "f0" } ].to_json,
+            parts: { f0: upload("x" * 9, filename: "cube.3mf", content_type: "model/3mf") }
+          }
+        end
+        assert_response :unprocessable_entity
+      end
+    end
+
+    # AND A RAISED CAP IS ACTUALLY HONOURED THROUGH A MULTIPART REQUEST. This is the half of the
+    # Rack story the controller comment argues: the 4 MiB QueryParser ceiling is a URL-ENCODED
+    # limit, so a multipart body sails past it and an operator's raised cap means something. Sized
+    # just over the default, so a regression to a hard-coded 4_000_000 fails here.
+    test "a raised ADDON_SAVE_MAX_BYTES lets a larger multipart save through" do
+      with_env("ADDON_SAVE_MAX_BYTES" => "5000000") do
+        post tools_addon_path("widgetkit"), params: {
+          name: "over four", data: "{}",
+          files: [ { name: "big.3mf", part: "f0" } ].to_json,
+          parts: { f0: upload("x" * 4_200_000, filename: "big.3mf", content_type: "model/3mf") }
+        }
+        assert_redirected_to tools_addon_path("widgetkit")
+        node = @user.nodes.present.find_by!(name: "big.3mf")
+        assert_equal 4_200_000, FileLayer.current.read(@user, node_id: node.node_id).bytesize
+      end
+    end
+
+    # A GARBAGE VALUE FALLS BACK TO THE DEFAULT RATHER THAN TO 0. `"four".to_i` is 0, and a 0 cap
+    # refuses every save in the deployment — an operator typo must not be able to switch the save
+    # door off, nor (with a negative) the cap.
+    test "a nonsense cap value falls back to the default instead of refusing everything" do
+      with_env("ADDON_SAVE_MAX_FILES" => "four", "ADDON_SAVE_MAX_BYTES" => "-1") do
+        assert_equal 8, Tools::AddonsController.max_files
+        assert_equal 4_000_000, Tools::AddonsController.max_bytes
+      end
+    end
+
+    # ---- read: GET /tools/:key/file/:node_id (PR 5) -----------------------------------------
+    #
+    # THE FIXTURE IS BUILT BY THE REAL SAVE DOOR, NEVER `nodes.create!`. §14a records why: a node
+    # made in Ruby has a NULL storage_path, which cannot exist on share or s3 — the read would find
+    # nothing there while passing happily on chunk, splitting the legs for a reason that has nothing
+    # to do with the endpoint. Going through the door also means these tests exercise the binary
+    # save path on the way in, which is how a `.3mf` would really get there.
+    def saved_file_node(name:, bytes:, content_type: "application/octet-stream", key: FIXTURE_KEY)
+      post tools_addon_path(key), params: {
+        name: "save for #{name}", data: "{}",
+        files: [ { name: name, part: "f0" } ].to_json,
+        parts: { f0: upload(bytes, filename: name, content_type: content_type) }
+      }
+      assert_redirected_to tools_addon_path(key)
+      @user.nodes.present.find_by!(name: name, kind: "file")
+    end
+
+    # THREE BACKENDS, THREE Delivery MECHANISMS, AND THE BRANCH IS THE HONEST SHAPE RATHER THAN A
+    # CONCESSION. Chunk streams and share sends a file, so Rails holds the bytes and they can be
+    # compared; on s3 the port presigns and Rails redirects, so the bytes are never ours — the
+    # disposition travels SIGNED INTO THE URL instead (§14a), which is what is read there.
+    #
+    # EXACTLY THREE ASSERTIONS ON EVERY LEG, WHICH IS NOT COSMETIC: §15 requires the three CI legs
+    # to report IDENTICAL counts, so a helper that asserts three things on two backends and one on
+    # the third makes the totals differ for a reason nobody reading the summary could locate. Each
+    # arm states the same three facts about a different mechanism.
+    def assert_delivers(bytes)
+      assert_includes [ 200, 302 ], response.status, "unexpected answer: #{response.body}"
+      assert_includes delivered_disposition, "attachment"
+      # On s3, Rails serves no body at all — the browser is sent to the store — so "no bytes here"
+      # is the honest expectation rather than an assertion quietly skipped.
+      assert_equal(response.redirect? ? "" : bytes, response.body.b)
+    end
+
+    # Where the disposition ACTUALLY IS for whichever mechanism answered: a response header when
+    # Rails serves the bytes, and the `response-content-disposition` query parameter the adapter
+    # SIGNED INTO the presigned URL when it does not.
+    def delivered_disposition
+      return response.headers["Content-Disposition"].to_s unless response.redirect?
+
+      signed_param("response-content-disposition")
+    end
+
+    test "an addon declaring library:read is served one of the user's own files" do
+      node = saved_file_node(name: "part.3mf", bytes: BINARY, content_type: "model/3mf")
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_delivers BINARY
+    end
+
+    # THE GATE. Same user, same node, same request — a different addon key, and the only difference
+    # between them is one line in a manifest.
+    #
+    # AND IT IS DECLARATION CONSISTENCY, NOT CONTAINMENT (spec §8.1). A Ring 1 bundle is same-origin
+    # browser code in this very session, so the `widgetkit` page's own JS could simply call
+    # `/tools/readerkit/file/<id>` and be served. That is not a hole this test is failing to cover —
+    # it is what the gate is FOR: making an addon that reads the library say so on the card the
+    # operator reads at publish time. The boundary that is real here is the current_user scope
+    # below.
+    test "an addon whose manifest does not declare library:read is refused" do
+      node = saved_file_node(name: "gated.3mf", bytes: BINARY, content_type: "model/3mf")
+
+      get tools_addon_file_path(FIXTURE_KEY, node.node_id)
+      assert_response :forbidden
+      assert_equal "forbidden_capability", response.parsed_body["error"]
+    end
+
+    # THE SCOPE THAT IS ACTUALLY LOAD-BEARING — AND THE PORT DOUBLE IS WHAT MAKES THIS TEST ABLE TO
+    # SEE IT. Written first against the real adapter, and it passed with `current_user.nodes`
+    # mutated to `Node.present`: every shipped adapter re-scopes inside its own `live_node!`, so the
+    # stranger's node still 404s, just from the port's NotFound instead of this lookup. Green over a
+    # guard that had been deleted is this repo's dominant failure shape, so the double answers bytes
+    # for ANY id — the way an adapter that trusts its caller legitimately may (the port's contract
+    # is that the caller has already decided the request is allowed) — leaving the controller's own
+    # scope as the only thing that can refuse.
+    #
+    # A 404 AND NOT A 403, DELIBERATELY: a stranger's node id and an id that never existed must be
+    # indistinguishable, or this endpoint reports which node ids are real.
+    test "another user's file is a 404, the same answer an unknown id gets" do
+      FileLayer.current = PermissiveDownloadPort.new
+      stranger = User.create!(email: "stranger@example.com", password: PASSWORD,
+                              confirmed_at: Time.current)
+      theirs = stranger.nodes.create!(node_id: SecureRandom.uuid, name: "theirs.3mf", kind: "file")
+
+      get tools_addon_file_path(READER_KEY, theirs.node_id)
+      assert_response :not_found
+      theirs_body = response.parsed_body
+
+      get tools_addon_file_path(READER_KEY, SecureRandom.uuid)
+      assert_response :not_found
+      assert_equal theirs_body, response.parsed_body, "a stranger's node must not be distinguishable"
+    ensure
+      FileLayer.reset!
+    end
+
+    # A port that hands over bytes for ANY node id, with no user scope and no liveness check. NOT a
+    # strawman: FileLayer's contract is that the CALLER decides whether a request is legitimate
+    # (FilesController#blob scopes before calling too), so an adapter is entitled to trust it —
+    # chunk/share/s3 all happen to re-check, which is exactly why a test using one of them cannot
+    # tell whether this controller's own guards exist.
+    class PermissiveDownloadPort
+      def download(_user, node_id:, disposition:, content_type: nil)
+        FileLayer::Delivery::Stream.new(enum: [ "bytes for #{node_id}" ].each)
+      end
+    end
+
+    test "a tombstoned file is gone to an addon too" do
+      node = saved_file_node(name: "doomed.3mf", bytes: BINARY, content_type: "model/3mf")
+      node.update!(deleted: true)
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_response :not_found
+    end
+
+    # A DIRECTORY IS NOT A FILE. Without `kind: "file"` the lookup hands a dir node to #download,
+    # whose answer differs per backend — on share that is the poisoned-path family §14b records —
+    # and the honest answer for "read me this folder" is that there is no such file.
+    #
+    # THE SAME PORT DOUBLE, FOR THE SAME REASON AS THE SCOPE TEST ABOVE: against a real adapter this
+    # passed with `kind: "file"` deleted, because chunk answers NotFound for a dir node with no
+    # current_version and the 404 arrives from the port instead. The double removes that safety net
+    # so the controller's own filter is what is being asserted.
+    test "a directory node is not readable as a file" do
+      # The mkdir goes through the REAL port (LibraryFolder asks it for `capabilities`), so the
+      # double is installed after it, not before.
+      dir = Maker::LibraryFolder.create_child!(@user, parent_node_id: nil, name: "AddonReadDir")
+      FileLayer.current = PermissiveDownloadPort.new
+
+      get tools_addon_file_path(READER_KEY, dir.node_id)
+      assert_response :not_found
+    ensure
+      FileLayer.reset!
+    end
+
+    # A `.js` FILE IN THE LIBRARY, WHICH WAS UNREADABLE UNTIL THIS ENDPOINT STOPPED ANSWERING
+    # MARCEL'S CONTENT TYPE — found by probing the endpoint, not by reading it.
+    # `verify_same_origin_request` is an `append_after_action` that fires on ANY non-XHR JavaScript
+    # response, and `fetch` sets no `X-Requested-With`, so every SDK read of a `.js` raised
+    # `InvalidCrossOriginRequest` and the addon received a **422 HTML error page** instead of its
+    # bytes. Serving every file as `application/octet-stream` removes the condition rather than
+    # skipping the guard — see #file's comment for why the skip would have been the worse fix.
+    #
+    # ASSERTS THE TYPE AS WELL AS THE BYTES: a bytes-only assertion would pass against an
+    # implementation that fixed the status and still leaked `text/javascript` into the header.
+    test "a .js file in the library reads back as opaque bytes, not as JavaScript" do
+      node = saved_file_node(name: "script.js", bytes: "console.log(1)",
+                             content_type: "text/javascript")
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_delivers "console.log(1)"
+      assert_not_includes delivered_content_type, "javascript"
+    end
+
+    # An SVG through the same door, for the second half of #file's argument: nothing this endpoint
+    # serves may be a script-capable document in our origin, whatever the extension says.
+    test "an SVG reads back as opaque bytes too" do
+      node = saved_file_node(name: "drawing.svg", bytes: "<svg/>", content_type: "image/svg+xml")
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_delivers "<svg/>"
+      assert_not_includes delivered_content_type, "svg"
+    end
+
+    # Where the CONTENT TYPE actually is for whichever mechanism answered — a response header when
+    # Rails serves the bytes, and the `response-content-type` the adapter signed into the presigned
+    # URL when it does not. The sibling of `delivered_disposition`, for the same reason.
+    def delivered_content_type
+      return response.headers["Content-Type"].to_s unless response.redirect?
+
+      signed_param("response-content-type")
+    end
+
+    # ONE query parameter out of the presigned URL, never the whole URL as a haystack. Written the
+    # crude way first and the s3 leg caught it: the URL also carries the FILENAME, so
+    # `assert_not_includes location, "svg"` fails on `drawing.svg` for a response whose signed
+    # content type is `application/octet-stream` — a true assertion failing on the wrong string.
+    def signed_param(name)
+      CGI.parse(URI.parse(response.location).query.to_s)[name].first.to_s
+    end
+
+    test "reading a file requires login" do
+      node = saved_file_node(name: "private.3mf", bytes: BINARY, content_type: "model/3mf")
+      reset!
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_redirected_to new_user_session_path
+    end
+
+    # AN UNMOUNTED LIBRARY IS RETRYABLE AND MUST NOT READ AS "YOUR FILE IS GONE" (§14a). The
+    # class-level rescue_from already answers 503 for the save door; this proves it covers the read
+    # door too rather than being shadowed by #file's own NotFound rescue.
+    test "an unreachable library answers 503, not 404" do
+      FileLayer.current = UnreachablePort.new
+      get tools_addon_file_path(READER_KEY, SecureRandom.uuid)
+      assert_response :not_found, "no node row means the port is never asked"
+
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "away.3mf", kind: "file")
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_response :service_unavailable
+      assert_equal "fetch_error", response.parsed_body["error"]
+    ensure
+      FileLayer.reset!
+    end
+
+    # THE PORT'S OWN NotFound, WHICH MUST NOT REACH THE CLASS-LEVEL 422 ARM. That arm answers
+    # "Your library refused that write." — correct for the save door, a lie on a read, and it would
+    # send an addon author looking at their own request for a file the user deleted.
+    test "the port's NotFound is a 404 here, never the save door's 422" do
+      FileLayer.current = MissingBytesPort.new
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "vanished.3mf", kind: "file")
+
+      get tools_addon_file_path(READER_KEY, node.node_id)
+      assert_response :not_found
+      assert_equal "not_found", response.parsed_body["error"]
+    ensure
+      FileLayer.reset!
+    end
+
+    # THE NO-FALLTHROUGH GUARD, WHICH IS AN ABSENCE AND SO CANNOT BE READ OFF THE CODE. A fourth
+    # Delivery mechanism with no consumer here must RAISE (§14a) — a silent `else` would answer a
+    # blank 200 with the right filename, and an addon would measure an empty file.
+    test "a Delivery variant with no consumer raises rather than serving a blank 200" do
+      FileLayer.current = NovelDeliveryPort.new
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "novel.3mf", kind: "file")
+
+      assert_raises(NoMatchingPatternError) do
+        get tools_addon_file_path(READER_KEY, node.node_id)
+      end
+    ensure
+      FileLayer.reset!
+    end
+
+    # Three one-verb doubles. Each implements ONLY `download`, so a test that wandered onto another
+    # port verb fails with a NoMethodError naming it rather than a plausible wrong answer.
+    class UnreachablePort
+      def download(_user, node_id:, disposition:, content_type: nil)
+        raise FileLayer::FetchError, "library not mounted"
+      end
+    end
+
+    class MissingBytesPort
+      def download(_user, node_id:, disposition:, content_type: nil)
+        raise FileLayer::NotFound, "no bytes for #{node_id}"
+      end
+    end
+
+    # A Delivery mechanism this controller has never heard of. `Data.define` rather than a bare
+    # Object because the real variants are Data objects, so this fails the pattern match for the
+    # reason a genuine fourth variant would, not because it is the wrong kind of thing entirely.
+    NovelDelivery = Data.define(:handle)
+
+    class NovelDeliveryPort
+      def download(_user, node_id:, disposition:, content_type: nil)
+        NovelDelivery.new(handle: node_id)
+      end
     end
 
     test "service proxies to the sidecar URL the HOST configures" do

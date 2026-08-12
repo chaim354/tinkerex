@@ -4,16 +4,48 @@ module Tools
   class AddonsController < BaseController
     include Tools::LibraryFolders
 
-    MAX_FILES = 8
-    # Kept below Rack::QueryParser's own bytesize_limit (4_194_304 = 4 MiB, Rack's hard ceiling on
-    # a url-encoded request body — see Rack::Utils.default_query_parser). Anything at or above that
-    # never reaches this action at all: Rack raises QueryLimitError -> ActionController::BadRequest
-    # (400) while parsing params, before load_addon or create ever runs. Setting this cap ABOVE the
-    # Rack ceiling would make it dead code for that request shape (a real multipart FormData upload
-    # from the addon's own JS isn't bound by this same Rack limit, but a plain url-encoded POST is,
-    # and this app-level check exists precisely to give a routine 422 instead of a bare 400 either
-    # way). Leave real headroom under 4_194_304, not just less-than.
-    MAX_FILE_BYTES = 4_000_000
+    # TODAY'S NUMBERS, KEPT AS THE DEFAULTS SO NO PUBLISHED BUNDLE CHANGES BEHAVIOUR (spec §10.3).
+    # Both are per-REQUEST: at most this many files in one save, and at most this many bytes ACROSS
+    # ALL OF THEM. `ADDON_SAVE_MAX_BYTES` is deliberately NOT a per-file cap — making it one would
+    # LOOSEN today's rule (8 files × 4 MB = 32 MB where 4 MB is refused now), and a cap that grows
+    # when it is made explicit is not the same cap.
+    DEFAULT_MAX_FILES = 8
+    # 4 MB, and the number is chosen against Rack rather than picked. THE TWO WIRE SHAPES HIT
+    # DIFFERENT RACK LIMITS, WHICH IS THE WHOLE REASON THIS COMMENT SURVIVES THE CAP BECOMING
+    # TUNABLE — verified against rack 3.2.6, not assumed:
+    #
+    #   url-encoded POST -> Rack::QueryParser::BYTESIZE_LIMIT, 4_194_304 (4 MiB), env
+    #                       RACK_QUERY_PARSER_BYTESIZE_LIMIT. A body at or above it never reaches
+    #                       this action: each_query_pair raises QueryLimitError ->
+    #                       ActionController::BadRequest (400) while parsing params, before
+    #                       load_addon or create runs. So for THIS shape, raising
+    #                       ADDON_SAVE_MAX_BYTES past ~4 MiB buys nothing — the app-level 422 is
+    #                       simply replaced by Rack's bare 400.
+    #   multipart POST   -> a DIFFERENT limit entirely, Rack::Multipart::Parser's own
+    #                       RACK_MULTIPART_PARSER_BYTESIZE_LIMIT, default 10 GiB. The query
+    #                       parser's 4 MiB never applies, INCLUDING to the JSON `files` text field
+    #                       inside a multipart body — multipart fields are parsed by the multipart
+    #                       parser, not by each_query_pair.
+    #
+    # So an operator raising ADDON_SAVE_MAX_BYTES gets what they asked for from the SDK (which
+    # always sends multipart) and not from a hand-rolled url-encoded POST. That asymmetry is Rack's,
+    # not ours, and it fails LOUDLY (a 400) rather than silently.
+    DEFAULT_MAX_BYTES = 4_000_000
+
+    # READ PER REQUEST, NOT FROZEN AT BOOT, and that is for the tests as much as the operator: a
+    # guard whose limit cannot be moved from a test is a guard that gets exercised with a 4 MB
+    # payload or not at all. The cost is two ENV reads per save.
+    #
+    # A GARBAGE VALUE FALLS BACK TO THE DEFAULT RATHER THAN TO 0. `"four".to_i` is 0, and a 0 cap
+    # refuses every save in the deployment — an operator typo must not be able to turn the save
+    # door off, and must certainly not be able to turn the cap off either.
+    def self.max_files = positive_env_int("ADDON_SAVE_MAX_FILES", DEFAULT_MAX_FILES)
+    def self.max_bytes = positive_env_int("ADDON_SAVE_MAX_BYTES", DEFAULT_MAX_BYTES)
+
+    def self.positive_env_int(name, fallback)
+      value = Integer(ENV[name].to_s, exception: false)
+      value&.positive? ? value : fallback
+    end
 
     before_action :load_addon
 
@@ -243,6 +275,101 @@ module Tools
       }
     end
 
+    # GET /tools/:key/file/:node_id — ONE library file's bytes, to the addon that asked for it.
+    #
+    # THE GATE IS THE MANIFEST DECLARING `library:read`, AND IT IS DECLARATION CONSISTENCY RATHER
+    # THAN CONTAINMENT — spec §8.1's own words, repeated here because a 403 in a controller reads
+    # like a boundary and this one is not. A Ring 1 bundle is same-origin browser code in the
+    # signed-in session: it can call `/tools/<some-other-key>/file/<id>` directly, and if that
+    # addon's manifest declares the permission, it is served. What the gate buys is that an addon
+    # which starts reading the library must SAY SO on the card the operator reads at publish time,
+    # in a deployment where publishing a bundle IS the deploy.
+    #
+    # THE `current_user` SCOPE BELOW IS THE PART THAT IS REAL. Stated precisely, because the loose
+    # version ("the only thing between one user's files and another's") is not quite true and a
+    # test written against it passes under mutation: all three shipped adapters ALSO re-scope
+    # inside their own `live_node!`, so removing this line today still answers 404 — via the port's
+    # NotFound rather than this lookup. That is defence in depth, not a reason to delegate. The
+    # port's contract is that the CALLER has already decided the request is legitimate
+    # (FilesController#blob scopes identically before calling), so an adapter is entitled to trust
+    # it, and the day one does this line is the whole guard. Pinned with a port double that does
+    # trust it, since a real adapter cannot tell the two implementations apart.
+    #
+    # It is also why an unknown id and another user's id answer identically: `find_by` over
+    # `current_user.nodes.present` cannot tell them apart and must not — a 403-vs-404 split here
+    # would confirm the existence of a stranger's node.
+    #
+    # ALWAYS `application/octet-stream` + `attachment`, WHATEVER THE FILE IS — never Marcel's
+    # answer, and never the SAFE_INLINE_TYPES allowlist FilesController weighs for a human's browser
+    # tab. Nothing is lost: the only caller is `host.files.read`, a `fetch` reading `.arrayBuffer()`,
+    # and neither header affects a fetch body (the same reasoning that keeps image/svg+xml off the
+    # service proxy's inline allowlist, §14c). Two things are gained, and the FIRST WAS A LIVE BUG
+    # FOUND BY PROBING THIS ENDPOINT RATHER THAN BY READING IT:
+    #
+    #   1. A `.js` FILE IN THE LIBRARY WAS UNREADABLE. Marcel answers `text/javascript`, and
+    #      `verify_same_origin_request` — an `append_after_action` that fires on ANY non-XHR
+    #      JavaScript response — raised `InvalidCrossOriginRequest`. `fetch` sets no
+    #      `X-Requested-With`, so `request.xhr?` is false for every SDK call; probed, and the addon
+    #      got a **422 HTML error page** where its bytes should have been. (The same latent shape
+    #      exists on `FilesController#blob`, which serves Marcel's type too — out of scope here, but
+    #      it is why the fix belongs in the CONTENT TYPE rather than in a `skip_forgery_protection`
+    #      on this action.)
+    #   2. …AND THAT SKIP WOULD HAVE BEEN THE WORSE FIX. It is what `#asset` does, but `#asset`
+    #      serves the same static bundle to every viewer, so its residual leaks nothing. Here the
+    #      body is a USER'S OWN FILE: with `text/javascript` and the same-origin guard skipped, a
+    #      third-party page's `<script src>` would execute a library file in ITS origin and could
+    #      read the contents out. `octet-stream` + `nosniff` makes that structurally impossible
+    #      instead of relying on a guard, and needs no list of script-capable types to keep current
+    #      — §14b's skip-list blind spot is what a list here would become.
+    #
+    # A bundle loses nothing it needs: it picked the file and knows what it asked for. It is also
+    # why there is deliberately NO `host.files.blobUrl` helper — forced to attachment, this URL
+    # cannot back an `<img src>`, so a helper would exist only to be a trap.
+    #
+    # DELIVERY IS CONSUMED EXACTLY AS FilesController#blob CONSUMES IT — all three variants, NO
+    # `else`. An unhandled variant raises NoMatchingPatternError, which is what a new Delivery
+    # mechanism with no consumer here should do; a silent fallthrough would answer a blank 200 and
+    # an addon would measure an empty file (§14a).
+    #
+    # ON S3, `Redirect` HANDS THE BROWSER A PRESIGNED URL AT THE OBJECT STORE — cross-origin, so a
+    # `fetch` can only READ that response if the bucket's CORS policy allows this app's origin. That
+    # is a real operator prerequisite on the s3 backend, stated in docs/addon-api-v1.md rather than
+    # worked around: the alternative is streaming the bytes through Rails, which is the one thing
+    # §15 exists to prevent. Chunk mode hits it only for a single-chunk file on an S3ChunkStore;
+    # share mode never does.
+    OPAQUE_TYPE = "application/octet-stream".freeze
+
+    def file
+      unless @addon.declares_permission?("library:read")
+        return render json: { error: "forbidden_capability",
+                              message: "This addon's manifest does not declare library:read." },
+                      status: :forbidden
+      end
+
+      node = current_user.nodes.present.find_by(node_id: params[:node_id], kind: "file")
+      return render_file_not_found if node.nil?
+
+      filename = node.name
+      delivery = FileLayer.current.download(current_user, node_id: node.node_id,
+                                            disposition: "attachment", content_type: OPAQUE_TYPE)
+
+      case delivery
+      in FileLayer::Delivery::Redirect(url:)
+        redirect_to url, allow_other_host: true
+      in FileLayer::Delivery::SendFile(path:)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        send_file path, disposition: "attachment", type: OPAQUE_TYPE, filename:
+      in FileLayer::Delivery::Stream(enum:)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Type"] = OPAQUE_TYPE
+        response.headers["Content-Disposition"] =
+          ActionDispatch::Http::ContentDisposition.format(disposition: "attachment", filename:)
+        self.response_body = enum
+      end
+    rescue FileLayer::NotFound
+      render_file_not_found
+    end
+
     # The ONE save door for every addon. Generation happens in the browser, so the bytes arrive in
     # the request — bounded here, because a client-supplied body is not a trusted size.
     #
@@ -283,7 +410,7 @@ module Tools
         addon_files = Maker::Addons::LibraryOutput.write(
           user: current_user, state:, parent_node_id:,
           files: files.each_with_index.map do |f, i|
-            { name: f["name"], bytes: f["body"], content_type: f["content_type"], role: "output" }
+            { name: f.name, bytes: f.bytes, content_type: f.content_type, role: "output" }
               .merge(placements[i].except(:folder))
           end
         )
@@ -311,7 +438,7 @@ module Tools
       # send the user to the wrong addon's page after a states_key-diverging save.
       redirect_to tools_addon_path(@addon.key),
                   notice: project_intake_sentence("Saved “#{state.name}”", intake_result,
-                                                  unfiled_by_conflict(intake_result, files.map { |f| f["name"] }))
+                                                  unfiled_by_conflict(intake_result, files.map(&:name)))
     end
 
     private
@@ -319,6 +446,24 @@ module Tools
     def load_addon
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
+    end
+
+    # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
+    # FileLayer::NotFound` — which answers 422 with "Your library refused that write." That arm is
+    # correct for the SAVE door, where NotFound means the port refused a write the caller could have
+    # made differently; it is a lie on a read, whose request was well-formed and simply named
+    # something that is not there. Same shape as FilesController#geometry rescuing RecordNotFound
+    # locally because the class-level handler is right for a different action (§14h).
+    #
+    # 404 rather than 422 for the second reason too: 422 says "your request was malformed", which
+    # sends an addon author looking at their own code for a file the user deleted.
+    #
+    # ONE ANSWER FOR THREE CAUSES, deliberately: no such node, someone else's node, and a node whose
+    # BYTES have gone (the port's own NotFound). Splitting them would make this endpoint report
+    # whether a stranger's node id exists.
+    def render_file_not_found
+      render json: { error: "not_found", message: "No such file in your library." },
+             status: :not_found
     end
 
     # THE SDK's VIEW OF THE HOST, AS ONE SERIALIZED VALUE. Everything here is data the SERVER knows;
@@ -340,6 +485,11 @@ module Tools
           # A BASE, ending in "/" — a bundle builds `${service}/${path}` onto it. Derived from the
           # real route by service_base_url, never a literal.
           service: @service_url,
+          # ALSO A BASE, for the same reason and by the same derivation: append one node id.
+          # Emitted for EVERY addon, including one whose manifest does not declare `library:read` —
+          # the URL is not the gate (the endpoint's own check is), and withholding it would make a
+          # missing declaration surface as a broken SDK method instead of the 403 that names it.
+          file: file_base_url,
           children: library_children_path,
           create: library_folders_path
         },
@@ -358,6 +508,13 @@ module Tools
     # correct even in the degenerate case where an addon's own key collides with a placeholder.
     def service_base_url
       tools_addon_service_path(@addon.key, "__SERVICE__", "__PATH__").delete_suffix("__SERVICE__/__PATH__")
+    end
+
+    # The base a bundle appends ONE node id to. Same placeholder-substitution trick as
+    # service_base_url and for the same reason: the shape of the route lives in config/routes.rb
+    # exactly once, so changing it cannot silently desync a hand-copied literal here.
+    def file_base_url
+      tools_addon_file_path(@addon.key, "__NODE__").delete_suffix("__NODE__")
     end
 
     # The manifest must DECLARE the service, and the host must have a URL for it. Both, not either —
@@ -406,7 +563,7 @@ module Tools
     def resolve_placements(files, parent_node_id)
       files.map do |f|
         dest = Maker::ProjectIntake.destination_for(user: current_user, parent_node_id:,
-                                                    name: f["name"])
+                                                    name: f.name)
         occupied = dest&.occupied_by
         next {} unless occupied
 
@@ -435,13 +592,13 @@ module Tools
       return false if colliding.empty?
 
       render json: { error: "would_replace",
-                     files: colliding.map { |f, p| { name: f["name"], folder: p[:folder] } } },
+                     files: colliding.map { |f, p| { name: f.name, folder: p[:folder] } } },
              status: :conflict
       true
     end
 
     def refuse_taken_names!(files, parent_node_id)
-      taken = files.map { |f| f["name"] }.select do |name|
+      taken = files.map(&:name).select do |name|
         Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
       end
       return if taken.empty?
@@ -451,12 +608,53 @@ module Tools
             "folder. Rename the save or pick another folder."
     end
 
+    # ONE SAVE FILE, NORMALIZED OUT OF EITHER WIRE SHAPE. `bytes` is a String either way, so
+    # everything downstream — the name checks, the collision checks, LibraryOutput — sees exactly
+    # one shape and no branch.
+    SaveFile = Data.define(:name, :content_type, :bytes)
+
     # Returns nil (-> 422) rather than raising, so a malformed or oversized payload is a routine
     # refusal instead of a 500.
+    #
+    # TWO WIRE SHAPES, ONE ORDERED LIST, AND THE JSON ARRAY IS ALWAYS THE LIST.
+    #
+    #   {name, content_type, body}  — today's shape. `body` is a String carried INSIDE the JSON
+    #                                 field. Every published bundle sends this and it must keep
+    #                                 working: publishing a bundle is the deploy and Rails is never
+    #                                 rebuilt (§14c), so a host may never assume bundles moved.
+    #   {name, part: "f0"}          — the bytes are a REAL multipart file part, posted alongside as
+    #                                 `parts[f0]`. This is what makes binary output possible.
+    #
+    # WHY THE JSON ARRAY STAYS THE MANIFEST INSTEAD OF PARTS BEING THE LIST: order is load-bearing
+    # (AddonFile#position, and `placements[i]` pairs a file with the destination resolved for it),
+    # and a request carrying two collections has no ordering rule that is not implicit. One list,
+    # one index, nothing to get wrong.
+    #
+    # THE NAME ALWAYS COMES FROM THE JSON ENTRY, NEVER FROM THE PART'S OWN filename. The SDK does
+    # send a filename on the part (it makes the request readable in devtools) and this ignores it:
+    # two sources for one value is the drift shape this file already carries scars from, and the
+    # single source means valid_leaf_name? + ReservedNames below cover BOTH shapes with no second
+    # copy. THE CONTENT TYPE IS THE OPPOSITE — for a part it comes FROM THE PART and is never
+    # guessed from the name, which is spec §6.1's own words.
+    #
+    # A TEXT FILE'S CONTENT MUST NEVER TRAVEL AS A BARE MULTIPART TEXT FIELD, and that rule is the
+    # reason there is no third shape here. multipart/form-data serialization NORMALIZES EVERY TEXT
+    # ENTRY'S NEWLINES TO CRLF (the HTML standard's own encoding algorithm), which silently
+    # corrupted a line-by-line sidecar payload once already (§14c, `service.post`). Both shapes
+    # above are safe, for two different reasons worth keeping straight: a `body` inside the JSON
+    # field is JSON-ESCAPED, so a "\n" is the two characters `\` and `n` on the wire and the
+    # serializer has no newline to rewrite; and a `parts[…]` entry is a FILE part, which the same
+    # algorithm transmits verbatim precisely because it is not a text entry. Add a shape that puts
+    # raw file content in a plain field and you reintroduce the bug.
     def parse_files
       parsed = JSON.parse(params[:files].to_s)
-      return nil unless parsed.is_a?(Array) && parsed.any? && parsed.size <= MAX_FILES
-      return nil unless parsed.all? { |f| f.is_a?(Hash) && f["body"].is_a?(String) }
+      return nil unless parsed.is_a?(Array) && parsed.any? && parsed.size <= self.class.max_files
+
+      # TWO PHASES, AND THE SPLIT IS THE POINT: sources are SIZED before any of them is read, so a
+      # save over the cap is refused without the bytes ever entering the Rails heap. Read first and
+      # the cap protects nothing it was written to protect.
+      sources = parsed.map { |f| file_source(f) }
+      return nil if sources.any?(&:nil?)
       # THE NAME CHECK, BACKEND-NEUTRAL AND BEFORE ANY WRITE. This used to be `f["name"].present?`,
       # which is not a filename check — it accepted "../../escape.txt", and on chunk (the main
       # deployment, and the one door with no name validation anywhere downstream) that produced a
@@ -475,11 +673,68 @@ module Tools
       # in this same batch claiming the same name — neither exists yet, so both pass and chunk
       # writes the duplicate pair itself.
       return nil unless parsed.map { |f| f["name"] }.uniq.size == parsed.size
-      return nil if parsed.sum { |f| f["body"].bytesize } > MAX_FILE_BYTES
+      # SIZED, NOT READ — see the two-phase note above. `UploadedFile#size` is the tempfile's stat,
+      # so a 900 MB part is refused for the price of a stat.
+      return nil if sources.sum(&:size) > self.class.max_bytes
 
-      parsed
+      parsed.each_with_index.map do |f, i|
+        SaveFile.new(name: f["name"], content_type: sources[i].content_type, bytes: sources[i].bytes)
+      end
     rescue JSON::ParserError
       nil
+    end
+
+    # ONE FILE'S BYTES AND THEIR DECLARED TYPE, RESOLVED BUT NOT YET READ. nil means refuse.
+    #
+    # `size` answers the cap without touching the bytes; `bytes` is called only after every check
+    # has passed, exactly once per file, and only then does a part leave its tempfile.
+    FileSource = Data.define(:content_type, :size, :reader) do
+      def bytes = reader.call
+    end
+
+    def file_source(entry)
+      return nil unless entry.is_a?(Hash)
+      return inline_file_source(entry) if entry["part"].nil?
+
+      part = uploaded_part(entry["part"])
+      return nil if part.nil?
+
+      # FROM THE PART, NEVER GUESSED (spec §6.1). A part whose type the browser left blank is
+      # octet-stream — which is still the PART's answer, not an inference from the filename. The
+      # JSON entry's own `content_type` is ignored for a part entry on purpose: one value, one
+      # source. (The SDK stamps the author's declared contentType onto the Blob it builds, so an
+      # author's choice still lands here — it just travels as the part's type rather than beside
+      # it, where the two could disagree.)
+      FileSource.new(content_type: part.content_type.presence || "application/octet-stream",
+                     size: part.size, reader: -> { part.read })
+    end
+
+    def inline_file_source(entry)
+      body = entry["body"]
+      return nil unless body.is_a?(String)
+
+      FileSource.new(content_type: entry["content_type"], size: body.bytesize, reader: -> { body })
+    end
+
+    # THE PART NAMED BY A JSON ENTRY, OR nil. TWO GUARDS, AND BOTH ARE ABOUT A CLIENT-SUPPLIED KEY
+    # BEING USED TO INDEX A PARAMS HASH:
+    #
+    #   1. IT IS LOOKED UP INSIDE `parts[…]`, ITS OWN NAMESPACE, never at the top level of `params`.
+    #      `part: "name"` at the top level would resolve to the state's own NAME — an ordinary
+    #      String — and `part: "files"` to this very JSON blob. A namespace makes an addon unable to
+    #      name anything but a part.
+    #   2. THE VALUE MUST BE AN UploadedFile. A client can post `parts[f0]=hello` as a plain text
+    #      field, and a String answers `#size` (CHARACTER count, not bytes — so it also mis-measures
+    #      the cap) and has no `#read`, i.e. a 500 from inside the save. Refusing here makes it the
+    #      routine 422 every other malformed payload gets.
+    def uploaded_part(key)
+      return nil unless key.is_a?(String) && key.present?
+
+      parts = params[:parts]
+      return nil unless parts.is_a?(ActionController::Parameters)
+
+      part = parts[key]
+      part.is_a?(ActionDispatch::Http::UploadedFile) ? part : nil
     end
 
     def parse_data

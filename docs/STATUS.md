@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-11 (**the addon service plane — `service.post`'s multipart transport rewrote every newline to CRLF, silently, and a sidecar parsing line by line misread it**)
+**Updated:** 2026-08-11 (**the addon file plane — an addon can write bytes and read one file back, and the OpenSCAD controller's two blockers are gone**)
 
 ## What this file is
 
@@ -60,7 +60,213 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-11): the addon service plane — a CRLF corruption nothing could see, and three more (branch `claude/addon-api-pr6-service-plane`)
+## Latest (2026-08-11): the addon file plane — binary out, one file in, and a picker that is the host's (branch `claude/addon-api-pr5-file-plane`)
+
+**Row 5 of the addon API v1 arc** (`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §6),
+and the thing standing between the arc and row 7. Retiring the bespoke `Tools::OpenscadController`
+needs two capabilities the generic surface did not have: it **reads** `.scad` out of the library via
+`FileLayer#read`, and it **writes 3MF — binary**, while the generic save door required
+`f["body"].is_a?(String)`. Both are now there.
+
+### Binary save: two wire shapes, one ordered list
+
+`POST /tools/:key` still takes today's JSON `files` array — every published bundle sends it and
+Rails is never rebuilt when a bundle is (§14c) — and now also accepts **real multipart file parts**.
+A JSON entry either carries its bytes inline (`body`, a String) or names a part (`part: "f0"`, posted
+as `parts[f0]`). **The JSON array stays the manifest for both**, because order is load-bearing
+(`AddonFile#position`; `placements[i]` pairs a file with the destination resolved for it) and two
+collections in one request have no ordering rule that is not implicit.
+
+**How a text file's content travels, and why.** A file's content never crosses the wire as a bare
+multipart TEXT field — that is the rule, written into `#parse_files` and into the SDK. The two shapes
+are safe for two different reasons and both have to be understood before anyone adds a third: a
+string `body` is **JSON-escaped**, so a `\n` is the two characters `\` and `n` on the wire and the
+browser's serializer has no newline to rewrite; a `parts[…]` entry is a **file** part, which the same
+multipart algorithm transmits verbatim precisely because it is not a text entry. This is the CRLF
+defect the previous entry records, one door over — and it would have been strictly worse here,
+because the corruption lands in a file the user keeps rather than in one sidecar call. The SDK routes
+by the body's TYPE (`Blob`/`File`/`ArrayBuffer`/TypedArray/`DataView` → a part; String → the JSON
+field) and re-wraps a Blob so the part carries the author's declared `contentType`: **content type
+comes from the part, never guessed**, so one value with one source.
+
+Two more single-source rules, each with its own test: the **name** always comes from the JSON entry
+and never from the part's `filename` (which is what lets `valid_leaf_name?` + `ReservedNames` cover
+both shapes with no second copy), and a `part` is looked up **inside `parts[…]`** and must be an
+`UploadedFile` — a client-supplied key indexing the top level of `params` would resolve `part: "name"`
+to the state's own name, a String that answers `#size` in CHARACTERS and has no `#read`.
+
+`ADDON_SAVE_MAX_FILES` / `ADDON_SAVE_MAX_BYTES` are explicit and read per request, defaulting to
+today's **8** and **4,000,000** so no published bundle changes behaviour. Bytes is a **total across
+the save**, deliberately not per-file — per-file would LOOSEN the rule (8 × 4 MB), and a cap that
+grows when it is made explicit is not the same cap. Sources are **sized before any is read**, so an
+oversized part is refused for the price of a `stat`. A garbage value falls back to the default, never
+to 0.
+
+**The Rack interaction, verified against rack 3.2.6 rather than assumed**, because the old comment on
+`MAX_FILE_BYTES` only described half of it: a **url-encoded** body dies at
+`RACK_QUERY_PARSER_BYTESIZE_LIMIT` (4 MiB) as a bare 400 in `each_query_pair`, before the action
+runs — so raising the app cap buys that shape nothing. **Multipart is a different limit entirely**,
+`RACK_MULTIPART_PARSER_BYTESIZE_LIMIT`, default 10 GiB — and that covers the JSON `files` field
+*inside* a multipart body too, since multipart fields never reach the query parser. So a raised cap
+means something to the SDK (always multipart) and nothing to a hand-rolled url-encoded POST. Pinned
+by a test that saves 4.2 MB through a part with the cap raised to 5 MB.
+
+### The read surface
+
+`GET /tools/:key/file/:node_id`, gated on the manifest declaring `library:read`, scoped to
+`current_user`'s own live **file** nodes, consuming `FileLayer::Delivery` exactly as
+`FilesController#blob` does — all three variants, **no `else`**, so a fourth mechanism raises rather
+than serving a blank 200.
+
+**The gate is declaration consistency, not containment, and the code says so in those words**
+(spec §8.1). A Ring 1 bundle is same-origin browser code in the signed-in session and can call
+another addon's read endpoint directly. What it buys is that an addon which starts reading the
+library must say so on the card the operator reads at publish time, in a deployment where publishing
+a bundle IS the deploy.
+
+**`NotFound` answers 404, rescued inside the action.** The class-level `rescue_from` answers 422 with
+"Your library refused that write." — right for the save door, a lie on a read whose request was
+well-formed and simply named something gone; and 422 ("your request was malformed") sends an addon
+author looking at their own code for a file the user deleted. Same shape as `FilesController#geometry`
+rescuing `RecordNotFound` locally (§14h). One 404 for four causes — unknown id, a stranger's node, a
+tombstone, a directory — so the endpoint cannot report which node ids are real. `FetchError` keeps
+the class-level 503: an unmounted share is retryable and must never read as "your file is gone"
+(§14a).
+
+**Always `application/octet-stream` + `attachment`, and therefore no byte-URL helper — and the
+content-type half was a LIVE BUG found by probing rather than by reading.** The endpoint first served
+Marcel's answer, the way `FilesController#blob` does. A `.js` file in the library is
+`text/javascript`; `verify_same_origin_request` is an `append_after_action` that fires on any non-XHR
+JavaScript response; and a `fetch` sets no `X-Requested-With`, so **every SDK read of a `.js` raised
+`InvalidCrossOriginRequest` and the addon received a 422 HTML error page instead of its bytes.**
+Probed with a throwaway integration test aimed at the endpoint, not derived from the code.
+
+`skip_forgery_protection only: :file` would have been the obvious fix and is the **worse** one:
+`#asset` can afford that skip because its body is the same static bundle for every viewer, while this
+body is a **user's own file** — skipped, a third-party page's `<script src>` would execute a library
+file in the attacker's origin and read it out. Serving everything opaquely removes the condition
+structurally, needs no list of script-capable types to keep current (§14b's skip-list blind spot),
+and costs a bundle nothing: it picked the file and knows what it asked for. Two tests pin it, on the
+type as well as the bytes — a bytes-only assertion would pass against a fix that corrected the status
+and still leaked `text/javascript`. **`FilesController#blob` still serves Marcel's type and carries
+the same latent shape**; out of scope here, recorded.
+
+Forcing attachment also means such a URL could not back an `<img src>`, which is why
+`host.files.blobUrl` does not exist. One operator caveat, in the docs rather than worked around: on
+**s3** the `Delivery::Redirect` is cross-origin, so a bundle reading those bytes needs the bucket's
+CORS to allow this origin — streaming through Rails instead is what §15 forbids.
+
+### `pickFile`, and where the extension filter lives
+
+`app/javascript/lib/file_chooser.js` already had `mode: "file"` and `library_browse#children` already
+took `files=1`, so this was wiring: the shell hands the bundle a `chooseFile` function beside
+`chooseFolder` (in the SDK ctx **and** in the raw `mount` ctx — additive, and the raw path stays
+supported per §10.2), and the SDK exposes `host.files.pickFile({ extensions })`. Resolves
+`{nodeId, kind, path}` or **`null` for cancel**, and in file mode `null` has exactly one meaning:
+there is no "chose the root" answer, because a directory is never a valid selection.
+
+**`extensions` filters client-side**, and the argument is the one §14d already makes about
+vocabularies: `/library/children` answers one bounded folder the modal already holds, so a server-side
+filter buys no round trips and costs a second definition of "which extensions count" on an endpoint
+the form-field chooser shares. Folders are never filtered — that would hide the path TO a matching
+file. A malformed `extensions` filters nothing rather than everything, so an addon's typo shows the
+user their files instead of an empty picker. It is a convenience for the human, never a restriction:
+a bundle can pass any node id to `read`.
+
+### `Host::LEVEL` is 2
+
+`library:read` and `pick:file` flipped to `true` and `LEVEL` bumped **in the same commit**, per
+§14c's rule — a manifest's `min_host` is the only way an addon can say "I need this", and
+`api_version` equality cannot express it. `host_test.rb` now pins the level against the *set* of true
+capabilities as a relationship, so flipping a third without bumping goes red rather than shipping a
+capability no manifest can require. **Binary output deliberately got no capability name of its own**:
+it is the same `library:write` door growing a second body type, so a second name would be true
+exactly when `library:write` is, and would carry no information. `min_host: 2` is how a bundle
+requires it.
+
+A `min_host: 1` manifest still works: `unavailable_reason` refuses only when `min_host > LEVEL`. The
+`sdk-fixture` manifest now declares `min_host: 1` so that is proved by something that RUNS — through
+a real mount, not by asserting `available?`, which is a weaker claim than the page rendering.
+
+### What did NOT land, recorded because the spec promised it
+
+Spec §6.2 says "`folders` therefore moves behind `pickFolder`", and §14 justifies it as removing a
+per-load tree inflation. **`data-addon-folders-value` stays emitted**: §10.1 keeps every current data
+attribute for the life of `api_version: "1"` and published bundles build their `<select>` from it, so
+removing it is a decision for the bundles repo. The Ring-2 half of that sentence is true (an addon
+using the pickers never enumerates the tree); **the perf half is not** — the shell still serializes
+the user's folder list into every addon page. Corrected in the spec rather than left to read as done.
+
+### Mutation checks — thirteen, each RED on its own test and restored (§15)
+
+Two of them found that a test could not see the guard it was written for, which is the whole point of
+doing this:
+
+| # | Mutation | Result |
+|---|---|---|
+| 1 | `unless @addon.declares_permission?("library:read")` → `unless true` | RED — `Expected response to be a <403: forbidden>, but was a <200: OK>` |
+| 2 | `current_user.nodes` → `Node` on `#file` | **GREEN at first** — every adapter re-scopes in its own `live_node!`, so a stranger's node still 404s, from the port. Test rewritten onto a port double that trusts its caller; then RED, `<404: missing>` vs `<200: OK>` |
+| 3 | `kind: "file"` dropped from the lookup | **GREEN at first**, same reason (chunk answers NotFound for a dir with no `current_version`). Same fix; then RED, `<404> vs <200>` |
+| 4 | file-count cap removed | RED — a 3-file save accepted with the cap at 2 |
+| 5 | total-bytes cap removed | RED — two 6-byte files accepted with the cap at 10 |
+| 6 | a part's `size` reported as 0 | RED — a 9-byte part accepted with the cap at 8 |
+| 7 | `else head :ok` added to the Delivery match | RED — `NoMatchingPatternError expected but nothing was raised` |
+| 8 | the `UploadedFile` type check on a part removed | RED — `NoMethodError: undefined method 'content_type' for an instance of String`, i.e. the 500 the guard exists to prevent |
+| 9 | `params[:parts]` → `params` | RED — a real upload posted under an undeclared top-level key was written |
+| 10 | content type taken from the JSON entry instead of the part | RED — `Expected: "application/vnd.custom"` |
+| 11 | the name taken from the part's `original_filename` | RED — the file was written under the browser's name |
+| 12 | the chooser's extension filter disabled | RED (browser) — `found 1 match: "📄 pick-other.svg"` |
+| 13 | the read endpoint answering Marcel's content type again | RED on both — `Expected "image/svg+xml" to not include "svg"`, and the `.js` case reproducing `ActionController::InvalidCrossOriginRequest` as a 422 |
+
+Two more in a real browser, on the transport itself: a string body pre-normalized to CRLF the way a
+multipart text field would do it read
+`txt=line one<CR><LF>line two<CR><LF>` against the expected `<LF>` — which is exactly why the fixture
+renders the terminators rather than the text, since Capybara's whitespace normalization makes the two
+identical to an ordinary assertion; and disabling the SDK's binary routing read
+`AddonError:invalid_argument`.
+
+### The browser proof
+
+`test/fixtures/addons/sdk-fixture/` gained a **"Save and read back"** button that writes a binary
+`.3mf` (a PNG signature plus a lone `0xFF 0xFE` — bytes no decode/re-encode could launder quietly) and
+a multi-line `.txt` **in one save**, then reads both back through `host.files.read` and renders the
+binary as hex and the text with its line endings spelled out. The save side cannot see any of this:
+a save that mangled the bytes still redirects and still says "Saved."
+
+Plus a **"Pick a file"** button covering both halves of the picker contract. Written first against a
+project folder, and §14f's eager intake nudge did exactly its job — it filed the `.3mf` into `models/`
+and the `.svg` into `design/` before the picker opened, so the two files were never in one column and
+the `extensions` assertion was **vacuously true**. Rewritten against a folder no project owns.
+
+One more found by the share leg rather than by reading: three new tests all wrote `cube.3mf` to the
+library root, and the share leg's parallel workers share one `LIBRARY_PATH`, so the second worker hit
+a real `Share#write` clobber. Unique names per test.
+
+And one by the **s3** leg. The helper reading the delivered content type treated the whole presigned
+URL as a haystack, which is fine for `attachment` and wrong for a type: the URL also carries the
+FILENAME, so `assert_not_includes location, "svg"` failed on `drawing.svg` for a response whose
+signed `response-content-type` was `application/octet-stream` — a true assertion failing on the wrong
+string. Both helpers now parse the specific signed parameter.
+
+### Numbers
+
+`bin/ci` **exit 0** — judged by exit code — all seven gates, 55.0 s. **2292 runs / 8290 assertions /
+0 failures / 0 errors / 9 skips, identical on chunk, share and s3** (9.8 s / 9.0 s / 10.4 s); system
+**86 runs / 519 assertions** (19.5 s). Baseline taken by **running the merge-base** `9da27da`, not by
+reading the entry below: 2265 / 8187 and 82 / 494. So **+27 server tests** (26 in
+`addons_controller_test`, 1 in `host_test`) and **+4 system tests**, none removed.
+
+### What this unblocks — row 7, and the honest state of it
+
+Both of `Tools::OpenscadController`'s blockers are gone: a bring-your-own `.scad` is
+`pickFile({extensions: [".scad"]})` + `files.read`, and a 3MF is `files.save` with a `Uint8Array`
+body. Neither is theoretical — the fixture does the binary half and the picker half in a browser on
+every CI run. What row 7 still owns is what the spec already flags as its risk and this PR does not
+touch: **`OpenscadParams.coerce` runs server-side**, reading a `.scad`'s declared parameter groups to
+coerce and refuse user input, and a bundle cannot call it. That coercion has to move into the sidecar
+before the controller can go.
+
+## 2026-08-11: the addon service plane — a CRLF corruption nothing could see, and three more (branch `claude/addon-api-pr6-service-plane`)
 
 **PR 6 of the Addon API v1 arc** (spec `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
 §12 row 6), and **only half of that row**: the *service* plane shipped, `integrity` and content-hash

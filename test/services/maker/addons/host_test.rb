@@ -29,14 +29,28 @@ module Maker
         assert caps.fetch("state:list")
         assert caps.fetch("service")
         assert caps.fetch("pick:folder")
+        # PR 5's file plane.
+        assert caps.fetch("library:read")
+        assert caps.fetch("pick:file")
         # Named in the contract, answered false until their own PR. Present-and-false is the
         # point: an addon can be written against a capability before the host has it.
-        assert_not caps.fetch("library:read")
         assert_not caps.fetch("state:crud")
         assert_not caps.fetch("data")
         assert_not caps.fetch("maker:read")
-        assert_not caps.fetch("pick:file")
         assert_not caps.fetch("project:current")
+      end
+
+      # THE RULE §14c STATES, ASSERTED RATHER THAN REMEMBERED: bump LEVEL in the same commit that
+      # flips a capability to true. Pinned as a RELATIONSHIP — the level and the set of true
+      # capabilities move together — so flipping one more capability without bumping goes red here
+      # rather than shipping a capability no manifest's `min_host` can require.
+      #
+      # The literals are the point rather than a smell: this test is the ledger of which level
+      # bought which capabilities, and updating it IS the deliberate act the rule asks for.
+      test "LEVEL records which capabilities this host has, and moves when they do" do
+        assert_equal 2, Maker::Addons::Host::LEVEL
+        assert_equal %w[library:read library:write pick:file pick:folder service state:list],
+                     Maker::Addons::Host.capabilities.select { |_, v| v }.keys.sort
       end
     end
   end

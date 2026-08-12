@@ -25,6 +25,22 @@ module Maker
         "Needs a newer version of this host (asks for level #{min_host}, this host is level " \
           "#{Maker::Addons::Host::LEVEL})"
       end
+
+      # DOES THIS MANIFEST SAY IT WANTS `name`? Read by Tools::AddonsController#file, the one
+      # endpoint gated on a declaration.
+      #
+      # WHAT THAT GATE IS, IN THE WORDS spec §8.1 INSISTS ON: DECLARATION CONSISTENCY, NOT
+      # CONTAINMENT. A Ring 1 bundle is browser code running same-origin in the signed-in session,
+      # so it can call ANY /tools/<key>/… endpoint the user can — including another addon's, whose
+      # manifest may well declare `library:read`. Nothing here stops that and nothing is claimed to.
+      # What it buys is that an addon which quietly starts reading the library has to SAY SO in the
+      # manifest the operator reads at publish time, in a deployment where publishing a bundle IS
+      # the deploy and there is no review step in between. The real boundary on that endpoint is the
+      # `current_user` scope in the controller, one layer down, and that one is load-bearing.
+      #
+      # Compares the NAME only. `reasoning` is prose for the operator's card; a check that also
+      # required it would refuse an addon over a documentation defect.
+      def declares_permission?(name) = permissions.any? { |p| p["name"].to_s == name.to_s }
     end
 
     module Registry

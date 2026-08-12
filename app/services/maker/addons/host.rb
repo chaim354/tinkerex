@@ -19,11 +19,13 @@ module Maker
     module Host
       module_function
 
-      LEVEL = 1
+      # 2 — PR 5's file plane. Bumped IN THE SAME COMMIT that flipped `library:read` and
+      # `pick:file` to true, per the rule above.
+      LEVEL = 2
 
       CAPABILITIES = {
         "library:write"   => true,   # POST /tools/:key — the save door
-        "library:read"    => false,  # PR 5
+        "library:read"    => true,   # GET /tools/:key/file/:node_id — PR 5
         "state:list"      => true,   # GET /tools/:key/states
         "state:crud"      => false,  # PR 3
         "data"            => false,  # PR 4 — addon-owned collections
@@ -31,8 +33,16 @@ module Maker
         "project:current" => false,  # PR 3
         "service"         => true,   # the sidecar proxy
         "pick:folder"     => true,   # ctx.chooseFolder, already shipped
-        "pick:file"       => false   # PR 5
+        "pick:file"       => true    # ctx.chooseFile — PR 5
       }.freeze
+
+      # BINARY OUTPUT GOT NO CAPABILITY OF ITS OWN, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+      # It is not a new door — it is the SAME save door (`library:write`) growing a second wire
+      # shape — so a second name would have to be answered `true` for exactly the hosts that answer
+      # `library:write` true, forever, which is a name that carries no information. What tells a
+      # bundle it may send bytes is `LEVEL >= 2`, which is precisely what `min_host` exists to
+      # express (docs/addon-api-v1.md §3). Recorded here because "binary output" reads like a
+      # capability and the next person WILL look for one.
 
       def capabilities = CAPABILITIES
     end
