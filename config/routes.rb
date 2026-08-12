@@ -224,6 +224,16 @@ Rails.application.routes.draw do
   # the service route does.
   get "tools/:key/states", to: "tools/addons#states", as: :tools_addon_states
 
+  # ONE library file's bytes, for an addon whose manifest declares `library:read`. Four segments, so
+  # unlike the two-segment sibling routes above there is no ordering hazard with `tools/:key` at all
+  # (Rails requires a segment-count match, the same reason tools/addon_states/:id/params is safe) —
+  # it sits here to keep the addon surface in one block, not because the order protects it.
+  #
+  # `format: false` because a node_id is opaque. Today it is a dot-free UUID, but if one ever
+  # carried a dot Rails would slice it off as a format segment and the lookup would 404 for a file
+  # that is right there — a silent failure, for a format this endpoint never negotiates.
+  get "tools/:key/file/:node_id", to: "tools/addons#file", as: :tools_addon_file, format: false
+
   # `format: false` on the asset route stops Rails stripping ".js" from the path as a format segment.
   get  "tools/:key/asset/*path", to: "tools/addons#asset", as: :tools_addon_asset, format: false
   post "tools/:key",             to: "tools/addons#create"

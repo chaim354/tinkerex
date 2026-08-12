@@ -17,13 +17,26 @@ export const ROOT_LABEL = "/ (library root)"
 
 export class FileChooser {
   // `label` is the CURRENT selection's path, not decoration — see the note in #open.
-  constructor({ mode = "folder", childrenUrl, createUrl, rootLabel = ROOT_LABEL, value = "", label = null } = {}) {
+  constructor({ mode = "folder", childrenUrl, createUrl, rootLabel = ROOT_LABEL, value = "", label = null,
+                extensions = null } = {}) {
     this.mode = mode
     this.childrenUrl = childrenUrl
     this.createUrl = createUrl
     this.rootLabel = rootLabel
     this.value = value || ""
     this.label = label
+    // FILTERED IN THE BROWSER, NOT BY THE SERVER, AND THAT IS THE DELIBERATE HALF OF `pickFile`.
+    // /library/children already answers one folder's children — a bounded list this modal has
+    // entirely in hand — so a server-side filter would buy no round trips and no bytes worth
+    // counting. What it would cost is a second definition of "which extensions count" living on a
+    // shared endpoint (filechooser_controller.js's form field uses the same one), i.e. exactly the
+    // extension-vocabulary duplication §14d records. It is also honest about what the filter IS:
+    // a convenience for the human picking, never a restriction on the addon — a bundle can pass
+    // any node id to `host.files.read` regardless of what the picker showed it.
+    //
+    // Normalized here, once: lower-cased and dot-prefixed, so a caller may write "svg" or ".SVG".
+    // An empty or absent list means no filtering at all.
+    this.extensions = normalizeExtensions(extensions)
     this.cache = {}       // parentId ("" = root) -> entries array
     this.trail = []       // folders descended into (root implicit); each { id, name }
     this.selection = null // { nodeId, kind, path } or null
@@ -141,7 +154,15 @@ export class FileChooser {
     }
   }
 
-  columnEl(entries, depth, descendedId) {
+  // FOLDERS ARE NEVER FILTERED, only files. A filter that hid folders would hide the path TO a
+  // matching file, which is the one thing a Miller-columns picker cannot recover from.
+  visible(entries) {
+    if (!this.extensions) return entries
+    return entries.filter((e) => e.kind === "dir" || this.extensions.some((ext) => endsWithExt(e.name, ext)))
+  }
+
+  columnEl(allEntries, depth, descendedId) {
+    const entries = this.visible(allEntries)
     const col = document.createElement("div")
     col.className = "filechooser-col"
     if (entries.length === 0) {
@@ -254,8 +275,39 @@ export class FileChooser {
   }
 }
 
+// -> [".svg", …] lower-cased and dot-prefixed, or null for "no filtering". A non-array, or an
+// array with nothing usable in it, is null rather than a filter matching nothing: a typo in an
+// addon's `extensions` must show the user their files, not an empty picker they cannot explain.
+function normalizeExtensions(extensions) {
+  if (!Array.isArray(extensions)) return null
+  const cleaned = extensions
+    .filter((e) => typeof e === "string" && e.trim() !== "")
+    .map((e) => { const t = e.trim().toLowerCase(); return t.startsWith(".") ? t : `.${t}` })
+  return cleaned.length ? cleaned : null
+}
+
+// Compared against a LOWER-CASED name, because a NAS is full of `.STL` and `.Lbrn2`. Deliberately
+// not a regex: a filename is user data and an extension is an addon-supplied string, so building a
+// pattern out of either is a needless escaping problem.
+function endsWithExt(name, ext) {
+  return String(name).toLowerCase().endsWith(ext)
+}
+
 // The one-call form, and the shape handed to addon bundles as `ctx.chooseFolder`. Resolves with the
 // selection or null; never rejects, because a cancel is not an error.
 export function chooseFolder(options = {}) {
   return new FileChooser({ ...options, mode: "folder" }).open()
+}
+
+// The file-mode sibling, handed to bundles as `ctx.chooseFile` and reached through the SDK as
+// `host.files.pickFile`. Same resolution contract, and the CANCEL half of it is the part worth
+// stating twice: null means the user cancelled and is NOT the same answer as any selection —
+// there is no "chose the root" in file mode at all, because a directory is never a valid
+// selection here, so a caller conflating null with a value has nothing sensible to fall back to.
+//
+// `mode` is forced rather than defaulted, exactly as chooseFolder forces its own: these two
+// functions ARE the mode, and an options bag that could quietly flip it would make the export name
+// a lie.
+export function chooseFile(options = {}) {
+  return new FileChooser({ ...options, mode: "file" }).open()
 }

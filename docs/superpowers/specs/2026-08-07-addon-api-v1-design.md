@@ -408,7 +408,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | 2 | **SHIPPED** (branch `claude/addon-api-pr2-manifest-metadata`, stacked on PR 1) — manifest metadata, `min_host` / `Host::LEVEL`, the `states_key` mutual constraint, permission **display**. Enforcement scoped out; see below | Closes audit §2.1 while every manifest is first-party | low |
 | 3 | Error contract completion + state CRUD + keyset paging | States stop accumulating unboundedly | low |
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
-| 5 | File plane — multipart + binary save, gated read, `pickFile`; `folders` moves behind `pickFolder` | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |
+| 5 | **SHIPPED** (branch `claude/addon-api-pr5-file-plane`) — the **file plane**: multipart + binary save, the gated read endpoint, `pickFile`, `Host::LEVEL` 2. `folders` does **NOT** move behind `pickFolder`; see below | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |
 | 6 | **PARTIALLY SHIPPED** (branch `claude/addon-api-pr6-service-plane`) — the **service plane**: per-service timeouts, plus three transport fixes a real bundle migration exposed. `integrity` and content-hash asset URLs are **NOT** in it; see below | Perf + the OpenSCAD migration (row 7) | medium |
 | 7 | OpenSCAD migrates onto the generic surface; the bespoke controller retires | Retires the last hand-written addon controller | **high** — server-side param coercion moves into the sidecar |
 | 8 | Ring 2 | Third-party addons | triggered, not scheduled |
@@ -444,6 +444,22 @@ Three reasons, in order of weight:
    PR 2 shipped and what `docs/addon-api-v1.md` §2 and §4 now say in those words.
 
 Reconcile `services` with `service:<name>` **before** building the check, not while building it.
+
+**Row 5's scope correction: `folders` did NOT move behind `pickFolder`, and the win §14 claimed for
+it has not landed.** §6.2 above says *"`folders` therefore moves behind `pickFolder`"*, and §14's
+last bullet justifies it as removing "a per-load tree inflation". `pickFile` shipped and
+`data-addon-folders-value` **stays emitted on every addon page**, because §10.1 keeps every current
+data attribute for the life of `api_version: "1"` and published bundles build their `<select>` from
+it — removing it is a decision for the bundles repo, not this one. So the second half of that
+sentence is still true (an addon that uses the pickers cannot enumerate the tree, which is the
+Ring-2 prerequisite) and **the first half is not**: the shell still serializes the user's folder
+list into the page on every load. Recorded rather than quietly dropped, because a spec claiming a
+perf win nobody took is how the next reader stops looking for it.
+
+Also shipped beyond the row as written: `host.files.read`, which §5 lists in the SDK surface and the
+row's title does not name. `host.files.url(nodeId)` is unchanged (still the detail page), and there
+is deliberately **no** byte-URL helper — the read endpoint forces `attachment`, so one could not
+back an `<img src>` and would exist only to mislead.
 
 **Row 6's scope split, recorded where the single-row version was written.** The row bundled three
 unrelated things under "perf"; what shipped is the **service plane** only, and the other two were

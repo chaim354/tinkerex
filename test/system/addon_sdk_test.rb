@@ -218,6 +218,117 @@ class AddonSdkTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # ---- the file plane (PR 5) --------------------------------------------------------------
+
+  # The same bytes the fixture bundle holds, spelled out here rather than derived: an expectation
+  # computed from anything the transport touched would let a corruption cancel itself out on both
+  # sides, which is the trap ART's own comment records at the top of this file.
+  BINARY_HEX = "89504e470d0a1a0a00fffe".freeze
+  TEXT_SHOWN = "line one<LF>line two<LF>".freeze
+
+  # BINARY OUT AND BACK, IN THE ONLY PLACE THE TRANSPORT IS REAL. A request test can post a
+  # multipart part, and one does (addons_controller_test.rb) — but it builds that part in Ruby, and
+  # the thing under test here is the BROWSER's own multipart serializer, which is where §14c's CRLF
+  # defect lived and where no Ruby-side assertion can reach.
+  #
+  # THE TEXT FILE IN THE SAME SAVE IS THE HALF THAT WOULD HAVE CAUGHT THAT DEFECT. `<LF>` is
+  # rendered by the fixture precisely because Capybara normalizes whitespace: without spelling the
+  # terminators out, "line one\r\nline two" and "line one\nline two" are the same assertion and the
+  # corruption this test exists for would pass unseen. If a future change routes a string body
+  # through a bare multipart text field, this reads `line one<CR><LF>line two<CR><LF>`.
+  test "files.save carries binary and text through a real browser, and files.read brings them back" do
+    user = User.find_by!(email: "sdk@example.com")
+    project = user.maker_projects.create!(name: "SDK Roundtrip")
+    folder = project.ensure_library_folder!(user)
+
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&bname=rt-part.3mf&tname=rt-notes.txt"
+    click_button "Save and read back"
+
+    assert_selector "[data-role=sdk-roundtrip-result]",
+                    exact_text: "bin=#{BINARY_HEX} txt=#{TEXT_SHOWN}"
+    assert_no_console_errors
+  end
+
+  # THE GATE, FROM THE BUNDLE'S SIDE. The sdk-fixture manifest declares `library:read`; the sibling
+  # `fixture` addon does not, and asking for the same node through ITS key is refused. Driven here
+  # as well as in a request test because this pair is what a bundle author actually meets.
+  #
+  # DECLARATION CONSISTENCY, NOT CONTAINMENT (spec §8.1), and this test is written so as not to
+  # imply otherwise: it asserts that the OTHER ADDON'S endpoint refuses, never that the file is
+  # unreachable. A same-origin bundle can call `/tools/sdk-fixture/file/<id>` directly and be served
+  # — which is precisely what the second half here does.
+  test "the read endpoint refuses an addon whose manifest does not declare library:read" do
+    user = User.find_by!(email: "sdk@example.com")
+    project = user.maker_projects.create!(name: "SDK Gate")
+    folder = project.ensure_library_folder!(user)
+
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&bname=gate-part.3mf&tname=gate-notes.txt"
+    click_button "Save and read back"
+    assert_selector "[data-role=sdk-roundtrip-result]", text: "bin=#{BINARY_HEX}"
+
+    node_id = user.maker_addon_states.last.files.first.node_id
+    visit "/tools/fixture/file/#{node_id}"
+    assert_match(/forbidden_capability/, page.text)
+  end
+
+  # pickFile: A SELECTION, AND CANCEL AS A DISTINCT ANSWER. Both halves in one test because the
+  # distinction IS the contract — a bundle that cannot tell them apart silently treats Escape as a
+  # choice, the defect chooseFolder's own comment records one door over.
+  #
+  # THE `.svg` IS NOT DECORATION: the fixture asks for `extensions: [".3mf"]`, so a second file the
+  # filter must exclude, IN THE SAME COLUMN, is what makes that assertion mean anything. Drop the
+  # filter and `pick-other.svg` appears beside `pick-me.3mf` and the assert_no_selector goes red.
+  #
+  # A PLAIN FOLDER, NOT A PROJECT'S, AND THAT IS THE POINT OF THE PREVIOUS SENTENCE. Written against
+  # a project folder first, and §14f's eager intake nudge did exactly its job: it filed the `.3mf`
+  # into `models/` and the `.svg` into `design/` before the picker ever opened, so the two files
+  # were never in one column and the filter assertion was vacuously true. A folder no project owns
+  # is never swept, so both outputs stay put.
+  test "files.pickFile returns a selection, filters by extension, and answers null on cancel" do
+    user = User.find_by!(email: "sdk@example.com")
+    # Created through Maker::LibraryFolder (the one cross-backend mkdir seam) and the FILES through
+    # the real save door, for §14a's reason: a node built with nodes.create! has a NULL
+    # storage_path, which cannot exist on share or s3.
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "picker-files")
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&bname=pick-me.3mf&tname=pick-other.svg"
+    click_button "Save and read back"
+    assert_selector "[data-role=sdk-roundtrip-result]", text: "bin=#{BINARY_HEX}"
+
+    visit "/tools/sdk-fixture"
+    click_button "Pick a file"
+    assert_selector ".filechooser"
+    find(".filechooser-row", text: "picker-files").click
+    assert_selector ".filechooser-row", text: "pick-me.3mf"
+    assert_no_selector ".filechooser-row", text: "pick-other.svg"
+    find(".filechooser-row", text: "pick-me.3mf").click
+    click_button "Open"
+
+    assert_selector "[data-role=sdk-picked]", exact_text: "picked file /picker-files/pick-me.3mf"
+
+    # CANCEL, ON A SECOND OPEN. Escape rather than the Cancel button, because Escape is the one a
+    # user presses without deciding anything and the one a caller is most likely to conflate with a
+    # selection.
+    click_button "Pick a file"
+    assert_selector ".filechooser"
+    find(".filechooser").send_keys(:escape)
+    assert_selector "[data-role=sdk-picked]", exact_text: "cancelled"
+    assert_no_console_errors
+  end
+
+  # A MANIFEST WRITTEN AGAINST AN OLDER HOST STILL RUNS. The sdk-fixture declares `min_host: 1`
+  # while this host is LEVEL 2 — the compatibility direction that has to keep working, since all
+  # three published bundles declare exactly that and Rails is never rebuilt when one is republished.
+  # Asserted through a real mount rather than on the Addon struct: `available?` answering true is
+  # not the same claim as the page rendering.
+  test "a min_host 1 manifest still mounts against a level 2 host" do
+    assert_equal 1, Maker::Addons::Registry.find("sdk-fixture").min_host
+    assert_operator Maker::Addons::Host::LEVEL, :>, 1, "this test proves nothing at level 1"
+
+    visit "/tools/sdk-fixture"
+    assert_selector "[data-role=sdk-level]", text: "level #{Maker::Addons::Host::LEVEL}"
+    assert_no_console_errors
+  end
+
   # THE CONNECT -> DISCONNECT -> CONNECT LIFECYCLE, THROUGH A REAL TURBO SOFT NAVIGATION. `visit` is
   # a hard browser load: it tears down the whole JS runtime and re-fetches every module fresh, so
   # addon_sdk.js's module-level `host` binding and `everInitialized` flag start over every time — a

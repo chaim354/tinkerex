@@ -106,7 +106,7 @@ check the required keys and the exact string `"1"` first.
 | `states_key` | string | The scope your saved states are read and written under. Defaults to `key`. Naming **another** addon's key requires that addon's written consent — see below. |
 | `shares_states_with` | array of strings | The addon keys you consent to sharing *your* saved states with. The other half of `states_key`; on its own it grants nothing. |
 | `min_host` | integer | The lowest `host.level` your bundle works against. A host below it lists your addon **greyed out with a reason** rather than running it. Must be a JSON integer. |
-| `permissions` | array of objects | What your addon asks for, as `{ "name": …, "reasoning": … }`. **Shown to the operator; not enforced** — see below. |
+| `permissions` | array of objects | What your addon asks for, as `{ "name": …, "reasoning": … }`. Shown to the operator. **`library:read` must be declared or `files.read` answers 403**; every other name is display only — see §4. |
 | `version` | string | Your bundle's own version string. Read onto the addon, displayed nowhere yet. |
 | `author` | string | Who wrote it. Read, displayed nowhere yet. |
 | `license` | string | The bundle's licence. Read, displayed nowhere yet. |
@@ -146,7 +146,7 @@ You do not need to pin `@maker/addon-sdk`. The host pins it for every addon page
 
 `min_host` is compared against `host.level` (§3). If it is **higher** than this host's level, your
 addon is still built and still **listed** — greyed out, with a reason naming both numbers
-("asks for level 2, this host is level 1"). It is deliberately not hidden: an addon that silently
+("asks for level 3, this host is level 2"). It is deliberately not hidden: an addon that silently
 never appears reads as a broken deploy, which sends an operator looking in the wrong place.
 
 Two things to know before you rely on it:
@@ -161,7 +161,7 @@ Two things to know before you rely on it:
   addon out of the gallery; it is not a runtime kill switch. Feature-detect with
   `host.capabilities()` (§4) for anything that must actually not run.
 
-#### `permissions` — declared and displayed, never enforced
+#### `permissions` — declared and displayed; exactly one is also checked
 
 Each entry is an object with a **`name`** and an optional **`reasoning`**. The names your addon
 declares are rendered on its gallery card and, with the reasoning, on its own page.
@@ -197,11 +197,16 @@ where the capability map has `state:list`, `state:crud` and `project:current`. D
 permission does not grant a capability, and a capability answered `true` does not require a
 declaration.
 
-> **Nothing on the server refuses a request because your manifest did or did not declare
-> something.** A declared permission is a statement of intent, shown to the operator at publish
-> time — which is the point, in a deployment where republishing a bundle *is* the deploy and Rails
-> is never rebuilt: the card is where scope drift becomes visible. It is **not** a sandbox, not an
-> allowlist, and not a thing to design a security argument around. See §4.
+> **`library:read` is the one name the server checks.** Without it, `host.files.read` answers 403
+> `forbidden_capability` (§3). Every other name is displayed only — nothing refuses a request
+> because your manifest did or did not declare it.
+>
+> **Even that one is declaration consistency, not containment.** Your bundle runs same-origin in the
+> signed-in session and can call a *different* addon's read endpoint, whose manifest may well
+> declare it. What the check buys is that an addon which starts reading the library has to say so
+> where the operator sees it, in a deployment where republishing a bundle *is* the deploy and Rails
+> is never rebuilt: the card is where scope drift becomes visible. The list is **not** a sandbox,
+> not an allowlist, and not a thing to design a security argument around. See §4.
 
 #### `service_timeouts` — asking for longer, within a ceiling you do not set
 
@@ -366,10 +371,16 @@ and is not a way to ask whether a real host is present. Use `await host.capabili
 
 ### `host.level`
 
-An integer — the host's capability level. `1` today. It rises when the host gains capabilities.
+An integer — the host's capability level. **`2` today.** It rises when the host gains capabilities,
+in the same change that flips them on, so `min_host` (§2) can name a floor.
+
+| Level | Added |
+|---|---|
+| 1 | The SDK itself: `files.save`, `files.pickFolder`, `files.url`, `state.list`, `service.*`, `capabilities()`, `on("teardown")` |
+| 2 | The file plane: binary bodies on `files.save`, `files.read`, `files.pickFile` |
 
 ```js
-console.log(host.level)  // 1
+console.log(host.level)  // 2
 ```
 
 ### `host.addon`
@@ -440,7 +451,45 @@ request, naming the file. Without that check the key would vanish during seriali
 would be written with no content type at all — discovered days later as a file that will not
 preview.
 
-`body` is a **string**. Binary output is not available at this level (§7).
+#### `body` may be text or bytes (host level 2)
+
+| `body` | Written as |
+|---|---|
+| a `string` | text, carried in the save's JSON payload |
+| a `Blob` (or `File`) | bytes |
+| an `ArrayBuffer` | bytes |
+| a `TypedArray` (`Uint8Array`, …) or `DataView` | bytes |
+
+```js
+const zip = await make3mf()                       // a Uint8Array
+await host.files.save({
+  name: "bracket",
+  folderNodeId: folder.nodeId,
+  files: [
+    { name: "bracket.3mf", contentType: "model/3mf",  body: zip },
+    { name: "bracket.txt", contentType: "text/plain", body: "printed at 0.2mm\n" },
+  ],
+})
+```
+
+Anything else — a number, an object, `null` — throws `invalid_argument` before any request.
+
+**Your declared `contentType` always wins.** If you pass a `Blob`, the SDK re-wraps it so the part
+carries `contentType` rather than whatever `type` the Blob happened to have. There is one content
+type per file and it is the one you wrote down.
+
+**You do not choose how a file travels, and you must not try to.** Which wire shape each body takes
+is the SDK's decision, and it exists to keep one rule true: **a file's content never crosses the
+wire as a plain multipart text field.** Multipart serialisation rewrites every text field's
+newlines to CRLF inside the browser, after the value is handed over — the defect that silently
+corrupted a line-by-line sidecar payload once already (§3, `service.post`). A string body is
+JSON-encoded, so its newlines are escaped and there is nothing for the serialiser to rewrite; a
+binary body is a file part, which is transmitted verbatim because it is not a text field at all.
+Both are safe; hand-rolling a `FormData` yourself is not. Your `\n` stays a `\n` either way, and
+your bytes arrive byte for byte.
+
+**Order is preserved across both shapes.** The files you list are written in the order you list
+them, whatever each body's type, and that is the order `state.list()` reports them back in.
 
 **`data` must be a JSON object.** It is your params, stored on the state and handed straight back by
 `host.state.list()`. Anything that is not an object — an array, a number, a string — is **silently
@@ -469,8 +518,9 @@ implicit.
 
 **Server-side limits on a save**, all answered as a refusal rather than a partial write:
 
-- at least one file, and at most **8** per save;
-- **4,000,000 bytes** total across all file bodies;
+- at least one file, and at most **8** per save (`ADDON_SAVE_MAX_FILES`);
+- **4,000,000 bytes** total across all file bodies (`ADDON_SAVE_MAX_BYTES`) — a *total*, not a
+  per-file allowance;
 - names unique within one save;
 - each name a valid single filename: non-empty, at most 255 bytes, no `/`, `\` or NUL, and not
   `.` or `..`.
@@ -500,6 +550,88 @@ If the capability map says `pick:folder` is available but the host wired up no c
 `AddonError` with code `host_misconfigured` — never a `null`, because that would be
 indistinguishable from the user pressing Escape.
 
+### `host.files.pickFile(options?)` — capability `pick:file`
+
+Opens the host's own file chooser: folders navigate, and clicking a file selects it.
+
+```js
+const file = await host.files.pickFile({ extensions: [ ".scad", ".svg" ] })
+// -> { nodeId: "…", kind: "file", path: "/Projects/harbor/design/lid.scad" }   or   null if cancelled
+```
+
+`null` means **cancel**. There is no "chose the root" answer in file mode — a folder is never a
+valid selection — so `null` has exactly one meaning, and conflating it with a value gives you
+nothing usable.
+
+**`extensions` is a convenience for the person picking, not a restriction on you.** Matching is
+case-insensitive and a leading dot is optional (`"svg"` and `".SVG"` both work). Folders are never
+filtered, or the path to a matching file would be unreachable. Nothing stops you passing any node
+id to `read`, and nothing stops the user having files your addon cannot parse — **check what you
+actually got.** An `extensions` value the host cannot make sense of (not an array, or an array with
+nothing usable in it) filters nothing rather than everything, so a typo shows the user their files
+instead of an empty picker.
+
+**Selection is the host's, always.** There is no way to list a folder, walk the tree, or search —
+by design. Your addon asks the host to ask the user. That is what keeps the whole tree out of your
+bundle's reach and what will let a future host run addons in a sandboxed frame without any addon
+changing.
+
+If the capability map says `pick:file` is available but the host wired up no chooser, you get an
+`AddonError` with code `host_misconfigured` — never `null`, for the same reason as `pickFolder`.
+
+### `host.files.read(nodeId)` — capability `library:read`
+
+Reads one library file's bytes.
+
+```js
+const buf  = await host.files.read(file.nodeId)   // an ArrayBuffer
+const text = new TextDecoder().decode(buf)        // for a .scad, .dxf, .svg, G-code…
+```
+
+**Bytes, not text, and that is deliberate.** The host does not know your file's encoding and you
+often do; decoding for you would be a guess you cannot undo. One line of `TextDecoder` is the whole
+cost.
+
+**Where a `nodeId` comes from:** `pickFile`, or the `files` list on a `state.list()` entry. There is
+no way to enumerate the library.
+
+**What `library:read` is, exactly.** Your manifest must declare it in `permissions` (§2) or this
+endpoint answers **403 `forbidden_capability`** — and that check is a *declaration-consistency*
+check, not a security boundary. It exists so that an addon which starts reading the library has to
+say so on the card the operator reads at publish time; a bundle runs same-origin in the signed-in
+session and can call another addon's read endpoint directly. What actually protects a user's files
+is that every lookup is scoped to the signed-in user: there is no way to read another user's file,
+declared or not. A node id that is not yours, and one that does not exist, both answer **404** with
+the same body.
+
+**Failures.** `not_found` (404) for a missing, deleted, foreign or non-file node;
+`ServiceUnavailableError` (503) when the library itself is unreachable — retry that one, it is the
+unmounted-share case and nothing is wrong with your request.
+
+**Every file comes back as `application/octet-stream`, whatever it is.** The response's
+`Content-Type` tells you nothing — do not read it. You picked the file and you know what you asked
+for; if you need a typed `Blob`, say so yourself:
+
+```js
+const blob = new Blob([ await host.files.read(nodeId) ], { type: "model/3mf" })
+```
+
+That is not tidiness. Serving a `.js` file as `text/javascript` made Rails' own cross-origin-JS
+guard reject the response — a `fetch` is not an XHR, so an addon reading a `.js` from the library
+got a **422 HTML error page** instead of its bytes. Serving everything opaquely removes the
+condition, and it also means this URL can never deliver a script-capable document in the app's
+origin.
+
+**There is no URL helper for the bytes.** The host serves this endpoint as
+`Content-Disposition: attachment` unconditionally, so such a URL could not back an `<img src>`
+anyway — it would download. If you need a preview, `read` it and build an object URL yourself:
+
+```js
+const url = URL.createObjectURL(new Blob([ await host.files.read(nodeId) ], { type: "image/png" }))
+img.src = url
+img.onload = () => URL.revokeObjectURL(url)
+```
+
 ### `host.files.url(nodeId)`
 
 Synchronous. Returns the path of a file's **detail page** in the library.
@@ -509,7 +641,8 @@ link.href = host.files.url(nodeId)
 link.textContent = "Open in the library"
 ```
 
-This is not a URL for the raw bytes. There is no byte-level URL helper at this level (§7).
+This is not a URL for the raw bytes, and there is no helper that returns one — see
+`host.files.read` above for why, and for what to do instead.
 
 ### `host.state.list()` — capability `state:list`
 
@@ -688,7 +821,7 @@ lights up on its own when the host gains it.
 | Capability | Today | What it gates |
 |---|---|---|
 | `library:write` | **true** | `host.files.save` — writing output files into the library |
-| `library:read` | false | Reading the bytes of a library file |
+| `library:read` | **true** | `host.files.read` — reading the bytes of a library file |
 | `state:list` | **true** | `host.state.list` — listing this addon's saved states |
 | `state:crud` | false | Creating, updating and deleting states directly |
 | `data` | false | Addon-owned collections (records that are not files or states) |
@@ -696,7 +829,7 @@ lights up on its own when the host gains it.
 | `project:current` | false | Reading the user's current project |
 | `service` | **true** | `host.service.get` / `host.service.post` — the sidecar proxy |
 | `pick:folder` | **true** | `host.files.pickFolder` — the host's folder chooser |
-| `pick:file` | false | Picking an existing library file |
+| `pick:file` | **true** | `host.files.pickFile` — the host's file chooser |
 
 ### The rule: check before you call
 
@@ -730,7 +863,7 @@ told apart. Test the value, not the key's presence:
 if (caps["maker:read"]) { showInventoryPanel() }     // false today, true later, no code change
 ```
 
-### Capabilities gate what you can call. Declared permissions do not.
+### Capabilities gate what you can call. Declared permissions almost never do.
 
 These are two different things and it matters which one you are looking at:
 
@@ -738,26 +871,30 @@ These are two different things and it matters which one you are looking at:
 |---|---|---|
 | Where it lives | The host, one definition, served to every addon | Your own manifest |
 | What it does | The SDK refuses a call whose capability is `false`, before any request | Renders on your gallery card and your addon page |
-| Refuses a request? | Yes — `UnsupportedCapabilityError` | **No. Never.** |
+| Refuses a request? | Yes — `UnsupportedCapabilityError` | **Only `library:read`** — 403 `forbidden_capability` |
 
-**A declared permission is displayed, not enforced.** Nothing on the server checks a manifest before
-answering a request, and nothing refuses one because a permission was not declared. Removing
-`library:write` from your manifest does not stop `host.files.save` from working, and adding
-`maker:read` does not make anything readable.
+**Exactly one declared permission is checked: `library:read`.** Without it in your manifest,
+`GET /tools/<key>/file/<node_id>` answers 403 and `host.files.read` throws. Every other name in the
+list is display only. Removing `library:write` does not stop `host.files.save` from working, and
+adding `maker:read` does not make anything readable.
 
-Declaring is still worth doing, for a reason that is about the operator rather than about you: in
-this deployment **republishing a bundle *is* the deploy** — Rails is never rebuilt, there is no
-review step and no CI in between — so the gallery card is the one place where an addon that quietly
-starts asking for more becomes visible to the person running the server. That is the job the list
-does.
+**Even that one is a declaration-consistency check, not a security boundary, and this document says
+so in those words.** Your bundle runs same-origin in the signed-in session, so it can call any
+`/tools/<key>/…` endpoint the user can — including a *different* addon's read endpoint, whose
+manifest may well declare `library:read`. Nothing prevents that and nothing is claimed to. What the
+check buys is that an addon which starts reading the library has to say so where the operator can
+see it, which matters here because **republishing a bundle *is* the deploy** — Rails is never
+rebuilt, there is no review step and no CI in between, so the gallery card is the only place scope
+drift becomes visible.
 
-What it is **not**: a sandbox, an allowlist, a capability grant, or a boundary between one addon and
-another. A bundle runs same-origin in the signed-in session, so it can already reach any host
-endpoint the user can, including another addon's `/tools/<key>/states` (§2). The boundaries that
-actually hold today are elsewhere — the same-origin sidecar proxy (a sidecar has no published port,
-so a browser cannot reach it directly), the rule that a manifest names a *service* and never a URL,
-`script_src 'self'`, the content-type allowlist on the proxy, and per-user scoping on every query.
-Do not build a security argument on top of the permission list.
+Declaring the rest is still worth doing, for the same operator-facing reason.
+
+What the list is **not**: a sandbox, an allowlist, a capability grant, or a boundary between one
+addon and another. The boundaries that actually hold today are elsewhere — **per-user scoping on
+every query** (the one protecting `files.read`), the same-origin sidecar proxy (a sidecar has no
+published port, so a browser cannot reach it directly), the rule that a manifest names a *service*
+and never a URL, `script_src 'self'`, and the content-type allowlist on the proxy. Do not build a
+security argument on top of the permission list.
 
 ---
 
@@ -826,6 +963,8 @@ only when you did not.
 | `unsupported_operation` | 422 | `NameTakenError` | An output name is already taken in the folder you picked. |
 | `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** What does: an output `name` the library cannot index — `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, or `.trash` at the library root (plus `.maker-tmp-*` on a share-backed host). Rename the output. Raised only on a share/S3-backed host; a chunk-backed host accepts those names. 422 rather than 404 because the endpoint is fine and the request was refused. |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
+| `not_found` | 404 | `AddonError` | **`files.read` only.** No such file: a node id that is not yours, one that never existed, one that has been deleted, or a folder. All four answer identically on purpose — a split would tell you which node ids are real. Note the status: this is the only place `not_found` is a 404, and the 422 row above is a different condition on a different endpoint. |
+| `forbidden_capability` | 403 | `AddonError` | **`files.read` only.** Your manifest does not declare the `library:read` permission. Add it; nothing about the file changed. |
 | `request_failed` | any | `AddonError` | The fallback when a failure response carries no code at all. A save rejected for a malformed or oversized payload answers a body-less 422 and arrives this way. |
 | `name_taken` | — | `NameTakenError` | **Reserved.** The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. |
 | `service_unavailable` | — | `ServiceUnavailableError` | **Reserved**, in the same way. The SDK already maps it; this host does not emit it yet — an unreachable library arrives as `fetch_error`. |
@@ -928,6 +1067,7 @@ built against the other.
    | `defaultFolder` | The default destination's node id, as a string |
    | `defaultFolderLabel` | That folder's path, e.g. `/Projects/harbor` |
    | `chooseFolder` | The folder chooser, as a function → `Promise<{nodeId, kind, path} \| null>` |
+   | `chooseFile` | The file chooser, same shape; takes `{extensions}`. Added at host level 2 — feature-detect with `typeof ctx.chooseFile === "function"` if you are on the raw-`ctx` path |
    | `csrfToken` | The token for a hand-rolled request |
 
    Prefer the SDK. It exists so a future host can move the transport underneath you — the same
@@ -957,14 +1097,12 @@ up when the host ships it — no new release of your bundle required.
 
 | Not available | Will be announced by |
 |---|---|
-| Reading the bytes of a library file | `library:read` |
-| Picking an existing file (`pickFile`) | `pick:file` |
 | Creating, updating and deleting saved states from your bundle | `state:crud` |
 | Addon-owned collections — structured records that are neither files nor states | `data` |
 | Reading maker data: inventory, projects, BOM | `maker:read` |
 | Reading the user's current project | `project:current` |
 | Outbound HTTP to anything but a declared sidecar | Not reserved. The host makes no arbitrary outbound requests on an addon's behalf, by design; a future permission model would name specific origins. |
-| Binary file output | No capability of its own — `body` becomes able to carry bytes under `library:write`, and the host's `level` rises when it does. Today `body` is a string. |
+| ~~Binary file output~~ | **Shipped at host level 2.** It never got a capability of its own: it is the same `library:write` door growing a second body type, so a second name would be `true` exactly when `library:write` is and would carry no information. `min_host: 2` is how a bundle requires it. |
 | Async / long-running jobs — submit, poll, collect | Not reserved. Every sidecar call is synchronous and holds a host thread for its duration, which is why `service_timeouts` (§2) has a ceiling; a job surface would be named `jobs:*` once something needs one. |
 
 ```js

@@ -18,6 +18,27 @@ import { host, WouldReplaceError } from "@maker/addon-sdk"
 // corruption happens inside the browser, between the bundle's call and the wire.
 const ART = "+-+-+-+\n| | | |\n+-+-+-+\n"
 
+// THE BINARY PAYLOAD, CHOSEN SO NOTHING CAN LAUNDER IT QUIETLY. A PNG signature carries a literal
+// CR LF pair, and 0xFF 0xFE is a lone UTF-16 BOM that is not valid UTF-8 at all. Any layer that
+// decoded, re-encoded or newline-normalized these bytes on the way through would change them
+// visibly — which an ASCII payload would let it get away with.
+const BYTES = new Uint8Array([ 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0xfe ])
+
+// A MULTI-LINE TEXT FILE, THE OTHER HALF OF THE SAME PROOF AND THE EASIER HALF TO GET WRONG.
+// `service.post`'s CRLF incident (see ART above) was a text value crossing a multipart TEXT field;
+// a FILE's content must never do that either. This travels as a plain string, which the SDK keeps
+// inside the JSON `files` field, where JSON escaping leaves the serializer no newline to rewrite.
+const TEXT = "line one\nline two\n"
+
+// Rendered rather than compared in the bundle, so the Ruby side asserts on the bytes themselves.
+const hex = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("")
+
+// LINE ENDINGS MADE VISIBLE. A textContent assertion cannot tell "line one\nline two" from
+// "line one\r\nline two" — Capybara normalizes whitespace, so the very corruption under test would
+// be invisible in the one place it is observable. Spelling the terminators out is what makes a CRLF
+// regression a STRING MISMATCH rather than a passing test.
+const showEndings = (text) => text.replaceAll("\r", "<CR>").replaceAll("\n", "<LF>")
+
 export default {
   mount(el, _ctx) {
     const q = new URLSearchParams(location.search)
@@ -35,7 +56,11 @@ export default {
       <button data-role="sdk-url-probe">Probe url guards</button>
       <p data-role="sdk-url-guards"></p>
       <button data-role="sdk-abort-probe">Probe abort</button>
-      <p data-role="sdk-abort"></p>`
+      <p data-role="sdk-abort"></p>
+      <button data-role="sdk-roundtrip">Save and read back</button>
+      <p data-role="sdk-roundtrip-result"></p>
+      <button data-role="sdk-pick">Pick a file</button>
+      <p data-role="sdk-picked"></p>`
 
     // Rendering the LEVEL proves initHost ran before this module was imported — a fixture that only
     // asserted its own text would pass with the binding still null.
@@ -152,6 +177,65 @@ export default {
       reasoned.abort(new Error("superseded"))
       el.querySelector("[data-role=sdk-abort]").textContent =
         `plain=${await attempt(plain.signal)} reasoned=${await attempt(reasoned.signal)}`
+    })
+
+    // THE FILE PLANE, END TO END, IN THE ONE PLACE THE TRANSPORT IS REAL — write two files of
+    // deliberately different KINDS in a single save, then read both back through the host and
+    // render what came out.
+    //
+    // ONE SAVE, TWO SHAPES, BECAUSE THAT IS THE SHAPE A REAL ADDON HAS. A CAD addon emits a binary
+    // 3MF beside a text README or G-code header, and the SDK routes each by its body's type: bytes
+    // become a real multipart file part, a string stays inside the JSON `files` field. Sending them
+    // together is what proves the two shapes coexist in ONE request with the array's order intact.
+    //
+    // THE READ-BACK IS THE ASSERTION, NOT THE SAVE. A save that silently mangled the bytes still
+    // redirects and still reports "Saved." — the whole family of defects this exercises (CRLF
+    // rewriting, UTF-8 re-encoding, a part swapped for its neighbour) is invisible from the write
+    // side. Only fetching the bytes again can tell.
+    //
+    // NODE IDS COME FROM state.list(), because they have nowhere else to come from: files.save's
+    // `data` is structurally empty today (the door answers a redirect, not JSON), so the states
+    // endpoint — which relinks a save to the library nodes it produced, in `position` order — is
+    // how a bundle finds what it just wrote. That is the same call a real addon's "open what I made
+    // last time" is built on.
+    el.querySelector("[data-role=sdk-roundtrip]").addEventListener("click", async () => {
+      const out = el.querySelector("[data-role=sdk-roundtrip-result]")
+      try {
+        const result = await host.files.save({
+          name: "sdk roundtrip",
+          folderNodeId: q.get("parent") || "",
+          files: [
+            { name: q.get("bname"), contentType: "model/3mf", body: BYTES },
+            { name: q.get("tname"), contentType: "text/plain", body: TEXT },
+          ],
+        })
+        if (result.cancelled) { out.textContent = "Not saved."; return }
+
+        const [ latest ] = await host.state.list()
+        const bin = await host.files.read(latest.files[0].node_id)
+        const txt = await host.files.read(latest.files[1].node_id)
+        out.textContent = `bin=${hex(bin)} txt=${showEndings(new TextDecoder().decode(txt))}`
+      } catch (e) {
+        out.textContent = `${e.name}:${e.code}`
+      }
+    })
+
+    // pickFile: A SELECTION OR null, AND THE TEST DRIVES BOTH. `extensions` is passed so the
+    // client-side filter is exercised by something that runs — the Ruby side seeds a `.svg`
+    // alongside the `.3mf` and asserts the picker offers only one of them.
+    //
+    // RENDERS "cancelled" FOR null RATHER THAN AN EMPTY STRING. Cancel and "chose something" must
+    // stay distinguishable, and an empty textContent is exactly what a never-resolved promise also
+    // looks like — a test asserting emptiness would pass on a picker that simply hung.
+    el.querySelector("[data-role=sdk-pick]").addEventListener("click", async () => {
+      const out = el.querySelector("[data-role=sdk-picked]")
+      out.textContent = "opening"
+      try {
+        const picked = await host.files.pickFile({ extensions: [ ".3mf" ] })
+        out.textContent = picked === null ? "cancelled" : `picked ${picked.kind} ${picked.path}`
+      } catch (e) {
+        out.textContent = `${e.name}:${e.code}`
+      }
     })
   },
 }
