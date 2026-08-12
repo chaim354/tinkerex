@@ -109,6 +109,16 @@ module WebHelpers
     end
   end
 
+  # Capybara's matchers wait on the DOM; an <img> swapping its `src` is a PROPERTY read, which no
+  # Capybara matcher can wait on — so poll it. Lived privately in box_sections_test until
+  # openscad_preview_test needed the same wait for the same reason (a self-starting preview filling
+  # an <img>), which by this file's own header is the point at which it moves here.
+  def wait_until(timeout: 5, message: "condition never became true")
+    deadline = Time.now + timeout
+    sleep 0.05 until yield || Time.now > deadline
+    assert yield, message
+  end
+
   # Fails the test if the browser logged an error. Cheap, and it catches the whole class of bug
   # where a Stimulus controller throws, the DOM is left half-built, and the assertion below happens
   # to still pass — how the jspreadsheet async-factory bug rendered a permanently empty grid with no

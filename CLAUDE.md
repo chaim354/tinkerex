@@ -1057,6 +1057,21 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `%>` inside a `<%# … %>`; describe the wrong spelling in words. Guarded on the RENDERED OUTPUT by
   `test/integration/web/template_hygiene_test.rb` (a static template scan was tried first and is
   weaker — it has to guess whether the text after a terminator was meant to be markup or prose).
+- **A `data-controller` NAME THAT RESOLVES TO NOTHING IS A SILENT NO-OP, SO DELETING A STIMULUS FILE
+  CAN DELETE A FEATURE WITH NOTHING ANYWHERE GOING RED.** Stimulus neither throws nor warns on an
+  identifier it cannot resolve — the page renders perfectly and the behaviour is simply absent.
+  `6095b87` deleted `boxpreview_controller.js` and `boxfilter_controller.js` while
+  `app/views/tools/openscad/` went on declaring both, and the editor opened on an empty grey preview
+  panel for **nine days**. `openscad_controller_test.rb` stayed green throughout because it POSTs the
+  preview endpoint DIRECTLY and therefore cannot see that the only thing which issues that POST has
+  become inert — a request test proves the endpoint works and nothing about whether anything calls
+  it. Guarded by **`test/stimulus_hygiene_test.rb`**, which DERIVES every registered identifier from
+  the filenames by replicating stimulus-loading's own rule rather than listing them (a new controller
+  needs no test edit), and sweeps **both** spellings — `data-controller="a b"` (several names per
+  attribute) and the Rails `data: { controller: "a" }` hash, which
+  `app/views/shared/_folder_field.html.erb` uses and a literal-attribute grep misses. `data-controller`
+  is the COMPLETE set, not merely the convenient one: Stimulus resolves `data-action` and
+  `data-*-target` only for a controller attached through it.
 - **`back_target_path` COMPARES THE REFERER'S ORIGIN AND THEN DISCARDS IT** — only a root-relative
   path ever reaches an `href`, so a cross-origin referer is DROPPED, never sanitised and re-emitted.
   Do not "improve" it into accepting a URL param: the referer is chosen precisely because a file

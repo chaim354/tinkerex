@@ -56,6 +56,13 @@
   <aside class="box-side">
     <div class="preview box-preview">
       <img data-boxpreview-target="image" alt="Model preview" class="preview-image">
+      <%# THE STATUS LINE IS NOT DECORATION, and its absence here was a second, quieter half of the
+          same regression. #preview answers every refusal with `render plain: e.message`, and for a
+          value the sidecar would not coerce that message is coerce.py's own prose naming the
+          parameter to fix. boxpreview_controller's #status returns early unless this target
+          exists, so without it a 422 is swallowed and the panel simply stays blank — which reads
+          exactly like the missing controller did. %>
+      <p class="box-preview-status" data-boxpreview-target="status" role="status" aria-live="polite" hidden></p>
     </div>
 
     <% if @source[:attribution].present? %>
