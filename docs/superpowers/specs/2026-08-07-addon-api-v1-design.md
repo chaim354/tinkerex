@@ -410,7 +410,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
 | 5 | **SHIPPED** (branch `claude/addon-api-pr5-file-plane`) — the **file plane**: multipart + binary save, the gated read endpoint, `pickFile`, `Host::LEVEL` 2. `folders` does **NOT** move behind `pickFolder`; see below | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |
 | 6 | **PARTIALLY SHIPPED** (branch `claude/addon-api-pr6-service-plane`) — the **service plane**: per-service timeouts, plus three transport fixes a real bundle migration exposed. `integrity` and content-hash asset URLs are **NOT** in it; see below | Perf + the OpenSCAD migration (row 7) | medium |
-| 7 | OpenSCAD migrates onto the generic surface; the bespoke controller retires | Retires the last hand-written addon controller | **high** — server-side param coercion moves into the sidecar |
+| 7 | OpenSCAD migrates onto the generic surface; the bespoke controller retires. **Its coercion prerequisite has SHIPPED on its own** (branch `claude/openscad-coercion-to-sidecar`); the migration itself is **not started** — see below | Retires the last hand-written addon controller | ~~**high**~~ → **medium**: the coercion move is done |
 | 8 | Ring 2 | Third-party addons | triggered, not scheduled |
 
 **Row 1's scope correction, recorded where the wrong version was written.** This document said
@@ -496,6 +496,23 @@ also share a prerequisite this row does not: a **per-publish version to key on**
 contract still lacks and which is a change to the manifest format rolled out across every bundle in
 a separate repo. Landing them here would have doubled the diff and coupled a browser-transport fix
 to a bundle-format migration.
+
+**Row 7 was split, and only the FIRST half has shipped.** The risky part of the row was never the
+migration — it was the sentence in the Risk column: *server-side param coercion moves into the
+sidecar*. That is `app/services/openscad_params.rb`, which existed because **a garbage parameter
+value renders successfully with the DEFAULT geometry** (OpenSCAD's `parameterSet` silently ignores a
+value it cannot parse), and which a browser bundle cannot call. It is now
+`sidecar/openscad/coerce.py`, applied on `POST /render`, with the Rails copy **deleted** rather than
+left beside it. `docs/STATUS.md` narrates it.
+
+**What that leaves for the migration itself, which is not started.** A manifest + bundle in
+`chaim354/tinkerex-addons` reproducing the editor (schema-driven form, live preview, save), which
+needs one host capability the generic surface still lacks — the bundle must be able to ASK the
+sidecar for a `.scad`'s parameter schema before it can render a form, and `POST /params` is
+reachable through the service proxy but the response shape is nobody's contract yet. Also unmoved:
+`Tools::LibraryFolders`' folder-path label, the "prior designs from this source" list (a
+`Maker::AddonState` query filtered in Ruby), and the server-side 3MF→PNG rasterization
+(`#rasterize`), which has no bundle-facing equivalent because a browser cannot display a 3MF.
 
 ---
 

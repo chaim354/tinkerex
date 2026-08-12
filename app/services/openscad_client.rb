@@ -12,6 +12,11 @@ class OpenscadClient
   Generator = Data.define(:key, :title, :description, :license, :attribution, :source_url,
                           :params, :param_groups)
   class Error < StandardError; end
+  # A submitted PARAMETER VALUE the sidecar refused to coerce (sidecar/openscad/coerce.py). A
+  # SUBCLASS rather than a flag or a second top-level class, so every existing `rescue
+  # OpenscadClient::Error` keeps catching it and only the one caller that must branch on WHY says so
+  # — §14a's rule for exactly this shape.
+  class InvalidParams < Error; end
 
   # Renders can legitimately take up to the sidecar's 60 s cap, so this read timeout must sit ABOVE
   # it — otherwise Rails gives up on a render that is about to succeed and the user sees a generic
@@ -80,22 +85,34 @@ class OpenscadClient
   def http(req, read_timeout: READ_TIMEOUT)
     uri = req.uri
     res = Net::HTTP.start(uri.host, uri.port, open_timeout: OPEN_TIMEOUT, read_timeout:) { |h| h.request(req) }
-    unless res.is_a?(Net::HTTPSuccess)
-      # Surface the sidecar's own {"error": …} when it sent one — it names the actual OpenSCAD
-      # complaint ("Parser error: syntax error…"), which is the only thing the user can act on.
-      raise Error, error_detail(res) || "openscad sidecar #{res.code}"
-    end
+    raise refusal(res) unless res.is_a?(Net::HTTPSuccess)
 
     res
   end
 
-  def error_detail(res)
-    body = res.body.to_s
-    detail = begin
-      JSON.parse(body)["error"]
-    rescue StandardError
-      nil
-    end
-    (detail || body[0, 200]).presence
+  # THE STATUS ALONE CANNOT TELL THE TWO 422s APART, AND THE CALLER MUST. The sidecar answers 422
+  # both for a .scad it cannot parse and for a submitted VALUE it refuses to coerce, and
+  # Tools::OpenscadController reacts differently to each: a rejected value is something the user can
+  # fix, so the editor comes back with their own form still in it; a broken source is not, so it
+  # bounces to the index. The sidecar tags the one it means with `code: "invalid_params"`, and this
+  # matches on that CODE and never on the prose — the prose is a human sentence, free to be reworded
+  # in a sidecar release that never rebuilds Rails.
+  def refusal(res)
+    body = parsed_body(res)
+    # Surface the sidecar's own {"error": …} when it sent one — it names the actual OpenSCAD
+    # complaint ("Parser error: syntax error…"), which is the only thing the user can act on.
+    detail = (body["error"].presence || res.body.to_s[0, 200]).presence
+    klass = body["code"] == "invalid_params" ? InvalidParams : Error
+    klass.new(detail || "openscad sidecar #{res.code}")
+  end
+
+  # -> Hash, ALWAYS. `is_a?(Hash)` and not merely a rescue: a body of `null` or `[]` parses fine and
+  # then answers `[]` to `body["error"]` (a TypeError) or nil to `body["code"]`, so "it parsed" is
+  # not the same question as "it is the object shape we are about to index".
+  def parsed_body(res)
+    parsed = JSON.parse(res.body.to_s)
+    parsed.is_a?(Hash) ? parsed : {}
+  rescue StandardError
+    {}
   end
 end

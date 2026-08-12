@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-11 (**the addon file plane — an addon can write bytes and read one file back, and the OpenSCAD controller's two blockers are gone**)
+**Updated:** 2026-08-12 (**OpenSCAD parameter coercion moved out of Rails and into the sidecar — row 7's risky half, shipped on its own**)
 
 ## What this file is
 
@@ -60,7 +60,179 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-11): the addon file plane — binary out, one file in, and a picker that is the host's (branch `claude/addon-api-pr5-file-plane`)
+## Latest (2026-08-12): the OpenSCAD coercion guard moved into the sidecar (branch `claude/openscad-coercion-to-sidecar`)
+
+**Row 7's risky half, split off and shipped on its own** (`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
+§12). The row's Risk column said *"server-side param coercion moves into the sidecar"* — that
+sentence, and not the bundle work, is what made it **high**. This is that sentence, done. **The
+migration itself is not started**, and nothing here brings it closer than one prerequisite.
+
+### The fact underneath it, which is the whole reason there is a guard at all
+
+**A garbage parameter value renders SUCCESSFULLY, with the DEFAULT geometry.** `{"cols": "))("}`
+comes back **200**, because OpenSCAD's `parameterSet` silently *ignores* a value it cannot parse.
+Not reasoned — observed against a real render, and it is now **pinned by a test rather than by a
+comment**: `test_OPENSCAD_REALLY_DOES_IGNORE_A_VALUE_IT_CANNOT_PARSE` calls `render.render`
+*directly*, bypassing coercion, and asserts the garbage render is **byte-identical to the default
+one** while a real value **does** move the geometry. (Both halves: without the second, a build that
+had stopped honouring `cols` at all would pass the first.) OPENSCAD_BIN-gated, so it runs in the
+image. If OpenSCAD ever starts refusing such a value, that test is what says so — and the
+justification for all 200 lines below would need re-reading rather than being taken on trust.
+
+Without a refusal, a typo yields a default-sized model, **saved into the user's library**, with no
+feedback anywhere. That is the silent-wrong-output failure this codebase treats as worst.
+
+### What moved, and why it could not simply be copied
+
+`app/services/openscad_params.rb` (130 lines) is **deleted**. `sidecar/openscad/coerce.py` is the
+one copy. A browser bundle cannot call a Rails service object, so the guard had to sit at the door
+*every* caller goes through — and both Rails and a future bundle reach OpenSCAD only via
+`POST /render`. Leaving a Ruby copy beside it would have been this repo's recorded failure shape
+(the five `port_writable?` branches, the Scanner's skip-list, chunk's missing filename check): a
+guard that runs on one caller's path and silently does not on another's.
+
+Ported faithfully, including the four things easiest to "improve" into bugs:
+
+- **`choices` beats `type`** (schema.py's TRAP 3). schema.py always labels an options-carrying param
+  `"enum"` today, so that arm is not observable from its own output — which is exactly why it has a
+  test of its own, built on a hand-made `{type: "int", choices: [10, 20]}` spec: read `type` first
+  and a future derivation silently accepts `15` for a param whose only legal values are 10 and 20.
+- **The bool mapping is an ALLOWLIST**, not a framework boolean cast. Rails'
+  `ActiveModel::Type::Boolean` (and most equivalents) map everything outside a short false-list to
+  **`true`**, so `"maybe"` would silently become a rounded plate nobody asked for — the same bug in
+  a hat.
+- **min/max are NOT enforced**, deliberately. OpenSCAD *honours* an out-of-range number rather than
+  ignoring it, so an out-of-range value is not the silent-default failure this guard exists to stop;
+  refusing it would only add false rejections to a check whose whole value is that it never fires on
+  something that would have worked. The test asserts the fixture really does declare a range first,
+  so it cannot pass vacuously.
+- **Messages are truncated at 40 characters**, ActiveSupport's `String#truncate` semantics (the
+  omission is *inside* the budget: 37 chars + `...`, never 43), so a 10 kB paste in a number field
+  cannot become a 10 kB flash.
+
+**Two Python-vs-Ruby divergences the port had to close by hand**, both silent if missed: `str(None)`
+is `"None"` where Ruby's `to_s` gives `""` (a cleared field would stop reading as blank and start
+reading as garbage — same refusal, wrong sentence), and `str(True)` is `"True"` where Ruby gives
+`"true"` (a JSON `true` posted to an enum would stop matching a `"true"` choice). `coerce._text` is
+Ruby's `to_s`, not Python's `str`, and says so. Going the other way, `float()` **accepts** `"inf"`
+and `"nan"` where Ruby's `Float()` refused them outright — so the `math.isfinite` check that existed
+only for `"1e400"` overflow now does both jobs.
+
+### The discriminator: the sidecar answers 422 for two different things
+
+A `.scad` the parser rejects and a *value* the coercer rejects are both client conditions and both
+**422** — and Rails must react differently. A rejected value comes back as a **form error with the
+user's own entries still in it** (`editor_again`, which is what stops a correctness guard from
+costing someone their whole form); a broken source **bounces to the index**. So `/render` tags the
+one it means:
+
+```json
+{"error": "“cols” must be a number (got “))(”)", "code": "invalid_params"}
+```
+
+`error` keeps the prose — it is the key this sidecar already answers errors in, and PR #169
+deliberately preserved a sidecar's own words end to end into a bundle's `ServiceError`. `code` is
+the machine half. `OpenscadClient` raises **`InvalidParams`, a SUBCLASS of `Error`** (§14a's rule:
+a caller that must branch on WHY gets a subclass, so every existing `rescue Error` — `#preview`,
+`#new`, `editor_again`'s own fallback — keeps working untouched), matching on the **code and never
+the prose**, which a sidecar release can reword without ever rebuilding Rails.
+
+**`OpenscadClient` needed one more fix while it was open.** `error_detail` did
+`JSON.parse(body)["error"]` inside a rescue — which handles *unparseable* bodies but not bodies that
+parse to a **non-object**. `[1,2,3]` is valid JSON and `["error"]` on an Array is a `TypeError`,
+escaping as a 500 from inside the code whose only job is to describe a failure. "It parsed" and "it
+is the shape we are about to index" are different questions; `parsed_body` now asks the second.
+
+### The render cache: checked, and it is fine — because coercion runs BEFORE the key
+
+The sidecar content-addresses renders over the params it is handed. Until now Rails coerced and the
+sidecar hashed the **coerced** values; `_coerced` is therefore called **before `render.render`**, so
+the key is still computed over those same values and **every entry already on the `/cache` volume
+keeps hitting**. Hash the raw values instead and nothing is *wrong* — different raw spellings
+produce different keys, never a collision — but the whole existing cache is orphaned on deploy: a
+silent full re-render of every design anyone has ever made. Pinned directly:
+`cache_key(src, coerce({"cols": "6", …})) == cache_key(src, {"cols": 6, …})`, the second literal
+being what Rails used to send.
+
+### The one behaviour that is deliberately different, and the assertion that changed with it
+
+`Maker::AddonState#data["params"]` now records the values **as submitted** (`{"cols" => "6"}`)
+rather than coerced (`{"cols" => 6}`). Rails no longer *has* the coerced values — `/render` answers
+3MF bytes, not values — and echoing them back through a response header was rejected as inventing a
+truncatable side channel. **Nothing downstream can tell**: the show page renders `6` either way, the
+"duplicate & tweak" link emits `params[cols]=6` either way, and re-posting them re-coerces
+identically, which is what "the design reproduces exactly" actually needs. One assertion in
+`openscad_controller_test.rb` changed from `6`/`2.5` to `"6"`/`"2.5"` — **saying something
+different, not something less**: it still pins the exact recorded value including its type, which is
+what would catch a drift back.
+
+### What the tests do now, and where the coverage went
+
+The Ruby suite's three coercion tests are **two**, and they claim less on purpose. Every semantic —
+each type, the enum trap, the bool allowlist, min/max, truncation, the six-case garbage loop — is in
+`sidecar/openscad/tests/test_coerce.py`, against a `param_groups` derived from **real
+`--export-format=param` output** (test_schema's captured dump, reused rather than re-invented: the
+FakeS3 lesson). What Rails still owns, and all the two remaining tests assert, is the **reaction**:
+the sidecar's own sentence reaches the user unreworded, and a refusal on save costs them neither
+their form nor a half-written bundle. The fake raises `InvalidParams` because that is what the real
+client raises for the sidecar's tagged 422 — **proved against the wire**, over a real socket, in
+`openscad_client_test.rb`, rather than taken on trust from the fake.
+
+`openscad_live_test.rb` gains the end-to-end leg (Rails posts raw → the sidecar refuses → the tagged
+422 arrives back as `InvalidParams` and *not* as a plain `Error`), and its stale "`5 skips`" header
+now reads 7 and matches the file.
+
+### Mutation-checked, four ways
+
+| Mutation | Result |
+|---|---|
+| `/render` restored to the pass-through (`params = body.get("params")`) | **3 red**, headline `assert 200 == 422` — the garbage value renders |
+| `_boolean` falls through to `return True`, `_number` falls back to the default | **8 red** |
+| `refusal` always raises `Error` (discriminator dropped) | **1 red** — the wire test; the controller tests *cannot* see it, which is why the wire test exists |
+| `#create`'s two rescue arms swapped (superclass first) | **1 red** — `302` to the index instead of `422` with the form |
+
+### Numbers
+
+`bin/ci` **exit 0** — judged by exit code — all seven gates, 58.7 s. **2298 runs / 8278 assertions /
+0 failures / 0 errors / 10 skips, identical on chunk, share and s3** (10.7 s / 9.6 s / 8.7 s);
+system **86 runs / 519 assertions** (22.1 s). Baseline by **running the merge-base** `d23317b`:
+2292 / 8290 / 9 skips. So **+6 server tests** and **+1 skip** (the new live test, which skips without
+`OPENSCAD_SIDECAR_URL`); system unchanged.
+
+**Assertions went DOWN by 12, and that is the honest shape of this change rather than a regression.**
+The deleted six-case loop was assertion-dense (18 assertions in one test) and its coverage did not
+vanish — it moved to Python, where minitest cannot count it. The sidecar suite went **29 → 66 passed
+/ 11 → 13 skipped** on the host (`python -m pytest -q` in `sidecar/openscad`, with flask + pytest in
+a venv), i.e. **+37 tests**; in the image, where the two new OPENSCAD_BIN-gated tests also run, the
+README's expected total is **79 passed, nothing skipped**.
+
+`test/deploy_hygiene_test.rb` passes unchanged — this adds Python to a GPL-2.0 sidecar and imports
+nothing from it into Rails, so `/sidecar/` in `.dockerignore`, the blanked `OPENSCAD_SIDECAR_URL` in
+`deploy.ovh.yml`, and the in-image `LICENSE` are all untouched (§9, §14c).
+
+### What still stands between here and retiring the controller
+
+Named plainly, because an optimistic list here is what makes the next reader stop looking:
+
+1. **No bundle exists.** The manifest + editor UI live in `chaim354/tinkerex-addons`, a separate
+   repo, and publishing that image *is* the deploy.
+2. **A bundle cannot get a `.scad`'s parameter schema yet.** It must ask before it can render a
+   form. `POST /params` is reachable through the service proxy, but **the sidecar's normalized
+   schema shape is nobody's declared contract** — it is documented only as "what `OpenscadClient`
+   speaks". Freezing it is real work, and it is the next prerequisite.
+3. **Three pieces of the controller have no bundle-facing equivalent**: the server-side 3MF→PNG
+   rasterization (`#rasterize` — a browser cannot display a 3MF, so this is not a "just do it
+   client-side"), the folder-path label from `Tools::LibraryFolders`, and the "prior designs from
+   this source" list (a `Maker::AddonState` query filtered in Ruby because `data->>'generator'` is
+   Postgres-only).
+4. **`state.data`'s shape is load-bearing for `show` and the prefill link**, and a bundle saving
+   through the generic door writes a different shape. Migrating existing saved designs, or teaching
+   `show` both shapes, is unplanned.
+5. **The catalog's licence display** (`index` renders each generator's licence and attribution per
+   tile, guarded by a test) has to survive the move — the catalog is redistributed inside a
+   commercial image, so this is the §2 rule, not decoration.
+
+## 2026-08-11: the addon file plane — binary out, one file in, and a picker that is the host's (branch `claude/addon-api-pr5-file-plane`)
 
 **Row 5 of the addon API v1 arc** (`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md` §6),
 and the thing standing between the arc and row 7. Retiring the bespoke `Tools::OpenscadController`
@@ -264,7 +436,8 @@ body. Neither is theoretical — the fixture does the binary half and the picker
 every CI run. What row 7 still owns is what the spec already flags as its risk and this PR does not
 touch: **`OpenscadParams.coerce` runs server-side**, reading a `.scad`'s declared parameter groups to
 coerce and refuse user input, and a bundle cannot call it. That coercion has to move into the sidecar
-before the controller can go.
+before the controller can go. *(Done the next day, on its own branch — see the Latest entry. Nothing
+else in this paragraph changed; the migration is still not started.)*
 
 ## 2026-08-11: the addon service plane — a CRLF corruption nothing could see, and three more (branch `claude/addon-api-pr6-service-plane`)
 

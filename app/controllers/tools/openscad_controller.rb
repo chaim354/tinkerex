@@ -35,10 +35,12 @@ module Tools
     # inline untrusted markup" posture.
     def preview
       scad = source_text!
-      bytes = client.render(scad:, params: scad_params(scad))
+      bytes = client.render(scad:, params: submitted_params)
       png = rasterize(bytes)
       send_data png[:bytes], type: png[:content_type], disposition: "inline"
-    rescue OpenscadParams::Invalid, OpenscadClient::Error, PreviewUnavailable,
+      # OpenscadClient::InvalidParams is a SUBCLASS of Error, so a refused value is already covered
+      # here — #preview answers both the same way and has no form to hand back.
+    rescue OpenscadClient::Error, PreviewUnavailable,
            FileLayer::NotFound, FileLayer::FetchError => e
       render plain: e.message, status: :unprocessable_entity
     end
@@ -46,7 +48,7 @@ module Tools
     # POST /tools/openscad -> save the state + write the tied bundle (3mf output).
     def create
       scad = source_text!
-      p = scad_params(scad)
+      p = submitted_params
       bytes = client.render(scad:, params: p)
 
       state = current_user.maker_addon_states.create!(
@@ -56,6 +58,11 @@ module Tools
         # possibly restrictively-licensed design around the user's library and into any future
         # share/export path. `data` records what was rendered; the source stays where the user
         # put it.
+        #
+        # `params:` records the values AS SUBMITTED. It held the COERCED values until 2026-08-12,
+        # when coercion moved into the sidecar and Rails stopped having them — and submitted is the
+        # better record anyway: it is what reproduces the design (re-post it and it re-coerces
+        # identically) and it is what the prefill link has to put back in the form.
         data: { generator: params[:generator].presence, node_id: params[:node_id].presence,
                 params: p }.compact
       )
@@ -76,7 +83,10 @@ module Tools
       intake_result = intake_project_folder(addon_files.first&.node_id)
       redirect_to tools_openscad_design_path(state),
                   notice: project_intake_sentence("Saved “#{state.name}”", intake_result, filename)
-    rescue OpenscadParams::Invalid => e
+    rescue OpenscadClient::InvalidParams => e
+      # BEFORE the Error arm below, which is its own superclass — reverse the two and every refused
+      # value bounces to the index instead of coming back as a form error.
+      #
       # A REJECTED VALUE IS SOMETHING TO FIX, so hand the editor straight back with the user's own
       # values still in it. Bouncing to the index would make the check cost them the whole form,
       # which is how a correctness guard turns into something people route around. `flash.now` +
@@ -207,27 +217,14 @@ module Tools
                   .select { |s| s.data[key] == value }
     end
 
-    # The submitted fields, COERCED against the declared schema — NOT a pass-through. A value
-    # OpenSCAD cannot parse is silently IGNORED by its parameterSet, so passing text through means a
-    # typo renders the default geometry with no feedback at all. See OpenscadParams for the whole
-    # argument; it raises Invalid, which both callers turn into a 422 / a form-level alert.
-    def scad_params(scad)
-      OpenscadParams.coerce(params[:params]&.to_unsafe_h || {}, declared_param_groups(scad))
-    end
-
-    # THE SAME DECLARATION THE FORM WAS RENDERED FROM — the two branches mirror `resolve_source`'s
-    # exactly, so what the user was shown and what their answers are checked against cannot drift.
-    # A catalog generator's schema arrives with the catalog listing; a bring-your-own file's is
-    # derived from its own source text (the sidecar memoizes that by text, so the /render call right
-    # behind this one reuses it). Both are the sidecar's one derivation, so this is not a second
-    # render path — only a second way of asking for a schema we were already given.
-    # nil when it can't be had at all; OpenscadParams then refuses rather than forwarding unchecked.
-    def declared_param_groups(scad)
-      if params[:node_id].present?
-        client.params_for(scad)["param_groups"]
-      else
-        client.generators.find { |g| g.key == params[:generator] }&.param_groups
-      end
-    end
+    # THE SUBMITTED FIELDS, PASSED STRAIGHT THROUGH — and the pass-through is DELIBERATE, not the
+    # oversight it looks like. A value OpenSCAD cannot parse is silently IGNORED by its parameterSet,
+    # so a typo would render the default geometry with no feedback anywhere; something has to REFUSE
+    # it. That something is `sidecar/openscad/coerce.py`, which until 2026-08-12 was a second copy
+    # here (`OpenscadParams`, now deleted). It moved because a browser bundle cannot call a Rails
+    # service object and the addon migration makes a bundle the caller — and it moved rather than
+    # being duplicated because a guard that runs on one caller's path and silently does not on
+    # another's is this repo's recorded failure shape. DO NOT REINTRODUCE A COPY HERE.
+    def submitted_params = params[:params]&.to_unsafe_h || {}
   end
 end

@@ -8,8 +8,9 @@ module Tools
   #   OPENSCAD_SIDECAR_URL=http://localhost:18000 bin/rails test test/integration/tools/openscad_live_test.rb
   #   docker rm -f oscad-live
   #
-  # `5 skips` is the failure mode to watch for here, not a pass: it means the env var never reached
-  # the test and NOTHING was verified.
+  # `7 skips` is the failure mode to watch for here, not a pass: it means the env var never reached
+  # the test and NOTHING was verified. (This line read `5` while the file held 6 tests; the number
+  # is only useful if it is right, so it is now 7 and matches.)
   class OpenscadLiveTest < ActiveSupport::TestCase
     # The bundled catalog as SHIPPED (catalog/catalog.json), not as the plan first imagined it:
     # vase_box and universal_stand were dropped on licensing grounds (catalog/NOTICE).
@@ -85,6 +86,22 @@ module Tools
       assert elapsed < 1.0, "expected a cache hit to be fast, took #{elapsed.round(2)}s"
     end
 
+    # THE GUARD THAT MOVED OUT OF RAILS ON 2026-08-12, proved end to end against the real binary
+    # over real HTTP — the sidecar's own suite proves the coercion, this proves the whole chain
+    # (Rails posts raw, the sidecar refuses, the tagged 422 arrives back as InvalidParams and not as
+    # a plain Error). Without the sidecar's coercion this call comes back 200 with the DEFAULT
+    # geometry, because OpenSCAD's parameterSet silently ignores a value it cannot parse.
+    test "a value the sidecar cannot coerce is REFUSED as InvalidParams, not rendered as the default" do
+      src = "cols = 4;\ncube([cols, 1, 1]);\n"
+      e = assert_raises(OpenscadClient::InvalidParams) do
+        OpenscadClient.current.render(scad: src, params: { "cols" => "))(" })
+      end
+      assert_match(/cols/, e.message, "the refusal must name the parameter the user has to fix")
+      # …and the guard is not simply refusing everything: a good value still renders. Without this
+      # half, a sidecar that 422'd on every render would pass the assertion above.
+      assert_equal "PK", OpenscadClient.current.render(scad: src, params: { "cols" => "6" })[0, 2]
+    end
+
     test "a broken .scad raises a client Error carrying OpenSCAD's own complaint" do
       e = assert_raises(OpenscadClient::Error) do
         OpenscadClient.current.render(scad: "this is not scad {{{", params: {})
@@ -93,6 +110,10 @@ module Tools
       # The sidecar's own {"error": …} is what names the actionable complaint; a bare
       # "openscad sidecar 422" would mean the detail never made it through.
       refute_match(/\Aopenscad sidecar \d+\z/, e.message, "lost the sidecar's error detail")
+      # THE OTHER 422. Both this and the refusal above are 422s; only the sidecar's `code` tells them
+      # apart, and #create sends them to different places. Collapse them and a parser error tells
+      # the user their perfectly good values are wrong.
+      assert_not_kind_of OpenscadClient::InvalidParams, e
     end
   end
 end

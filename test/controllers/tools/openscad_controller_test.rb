@@ -48,54 +48,51 @@ module Tools
       assert_select ".addon-card .addon-title", text: "hex_plate"
     end
 
-    # --- parameter coercion (Task 10) ---------------------------------------------------------
-    # The full controller suite is Task 12; these three exist because the coercion is a DESIGN
-    # DECISION made here, and an undefended one would quietly rot back into a pass-through.
+    # --- parameter coercion, now the SIDECAR's job -----------------------------------------------
+    #
+    # THE COERCION ITSELF MOVED OUT OF RAILS on 2026-08-12 (`OpenscadParams` deleted;
+    # `sidecar/openscad/coerce.py` is the one copy). It had to: a browser bundle cannot call a Rails
+    # service object, and the /tools addon migration makes a bundle the caller. Every semantic the
+    # old three tests here pinned — each type, the choices-means-enum trap, the bool allowlist, the
+    # min/max NON-enforcement, message truncation, and the six-case garbage loop — moved with it to
+    # `sidecar/openscad/tests/test_coerce.py`, along with an OPENSCAD_BIN-gated test that reproduces
+    # the observed fact underneath all of it (a garbage value renders the DEFAULT geometry, 200).
+    #
+    # WHAT IS STILL RAILS' JOB, and all these two now claim, is the REACTION to a refusal: the
+    # sidecar's own sentence reaches the user, and a refusal on save costs them neither their form
+    # nor a half-written bundle. The stub raises InvalidParams because that is what OpenscadClient
+    # really raises for the sidecar's tagged 422 — proved against the WIRE in
+    # test/services/openscad_client_test.rb rather than taken on trust here, which is the FakeS3
+    # lesson (CLAUDE.md §14e): a fake sharing the code's idea of the wire confirms it.
+    REFUSAL = "“cols” must be a number (got “))(”)".freeze
 
-    test "preview coerces every submitted value to its declared type before rendering" do
+    test "preview hands the submitted values to the sidecar VERBATIM — it no longer coerces" do
       post preview_tools_openscad_path, params: {
         generator: "hex_plate",
         params: { cols: "6", wall: "2.5", rounded: "true", label: "hi", span: "10, 20,30", mode: "2" }
       }
       # The PNG step shells out to the stl-thumbnailer binary, so a box without it answers 422 by
-      # design (PreviewUnavailable, not a coercion refusal). What this test is about is what reached
-      # the SIDECAR, which is identical either way.
+      # design (PreviewUnavailable, not a refusal). What this test is about is what reached the
+      # SIDECAR, which is identical either way.
       assert_response(Maker::Previews::Stl.available? ? :success : :unprocessable_entity)
-      assert_equal({ "cols" => 6, "wall" => 2.5, "rounded" => true, "label" => "hi",
-                     "span" => "[10,20,30]", "mode" => 2 },
+      # THE PASS-THROUGH IS THE ASSERTION. Rails turned these into 6 / 2.5 / true / "[10,20,30]" / 2
+      # before the move; a Rails-side copy of the coercion creeping back is exactly what this
+      # catches, because it would narrow "6" to 6 right here and go red.
+      assert_equal({ "cols" => "6", "wall" => "2.5", "rounded" => "true", "label" => "hi",
+                     "span" => "10, 20,30", "mode" => "2" },
                    OpenscadClient.current.rendered[:params])
     end
 
-    test "a value that will not coerce is REFUSED, not handed to OpenSCAD to ignore" do
-      # THE WHOLE POINT (observed against the real sidecar): OpenSCAD's parameterSet silently
-      # ignores a value it cannot parse and renders the DEFAULT geometry — so a pass-through gives a
-      # typo a 200 and a wrong model, saved to the library, with no feedback anywhere.
-      # An ARRAY of pairs, not a Hash: two of these probe the same field, and a Hash literal would
-      # keep only the last one — dropping a case while staying green.
-      [
-        [ "cols",    "))(" ],   # the observed real case
-        [ "cols",    "4.5" ],   # an int field, non-integral
-        [ "wall",    "" ],      # a cleared number field: the default is NOT what they asked for
-        [ "rounded", "maybe" ], # not a boolean, and must not become `true` by falling through
-        [ "span",    "10,,30" ], # a hole in the vector
-        [ "mode",    "3" ]      # not one of the declared choices
-      ].each do |name, bad|
-        OpenscadClient.stub = FakeOpenscad.new # a fresh recorder per case
-        post preview_tools_openscad_path, params: { generator: "hex_plate", params: { name => bad } }
-        assert_response :unprocessable_entity, "#{name}=#{bad.inspect} should be refused"
-        assert_match(/#{name}/, response.body, "the message should name the parameter")
-        assert_nil OpenscadClient.current.rendered, "#{name}=#{bad.inspect} must never reach the sidecar"
-      end
-    end
-
-    test "a parameter the design doesn't declare is refused, not silently dropped" do
-      post preview_tools_openscad_path, params: { generator: "hex_plate", params: { colz: "9" } }
+    test "a value the sidecar refuses is a 422 on preview, in the sidecar's own words" do
+      OpenscadClient.stub = refusing_sidecar
+      post preview_tools_openscad_path, params: { generator: "hex_plate", params: { cols: "))(" } }
       assert_response :unprocessable_entity
-      assert_match(/colz/, response.body)
-      assert_nil OpenscadClient.current.rendered
+      assert_equal REFUSAL, response.body,
+                   "the sidecar's sentence is the only actionable part; it must not be reworded here"
     end
 
     test "a rejected value hands the EDITOR back with the user's own form still in it" do
+      OpenscadClient.stub = refusing_sidecar
       post tools_openscad_path, params: { generator: "hex_plate", name: "My plate",
                                           parent_node_id: "", params: { cols: "))(" } }
       assert_response :unprocessable_entity
@@ -235,7 +232,7 @@ module Tools
       # from the catalog source, as a 3MF, with the coerced value.
       assert_equal "3mf", OpenscadClient.current.rendered[:format]
       assert_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
-      assert_equal 6, OpenscadClient.current.rendered[:params]["cols"]
+      assert_equal "6", OpenscadClient.current.rendered[:params]["cols"]
     end
 
     test "preview of a library file renders the user's OWN bytes, not the catalog's" do
@@ -249,6 +246,11 @@ module Tools
       refute_equal FakeOpenscad.new.source("hex_plate"), OpenscadClient.current.rendered[:scad]
     end
 
+    # THE OTHER 422, AND THE CONTRAST IS THE POINT. The sidecar answers 422 both for a .scad it
+    # cannot parse (here) and for a value it refuses to coerce (above), and Rails must react
+    # differently: a bad source bounces to the index, a bad value comes back as a form error with
+    # the user's own entries still in it. Only `code: "invalid_params"` tells the two apart —
+    # collapse the distinction and one of these two tests goes red, whichever way it is collapsed.
     test "a sidecar error is a 422 on preview and an alert on create — never a 500, never a half-save" do
       OpenscadClient.stub = Class.new(FakeOpenscad) do
         def render(**) = raise(OpenscadClient::Error, "Parser error: syntax error in line 3")
@@ -303,13 +305,19 @@ module Tools
       assert_empty @user.nodes.present.where("name LIKE ?", "%.params.json"),
                    "no .params.json may be written into the library"
 
-      # The DB records what was rendered — COERCED, so the design reproduces exactly. This assertion
-      # used to read the params FILE; it MOVED to `data` rather than being deleted, because the
-      # coercion it pins (a form String becoming an Integer/Float) is the reason OpenscadParams
-      # exists, and `data` is now the only place it is recorded.
+      # The DB records what was SUBMITTED, so the design reproduces exactly: re-post these and the
+      # sidecar coerces them identically, which is also what "duplicate & tweak" does with them.
+      #
+      # THIS ASSERTION CHANGED ON 2026-08-12 AND THE CHANGE IS NOT A WEAKENING — it says something
+      # different, not something less. It read `6` and `2.5` while Rails coerced and could therefore
+      # record the coerced values; coercion is the sidecar's now (`OpenscadParams` deleted), the
+      # sidecar answers 3MF bytes rather than values, so what Rails HAS to record is what the user
+      # typed. Nothing downstream can tell: the show page renders "6" either way, the prefill link
+      # emits params[cols]=6 either way, and a re-render re-coerces. Asserting the exact recorded
+      # value — including the TYPE, via the string literal — is what would catch a silent drift back.
       assert_equal "hex_plate", state.data["generator"]
-      assert_equal 6, state.data["params"]["cols"], "cols should be the coerced Integer, not the string"
-      assert_equal 2.5, state.data["params"]["wall"]
+      assert_equal "6", state.data["params"]["cols"], "the value as submitted, not a re-derived one"
+      assert_equal "2.5", state.data["params"]["wall"]
 
       assert_redirected_to tools_openscad_design_path(state)
     end
@@ -474,6 +482,15 @@ module Tools
     end
 
     private
+
+    # A sidecar that refuses the submitted value, the way the real one does for a value coerce.py
+    # will not take. `render` raises rather than recording, so a test using this can say nothing
+    # about what "reached" the sidecar — that guarantee is the SIDECAR's now and is asserted there.
+    def refusing_sidecar
+      Class.new(FakeOpenscad) do
+        def render(**) = raise(OpenscadClient::InvalidParams, REFUSAL)
+      end.new
+    end
 
     # A real .scad in a user's library, written through the SAME backend-neutral path the addon
     # itself uses — so this seeds correctly on chunk, share and s3 alike.
