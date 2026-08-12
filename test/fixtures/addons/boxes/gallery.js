@@ -1,6 +1,9 @@
 import { mountSections } from "./sections.js"
 import { mountFilter } from "./filter.js"
 import { sectionId } from "./util.js"
+// See boxes.js's import for why this is a static import of the host pin and never a vendored copy.
+// `host` is a LIVE BINDING — read through it at call time, never captured at module top level.
+import { host } from "@maker/addon-sdk"
 
 // The Box Generator's index page: a filterable, sectioned gallery of generators plus a saved-box
 // rail. Ported from the tinkerex repo's app/views/tools/boxes/index.html.erb + its boxfilter/
@@ -9,7 +12,11 @@ import { sectionId } from "./util.js"
 // root: the element to render into (emptied first). generators/states: already-fetched arrays (see
 // boxes.js). onOpenGenerator(key, prefillValues|null): open the editor. onOpenState(state): open a
 // saved box's detail view.
-export function mountGallery(root, { generators, states, ctx, onOpenGenerator, onOpenState }) {
+//
+// NO `ctx`: the sample-photo <img> below was the only thing in this module that ever read one, and
+// it now builds its URL through the SDK. Kept out rather than left in place for a future caller —
+// an unread parameter reads as "something here still needs the mount context".
+export function mountGallery(root, { generators, states, onOpenGenerator, onOpenState }) {
   const sections = groupByField(generators, (g) => g.group || "Other")
   const savedTree = buildSavedTree(states, generators)
 
@@ -77,7 +84,7 @@ export function mountGallery(root, { generators, states, ctx, onOpenGenerator, o
 
     const grid = document.createElement("div")
     grid.className = "tools-grid"
-    for (const g of gens) grid.appendChild(buildCard(g, ctx, onOpenGenerator))
+    for (const g of gens) grid.appendChild(buildCard(g, onOpenGenerator))
     details.appendChild(grid)
 
     $("groups").appendChild(details)
@@ -94,7 +101,7 @@ export function mountGallery(root, { generators, states, ctx, onOpenGenerator, o
   }
 }
 
-function buildCard(generator, ctx, onOpenGenerator) {
+function buildCard(generator, onOpenGenerator) {
   const card = document.createElement("a")
   card.href = "#"
   card.className = "addon-card"
@@ -109,20 +116,15 @@ function buildCard(generator, ctx, onOpenGenerator) {
   img.className = "addon-thumb"
   img.alt = ""
   img.loading = "lazy"
-  // DELIBERATELY STILL RAW `ctx.serviceUrl`, AND THE ONE PLACE IN THIS BUNDLE THAT IS — NOT AN
-  // OVERSIGHT LEFT BEHIND BY THE SDK MIGRATION. The SDK has no accessor returning a URL an
-  // <img src> can take: `host.service.get` PERFORMS the request and resolves a Response, which
-  // cannot feed an attribute the BROWSER must fetch itself. Both ways of reaching around that are
-  // worse than the gap. Fetching and building an object URL would download every sample photo
-  // eagerly — this is a grid of lazy tiles, so `loading="lazy"` is doing real work here — and would
-  // need a matching revokeObjectURL on teardown to avoid leaking one blob per card. Reconstructing
-  // the URL from anything else the SDK exposes is just this line with extra steps.
-  //
-  // The host's proxy keeps `image/jpeg` INLINE on its content-type allowlist precisely for this
-  // call site (tinkerex CLAUDE.md §14c), so the raw URL is a supported path rather than a loophole.
-  // The real fix is an SDK addition — a `host.service.url(name, path)` that BUILDS a string and
-  // requests nothing — and until that exists this stays as it is, named rather than quietly left.
-  img.src = `${ctx.serviceUrl}boxes/sample/${encodeURIComponent(generator.key)}`
+  // `service.url` IS A BUILDER, NOT A REQUEST — which is the one thing `service.get` structurally
+  // cannot be: it PERFORMS the call and resolves a Response, and a Response cannot feed an attribute
+  // the BROWSER must fetch itself. That is why this line was a hand-built `ctx.serviceUrl` string
+  // until tinkerex PR #169 added the builder; it is not free-hand any more, and the encoding guards
+  // (a rejected ".", ".." or empty segment, per-segment escaping) now apply here exactly as they do
+  // to get/post, on the one URL no server guard ever gets to inspect. The host's proxy keeps
+  // `image/jpeg` INLINE on its content-type allowlist for precisely this call site (tinkerex
+  // CLAUDE.md §14c), so an <img> pointed at it is a supported path rather than a loophole.
+  img.src = host.service.url("boxes", `sample/${generator.key}`)
   // Replaces the host's thumbfallback Stimulus controller for this addon: this bundle isn't
   // Stimulus, so a missing sample photo (most generators have none — 404) is hidden by hand rather
   // than relying on a host controller auto-connecting to markup this bundle injects.

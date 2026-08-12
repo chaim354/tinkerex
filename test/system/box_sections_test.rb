@@ -43,6 +43,11 @@ class BoxSectionsTest < ApplicationSystemTestCase
   # `assert_no_console_errors(ignoring:)`.
   SAMPLE_404 = %r{/tools/boxes/service/boxes/sample/\w+ - Failed to load resource.+404}
 
+  # The refusal the last test in this file provokes on purpose. Chrome logs any failed fetch at
+  # SEVERE, so without this the deliberate 422 would mask a genuine error logged beside it — the
+  # same argument SAMPLE_404 above already makes for the gallery's missing sample photos.
+  GENERATE_422 = %r{/tools/boxes/service/boxes/generate - Failed to load resource.+422}
+
   setup do
     # Hermetic fixture, not the real bundle — see the file header. Mirrors
     # test/system/addon_bundle_test.rb's own ADDON_SOURCE_PATH dance exactly (ADDON_SOURCE_PATH,
@@ -273,5 +278,41 @@ class BoxSectionsTest < ApplicationSystemTestCase
     # Folded or not, the fields stay in the DOM, so they are still submitted.
     assert_selector '[data-param="FingerJoint_style"]', visible: :all
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
+  # THE SIDECAR'S OWN SENTENCE, NOT A STATUS CODE — and nothing else in this suite asserted it.
+  # boxes.py refuses with prose in its `error` key ("traylayout requires --layout, …"), which names
+  # the param to fix; "Preview failed (422)" names nothing. §14c is the rule behind it: a sidecar's
+  # error never runs through the host's error table, so the SDK hands back a `ServiceError` carrying
+  # the response's RAW TEXT and the BUNDLE does the parsing, in the one place the sidecar's shape is
+  # known (preview.js's `sidecarMessage`).
+  #
+  # WRITTEN WHEN generateSvg CAME OFF ITS RAW `fetch`, because that rewrite is invisible to every
+  # other assertion here. The old code branched on the response's Content-Type header; the new one
+  # parses the text ServiceError carried. Both spellings render an identical preview on the happy
+  # path, so a suite with no failing-render test would have gone green over a bundle that had
+  # silently started showing users a bare status code.
+  #
+  # `exact_text:` IS LOAD-BEARING AND `text:` IS A FALSE GREEN HERE — found by mutation-checking this
+  # very test, not by reading it. Capybara's `text:` is a SUBSTRING match, and the unparsed body
+  # `{"error":"traylayout requires …"}` CONTAINS the sentence, so a `sidecarMessage` that skipped the
+  # JSON rung entirely and dumped the raw JSON into the panel passed the substring form. Do not
+  # relax this back.
+  #
+  # MUTATION-CHECKED (2026-08-11): dropped the JSON rung from `sidecarMessage` (return
+  # `error.message` straight away) — RED, the panel read the whole `{"error":"…"}` blob; restored,
+  # green again.
+  test "a sidecar's refusal reaches the user in the sidecar's own words" do
+    complaint = "traylayout requires --layout, --input, or implementation of generate_layout"
+    @proxy.ok("#{FakeBoxesSidecar::BASE_URL}/generate", status: 422,
+              body: { error: complaint }.to_json, content_type: "application/json")
+
+    visit tools_addon_path("boxes")
+    open_generator("TrayLayout")
+
+    # `.is-error`, not just the text: the panel has one status element for "Rendering…" too, and a
+    # message shown without the error class is a refusal styled as ordinary progress.
+    assert_selector '[data-role="status"].is-error', exact_text: complaint
+    assert_no_console_errors ignoring: [ SAMPLE_404, GENERATE_422 ]
   end
 end

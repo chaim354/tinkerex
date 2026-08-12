@@ -193,6 +193,52 @@ meantime — nothing here is a breaking change — so the migration is a follow-
 `chaim354/tinkerex-addons`, not a coupled release. **Until it lands, no published bundle exercises
 the JSON transport in production**; the hermetic fixture is what covers it.
 
+### Follow-up, same arc: the workarounds retired, and a false green caught by mutating the test that found it (branch `claude/boxes-drop-workarounds`)
+
+The follow-up above, landed as a **lockstep pair** — `chaim354/tinkerex-addons`
+`claude/boxes-drop-workarounds` and this branch, which mirrors the finished bundle into
+`test/fixtures/addons/boxes/`. Both workarounds are gone from `boxes` **and** `boxes-next` (the two
+are byte-identical and stay so; `diff -rq` across all three trees is empty). Net **−9 lines** in the
+bundle: a ~30-line gap comment and a hand-rolled `fetch` out, an SDK call and a small
+`sidecarMessage` helper in. The `ctx` threading that existed only to feed them went too —
+`mountPreview` and `mountGallery` now take no `ctx` at all, and `buildCard` no longer forwards one.
+
+**`tray_layout_test.rb` was the point of the exercise and it is green.** It drives the real published
+bundle through a real browser and asserts on **what the proxy received** — so with `preview.js` back
+on `host.service.post`, the pass is the end-to-end proof that PR 6's JSON transport preserves an
+LF-clean `<textarea>` through a **published bundle**, not only through the hermetic `sdk-fixture`.
+That closes the caveat the paragraph above ends on. The other four boxes system tests
+(`box_save_folder`, `box_sections`, `plan_export`, `tray_top_view`) stay green.
+
+**One assertion in this repo went from missing to real, and the first version of it was a false
+green.** Nothing anywhere asserted that a sidecar's own prose reaches the user — the whole reason
+`ServiceError` carries RAW TEXT (§14c) — and the rewrite changed exactly how it is extracted: the old
+code branched on the response's `Content-Type` header, the new one parses the text out of the thrown
+`ServiceError`. Both spellings render an identical preview on the happy path. So
+`box_sections_test.rb` gained "a sidecar's refusal reaches the user in the sidecar's own words",
+stubbing `/generate` to a 422 carrying boxes.py's actual complaint. **Written with `text:`, it passed
+with the JSON rung deleted** — Capybara's `text:` is a SUBSTRING match and the unparsed body
+`{"error":"traylayout requires …"}` *contains* the sentence, so a bundle dumping the raw blob into
+the panel satisfied it. `exact_text:` is what makes it an assertion; the mutation then failed with
+the blob quoted verbatim. That is this repo's dominant failure mode caught inside the test written
+to prevent it — recorded here because a substring matcher will look harmless to the next reader too.
+
+Two mutation checks, each RED and restored: the JSON rung dropped from `sidecarMessage` (RED on the
+new test, panel showing `{"error":"…"}`); and `gallery.js` calling
+`host.service.url("boxes", generator.key)` without the `sample/` segment — RED across **ten**
+assertions in `box_sections_test` and `tray_top_view_test`, via `assert_no_console_errors`, because
+the mis-built URL 404s outside the `SAMPLE_404` ignore pattern. The second is worth knowing: the
+gallery's `service.url` call site is covered, and covered by accident of the console guard rather
+than by anything naming it.
+
+`bin/ci` **exit 0** — judged by exit code — all seven gates, 51.3 s. **2265 runs / 8187 assertions /
+0 failures / 0 errors / 9 skips, identical on chunk, share and s3** (8.6 s / 7.8 s / 8.4 s); system
+**82 runs / 494 assertions** (20.2 s). **+1 test** over `origin/main` at `b19efeb`, none removed —
+the server legs are unchanged, because a bundle that lives in `test/fixtures/` is only ever exercised
+by a browser. `bin/check-fixture-drift` in the addons repo **fails until this PR merges**, by design:
+it compares against the sibling checkout, which is on `main` and does not carry the new fixture. That
+is the gate working, not something to route around, and `ALLOW_FIXTURE_DRIFT=1` is not the answer.
+
 ## 2026-08-10: the reserved-name guard three web doors never had (branch `claude/reserved-name-door-guard`)
 
 **The ask** was one recorded divergence, carried over from PR #163 which was scoped to comments and

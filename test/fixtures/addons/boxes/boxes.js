@@ -46,7 +46,7 @@ export default {
     }
 
     const showGallery = () =>
-      swap(() => mountGallery(page, { generators, states, ctx, onOpenGenerator: showEditor, onOpenState: showState }))
+      swap(() => mountGallery(page, { generators, states, onOpenGenerator: showEditor, onOpenState: showState }))
 
     const showEditor = (key, prefillValues) => {
       const generator = generators.find((g) => g.key === key)

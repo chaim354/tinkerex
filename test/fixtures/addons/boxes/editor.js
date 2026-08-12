@@ -55,10 +55,11 @@ const saveFailure = (e) => {
 //
 // root: element to render into. generator: {key, title, group, param_groups}. states: the full
 // saved-states array (filtered here to this generator for the prior-boxes list). ctx: the mount
-// context, now forwarded rather than picked apart — folder_field.js reads its two DESTINATION keys
-// (`defaultFolder`, `defaultFolderLabel`) and preview.js reads `serviceUrl`/`csrfToken` for the one
-// call the SDK cannot yet carry (see the gap block in preview.js). `saveUrl` and the hand-rolled
-// CSRF header are gone entirely — `host.files.save` owns the save door now.
+// context, forwarded to ONE place and no longer threaded onward to preview.js — folder_field.js
+// reads its two DESTINATION keys (`defaultFolder`, `defaultFolderLabel`), which have no SDK
+// accessor and deliberately must not grow one (see folder_field.js). Everything transport-shaped is
+// the SDK's: `saveUrl` and the hand-rolled CSRF header went with `host.files.save`, and
+// `serviceUrl`/`csrfToken` went with `host.service.post` in preview.js.
 // prefillValues: a saved box's
 // `params`, when opened via "Load"/"Duplicate & tweak", or null for a fresh generator.
 // onBack(): return to the gallery. onSaved(): a save completed — the caller re-fetches states.
@@ -194,7 +195,6 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   destroyers.push({ destroy: () => root.removeEventListener("click", onExport) })
 
   const preview = mountPreview({
-    ctx,
     paramsRoot: $("groups"),
     image: $("preview-image"),
     status: $("status"),
@@ -220,9 +220,15 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     // A FRESH render, not whatever the debounced live preview last drew — the box's params may
     // have changed since that request landed, and this mirrors what the retired
     // Tools::BoxesController#create did (its own separate `client.generate` call at save time).
+    //
+    // NO `signal`, unlike mountPreview's: a superseded render is what an AbortSignal is for, and
+    // this one cannot be superseded — it is one call per click, and its result is consumed by the
+    // save immediately below rather than painted. Cancelling only this half would abandon the save
+    // it feeds, mid-flight, which is worse than letting a click the user has walked away from run
+    // to completion.
     let result
     try {
-      result = await generateSvg({ ctx, generator: generator.key, params })
+      result = await generateSvg({ generator: generator.key, params })
     } catch (e) {
       // generateSvg returns {ok: false} for a sidecar's own refusal and only THROWS for a genuine
       // transport failure, so this arm must not say anything about parameters. Previously an
