@@ -17,6 +17,26 @@ module Tools
 
     before_action :load_addon
 
+    # PARAMS WRAPPING OFF, AND THIS IS LOAD-BEARING FOR #service RATHER THAN TIDINESS. Rails 8
+    # defaults `wrap_parameters format: [:json]` in the FRAMEWORK — there is no
+    # config/initializers/wrap_parameters.rb in this repo, so grepping config/ for it finds nothing
+    # and the behaviour reads as absent. It is not: ParamsWrapper MERGES a duplicate of the whole
+    # body under a key derived from the controller's own name into `request.request_parameters`,
+    # which is verbatim what #service forwards to the sidecar. Probed, before and after: a
+    # `{generator, params}` JSON body arrived at the proxy as
+    # `{"generator"=>…, "params"=>…, "addon"=>{"generator"=>…, "params"=>…}}` — every sidecar call
+    # carrying a second, complete copy of itself under a key no sidecar has ever heard of.
+    #
+    # It only bites now because `host.service.post` sends JSON; the old FormData body was multipart,
+    # which ParamsWrapper does not touch, so this was inert until the transport changed and would
+    # have shipped as a doubled request body on the boxes sidecar's every keystroke-debounced render.
+    # boxes.py would tolerate the extra key, which is exactly why nothing would have reported it.
+    #
+    # Safe for the other actions by construction: wrapping only ADDS the duplicate, so nothing that
+    # reads `params[:name]` / `params[:files]` (all multipart from the save door) loses anything.
+    # There is no `Addon` model for it to have been wrapping FOR.
+    wrap_parameters format: []
+
     # `skip_forgery_protection` only does `skip_before_action :verify_authenticity_token`
     # (actionpack's request_forgery_protection.rb, `protect_from_forgery`) — it does NOT skip the
     # `verify_same_origin_request` after_action, which stays installed via
@@ -186,7 +206,13 @@ module Tools
       get_like = request.get? || request.head?
       res = Maker::Addons::ServiceProxy.current.call(
         method: get_like ? :get : :post, url: url, path: path,
-        params: get_like ? request.query_parameters : request.request_parameters
+        params: get_like ? request.query_parameters : request.request_parameters,
+        # THE MANIFEST ASKS; THE HOST DECIDES. Resolution lives in ServiceProxy.read_timeout_for
+        # rather than here, next to the default and the cap it clamps against, so a second call
+        # site cannot ship with the cap applied differently — or not at all.
+        read_timeout: Maker::Addons::ServiceProxy.read_timeout_for(
+          @addon.service_timeouts[params[:service].to_s]
+        )
       )
       type, disposition = proxied_delivery(res.content_type)
       send_data res.body, type:, disposition:, status: res.status

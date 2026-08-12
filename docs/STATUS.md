@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-10 (**a reserved output filename was a live node on chunk and a 422 on share/s3 — the door guard three web doors never had**)
+**Updated:** 2026-08-11 (**the addon service plane — `service.post`'s multipart transport rewrote every newline to CRLF, silently, and a sidecar parsing line by line misread it**)
 
 ## What this file is
 
@@ -60,7 +60,140 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-10): the reserved-name guard three web doors never had (branch `claude/reserved-name-door-guard`)
+## Latest (2026-08-11): the addon service plane — a CRLF corruption nothing could see, and three more (branch `claude/addon-api-pr6-service-plane`)
+
+**PR 6 of the Addon API v1 arc** (spec `docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
+§12 row 6), and **only half of that row**: the *service* plane shipped, `integrity` and content-hash
+asset URLs were split out — they are the *asset* plane, a different action, a different cache, and
+they need a per-publish manifest version this contract still lacks. Recorded in the spec beside the
+row rather than left to be re-derived.
+
+**Three of the four changes were defects, not enhancements, and none was a hypothesis.** `generators`,
+`boxes` and `boxes-next` are all live on `@maker/addon-sdk`; migrating `boxes` is what exposed them,
+and each had a live workaround in a published bundle with a comment naming the gap.
+
+### 1. `service.post` corrupted every multi-line value, silently
+
+The SDK built a `FormData`. **multipart/form-data serialization normalizes every text entry's
+newlines to CRLF** — the HTML standard's own encoding algorithm — and it happens *inside the
+browser, after `append` returns*. So a `<textarea>` whose DOM value is LF-clean reached the sidecar
+as `"+-+-+-+\r\n…"`. boxes.py's **TrayLayout**, whose entire input is that ASCII art parsed line by
+line, rendered the wrong tray and reported nothing. There is no bundle-side fix: pre-normalizing
+cannot help, because the mangling is downstream of the bundle. `preview.js` was still on a raw
+`fetch` for exactly this.
+
+**The server end already wanted JSON and this was verified rather than assumed.** `ServiceProxy#call`
+re-emits `params` as a JSON body because Flask's `request.get_json(force=True)` cannot read a form
+body. So the corruption was entirely browser-side and the fix is one-sided: `Content-Type:
+application/json` + `JSON.stringify(params)`, CSRF header kept. The same line fixes a second defect —
+`append` stringifies a nested value to the literal `"[object Object]"`, and `{generator, params: {…}}`
+is the shape of *every* real sidecar call.
+
+**Probing the whole path end to end found a defect nobody had reported.** Rails 8 defaults
+`wrap_parameters format: [:json]` **in the framework** — there is no initializer in this repo, so
+grepping `config/` finds nothing and the behaviour reads as absent. ParamsWrapper **merges a complete
+duplicate of the body** under a controller-derived key into `request.request_parameters`, which is
+verbatim what `#service` forwards. Measured, before the fix:
+
+```
+{"generator" => "TrayLayout", "params" => {…}, "addon" => {"generator" => "TrayLayout", "params" => {…}}}
+```
+
+Every sidecar call would have carried a second complete copy of itself under a key no sidecar has
+heard of. **Inert while the transport was multipart** (ParamsWrapper does not touch it), live the
+moment it became JSON — a doubled body on boxes' every debounced render, which boxes.py tolerates,
+which is exactly why nothing would have reported it. Fixed with `wrap_parameters format: []` on
+`Tools::AddonsController`.
+
+### 2–4. `service.url`, `{ signal }`, and per-service timeouts
+
+- **`host.service.url(name, path, params?)`** — synchronous, issues no request. `gallery.js` points
+  an `<img src>` at the proxy for sample photos and `service.get` *performs* the request and resolves
+  a `Response`, which cannot feed an attribute. Fetch-and-objectURL was rejected on measurement, not
+  taste: it defeats `loading="lazy"` across a tile grid and leaks a blob per card. All three verbs now
+  share **one** builder (`_serviceUrl`), which is what makes the traversal guards unforgeable — the
+  builder is the one place where a `..` is never inspected by a server guard afterwards, because there
+  is no request to inspect.
+- **`{ signal }` on `get`/`post`**, forwarded to `fetch`. **An abort is rethrown verbatim, never
+  wrapped in `ServiceUnavailableError`** — that class means "retry later, nothing to fix now", a lie
+  about a request the bundle cancelled itself. The condition is **`init.signal?.aborted`, not
+  `err.name === "AbortError"`**: `abort(reason)` makes fetch reject with *that reason* (a plain
+  `Error`, name `"Error"`), so the name test works for the simple caller and **fails silently for the
+  careful one**. Both directions mutation-checked.
+- **Per-service timeouts** — the row's original scope, and what unblocks row 7. `ServiceProxy::READ_TIMEOUT`
+  is a fixed 30 s while the OpenSCAD sidecar caps its **own** render at 60 s
+  (`sidecar/openscad/render.py`'s `TIMEOUT_S`, confirmed in tree), so the proxy gave up before the
+  sidecar finished — which is why the bespoke OpenSCAD controller could not retire. Recorded as
+  `docs/AUDIT-2026-08-03.md` **§2.3 "Sidecar-proxy read timeout…"**, named rather than numbered
+  because **that document has two sections numbered 2.3** and the other is the Content-Type
+  allowlist. Manifest key `service_timeouts` (`{name: seconds}`), parsed by `Registry` **per entry** and
+  degrading; the cap is applied at the **point of use** (`ServiceProxy.read_timeout_for`), not in
+  `Registry`, so lowering `ADDON_SERVICE_MAX_TIMEOUT` (default 120) does not wait out the 5-minute
+  manifest cache. **A manifest above the cap gets the cap, not an error** — refusing would take a
+  working addon down on a deploy that merely lowered the ceiling.
+
+**Why the cap exists, since it is the whole argument for having one:** the proxy is synchronous and
+`#service` holds a Puma thread for the entire round trip. Production runs `RAILS_MAX_THREADS: 16` on
+one worker (`config/deploy.yml`), so **16 concurrent renders at the cap occupy every thread for two
+minutes** and queue everything behind them — the addon page itself included. The cap bounds
+worst-case head-of-line blocking; the answer to a genuinely long render is an async job, which
+`docs/addon-api-v1.md` §7 now names as **not reserved** — matching spec §13, so an addon author is
+told there is no capability to feature-detect rather than left to guess one is coming.
+
+Worth connecting, because it was already written down elsewhere: `config/deploy.yml`'s own
+`RAILS_MAX_THREADS: 16` comment calls that thread bump "the cheapest of the three fixes the audit
+lists", naming the other two as **per-endpoint proxy timeouts** and **moving renders to a job with a
+polled result**. This PR ships the first of those two. The third stays open.
+
+### The CRLF fix had to be proved in a browser, and the mutation is the evidence
+
+**A unit assertion could not have caught this and still cannot** — every layer this repo can call
+directly holds a clean string; the corruption lives in the browser's multipart serializer. The
+original bug was found by `tray_layout_test.rb`, a real round trip, so the pin is one too: the
+hermetic `sdk-fixture` bundle now `host.service.post`s a real `<textarea>`'s value, and the Ruby side
+asserts **on what `FakeServiceProxy` received**, never on the SDK's intent. Reverting `post` to
+`FormData` produces, verbatim:
+
+```
+-"+-+-+-+     +"+-+-+-+\r
+-| | | |      +| | | |\r
+-+-+-+-+      ++-+-+-+\r
+```
+
+and, in the sibling test, `"[object Object]"` where a nested hash belongs.
+
+**Ten mutation checks, each RED on its own test and restored** (§15): `FormData` transport (2 RED,
+above); `wrap_parameters` removed (the `"addon"` duplicate reappears); `read_timeout` dropped at the
+controller (90 → 30, 120 → 30); the clamp removed (`9999` served); `.to_i` in `max_read_timeout`
+(`"-10"` becomes the cap); `read_timeout` hard-coded at the socket (**40 s elapsed against a 1 s
+argument**); `Registry` coercing instead of filtering (`"90"`, `0`, `-5`, `12.5` all honoured);
+`service.url` bypassing the shared builder (`name=no-error path=no-error` — traversal accepted, and
+the space left unencoded); the abort clause removed (`plain=ServiceUnavailableError`); the abort
+clause keyed on `err.name` (`plain=AbortError reasoned=ServiceUnavailableError` — precisely the
+careful-caller failure the `signal.aborted` reading exists to avoid); and the signal not forwarded at
+all (`plain=no-error`).
+
+### Numbers
+
+`bin/ci` **exit 0** — judged by exit code, not by reading output — all seven gates, 1 m 3.9 s on the
+committed tree. **2265 runs / 8187 assertions / 0 failures / 0 errors / 9 skips, identical on all
+three backend legs** (chunk 9.8 s, share 9.4 s, s3 9.4 s); system **81 runs / 490 assertions**
+(29.0 s). **+23 tests** over `origin/main` at `516b724` — 17 server
+(6 `registry_test`, 6 `service_proxy_test`, 5 `addons_controller_test`) and 6 system
+(`addon_sdk_test`), none removed.
+
+### What this leaves for the bundles repo — not changed here
+
+Three published workarounds can now go, and naming them is the point of having written them down:
+`addons/boxes/preview.js`'s `generateSvg` raw `fetch` (its whole `STILL A RAW fetch` block, ~30 lines
+of comment plus the `fetch`/CSRF/`ctx` threading) becomes `host.service.post(..., { signal })`; and
+`addons/boxes/gallery.js`'s `img.src = \`${ctx.serviceUrl}boxes/sample/…\`` becomes
+`host.service.url("boxes", \`sample/${generator.key}\`)`. Both bundles keep working unchanged in the
+meantime — nothing here is a breaking change — so the migration is a follow-up PR in
+`chaim354/tinkerex-addons`, not a coupled release. **Until it lands, no published bundle exercises
+the JSON transport in production**; the hermetic fixture is what covers it.
+
+## 2026-08-10: the reserved-name guard three web doors never had (branch `claude/reserved-name-door-guard`)
 
 **The ask** was one recorded divergence, carried over from PR #163 which was scoped to comments and
 deliberately did not fix it: an addon save (`POST /tools/:key`) answered differently per

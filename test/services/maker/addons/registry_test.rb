@@ -297,6 +297,65 @@ module Maker
         ])
         assert Registry.find("generators").available?
       end
+
+      # ---- service_timeouts ------------------------------------------------------------------
+
+      test "service_timeouts defaults to {} when the manifest omits it, exactly as pins does" do
+        assert_equal({}, Registry.find("generators").service_timeouts)
+      end
+
+      test "a manifest's declared service_timeouts carry onto the Addon" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("service_timeouts" => { "openscad" => 90, "boxes" => 15 })
+        ])
+        assert_equal({ "openscad" => 90, "boxes" => 15 },
+                     Registry.find("generators").service_timeouts)
+      end
+
+      test "a non-hash service_timeouts degrades to {} rather than erroring" do
+        [ 90, "90", [ "openscad", 90 ], nil ].each do |bad|
+          Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("service_timeouts" => bad) ])
+          assert_equal({}, Registry.find("generators").service_timeouts,
+                       "#{bad.inspect} must degrade, not carry")
+        end
+      end
+
+      # THE REFUSED VALUES, AND WHY EACH IS REFUSED RATHER THAN COERCED. `"90".to_i` is 90, so
+      # coercion would honour a value a JSON manifest should not contain — min_host's argument. 0
+      # and negatives are worse than a typo: Net::HTTP reads `read_timeout: 0` as "give up
+      # immediately", so honouring one would take a working sidecar down completely instead of
+      # leaving today's 30 s in place.
+      test "a service_timeouts value that is not a positive integer is dropped, not coerced" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("service_timeouts" => {
+            "str" => "90", "zero" => 0, "neg" => -5, "float" => 12.5, "nil" => nil, "ok" => 90
+          })
+        ])
+        assert_equal({ "ok" => 90 }, Registry.find("generators").service_timeouts)
+      end
+
+      # PER ENTRY, NOT PER HASH — an addon with two sidecars must not lose the good timeout to the
+      # bad one. The assertion above already proves this for a mixed hash; this states it as the
+      # rule so a "reject the whole hash if any entry is malformed" simplification fails here.
+      test "one malformed service_timeouts entry does not discard its valid siblings" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("service_timeouts" => { "good" => 45, "bad" => "45" })
+        ])
+        assert_equal({ "good" => 45 }, Registry.find("generators").service_timeouts)
+      end
+
+      # THE CAP IS NOT THE REGISTRY'S JOB. It records what the manifest ASKED FOR; the host's
+      # ceiling is applied at the point of use (ServiceProxy.read_timeout_for), so lowering
+      # ADDON_SERVICE_MAX_TIMEOUT takes effect without waiting out the 5-minute manifest cache.
+      test "a service_timeouts value above the host cap is carried unclamped, not refused here" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("service_timeouts" => { "slow" => 9_999 })
+        ])
+        assert_equal({ "slow" => 9_999 }, Registry.find("generators").service_timeouts)
+        assert_equal Maker::Addons::ServiceProxy::MAX_TIMEOUT_DEFAULT,
+                     Maker::Addons::ServiceProxy.read_timeout_for(9_999),
+                     "the clamp belongs to the proxy, and must actually happen there"
+      end
     end
   end
 end

@@ -107,8 +107,13 @@ class BoxSectionsTest < ApplicationSystemTestCase
   # at once, so the cards render and become clickable while their four thumbnails are still in
   # flight — the exact state the gallery is in on a loaded CI box, and the one that made the click
   # race reachable there and not here.
+  #
+  # NAMES ONLY THE ARGUMENT IT BRANCHES ON and forwards the rest with a bare `super`. Spelling the
+  # whole signature out made this override an ArgumentError the moment ServiceProxy#call grew a
+  # keyword (`read_timeout:` was the first), which fails as a broken gallery rather than as
+  # anything naming a signature.
   class SlowSamples < FakeServiceProxy
-    def call(method:, url:, path:, params: {})
+    def call(path:, **rest)
       sleep 0.3 if path.to_s.start_with?("sample/")
       super
     end

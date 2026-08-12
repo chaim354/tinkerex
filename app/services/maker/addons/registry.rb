@@ -9,7 +9,7 @@ module Maker
     # out rather than 500ing. One bad addon must never take /tools down.
     Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout,
                         :states_key, :version, :author, :license, :homepage, :permissions,
-                        :min_host, :shares_states_with) do
+                        :min_host, :shares_states_with, :service_timeouts) do
       # NO LONGER HARDCODED TRUE. It was, for as long as a registered addon was by definition
       # fetchable; `min_host` gives it a second, real answer — an addon can be perfectly fetchable
       # and still ask for a host this deployment does not have. The gallery already had the
@@ -110,7 +110,27 @@ module Maker
           # and `pins` which type-check. Lenient in the CONSENT direction — the worst case is an
           # author writing `"shares_states_with": "boxes-next"` and it working — so it is safe, but
           # it is leniency rather than validation and the doc says "array of strings".
-          shares_states_with: Array(manifest["shares_states_with"]).map(&:to_s)
+          shares_states_with: Array(manifest["shares_states_with"]).map(&:to_s),
+          # PER-SERVICE READ TIMEOUTS, `{service_name => seconds}`. Filtered to POSITIVE INTEGERS,
+          # entry by entry, for `min_host`'s reason one line up and one more of its own:
+          #
+          #   - `"60"` (the string) is REFUSED rather than coerced. `.to_i` would honour a value a
+          #     JSON manifest should not contain, and the failure direction that leaves — the
+          #     service keeps the 30 s default — is the one an operator can diagnose, because it is
+          #     simply today's behaviour rather than a novel one.
+          #   - 0 and negatives are refused because Net::HTTP reads `read_timeout: 0` as "give up
+          #     immediately", so the obvious typo would take a working sidecar down completely
+          #     rather than degrade.
+          #
+          # PER ENTRY, NOT PER HASH: one malformed value must not discard the sibling entries that
+          # are fine — an addon with two sidecars should not lose the good timeout to the bad one.
+          # THE CAP IS NOT APPLIED HERE. This records WHAT THE MANIFEST ASKED FOR; the host's
+          # ceiling is Maker::Addons::ServiceProxy.read_timeout_for, at the point of use, so an
+          # operator changing ADDON_SERVICE_MAX_TIMEOUT does not need the 5-minute manifest cache
+          # to expire before it takes effect.
+          service_timeouts: (manifest["service_timeouts"].is_a?(Hash) ? manifest["service_timeouts"] : {})
+            .select { |_name, seconds| seconds.is_a?(Integer) && seconds.positive? }
+            .transform_keys(&:to_s)
         )
       end
 
