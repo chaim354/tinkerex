@@ -409,7 +409,7 @@ from §4, §5, §9 and §10, which is what an addon author reads instead of this
 | 3 | Error contract completion + state CRUD + keyset paging | States stop accumulating unboundedly | low |
 | 4 | Data plane — `AddonRecord`, collections, grants, JSON Schema, typed refs | Machine / Material / bit libraries; the moat becomes addressable | medium |
 | 5 | File plane — multipart + binary save, gated read, `pickFile`; `folders` moves behind `pickFolder` | Real CAD/CAM addons (3MF/STL out, `.scad`/`.dxf` in) | medium |
-| 6 | Per-service timeouts, `integrity`, content-hash asset URLs | Perf + the stale-bundle trap | medium |
+| 6 | **PARTIALLY SHIPPED** (branch `claude/addon-api-pr6-service-plane`) — the **service plane**: per-service timeouts, plus three transport fixes a real bundle migration exposed. `integrity` and content-hash asset URLs are **NOT** in it; see below | Perf + the OpenSCAD migration (row 7) | medium |
 | 7 | OpenSCAD migrates onto the generic surface; the bespoke controller retires | Retires the last hand-written addon controller | **high** — server-side param coercion moves into the sidecar |
 | 8 | Ring 2 | Third-party addons | triggered, not scheduled |
 
@@ -444,6 +444,42 @@ Three reasons, in order of weight:
    PR 2 shipped and what `docs/addon-api-v1.md` §2 and §4 now say in those words.
 
 Reconcile `services` with `service:<name>` **before** building the check, not while building it.
+
+**Row 6's scope split, recorded where the single-row version was written.** The row bundled three
+unrelated things under "perf"; what shipped is the **service plane** only, and the other two were
+deliberately left out rather than forgotten.
+
+What shipped, four changes to one subsystem:
+
+1. **Per-service timeouts** — the row's original scope. Manifest key `service_timeouts`
+   (`{name: seconds}`), parsed by `Registry` per entry and degrading, resolved and capped at the
+   point of use by `Maker::Addons::ServiceProxy.read_timeout_for`, ceiling
+   `ADDON_SERVICE_MAX_TIMEOUT` default 120. A manifest above the cap gets **the cap, not an error**.
+   This is what unblocks row 7: the OpenSCAD sidecar caps its own render at 60 s
+   (`sidecar/openscad/render.py`'s `TIMEOUT_S`) against the proxy's fixed 30 s, so the proxy gave up
+   first. Recorded as `docs/AUDIT-2026-08-03.md` **§2.3 "Sidecar-proxy read timeout…"** — named, not
+   numbered, because that document has **two** sections numbered 2.3.
+2. **`service.post` sends JSON, not `FormData`** — multipart normalizes every text field's newlines
+   to **CRLF**, silently corrupting any sidecar input parsed line by line (boxes.py's TrayLayout is
+   entirely ASCII art). Same line also fixes `FormData` flattening a nested `params` object to
+   `"[object Object]"`.
+3. **`host.service.url(name, path, params?)`** — a pure URL builder for `<img src>`, sharing the
+   traversal guards with `get`/`post`.
+4. **`{ signal }` on `get`/`post`** — an `AbortSignal`, with the abort rethrown verbatim rather than
+   collapsed into `ServiceUnavailableError`.
+
+**Three of those four were defects, not enhancements, and each had a live workaround in a published
+bundle** — `addons/boxes/preview.js` was still on a raw `fetch` for (2) and (4), and
+`addons/boxes/gallery.js` on a raw `ctx.serviceUrl` for (3), both with comments naming the gap. That
+is what pulled them into this row: they are the service plane, and the migration proved them.
+
+**`integrity` and content-hash asset URLs are split out into a later PR**, unbuilt and unscheduled.
+They belong to the **asset** plane, not the service plane — a different controller action
+(`#asset`), a different cache (`ASSET_TTL`), and a different problem (the stale-bundle trap). They
+also share a prerequisite this row does not: a **per-publish version to key on**, which the manifest
+contract still lacks and which is a change to the manifest format rolled out across every bundle in
+a separate repo. Landing them here would have doubled the diff and coupled a browser-transport fix
+to a bundle-format migration.
 
 ---
 

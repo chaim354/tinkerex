@@ -101,6 +101,7 @@ check the required keys and the exact string `"1"` first.
 |---|---|---|
 | `pins` | object | Bare-specifier → asset path. Each entry is added to the page's import map, pointing at your addon's own asset, so `import geometry from "geometry"` resolves inside your bundle. Paths are relative to your addon's directory. |
 | `services` | array of strings | Sidecar services this addon may talk to through `host.service.*`. **The host will only proxy a service your manifest names** *and* for which the operator has configured a URL — both, never either. |
+| `service_timeouts` | object | Per-service read timeout in seconds, `{ "<service>": <integer> }`. Bounded by a host maximum — see below. |
 | `layout` | string | `"wide"` opts the page into the wide container. Any other value — including a typo — is treated exactly like the key being absent. |
 | `states_key` | string | The scope your saved states are read and written under. Defaults to `key`. Naming **another** addon's key requires that addon's written consent — see below. |
 | `shares_states_with` | array of strings | The addon keys you consent to sharing *your* saved states with. The other half of `states_key`; on its own it grants nothing. |
@@ -202,6 +203,49 @@ declaration.
 > is never rebuilt: the card is where scope drift becomes visible. It is **not** a sandbox, not an
 > allowlist, and not a thing to design a security argument around. See §4.
 
+#### `service_timeouts` — asking for longer, within a ceiling you do not set
+
+The host gives every sidecar call a **30-second** read timeout. That is too short for some real
+renders, so a manifest can ask for more, per service:
+
+```json
+{
+  "services": [ "openscad", "boxes" ],
+  "service_timeouts": { "openscad": 90 }
+}
+```
+
+Keyed by **service name**, not by addon: an addon with a slow sidecar and a fast one should not
+give the fast one the slow one's budget. A service you do not list keeps the 30-second default.
+
+**You are asking, not setting.** The operator's `ADDON_SERVICE_MAX_TIMEOUT` (default **120**) is the
+ceiling, and a value above it is silently **clamped to the cap rather than refused** — your addon
+keeps working on a deployment that lowered the ceiling, it just does not get the number it asked
+for. There is no way to observe the effective value from a bundle; if a render needs more time than
+the deployment allows, the call fails as an ordinary `ServiceError` when the timeout expires.
+
+Three ways to write it that do **not** work, all silent, all leaving that service on the 30-second
+default:
+
+- **a string** — `"openscad": "90"`. Write a bare JSON number. (`min_host`'s rule, same reason:
+  coercing would honour a value a JSON manifest should not contain.)
+- **zero or a negative** — refused rather than honoured, because the underlying HTTP client reads a
+  0-second timeout as "give up immediately", which would take the sidecar down completely instead
+  of leaving it as it was.
+- **a non-object** — `"service_timeouts": 90` is ignored entirely.
+
+A malformed entry only discards **itself**; valid siblings in the same object still apply.
+
+**Why there is a ceiling at all, since it constrains you:** the proxy is synchronous and holds one
+of the host's request threads for the whole sidecar round trip. At the cap, a handful of concurrent
+renders can occupy the entire pool and queue every other request behind them — including the addon
+page itself. A genuinely long-running job wants an async surface, which this version does not have
+(§7).
+
+> **This is a manifest key, not a per-call option.** The design sketch for this API showed
+> `host.service.post(name, path, params, { timeout: 90 })`; that is **not** implemented and is not
+> the shape this shipped in. The only per-call option is `signal` (§3).
+
 #### `states_key` and `shares_states_with` — both sides, or neither
 
 By default your saved states live under your own `key`. `states_key` points them at a different
@@ -250,7 +294,7 @@ per-user scoping.
 
 The design for this API reserves the keys below. **This host does not read any of them yet.**
 
-`collections`, `contributes`, `integrity`, `service_timeouts`.
+`collections`, `contributes`, `integrity`.
 
 **Unknown keys are ignored in silence.** The manifest reader takes only the keys it knows and never
 complains about the rest, so writing `"integrity": {…}` today produces no warning, no log line and
@@ -487,7 +531,7 @@ your addon's `states_key`; there is no way to read another user's states.
 A non-JSON response raises an `AddonError` with code `invalid_response` rather than a bare
 `SyntaxError`.
 
-### `host.service.get(name, path, params?)` / `host.service.post(name, path, params?)` — capability `service`
+### `host.service.get(name, path, params?, options?)` / `host.service.post(name, path, params?, options?)` / `host.service.url(name, path, params?)` — capability `service`
 
 Proxies one request to a sidecar your manifest names in `services`.
 
@@ -503,7 +547,22 @@ const list = await res.json()
 
 **These return the raw `Response`, not parsed data.** A sidecar can answer SVG, JSON, a 3MF or a
 JPEG, and the SDK has no way to know which — so parsing is yours: `.text()`, `.json()`, `.blob()`,
-whichever fits. `post` sends `params` as form data; `get` sends them as a query string.
+whichever fits.
+
+**`post` sends `params` as a JSON body** (`Content-Type: application/json`); `get` sends them as a
+query string. Two consequences worth knowing, because both were real bugs under the form-data
+transport this replaced:
+
+- **Nested values survive.** `{ generator: "TrayLayout", params: { depth: 3 } }` arrives at your
+  sidecar as that object. Form data stringified the inner object to the literal
+  `"[object Object]"`.
+- **Multi-line strings survive.** A `\n` stays a `\n`. Multipart serialization rewrites every text
+  field's newlines to **CRLF**, so a `<textarea>` whose DOM value is LF-clean reached the sidecar
+  as `"+-+-+-+\r\n…"` — which a sidecar parsing line by line misreads with no error anywhere.
+
+Your sidecar therefore reads a JSON body. In Flask that is `request.get_json(force=True)`, which is
+what `sidecar/boxes` already did — the host has always re-emitted these params as JSON, so it is
+only the browser half that changed.
 
 `path` may be multi-segment (`"render/preview"`); each segment is encoded separately. Empty
 segments and `.` / `..` are **rejected** with `invalid_argument` rather than normalised away, so a
@@ -517,13 +576,79 @@ call would otherwise misroute silently instead of failing.
 The host answers **404** if your manifest does not name the service, or if the operator has
 configured no URL for it. The sidecar's URL never comes from your manifest.
 
-One thing that only matters if you point an element's `src` straight at the proxy URL (available as
-`ctx.serviceUrl` in `mount`) rather than reading through `service.get`: the host re-decides the
-response's content type from a fixed list — `application/json`, `image/jpeg`, `image/png`,
-`text/plain` and `model/*` are served inline; **everything else, including `image/svg+xml`, is
-served as an `application/octet-stream` attachment**. Neither header affects a `fetch()` body, so a
-`service.*` call is unaffected — read the SVG with `res.text()` and build a `data:` URL if you need
-to display it.
+#### Cancelling a call: the `signal` option
+
+Both take an optional fourth argument, `{ signal }` — an ordinary `AbortSignal`, forwarded to
+`fetch`. A superseded render and a teardown are the two cases:
+
+```js
+let controller = null
+
+async function render() {
+  controller?.abort()                    // whatever is in flight is now stale
+  controller = new AbortController()
+  try {
+    const res = await host.service.post("boxes", "generate", values(), { signal: controller.signal })
+    draw(await res.text())
+  } catch (e) {
+    if (e.name === "AbortError") return  // we cancelled this ourselves; not a failure
+    showError(e)
+  }
+}
+
+host.on("teardown", () => controller?.abort())
+```
+
+**An abort is rethrown exactly as the platform produced it — it is deliberately *not* wrapped in a
+`ServiceUnavailableError`.** That class means "retry later, there is nothing to fix now", which
+would be a lie about a request your own code cancelled, and would make a cancelled render paint an
+error banner. So:
+
+| How you aborted | What you catch |
+|---|---|
+| `controller.abort()` | the platform's `DOMException`, `name === "AbortError"` |
+| `controller.abort(reason)` | **`reason` itself**, untouched — whatever object you passed |
+| `AbortSignal.timeout(ms)` expiring | the platform's `DOMException`, `name === "TimeoutError"` |
+| a genuine network failure | `ServiceUnavailableError`, code `network_error` |
+
+Branch on `e.name === "AbortError"`, or on `signal.aborted`, or on your own reason object —
+whichever suits. What you must *not* do is treat `ServiceUnavailableError` as covering
+cancellation; it never does.
+
+#### `host.service.url(name, path, params?)` — a URL, no request
+
+Synchronous. Returns the proxy URL for a sidecar endpoint **without fetching anything**, for the
+one case `get` cannot serve: handing a string to an attribute the browser fetches itself.
+
+```js
+const img = document.createElement("img")
+img.loading = "lazy"
+img.src = host.service.url("boxes", `sample/${generator.key}`)
+```
+
+`get` performs the request and resolves a `Response`, which cannot feed an `<img src>`; fetching
+and building an object URL instead would download every tile eagerly (defeating `loading="lazy"`)
+and need a `revokeObjectURL` per element. This is the supported spelling.
+
+It applies **exactly the same refusals as `get` and `post`** — same encoding, same rejection of
+empty / `.` / `..` segments and of a `/` in the service name — and throws
+`UnsupportedCapabilityError` if the host cannot proxy services at all, rather than handing back a
+URL that would 404 as a silent broken image.
+
+Mind the content-type rule below: this is the call site it exists for, and it is also the call site
+where getting the type wrong shows up as a blank element rather than an error.
+
+#### What the host serves inline
+
+This only matters if the browser fetches the URL itself — via `service.url` above, or the raw
+`ctx.serviceUrl` in `mount` — rather than your code reading through `service.get`. The host
+re-decides the response's content type from a fixed list: `application/json`, `image/jpeg`,
+`image/png`, `text/plain` and `model/*` are served inline; **everything else, including
+`image/svg+xml`, is served as an `application/octet-stream` attachment**.
+
+So an `<img src>` pointed at a JPEG endpoint works, and one pointed at an SVG endpoint does not.
+Neither header affects a `fetch()` body, so a `service.get` / `service.post` call is unaffected —
+read the SVG with `res.text()` and build a `data:` URL if you need to display it.
 
 ### `host.on("teardown", fn)`
 
@@ -741,6 +866,13 @@ host starts emitting the newer spelling, and a `e.code === "…"` check quietly 
 | `invalid_response` | `AddonError` | The host answered the states list with something that is not JSON. |
 | `unknown_event` | `AddonError` | `host.on` was given an event name other than `"teardown"`. |
 
+**A cancelled request is not in this table, on purpose.** When you abort a `service.get` /
+`service.post` through its `signal`, the rejection you catch is the platform's own — or your own
+`abort(reason)` object — passed through with no `code` and no SDK class wrapped around it. It is
+your action, not a host failure, so it is not given a failure code. See §3 for the full table of
+what you catch for each way of aborting; note in particular that it is **never**
+`ServiceUnavailableError`.
+
 ### Sidecar failures are not run through this table
 
 A failed `host.service.get`/`post` raises a **`ServiceError`** with code `service_error`, carrying
@@ -833,6 +965,7 @@ up when the host ships it — no new release of your bundle required.
 | Reading the user's current project | `project:current` |
 | Outbound HTTP to anything but a declared sidecar | Not reserved. The host makes no arbitrary outbound requests on an addon's behalf, by design; a future permission model would name specific origins. |
 | Binary file output | No capability of its own — `body` becomes able to carry bytes under `library:write`, and the host's `level` rises when it does. Today `body` is a string. |
+| Async / long-running jobs — submit, poll, collect | Not reserved. Every sidecar call is synchronous and holds a host thread for its duration, which is why `service_timeouts` (§2) has a ceiling; a job surface would be named `jobs:*` once something needs one. |
 
 ```js
 // Written today, dormant today, live the day the host ships it.

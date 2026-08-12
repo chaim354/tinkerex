@@ -1,4 +1,5 @@
 require "application_system_test_case"
+require_relative "../support/fake_service_proxy"
 
 # THE SDK, IN THE ONLY PLACE IT IS REAL. There is no JS unit-test runner in this repo (no
 # package.json, importmap + Propshaft only), and the SDK is transport — a fetch, a CSRF header, a
@@ -9,6 +10,16 @@ require "application_system_test_case"
 # HERMETIC, like its sibling addon_bundle_test.rb: this reads test/fixtures/addons, never the
 # chaim354/tinkerex-addons working copy, so a fresh clone can run it.
 class AddonSdkTest < ApplicationSystemTestCase
+  # The sdk-fixture manifest declares `services: ["fixture-svc"]`, so
+  # Tools::AddonsController#sidecar_url_for derives exactly this env var name.
+  SIDECAR_URL = "http://sdk-sidecar.test".freeze
+
+  # The same art the fixture bundle seeds its <textarea> with. Duplicated deliberately rather than
+  # threaded through the page: the assertion is "the bytes the bundle held are the bytes the proxy
+  # received", and deriving the expectation from anything the transport touched would let a
+  # corruption cancel itself out on both sides.
+  ART = "+-+-+-+\n| | | |\n+-+-+-+\n".freeze
+
   setup do
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
@@ -17,6 +28,20 @@ class AddonSdkTest < ApplicationSystemTestCase
 
   teardown do
     ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
+    ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+    Maker::Addons::ServiceProxy.reset!
+  end
+
+  # Installs a recording proxy answering the two endpoints the fixture calls. Returns it so a test
+  # can read `.calls` — the same seam tray_layout_test.rb uses, and the only place the browser's
+  # own serialization is observable from Ruby.
+  def install_sidecar
+    ENV["FIXTURE_SVC_SIDECAR_URL"] = SIDECAR_URL
+    proxy = FakeServiceProxy.new
+    proxy.ok("#{SIDECAR_URL}/echo", body: "echoed", content_type: "text/plain")
+    proxy.ok("#{SIDECAR_URL}/slow", body: "slow", content_type: "text/plain")
+    Maker::Addons::ServiceProxy.stub = proxy
+    proxy
   end
 
   test "a bundle that imports the SDK mounts, sees the host level, and reads the capability map" do
@@ -93,6 +118,103 @@ class AddonSdkTest < ApplicationSystemTestCase
     # network, so there is no failed fetch for Chrome to log SEVERE. With either guard removed a 404
     # appears here too — but a console check alone would be a weaker guard than the assertion above,
     # which names exactly which of the two halves broke.
+    assert_no_console_errors
+  end
+
+  # ---- the service plane ---------------------------------------------------------------------
+
+  # THE CRLF DEFECT, PROVED THE ONLY WAY IT CAN BE. A unit assertion on the SDK cannot see this and
+  # never could: under the old FormData transport the mangling happened INSIDE THE BROWSER'S
+  # multipart serializer, after `body.append(k, v)` returned, so every layer this repo can call
+  # directly held a perfectly LF-clean string. The bug was found by tray_layout_test.rb — a real
+  # browser round trip — and it has to be pinned by one.
+  #
+  # ASSERTS ON WHAT THE PROXY RECEIVED, NOT ON THE SDK'S INTENT. `@proxy.calls` is the far side of
+  # the whole chain (bundle -> fetch -> Rack -> Rails param parsing -> #service), which is the only
+  # vantage point from which "the newlines survived" is a fact rather than a hope.
+  test "service.post carries a multi-line value through with its newlines intact" do
+    proxy = install_sidecar
+    visit "/tools/sdk-fixture"
+    click_button "Post art"
+    assert_selector "[data-role=sdk-post-result]", text: "echoed"
+
+    layout = proxy.calls.last.params["layout"]
+    # THE NARROWEST TRUE THING FIRST, then the two properties it is made of — so a failure names
+    # which half broke rather than dumping two blobs of ASCII art at the reader.
+    assert_equal ART, layout
+    assert_includes layout, "\n", "the line breaks were dropped entirely"
+    assert_not_includes layout, "\r", "multipart CRLF normalization is back"
+  end
+
+  # THE SECOND DEFECT IN THE SAME LINE, and the reason the fix is JSON rather than a
+  # pre-normalization hack: `FormData#append` stringifies a nested value to the literal
+  # "[object Object]". Every real sidecar call in the boxes bundle sends `{generator, params: {…}}`,
+  # so this is the common shape, not an edge case.
+  test "service.post preserves a nested params object instead of flattening it" do
+    proxy = install_sidecar
+    visit "/tools/sdk-fixture"
+    click_button "Post art"
+    assert_selector "[data-role=sdk-post-result]", text: "echoed"
+
+    assert_equal({ "generator" => "TrayLayout", "depth" => 3 }, proxy.calls.last.params["nested"])
+  end
+
+  # The manifest declares `service_timeouts: {"fixture-svc": 90}`, so this drives the whole chain in
+  # one go — a JSON manifest read off disk by Source::Local, parsed by Registry, resolved against
+  # the host cap by ServiceProxy.read_timeout_for, and handed to the proxy — rather than the three
+  # unit tests each proving their own link and nobody proving they are connected.
+  test "a manifest's declared service timeout reaches the proxy for a real browser call" do
+    proxy = install_sidecar
+    visit "/tools/sdk-fixture"
+    click_button "Post art"
+    assert_selector "[data-role=sdk-post-result]", text: "echoed"
+
+    assert_equal 90, proxy.calls.last.read_timeout
+  end
+
+  # SYNCHRONOUS, AND IT ISSUES NO REQUEST — both asserted at once. The fixture fills this element
+  # during mount(), with no await, so a `url` that performed a request could not have produced text
+  # by the time the page settles; and the proxy recording stays EMPTY, which is the direct form of
+  # "nothing was fetched".
+  #
+  # The path segment carries a SPACE so the assertion also pins that the builder encodes rather
+  # than interpolates — an unencoded space in an <img src> is exactly the kind of thing that works
+  # in one browser and not the next.
+  test "service.url builds a URL, encodes it, and sends nothing" do
+    proxy = install_sidecar
+    visit "/tools/sdk-fixture"
+
+    assert_selector "[data-role=sdk-service-url]",
+                    exact_text: "/tools/sdk-fixture/service/fixture-svc/sample/a%20b"
+    assert_empty proxy.calls, "service.url must not perform a request"
+    assert_no_console_errors
+  end
+
+  # THE GUARDS ARE SHARED WITH get/post, WHICH IS THE WHOLE SAFETY ARGUMENT FOR THE BUILDER. A URL
+  # handed to an `<img src>` is the one case where a traversal is never inspected by a server guard
+  # later — there is no request to inspect — so a builder that skipped these would be a traversal
+  # hole with a friendly name. EXACT text, not a substring: this file's own onReplace assertion
+  # records why a substring match would let half a regression through.
+  test "service.url refuses a traversing service name and a traversing path" do
+    install_sidecar
+    visit "/tools/sdk-fixture"
+    click_button "Probe url guards"
+    assert_selector "[data-role=sdk-url-guards]",
+                    exact_text: "name=AddonError:invalid_argument path=AddonError:invalid_argument"
+    assert_no_console_errors
+  end
+
+  # AN ABORT IS THE CALLER'S OWN ACTION AND MUST NOT ARRIVE AS A HOST FAILURE. Both halves matter,
+  # and the second is the one with teeth: `abort(reason)` makes fetch reject with THAT reason — a
+  # plain Error, name "Error" — so an SDK that recognised aborts by `err.name === "AbortError"`
+  # would pass `plain=` and report `reasoned=ServiceUnavailableError`, wrapping a cancellation into
+  # "retry later, there is nothing to fix now". Reading the class NAME of each is what tells the
+  # two implementations apart.
+  test "an aborted service call rejects with the caller's own error, not ServiceUnavailableError" do
+    install_sidecar
+    visit "/tools/sdk-fixture"
+    click_button "Probe abort"
+    assert_selector "[data-role=sdk-abort]", exact_text: "plain=AbortError reasoned=Error"
     assert_no_console_errors
   end
 

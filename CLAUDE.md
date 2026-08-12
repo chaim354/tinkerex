@@ -802,6 +802,53 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   definition. Only `.`, `..` and `""` survive `encodeURIComponent` — `\`, `#`, `?`, `%` need no
   clause. Proven in a **browser** (`addon_sdk_test.rb`), because the normalization is the URL
   parser's and no server-side test can observe it.
+- **`service.post` SENDS A JSON BODY, AND A `FormData` IS NOT AN EQUIVALENT SPELLING OF IT.**
+  multipart/form-data serialization **normalizes every text entry's newlines to CRLF** (the HTML
+  standard's own encoding algorithm), and it happens INSIDE THE BROWSER, *after* `append` returns —
+  so a `<textarea>` whose DOM value is LF-clean reached the sidecar as `"+-+-+-+\r\n…"` with no
+  bundle-side fix possible and nothing anywhere reporting it. boxes.py's TrayLayout, whose entire
+  input is that ASCII art, then rendered the wrong tray. `append` ALSO stringifies a nested value to
+  the literal `"[object Object]"`, and `{generator, params: {…}}` is the shape of every real sidecar
+  call. **The server end always wanted JSON** — `ServiceProxy#call` re-emits `params` as a JSON body
+  because Flask's `request.get_json(force=True)` cannot read a form body — so the whole corruption
+  was one-sided and the fix is one-sided. **A unit assertion cannot see this**: every layer this repo
+  can call directly holds a clean string. Pinned in a real browser by `addon_sdk_test.rb`, asserting
+  on **what the proxy RECEIVED** (`FakeServiceProxy#calls`), never on the SDK's intent.
+- **`wrap_parameters format: []` ON `Tools::AddonsController` IS LOAD-BEARING FOR `#service`.** Rails
+  8 defaults `wrap_parameters format: [:json]` in the FRAMEWORK — there is no initializer in this
+  repo, so grepping `config/` finds nothing and the behaviour reads as absent. It is not:
+  ParamsWrapper **merges a complete duplicate of the body** under a controller-derived key into
+  `request.request_parameters`, which is verbatim what `#service` forwards to the sidecar. Probed: a
+  `{generator, params}` body arrived as `{…, "addon" => {…the whole body again…}}`. Inert while the
+  transport was multipart, live the moment it became JSON — a doubled request body on every
+  debounced render, which boxes.py tolerates, which is exactly why nothing would have reported it.
+- **`service.url` SHARES ONE URL BUILDER WITH `get`/`post`, WHICH IS THE WHOLE SAFETY ARGUMENT.** It
+  hands a raw string to an attribute the **browser** dereferences, so there is no request for a
+  server guard to inspect afterwards — a builder that skipped `encodeServiceName` /
+  `encodePathSegments` would be the bullet above's traversal hole with a friendly name. Hence
+  `_serviceUrl`, shared by all three, rather than three call sites that must agree. It exists
+  because `get` PERFORMS the request and resolves a `Response`, which cannot feed an `<img src>`;
+  fetch-and-objectURL defeats `loading="lazy"` across a tile grid and leaks a blob per card. The
+  proxy's `image/jpeg` allowlist entry (above) is for exactly this call site.
+- **AN ABORT IS RETHROWN VERBATIM AND MUST NEVER BECOME `ServiceUnavailableError`** — that class
+  means "retry later, there is nothing to fix now", which is a lie about a request the bundle
+  cancelled itself, and would make a superseded render paint an error banner. **The condition is
+  `init.signal?.aborted`, NOT `err.name === "AbortError"`**: `abort(reason)` makes fetch reject with
+  THAT reason (a plain `Error`, name `"Error"`), so the name test works for the simple caller and
+  **silently fails for the careful one**. Mutation-checked in both directions.
+- **A `service_timeouts` VALUE ABOVE `ADDON_SERVICE_MAX_TIMEOUT` GETS THE CAP, NOT AN ERROR** —
+  the manifest is remote and versioned independently of this host, so refusing would take a working
+  addon down on a deploy that merely lowered the ceiling. The cap is applied at the point of use
+  (`ServiceProxy.read_timeout_for`), **not** in `Registry`, so lowering it does not wait out the
+  5-minute manifest cache; `Registry` records what was ASKED FOR and filters to **positive Integers
+  per entry** (a `"90"` string coerced would honour what a JSON manifest should not contain; a `0`
+  is read by Net::HTTP as "give up immediately", so honouring it takes the sidecar down rather than
+  degrading). **The ceiling exists because the proxy is SYNCHRONOUS**: `#service` holds a Puma
+  thread for the whole round trip and production runs `RAILS_MAX_THREADS: 16` on one worker, so 16
+  concurrent renders at the cap occupy every thread for two minutes and queue the addon page itself
+  behind them. Raising it raises worst-case head-of-line blocking; the fix for a genuinely long
+  render is an async job, which spec §13 lists as **not reserved** — no capability name, nothing to
+  feature-detect — so a bigger number here is not a substitute for building one.
 - **A `states_key` POINTING AT ANOTHER ADDON REQUIRES A MUTUAL DECLARATION** — the claimant names
   the target, the target names the claimant back in `shares_states_with`, **and the target must
   itself be a VALID addon** (`build` must succeed on it), or an entry `build` rejects confers a

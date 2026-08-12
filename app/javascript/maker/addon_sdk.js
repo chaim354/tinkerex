@@ -292,16 +292,39 @@ class Host {
   // connection) throws a bare `TypeError: Failed to fetch` today — the most actionable failure a
   // bundle can see, and the only one with no class, in a file that opens by claiming every
   // actionable failure is one. Classify it instead of letting it escape raw.
+  //
+  // AN ABORT IS THE ONE REJECTION THAT ESCAPES UNWRAPPED, AND THAT IS THE CONTRACT, NOT A GAP. When
+  // the caller's own `signal` fired, the rejection is the CALLER'S OWN ACTION rather than a host
+  // failure, and the two must stay distinguishable: `ServiceUnavailableError` means "retry later,
+  // there is nothing to fix now", which is a lie about a request the bundle itself cancelled — it
+  // would make a superseded render paint an error banner and a teardown-time abort log a fake
+  // outage. So the original rejection is rethrown verbatim, which is also what every fetch-based
+  // bundle already tests for (`if (e.name === "AbortError") return`).
+  //
+  // THE CONDITION IS `signal.aborted`, DELIBERATELY NOT `err.name === "AbortError"`. `abort(reason)`
+  // makes fetch reject with THAT reason — a plain `Error("superseded")`, whose name is "Error" —
+  // and a bundle that names its own abort reasons is exactly the bundle careful enough to be doing
+  // this. Matching on the name would wrap those back into ServiceUnavailableError, i.e. work for
+  // the simple caller and silently fail for the careful one. `AbortSignal.timeout()` (a
+  // `TimeoutError`, never an `AbortError`) rides along on the same reading, correctly: the caller
+  // set that deadline too.
   async _fetch(url, init = {}) {
     try {
       return await fetch(url, init)
     } catch (err) {
+      if (init.signal?.aborted) throw err
       throw new ServiceUnavailableError("network_error", `Network request failed: ${err?.message ?? err}`)
     }
   }
 
-  _post(url, body) {
-    return this._fetch(url, { method: "POST", body, headers: { "X-CSRF-Token": this._ctx.csrfToken } })
+  // `headers` MERGES OVER the CSRF token rather than replacing the object, so a caller adding a
+  // Content-Type cannot drop the token by accident — the failure that would be, a 422
+  // InvalidAuthenticityToken on every save, is loud but pointlessly so.
+  _post(url, body, { headers = {}, signal } = {}) {
+    return this._fetch(url, {
+      method: "POST", body, signal,
+      headers: { "X-CSRF-Token": this._ctx.csrfToken, ...headers },
+    })
   }
 
   files = {
@@ -417,29 +440,85 @@ class Host {
     },
   }
 
+  // ONE URL BUILDER FOR ALL THREE VERBS, WHICH IS WHAT MAKES THE GUARDS UNFORGEABLE. get, post and
+  // url all land here, so `encodeServiceName` and `encodePathSegments` cannot be applied to two of
+  // them and forgotten on the third — and the third, `url`, is precisely the one where forgetting
+  // would matter most, because it hands a raw string to an attribute the BROWSER dereferences with
+  // no further checking. A builder that skipped the guards would be a traversal hole with a
+  // friendly name; sharing the function means it cannot drift into one later either.
+  _serviceUrl(serviceName, path, params = {}) {
+    const qs = new URLSearchParams(params).toString()
+    return `${this._ctx.urls.service}${encodeServiceName(serviceName)}/` +
+      `${encodePathSegments(path)}${qs ? `?${qs}` : ""}`
+  }
+
   service = {
     // Returns the raw Response, not parsed data — unlike save/state.list, which are OUR endpoints
     // with a known JSON shape, a sidecar can answer SVG, 3MF or a JPEG, and the SDK has no way to
     // know which up front. Parsing is left to the caller: `.text()`, `.blob()`, `.json()` —
     // whichever fits that addon's own sidecar.
-    get: async (serviceName, path, params = {}) => {
+    //
+    // `options.signal` is an ordinary AbortSignal, forwarded to fetch. A long sidecar render is the
+    // canonical thing a user cancels by editing a field or navigating away, and an abort surfaces
+    // as the caller's OWN rejection rather than a ServiceUnavailableError — see _fetch for why the
+    // two must not collapse.
+    get: async (serviceName, path, params = {}, { signal } = {}) => {
       this._require("service")
-      const qs = new URLSearchParams(params).toString()
-      const url = `${this._ctx.urls.service}${encodeServiceName(serviceName)}/${encodePathSegments(path)}${qs ? `?${qs}` : ""}`
-      const res = await this._fetch(url)
+      const res = await this._fetch(this._serviceUrl(serviceName, path, params), { signal })
       if (!res.ok) throw await serviceErrorFrom(res)
       return res
     },
 
-    post: async (serviceName, path, params = {}) => {
+    // A JSON BODY, NOT A FormData, AND THAT IS A BUG FIX RATHER THAN A PREFERENCE — TWO OF THEM, AND
+    // THE SECOND IS SILENT.
+    //
+    //   1. multipart/form-data serialization NORMALIZES EVERY TEXT ENTRY'S NEWLINES TO CRLF (the
+    //      HTML standard's own "multipart/form-data encoding algorithm" says so). A textarea's DOM
+    //      value is always LF-clean, so a bundle that reads `textarea.value` and appends it here
+    //      handed the sidecar "+-+-+-+\r\n…" without one line of bundle code doing anything wrong.
+    //      A sidecar that parses line by line then silently misreads it: boxes.py's TrayLayout,
+    //      whose ENTIRE input is ASCII art, rendered the wrong tray and reported no error at all.
+    //      There is no bundle-side fix — the mangling happens inside the browser's multipart
+    //      serializer, AFTER append — which is why the fix has to be here.
+    //   2. `body.append(k, v)` STRINGIFIES a nested value to the literal "[object Object]". Every
+    //      real sidecar call in the boxes bundle sends `{generator, params: {…}}`, so the nesting
+    //      is not an edge case; JSON preserves it by construction.
+    //
+    // THE SERVER SIDE ALREADY WANTED JSON, which is what makes this a one-sided change. Rails parses
+    // whatever arrives into `request.request_parameters`, and Maker::Addons::ServiceProxy re-emits
+    // that hash as a JSON body — because boxes.py reads `request.get_json(force=True)` and cannot
+    // read a form body at all. So the whole corruption was introduced in the browser, between
+    // `append` and the wire, and undone by not going through multipart in the first place.
+    post: async (serviceName, path, params = {}, { signal } = {}) => {
       this._require("service")
-      const body = new FormData()
-      Object.entries(params).forEach(([ k, v ]) => body.append(k, v))
-      const res = await this._post(
-        `${this._ctx.urls.service}${encodeServiceName(serviceName)}/${encodePathSegments(path)}`, body,
-      )
+      const res = await this._post(this._serviceUrl(serviceName, path), JSON.stringify(params), {
+        headers: { "Content-Type": "application/json" }, signal,
+      })
       if (!res.ok) throw await serviceErrorFrom(res)
       return res
+    },
+
+    // A URL, AND NOTHING ELSE — SYNCHRONOUS, AND IT ISSUES NO REQUEST. For the one thing `get`
+    // structurally cannot do: hand a string to an attribute the browser fetches itself. `get`
+    // PERFORMS the request and resolves a Response, which cannot feed an `<img src>`, and the two
+    // ways of reaching around that are both worse than the gap this closes — fetch-and-objectURL
+    // defeats `loading="lazy"` across a tile grid (it downloads every tile eagerly) and needs a
+    // matching revokeObjectURL per card, while hand-building the URL from `ctx.serviceUrl` is this
+    // function with the guards left off.
+    //
+    // NOT A LOOPHOLE IN THE PROXY'S CONTENT-TYPE POLICY: the host already keeps `image/jpeg` inline
+    // on its allowlist FOR THIS EXACT CALL SITE (§14c), so pointing an `<img>` at the proxy is a
+    // supported path that until now had no supported way to spell. What is served inline is still
+    // the host's decision, unchanged — `image/svg+xml` is still downgraded to an attachment, so an
+    // `<img src>` at an SVG endpoint will not render and should still go through `get` + `res.text()`.
+    //
+    // REQUIRES THE CAPABILITY even though nothing is sent. A host that cannot proxy services would
+    // answer this URL with a 404, and an `<img>` reports that as a bare `onerror` with no reason
+    // attached — the named UnsupportedCapabilityError is strictly more diagnosable than a silently
+    // broken tile.
+    url: (serviceName, path, params = {}) => {
+      this._require("service")
+      return this._serviceUrl(serviceName, path, params)
     },
   }
 

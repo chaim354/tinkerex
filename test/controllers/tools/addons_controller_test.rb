@@ -844,6 +844,91 @@ module Tools
       assert_no_match(/attachment/, response.headers["Content-Disposition"].to_s)
     end
 
+    # THE SDK NOW POSTS JSON (host.service.post), SO THIS IS THE SHAPE THE PROXY ACTUALLY RECEIVES.
+    # Two properties in one drive, because they are one request:
+    #
+    #   1. NESTING SURVIVES. The old FormData transport flattened a nested value to the literal
+    #      string "[object Object]", and every real sidecar call sends `{generator, params: {…}}`.
+    #   2. NOTHING ELSE IS ADDED. Rails 8 defaults `wrap_parameters format: [:json]` in the
+    #      FRAMEWORK — no initializer in this repo, so it does not grep — and ParamsWrapper MERGES a
+    #      complete duplicate of the body under a controller-derived key into
+    #      `request.request_parameters`, which is exactly what #service forwards. Probed before the
+    #      fix: the proxy received an extra `"addon" => {…the whole body again…}`. Inert while the
+    #      transport was multipart; live the moment it became JSON. `assert_equal` on the WHOLE hash
+    #      rather than `dig`s, because a stray extra key is precisely the defect.
+    test "a JSON body reaches the sidecar nested, and with nothing added to it" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/generate", body: "ok", content_type: "text/plain")
+
+      post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "generate"),
+           params: { generator: "TrayLayout", params: { x: 3, tall: true } }.to_json,
+           headers: { "CONTENT_TYPE" => "application/json" }
+
+      assert_response :success
+      assert_equal({ "generator" => "TrayLayout", "params" => { "x" => 3, "tall" => true } },
+                   @fake_service_proxy.calls.last.params)
+    end
+
+    # ---- per-service read timeouts ------------------------------------------------------------
+    #
+    # The manifest ASKS and the host DECIDES, and the resolved number is only observable here — the
+    # controller is where the two meet. Registry proves the parse and ServiceProxy proves the clamp;
+    # what these prove is that the controller wires the right addon's right service to the clamp at
+    # all, rather than passing nothing and silently keeping 30 s everywhere.
+    test "a service with no declared timeout gets the default" do
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "ok", content_type: "text/plain")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_equal Maker::Addons::ServiceProxy::READ_TIMEOUT,
+                   @fake_service_proxy.calls.last.read_timeout
+    end
+
+    test "a manifest's service_timeouts entry is applied to that service" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge("service_timeouts" => { "fixture-svc" => 90 }) ], assets: {}
+      )
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "ok", content_type: "text/plain")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_equal 90, @fake_service_proxy.calls.last.read_timeout
+    end
+
+    # KEYED BY SERVICE NAME, NOT "the addon's timeout". An addon may declare two sidecars and want a
+    # long ceiling for only one of them; a per-ADDON reading would hand the fast one the slow one's
+    # thread-hold budget. The manifest declares a timeout for a service this request does not name,
+    # so the default must survive.
+    test "a service_timeouts entry naming a different service does not leak onto this one" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge("service_timeouts" => { "some-other-svc" => 90 }) ], assets: {}
+      )
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "ok", content_type: "text/plain")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      assert_equal Maker::Addons::ServiceProxy::READ_TIMEOUT,
+                   @fake_service_proxy.calls.last.read_timeout
+    end
+
+    test "a manifest asking for more than the host cap gets the cap, and still serves" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(
+        manifests: [ MANIFEST.merge("service_timeouts" => { "fixture-svc" => 9_999 }) ], assets: {}
+      )
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      stub_http_ok("http://sidecar.test/render", body: "ok", content_type: "text/plain")
+
+      get tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
+
+      # NOT a 4xx: a remote manifest asking for too much must degrade, not take the addon down.
+      assert_response :success
+      assert_equal Maker::Addons::ServiceProxy::MAX_TIMEOUT_DEFAULT,
+                   @fake_service_proxy.calls.last.read_timeout
+    end
+
     test "a service the manifest does not declare is refused" do
       # The manifest names WHICH services an addon may reach; the host says WHERE each lives. An
       # addon that could name an arbitrary service — or an arbitrary URL — would be an SSRF
