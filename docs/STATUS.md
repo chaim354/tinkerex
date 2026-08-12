@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-12 (**OpenSCAD parameter coercion moved out of Rails and into the sidecar — row 7's risky half, shipped on its own**)
+**Updated:** 2026-08-12 (**two Stimulus controllers deleted out from under the views that declared them — a nine-day silent regression on `/tools/openscad`, plus the repo-wide guard that would have caught it**)
 
 ## What this file is
 
@@ -60,7 +60,161 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-12): the OpenSCAD coercion guard moved into the sidecar (branch `claude/openscad-coercion-to-sidecar`)
+## Latest (2026-08-12): two Stimulus controllers deleted out from under the views that declared them (branch `claude/openscad-dead-controllers`)
+
+A **live user-facing regression**, nine days old, plus the guard that would have caught it in the
+commit that caused it. A bug fix, not an arc.
+
+### What broke
+
+`6095b87` (2026-08-03 — the *boxes* migration to a runtime bundle) deleted
+`app/javascript/controllers/boxpreview_controller.js` (81 lines) and `boxfilter_controller.js` (52
+lines). Both were the Box Generator's, and the Box Generator had indeed become an ESM bundle — but
+**`/tools/openscad` also declared them**, at `index.html.erb:5` (`boxfilter`) and `new.html.erb:11`
+(`boxpreview`), and nothing in that commit touched those views.
+
+**Stimulus no-ops silently on an identifier it cannot resolve.** No throw, no console warning,
+nothing in any log. So from 2026-08-03 to 2026-08-12:
+
+- the OpenSCAD editor opened on an **empty grey preview panel**. `boxpreview` previews the
+  generator's defaults **on connect** — its own comment says landing on an empty panel and having to
+  press a button to find out what the generator even makes *was the thing it was written to fix* —
+  re-renders on a debounce as params settle, and treats the Preview button as the manual retry. All
+  three were gone; the button was inert too, since `data-action` only resolves for an attached
+  controller.
+- the generator filter on the index did nothing.
+
+`thumbs_controller.js` survived, so prior-design thumbnails were unaffected — which is part of why
+the page still looked healthy.
+
+### Why the suite was green over it
+
+`test/controllers/tools/openscad_controller_test.rb:218` POSTs the preview endpoint **directly**. It
+proves the endpoint works and says nothing about whether anything calls it — so it stayed green
+while the only button that issues that POST was inert. **This repo's recorded dominant failure
+shape** (CLAUDE.md §15): a green suite over something that never runs.
+
+### The guard — the valuable half
+
+**`test/stimulus_hygiene_test.rb`** (new, 4 tests): every `data-controller` name declared anywhere in
+`app/views/` must resolve to a real controller file. Repo-wide, not OpenSCAD-specific. **It fails in
+`6095b87` itself.**
+
+- **The mapping is DERIVED, not listed** — `identifier_for` replicates
+  `registerControllerFromPath` in `@hotwired/stimulus-loading` verbatim, on the same input (the
+  importmap pin name): `sub("_controller","")` — **`sub`, not `gsub`**, because JS's
+  `String#replace` with a *string* argument replaces only the first occurrence, and it runs *before*
+  the underscore pass — then `/` → `--`, then `_` → `-`. A new controller needs no edit here.
+- **Both spellings are swept.** The literal attribute (which may carry **several space-separated
+  names** — `data-controller="thumbs filemenu"` appears three times in `app/views/files` alone) and
+  the Rails `data: { controller: … }` hash, which `app/views/shared/_folder_field.html.erb` uses.
+  A literal-attribute grep silently misses that twelfth declaration; the task's own survey of
+  "eleven declared names" is exactly what such a grep returns. The hash pattern is **anchored on
+  `data:`** so a routing `url_for(controller: "files")` can never be mistaken for an identifier, and
+  tolerates one level of nested braces so an interpolated sibling value does not end the scan early.
+- **`data-controller` is the COMPLETE set**, not merely the greppable one: Stimulus binds
+  `data-action="x->foo#bar"` and `data-foo-target` only when `foo` is attached through a
+  `data-controller` on an ancestor, so sweeping that one attribute misses nothing.
+- **The direction is deliberate.** Declared-but-missing fails; a controller file no view names does
+  **not** — `hello_controller.js` is Rails' scaffold and `thumbfallback_controller.js` is reached
+  from JS, so the converse would need an exception list, which is the thing this file avoids.
+- **Non-vacuity is proved on a SYNTHETIC document**, not on whatever `app/views` contains today: a
+  second test feeds the extractor all four cases (two names in one attribute, single quotes, the
+  hash form after an interpolated sibling, and a routing option that must *not* be collected) and
+  pins the reported `file:line` as well as the names. A regex that quietly stopped matching would
+  otherwise leave the sweep passing because it finds nothing.
+- **No real filename is pinned anywhere.** The transformation is asserted on invented paths, and the
+  glob only on the SHAPE of what it returns (which is what would catch `Dir.glob`'s `base:` going
+  wrong and turning every identifier into an absolute path). A guard that names a file goes red the
+  day that file is legitimately renamed, which is how a guard gets deleted rather than fixed.
+
+**MUTATION-CHECKED, three ways** — each time red, then restored green:
+
+| removed | failure |
+|---|---|
+| `boxpreview_controller.js` (the original bug) | `["app/views/tools/openscad/new.html.erb:11 declares \`boxpreview\`"]` |
+| `filechooser_controller.js` (the hash-form arm) | `["app/views/shared/_folder_field.html.erb:25 declares \`filechooser\`"]` |
+| `thumbs_controller.js` (multi-name attribute) | 8 offenders across 8 views, including the three `thumbs filemenu` pairs |
+
+### The behaviour test
+
+**`test/system/openscad_preview_test.rb`** (new, 2 tests). The hygiene guard proves the controller
+*exists*; this proves it does its job — loading `/tools/openscad/new` for a catalog generator renders
+a preview with **nobody clicking Preview**. Asserts the `<img>` gets a `blob:` src *and*
+`naturalWidth > 0`, because a blob holding a 404 page still yields a `blob:` URL; only a decode proves
+a picture appeared. Plus `assert_no_console_errors`.
+
+**Two seams are stubbed, for different reasons — and the second is the one worth reading.**
+
+1. **The sidecar**, at `OpenscadClient.stub` — the seam `openscad_controller_test.rb` and
+   `file_chooser_test.rb` already use. No Python sidecar in CI.
+2. **The rasterizer**, at `Maker::Previews::ThreeMf.render`. Not a sidecar problem: a
+   sidecar-produced 3MF carries no embedded slicer thumbnail, so `#rasterize` always falls through
+   to the mesh path, which shells out to the **`stl-thumbnailer` binary** — absent on this box and on
+   the runner. Unstubbed, the endpoint answers a perfectly correct 422 and "an image appeared" is a
+   test that can never pass, for a reason having nothing to do with the bug.
+
+Stubbing (2) costs no coverage: `openscad_controller_test.rb`'s "preview rasterizes the rendered 3MF
+server-side, and says so when it cannot" drives the **real** `#rasterize` on both branches.
+**Rejected alternative:** handing `FakeOpenscad` a 3MF that embeds a thumbnail would have needed no
+second stub, but would quietly send the server down a branch production never takes — a fake
+diverging from the real wire format is this repo's recorded way of *confirming* a bug (§14e).
+Hand-rolled with `define_singleton_method` + an `ensure`, because **minitest 6 dropped
+`minitest/mock`** and with it `Object#stub`; the separate gem is not in the Gemfile.
+
+MUTATION-CHECKED: deleting `boxpreview_controller.js`, and separately removing just the
+`this.preview()` at the end of `connect()`, each turn both tests red
+(*"the editor never previewed the generator's defaults"*) with the rest of the suite green.
+
+### Two things that had drifted in nine days
+
+- **`new.html.erb` shipped no `status` target**, so the restored controller's `#status` would have
+  returned early and swallowed every refusal — the panel would just stay blank, reading exactly like
+  the missing controller did. Added, with the second system test as its guard (removing the element
+  turns that test, and only that test, red). The endpoint's contract also moved under it in `#176`:
+  a refused value now comes back **422 carrying the sidecar's own prose** (`code: "invalid_params"` →
+  `OpenscadClient::InvalidParams` → `render plain: e.message`), so the restored `#refusal` surfaces
+  that text rather than "Preview failed (422)" — branched on `text/plain`, so an unrescued 500's HTML
+  error page is not emptied into the status line instead.
+- **`boxfilter` was trimmed on restore.** Its deleted version also forced collapsed `<details>` open
+  during a query and hid table-of-contents entries — both for the Box Generator's grouped index.
+  `/tools/openscad` renders one flat `<div class="box-group">` and no TOC, and the `boxsections`
+  controller those `<details>` belonged to went in the same commit. Restoring the `tocitem` target
+  and the reveal pass verbatim would have been restoring dead code whose own comment pointed at a
+  controller that no longer exists.
+
+**Not renamed.** `box*` names now serving only OpenSCAD are misleading, but the addon is slated for
+retirement within days and a rename touches both views plus both files for nothing a user can see.
+A header comment on each says the name is historical and why.
+
+### One knock-on, and it is evidence the fix works
+
+Restoring the controller made `file_chooser_test` go red on all five of its tests — its host page is
+`/tools/openscad/new`, which now actually fires a preview, which on a box with no `stl-thumbnailer`
+answers a correct 422 that Chrome logs at SEVERE. Handled with an `ignoring: [PREVIEW_422]` pattern
+and a comment, the same way `box_sections_test` handles its deliberate sample-photo 404s. It is not a
+hole that widens with the environment: on a box that HAS the binary the preview succeeds and the
+pattern matches nothing. **Between `6095b87` and this branch it also matched nothing — because no
+preview was ever requested.** That silence is precisely what the new hygiene test refuses to allow.
+
+`wait_until` moved from `box_sections_test`'s private section into `WebHelpers`, this being the
+second file needing the same poll for the same reason (an `<img>` `src` is a property, not a DOM node
+Capybara can wait on) — which is the point that file's own header says it moves.
+
+### Verification
+
+`bin/ci` **exit 0**, judged by exit code, all seven gates, 54.1 s. **2302 runs / 8315 assertions / 0
+failures / 10 skips**, **identical on all three legs** (chunk, share, s3); system **88 runs / 529
+assertions** (20.1 s). Baseline by **running the merge-base** `84632d0` with the two new files moved
+aside: **2298 / 8278 / 10 skips**. So **+4 server tests / +37 assertions** and **+2 system tests**,
+no new skips. (The assertion count is lopsided because one guard loops over every controller file.)
+
+**Not deployed.** The fix is live-user-facing and the addon is deployed on all three Unraid legs, so
+this wants a deploy once merged.
+
+---
+
+## 2026-08-12: the OpenSCAD coercion guard moved into the sidecar (branch `claude/openscad-coercion-to-sidecar`)
 
 **Row 7's risky half, split off and shipped on its own** (`docs/superpowers/specs/2026-08-07-addon-api-v1-design.md`
 §12). The row's Risk column said *"server-side param coercion moves into the sidecar"* — that

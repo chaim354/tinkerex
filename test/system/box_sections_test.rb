@@ -65,12 +65,8 @@ class BoxSectionsTest < ApplicationSystemTestCase
     ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
   end
 
-  # Capybara's matchers wait on the DOM; an <img> swapping its src is a property read, so poll it.
-  def wait_until(timeout: 5, message: "condition never became true")
-    deadline = Time.now + timeout
-    sleep 0.05 until yield || Time.now > deadline
-    assert yield, message
-  end
+  # `wait_until` moved to WebHelpers when openscad_preview_test needed the same poll for the same
+  # reason (an <img> src is a property, not a DOM node Capybara can wait on).
 
   # Capybara's `assert_no_selector` takes no failure message, and these negatives are the whole
   # point of most of these tests — "it was still open" needs to say WHICH claim broke.

@@ -18,6 +18,17 @@ require_relative "../support/fake_openscad"
 class FileChooserTest < ApplicationSystemTestCase
   include WebHelpers
 
+  # THE HOST PAGE PREVIEWS ITSELF, and on a box without the `stl-thumbnailer` binary that preview
+  # honestly cannot succeed. boxpreview_controller fires on connect, #rasterize has no binary to
+  # shell out to, and the endpoint answers a correct 422 ("no preview image could be made") — which
+  # Chrome logs at SEVERE like any failed fetch, masking anything genuine logged beside it.
+  #
+  # Nothing to do with the chooser, and NOT a hole that widens with the environment: on a box that
+  # HAS the binary the preview succeeds and this pattern matches nothing at all. (Between 6095b87
+  # and this branch it also matched nothing — the controller was missing, so no preview was ever
+  # requested. That silence is exactly what test/stimulus_hygiene_test.rb now refuses to allow.)
+  PREVIEW_422 = %r{/tools/openscad/preview - Failed to load resource.+422}
+
   setup do
     # The chooser is addon-agnostic; /tools/openscad is simply the one page on `main` that renders
     # it. The sidecar stub is this page's own precondition, not the chooser's — the editor needs a
@@ -68,7 +79,7 @@ class FileChooserTest < ApplicationSystemTestCase
     chosen = @user.nodes.present.find_by(name: "harbor", kind: "dir")
     assert_equal chosen.node_id, find("input[name='parent_node_id']", visible: false).value
 
-    assert_no_console_errors
+    assert_no_console_errors ignoring: [ PREVIEW_422 ]
   end
 
   test "New Folder creates a real dir through the port and steps into it" do
@@ -87,7 +98,7 @@ class FileChooserTest < ApplicationSystemTestCase
     parent = @user.nodes.present.find_by(name: "Projects", kind: "dir")
     assert @user.nodes.present.exists?(name: "exports", parent_node_id: parent.node_id, kind: "dir")
 
-    assert_no_console_errors
+    assert_no_console_errors ignoring: [ PREVIEW_422 ]
   end
 
   test "a rejected folder name reports inline and creates nothing" do
@@ -106,7 +117,7 @@ class FileChooserTest < ApplicationSystemTestCase
 
     # `ignoring:` the 422: Chrome logs any non-2xx fetch at SEVERE, and this refusal IS the flow —
     # same reason addon_bundle_test ignores its own 409.
-    assert_no_console_errors(ignoring: [ /library\/folders.*422/ ])
+    assert_no_console_errors(ignoring: [ /library\/folders.*422/, PREVIEW_422 ])
   end
 
   # REOPENING MUST NOT FORGET WHAT IS ALREADY CHOSEN — a defect in the original controller, fixed
@@ -133,7 +144,7 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_text "/Projects"
     assert_equal chosen.node_id, find("input[name='parent_node_id']", visible: false).value,
                  "the label and the submitted node_id must name the same folder"
-    assert_no_console_errors
+    assert_no_console_errors ignoring: [ PREVIEW_422 ]
   end
 
   test "Escape closes the modal without committing a selection" do
@@ -146,6 +157,6 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_no_selector ".filechooser-overlay"
     # Cancelling must leave the FIELD untouched — the selection lives in the modal until "Choose".
     assert_equal "", find("input[name='parent_node_id']", visible: false).value
-    assert_no_console_errors
+    assert_no_console_errors ignoring: [ PREVIEW_422 ]
   end
 end
