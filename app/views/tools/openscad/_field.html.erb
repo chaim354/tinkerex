@@ -26,9 +26,10 @@
     <input type="hidden" name="params[<%= pname %>]" value="false">
     <input type="checkbox" name="params[<%= pname %>]" value="true" <%= "checked" if val.to_s == "true" %>>
   <% elsif param["type"] == "vector" %>
-    <%# A vector is edited as comma-separated text. OpenscadParams turns it into the OpenSCAD
-        literal "[a,b,c]" on the way out, so a saved design prefills as "[10,20,30]" while a fresh
-        one shows schema.py's bare "10,20,30" — both are accepted back. %>
+    <%# A vector is edited as comma-separated text; the sidecar's coerce.py turns it into the
+        OpenSCAD literal "[a,b,c]" on the way into the render. A fresh field shows schema.py's bare
+        "10,20,30" and a design saved before coercion moved out of Rails prefills as "[10,20,30]" —
+        both spellings are accepted back. %>
     <input type="text" name="params[<%= pname %>]" value="<%= val %>" placeholder="10,20,30">
   <% elsif %w[float int].include?(param["type"]) %>
     <input type="number" step="<%= param["type"] == "int" ? (param["step"] || 1) : "any" %>"

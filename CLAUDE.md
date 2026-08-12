@@ -789,6 +789,30 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   in `.message` — and a non-JSON body (Werkzeug's HTML 405, the proxy's own body-less 404) would be
   consumed by the failing `res.json()` and lost entirely. `service.*` raises `ServiceError`, built
   from the status and the raw text.
+- **A GARBAGE OPENSCAD PARAMETER VALUE RENDERS SUCCESSFULLY, WITH THE DEFAULT GEOMETRY — SO THE
+  SIDECAR REFUSES IT, AND THERE IS EXACTLY ONE COPY OF THAT CHECK.** Observed, not reasoned:
+  `{"cols": "))("}` comes back **200** because OpenSCAD's `parameterSet` silently *ignores* a value
+  it cannot parse, so a pass-through turns a typo into a default-sized model saved to the library
+  with no feedback anywhere. `sidecar/openscad/coerce.py` checks every submitted value against the
+  schema `schema.py` derived for that same source and **refuses** what will not coerce. It lived in
+  Rails (`app/services/openscad_params.rb`) until 2026-08-12 and was **deleted, not duplicated**, on
+  the way out — a browser bundle cannot call a Rails service object, and a guard that runs on one
+  caller's path and silently does not on another's is this repo's recorded failure shape. Four
+  things travel with it: **`choices` beats `type`** (schema.py's TRAP 3 — an enum's declared type is
+  the type of its *values*); the bool mapping is an **ALLOWLIST**, never a framework boolean cast,
+  which maps everything outside its false-list to **`true`** — garbage silently becoming `true` is
+  the same bug wearing a hat; **min/max are NOT enforced**, deliberately, because OpenSCAD *honours*
+  an out-of-range number rather than ignoring it, so refusing one adds false rejections and prevents
+  nothing; and messages are **truncated** so a pasted value cannot become the message.
+- **THE SIDECAR ANSWERS 422 FOR TWO DIFFERENT THINGS, AND ONLY `code: "invalid_params"` TELLS THEM
+  APART.** A `.scad` it cannot parse and a *value* it refuses are both client conditions and both
+  422, but Rails must react differently — a rejected value comes back as a form error with the
+  user's own entries still in it (`editor_again`), a broken source bounces to the index. So
+  `OpenscadClient` raises **`InvalidParams`, a SUBCLASS of `Error`** (§14a's rule: a caller that must
+  branch on WHY gets a subclass, so every existing `rescue Error` keeps working), matching on the
+  **code and never the prose** — the prose is a human sentence a sidecar release can reword without
+  ever rebuilding Rails. `#create`'s two rescue arms are ordered subclass-first; reverse them and
+  every refused value silently bounces to the index instead.
 - **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
   `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
   is sent and it never reaches the route the server guards: it misroutes **silently** instead of

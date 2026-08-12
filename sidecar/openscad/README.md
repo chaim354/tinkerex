@@ -15,6 +15,28 @@ app's `OpenscadClient` speaks:
 a bring-your-own file's bytes, so the two are indistinguishable to everything downstream. One render
 path, one cache, one error surface.
 
+## `/render` refuses a value it cannot coerce
+
+**A garbage parameter value renders SUCCESSFULLY, with the DEFAULT geometry.** OpenSCAD's
+`parameterSet` silently *ignores* a value it cannot parse, so `{"cols": "))("}` used to come back 200
+with a model nobody asked for. `/render` therefore checks every submitted value against the schema
+`/params` derives for that same source and answers **422** for one that will not coerce:
+
+```json
+{"error": "“cols” must be a number (got “))(”)", "code": "invalid_params"}
+```
+
+`error` is prose, for a human. `code` is there because **the status alone cannot tell this apart from
+a `.scad` the parser rejected** — also a 422 — and a caller that shows a form must: a rejected value
+is something the user can fix in place, a broken source is not. A parse failure carries no `code`.
+Callers must branch on the **code, never on the prose**, which is free to be reworded here.
+
+`coerce.py` owns this and is the **only** copy — it lived in the Rails app until 2026-08-12, where a
+browser-side addon bundle could not reach it. Read its header before changing it; in particular
+min/max are deliberately **not** enforced (OpenSCAD honours an out-of-range number rather than
+ignoring it, so refusing one prevents nothing and adds false rejections). Coercion runs **before** the
+cache key is computed, so the key stays keyed on the values that actually determine the bytes.
+
 ## Licensing (important)
 
 This entire directory is **GPL-2.0** (OpenSCAD's licence). It ships as a **separate container** and
@@ -121,10 +143,10 @@ render can never see a half file.
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/python -m pytest -q          # 29 passed, 11 skipped — the binary-dependent ones skip on the host
+.venv/bin/python -m pytest -q          # 66 passed, 13 skipped — the binary-dependent ones skip on the host
 docker buildx build --platform linux/amd64 -t openscad-sidecar .
 docker run --rm -v "$PWD/tests:/app/tests" openscad-sidecar \
-  sh -c "pip install -q pytest && python -m pytest tests/ -q"    # 40 passed — NOTHING should skip here
+  sh -c "pip install -q pytest && python -m pytest tests/ -q"    # 79 passed — NOTHING should skip here
 ```
 
 A skip in the second command is a finding, not noise: it means a test that exists to exercise the
