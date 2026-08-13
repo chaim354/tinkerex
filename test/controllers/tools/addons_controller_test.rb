@@ -771,8 +771,14 @@ module Tools
     # warning is about a NULL `storage_path` making a replace miss on share/s3 — it bites a test
     # whose save must SUCCEED. This save must be REFUSED, at the door, before a backend is chosen,
     # so the assertion is identical on all three legs and no real bytes are needed to reach it.
-    # Order matters: the stranger is created FIRST, so `existing_at`'s `find_by` would return the
-    # stranger's node and not this state's.
+    #
+    # THE CREATION ORDER IS A CONVENIENCE, NOT WHAT MAKES THIS TEST BITE — worth separating,
+    # because it reads like load-bearing setup. `existing_at` is a bare `find_by` with NO `order`,
+    # so "the stranger was created first, therefore it is the one returned" is a property of
+    # SQLite's rowid scan (what all three legs run here), not of the query. Under the pre-fix skip
+    # form the FIRST assertion below goes red either way — that save answered 302 whichever node
+    # `existing_at` picked — and only the adoption assertion depends on the stranger being the one
+    # it reached.
     test "revising refuses a name it owns when a node it does NOT own also holds it" do
       clash = "clash-#{SecureRandom.hex(4)}.svg"
       stranger = @user.nodes.create!(node_id: SecureRandom.uuid, name: clash, kind: "file")
@@ -793,7 +799,13 @@ module Tools
       assert_equal [ mine.node_id ], state.files.pluck(:node_id),
                    "the stranger's node must not be ADOPTED into this state's bundle"
       assert_equal 2, @user.nodes.present.where(name: clash).count, "and nothing new was written"
-      assert_equal stranger.updated_at.to_i, stranger.reload.updated_at.to_i,
+      # THE CONTENT COLUMNS, NOT `updated_at`. The first spelling of this compared `updated_at.to_i`
+      # — whole SECONDS, against a write that lands in the same second — so it passed whether or not
+      # the stranger was rewritten. These three are nil on a fixture node and a real write sets at
+      # least one on every backend (measured: chunk fills current_version_id, share and s3 fill size
+      # and content_hash), so the assertion is precision-independent and identical on all three legs.
+      assert_equal [ nil, nil, nil ],
+                   stranger.reload.slice(:size, :content_hash, :current_version_id).values,
                    "the stranger's node is untouched"
     end
 

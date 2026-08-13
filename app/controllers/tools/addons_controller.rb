@@ -409,23 +409,15 @@ module Tools
 
       parent_node_id = chosen_parent_node_id
       # WHAT THIS REVISION MAY OVERWRITE — `{}` for a new box, so a save sending no `state_id` hands
-      # LibraryOutput a byte-identical argument to before. Resolved ONCE and passed to both checks
-      # below: they ask about DIFFERENT folders and answer with different statuses, but they must
-      # share one answer to "is the file in the way this state's own?"
+      # LibraryOutput a byte-identical argument to before.
       owned = owned_destinations(state)
-      refuse_taken_names!(files, parent_node_id, owned)
       # TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THAT IS THE POINT rather than
-      # redundancy. #refuse_taken_names! asks about the folder the user PICKED and is terminal
-      # ("pick another name"). This asks about the CATEGORY folder the sweep will file into, which
-      # is where a re-save actually collides — and is answerable ("overwrite?"). The gap between
-      # them is the bug: after the first save is filed, the picked folder is vacant again, so the
-      # first check passes and the sweep is left holding a file it cannot place.
-      #
-      # A REVISION MEETS WHICHEVER ONE ITS OWN FILE IS SITTING IN, WHICH IS WHY BOTH TAKE `owned`.
-      # A box swept into `Projects/<slug>/design/` leaves the picked folder vacant and collides
-      # here; a box saved to a plain library folder is still sitting there and collides above,
-      # where the refusal is terminal and no `overwrite` could ever answer it. Exempting only one
-      # of them leaves "open a saved design, tweak it, re-save it" refused (spec §1.3).
+      # redundancy: #refuse_taken_names! asks about the folder the user PICKED and is terminal,
+      # #resolve_placements asks about the CATEGORY folder the sweep will file into and is
+      # answerable. Both take `owned` because a revision meets whichever one its own file is
+      # sitting in. Each method states its own half at length — deliberately not restated here,
+      # since the argument moving in three places at once is how it drifts.
+      refuse_taken_names!(files, parent_node_id, owned)
       placements = resolve_placements(files, parent_node_id, owned)
       return if render_would_replace(files, placements)
 
@@ -474,10 +466,12 @@ module Tools
           files: files.each_with_index.map do |f, i|
             # AN ALLOWLIST OF THE TWO KEYS LibraryOutput ACTUALLY READS, not a skip-list of the
             # ones it does not — §14b's blind spot is this repo's recorded failure shape, and a
-            # placement that grows a third key (the own-file collision exemption is going to add
-            # one) would be silently ignored downstream rather than refused, with no test able to
-            # go red. `:folder` is #render_would_replace's business — it names the folder in the
-            # 409 body — and means nothing here. A non-colliding file's placement is `{}`, and
+            # placement key this method does not read would be silently ignored downstream rather
+            # than refused, with no test able to go red. TWO ARE DROPPED HERE TODAY, both for the
+            # same reason: `:folder` is #render_would_replace's business (it names the folder in
+            # the 409 body) and `:owned` is too (it suppresses that 409 for a revision landing on
+            # its own file). Neither means anything to a WRITE. A non-colliding file's placement is
+            # `{}`, and
             # `{}.slice` is `{}`, so `fetch(:parent_node_id, …)`'s absent-vs-nil distinction over
             # in LibraryOutput survives this untouched.
             { name: f.name, bytes: f.bytes, content_type: f.content_type, role: "output" }
@@ -740,7 +734,13 @@ module Tools
     # asks about the PICKED folder, and #resolve_placements has to mark that same file
     # `replace: true` or the write lands as a CREATE. See arm 2 of its own note for what that
     # looked like when measured.
-    def refuse_taken_names!(files, parent_node_id, owned = {})
+    # `owned` IS REQUIRED, NOT DEFAULTED, and that is the paragraph above made structural. A default
+    # would let a future caller take half the pair — and the two halves fail in opposite directions,
+    # so neither omission is a safe fallback: dropping it here fails toward a REFUSAL, dropping it
+    # on #resolve_placements fails toward arm 2 never firing, which is the CREATE that puts a second
+    # live node at one name on chunk. Both callers already pass it; the parameter is what stops the
+    # rule from living only in prose.
+    def refuse_taken_names!(files, parent_node_id, owned)
       taken = files.map(&:name).select do |name|
         Maker::MoveNode.collision?(current_user, parent_node_id:, name:,
                                    except_node_id: owned[[ parent_node_id, name ]])
@@ -788,7 +788,8 @@ module Tools
     # `owned` MARKS A COLLISION THE CALLER HAS ALREADY CONSENTED TO by naming this state. It still
     # sets `replace: true` — the write is a replace either way — and is what keeps
     # #render_would_replace from asking a question the `state_id` already answered.
-    def resolve_placements(files, parent_node_id, owned = {})
+    # `owned` IS REQUIRED HERE FOR THE SAME REASON — see #refuse_taken_names!'s note on the pair.
+    def resolve_placements(files, parent_node_id, owned)
       files.map do |f|
         dest = Maker::ProjectIntake.destination_for(user: current_user, parent_node_id:,
                                                     name: f.name)
