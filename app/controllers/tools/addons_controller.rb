@@ -715,15 +715,35 @@ module Tools
     # by a file this state did not produce stays the terminal 422 it has always been, because no
     # `overwrite` can make somebody else's file the right thing to rewrite.
     #
-    # EXEMPTING IT HERE IS ONLY HALF THE ANSWER, and the halves must move together: this check
+    # THE EXEMPTION EXCLUDES ONE NODE, IT DOES NOT SKIP THE QUESTION — `except_node_id:` is the
+    # parameter Maker::MoveNode.collision? has always had for exactly this, and it was being passed
+    # nil. Skipping the query instead ("this state owns that (parent, name), so wave it through")
+    # is not the same rule, and the difference is a live defect measured on chunk: two live
+    # siblings sharing (parent, name) are reachable there, since Sync::Commit validates a manifest
+    # exhaustively and the name not at all (§14a), so a device push can land one. With the check
+    # skipped, that save answered 302, rewrote the node this state does NOT own and adopted it into
+    # `state.files` — §14a's orphaning shape with the sign flipped. Excluding the owned node leaves
+    # the stranger's node in the result set, so the answer is the 422 it should always have been.
+    #
+    # §14a DOES NOT ARGUE AGAINST THIS, WHICH IS WHERE THE FIRST READING WENT WRONG. Its rule
+    # governs how a replace RESOLVES its target — `existing_at` by (parent, name) on chunk, because
+    # chunk nodes have no `storage_path` — and says nothing about how a door decides a replace is
+    # AUTHORIZED. #resolve_placements' arm 1 already does the identity comparison; this is the same
+    # question, asked the same way, on the folder that arm cannot see.
+    #
+    # IT ALSO CLOSES ARM 2 WITHOUT ARM 2 CHANGING, and that composition is why arm 2 keeps its
+    # cheaper `.key?`: arm 2 is only reachable once this check has passed, and passing it means
+    # nothing but the owned node holds that (parent, name) — so `existing_at` there can only find
+    # the owned node. Reorder the two and that stops being true.
+    #
+    # EXEMPTING HERE IS STILL ONLY HALF THE ANSWER, and the halves must move together: this check
     # asks about the PICKED folder, and #resolve_placements has to mark that same file
     # `replace: true` or the write lands as a CREATE. See arm 2 of its own note for what that
     # looked like when measured.
     def refuse_taken_names!(files, parent_node_id, owned = {})
       taken = files.map(&:name).select do |name|
-        next false if owned.key?([ parent_node_id, name ])
-
-        Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
+        Maker::MoveNode.collision?(current_user, parent_node_id:, name:,
+                                   except_node_id: owned[[ parent_node_id, name ]])
       end
       return if taken.empty?
 
@@ -757,6 +777,13 @@ module Tools
     #      exists to remove. `owned: true` is a tautology inside this arm, since its condition IS the
     #      ownership test, and `folder:` is absent because that key exists only for the 409 body an
     #      owned placement never reaches.
+    #
+    # ARM 1 WINS WHEN BOTH APPLY, AND THAT IS THE CONSERVATIVE ANSWER RATHER THAN AN ACCIDENT OF
+    # `if`/`elsif`. Both apply when the picked folder holds this state's own output while the
+    # CATEGORY folder holds a stranger's file of the same name. Taking arm 1 there yields a 409
+    # naming the category folder and writes nothing — the sweep's destination is where the file
+    # would end up, so refusing to guess is right, and the user gets the question rather than a
+    # silent replace of either file. Probed; do not "simplify" the order away.
     #
     # `owned` MARKS A COLLISION THE CALLER HAS ALREADY CONSENTED TO by naming this state. It still
     # sets `replace: true` — the write is a replace either way — and is what keeps

@@ -725,6 +725,106 @@ module Tools
                    "the other box's bytes are untouched until the user answers"
     end
 
+    # THE EXEMPTION IS KEYED BY (parent, name), NOT BY NAME, and nothing pinned that until this
+    # test. Owning `clash.svg` SOMEWHERE must not license overwriting a stranger's `clash.svg`
+    # in a folder this state owns nothing in — which is what a name-only lookup would do, silently.
+    # Every other test here varies the exemption's CONDITIONALITY; this one varies its KEY.
+    #
+    # ITS MEASURED STATUS, STATED SO IT IS NOT OVER-TRUSTED: against the CURRENT structure this
+    # test catches no mutation, and that is a property of the fix rather than a weakness of the
+    # test. `except_node_id:` excludes one NODE instead of skipping the query, so even a name-only
+    # lookup leaves the stranger's node in the result set and the 422 stands. It bites the moment
+    # the exemption is rewritten as a SKIP — the shape this door shipped with for exactly one
+    # commit: with that form restored, a name-only lookup turns THIS test red while a
+    # parent-scoped one leaves it green. So it is the pin on the KEY, and the sibling below is the
+    # pin on the IDENTITY; neither substitutes for the other.
+    test "the exemption is scoped to the folder it owns, not to the name" do
+      clash = "clash-#{SecureRandom.hex(4)}.svg"
+      subfolder = Maker::LibraryFolder.ensure_path!(@user, [ "boxes-#{SecureRandom.hex(4)}" ])
+      state = save_box(name: "shelf box", file: clash, parent_node_id: subfolder.node_id)
+      save_box(name: "unrelated", file: clash)   # a DIFFERENT state owns that name AT THE ROOT
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: clash, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      root_copy = @user.nodes.present.find_by!(parent_node_id: nil, name: clash)
+      assert_equal "<svg/>", FileLayer.current.read(@user, node_id: root_copy.node_id),
+                   "the stranger's file at the picked folder is untouched"
+    end
+
+    # A NAME THIS STATE OWNS CAN STILL BE HELD BY SOMEBODY ELSE'S NODE, AND THE EXEMPTION MUST NOT
+    # COVER IT. Two live siblings sharing (parent, name) are reachable on chunk by construction —
+    # Sync::Commit validates a manifest exhaustively and the name not at all (§14a), so a device
+    # push can land one — and the door's own job is to stop the SAVE side adding more. Before the
+    # `except_node_id:` scoping this save answered 302, rewrote the STRANGER's node and adopted it
+    # into `state.files`: §14a's orphaning shape with the sign flipped, introduced by the very
+    # commit that added the exemption.
+    #
+    # THE FIXTURE NODES ARE DELIBERATE AND THE §14a WARNING TWO SCREENS UP DOES NOT APPLY. That
+    # warning is about a NULL `storage_path` making a replace miss on share/s3 — it bites a test
+    # whose save must SUCCEED. This save must be REFUSED, at the door, before a backend is chosen,
+    # so the assertion is identical on all three legs and no real bytes are needed to reach it.
+    # Order matters: the stranger is created FIRST, so `existing_at`'s `find_by` would return the
+    # stranger's node and not this state's.
+    test "revising refuses a name it owns when a node it does NOT own also holds it" do
+      clash = "clash-#{SecureRandom.hex(4)}.svg"
+      stranger = @user.nodes.create!(node_id: SecureRandom.uuid, name: clash, kind: "file")
+      state = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "shelf box", data: {})
+      mine = @user.nodes.create!(node_id: SecureRandom.uuid, name: clash, kind: "file")
+      state.files.create!(node_id: mine.node_id, role: "output", position: 0)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: clash, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      assert_equal [ mine.node_id ], state.files.pluck(:node_id),
+                   "the stranger's node must not be ADOPTED into this state's bundle"
+      assert_equal 2, @user.nodes.present.where(name: clash).count, "and nothing new was written"
+      assert_equal stranger.updated_at.to_i, stranger.reload.updated_at.to_i,
+                   "the stranger's node is untouched"
+    end
+
+    # WHEN BOTH PLACEMENT ARMS APPLY, ARM 1 WINS — asserted because the comment on
+    # #resolve_placements says so and an `if`/`elsif` is one edit away from saying the opposite.
+    # Here the picked folder (the project's own root) holds THIS state's copy while the category
+    # folder holds a STRANGER's file of the same name. Taking arm 1 asks the question; taking arm 2
+    # would treat the save as an approved replace of the state's own copy, answer 302, and leave the
+    # sweep unable to file the result. The conservative answer is the right one, and it is the one
+    # that goes red if the arms are reordered.
+    test "when both placement arms apply the category folder wins and the save asks" do
+      name = "prec-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      stranger_filed = @user.nodes.present.find_by!(name:)
+      state = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "mine", data: {})
+      mine = @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
+                                 parent_node_id: folder.node_id)
+      state.files.create!(node_id: mine.node_id, role: "output", position: 0)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "mine", data: "{}", parent_node_id: folder.node_id, state_id: state.id,
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+
+      assert_response :conflict
+      assert_equal [ { "name" => name, "folder" => "design" } ], response.parsed_body["files"],
+                   "the 409 names the CATEGORY folder, which is where the save would land"
+      assert_equal "<svg>v1</svg>", FileLayer.current.read(@user, node_id: stranger_filed.node_id)
+      assert_equal 1, state.reload.revision
+    end
+
     # THE DEAD END THIS CLOSES (spec §1.3). WITHOUT a state_id, re-saving into the folder the file
     # already sits in is a terminal 422 that no confirmation can answer — that is the bug — and it
     # must STAY refused for a save that does not name the state, or the exemption has quietly
