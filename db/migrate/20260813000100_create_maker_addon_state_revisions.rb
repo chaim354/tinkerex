@@ -12,27 +12,18 @@
 # `maker_addon_states.revision` IS THE CURRENT NUMBER AND THERE IS NO COUNT COLUMN: nothing deletes
 # a revision, so the count equals the current number. Add a count column with the deletion, not
 # before — two values to keep in step, for no present reader, is how they drift.
-#
-# `if_not_exists: true` ON ALL THREE DDL CALLS BELOW, SOLELY SO THIS MIGRATION CAN BE DRIVEN A
-# SECOND TIME — which `create_maker_addon_state_revisions_migration_test.rb` does, to pin the
-# backfill against a real pre-existing row rather than trusting it by reading it. A first, genuine
-# `db:migrate` never sees these as anything but no-ops (none of the three exist yet); they only
-# matter when `up` runs again against a schema — like this app's own test database — that already
-# has them. The BACKFILL below stays a plain, unguarded `INSERT`: it is a one-time fixup, not
-# something meant to be idempotent, and a second run against a state that already has its
-# revision-1 row correctly fails on the unique index below rather than duplicating history.
 class CreateMakerAddonStateRevisions < ActiveRecord::Migration[8.1]
   def up
-    create_table :maker_addon_state_revisions, if_not_exists: true do |t|
+    create_table :maker_addon_state_revisions do |t|
       t.references :addon_state, null: false, foreign_key: { to_table: :maker_addon_states }
       t.integer :revision, null: false
       t.json :data, null: false, default: {}
       t.datetime :created_at, null: false
     end
     add_index :maker_addon_state_revisions, [ :addon_state_id, :revision ], unique: true,
-              name: "index_maker_addon_state_revisions_on_state_and_revision", if_not_exists: true
+              name: "index_maker_addon_state_revisions_on_state_and_revision"
 
-    add_column :maker_addon_states, :revision, :integer, null: false, default: 1, if_not_exists: true
+    add_column :maker_addon_states, :revision, :integer, null: false, default: 1
 
     # BACKFILL: every existing state comes out of this migration with a coherent one-entry history
     # rather than an empty one. `created_at` is the STATE's own, not now() — the snapshot describes
