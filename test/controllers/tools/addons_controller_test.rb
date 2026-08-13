@@ -448,7 +448,12 @@ module Tools
         **{ state_id:, parent_node_id:, overwrite: }.compact
       }
       assert_redirected_to tools_addon_path("widgetkit")
-      @user.maker_addon_states.order(:id).last
+      # RETURNS THE STATE THIS SAVE TARGETED, which for a revision is `state_id` and NOT
+      # `order(:id).last`. The two agree only while a test has one state; a test that creates a
+      # second box and then revises the first would silently get the wrong row back, and every
+      # assertion after it would be about a state the save never touched. Still user-scoped, so a
+      # helper cannot reach across tenants either.
+      state_id ? @user.maker_addon_states.find(state_id) : @user.maker_addon_states.order(:id).last
     end
 
     test "a save carrying state_id revises the box instead of creating a second one" do
@@ -465,6 +470,18 @@ module Tools
       assert_equal "60", state.revisions.find_by(revision: 1).data.dig("params", "h"),
                    "revision 1 still holds what was saved AT revision 1, not the state's later data"
       assert_equal "80", state.revisions.find_by(revision: 2).data.dig("params", "h")
+
+      # THE STALE ROW STAYS AND ITS POSITION COLLIDES WITH THE NEW ONE. This revision emitted a
+      # DIFFERENTLY-NAMED file, so it wrote a new node rather than replacing one, and
+      # Maker::Addons::LibraryOutput leaves the previous save's row alone on purpose (that file is
+      # still an ordinary library file the user may have renamed or attached, §14c). The visible
+      # cost is here: `position` is this save's index into its own outputs, so two rows now hold 0
+      # and the number means nothing ACROSS saves. Asserted so the wart is recorded rather than
+      # discovered. (Maker::AddonState orders by (position, id) so #states at least serialises them
+      # the same way twice — that tiebreak is deliberately NOT asserted here, because SQLite
+      # returns rowid order for the tied rows anyway and a test that passes with or without the
+      # `:id` cannot show the guard works.)
+      assert_equal [ 0, 0 ], state.files.pluck(:position)
     end
 
     # A REVISION RENAMES THE BOX. `name` is a property of the design, not of one snapshot — a
@@ -525,7 +542,9 @@ module Tools
         }
       end
       assert_response :not_found
+      assert_equal "not_found", response.parsed_body["error"]
       assert_equal 0, theirs.reload.revisions.count
+      assert_equal 1, theirs.revision, "a refusal must not bump the counter it refused to advance"
     end
 
     test "an unknown state_id is a 404 and writes nothing" do
@@ -539,6 +558,24 @@ module Tools
         }
       end
       assert_response :not_found
+      assert_equal "not_found", response.parsed_body["error"]
+    end
+
+    # A NUMERIC `state_id` RESOLVES. A JSON request body preserves JSON's own types, so a caller
+    # posting `{"state_id": 5}` hands the door an Integer — refusing it would answer 404 "no such
+    # saved item" about a state that exists and is the caller's own. The allowlist widened; the
+    # Array refusal below did not move.
+    test "a numeric state_id revises, like the string one" do
+      state = save_box(name: "shelf box")
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box", data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: "n-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                   body: "<svg/>" } ].to_json,
+        state_id: state.id
+      }.to_json, headers: { "CONTENT_TYPE" => "application/json" }
+
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert_equal 2, state.reload.revision
     end
 
     # A `state_id` THAT IS NOT ONE ID IS NOT A TARGET. `state_id[]=1&state_id[]=2` arrives as an
@@ -577,6 +614,7 @@ module Tools
       }
       assert_response :not_found
       assert_equal 0, foreign.reload.revisions.count
+      assert_equal 1, foreign.revision, "a refusal must not bump the counter it refused to advance"
     end
 
     # ---- save: the filename is a filename ------------------------------------------------

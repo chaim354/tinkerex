@@ -60,9 +60,14 @@ module Maker
       # A ROW WHOSE FILE THE BUNDLE STOPPED EMITTING IS LEFT ALONE, deliberately. That file is
       # still an ordinary library file the user may have renamed, attached to a project or put in a
       # BOM, and "a migration must not delete user bytes" (§14c) binds a save door too — the row is
-      # the only record that this state produced it. The cost is honest and bounded: `position`
-      # then describes this save's outputs while a stale sibling keeps the position it was written
-      # with, so an ordering is only meaningful within one save's set.
+      # the only record that this state produced it.
+      #
+      # THE COST, STATED PROPERLY: `position` IS NOW ONLY UNIQUE WITHIN ONE SAVE, AND NOTHING ON
+      # THE ROW SAYS WHICH SAVE THAT WAS. A revision emitting a differently-named file leaves the
+      # old row at position 0 and writes a new one at position 0 — verified, two rows, both zero —
+      # so the relative order of a stale row and a current one is arbitrary and unrecoverable.
+      # Maker::AddonState orders by (position, id) so at least the JSON #states hands a bundle is
+      # stable request to request; that is a tiebreak, not a repair.
       def upsert_file!(state, node_id:, role:, content_type:, position:)
         row = state.files.find_or_initialize_by(node_id:)
         row.update!(role:, content_type:, position:)

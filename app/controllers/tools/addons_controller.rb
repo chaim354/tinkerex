@@ -390,20 +390,24 @@ module Tools
       files = parse_files
       return head(:unprocessable_entity) if files.nil?
 
-      # THE TARGET OF A REVISION, or nil for a new box. Resolved BEFORE any write: a bad state_id
-      # must cost nothing, and a 404 rendered after a partial write would leave library bytes
-      # behind for a save the caller was told did not happen.
-      #
-      # `performed?` RATHER THAN A SENTINEL, because #revision_target's nil is genuinely ambiguous
-      # — it means both "no state_id was sent" (create) and "the state_id did not resolve" (404,
-      # already rendered). `performed?` is what tells them apart: it is true once render/redirect
-      # has run, and a `return` after a render is the ordinary Rails way to stop an action (the
-      # alternative, DoubleRenderError, is what happens if this line is deleted — loudly, and
-      # pinned by the two 404 tests' assertion that nothing was written).
-      state = revision_target
-      return if performed?
+      # THE TARGET OF A REVISION, or nil for a new box — resolved BEFORE any write, so an id this
+      # door cannot honour costs nothing. #resolve_revision_target owns the argument for why that
+      # is a 404 rather than a create, and renders nothing itself; the `if` is what keeps its nil
+      # to one meaning.
+      state = nil
+      if params[:state_id].present?
+        state = resolve_revision_target
+        return render_no_such_state if state.nil?
+      end
 
       parent_node_id = chosen_parent_node_id
+      # NOT YET USABLE FOR THE MAINLINE REVISION FLOW, AND NOTHING ELSE HERE SAYS SO. A revision
+      # that re-emits the SAME filename into the SAME picked folder is still refused 422 by the
+      # line below — it does not know that the file it is colliding with is the target state's own
+      # output — and "open a saved design, tweak it, re-save it" is exactly that request. The
+      # collision exemption that makes a state's own file an approved replace is a separate change;
+      # until it lands, only a revision whose output name CHANGED gets through, which is why no
+      # test in this file exercises the other case.
       refuse_taken_names!(files, parent_node_id)
       # TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THAT IS THE POINT rather than
       # redundancy. #refuse_taken_names! asks about the folder the user PICKED and is terminal
@@ -414,16 +418,36 @@ module Tools
       placements = resolve_placements(files, parent_node_id)
       return if render_would_replace(files, placements)
 
+      # HOISTED OUT OF BOTH BRANCHES so they cannot drift on what a save's name and data are. Kept
+      # HERE, immediately before the transaction rather than at the top of the action, because
+      # `require` raises ParameterMissing (-> 400) and these used to be the transaction's first
+      # statement: moving them any earlier would answer 400 where a nameless save with a taken
+      # filename answers 422 today.
+      name = params.require(:name)
+      data = parse_data
+
       addon_files = nil
       ApplicationRecord.transaction do
         if state
           # A REVISION RENAMES THE BOX when the name changed — `name` is a property of the design,
           # not of one snapshot, so a rename has nowhere else to land. The snapshot below records
           # `data` only.
-          state.update!(name: params.require(:name), data: parse_data, revision: state.revision + 1)
+          #
+          # THE INCREMENT IS A READ-MODIFY-WRITE AND IS DELIBERATELY NOT LOCKED. `state.revision`
+          # was read before this transaction opened, so two concurrent revisions of the SAME item
+          # by the SAME user — a double-click — both compute N+1, and the snapshot row's unique
+          # index on [addon_state_id, revision] gives the loser a RecordNotUnique 500 rather than a
+          # silently overwritten history. ACCEPTED: the transaction rolls back before
+          # `LibraryOutput.write` runs, so nothing reaches the library, no snapshot is lost, and a
+          # retry succeeds. A `state.lock!` here would buy that at the price of a NEW LOCK-ORDERING
+          # EDGE inside a transaction that goes on to take `Sync::`'s own `FOR UPDATE` on the users
+          # row via `next_seq!` (chunk mode) — precisely where §14e's deadlock rule lives, and a
+          # deadlock this repo has already paid for once. Small race, right failure direction, not
+          # worth a new lock next to that one.
+          state.update!(name:, data:, revision: state.revision + 1)
         else
           state = current_user.maker_addon_states.create!(
-            addon_key: @addon.states_key, name: params.require(:name), data: parse_data
+            addon_key: @addon.states_key, name:, data:
           )
         end
         # THE CREATE BRANCH TAKES THIS LINE TOO, so a state's history is complete from its first
@@ -435,14 +459,16 @@ module Tools
         addon_files = Maker::Addons::LibraryOutput.write(
           user: current_user, state:, parent_node_id:,
           files: files.each_with_index.map do |f, i|
-            # `:folder` is #render_would_replace's business — it names the folder in the 409 body
-            # — and means nothing to LibraryOutput. `:owned` is NOT PRODUCED YET: the own-file
-            # collision exemption will mark a placement with it, and it is dropped here in advance
-            # so that change cannot forget this line. Dropped at the CALL SITE because
-            # LibraryOutput reads the keys it knows and silently ignores the rest, so a leak would
-            # never announce itself.
+            # AN ALLOWLIST OF THE TWO KEYS LibraryOutput ACTUALLY READS, not a skip-list of the
+            # ones it does not — §14b's blind spot is this repo's recorded failure shape, and a
+            # placement that grows a third key (the own-file collision exemption is going to add
+            # one) would be silently ignored downstream rather than refused, with no test able to
+            # go red. `:folder` is #render_would_replace's business — it names the folder in the
+            # 409 body — and means nothing here. A non-colliding file's placement is `{}`, and
+            # `{}.slice` is `{}`, so `fetch(:parent_node_id, …)`'s absent-vs-nil distinction over
+            # in LibraryOutput survives this untouched.
             { name: f.name, bytes: f.bytes, content_type: f.content_type, role: "output" }
-              .merge(placements[i].except(:folder, :owned))
+              .merge(placements[i].slice(:parent_node_id, :replace))
           end
         )
       end
@@ -479,54 +505,58 @@ module Tools
       head :not_found unless @addon
     end
 
-    # THE STATE A SAVE REVISES, or nil when this is a new box. Renders the 404 itself, so its
-    # caller checks `performed?` rather than reading a second meaning into the nil.
+    # THE STATE A SAVE REVISES, for a request that asked for one. ONLY EVER CALLED WHEN A
+    # `state_id` WAS SENT, so its nil has exactly one meaning — "that id does not resolve" — and it
+    # renders nothing: the caller answers. (An earlier draft resolved and rendered in one method,
+    # whose nil meant both "no state_id" and "already 404'd", and needed a `performed?` check plus
+    # a paragraph explaining it. Two pure methods and an `if` say the same thing without either.)
     #
-    # NO `state_id` MEANS CREATE, UNCHANGED — which is the compatibility contract, not a
-    # convenience: every already-published bundle sends none, and publishing a bundle IS the addon
-    # deploy while Rails is never rebuilt (§14c), so this door may never assume bundles moved with
-    # it. `blank?` rather than `nil?` because a form that renders an empty hidden field sends "".
+    # NO `state_id` MEANS CREATE, UNCHANGED — the compatibility contract rather than a convenience:
+    # every already-published bundle sends none, and publishing a bundle IS the addon deploy while
+    # Rails is never rebuilt (§14c), so this door may never assume bundles moved with it. The
+    # caller's `present?` is what implements that, and `present?` rather than `!nil?` because a
+    # form rendering an empty hidden field sends "".
     #
     # SCOPED BY `states_key`, NOT `key` — that is the DATA scope (the same one #states reads),
     # while `key` builds routes. Scoping by `key` would let a save under one addon append a
     # revision to a state filed under another's namespace whenever the two diverge. Note what this
-    # is NOT: it is not an inter-addon boundary, for the reason #states already states at length —
+    # is NOT: it is not an inter-addon boundary, for the reason #states already gives at length —
     # a bundle is same-origin browser code in the session and can POST to another addon's own save
     # URL directly. What it enforces is that a manifest cannot redirect ITS OWN saves into another
     # addon's namespace by declaration alone.
     #
+    # A STRING OR AN INTEGER, ALLOWLISTED, AND THE REFUSAL WAS PROBED RATHER THAN REASONED ABOUT.
+    # `state_id[]=1&state_id[]=2` arrives as an ARRAY and `find_by(id: [...])` is an `IN`: before
+    # this check it RESOLVED, writing a revision onto whichever of the user's own boxes the
+    # database returned first — a design nobody named, with no error anywhere. Both scopes still
+    # held, so nothing was disclosed; it is refused because it is SILENT and it WRITES. Integer is
+    # on the list because a JSON request body preserves JSON's types, so a caller posting
+    # `{"state_id": 5}` would otherwise get a 404 whose message is a lie about a state that exists
+    # and is theirs. An allowlist and not a `reject if Array`: a nested `state_id[a]=b` is a Hash,
+    # and naming the shapes we accept covers it (and whatever the next one is) without a second
+    # probe.
+    def resolve_revision_target
+      raw = params[:state_id]
+      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
+
+      current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)
+    end
+
     # 404 AND NOT A SILENT FALLBACK TO CREATING. An id that does not resolve is a bundle bug or a
     # stale tab, and creating a new box instead would file a revision of an existing design as an
-    # unrelated one — the pile-up this whole feature exists to end, reintroduced by the error path.
-    # JSON with a real status for the same reason the rescue_from arms above are: the only caller
-    # is a `fetch` that branches on `res.ok`, and fetch FOLLOWS a 302, so answering an error the
-    # way success is answered reports "Saved." over a save that never happened.
+    # unrelated one — the pile-up this whole feature exists to end, reintroduced by its own error
+    # path. JSON with a real status for the same reason the rescue_from arms above use it: the only
+    # caller is a `fetch` that branches on `res.ok`, and fetch FOLLOWS a 302, so answering an error
+    # the way success is answered would report "Saved." over a save that never happened.
     #
     # ONE ANSWER FOR FOUR CAUSES — no such id, another user's, another addon's, and not one id at
     # all — deliberately, so this door cannot be used to report which state ids exist or who owns
-    # them.
-    #
-    # A STRING OR NOTHING, and this one was PROBED rather than reasoned about. `state_id[]=1&
-    # state_id[]=2` arrives as an ARRAY, and `find_by(id: [...])` is an `IN`: it RESOLVES, to
-    # whichever of the user's own boxes the database returns first, and the revision lands on a
-    # design nobody named — silently, and it writes. Both scopes still hold, so nothing is
-    # disclosed; what makes it worth refusing is that there is no error anywhere. (A nested
-    # `state_id[a]=b` needs no clause of its own — probed: `find_by` answers nil rather than
-    # raising — but it takes this same door, which is why the check is "is it a String" rather
-    # than "is it an Array".) It is a 404 and NOT a create, for the reason below: a `state_id`
-    # this door cannot honour must never be answered by filing a new box.
-    def revision_target
-      raw = params[:state_id]
-      return nil if raw.blank?
-
-      if raw.is_a?(String)
-        state = current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)
-        return state if state
-      end
-
+    # them. Sibling of #render_file_not_found below, and note the two share the `not_found` code
+    # while meaning different things ("no such file" there, "no such saved item" here); anything
+    # mapping these codes to exceptions has to key on the endpoint, not the string alone.
+    def render_no_such_state
       render json: { error: "not_found", message: "No such saved item for this addon." },
              status: :not_found
-      nil
     end
 
     # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
