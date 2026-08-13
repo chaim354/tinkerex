@@ -419,6 +419,15 @@ class AddonSdkTest < ApplicationSystemTestCase
   # THE DEEP LINK, AND THE ABSENCE OF ONE. Both halves in one test because the distinction IS the
   # contract: `launch` is always an object and `stateId` is null when there is nothing to open, so a
   # bundle can tell "no deep link" from "a host too old to have one" — which a missing key could not.
+  #
+  # `old:` IS THE HALF WITH NOTHING ELSE PINNING IT, and it is here because the first version of this
+  # test could not fail for it. Every ctx this server serves carries `launch`, so the getter's
+  # compatibility default is unreachable from a real page: dropping `stateId: null` while keeping the
+  # spread left the whole file GREEN, because the spread still found the server's own key. The
+  # fixture calls the getter with a level-2 ctx (no `launch` at all) so the answer a published bundle
+  # would get from an older host is a string this assertion can read.
+  LEVEL_2_LAUNCH = '{"stateId":null}'.freeze
+
   test "host.launch carries the resolved deep link, and none is not an error" do
     user = User.find_by!(email: "sdk@example.com")
     folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "sdk-launch")
@@ -426,10 +435,11 @@ class AddonSdkTest < ApplicationSystemTestCase
     state = save_through_sdk_fixture(user, folder, fname: "launch-one.svg")
 
     visit "/tools/sdk-fixture?state=#{state.id}"
-    assert_selector "[data-role=sdk-launch]", exact_text: "launch:#{state.id}"
+    assert_selector "[data-role=sdk-launch]",
+                    exact_text: "launch:#{state.id} old:#{LEVEL_2_LAUNCH}"
 
     visit "/tools/sdk-fixture"
-    assert_selector "[data-role=sdk-launch]", exact_text: "launch:none"
+    assert_selector "[data-role=sdk-launch]", exact_text: "launch:none old:#{LEVEL_2_LAUNCH}"
     assert_no_console_errors
   end
 

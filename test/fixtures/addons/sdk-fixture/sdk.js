@@ -254,7 +254,7 @@ export default {
     // no URL left to put it in. Filling a field keeps the save and the revision on ONE mount; a
     // second `visit` is a hard browser load that tears the whole JS runtime down and rebuilds it
     // (the Turbo test at the foot of addon_sdk_test.rb spells that out).
-    const stateId = el.querySelector("[data-role=sdk-state-id]")
+    const stateIdInput = el.querySelector("[data-role=sdk-state-id]")
 
     // REVISING IS THE SAME SAVE PLUS ONE FIELD. Deliberately writes a DIFFERENT filename from the
     // first save: whether a revision may replace its OWN file is Task 3's collision exemption and is
@@ -271,7 +271,7 @@ export default {
           name: "sdk fixture revised",
           folderNodeId: q.get("parent") || "",
           data: { n: 2 },
-          stateId: Number(stateId.value),
+          stateId: Number(stateIdInput.value),
           files: [ { name: q.get("rname") || "revised.txt", contentType: "text/plain", body: "v2" } ],
         })
         out.textContent = result.cancelled ? "Not saved." : "Saved."
@@ -287,7 +287,7 @@ export default {
     el.querySelector("[data-role=sdk-revisions]").addEventListener("click", async () => {
       const out = el.querySelector("[data-role=sdk-revisions-out]")
       try {
-        const rows = await host.state.revisions(stateId.value)
+        const rows = await host.state.revisions(stateIdInput.value)
         out.textContent = rows.map((r) => `v${r.revision}:${r.data.n ?? "-"}`).join(",")
       } catch (e) {
         out.textContent = `${e.name}:${e.code}`
@@ -310,12 +310,16 @@ export default {
     // and "not found" both produce one. Aimed at a row that exists, removing the guard makes this
     // read answer `no-error` — a history nobody asked for — and makes the write below append a
     // revision to a design nobody named.
+    //
+    // ON A GREEN RUN THIS WRITES NOTHING. `save` throws at the id before it reaches `_post`, so no
+    // request leaves the browser and no file is created; the library write described above happens
+    // ONLY while the guard is mutated out, which is exactly what makes the mutation legible.
     el.querySelector("[data-role=sdk-revisions-probe]").addEventListener("click", async () => {
       const attempt = async (fn) => {
         try { await fn(); return "no-error" } catch (e) { return `${e.name}:${e.code}` }
       }
       const read = async (id) => attempt(() => host.state.revisions(id))
-      const laundered = [ stateId.value, stateId.value ]
+      const laundered = [ stateIdInput.value, stateIdInput.value ]
       const write = await attempt(() => host.files.save({
         name: "guard probe", folderNodeId: q.get("parent") || "", stateId: laundered,
         files: [ { name: "guard-probe.txt", contentType: "text/plain", body: "x" } ],
@@ -330,7 +334,21 @@ export default {
     // (the same argument capabilities() makes for every value being a real boolean), so an optional
     // chain here would quietly render "launch:none" for a host that stopped sending it at all —
     // exactly the case a bundle cannot tell apart from "nothing to open".
+    //
+    // AND `old:` IS THAT VERY CASE, SIMULATED, BECAUSE THIS SERVER CAN NO LONGER PRODUCE IT. Every
+    // ctx it serves now carries `launch`, so the compatibility default inside the getter —
+    // `{stateId: null, ...}` — is invisible to any assertion driven through a real page: drop it and
+    // the spread still finds the server's own key, and every test stays green over a getter that
+    // would answer `undefined` to the level-2 hosts a published bundle still has to run against.
+    // Calling the getter with a synthetic `_ctx` is the only vantage point left. It reaches through
+    // the prototype ON PURPOSE rather than exporting the Host class for a test: the SDK's whole
+    // premise is that a bundle touches `host` and nothing else, and widening the public API to pin
+    // a private default would cost more than the awkwardness of this line.
+    const launchGetter =
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(host), "launch").get
+    const oldHostLaunch = launchGetter.call({ _ctx: {} })   // a level-2 ctx: no `launch` key at all
+
     el.querySelector("[data-role=sdk-launch]").textContent =
-      `launch:${host.launch.stateId ?? "none"}`
+      `launch:${host.launch.stateId ?? "none"} old:${JSON.stringify(oldHostLaunch)}`
   },
 }

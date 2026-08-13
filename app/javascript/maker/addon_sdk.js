@@ -238,7 +238,13 @@ function encodePathSegments(path) {
 // escapes all four. The backslash is the one worth naming — a browser treats it as a path separator
 // in a special-scheme URL, so `"..\\..\\evil"` would normalize like the slash form — but the encoding
 // runs while we are still building a string, before any URL parser sees it, so "%5C" is what ships.
-// Only ".", ".." and "" survive encodeURIComponent untouched, and those are exactly the clauses here.
+// A GREAT DEAL survives encodeURIComponent untouched — every alphanumeric plus `- . _ ~ ! * ' ( )`,
+// so "a.b" and "..." come through verbatim; an earlier draft of this line claimed these three were
+// the only survivors and that is simply false. The true claim is narrower and is the one the guard
+// rests on: ".", ".." and "" are the only survivors A URL PARSER ACTS ON — the two dot-segments it
+// resolves away, and the empty segment that builds a double slash — so those are exactly the clauses
+// here. (The %2e spellings WHATWG also treats as dot-segments need no clause of their own: the "%"
+// escapes to "%25", so "%2e%2e" ships as "%252e%252e" and is inert. Verified, not reasoned.)
 //
 // The type check earns its place rather than mirroring encodePathSegments (which throws a bare
 // TypeError off `.split`): `encodeURIComponent(undefined)` is the STRING "undefined", so a missing
@@ -288,9 +294,10 @@ function stateIdString(id) {
 // encodePathSegments ALREADY HOLD: REJECT, NEVER NORMALIZE. `encodeURIComponent("..")` leaves ".."
 // untouched, so `/tools/k/states/../revisions` is resolved by THE BROWSER'S OWN URL PARSER before
 // the request is sent — the route the server guards is never asked, and the call misroutes silently
-// instead of failing loudly. ".", ".." and "" are the only three values that survive
-// encodeURIComponent; "/", "#", "?", "%" and "\" all escape, so none of them needs a clause here
-// (encodeServiceName's own comment works through that list).
+// instead of failing loudly. ".", ".." and "" are the only values that survive encodeURIComponent
+// AND mean something to a URL parser — plenty of others survive it untouched ("a.b", "..."), they
+// just are not dot-segments; "/", "#", "?", "%" and "\" all escape. encodeServiceName's own comment
+// works through both halves of that list.
 //
 // An empty id is refused for the second reason too: left alone it builds ".../states//revisions".
 function encodeStateId(id) {
@@ -490,8 +497,13 @@ class Host {
       })
 
       // RESOLVED ONCE, OUT HERE, RATHER THAN INSIDE build() — which runs a second time for the
-      // overwrite retry. An unusable id is then refused before the FIRST request goes out, instead
-      // of after a round trip, and the same string is sent both times by construction.
+      // overwrite retry, so the same string is sent both times by construction.
+      //
+      // NOT "so an unusable id is refused before the first request", WHICH AN EARLIER DRAFT OF THIS
+      // COMMENT CLAIMED AND WHICH IS FALSE. `build(false)` is evaluated as an ARGUMENT to _post
+      // below, so a throw inside build precedes the request just as surely. Measured rather than
+      // argued: with the validation moved inside build, the number of requests reaching #create was
+      // still ZERO. There is no round trip here to save.
       //
       // `null` MEANS "CREATE" AND IS THE ONLY VALUE THAT OMITS THE FIELD. A caller passing `""` gets
       // `state_id=""` on the wire, which the door treats exactly as an absent one (`present?`) —

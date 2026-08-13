@@ -726,9 +726,15 @@ module Tools
         #
         # A HASH RATHER THAN A BARE `launchStateId`, matching `defaultFolder` above: the blob names
         # a thing with a small object, so a key added inside it later is additive to a namespace a
-        # bundle already reads rather than a new top-level name every bundle must learn. (The SDK
-        # is planned to expose it whole as `host.launch` — Task 9 of this arc, not yet built; there
-        # is nothing in app/javascript/maker/addon_sdk.js reading it today.)
+        # bundle already reads rather than a new top-level name every bundle must learn.
+        #
+        # THE SDK NOW EXPOSES THIS WHOLE HASH as `host.launch` (app/javascript/maker/addon_sdk.js),
+        # and its getter re-asserts the always-present rule from the other side — it answers
+        # `{stateId: null, ...ctx.launch}`, so a bundle running against a LEVEL-2 host, which sends
+        # no `launch` key at all, still reads an object rather than `undefined`. Note the
+        # consequence for anyone changing this line: emitting the key but dropping `stateId` from
+        # inside it would NOT surface as a missing value on that path, since the getter's default
+        # would silently supply the null. Keep the key here.
         launch: { stateId: launch_state_id }
       }
     end
