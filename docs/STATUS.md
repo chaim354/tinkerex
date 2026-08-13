@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-12 (**the `scan` gate now reports on the code and not on brakeman's own version — closing the structural question the retirement entry below spun out**)
+**Updated:** 2026-08-13 (**a saved addon item gains an immutable revision history, and a library file can find its way back to the generator that made it**)
 
 ## What this file is
 
@@ -60,7 +60,227 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-12): the `scan` gate reports on the code, not on brakeman's own version (branch `claude/brakeman-ensure-latest-gate`)
+## Latest (2026-08-13): a saved addon item gets a revision history, and a file gets a way back to its generator (branch `claude/addon-state-revisions`)
+
+**Design:** `docs/superpowers/specs/2026-08-13-addon-state-revisions-design.md`. **Plan:**
+`docs/superpowers/plans/2026-08-13-addon-state-revisions-host.md`. Ten tasks. **This is the host half
+only** — the design's §8 bundle changes live in `chaim354/tinkerex-addons` and are not in this branch,
+because the host must deploy first: a bundle publishing `min_host: 3` against a host that has not
+caught up greys itself out, which is the ordering §14c already requires.
+
+### What was broken
+
+A saved box was a `Maker::AddonState` row and the save door only ever `create!`d. Three consequences,
+all user-visible:
+
+1. **Five tweaks to one box were five unrelated rows all called "shelf box"**, and the params of the
+   version that actually fit the shelf were indistinguishable from the four that did not.
+2. **The library file was overwritten while the rows piled up** — a re-save collided, the bundle's
+   `confirm()` answered the 409, `LibraryOutput` rewrote the file keeping its node, and a brand-new
+   row was minted pointing at that same node. N rows, one file, only the newest row describing its
+   bytes.
+3. **Re-saving a box that was NOT in a project category folder was a hard dead end.** The two
+   collision checks ask about two different folders; a box swept into `Projects/<slug>/design/`
+   leaves the picked folder vacant and reaches the answerable 409, but a box sitting in a plain
+   library folder hits `refuse_taken_names!`'s **terminal 422** and could not be re-saved at all
+   without renaming.
+
+Plus: nothing anywhere linked a library file back to the addon that produced it, though
+`maker_addon_files.node_id` had recorded it since the framework shipped.
+
+### What shipped
+
+| # | | |
+|---|---|---|
+| 1 | `maker_addon_state_revisions` + a `revision` counter + a backfill | every pre-existing state comes out of the migration with a coherent one-entry history, not an empty one |
+| 2 | `POST /tools/:key` takes an optional `state_id` and **revises** | absent or empty → creates, byte-identical to before |
+| 3 | The own-file collision exemption, in **both** checks | closes the §1.3 dead end without loosening anything else |
+| 4 | `Host::LEVEL` 2 → 3, **no new capability**; `revision` in the states payload | `min_host: 3` is how a bundle asks |
+| 5 | `GET /tools/:key/states/:id/revisions` — lazy, newest first | a gallery pays nothing for histories nobody expanded |
+| 6 | `?state=<id>` resolved server-side into `ctx.launch` | the bundle never learns the host's URL shape |
+| 7 | `Maker::AddonOrigin` + an index on `maker_addon_files.node_id` | a page of library nodes back to the states that produced them, at fixed cost |
+| 8 | Four surfaces: Files list, Files grid, project attachment tiles, the file page's own button | one `data-` attribute per surface, one entry in `filemenu_controller.js` |
+| 9 | SDK: `stateId` on save, `host.state.revisions`, `host.launch` | |
+
+The invariants are in **CLAUDE.md §14c** (ten bullets), with the collision-exemption qualifier
+added to §14f's own two-checks bullet and the `.to_i` lesson below appended to §15's mutation-check
+rule.
+
+### The decision the whole feature rests on, and the bug inside it
+
+**A collision with the box's own file is an approved replace; every other collision keeps today's
+answer.** The alternative shape — `lineage_id` + `revision` columns, every save still a row — was
+rejected because `GET /tools/:key/states` would then return five entries where a box used to be one,
+and **publishing a bundle IS the deploy** (§14c): every already-published bundle would start showing
+duplicates on a host that merely deployed. One entry per box means `generators`, `openscad` and any
+older `boxes` need no change and simply *stop* seeing duplicates.
+
+The exemption shipped twice. The first spelling asked whether the target state owned that
+`(parent, name)` and, if so, **skipped the collision query**. That is a different rule, and the
+difference is live on chunk: `Sync::Commit` validates a manifest exhaustively and the name not at all
+(§14a), so two live siblings sharing one `(parent, name)` are reachable there. Measured — the save
+answered **302, rewrote the node the state does NOT own, and adopted it into `state.files`**: §14a's
+orphaning shape with the sign flipped, introduced by the very commit that added the exemption. The
+fix is `except_node_id:`, the parameter `Maker::MoveNode.collision?` has always had and was being
+passed nil, which **excludes one node without skipping the question** — the stranger's node stays in
+the result set and the 422 stands.
+
+The second half was found by measuring rather than reading. `Maker::ProjectIntake.destination_for`
+answers nil for anything that is not a project folder's own root, so **the mainline revision flow —
+a box in a plain library folder — never reaches `resolve_placements`' first arm at all**. Without a
+second arm it cleared `refuse_taken_names!` and then landed as a **CREATE**: a second live node with
+the same name in one directory on chunk, and on share/s3 the port's own clobber refusal turning the
+exemption straight back into the 422 it exists to remove. Both arms now exist, and **arm 1 wins when
+both apply** — picked folder holds this state's copy, category folder holds a stranger's — because
+refusing to guess and asking the question is the conservative answer.
+
+### `Maker::AddonOrigin`: the join was measured before it was rejected
+
+The obvious spelling is `joins(...).where(node_id:, maker_addon_states: {user_id:})`. It loses on
+cost while winning nothing on statement count. SQLite drives it from `maker_addon_states` on
+`user_id` and probes the composite `[addon_state_id, node_id]`, one seek per (state × node_id), so
+the cost grows with the user's **saved-state count** — which no query-count test can see, because it
+is all inside one statement. Measured on 20 000 addon files / 5 000 saved states, resolving one
+2000-node page:
+
+| | 25 states | 500 states | |
+|---|---|---|---|
+| join, 40 hits | 3.6 ms | **64.7 ms** | grows |
+| join, all miss | 3.5 ms | **64.6 ms** | grows |
+| two statements, 40 hits | 0.5 ms | 0.5 ms | flat |
+| two statements, all miss | 0.5 ms | 0.4 ms | flat |
+
+**The all-miss row is the one that settles it: 65 ms to return ZERO rows**, on the ordinary library
+that has never saved anything from an addon. That is the common case, not the corner. The join is
+also not one statement — `joins(<string>) + includes(:addon_state)`, the exact spelling proposed,
+emits the join *and* a separate preload whenever it matches, so there was never a statement to save.
+
+The durable half of the argument is not the numbers but the **plan**: probed, the join plans three
+different ways (production-scale with no stats → the composite; after ANALYZE → the `node_id` index;
+at fixture scale after ANALYZE → a bare table scan), while both single-table lookups are fixed at
+every scale and stats configuration. A SQLite-only `INDEXED BY` hint was the rejected alternative —
+this codebase is deliberately adapter-agnostic (§14e). The Postgres half is **reasoned, not
+measured**: there is no local Postgres on this box (§13).
+
+### Tried and rejected
+
+- **`if_not_exists: true` on the migration's DDL**, so the migration test could run `up` twice. Tried
+  and reverted: `add_column ... if_not_exists: true` **silently skips** if a column of that name
+  already exists with a different type or default, turning a loud migration failure into a database
+  quietly diverged from `db/schema.rb`. The test gets a genuine pre-existing row via `down` then `up`
+  instead — `down` does not touch `maker_addon_states`, so a state seeded before it survives.
+- **A `state.lock!` around the revision increment.** It would buy a lost-update race at the price of
+  a new lock-ordering edge inside a transaction that goes on to take `Sync::`'s own `FOR UPDATE` via
+  `next_seq!` — precisely where §14e's deadlock rule lives. Declined; see open item 2.
+- **A `limit(N)` on the revisions endpoint.** A cap without paging is §14b's silent truncation.
+- **Inlining the history into `/states`.** A 20-revision × 40-param history across every saved box
+  bloats the gallery's first paint for data nobody has expanded.
+- **`Origin = Data.define(:state)`** — shipped, then removed. The caller that eventually appeared
+  reads the state and nothing else, so a one-member wrapper whose only extra reader nobody calls was
+  ceremony between the caller and the row.
+- **A `blank?` short-circuit on the deep link.** `find_by(id: "")` was probed twice to return nil
+  rather than raise, so the guard changed nothing observable and no test could tell it apart from its
+  absence. Note the save door's `present?` is the **opposite** case and stays: there `""` must reach
+  the CREATE branch, with a red mutation to prove it.
+
+### The recurring bug shape this arc hit twice: `.to_i` on a timestamp
+
+Both instances were guards that **could not fail**, and both were caught by mutating rather than by
+reading:
+
+1. **The migration backfill test** asserted `state.created_at.to_i == revision.created_at.to_i`. A
+   state created and a migration run moments apart in one process land in the same wall-clock
+   **second**, so a `CURRENT_TIMESTAMP` mutation — the half most likely to regress — stayed green.
+   Fixed by creating the state inside `travel_to(3.days.ago)`, which makes a `now()`-style regression
+   fail by three orders of magnitude instead of by nothing.
+2. **The stranger-untouched assertion** in the collision test compared `updated_at.to_i` against a
+   write landing in the same second, so it passed whether or not the stranger's node was rewritten.
+   Fixed by asserting **content** columns instead — `size`, `content_hash`, `current_version_id` are
+   nil on a fixture node and a real write sets at least one on every backend (measured: chunk fills
+   `current_version_id`, share and s3 fill `size` and `content_hash`), so the assertion is
+   precision-independent and identical on all three legs.
+
+Recorded in CLAUDE.md §15 beside the mutation-check rule, because it is a way of writing a guard that
+looks careful and is inert.
+
+### A stale claim that had propagated to five files
+
+`test/integration/web/page_query_budget_test.rb` justified constancy-over-a-literal with *"the counts
+differ per FileLayer backend"* — false **in that file** since PR #108, because its `setup` calls
+`pin_file_layer_backend("chunk")`, so every test in the class resolves the Chunk adapter on all three
+legs and measures the same thing three times. Verified by introducing an N+1 into
+`Maker::AddonOrigin` deliberately: **11 small / 23 large on the default leg, on share and on s3 —
+identical**. The per-backend argument is real where the adapter is the subject
+(`test/services/file_layer/adapter_contract.rb` makes it at length); it is inert in a class that pins
+one. The real justification — a literal pins whatever a page costs today and growth is the defect —
+is unchanged, so no assertion moved; five copies of the reasoning did (commit `806d48c`).
+
+### Verification
+
+`bin/ci` **exit 0**, judged by exit code, all seven gates: `setup`, `style` (rubocop),
+`scan` (bundler-audit + importmap audit + brakeman, 0 warnings), `test`, `test-share`, `test-s3`,
+`system`.
+
+**2 332 runs / 8 493 assertions / 0 failures / 0 errors / 3 skips — identical on all three legs**
+(chunk, share, s3). System **92 runs / 561 assertions / 0 skips**, of which the browser SDK suite
+(`test/system/addon_sdk_test.rb`) is **19 runs / 106 assertions**.
+
+Baseline taken by **running the merge-base** `355ec79`, not by reading the entry below: **2 275 /
+8 212 / 3 skips**, system **87 / 529**, `addon_sdk_test.rb` **15 / 78**. So **+57 runs / +281
+assertions** on the Rails suite and **+5 runs / +32 assertions** on the system suite, with no change
+in skips. It reconciles: the four new Rails test files (`addon_origin_surfaces_test.rb`,
+`addon_state_revision_test.rb`, `create_maker_addon_state_revisions_migration_test.rb`,
+`addon_origin_test.rb`) are **28 runs / 79 assertions** measured together, leaving +29 / +202 in the
+three modified files (`addons_controller_test.rb`, `page_query_budget_test.rb`, `host_test.rb`); and
+the system delta is +4 runs from `addon_sdk_test.rb` plus the +1 in `file_menu_test.rb`.
+
+**Not deployed, not merged.**
+
+### Left open, deliberately — none of these were fixed here
+
+1. **A pre-existing `FOR KEY SHARE` → `FOR UPDATE` hazard on managed Postgres, UNVERIFIED.**
+   `Tools::AddonsController#create` wraps `LibraryOutput.write` in one transaction; on chunk that
+   calls `Sync::Commit.begin`, which inserts a `PendingCommit` carrying a `user_id` foreign key —
+   `FOR KEY SHARE` on the users row — and then `Sync::Commit.finalize` takes `next_seq!`'s
+   `FOR UPDATE` on the same row. That is §14e's deadlock shape exactly. It **predates this arc** and
+   revising changes nothing about the ordering — but **not, as the plan carried in, "since the addon
+   framework shipped"**: the wrapping transaction arrived on **2026-08-05 in `0032120` (#132)**, and
+   before it `Sync::Commit.begin` and `.finalize` each ran in their own implicit transaction, so the
+   `FOR KEY SHARE` was released before the `FOR UPDATE` was ever taken and there was no upgrade to
+   deadlock on. Dating it matters: the fix, if it is ever needed, is about the boundary that commit
+   drew, not about the door. Unverified because this box has no local Postgres (§13) and SQLite
+   cannot reproduce a lock upgrade.
+2. **The revision counter is a read-modify-write with no lock.** `state.revision` is read before the
+   transaction opens, so two concurrent revisions of one item — a double-click — both compute N+1 and
+   the loser gets `RecordNotUnique` → 500. Accepted: the unique index on `[addon_state_id, revision]`
+   is what converts the two silent outcomes (a duplicate revision number, and a lost update on the
+   state row) into a loud one, and the transaction rolls back **before any byte is written** —
+   proved, not assumed. A `state.lock!` was declined on open item 1's grounds. Worth stating plainly:
+   **nothing in the app locks `maker_addon_states` at all**, so that lock-ordering risk is
+   precautionary rather than demonstrated.
+3. **`GET /tools/:key/states/:id/revisions` is unbounded** — decided, not overlooked. See "tried and
+   rejected". What bounds it today is human save frequency; if that ever stops being true the fix is
+   paging, not a bare limit.
+4. **`models#show` file tiles have no right-click menu at all.** There is no `data-note-url` anywhere
+   under `app/views/models/`, so a model's bundle files reach neither their notes nor now their
+   generator. A gap, not a regression — the menu never existed on that surface.
+5. **`Registry.all` now runs once per Files/project page render** whenever the library has any addon
+   output (never otherwise — see §14c). Its `states_key_permitted?` warn fires once per call, so a
+   standing unreciprocated claim in production now logs once per **Files page view** rather than once
+   per `/tools` view. A log-volume change, not a behaviour change.
+6. **The known intermittent reappeared** (CLAUDE.md §12 item 7): `SQLite3::BusyException`-shaped
+   failures in a controller test's `setup`, seen by three separate agents on unrelated tests, roughly
+   **2 in 14 runs** during the middle of the arc and then **0 in 45+** afterwards. **No new
+   diagnosis** — nothing here narrows it, and the appearance/disappearance correlates with nothing
+   anyone identified.
+7. **The host level is pinned in two places** — `host_test.rb`'s capability ledger and the
+   rendered-ctx literal in `addons_controller_test.rb`. Both must move at level 4, by design: one
+   asserts the ledger moved with the capabilities, the other that the number actually reaches a
+   bundle.
+
+---
+
+## 2026-08-12: the `scan` gate reports on the code, not on brakeman's own version (branch `claude/brakeman-ensure-latest-gate`)
 
 **Closes the structural question the entry below spun out** ("that is a treadmill, not a fix … spun
 out as its own task"). That entry unblocked itself with a 2-line `Gemfile.lock` bump to brakeman
