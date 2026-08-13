@@ -19,6 +19,14 @@ require "test_helper"
 #     in a comment and uses the runner's own Ruby instead. Retargeting a Rails job at macos while
 #     keeping the action fails at step 2 of every job, on infrastructure rather than on code, which
 #     is the least legible kind of red.
+#   * `bin/brakeman` shipped the Rails scaffold's `ARGV.unshift("--ensure-latest")`, which made the
+#     `scan` gate fail whenever a newer BRAKEMAN was published — red with zero warnings and no code
+#     change. That is a second, INVISIBLE definition of what the gate runs, which is exactly what
+#     config/ci.rb's "ONE definition per gate" header exists to prevent. See the binstub.
+#
+# The binstub checks below extend this file past .github/workflows/. They belong here anyway: a
+# binstub is CI's actual entry point, the Rails process never loads it either, and the failure it
+# caused was a gate result rather than a code result.
 class CiHygieneTest < ActiveSupport::TestCase
   WORKFLOW_DIR = Rails.root.join(".github/workflows")
 
@@ -163,7 +171,92 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "#{ungated.join("\n  ")}"
   end
 
+  # ---------------------------------------------------------------------------------------------
+  # The scan gate reports on the CODE, never on how current the scanner itself is.
+  #
+  # THE BUG, probed at main@eb526c0 on 2026-08-12 and isolated by holding the version constant and
+  # varying only the flag (brakeman 8.0.5, this app, the gate's own flags):
+  #
+  #     with --ensure-latest    -> exit 5   "Brakeman 8.0.5 is not the latest version 8.0.6"
+  #     without it              -> exit 0   "No warnings found"
+  #
+  # So `bin/ci scan` exited 1 with ZERO security warnings, on a tree nobody had touched, because
+  # someone upstream had cut a release. Under CLAUDE.md §15 a red `bin/ci` blocks opening a PR, so
+  # that stops all work in the repo until the pin is bumped — and the next release re-breaks it.
+  # Offline it is worse than red: `Gem.latest_spec_for` returns nil and ensure_latest raises
+  # NoMethodError on `latest.date`, so the gate cannot run at all without reaching rubygems.org.
+  #
+  # "A newer brakeman exists" is answered by .github/dependabot.yml (bundler, weekly) as a
+  # reviewable PR, which is where a dependency bump belongs.
+  #
+  # WHY THESE ARE STATIC READS AND NOT A RUN. A run cannot see this. With the flag present and
+  # brakeman currently latest, `bin/brakeman` exits 0 — identical to the flag being absent — so a
+  # run-based guard is green either way and only goes red once upstream releases: a test that
+  # cannot fail for the reason it exists, which is this repo's dominant failure shape. That is
+  # exactly how the first green in this branch was worthless (see docs/STATUS.md).
+  #
+  # THREE ASSERTIONS, each mutation-checked, because no one of them carries the invariant alone:
+  # re-adding the unshift is caught only by the first, gutting the binstub only by the second, and
+  # moving the flag up into the gate command only by the third.
+
+  test "bin/brakeman injects no arguments of its own" do
+    # STRUCTURAL, not a search for one literal. Any argument a binstub adds is invisible at the
+    # only place that claims to define the gate (config/ci.rb), so the rule is that the binstub is
+    # a plain loader and flags live in the gate definition. That catches the next injected flag as
+    # well as this one — the repo's standing objection to enumerating what a bad value can look
+    # like (see the self-hosted-label argument above, and deploy_hygiene_test.rb's licence sweep).
+    #
+    # DELIBERATELY NOT EXTENDED TO bin/bundler-audit, which legitimately injects
+    # `--config config/bundler-audit.yml`. Narrow and argued beats broad with carve-outs: that
+    # argument names a file in this repo, has no network or version semantics, and cannot change
+    # what the audit reports. brakeman's injected flag was a network call that failed the gate on
+    # its answer. Verified 2026-08-12 that neither bundler-audit nor `importmap audit` has any
+    # self-version check at all, so brakeman is the only binstub that needs this rule.
+    offenders = code_lines("bin/brakeman").grep(/\bARGV\b/)
+    assert_empty offenders,
+                 "bin/brakeman must be a plain loader — flags belong in config/ci.rb, the one " \
+                 "definition of what the scan gate runs. Found:\n  #{offenders.join("\n  ")}"
+  end
+
+  test "bin/brakeman still resolves the brakeman that Gemfile.lock pins" do
+    # THE ASSERTION THAT STOPS THE ONE ABOVE BEING SATISFIED BY AN EMPTY FILE. `: > bin/brakeman`
+    # passes the ARGV check perfectly and disables the security gate; only running the thing
+    # notices. Same lesson as ArchitectureInvariantsTest, where a mutation that keeps the count at
+    # 1 while MOVING the reference is caught solely by the second assertion.
+    locked = Rails.root.join("Gemfile.lock").read[/^ {4}brakeman \(([\d.]+)\)/, 1]
+    assert locked, "could not read brakeman's pinned version out of Gemfile.lock"
+
+    out = IO.popen([ Rails.root.join("bin/brakeman").to_s, "--version" ], err: [ :child, :out ], &:read)
+    assert_equal 0, $?.exitstatus, "`bin/brakeman --version` failed:\n#{out}"
+    assert_equal "brakeman #{locked}", out.strip,
+                 "bin/brakeman must load the pinned brakeman; got #{out.strip.inspect}"
+  end
+
+  test "nothing in the CI surface asks a scanner whether a newer version of itself is published" do
+    # The third re-entry route: leave the binstub a clean loader and put the flag in the gate
+    # command instead, where the two checks above cannot see it. This one is necessarily a literal
+    # — `--ensure-latest` is brakeman's own spelling and there is no structural tell in a YAML
+    # `run:` string — so it is the WEAKEST of the three and is here to close a gap, not to be
+    # relied on. Comments are stripped first, or this file's own documentation would trip it.
+    surface = [ "config/ci.rb", *Dir.glob("bin/*"), *Dir.glob(".github/workflows/*.{yml,yaml}") ]
+    offenders = surface.filter_map do |rel|
+      hits = code_lines(rel).grep(/--ensure-latest/)
+      "#{rel}: #{hits.join(" / ")}" if hits.any?
+    end
+    assert_empty offenders,
+                 "--ensure-latest fails the scan gate on brakeman's own version rather than on " \
+                 "this code; gem freshness is Dependabot's job:\n  #{offenders.join("\n  ")}"
+  end
+
   private
+
+    # Source lines with blanks and whole-line comments removed. Both `#` (ruby, yaml) and the
+    # shebang go; nothing here needs to read a trailing comment.
+    def code_lines(relative_path)
+      path = Rails.root.join(relative_path)
+      return [] unless path.file?
+      path.readlines(chomp: true).reject { |l| l.strip.empty? || l.strip.start_with?("#") }
+    end
 
     # The real gate list, read by RUNNING bin/ci rather than by parsing config/ci.rb.
     #

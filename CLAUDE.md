@@ -1225,6 +1225,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **The suite being green is not evidence a guard works** if the guard's precondition is
   never established in test (see the `STORAGE_BACKEND` 500 in §14a, and the form `scope:` bug
   in §14d). Drive the real request.
+- **A SECURITY GATE REPORTS ON THE CODE, NEVER ON HOW CURRENT THE SCANNER ITSELF IS.** The Rails
+  scaffold's `bin/brakeman` unshifts `--ensure-latest`, so `bin/ci scan` exited **5/1 with zero
+  warnings and no code change** the day brakeman cut a release — and §15 makes a red `bin/ci` block
+  every PR, so an upstream release stopped all work until someone bumped the pin, which the next
+  release re-breaks. Offline it does not even fail cleanly: `Gem.latest_spec_for` returns nil and
+  ensure_latest raises `NoMethodError`. Gem freshness belongs to **Dependabot** (already weekly),
+  off the critical path. A binstub that injects flags is also a **second, invisible definition of a
+  gate** that `config/ci.rb` claims to define alone. `rails app:update` will offer the line back;
+  `test/ci_hygiene_test.rb` refuses it, and refuses any other injected argument.
 - **A SOLID STORE IS NOT WIRED UNTIL `config.<x>_store` SAYS SO.** Solid Cache shipped with its
   gem, `config/cache.yml`, a `cache` role in `database.yml`, `db/cache_schema.rb` and a
   persistent volume — and `config.cache_store` left at the Rails scaffold comment, so production

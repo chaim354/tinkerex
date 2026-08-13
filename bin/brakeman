@@ -2,6 +2,32 @@
 require "rubygems"
 require "bundler/setup"
 
-ARGV.unshift("--ensure-latest")
+# NO `ARGV.unshift("--ensure-latest")` HERE. The Rails 8 scaffold ships that line and it is
+# DELIBERATELY REMOVED — `rails app:update` will offer to put it back, so read this before accepting
+# that hunk. test/ci_hygiene_test.rb goes red if it returns.
+#
+# WHAT IT DID: `--ensure-latest` makes brakeman ask rubygems.org whether a newer BRAKEMAN is
+# published and `exit 5` when there is one (Brakeman.ensure_latest → Gem.latest_spec_for). That is a
+# question about the TOOL, answered on the way to a question about the CODE, and it fails the whole
+# `scan` gate on the tool's answer. Observed at main@eb526c0 on 2026-08-12: brakeman 8.0.5 pinned,
+# 8.0.6 published, ZERO warnings found — `bin/brakeman --quiet --no-pager --exit-on-warn
+# --exit-on-error` exited 5 and `bin/ci scan` exited 1, with no code change and nothing to fix. Under
+# CLAUDE.md §15 a red `bin/ci` blocks opening a PR, so an unrelated upstream release stops all work
+# in the repo until someone bumps the pin — and 8.0.7 re-breaks it. A treadmill, not a fix.
+#
+# IT ALSO CRASHES OFFLINE, which is worse than merely needing the network. Probed: with rubygems
+# unreachable `Gem.latest_spec_for("brakeman")` returns **nil**, and ensure_latest then calls
+# `latest.date` → NoMethodError. The gate cannot run at all without network access to rubygems.org.
+#
+# `--ensure-latest 30` (the optional DAYS grace) is NOT the compromise it looks like: still red with
+# no code change, still network-bound, still crashes offline — only later.
+#
+# "A NEWER BRAKEMAN EXISTS" IS ANSWERED BY DEPENDABOT, off the critical path — .github/dependabot.yml
+# runs the bundler ecosystem weekly and brakeman is in the Gemfile. A version bump then arrives as a
+# reviewable PR instead of as a red gate on somebody else's branch.
+#
+# The two sibling scanners have NO equivalent and need no equivalent comment: bundler-audit has no
+# self-version check (its network use is the advisory DB, fetched only when absent), and
+# `importmap audit` has none either (its network call IS the finding, about our own pins).
 
 load Gem.bin_path("brakeman", "brakeman")
