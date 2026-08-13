@@ -3,8 +3,7 @@ require "test_helper"
 module Maker
   class AddonStateRevisionTest < ActiveSupport::TestCase
     setup do
-      @user = User.create!(email: "rev@example.com", password: "correct horse battery staple",
-                           confirmed_at: Time.current)
+      @user = User.create!(email: "rev@example.com")
       @state = @user.maker_addon_states.create!(
         addon_key: "boxes", name: "shelf box", data: { "generator" => "tray", "params" => { "h" => "60" } }
       )
@@ -21,11 +20,25 @@ module Maker
       end
     end
 
-    # A SNAPSHOT IS IMMUTABLE — there is no updated_at, so nothing can rewrite one and leave the
-    # history disagreeing with itself. Asserted on the SCHEMA rather than on behaviour: a model
-    # callback could be removed, a missing column cannot.
+    # NOT the immutability guard (that is `attr_readonly`, pinned below) — its absence blocks
+    # nothing by itself. Asserted on the SCHEMA rather than on behaviour: a future `t.timestamps`
+    # would compile and pass every other test here, and this is the one thing that would catch it.
     test "a revision has no updated_at" do
       assert_not Maker::AddonStateRevision.column_names.include?("updated_at")
+    end
+
+    # THE REAL GUARD. Confirmed empirically against this app's own config: `attr_readonly` makes a
+    # rewrite through the model raise `ActiveRecord::ReadonlyAttributeError`, on assignment as well
+    # as on `update!` — it does not wait for a failed save to say so. It is silent on a
+    # relation-level `update_all` or raw SQL (neither instantiates a record), which is why the
+    # migration's own backfill — the one legitimate writer — goes through `execute` rather than the
+    # model.
+    test "a revision refuses to be rewritten" do
+      revision = @state.revisions.create!(revision: 1, data: @state.data)
+      assert_raises(ActiveRecord::ReadonlyAttributeError) do
+        revision.update!(data: { "generator" => "tray", "params" => { "h" => "999" } })
+      end
+      assert_equal "60", revision.reload.data.dig("params", "h")
     end
 
     test "destroying a state destroys its revisions" do
