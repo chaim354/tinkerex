@@ -17,11 +17,17 @@
       <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
       <%# data-download-url puts "Download" in the right-click menu — the grid's ONLY route to the
           bytes without opening the file first, since a card has no row-actions cell. Folders take
-          the branch above and get no contextmenu action, so none of this reaches a directory. %>
+          the branch above and get no contextmenu action, so none of this reaches a directory.
+
+          data-addon-open-url and data-addon-open-label are the same mechanism for "Edit in the
+          addon that made this file"; nil for anything an addon did not produce, which renders no
+          attribute and so no menu entry. See the fuller note in _list.html.erb. %>
       <%= link_to file_path(node.node_id), class: "grid-card file-cell",
                   data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label,
                           action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                          download_url: blob_file_path(node.node_id, download: 1) } do %>
+                          download_url: blob_file_path(node.node_id, download: 1),
+                          addon_open_url: @addon_origins.dig(node.node_id, :url),
+                          addon_open_label: @addon_origins.dig(node.node_id, :label) } do %>
         <%= render "thumb", thumb:, ext_label: %>
         <span class="grid-name"><%= node.name %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>
@@ -29,7 +35,9 @@
     <% else %>
       <%= link_to file_path(node.node_id), class: "grid-card",
                   data: { action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                          download_url: blob_file_path(node.node_id, download: 1) } do %>
+                          download_url: blob_file_path(node.node_id, download: 1),
+                          addon_open_url: @addon_origins.dig(node.node_id, :url),
+                          addon_open_label: @addon_origins.dig(node.node_id, :label) } do %>
         <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
         <span class="grid-name"><%= node.name %></span>
         <%= render "note_badge", count: @note_counts[node.node_id] %>

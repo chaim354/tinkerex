@@ -1,4 +1,5 @@
 require "test_helper"
+require_relative "../../support/fake_addon_source"
 
 module Web
   # Every page here is rendered at two data sizes and must issue the SAME number of queries.
@@ -25,6 +26,10 @@ module Web
                            confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
     end
+
+    # Only the addon-origins test below stubs the source; a reset is harmless for every other test
+    # here and keeps the stub from leaking into the next test in this worker.
+    teardown { Maker::Addons::Source.reset! }
 
     # SCHEMA/TRANSACTION and PRAGMA are excluded: they are this page's cost only by accident of
     # being first in the process. The warm-up request in assert_constant_queries is what really
@@ -128,6 +133,40 @@ module Web
                               -> { add.call("fs", SMALL) },
                               -> { add.call("fl", LARGE - SMALL) },
                               "files#index (folder)")
+    end
+
+    # THE REVERSE LOOKUP MUST NOT BE PER ROW. `Maker::AddonOrigin.for` resolves a whole page at a
+    # fixed cost; written as a per-node (or per-state) lookup it is invisible on a three-file fixture
+    # and fatal on a real library, which has never had pagination in flat mode and was measured at
+    # 2000 nodes. Constancy, never a literal — the counts differ per LIBRARY_BACKEND.
+    #
+    # ONE STATE PER FILE, NOT ONE STATE WITH MANY FILES, because those are two different Ns and only
+    # this shape moves both. Ten files on one saved box leave `claims.map(&:last).uniq` a single id,
+    # so a per-STATE lookup stays flat however many files are added — the exact mutation that stayed
+    # green in Maker::AddonOriginTest until a second axis was added there. It is also the realistic
+    # library: many saved boxes, an output file or two each.
+    #
+    # THE SOURCE IS STUBBED so `Registry.all` returns a real addon and the page renders the whole
+    # feature. Unstubbed it degrades to [] (no ADDON_SOURCE_* in the test env), which still exercises
+    # `AddonOrigin.for` but stops short of `link_for` finding anything — a weaker measurement of the
+    # same page for no saving.
+    test "files#index does not grow with the number of addon-produced files" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        { "key" => "boxes", "title" => "Box Generator", "icon" => "📦", "description" => "d",
+          "api_version" => "1", "entry" => "boxes.js" }
+      ])
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          node!(id, "#{id}.svg")
+          state = @user.maker_addon_states.create!(addon_key: "boxes", name: "box #{id}", data: {})
+          state.files.create!(node_id: id, role: "output", position: 0)
+        end
+      end
+      assert_constant_queries(files_path,
+                              -> { add.call("as", SMALL) },
+                              -> { add.call("al", LARGE - SMALL) },
+                              "files#index (addon origins)")
     end
 
     test "trash#index does not grow with the number of tombstones" do

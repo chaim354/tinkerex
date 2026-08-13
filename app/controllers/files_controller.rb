@@ -40,6 +40,11 @@ class FilesController < ApplicationController
   # header for why that made it a concern rather than a second copy.
   include ProjectFolderIntake
 
+  # "Edit in <Addon>" for a file an addon produced — #addon_origins_for, called from #index and
+  # #show below and shared with ProjectsController#show, whose attachment tiles carry the same
+  # right-click menu. See the concern for why the Registry lookup is second and conditional.
+  include AddonOrigins
+
   # THE UPLOAD BRANCH. Two flows, one per deployment, and BOTH refusals are honest: neither
   # deployment can do the other's flow.
   #
@@ -227,6 +232,11 @@ class FilesController < ApplicationController
     @folder_paths = @flat ? folder_paths_for(@nodes) : {}
     # Note counts for the badge — one grouped query, never N+1.
     @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
+    # "Edit in <Addon>" for whichever of these files an addon produced. AFTER the select!/sort, so
+    # it is asked about exactly the rows that will render, and — like @note_counts beside it — a
+    # whole page at a time rather than per row (page_query_budget_test.rb asserts the constancy).
+    # Both list and grid read it, so it is set here rather than in either branch above.
+    @addon_origins = addon_origins_for(@nodes.map(&:node_id))
     @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
     backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
     # The current project's folder, for the upload button's default-into-project wiring (spec
@@ -372,6 +382,9 @@ class FilesController < ApplicationController
     @projects = scope.to_a.sort_by { |p| name_key(p) }
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)
+    # The same lookup #index makes for a whole page, asked about one node. Keyed by node_id either
+    # way so the view reads it identically; a file no addon produced is simply an absent key.
+    @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
   end
 

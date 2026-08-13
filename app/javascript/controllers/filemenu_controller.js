@@ -1,14 +1,14 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Right-click a file → a small menu (Add note / Open / Download). "Add note" opens a popover with a
+// Right-click a file → a small menu (Add note / Open / Download / Edit in <Addon>). "Add note" opens a popover with a
 // textarea that POSTs to the file's notes endpoint (JSON), then reloads so the server-rendered badge
 // is correct. Progressive enhancement: with no JS, right-click is the browser's own menu and notes
 // stay fully usable from the file detail page.
 //
 // EVERY ENTRY IS BUILT FROM A `data-` ATTRIBUTE ON THE CELL, never from a URL assembled here. The
-// cell already carries `data-note-url` and now `data-download-url`, both written by the server's own
-// route helpers — so this controller cannot get a path shape wrong, and a surface that does not want
-// an entry simply omits the attribute rather than needing a flag.
+// cell carries `data-note-url`, `data-download-url` and `data-addon-open-url`, all written by the
+// server's own route helpers — so this controller cannot get a path shape wrong, and a surface that
+// does not want an entry simply omits the attribute rather than needing a flag.
 export default class extends Controller {
   connect() {
     this.onDocClick = () => this.close()
@@ -62,6 +62,22 @@ export default class extends Controller {
       dl.href = downloadUrl
       dl.textContent = "Download"
       this.menu.appendChild(dl)
+    }
+
+    // "Edit in <Addon>" — only for a file an addon produced. Built from data- attributes the server
+    // wrote, exactly like every other entry here, so this controller cannot get the path shape wrong
+    // and a surface that omits them simply has no entry.
+    //
+    // BOTH ATTRIBUTES COME FROM ONE SERVER-SIDE HASH (AddonOrigins#addon_origins_for), so a cell
+    // carrying the url always carries the label too. The `||` below is therefore NOT a live branch
+    // today — it is there so a future surface that writes only the url gets a usable entry instead
+    // of one reading "undefined", which is what `textContent = undefined` renders.
+    const addonUrl = cell.dataset.addonOpenUrl
+    if (addonUrl) {
+      const edit = document.createElement("a")
+      edit.href = addonUrl
+      edit.textContent = cell.dataset.addonOpenLabel || "Edit in its generator"
+      this.menu.appendChild(edit)
     }
     document.body.appendChild(this.menu)
   }

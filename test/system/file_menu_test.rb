@@ -110,6 +110,37 @@ class FileMenuTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # "EDIT IN <ADDON>", WHICH ONLY A BROWSER CAN SEE. Three views write `data-addon-open-url` and
+  # `data-addon-open-label` (test/integration/web/addon_origin_surfaces_test.rb asserts every one of
+  # them); this asserts filemenu_controller.js turns the pair into a usable entry. Different
+  # failures, exactly as the Download pair above: an attribute on a menu that never reads it renders
+  # nothing, and a menu reading an attribute no view emits renders nothing either — and a Stimulus
+  # controller that stopped building the entry would be SILENT, which is §14d's whole complaint
+  # about this layer.
+  #
+  # THE REAL SOURCE, NOT A STUB, via test/fixtures/addons — the same hermetic fixture directory
+  # addon_bundle_test.rb uses, whose `boxes` entry is titled "Box Generator". The label asserted
+  # below is therefore the manifest's own title travelling through Registry, AddonOrigins and the
+  # view, rather than a string this test also wrote.
+  test "the right-click menu offers Edit in the addon that made the file" do
+    prior_source_path = ENV["ADDON_SOURCE_PATH"]
+    ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+    node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "box.svg", kind: "file")
+    state = @user.maker_addon_states.create!(addon_key: "boxes", name: "shelf box", data: {})
+    state.files.create!(node_id: node.node_id, role: "output", position: 0)
+
+    visit files_path
+    find(".file-cell", text: "box.svg").right_click
+
+    entry = find(".file-menu a", text: "Edit in Box Generator")
+    assert_equal tools_addon_path("boxes", state: state.id),
+                 entry[:href].sub(%r{\Ahttps?://[^/]+}, "")
+
+    assert_no_console_errors
+  ensure
+    ENV["ADDON_SOURCE_PATH"] = prior_source_path
+  end
+
   # project_with_folder gives a SOURCE folder ("parts") that is deliberately NOT the project's own
   # folder — this is a file sitting in the library, not yet part of any project, which is the
   # ordinary case the attach control exists for.

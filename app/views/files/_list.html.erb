@@ -34,18 +34,29 @@
               <%# data-download-url puts "Download" in the right-click menu (filemenu#open). The
                   same blob URL the row's own Download link uses, ?download=1 and all, so the two
                   cannot answer differently. Folders get neither — they have no contextmenu action
-                  at all, which is what keeps a "Download" off a directory. %>
+                  at all, which is what keeps a "Download" off a directory.
+
+                  data-addon-open-url and data-addon-open-label are the same mechanism for "Edit in
+                  the addon that made this file". @addon_origins has no key for anything an addon
+                  did not produce, so both values are nil, Rails renders NO attribute, and the menu
+                  simply has no entry — the way every surface here opts out. The two always travel
+                  together (one hash, built once in AddonOrigins), so the label can never go missing
+                  from a cell that has the url. %>
               <%= link_to file_path(node.node_id), class: "file-cell",
                           data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label,
                                   action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                                  download_url: blob_file_path(node.node_id, download: 1) } do %>
+                                  download_url: blob_file_path(node.node_id, download: 1),
+                                  addon_open_url: @addon_origins.dig(node.node_id, :url),
+                                  addon_open_label: @addon_origins.dig(node.node_id, :label) } do %>
                 <%= render "thumb", thumb:, ext_label: %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
             <% else %>
               <%= link_to node.name, file_path(node.node_id),
                           data: { action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                                  download_url: blob_file_path(node.node_id, download: 1) } %>
+                                  download_url: blob_file_path(node.node_id, download: 1),
+                                  addon_open_url: @addon_origins.dig(node.node_id, :url),
+                                  addon_open_label: @addon_origins.dig(node.node_id, :label) } %>
             <% end %>
             <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>

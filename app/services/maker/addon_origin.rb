@@ -20,16 +20,17 @@ module Maker
   # reaching once `for` has found a hit. `test/services/maker/addon_origin_test.rb` asserts the
   # zero-fetch property with a counting double rather than leaving it to be read off the code.
   module AddonOrigin
-    # `addon_key` is DERIVED, not stored beside the state — one value copied out of another is the
-    # drift shape §14e records, and here the copy would be free to disagree with the row it came
-    # from. Callers get the same reader either way.
-    Origin = Data.define(:state) do
-      def addon_key = state.addon_key
-    end
-
     module_function
 
-    # Returns { node_id => Origin }. Absent keys for nodes no addon produced.
+    # Returns { node_id => Maker::AddonState }. Absent keys for nodes no addon produced.
+    #
+    # THE STATE ITSELF, NOT A WRAPPER, AND THE WRAPPER WAS REMOVED RATHER THAN NEVER WRITTEN. This
+    # shipped as `Origin = Data.define(:state)` with a derived `addon_key` reader, on the reasoning
+    # that a caller would want both. The caller now exists — AddonOrigins#addon_origins_for — and it
+    # reads the state and nothing else, passing it to `link_for` (which asks the row for its own
+    # `addon_key`) and carrying it into the view for `name`/`revision`. A one-member Data whose only
+    # extra reader nobody calls is ceremony between the caller and the row, so it is gone; adding one
+    # back is a mechanical change on the day a second value genuinely needs to travel.
     #
     # TWO QUERIES WHEN SOMETHING MATCHED, ONE WHEN NOTHING DID (the ordinary case for a library with
     # no addon output) — AND THE JOIN WAS MEASURED BEFORE IT WAS REJECTED. The obvious spelling is
@@ -114,8 +115,48 @@ module Maker
       states = Maker::AddonState.where(id: claims.map(&:last).uniq, user_id: user.id).index_by(&:id)
       claims.filter_map { |node_id, state_id|
         state = states[state_id]
-        [ node_id, Origin.new(state:) ] if state
+        [ node_id, state ] if state
       }.to_h
+    end
+
+    # THE ADDON PAGE THAT OPENS THIS STATE, as {url:, title:}, or nil.
+    #
+    # `addons` IS `Registry.all`, PASSED IN RATHER THAN FETCHED HERE, and that argument is the whole
+    # reason this is a second method instead of a field on `for`'s answer. Registry.all is a manifest
+    # fetch behind a 5-minute cache; taking the index as an argument means a caller resolving a page
+    # of nodes fetches it ONCE, and — the half that matters — a library with no addon output never
+    # reaches this method at all, so an addon-source outage cannot slow down a Files page belonging
+    # to someone who has never opened /tools. AddonOrigins#addon_origins_for is the caller that holds
+    # up that order, and test/integration/web/addon_origin_surfaces_test.rb drives it through a real
+    # request with a counting double.
+    #
+    # BOTH VALUES COME BACK TOGETHER because the caller needs both and this is the one place that
+    # knows WHICH addon was chosen. Returning the URL alone and re-deriving the title by parsing the
+    # key back out of it is one value derived from another — the drift shape §14e records.
+    #
+    # PREFER AN EXACT `key` MATCH, THEN FALL BACK TO `states_key`. Registry defaults states_key to
+    # key, so the exact match is the ordinary case; the fallback exists for the one thing states_key
+    # is for — a successor addon ("boxes-next") that took over a predecessor's saved-state namespace
+    # by mutual declaration — so output saved under the old key still opens in the addon that now
+    # owns it. Where two addons share a states_key this is a deterministic GUESS rather than a fact,
+    # and the failure it can produce is the mild one: the sibling's page opens, which is a wrong PAGE
+    # and never a wrong WRITE. Nothing downstream trusts this choice — Tools::AddonsController
+    # re-resolves `?state=` through its OWN `current_user.maker_addon_states.for_addon(states_key)`
+    # scope, so a page that does not in fact own the state simply gets `launch.stateId: nil` and
+    # renders as a fresh session.
+    #
+    # nil IS A REAL ANSWER AND THE CALLER MUST DROP THE NODE, not fall back to a guessed path. No
+    # registered addon claims the key when a manifest has been withdrawn, when this deployment's
+    # addon source is down (Registry.manifests answers [] for that request), or when the state was
+    # written by an addon this deployment does not serve. A link to /tools/<key> in any of those
+    # cases is a 404 dressed as a feature; no link at all is the honest surface.
+    def link_for(state, addons:)
+      addon = addons.find { |a| a.key == state.addon_key } ||
+              addons.find { |a| a.states_key == state.addon_key }
+      return nil if addon.nil?
+
+      { url: Rails.application.routes.url_helpers.tools_addon_path(addon.key, state: state.id),
+        title: addon.title }
     end
   end
 end

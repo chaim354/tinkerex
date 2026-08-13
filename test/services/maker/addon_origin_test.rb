@@ -24,11 +24,14 @@ module Maker
 
     teardown { Maker::Addons::Source.reset! }
 
+    # THE VALUE IS THE Maker::AddonState ROW ITSELF. It was a one-member `Origin` Data wrapper until
+    # the caller (AddonOrigins#addon_origins_for) was written and turned out to read the state and
+    # nothing else — see the note on #for.
     test "resolves a node to the state that produced it" do
       origins = Maker::AddonOrigin.for(user: @user, node_ids: %w[node-a node-zzz])
-      assert_equal @state.id, origins["node-a"].state.id
+      assert_equal @state.id, origins["node-a"].id
       assert_equal "boxes", origins["node-a"].addon_key
-      assert_equal "shelf box", origins["node-a"].state.name
+      assert_equal "shelf box", origins["node-a"].name
     end
 
     # AN ABSENT KEY, NOT A RAISE AND NOT A NIL VALUE — the caller holds a page of node ids and most
@@ -166,6 +169,56 @@ module Maker
       assert_includes plan, "index_maker_addon_files_on_node_id",
                       "the node_id lookup no longer reaches its index — plan was:\n#{plan}"
       assert_not_includes plan, "SCAN maker_addon_files", "the node_id lookup degraded to a scan"
+    end
+
+    # --- link_for: the states_key -> route mapping -------------------------------
+    #
+    # REAL Addon VALUES, BUILT BY `Registry.build`, NOT A THREE-MEMBER Struct. The double a Struct
+    # would give is exactly the shape §14e warns about: it would agree with this code about which
+    # readers exist and could not notice `states_key` defaulting differently, being renamed, or
+    # `build` refusing a manifest. Building costs one hash.
+    def addon(key, states_key: nil, title: "Box Generator")
+      manifest = { "key" => key, "title" => title, "icon" => "box", "description" => "d",
+                   "api_version" => Maker::Addons::Registry::API_VERSION, "entry" => "index.js" }
+      manifest["states_key"] = states_key if states_key
+      Maker::Addons::Registry.build(manifest).tap { |a| assert_not_nil a, "manifest did not build" }
+    end
+
+    # THE NORMAL CASE IS AN EXACT `key` MATCH, because Registry defaults states_key to key. Asserted
+    # against a rival that declares the same states_key and is listed FIRST, so a `find` on
+    # states_key alone (the one-line spelling) picks the wrong addon and fails here.
+    test "link_for prefers the addon whose own key matches" do
+      addons = [ addon("boxes-next", states_key: "boxes", title: "Boxes Next"), addon("boxes") ]
+      assert_equal({ url: "/tools/boxes?state=#{@state.id}", title: "Box Generator" },
+                   Maker::AddonOrigin.link_for(@state, addons:))
+    end
+
+    # THE FALLBACK, for a successor addon that deliberately took over a predecessor's namespace
+    # (Registry's states_key/shares_states_with pair). Without it, every file the old addon made
+    # would lose its "Edit in" entry the day the old manifest was withdrawn.
+    test "link_for falls back to an addon that declares the states_key" do
+      addons = [ addon("boxes-next", states_key: "boxes", title: "Boxes Next") ]
+      assert_equal({ url: "/tools/boxes-next?state=#{@state.id}", title: "Boxes Next" },
+                   Maker::AddonOrigin.link_for(@state, addons:))
+    end
+
+    # nil, NOT A GUESSED PATH. An addon whose manifest has been withdrawn (or a source outage, which
+    # answers []) leaves saved output with nowhere to go, and a link to /tools/boxes that 404s is
+    # worse than no link: the caller drops the key entirely, so no attribute is rendered and the menu
+    # entry is simply absent.
+    test "link_for is nil when no registered addon claims the key" do
+      assert_nil Maker::AddonOrigin.link_for(@state, addons: [])
+      assert_nil Maker::AddonOrigin.link_for(@state, addons: [ addon("generators") ])
+    end
+
+    # THE URL IS BUILT FROM THE ROUTE HELPER, NOT INTERPOLATED — asserted here as a path RECOGNISED
+    # by the router rather than only as a string, so a future change to the /tools/:key shape cannot
+    # leave this method emitting a path that merely looks right.
+    test "link_for's url is the real addon route carrying ?state=" do
+      link = Maker::AddonOrigin.link_for(@state, addons: [ addon("boxes") ])
+      recognized = Rails.application.routes.recognize_path(link[:url])
+      assert_equal({ controller: "tools/addons", action: "show", key: "boxes" }, recognized)
+      assert_equal @state.id.to_s, Rack::Utils.parse_query(URI.parse(link[:url]).query)["state"]
     end
 
     def capture_sql
