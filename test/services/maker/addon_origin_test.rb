@@ -71,14 +71,32 @@ module Maker
     # and page_query_budget_test.rb asserts constancy for exactly that reason. A literal would also
     # pin one LIBRARY_BACKEND leg and fail the other two.
     #
-    # THE BULK NODES ARE REAL HITS, not misses: a lookup written per node would be constant at 1
-    # against ten node ids that resolve to nothing, so the growth this exists to catch would be
-    # invisible.
+    # THE BULK NODES ARE REAL HITS, not misses. The lookup returns early on `claims.empty?`, so ten
+    # node ids that resolve to nothing cost one query however the body below is written — the growth
+    # this exists to catch would be invisible.
     test "the query count does not grow with the number of nodes" do
       10.times { |i| @state.files.create!(node_id: "bulk-#{i}", role: "output", position: 10 + i) }
       one = count_queries { Maker::AddonOrigin.for(user: @user, node_ids: %w[node-a]) }
       many = count_queries do
         Maker::AddonOrigin.for(user: @user, node_ids: (0...10).map { "bulk-#{it}" } + %w[node-a])
+      end
+      assert_equal one, many
+    end
+
+    # THE SECOND AXIS, AND THE TEST ABOVE IS BLIND TO IT. Every node there belongs to ONE state, so
+    # `claims.map(&:last).uniq` is a single id and a per-STATE lookup — resolving each claim with its
+    # own `find_by` instead of one batched `where` — stays constant however many NODES are added.
+    # Found by mutating exactly that and watching the file stay green. It is also the realistic
+    # shape: a Files page shows output from many saved boxes, one state each, so growth in DISTINCT
+    # STATES is the N that actually moves in production.
+    test "the query count does not grow with the number of distinct states" do
+      10.times do |i|
+        other = @user.maker_addon_states.create!(addon_key: "boxes", name: "box #{i}", data: {})
+        other.files.create!(node_id: "multi-#{i}", role: "output", position: 0)
+      end
+      one = count_queries { Maker::AddonOrigin.for(user: @user, node_ids: %w[multi-0]) }
+      many = count_queries do
+        Maker::AddonOrigin.for(user: @user, node_ids: (0...10).map { "multi-#{it}" })
       end
       assert_equal one, many
     end
