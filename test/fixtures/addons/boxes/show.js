@@ -1,16 +1,23 @@
-// A saved box's detail view. Ported from the tinkerex repo's app/views/tools/boxes/show.html.erb.
+// See boxes.js's import for why this is a static import of the host pin and never a vendored copy.
+// `host` is a LIVE BINDING — read through it at call time, never captured at module top level.
+import { host } from "@maker/addon-sdk"
+
+// A saved box's detail view, now reached from the saved rail's right-click menu rather than a left
+// click — which opens the editor on that box instead. Kept because this is the only place that
+// lists the bundle's files. Ported from the tinkerex repo's app/views/tools/boxes/show.html.erb.
 //
-// state: one entry from ctx.statesUrl — {id, name, data: {generator, params}, updated_at,
+// state: one entry from state.list() — {id, name, data: {generator, params}, updated_at, revision,
 // files: [{node_id, role}]}. onBack(): return to the gallery. onDuplicate(generatorKey, params):
-// open the editor prefilled with this box's params (the "Duplicate & tweak" flow).
+// open the editor prefilled with this box's params (the "Duplicate & tweak" flow) — a FORK, the one
+// place in this bundle where opening a saved box's params does not mean editing that box.
 //
 // NOTE ON THE BUNDLE-FILES LIST: the states endpoint gives only {node_id, role} per file (no
-// content_type, no browsable URL) — this bundle has no host surface for "the URL of a library
-// file", so the link below is built from `/files/<node_id>`, the app's own long-standing
-// `resources :files` route. That is a hardcoded assumption about Rails' routing (the one thing
-// ctx.serviceUrl/ctx.statesUrl exist specifically so a bundle would NOT have to make), narrowly
-// tolerated here because the route is foundational and used throughout the host app; if it ever
-// moves, this link breaks quietly rather than the rest of the page.
+// content_type, no name), so the link text is the role and the href is `host.files.url(node_id)` —
+// the SDK's builder for a library file's DETAIL page (not its bytes, which are served as an
+// attachment). This was a hand-built `/files/<node_id>` for as long as no host surface existed for
+// that URL: a hardcoded assumption about Rails' routing, which is the one thing ctx exists so a
+// bundle would not have to make. The SDK grew the builder, so that assumption is gone from here and
+// from gallery.js's menu entry together.
 export function mountShow(root, { state, ctx, onBack, onDuplicate }) {
   root.innerHTML = `
     <div class="page-head">
@@ -36,9 +43,10 @@ export function mountShow(root, { state, ctx, onBack, onDuplicate }) {
   $("title").textContent = state.name
   $("generator").textContent = generatorKey
   // The states endpoint (Tools::AddonsController#states) returns `updated_at`, not `created_at` —
-  // the original ERB page showed the state's creation time; this is its last-saved time instead,
-  // which for a box that is never re-saved in place (this bundle always creates a new state) are
-  // the same moment anyway.
+  // the original ERB page showed the state's creation time; this is its LAST-saved time. Those were
+  // the same moment for as long as every save minted a new box; now that a save appends a revision
+  // they genuinely differ, and last-saved is the more useful of the two here — when the box was
+  // first created is a fact the History panel's oldest entry carries.
   $("saved-at").textContent = formatDateTime(state.updated_at)
 
   const filesList = $("files")
@@ -48,7 +56,7 @@ export function mountShow(root, { state, ctx, onBack, onDuplicate }) {
     for (const file of state.files) {
       const li = document.createElement("li")
       const link = document.createElement("a")
-      link.href = `/files/${encodeURIComponent(file.node_id)}`
+      link.href = host.files.url(file.node_id)
       link.textContent = file.role
       li.appendChild(link)
       filesList.appendChild(li)

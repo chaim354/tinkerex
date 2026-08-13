@@ -46,13 +46,18 @@ export default {
     }
 
     const showGallery = () =>
-      swap(() => mountGallery(page, { generators, states, onOpenGenerator: showEditor, onOpenState: showState }))
+      swap(() => mountGallery(page, {
+        generators, states, onOpenGenerator: showEditor,
+        onEditState: (state) => showEditor(state.data?.generator, state.data?.params || {}, state),
+        onShowState: showState,
+      }))
 
-    const showEditor = (key, prefillValues) => {
+    // `editingState` present -> Save appends a revision to that box; absent -> Save creates one.
+    const showEditor = (key, prefillValues, editingState = null) => {
       const generator = generators.find((g) => g.key === key)
       if (!generator) { showGallery(); return } // an unknown/removed generator key -> back to the gallery
       swap(() => mountEditor(page, {
-        generator, states, ctx, prefillValues,
+        generator, states, ctx, prefillValues, editingState,
         onBack: showGallery,
         onOpenGenerator: showEditor,
         // Refresh the saved-states list in the background so the gallery's rail and any editor
@@ -63,8 +68,12 @@ export default {
       }))
     }
 
+    // `onDuplicate` passes NO editingState, and that is the one place in this bundle where opening a
+    // saved box's params deliberately does not mean editing it: "Duplicate & tweak" forks a design.
     const showState = (state) =>
-      swap(() => mountShow(page, { state, ctx, onBack: showGallery, onDuplicate: showEditor }))
+      swap(() => mountShow(page, {
+        state, ctx, onBack: showGallery, onDuplicate: (key, params) => showEditor(key, params),
+      }))
 
     try {
       [ generators, states ] = await Promise.all([ fetchGenerators(), fetchStates() ])
@@ -84,7 +93,29 @@ export default {
       return
     }
 
-    showGallery()
+    // A DEEP LINK FROM THE LIBRARY. `host.launch.stateId` is the host's own validated answer to
+    // `?state=` — it has already refused an id belonging to another user or another addon, and
+    // answers null for a stale bookmark rather than 404ing the tool — so an id that arrives here is
+    // real, and this only has to find it in the list already fetched.
+    //
+    // `===` IS SAFE BECAUSE BOTH SIDES ARE THE SAME AR COLUMN: the host renders `id:` into the
+    // states list and `launch: {stateId:}` from `&.id`, so both cross as JSON numbers. Worth stating
+    // because the failure of a mismatch would be a deep link that silently always lands on the
+    // gallery.
+    //
+    // `?.` IS NOT DECORATION: `min_host: 3` greys the CARD out on an older host but does not make
+    // the page unreachable by URL (tinkerex CLAUDE.md §14c), and a level-2 host's SDK has no
+    // `launch` getter at all — so this must read `undefined` and fall through, not throw.
+    //
+    // A state whose generator the sidecar no longer offers also falls through to the gallery, the
+    // same degrade showEditor already performs for an unknown key.
+    const launchId = host.launch?.stateId
+    const launched = launchId ? states.find((s) => s.id === launchId) : null
+    if (launched) {
+      showEditor(launched.data?.generator, launched.data?.params || {}, launched)
+    } else {
+      showGallery()
+    }
   },
 }
 

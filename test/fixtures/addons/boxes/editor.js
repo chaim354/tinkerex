@@ -5,6 +5,7 @@ import { mountPreview, generateSvg } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
 import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
 import { mountFolderField } from "./folder_field.js"
+import { mountHistory } from "./history.js"
 // See boxes.js's import for why this is a static import of the host pin and never a vendored copy.
 // `host` is a LIVE BINDING — read through it at call time, never captured at module top level.
 import {
@@ -61,16 +62,24 @@ const saveFailure = (e) => {
 // the SDK's: `saveUrl` and the hand-rolled CSRF header went with `host.files.save`, and
 // `serviceUrl`/`csrfToken` went with `host.service.post` in preview.js.
 // prefillValues: a saved box's
-// `params`, when opened via "Load"/"Duplicate & tweak", or null for a fresh generator.
+// `params`, when opened via "Load"/"Duplicate & tweak"/the history panel, or null for a fresh
+// generator.
+// editingState: THE SAVED BOX THIS EDITOR IS EDITING — a full entry from state.list(), or null for
+// a new box. Present, Save appends a revision to it; absent, Save creates one. That is the whole
+// difference between the two acts, and the header below is what makes it visible, because the
+// button says the same word either way.
 // onBack(): return to the gallery. onSaved(): a save completed — the caller re-fetches states.
-// onOpenGenerator(key, prefillValues): re-open the editor (same or another generator) — used by the
-// "Load" link on a prior box made with this same generator.
-export function mountEditor(root, { generator, states, ctx, prefillValues, onBack, onSaved, onOpenGenerator }) {
+// onOpenGenerator(key, prefillValues, editingState): re-open the editor (same or another
+// generator) — used by the "Load" link on a prior box and by the history panel.
+export function mountEditor(root, {
+  generator, states, ctx, prefillValues, editingState, onBack, onSaved, onOpenGenerator,
+}) {
   root.innerHTML = `
     <div class="page-head">
       <div>
         <h1 data-role="key"></h1>
         <p class="page-subtitle muted" data-role="title"></p>
+        <p class="page-subtitle" data-role="editing" hidden></p>
       </div>
       <button type="button" class="btn ghost" data-role="back">Back</button>
     </div>
@@ -92,6 +101,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
           </div>
           <div class="page-actions">
             <button type="button" data-role="preview-btn" class="btn ghost">Preview</button>
+            <button type="button" data-role="save-as-new" class="btn ghost" hidden>Save as new box</button>
             <button type="button" data-role="save" class="btn">Save to library</button>
           </div>
         </div>
@@ -132,6 +142,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
             Printed sheets are 1:1 — check the 100&nbsp;mm bar with a ruler.</p>
         </div>
 
+        <div data-role="history"></div>
         <div data-role="prior-wrap"></div>
       </aside>
     </div>`
@@ -140,6 +151,22 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
 
   $("key").textContent = generator.key
   $("title").textContent = generator.title
+
+  // WHICH BOX THIS EDITOR IS EDITING, and at which revision. The number lives in a variable rather
+  // than being read off `editingState` at each use because a successful save APPENDS one, so what
+  // is on screen goes stale the moment the user presses Save (see onSaveClick's bump).
+  let revision = editingState?.revision ?? 1
+  const renderEditingHeader = () => {
+    if (!editingState) return
+    $("editing").hidden = false
+    $("editing").textContent = `Editing “${editingState.name}” · v${revision}`
+  }
+  renderEditingHeader()
+  if (editingState) $("name").value = editingState.name
+
+  // ONLY MEANINGFUL WHILE EDITING — a fresh generator's Save already creates a new box, so a second
+  // button saying so would be two controls for one act.
+  $("save-as-new").hidden = !editingState
 
   // The third argument is where the chooser reports a failure it cannot handle itself (a host that
   // advertises pick:folder and wired up no chooser, a capability answered false). Without it the
@@ -152,6 +179,19 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   renderPrior($("prior-wrap"), states, generator, onOpenGenerator)
 
   const destroyers = []
+
+  // ONLY WHEN EDITING: a fresh generator has no box and therefore no history, and an empty panel
+  // there would read as "this generator has never been used".
+  //
+  // Loading a revision re-opens this same editor, still editing this same box, with those values in
+  // the form — which is what makes an old design recoverable when the FILE of that revision is gone
+  // (on share and s3 it is: one file per box, overwritten — design §2).
+  const historyPanel = editingState ? mountHistory($("history"), {
+    stateId: editingState.id,
+    currentRevision: revision,
+    onLoad: (params) => onOpenGenerator(generator.key, params, editingState),
+  }) : null
+  if (historyPanel) destroyers.push(historyPanel)
   destroyers.push(mountSections(root))
   destroyers.push(mountTraySync($("groups")))
 
@@ -169,8 +209,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     destroyers.push({ destroy: () => paperSel.removeEventListener("change", rememberPaper) })
   }
 
-  const exportBase = () =>
-    $("name").value.trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || generator.key.toLowerCase()
+  const exportBase = () => slugify($("name").value, generator.key)
 
   // Mid-edit the art is routinely unparseable and the panel deliberately keeps the last good
   // drawing up, so an export uses that same model: what you print is what you are looking at.
@@ -211,7 +250,10 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     $("save-status").classList.toggle("is-error", isError)
   }
 
-  const onSaveClick = async () => {
+  // `asNew` is what the "Save as new box" button passes: it forks the design rather than appending
+  // to the box currently open. Everything else about the save is identical, which is why this is a
+  // parameter and not a second handler.
+  const onSaveClick = async (asNew = false) => {
     const name = $("name").value.trim()
     if (!name) { setSaveStatus("Name is required.", true); return }
 
@@ -238,7 +280,7 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
     }
     if (!result.ok) { setSaveStatus(result.message, true); return }
 
-    const base = name.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "box"
+    const base = slugify(name)
     // The plan goes in UNTILED and full size: tiling is a property of the printer, not of the
     // drawing, and an archival artifact should not arrive pre-chopped into sheets. SVG rather than
     // PDF because parse_files requires a String body over JSON — binary cannot round-trip, and a
@@ -256,31 +298,93 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
       })
     }
 
+    // WHICH BOX THIS SAVE REVISES, or null to create one. A fresh generator has nothing to revise,
+    // and "Save as new box" is the user saying so explicitly.
+    const revising = asNew || !editingState ? null : editingState
+
+    // THE BOX AN OFFER TO JOIN WAS ACCEPTED FOR. Written only by the arm below that makes that
+    // offer, and read once, immediately after the first save returns.
+    let join = null
+
+    // THE 409 ANSWERED IN PLACE — AND IT IS NARROWER THAN IT LOOKS. Measured while mutation-checking
+    // this: a same-name save into a PLAIN library folder never produces a 409 at all, because
+    // Tools::AddonsController#refuse_taken_names! runs first and is TERMINAL — 422 `name_taken`,
+    // "…already exists in that folder. Rename the save or pick another folder." A 409 comes only
+    // from #resolve_placements: the picked folder is a PROJECT folder's own root and the CATEGORY
+    // folder the sweep will file into already holds that name (CLAUDE.md §14f's recorded gap). That
+    // is not a corner case — this dialog's folder DEFAULTS to the current project's folder, so it is
+    // exactly where somebody working inside a project lands. BOTH outputs collide when it happens
+    // (<base>.svg and <base>-plan.svg), which used to strand a second copy of each at the project
+    // root, silently. Omit onReplace and the SDK throws WouldReplaceError instead — overwriting is
+    // never implicit.
+    //
+    // WHILE REVISING, THIS IS ONLY EVER ABOUT SOMEONE ELSE'S FILE: the host exempts a collision
+    // with the box's own output, because naming the state IS the consent
+    // (Tools::AddonsController#render_would_replace). So the plain question is the right one there.
+    //
+    // THE OFFER TO JOIN, on a save that is NOT already revising, CANNOT BE ANSWERED BY RETURNING
+    // TRUE — and that is measured, not assumed. The SDK resolves `stateId` ONCE, before its first
+    // request, and its overwrite retry re-sends exactly that id (probed against the real module: a
+    // `true` here produced a second request identical but for `overwrite=1`, `state_id` unchanged).
+    // So answering yes that way would replace the file and STILL create an unrelated box — the
+    // precise pile-up this feature exists to end. Joining is therefore a SECOND save() carrying the
+    // id, below; it needs no overwrite, because that same own-file exemption applies to it.
+    const onReplace = (state) => (replaceFiles) => {
+      const owner = state ? null : findStateOwning(states, replaceFiles, generator.key)
+      if (!owner) return window.confirm(`${replaceSentence(replaceFiles)}\n\nReplace with this version?`)
+
+      // ONE QUESTION, NOT TWO. "No" means not saved: replacing the file while minting a second box
+      // beside it is the outcome this feature exists to remove, so it is not offered as a fallback.
+      if (window.confirm(
+        `${replaceSentence(replaceFiles)}\n\nSave as revision ${(owner.revision ?? 1) + 1} of “${owner.name}”?`,
+      )) join = owner
+      return false
+    }
+
+    const submit = (state) => host.files.save({
+      name,
+      // REQUIRED AND NEVER DEFAULTED: null/undefined throws invalid_argument before any request,
+      // because a cancelled pickFolder() resolves null and must not silently become the library
+      // root. Safe here by construction — folderField.value() always answers a string, "" being
+      // the root, and a cancelled chooser leaves the previous choice in place.
+      folderNodeId: folderField.value(),
+      data: { generator: generator.key, params },
+      files: outputs,
+      // OMITTED ENTIRELY for a new box — the SDK only puts `state_id` on the wire when it is
+      // passed, so a fresh save sends byte-identical requests to what it always has.
+      stateId: state ? state.id : null,
+      onReplace: onReplace(state),
+    })
+
     try {
-      const saved = await host.files.save({
-        name,
-        // REQUIRED AND NEVER DEFAULTED: null/undefined throws invalid_argument before any request,
-        // because a cancelled pickFolder() resolves null and must not silently become the library
-        // root. Safe here by construction — folderField.value() always answers a string, "" being
-        // the root, and a cancelled chooser leaves the previous choice in place.
-        folderNodeId: folderField.value(),
-        data: { generator: generator.key, params },
-        files: outputs,
-        // THE 409 ANSWERED IN PLACE. A re-save under the same name is the ORDINARY way to iterate
-        // on a design, and BOTH outputs collide on it (<base>.svg and <base>-plan.svg) — which used
-        // to strand a second copy of each at the project root, silently. Omit onReplace and the SDK
-        // throws WouldReplaceError instead — overwriting is never implicit.
-        onReplace: (files) => window.confirm(
-          `This will replace ${files.length === 1 ? "a file" : "files"} you already saved:\n\n` +
-            `${files.map((f) => `  ${f.name}  (in ${f.folder}/)`).join("\n")}\n\n` +
-            "Replace with this version?",
-        ),
-      })
+      let saved = await submit(revising)
+      // The retry the dialog promised, now carrying the id. `onReplace(join)` gives it the PLAIN
+      // question, so a guess that named the wrong box comes back as an ordinary 409 rather than
+      // asking the same thing twice.
+      if (join) saved = await submit(join)
       // TAGGED, AND BOTH SHAPES ARE TRUTHY — `{cancelled: false, data}` and `{cancelled: true}`.
       // Read `.cancelled`; testing the returned object itself reports "Saved." over a save the user
       // just declined. (`data` is `{}` today: the save door redirects rather than answering JSON.)
       setSaveStatus(saved.cancelled ? "Not saved." : "Saved.")
-      if (!saved.cancelled) onSaved()
+      if (!saved.cancelled) {
+        // THE HEADER IS ONE BEHIND THE MOMENT A REVISION LANDS, and this editor stays open. The
+        // number is optimistic — the save door redirects rather than answering JSON, so there is no
+        // new revision number to read back — and the history panel refetches on its next expand,
+        // where the SERVER's answer wins.
+        //
+        // WRITTEN BACK ONTO THE STATE OBJECT TOO, because it is the SAME object a re-mount is handed:
+        // the history panel's onLoad passes `editingState` straight back to showEditor, so bumping
+        // only the local would make loading a revision reopen the editor one behind. boxes.js
+        // replaces this object wholesale on the states refresh `onSaved` triggers, so the mutation
+        // is short-lived by construction.
+        if (revising) {
+          revision += 1
+          revising.revision = revision
+          renderEditingHeader()
+          historyPanel?.refresh(revision)
+        }
+        onSaved()
+      }
     } catch (e) {
       setSaveStatus(saveFailure(e), true)
       // Anything that is not an AddonError is a bug in THIS bundle rather than a refusal from the
@@ -289,7 +393,12 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
       if (!(e instanceof AddonError)) throw e
     }
   }
-  $("save").addEventListener("click", onSaveClick)
+  // WRAPPED, NEVER PASSED DIRECTLY: a listener is handed the click Event as its first argument and
+  // an Event is truthy, so `addEventListener("click", onSaveClick)` would make every Save a fork.
+  const onSave = () => onSaveClick(false)
+  const onSaveNew = () => onSaveClick(true)
+  $("save").addEventListener("click", onSave)
+  $("save-as-new").addEventListener("click", onSaveNew)
 
   const onBackClick = () => onBack()
   $("back").addEventListener("click", onBackClick)
@@ -297,7 +406,8 @@ export function mountEditor(root, { generator, states, ctx, prefillValues, onBac
   return () => {
     for (const d of destroyers) d?.destroy?.()
     $("preview-btn").removeEventListener("click", preview.preview)
-    $("save").removeEventListener("click", onSaveClick)
+    $("save").removeEventListener("click", onSave)
+    $("save-as-new").removeEventListener("click", onSaveNew)
     $("back").removeEventListener("click", onBackClick)
   }
 }
@@ -347,12 +457,59 @@ function renderPrior(container, states, generator, onOpenGenerator) {
       e.preventDefault()
       // Reopen THIS SAME editor with the saved params prefilled — mirrors the original's
       // `box_prefill_path`, which re-requested `new` with `params[params]` set.
-      onOpenGenerator(generator.key, state.data?.params || {})
+      //
+      // AND EDITING THAT BOX, exactly as a left click in the gallery's saved rail does. This is the
+      // same act on the same object reached from a different list, and the two must not disagree —
+      // if it forked instead, a Load here followed by a Save would mint the second box the whole
+      // feature exists to stop. Forking is still one click away, on "Save as new box".
+      onOpenGenerator(generator.key, state.data?.params || {}, state)
     })
 
     li.append(thumb, meta, load)
     list.appendChild(li)
   }
+}
+
+// A NAME AS A FILENAME BASE, IN ONE PLACE. Three callers derive one — the export filename, the
+// save's own output names, and findStateOwning's guess below — and a drift between the last two
+// would make the 409 dialog name the wrong box. The FALLBACK differs per caller and the regex does
+// not, which is why it is a parameter: an unnamed export is named after its generator, an unnamed
+// save after nothing in particular.
+function slugify(name, fallback = "box") {
+  return String(name).trim().replace(/[^a-z0-9]+/gi, "-").toLowerCase() || String(fallback).toLowerCase()
+}
+
+// The files a 409 named, as the first half of a confirm dialog. Shared because the two questions
+// that can follow it must not describe the same collision in two ways.
+function replaceSentence(files) {
+  return `This will replace ${files.length === 1 ? "a file" : "files"} you already saved:\n\n` +
+    files.map((f) => `  ${f.name}  (in ${f.folder}/)`).join("\n")
+}
+
+// WHICH SAVED BOX OWNS THE FILES A 409 NAMED, by filename. A guess, and deliberately a conservative
+// one: it answers only when exactly ONE saved box made with THIS SAME generator would have written
+// one of those names, so anything ambiguous falls back to the plain "Replace?" question rather than
+// offering to append a revision to the wrong design. The generator clause is part of that — joining
+// across generators leaves a box whose own history reopens under a different tool.
+//
+// IT COMPARES WHOLE NAMES RATHER THAN STRIPPING THE SUFFIX OFF THE COLLIDING ONE, because stripping
+// is ambiguous in a way that misfires silently: `"harbor-plan.svg".replace(/(-plan)?\.svg$/, "")` is
+// "harbor", so a box the user named "harbor plan" would be looked up as, and could match, an
+// unrelated "harbor". The two names below are the two this same handler builds (`${base}.svg` and
+// `${base}-plan.svg`); if that scheme ever changes, this stops matching and the dialog falls back to
+// the plain question — the safe direction.
+//
+// A WRONG GUESS CANNOT REPLACE ANYTHING BEHIND THE USER'S BACK: the save it leads to carries that
+// box's id, and the host exempts only THAT box's own file, so a mismatch comes straight back as a
+// second 409 and the ordinary question.
+function findStateOwning(states, replaceFiles, generatorKey) {
+  const names = new Set(replaceFiles.map((f) => String(f.name)))
+  const matches = states.filter((s) => {
+    if (String(s.data?.generator ?? "") !== generatorKey) return false
+    const base = slugify(s.name)
+    return names.has(`${base}.svg`) || names.has(`${base}-plan.svg`)
+  })
+  return matches.length === 1 ? matches[0] : null
 }
 
 function escapeHtml(s) {

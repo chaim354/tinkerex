@@ -10,13 +10,19 @@ import { host } from "@maker/addon-sdk"
 // boxsections Stimulus controllers, onto plain DOM building + filter.js/sections.js.
 //
 // root: the element to render into (emptied first). generators/states: already-fetched arrays (see
-// boxes.js). onOpenGenerator(key, prefillValues|null): open the editor. onOpenState(state): open a
-// saved box's detail view.
+// boxes.js). onOpenGenerator(key, prefillValues|null): open the editor on a fresh generator.
+// onEditState(state): open the editor prefilled AND EDITING that box. onShowState(state): open its
+// read-only detail view.
+//
+// THE TWO SAVED-BOX CALLBACKS ARE NAMED FOR WHICH ACT THEY ARE, not for which view they open. They
+// were one `onOpenState` while there was only one thing a saved box could do; a left click now
+// means "edit this box" and the detail view has moved to the right-click menu, and a single name
+// covering both would leave every call site ambiguous about which one it wanted.
 //
 // NO `ctx`: the sample-photo <img> below was the only thing in this module that ever read one, and
 // it now builds its URL through the SDK. Kept out rather than left in place for a future caller —
 // an unread parameter reads as "something here still needs the mount context".
-export function mountGallery(root, { generators, states, onOpenGenerator, onOpenState }) {
+export function mountGallery(root, { generators, states, onOpenGenerator, onEditState, onShowState }) {
   const sections = groupByField(generators, (g) => g.group || "Other")
   const savedTree = buildSavedTree(states, generators)
 
@@ -90,7 +96,22 @@ export function mountGallery(root, { generators, states, onOpenGenerator, onOpen
     $("groups").appendChild(details)
   }
 
-  renderSavedRail($("saved"), savedTree, onOpenState)
+  // OWNED HERE, NOT AT MODULE SCOPE. The menu is appended to document.body — outside `root` — so
+  // nothing about swapping this page out would remove it; the destroy callback below is what does,
+  // and a module-level singleton would outlive every mount that created it.
+  const savedMenu = createSavedMenu({ onEditState, onShowState })
+  renderSavedRail($("saved"), savedTree, onEditState, savedMenu.open)
+
+  // Registered once per mount and removed on destroy, exactly as the host's own filemenu controller
+  // does it in connect()/disconnect() — closing is a no-op when no menu is open, so there is nothing
+  // to arm or disarm as menus come and go. DELIBERATELY THE SAME SHAPE AS THE HOST'S, rather than a
+  // listener armed on a later tick: if some gesture both opens a menu and dispatches a plain click,
+  // the menu would close instantly — and the host's own file cells would do it too, in one place, so
+  // this must not diverge into having its own half-fix.
+  const onDocClick = () => savedMenu.close()
+  const onDocKey = (e) => { if (e.key === "Escape") savedMenu.close() }
+  document.addEventListener("click", onDocClick)
+  document.addEventListener("keydown", onDocKey)
 
   const filterCtl = mountFilter(root)
   const sectionsCtl = mountSections(root)
@@ -98,7 +119,74 @@ export function mountGallery(root, { generators, states, onOpenGenerator, onOpen
   return () => {
     filterCtl.destroy()
     sectionsCtl.destroy()
+    document.removeEventListener("click", onDocClick)
+    document.removeEventListener("keydown", onDocKey)
+    savedMenu.close()
   }
+}
+
+// A small right-click menu on a saved box: the acts a left click no longer performs. Built the way
+// the host's own filemenu controller builds one — a positioned div of plain buttons — rather than as
+// a component, because this bundle has no framework and a host Stimulus controller does not
+// auto-attach to markup a bundle injects (README).
+//
+// `.file-menu` IS THE HOST'S OWN CLASS AND THAT IS THE POINT: it carries `position: absolute` and
+// the z-index. This repo ships no CSS at all (see history.js's header for why), so an invented class
+// name would render an unpositioned stack of buttons in the middle of the page.
+//
+// Returns {open, close}; the caller owns the document-level listeners and closes it on destroy.
+function createSavedMenu({ onEditState, onShowState }) {
+  let el = null
+  const close = () => { el?.remove(); el = null }
+
+  const open = (event, state) => {
+    close()
+    el = document.createElement("div")
+    el.className = "file-menu"
+    el.style.left = `${event.pageX}px`
+    el.style.top = `${event.pageY}px`
+
+    const entry = (label, fn) => {
+      const b = document.createElement("button")
+      b.type = "button"
+      b.textContent = label
+      // CLOSED BEFORE `fn` RUNS, not left to the document listener: both of these swap the whole
+      // page out, and the menu lives on document.body where that swap would not reach it.
+      // `stopPropagation` then keeps the document listener from repeating a close that has happened.
+      b.addEventListener("click", (e) => { e.stopPropagation(); close(); fn() })
+      el.appendChild(b)
+    }
+
+    entry("Open prefilled", () => onEditState(state))
+    entry("Details", () => onShowState(state))
+
+    // THE FIRST OUTPUT FILE — a cut sheet for every box this bundle saves, since the states endpoint
+    // orders `files` by save position and the sheet is written before the plan. NOT NECESSARILY THE
+    // CURRENT ONE: a revision saved under a NEW name leaves the previous file's row in place, and
+    // Maker::AddonState's ordering breaks the position tie by id, oldest first — so after a rename
+    // this can be the drawing from an earlier name. Still that box's drawing, which is what this
+    // entry offers; the whole list is one click further on, under Details.
+    //
+    // `host.files.url` rather than a hand-built "/files/<id>": the SDK gained that builder precisely
+    // so a bundle would stop encoding the host's route shape (see show.js's header, which recorded
+    // the hardcoded version as tolerated only while there was no host surface for it).
+    const first = state.files?.[0]
+    if (first) {
+      const link = document.createElement("a")
+      link.href = host.files.url(first.node_id)
+      link.textContent = "Open the file"
+      // NOT closed from here. Removing an anchor from the document during its own click is the kind
+      // of thing browsers disagree about, and navigating is this entry's entire job; the page it
+      // loads takes the menu with it. `stopPropagation` keeps the document listener from doing the
+      // removing either. A cmd-click that opens a new tab leaves the menu up for the next click.
+      link.addEventListener("click", (e) => e.stopPropagation())
+      el.appendChild(link)
+    }
+
+    document.body.appendChild(el)
+  }
+
+  return { open, close }
 }
 
 function buildCard(generator, onOpenGenerator) {
@@ -138,7 +226,7 @@ function buildCard(generator, onOpenGenerator) {
   return card
 }
 
-function renderSavedRail(container, savedTree, onOpenState) {
+function renderSavedRail(container, savedTree, onEditState, openMenu) {
   const total = savedTree.reduce((n, [ , types ]) => n + types.reduce((m, [ , items ]) => m + items.length, 0), 0)
   if (total === 0) {
     container.innerHTML = `<p class="muted">No saved boxes yet.</p>`
@@ -173,7 +261,12 @@ function renderSavedRail(container, savedTree, onOpenState) {
         a.href = "#"
         a.className = "box-saved-link"
         a.textContent = state.name
-        a.addEventListener("click", (e) => { e.preventDefault(); onOpenState(state) })
+        // A LEFT CLICK OPENS THE FORM, EDITING THIS BOX — it used to open the read-only detail view,
+        // whose "Duplicate & tweak" button was a second click on the way to the same form and forked
+        // the design when it got there. Everything rarer moved to the right-click menu, mirroring the
+        // host's own file cells.
+        a.addEventListener("click", (e) => { e.preventDefault(); onEditState(state) })
+        a.addEventListener("contextmenu", (e) => { e.preventDefault(); openMenu(e, state) })
         const date = document.createElement("div")
         date.className = "muted"
         date.textContent = String(state.updated_at).slice(0, 10)
