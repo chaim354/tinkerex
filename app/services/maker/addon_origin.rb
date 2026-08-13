@@ -31,32 +31,46 @@ module Maker
 
     # Returns { node_id => Origin }. Absent keys for nodes no addon produced.
     #
-    # TWO QUERIES WHEN SOMETHING MATCHED, ONE WHEN NOTHING DID (the ordinary case for a library
-    # with no addon output) — AND THE JOIN WAS MEASURED BEFORE IT WAS REJECTED. The obvious spelling
-    # is one statement — `eager_load(:addon_state).where(node_id: ids, addon_state: {user_id:})` —
-    # and it is the SLOWER one on the deployment most likely to run it. SQLite plans that join by
-    # driving from `maker_addon_states` on `user_id` and probing the composite
-    # [addon_state_id, node_id], i.e. one seek per (state × node_id): the cost then grows with the
-    # user's SAVED-STATE COUNT, which no query-count test can see because it is all inside one
-    # statement. Measured against a scratch table of 20,000 addon files and ~5,000 saved states,
-    # resolving one 2000-node page for a user owning 25 of those states and then 500 of them:
+    # TWO QUERIES WHEN SOMETHING MATCHED, ONE WHEN NOTHING DID (the ordinary case for a library with
+    # no addon output) — AND THE JOIN WAS MEASURED BEFORE IT WAS REJECTED. The obvious spelling is
+    # `joins(...).where(node_id:, maker_addon_states: {user_id:})`, and it loses on cost while
+    # winning nothing on statement count. SQLite plans it by driving from `maker_addon_states` on
+    # `user_id` and probing the composite [addon_state_id, node_id], one seek per (state × node_id),
+    # so the cost grows with the user's SAVED-STATE COUNT — which no query-count test can see,
+    # because it is all inside one statement. Measured on 20,000 addon files / 5,000 saved states,
+    # every state owning files, resolving one 2000-node page:
     #
-    #     one query   4.5 ms @ 25 states ->  22.5 ms @ 500 states   (grows with the state count)
-    #     two queries 0.5 ms @ 25 states ->   0.5 ms @ 500 states   (flat)
+    #                          user owns 25 states     user owns 500 states
+    #     join      40 hits            3.6 ms                  64.7 ms      (grows)
+    #     join      ALL MISS           3.5 ms                  64.6 ms      (grows)
+    #     this code 40 hits            0.5 ms                   0.5 ms      (flat)
+    #     this code ALL MISS           0.5 ms                   0.4 ms      (flat)
     #
-    # It also decides whether the index this feature added is reached AT ALL. SQLite only prefers
-    # `index_maker_addon_files_on_node_id` for the join form once `ANALYZE` stats exist, and nothing
-    # in this repo ever runs ANALYZE — neither `storage/development.sqlite3` nor
-    # `storage/test.sqlite3` has a `sqlite_stat1` table, so the join form leaves the migration that
-    # accompanied this class as dead weight. Split in two, each statement's plan is forced and
-    # stats-independent: `SEARCH maker_addon_files USING INDEX index_maker_addon_files_on_node_id`,
-    # then `SEARCH maker_addon_states USING INTEGER PRIMARY KEY`. A SQLite-only `INDEXED BY` hint
-    # was the rejected alternative — this codebase is deliberately adapter-agnostic (§14e).
+    # THE ALL-MISS ROW IS THE ONE THAT SETTLES IT: 65 ms to return ZERO rows, on the ordinary
+    # library that has never saved anything from an addon. That is the common case, not the corner.
+    #
+    # AND THE JOIN IS NOT EVEN ONE STATEMENT. `joins(<string>) + includes(:addon_state)` — the exact
+    # spelling proposed for this method — emits the join AND a separate
+    # `maker_addon_states WHERE id IN (…)` preload whenever it matches a row: 2 statements, the same
+    # count as below (probed; it collapses to 1 only when the result is empty and there is nothing
+    # to preload). So there was never a statement to save.
+    #
+    # THE JOIN'S PLAN IS OPTIMISER-DEPENDENT; THIS ONE IS NOT — that, and not any fact about
+    # ANALYZE, is the durable half of the argument. Probed, the join plans three different ways:
+    # production-scale with no stats it probes the composite; production-scale after ANALYZE it
+    # switches to `index_maker_addon_files_on_node_id`; at FIXTURE scale after ANALYZE it plans a
+    # bare `SCAN maker_addon_files`. (An earlier draft of this comment said the node_id index is
+    # only preferred once ANALYZE stats exist. True at production scale, false at fixture scale, and
+    # misleading either way — it invites "then just run ANALYZE", which would indeed repair the
+    # join's plan on a big table while leaving the cost above unexplained.) Split in two, both plans
+    # are fixed at every scale and stats configuration, which is what
+    # `addon_origin_test.rb`'s plan assertion pins. A SQLite-only `INDEXED BY` hint was the rejected
+    # alternative — this codebase is deliberately adapter-agnostic (§14e).
     #
     # THE POSTGRES HALF IS REASONED, NOT MEASURED — there is no local Postgres on this box (§13's
-    # env gotchas), so the numbers above are SQLite's. What carries across is the shape: both
-    # statements are single-table lookups, one on an indexed column and one on a primary key, which
-    # is the plan no planner gets wrong. The join is the form whose plan depends on the optimiser.
+    # env gotchas), so every number above is SQLite's. What carries across is the shape: both
+    # statements are single-table lookups on an indexed column, which is the plan no optimiser has
+    # to guess at. The join is the form whose plan depends on one.
     #
     # NOT TEST-PINNED, and said here rather than quietly left unguarded: the defect is a query PLAN,
     # not a query COUNT, so both spellings are constant in N and both pass every assertion in
@@ -91,6 +105,12 @@ module Maker
       # this `user_id` stops one being ANSWERED. Unlike Tools::AddonsController#file there is no
       # adapter re-scoping underneath to catch a mistake, so a test that passes without this line
       # would be proving nothing; `addon_origin_test.rb` mutation-checks it.
+      #
+      # ITS PLAN CHANGES SHAPE WITH THE IN-LIST AND BOTH SHAPES ARE FINE — worth writing down,
+      # because a transcript taken from a 3-row fixture does not look like production's. Probed at
+      # 5,000 states: up to 3 ids it is `SEARCH maker_addon_states USING INTEGER PRIMARY KEY
+      # (rowid=?)`; from 4 ids up it is `SEARCH maker_addon_states USING INDEX
+      # index_maker_addon_states_on_user_id (user_id=? AND rowid=?)`. Both are one seek per id.
       states = Maker::AddonState.where(id: claims.map(&:last).uniq, user_id: user.id).index_by(&:id)
       claims.filter_map { |node_id, state_id|
         state = states[state_id]

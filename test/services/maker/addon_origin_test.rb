@@ -120,6 +120,72 @@ module Maker
       assert_equal 1, source.calls
     end
 
+    # THE QUERY PLAN, NOT THE QUERY COUNT — and it takes TWO assertions, because neither of them
+    # catches both reverts and the obvious single assertion catches the wrong one.
+    #
+    # A COUNT ASSERTION WOULD BE USELESS HERE. The join spelling this method rejects
+    # (`joins(<string>) + includes`) issues TWO statements of its own whenever it matches a row, so
+    # `assert_equal 2, count_queries` stays green through the exact revert it appears to guard.
+    #
+    # THE SHAPE IS ASSERTED STRUCTURALLY AND THE PLAN IS ASSERTED SEPARATELY, because they fail for
+    # different reasons and only one of them is content-independent.
+    #
+    # THE NO-JOIN ASSERTION IS THE DURABLE ONE. It pins the two-statement shape the argument in
+    # Maker::AddonOrigin#for rests on, and nothing about the data can change its answer.
+    #
+    # THE INDEX ASSERTION IS THE ONE THAT NOTICES A DROPPED MIGRATION, and it is deliberately NOT
+    # trusted to catch a join revert, even though it happens to today: SQLite's plan for the join
+    # depends on table CONTENT as well as on stats, and it was probed choosing at least three
+    # different shapes — the composite probe (what this test DB produces, and what makes the join
+    # revert fail here), a bare `SCAN maker_addon_files` at fixture scale once ANALYZE has run, and
+    # `index_maker_addon_files_on_node_id` itself both at production scale after ANALYZE and at a
+    # degenerate one-row scale. That last shape is the point: an index assertion alone would PASS a
+    # join revert on some databases. Do not delete the no-join assertion on the grounds that this
+    # one already covers it.
+    #
+    # A COUNT ASSERTION WOULD COVER NEITHER. The join spelling this method rejects
+    # (`joins(<string>) + includes`) issues TWO statements of its own whenever it matches a row, so
+    # `assert_equal 2, count_queries` stays green through the exact revert it appears to guard.
+    #
+    # Couples to SQLite's EXPLAIN wording, which is worth it here. The skip cannot fire in bin/ci:
+    # LIBRARY_BACKEND selects a FileLayer adapter, not a database, and all three legs plus the test
+    # env report adapter_name "SQLite" (verified on each).
+    test "the lookup reaches the index the migration added, and never joins the two tables" do
+      skip "EXPLAIN wording is SQLite's" unless ActiveRecord::Base.connection.adapter_name == "SQLite"
+
+      statements = capture_sql { Maker::AddonOrigin.for(user: @user, node_ids: %w[node-a node-zzz]) }
+
+      joined = statements.select { |s| s.match?(/\bJOIN\b/i) }
+      assert_empty joined,
+                   "resolving an origin must not put maker_addon_files and maker_addon_states in " \
+                   "one statement — see Maker::AddonOrigin#for for the measurements. Got:\n#{joined.join("\n")}"
+
+      files = statements.select { |s| s.include?("maker_addon_files") }
+      assert_equal 1, files.size, "exactly one statement should touch maker_addon_files"
+      plan = explain_plan(files.sole)
+      assert_includes plan, "index_maker_addon_files_on_node_id",
+                      "the node_id lookup no longer reaches its index — plan was:\n#{plan}"
+      assert_not_includes plan, "SCAN maker_addon_files", "the node_id lookup degraded to a scan"
+    end
+
+    def capture_sql
+      out = []
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          out << payload[:sql]
+        end
+      end
+      yield
+      out
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    def explain_plan(sql)
+      ActiveRecord::Base.connection
+                        .select_all("EXPLAIN QUERY PLAN #{sql}").rows.map(&:last).join("\n")
+    end
+
     # SCHEMA/TRANSACTION/PRAGMA are excluded for the reason page_query_budget_test.rb gives: they
     # are this call's cost only by accident of being first in the process.
     def count_queries
