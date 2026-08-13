@@ -176,8 +176,8 @@ module Tools
     # first — but the sentence costs nothing, and narrowing it to the race alone would be a
     # user-facing change made on the strength of an unreachability argument, which is the kind of
     # argument §14e says to probe rather than trust. Prefer widening the arm's own test over
-    # trimming the sentence. None of #show, #asset, #service or #states touches FileLayer at all,
-    # so this class-level arm covers those four vacuously.
+    # trimming the sentence. None of #show, #asset, #service, #states or #revisions touches
+    # FileLayer at all, so this class-level arm covers those five vacuously.
     #
     # A 404 on a POST to the save endpoint would read as "this endpoint is gone", which sends an
     # addon author looking in entirely the wrong place; the honest answer is that the request was
@@ -254,8 +254,8 @@ module Tools
 
     # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
     # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways,
-    # by `states_key` AND by current_user — see #addon_states, which owns that argument for all four
-    # of this controller's state lookups, including what the addon_key half is NOT (a boundary
+    # by `states_key` AND by current_user — see #addon_states, which owns that argument for every
+    # state read and write in this controller, including what the addon_key half is NOT (a boundary
     # between addons).
     #
     # ONE ENTRY PER SAVED ITEM, AND `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.
@@ -299,6 +299,20 @@ module Tools
     # plus an explicit render rather than `find` for that same reason, and because the class-level
     # `rescue_from` arms above do not cover RecordNotFound — it would land on Rails' own HTML error
     # page, which is not an answer a `fetch` caller can read.
+    #
+    # UNBOUNDED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT — it is the whole history, every
+    # revision, each carrying its full `data` snapshot. A `limit(N)` was considered and REFUSED: a
+    # cap without paging is a SILENT TRUNCATION, which §14b names in terms as the failure where a
+    # bounded surface reads as "covered everything" when it did not. A bundle handed a history that
+    # quietly stops at N cannot tell that from a design saved N times, and there is no `truncated`
+    # flag and no cursor to tell it — so the cap would trade an unbounded response for a wrong one.
+    # Paging is out of scope for this arc and the spec excludes it for /states too.
+    #
+    # WHAT ACTUALLY BOUNDS IT IS HUMAN SAVE FREQUENCY: a revision costs a deliberate save of one
+    # design by one person, so a history reaching a size that matters means somebody saved that
+    # design thousands of times. IF THAT EVER STOPS BEING TRUE — an addon that saves on a timer, an
+    # import that replays a history — the fix is PAGING (a cursor plus a `has_more`), not a bare
+    # limit. Change this and change the lazy-loading argument in config/routes.rb with it.
     def revisions
       state = find_addon_state(params[:id])
       return render_no_such_state if state.nil?
@@ -424,9 +438,14 @@ module Tools
       return head(:unprocessable_entity) if files.nil?
 
       # THE TARGET OF A REVISION, or nil for a new box — resolved BEFORE any write, so an id this
-      # door cannot honour costs nothing. #resolve_revision_target owns the argument for why that
-      # is a 404 rather than a create, and renders nothing itself; the `if` is what keeps its nil
-      # to one meaning.
+      # door cannot honour costs nothing. #find_addon_state renders nothing and raises nothing, which
+      # is what lets THIS caller answer 404 while the deep link answers a null and renders the page;
+      # the `if` around it is what keeps its nil to one meaning here.
+      #
+      # 404 AND NOT A SILENT FALLBACK TO CREATING: an id that does not resolve is a bundle bug or a
+      # stale tab, and creating a new box instead would file a revision of an existing design as an
+      # unrelated one — the pile-up this whole feature exists to end, reintroduced by its own error
+      # path.
       #
       # `present?` AND NOT `!params[:state_id].nil?`, WHICH IS THE TIDY-UP TO REFUSE. A bundle
       # rendering an EMPTY hidden `state_id` field is the natural way to say "no target yet", and
@@ -436,7 +455,7 @@ module Tools
       # for it.
       state = nil
       if params[:state_id].present?
-        state = resolve_revision_target
+        state = find_addon_state(params[:state_id])
         return render_no_such_state if state.nil?
       end
 
@@ -484,9 +503,11 @@ module Tools
           # worth a new lock next to that one.
           state.update!(name:, data:, revision: state.revision + 1)
         else
-          state = current_user.maker_addon_states.create!(
-            addon_key: @addon.states_key, name:, data:
-          )
+          # THROUGH #addon_states, WHICH IS THE ONE SITE WHERE A DIVERGENCE WOULD FILE ROWS UNDER
+          # THE WRONG KEY — the read side merely fails to find them, this side creates them there.
+          # `for_addon`'s `where(addon_key:)` populates the attribute through the relation, so this
+          # is the same row the hand-built `create!(addon_key: @addon.states_key, …)` produced.
+          state = addon_states.create!(name:, data:)
         end
         # THE CREATE BRANCH TAKES THIS LINE TOO, so a state's history is complete from its first
         # save — revision 1 is the schema default on `maker_addon_states.revision`, and the
@@ -545,10 +566,15 @@ module Tools
       head :not_found unless @addon
     end
 
-    # THE DATA SCOPE EVERY STATE READ AND WRITE IN THIS CONTROLLER RESOLVES THROUGH. Four callers
-    # today — #states, #revisions, #resolve_revision_target, #launch_state_id — and the next
-    # state-reading action makes five, which is why it is one definition rather than four copies of
-    # a chain that must agree.
+    # THE DATA SCOPE EVERY STATE READ AND WRITE IN THIS CONTROLLER RESOLVES THROUGH — and the claim
+    # is exhaustive rather than a summary: `grep maker_addon_states` finds this line and nothing but
+    # comments. Four sites today — #states lists, #revisions and #launch_state_id look one up (both
+    # via #find_addon_state), and #create both looks one up and CREATES one — with the next
+    # state-reading action making five.
+    #
+    # #create's create! IS THE SITE THAT MATTERS MOST, and it was the last to be converted: every
+    # other caller merely fails to FIND a row if the scope drifts, while that one FILES rows under
+    # the wrong key, where nothing would look wrong until a later read came up empty.
     #
     # SCOPED BY `states_key`, NOT `key`: `states_key` is the DATA scope while `key` builds routes.
     # They are the same value unless the manifest says otherwise (Maker::Addons::Registry#build),
@@ -571,14 +597,17 @@ module Tools
     # ONE saved state by a client-supplied id, or nil.
     #
     # IT RENDERS NOTHING AND RAISES NOTHING, AND THAT IS THE WHOLE REASON IT CAN BE SHARED. THE
-    # CALLER DECIDES WHAT A MISS MEANS, and the two callers decide OPPOSITE things: #create answers
-    # 404 (the id says where to WRITE, and guessing wrong writes to the wrong place) while
-    # #addon_ctx serves a null `stateId` and renders the page (the id is a HINT about what to open,
-    # and a stale bookmark must not take the tool down).
+    # CALLER DECIDES WHAT A MISS MEANS, and the three callers do not agree: #create and #revisions
+    # answer 404 (there the id is an INSTRUCTION — where to write, whose history to serve — and
+    # guessing wrong acts on the wrong row), while #addon_ctx serves a null `stateId` and renders
+    # the page (there it is a HINT about what to open, and a stale bookmark must not take the tool
+    # down). This is the one place that opposition is written out; the callers point here.
     #
     # ** DO NOT MOVE A RENDER IN HERE. ** Folding #render_no_such_state into this method is the
     # tempting next step and it would SILENTLY INVERT the deep link's entire degrade promise: every
     # stale or deleted `?state=` bookmark would start 404ing the tool instead of opening it empty.
+    # SILENTLY IS EXACT: #addon_ctx is called from the ACTION, not from the view, so the fold would
+    # serve a plain 404 rather than the loud DoubleRenderError a view-time render would raise.
     # Nothing about the helper would look wrong afterwards — the caller that wanted the 404 would
     # still get one — which is precisely why the warning is here rather than left to be rediscovered.
     #
@@ -604,25 +633,6 @@ module Tools
       addon_states.find_by(id: raw)
     end
 
-    # THE STATE A SAVE REVISES, for a request that asked for one. ONLY EVER CALLED WHEN A
-    # `state_id` WAS SENT, so its nil has exactly one meaning — "that id does not resolve" — and it
-    # renders nothing: the caller answers. (An earlier draft resolved and rendered in one method,
-    # whose nil meant both "no state_id" and "already 404'd", and needed a `performed?` check plus
-    # a paragraph explaining it. Two pure methods and an `if` say the same thing without either.)
-    #
-    # NO `state_id` MEANS CREATE, UNCHANGED — the compatibility contract rather than a convenience:
-    # every already-published bundle sends none, and publishing a bundle IS the addon deploy while
-    # Rails is never rebuilt (§14c), so this door may never assume bundles moved with it. The
-    # caller's `present?` is what implements that, and `present?` rather than `!nil?` because a
-    # form rendering an empty hidden field sends "".
-    #
-    # THE SCOPE AND THE TYPE ALLOWLIST BOTH LIVE IN #find_addon_state, shared with the three other
-    # state lookups here — including the write-vs-read scope argument and the probed array refusal,
-    # which used to be spelled out at this method and is now stated once where all four callers get
-    # it. This method is the SAVE DOOR'S name for that lookup, and it exists for the caller contract
-    # above rather than for anything it adds to the query.
-    def resolve_revision_target = find_addon_state(params[:state_id])
-
     # 404 AND NOT A SILENT FALLBACK TO CREATING. An id that does not resolve is a bundle bug or a
     # stale tab, and creating a new box instead would file a revision of an existing design as an
     # unrelated one — the pile-up this whole feature exists to end, reintroduced by its own error
@@ -645,11 +655,10 @@ module Tools
     # UNKNOWN, ANOTHER USER'S, ANOTHER ADDON'S NAMESPACE, OR A VALUE THAT IS NOT ONE ID AT ALL, ALL
     # ANSWER nil AND THE PAGE RENDERS NORMALLY. A stale bookmark or a box the user has since deleted
     # must never 404 the tool: the id is a HINT about which item to open, not an authorization
-    # decision. Contrast #resolve_revision_target, whose caller DOES 404 — there the id is an
-    # instruction about where to WRITE, and guessing wrong writes to the wrong place. That is the
-    # opposition #find_addon_state exists to serve: it decides nothing, so the two callers can
-    # decide opposite things off one lookup. (It does NOT reject a merely ill-formed id — `1abc`
-    # casts to 1 and opens state 1; see #find_addon_state's last paragraph for why that is fine.)
+    # decision — the opposite of what the same id means to #create and #revisions, which 404. See
+    # #find_addon_state, which states that opposition once and is why it decides nothing itself.
+    # (It does NOT reject a merely ill-formed id — `1abc` casts to 1 and opens state 1; the same
+    # method's last paragraph says why that is fine.)
     #
     # NO `blank?` SHORT-CIRCUIT, AND ITS REMOVAL IS MEASURED RATHER THAN TIDIED. An empty `?state=`
     # is "no hint", and `find_by(id: "")` was probed TWICE to return nil rather than raise — the
@@ -716,9 +725,10 @@ module Tools
         # same argument Host::CAPABILITIES makes for every capability value being a real boolean.
         #
         # A HASH RATHER THAN A BARE `launchStateId`, matching `defaultFolder` above: the blob names
-        # a thing with a small object, and the SDK exposes this one whole as `host.launch`. A key
-        # added inside it later is then additive to a namespace a bundle already reads, rather than
-        # a new top-level name every bundle must learn.
+        # a thing with a small object, so a key added inside it later is additive to a namespace a
+        # bundle already reads rather than a new top-level name every bundle must learn. (The SDK
+        # is planned to expose it whole as `host.launch` — Task 9 of this arc, not yet built; there
+        # is nothing in app/javascript/maker/addon_sdk.js reading it today.)
         launch: { stateId: launch_state_id }
       }
     end

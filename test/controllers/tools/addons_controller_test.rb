@@ -229,24 +229,30 @@ module Tools
 
     # SILENTLY IGNORED, NOT A 404 AND NOT A 500. A stale bookmark, a deleted box or a hand-mangled
     # URL must not take the tool down — the id is a HINT about which item to open, never an
-    # authorization decision, so the page renders and the bundle simply starts empty. Contrast the
-    # save door, whose caller DOES 404 on an id it cannot resolve: there the id is an instruction
-    # about where to WRITE, and guessing wrong writes to the wrong place.
+    # authorization decision, so the page renders and the bundle simply starts empty. The save door
+    # answers the opposite way for the same id; #find_addon_state states why, once.
     #
-    # "UNRESOLVABLE", NOT "MALFORMED", AND THE DIFFERENCE IS MEASURED. `"not-a-number"` casts to 0
-    # and matches nothing, which is why it belongs here — but `?state=1abc` CASTS TO 1 and opens
-    # state 1, as do `" 1 "` and `"1.0"`, because ActiveModel's Integer type coerces rather than
-    # refuses. Harmless (a bound parameter inside both scopes, exactly what `find(params[:id])` does
-    # throughout Rails) and shared with the save door, so it is not a property of this endpoint —
-    # but an earlier version of this comment claimed "plain garbage all answers nil", which is a
-    # stronger claim than the code makes. #find_addon_state carries the argument.
+    # "UNRESOLVABLE", NOT "MALFORMED", AND THE DIFFERENCE IS MEASURED. `?state=1abc` CASTS TO 1 and
+    # opens state 1, as do `" 1 "` and `"1.0"`, because ActiveModel's Integer type coerces rather
+    # than refuses — harmless (a bound parameter inside both scopes, exactly what `find(params[:id])`
+    # does throughout Rails), shared with the save door, and so not a property of this endpoint.
+    # #find_addon_state carries that argument. An earlier version of this comment claimed "plain
+    # garbage all answers nil", which is a stronger claim than the code makes.
     #
-    # THE BLANK IS IN THIS LIST AS BEHAVIOUR, NOT AS A GUARD, and saying so is the point:
-    # `find_by(id: "")` casts to `WHERE id = NULL` and answers nil on any adapter, so an empty
-    # `?state=` resolved to nothing under the `blank?` short-circuit this once had and resolves to
-    # nothing now that it is gone. That is the opposite of the save door, where `""` must reach the
-    # CREATE branch and a `nil?` there is a 404 on every such save — which is why THAT half has a
-    # mutation-checked guard of its own and this one honestly cannot.
+    # BOTH UNRESOLVABLE ENTRIES BELOW TAKE THE SAME PATH, AND IT IS `WHERE id = NULL` FOR BOTH.
+    # `"not-a-number"` and `""` are stopped by `ActiveModel::Type::Integer#serialize`'s
+    # `non_numeric_string?` guard, which returns nil BEFORE `cast` runs — so neither reaches a
+    # comparison that could ever be true. (An earlier version of this comment said `"not-a-number"`
+    # "casts to 0 and matches nothing", which is what `cast` alone does and is where that came from;
+    # it was both wrong and weaker, since `= 0` merely happens to match no row while `= NULL` cannot
+    # match one. #launch_state_id's own comment already described this mechanism correctly for `""`,
+    # and two comments in one file must not disagree about one behaviour.)
+    #
+    # THE BLANK IS HERE AS BEHAVIOUR, NOT AS A GUARD: it answered nil under the `blank?`
+    # short-circuit this code once had and answers nil now that it is gone, on any adapter. That is
+    # the opposite of the save door, where `""` must reach the CREATE branch and a `nil?` there is a
+    # 404 on every such save — which is why THAT half has a mutation-checked guard of its own and
+    # this one honestly cannot.
     test "an unknown, foreign, other-addon or unresolvable ?state= renders the page with a null stateId" do
       other = User.create!(email: "other3@example.com", password: PASSWORD, confirmed_at: Time.current)
       theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
@@ -2071,6 +2077,12 @@ module Tools
       assert_equal "60", body.last.dig("data", "params", "h"),
                    "revision 1 must still hold what was saved AT revision 1"
       assert body.first["created_at"].present?, "a snapshot without its timestamp cannot be labelled"
+      # PINNED AS AN EXACT SET, for the reason the states payload's own key test gives one screen
+      # up: a removed or renamed key is what breaks a published bundle, and nothing in this repo can
+      # see that break. Asserted here while this wire contract still has NO consumer — Task 9's SDK
+      # is the first — because an added key (`id`, `addon_state_id`) is easiest to refuse before
+      # anything reads it, and the individual assertions above cannot see one arrive.
+      assert_equal %w[created_at data revision], body.first.keys.sort
     end
 
     # THE SAME SCOPE #states READS, ASSERTED AS THREE SEPARATE 404s. A state this addon could not

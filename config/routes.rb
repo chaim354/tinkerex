@@ -226,9 +226,14 @@ Rails.application.routes.draw do
   # ONE saved state's revision history, newest first. FIVE segments, so — unlike the two-segment
   # routes this block's long comment is about — it has no ordering hazard with the `tools/:key`
   # wildcard at all: Rails requires a segment-count match, the same reason
-  # `tools/addon_states/:id/params` is safe wherever it sits. Nor does either glob route above reach
-  # it: both pin their third segment to a literal ("service", "asset"), and this path's third
-  # segment is "states". It sits here to keep the addon surface in one block, not because the order
+  # `tools/addon_states/:id/params` is safe wherever it sits.
+  #
+  # NOR DOES EITHER GLOB ROUTE REACH IT, for two independent reasons — the second matters because
+  # only ONE of the globs is above this line. `tools/:key/service/:service/*path` is declared above
+  # and `tools/:key/asset/*path` below, and a route declared LATER cannot shadow one declared
+  # earlier, so `asset` could not take this path whatever it matched. Neither could anyway: both
+  # pin their third segment to a literal ("service", "asset") and this path's third segment is
+  # "states". So it sits here to keep the addon surface in one block, not because the order
   # protects it.
   #
   # LAZY BY DESIGN, WHICH IS WHY IT IS A SECOND ENDPOINT RATHER THAN A KEY ON #states. A 20-revision
