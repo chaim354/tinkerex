@@ -27,9 +27,10 @@ module Maker
       # is not a new door: it is the SAME `library:write` door growing an optional parameter, so a
       # capability would be answered `true` for exactly the hosts that answer `library:write` true,
       # forever, and would carry no information. `min_host: 3` is how a bundle requires it.
-      # `state:crud` stays false and is reserved for the DIRECT PATCH/DELETE state endpoints
-      # (docs/addon-api-v1.md §7.5), which this is not — a save door that revises writes library
-      # bytes and cannot be a rename or a delete.
+      # `state:crud` stays false and keeps the meaning its own row in docs/addon-api-v1.md's
+      # capability table gives it — "creating, updating and deleting states DIRECTLY" — which this
+      # is not: a save door that revises writes library bytes, and cannot rename or delete a state
+      # without one.
       LEVEL = 3
 
       CAPABILITIES = {

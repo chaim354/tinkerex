@@ -688,9 +688,10 @@ module Tools
         # `undefined` in JS and cannot be told apart from a host that predates this, which is the
         # same argument Host::CAPABILITIES makes for every capability value being a real boolean.
         #
-        # A HASH RATHER THAN A BARE `launchStateId`, because what a launch carries will grow (a
-        # revision to open at, a node id the link came from) and a bundle reading `ctx.launch`
-        # should not have to re-learn the shape each time one is added.
+        # A HASH RATHER THAN A BARE `launchStateId`, matching `defaultFolder` above: the blob names
+        # a thing with a small object, and the SDK exposes this one whole as `host.launch`. A key
+        # added inside it later is then additive to a namespace a bundle already reads, rather than
+        # a new top-level name every bundle must learn.
         launch: { stateId: launch_state_id }
       }
     end

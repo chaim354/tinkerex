@@ -2084,9 +2084,10 @@ module Tools
 
     # AN UNKNOWN ID ANSWERS BYTE-FOR-BYTE WHAT A STRANGER'S DOES, which is the property the two
     # tests above can only half-prove on their own: each of them alone is satisfied by any 404, and
-    # a body that differed between the two causes would make this endpoint an existence oracle.
-    # Compared against the save door's own refusal rather than a literal, because it IS that
-    # refusal — the same condition, resolved through the same scope (#render_no_such_state).
+    # a body that differed between the two causes would make this endpoint an existence oracle. The
+    # two responses are asserted EQUAL TO EACH OTHER rather than each against its own expected
+    # literal — recomputing an expectation twice cannot see the two drift apart, which is the same
+    # reasoning the ctx-vs-legacy-attributes test above states at length.
     test "an unknown state id is the same 404, with the same body, as a stranger's" do
       other = User.create!(email: "other4@example.com", password: PASSWORD, confirmed_at: Time.current)
       theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
