@@ -2122,8 +2122,13 @@ module Tools
       assert_equal "not_found", unknown["error"]
     end
 
-    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb
-    # (the counts differ per LIBRARY_BACKEND, so a literal would pin one leg and fail the other two).
+    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb:
+    # GROWTH with the data is the defect, and a literal would additionally go red on any unrelated
+    # query this endpoint gains. NOT "the counts differ per LIBRARY_BACKEND", which is what this said
+    # until 2026-08-13: #states reads maker_addon_states and nothing else, so the backend cannot enter
+    # the measurement. Probed with the eager load dropped, on all three legs and with the adapter
+    # genuinely resolved differently on each (this test pins none): **5 at 3 states and 17 at 15,
+    # identically**.
     # `includes(:files)` is what this guards: drop it and #states goes from a flat query count to one
     # extra SELECT per saved state, invisible to every other test here because none of them save more
     # than one or two states.

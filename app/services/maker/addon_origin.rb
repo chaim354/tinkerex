@@ -7,10 +7,14 @@ module Maker
   # states for the same reason (CLAUDE.md §14a). A raise would 404 a page over one ordinary file,
   # and an explicit nil value cannot be told apart by `key?` from a node that resolved to nothing.
   #
-  # THE QUERY COUNT MUST BE CONSTANT IN N. FilesController#index has never had pagination and was
-  # measured at 2000 nodes (§12), so a per-node lookup is an N+1 that no fixture-sized test notices —
-  # `test/integration/web/page_query_budget_test.rb` asserts constancy (never a literal: the counts
-  # differ per LIBRARY_BACKEND) for exactly that reason.
+  # THE QUERY COUNT MUST BE CONSTANT IN N. FilesController#index has never had pagination in flat
+  # mode and was measured at 2000 nodes (§12), so a per-node lookup is an N+1 that no fixture-sized
+  # test notices — `test/integration/web/page_query_budget_test.rb` asserts constancy for exactly
+  # that reason. CONSTANCY RATHER THAN A LITERAL because GROWTH is the defect and a literal would
+  # also go red on any unrelated query that page gains; NOT because the number varies by backend,
+  # which an earlier draft of this comment claimed. This method never touches the port at all —
+  # probed at **2 queries on each of chunk, share and s3**, with three different adapters genuinely
+  # resolved — so its cost is the same on every leg.
   #
   # THIS CLASS DOES NOT KNOW WHICH ADDON PAGE TO OPEN, and the split is the point. It answers with
   # the state, whose `addon_key` is a `states_key`; mapping that to a route needs

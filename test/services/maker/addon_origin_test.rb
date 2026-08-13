@@ -71,8 +71,14 @@ module Maker
     end
 
     # CONSTANT IN N, NOT A LITERAL. A per-node lookup here is an N+1 on a 2000-node library page,
-    # and page_query_budget_test.rb asserts constancy for exactly that reason. A literal would also
-    # pin one LIBRARY_BACKEND leg and fail the other two.
+    # and page_query_budget_test.rb asserts constancy for exactly that reason: GROWTH is the defect,
+    # and a literal would additionally go red on any unrelated query the code gains.
+    #
+    # NOT "A LITERAL WOULD PIN ONE LIBRARY_BACKEND LEG", WHICH IS WHAT THIS SAID UNTIL 2026-08-13.
+    # `Maker::AddonOrigin.for` never touches the port, so the count cannot vary with it: probed with
+    # the adapter actually resolved on each leg (FileLayer::Chunk / Share / S3), this lookup costs
+    # **2 queries on all three**. The per-backend argument is real where a page's FileLayer calls are
+    # in the measurement; here there are none.
     #
     # THE BULK NODES ARE REAL HITS, not misses. The lookup returns early on `claims.empty?`, so ten
     # node ids that resolve to nothing cost one query however the body below is written — the growth

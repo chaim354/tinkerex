@@ -4,11 +4,18 @@ require_relative "../../support/fake_addon_source"
 module Web
   # Every page here is rendered at two data sizes and must issue the SAME number of queries.
   #
-  # WHY CONSTANCY AND NOT A LITERAL: the counts differ per FileLayer backend (chunk resolves file
-  # metadata differently from share/s3), so a literal would pin one leg and fail the other two.
-  # Constancy is also the property that actually matters — a page that costs 12 queries is fine
-  # forever; a page that costs one query per row is a page that dies on real data. The same
-  # argument is made at length in test/services/file_layer/adapter_contract.rb.
+  # WHY CONSTANCY AND NOT A LITERAL: a literal pins whatever a page happens to cost today, so any
+  # unrelated change that adds or removes a single query turns it red with nothing wrong. The
+  # property that actually matters is a different one, and it is the one asserted — a page that costs
+  # 12 queries is fine forever; a page that costs one query per row is a page that dies on real data.
+  #
+  # NOT "THE COUNTS DIFFER PER LIBRARY_BACKEND", WHICH IS WHAT THIS COMMENT SAID FROM PR #108 UNTIL
+  # 2026-08-13 AND IS FALSE IN THIS FILE. `setup` calls `pin_file_layer_backend("chunk")`, so every
+  # test in this class resolves the Chunk adapter on all three legs and measures the same thing three
+  # times. Measured with an N+1 deliberately introduced into Maker::AddonOrigin: 11 small / 23 large
+  # on the default leg, on share and on s3 — identical, because all three ran chunk. The per-backend
+  # argument is real where the adapter is the subject (test/services/file_layer/adapter_contract.rb
+  # makes it at length); it is inert in a class that pins one.
   #
   # THIS FILE EXISTS BECAUSE projects#show REGRESSED TO LINEAR AND NOTHING NOTICED. Rich text
   # bodies arrived with the project-page overhaul and the eager load was never extended, so the
@@ -138,7 +145,9 @@ module Web
     # THE REVERSE LOOKUP MUST NOT BE PER ROW. `Maker::AddonOrigin.for` resolves a whole page at a
     # fixed cost; written as a per-node (or per-state) lookup it is invisible on a three-file fixture
     # and fatal on a real library, which has never had pagination in flat mode and was measured at
-    # 2000 nodes. Constancy, never a literal — the counts differ per LIBRARY_BACKEND.
+    # 2000 nodes. Constancy, never a literal, for the reason in this class's header: growth with row
+    # count is the defect, and a literal would additionally go red on any unrelated query this page
+    # gains or loses.
     #
     # ONE STATE PER FILE, NOT ONE STATE WITH MANY FILES, because those are two different Ns and only
     # this shape moves both. Ten files on one saved box leave `claims.map(&:last).uniq` a single id,
