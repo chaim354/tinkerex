@@ -234,7 +234,50 @@ in skips. It reconciles: the four new Rails test files (`addon_origin_surfaces_t
 three modified files (`addons_controller_test.rb`, `page_query_budget_test.rb`, `host_test.rb`); and
 the system delta is +4 runs from `addon_sdk_test.rb` plus the +1 in `file_menu_test.rb`.
 
-**Not deployed, not merged.**
+**Merged (#180) and deployed** — `7005fdb` runs on all three Unraid backends and answers
+`Maker::Addons::Host::LEVEL` **3**, checked against the running containers on 2026-08-13 before the
+bundle was allowed to declare `min_host: 3`.
+
+### The bundle half (branch `claude/boxes-state-revisions` in `chaim354/tinkerex-addons`)
+
+The design's §8 changes, published from the other repo: `history.js` (new), plus `editor.js`,
+`gallery.js`, `boxes.js`, `show.js` and `min_host: 3` in `manifests.json`. **This** branch
+(`claude/boxes-revision-fixture`) carries only the half the host owns — the
+`test/fixtures/addons/boxes/` snapshot those modules are driven through, which that repo's
+`bin/check-fixture-drift` refuses to let anyone publish past, and one new system test.
+
+Two things measured on the way, **both of which contradicted the bundle plan as written**:
+
+1. **The SDK resolves `stateId` once, before its first request, and its overwrite retry re-sends
+   exactly that id.** Probed against `app/javascript/maker/addon_sdk.js` with a stubbed `fetch`:
+   `onReplace` returning true produced a second request identical but for `overwrite=1`. The plan
+   had the 409 dialog offer *"save as revision N of X"* and answer it by returning true — which
+   would have replaced the file and **still minted a second box**, the exact pile-up this arc
+   exists to end. The bundle instead issues a SECOND `save()` carrying the id; it needs no
+   overwrite, because the own-file exemption above covers it.
+2. **A same-name save into a plain library folder never reaches a 409** — `refuse_taken_names!` is
+   terminal, which is "What was broken" item 3 restated from the bundle's side. So that offer is
+   reachable only through the project-folder gap (§14f), which is exactly where the save dialog's
+   default folder puts anyone working inside a project.
+
+`test/system/box_revisions_test.rb` drives the new surfaces through the snapshot: a left click
+opening the editor **on that box**, a save appending revision 2 with the output's `node_id`
+unchanged, "Save as new box" forking, the lazy history panel, the `?state=` deep link and its stale
+fallback, the right-click menu, and the project-folder join end to end. It is an addition to the
+plan, which asked only for the mirror: the five existing bundle system tests are a regression gate
+that cannot reach any of this, and the spec's §10 line "Bundle: its own tests" has no repo to land
+in — that one has no headless harness.
+
+**Seven guards mutation-checked**, each broken and watched go red. One did not: `assert_no_selector`
+for the history panel's laziness stayed **green** with the fetch moved to mount, because it returns
+the moment the list is absent — equally true of an eager fetch that has not resolved. Replaced with
+a count of the `/revisions` requests the browser actually made, which goes red. §15's rule earning
+its keep again. Also measured while writing it: **chromedriver's ctrl+click is an ordinary primary
+click** (`mousedown`/`click`, `button=0`, no `contextmenu`), so `right_click` is the only way a test
+reaches that menu.
+
+System suite **92 → 99 runs / 561 → 626 assertions**, 0 failures, 0 skips (whole suite run, not
+extrapolated). The five pre-existing bundle files are unchanged and green.
 
 ### Left open, deliberately — none of these were fixed here
 
