@@ -1162,6 +1162,27 @@ git commit -m "feat(addons): ?state= resolves server-side into ctx.launch"
 
 ### Task 7: `Maker::AddonOrigin` — a library node back to the state that made it
 
+> **AS SHIPPED, THIS TASK DIVERGED FROM THE TEXT BELOW — the code blocks here are historical.** Two
+> changes, both measured rather than argued:
+>
+> - **The single-query join was rejected.** It never reaches the `node_id` index this task adds —
+>   SQLite drives from `maker_addon_states` on `user_id` and probes the composite instead, so cost
+>   grows with the user's saved-STATE count, invisible to a query-count test because it happens
+>   *inside one statement*. Measured on a 2000-node page: **0.5 ms flat** for two statements against
+>   **64.7 ms at 500 states** for the join — and the all-miss case, a library with no addon output at
+>   all, costs the same 64.6 ms **to return zero rows**. The join also emits two statements anyway
+>   (join + preload), so the plan's "resolved in ONE query" was never true of the spelling it
+>   prescribed. Shipped as two statements.
+> - **`Origin` is `Data.define(:state)` with a derived `addon_key` reader**, not `Data.define(:state,
+>   :addon_key)` — same public API, but no second copy of a value free to disagree with its row. It
+>   also gained `.order(:id)`, because two states really can hold a row for one node (a save
+>   answering the 409 with `overwrite: "1"` rewrites another state's node while `LibraryOutput` keeps
+>   the old row) and which one won was otherwise undefined.
+>
+> **Carried into Task 8:** if the `AddonOrigins` concern reads `origin.state` everywhere and never
+> `addon_key`, the wrapper is ceremony and should collapse to `{node_id => state}`. Decide that when
+> the caller exists, not before.
+
 **Files:**
 - Create: `db/migrate/20260813000200_add_node_id_index_to_maker_addon_files.rb`
 - Create: `app/services/maker/addon_origin.rb`
@@ -1332,7 +1353,7 @@ git commit -m "feat(addons): resolve a library node back to the state that produ
 ### Task 8: The four surfaces
 
 **Files:**
-- Modify: `app/services/maker/addon_origin.rb` (add `.url_for`)
+- Modify: `app/services/maker/addon_origin.rb` (add `.link_for`)
 - Modify: `app/controllers/files_controller.rb` (`#index`, `#show`)
 - Modify: `app/controllers/projects_controller.rb` (`#show`)
 - Modify: `app/views/files/_list.html.erb`, `app/views/files/_grid.html.erb`, `app/views/projects/_attachment_group.html.erb`, `app/views/files/show.html.erb`
@@ -1396,12 +1417,12 @@ one of them and reuse its helper rather than adding a second way to seed a node.
 - [ ] **Step 2: Run and watch fail**
 
 ```bash
-bin/rails test test/services/maker/addon_origin_test.rb -n "/url_for/"
+bin/rails test test/services/maker/addon_origin_test.rb -n "/link_for/"
 ```
 
-Expected: `NoMethodError: undefined method 'url_for' for module Maker::AddonOrigin`.
+Expected: `NoMethodError: undefined method 'link_for' for module Maker::AddonOrigin`.
 
-- [ ] **Step 3: Add `url_for`**
+- [ ] **Step 3: Add `link_for`**
 
 Append to `Maker::AddonOrigin`:
 
