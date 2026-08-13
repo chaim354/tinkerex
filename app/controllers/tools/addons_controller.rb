@@ -408,21 +408,25 @@ module Tools
       end
 
       parent_node_id = chosen_parent_node_id
-      # NOT YET USABLE FOR THE MAINLINE REVISION FLOW, AND NOTHING ELSE HERE SAYS SO. A revision
-      # that re-emits the SAME filename into the SAME picked folder is still refused 422 by the
-      # line below — it does not know that the file it is colliding with is the target state's own
-      # output — and "open a saved design, tweak it, re-save it" is exactly that request. The
-      # collision exemption that makes a state's own file an approved replace is a separate change;
-      # until it lands, only a revision whose output name CHANGED gets through, which is why no
-      # test in this file exercises the other case.
-      refuse_taken_names!(files, parent_node_id)
+      # WHAT THIS REVISION MAY OVERWRITE — `{}` for a new box, so a save sending no `state_id` hands
+      # LibraryOutput a byte-identical argument to before. Resolved ONCE and passed to both checks
+      # below: they ask about DIFFERENT folders and answer with different statuses, but they must
+      # share one answer to "is the file in the way this state's own?"
+      owned = owned_destinations(state)
+      refuse_taken_names!(files, parent_node_id, owned)
       # TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THAT IS THE POINT rather than
       # redundancy. #refuse_taken_names! asks about the folder the user PICKED and is terminal
       # ("pick another name"). This asks about the CATEGORY folder the sweep will file into, which
       # is where a re-save actually collides — and is answerable ("overwrite?"). The gap between
       # them is the bug: after the first save is filed, the picked folder is vacant again, so the
       # first check passes and the sweep is left holding a file it cannot place.
-      placements = resolve_placements(files, parent_node_id)
+      #
+      # A REVISION MEETS WHICHEVER ONE ITS OWN FILE IS SITTING IN, WHICH IS WHY BOTH TAKE `owned`.
+      # A box swept into `Projects/<slug>/design/` leaves the picked folder vacant and collides
+      # here; a box saved to a plain library folder is still sitting there and collides above,
+      # where the refusal is terminal and no `overwrite` could ever answer it. Exempting only one
+      # of them leaves "open a saved design, tweak it, re-save it" refused (spec §1.3).
+      placements = resolve_placements(files, parent_node_id, owned)
       return if render_would_replace(files, placements)
 
       # HOISTED OUT OF BOTH BRANCHES so they cannot drift on what a save's name and data are. Kept
@@ -652,6 +656,37 @@ module Tools
       Maker::Addons::Services.url_for(name)
     end
 
+    # THE (parent, name) PAIRS THE TARGET STATE ALREADY OWNS — what a revision is entitled to
+    # overwrite, and nothing else. `{}` for a new box, which is what keeps every save that sends no
+    # `state_id` byte-identical to today: publishing a bundle IS the addon deploy and Rails is never
+    # rebuilt (§14c), so this door may never assume bundles moved with it.
+    #
+    # KEYED BY (parent, name) RATHER THAN BY node_id, because that is the question both collision
+    # checks below actually ask — "is something already sitting at this destination?" A set of
+    # node_ids would still need the destination lookup to compare against, and resolving them here
+    # means ONE query for the whole save instead of one per file.
+    #
+    # A STALE ROW STILL COUNTS, and that is the rule rather than an exception to it. A state keeps
+    # the AddonFile row of an output a later revision stopped emitting — Maker::Addons::LibraryOutput
+    # #upsert_file! leaves it alone on purpose (§14c: a save door must not delete user bytes) — so a
+    # revision that re-emits that old name replaces the file this same box produced.
+    #
+    # `.present` MATTERS: a tombstoned output is not a destination anybody can collide with, and
+    # #refuse_taken_names!'s own query scopes the same way, so the two cannot disagree about what is
+    # there. The `current_user` scope is defence in depth — `state` was already resolved through
+    # `current_user.maker_addon_states` — kept because a node_id list is the one thing here that
+    # came out of another table.
+    def owned_destinations(state)
+      return {} if state.nil?
+
+      node_ids = state.files.pluck(:node_id)
+      return {} if node_ids.empty?
+
+      current_user.nodes.present.where(node_id: node_ids)
+                  .pluck(:parent_node_id, :name, :node_id)
+                  .to_h { |parent, name, node_id| [ [ parent, name ], node_id ] }
+    end
+
     # ALL THE NAMES, CHECKED BEFORE ANY BYTE IS WRITTEN — which closes two different defects.
     #
     # 1. CHUNK MODE HAD NO CLOBBER CHECK AT ALL. Share and S3 refuse a taken destination inside
@@ -674,27 +709,71 @@ module Tools
     # Raises UnsupportedOperation rather than returning a flag so it lands on the one mapping at
     # the top of this class — §14a: "the destination is taken" IS UnsupportedOperation, and a
     # second spelling of that answer is the exact drift that bullet was written about.
+    #
+    # AN OWNED DESTINATION IS EXEMPT, AND ONLY AN OWNED ONE. Hitting the file this same state
+    # produced is what revising a design IS — naming the state is the consent — while a name held
+    # by a file this state did not produce stays the terminal 422 it has always been, because no
+    # `overwrite` can make somebody else's file the right thing to rewrite.
+    #
+    # EXEMPTING IT HERE IS ONLY HALF THE ANSWER, and the halves must move together: this check
+    # asks about the PICKED folder, and #resolve_placements has to mark that same file
+    # `replace: true` or the write lands as a CREATE. See arm 2 of its own note for what that
+    # looked like when measured.
+    def refuse_taken_names!(files, parent_node_id, owned = {})
+      taken = files.map(&:name).select do |name|
+        next false if owned.key?([ parent_node_id, name ])
+
+        Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
+      end
+      return if taken.empty?
+
+      raise FileLayer::UnsupportedOperation,
+            "#{taken.map(&:inspect).join(', ')} already #{taken.one? ? 'exists' : 'exist'} in that " \
+            "folder. Rename the save or pick another folder."
+    end
+
     # Per file: where it should go and whether it replaces what is there. An EMPTY hash is "the
-    # picked folder, create" — today's behaviour, and the answer for every save that is not a
-    # re-save into a project folder's root.
+    # picked folder, create" — today's behaviour, and the answer for every save that is neither a
+    # re-save into a project folder's root nor a revision landing on its own output.
     #
     # PER FILE, NOT PER SAVE, because one save can collide on some outputs and not others: the
     # boxes addon emits `<base>.svg` and `<base>-plan.svg` together, and a re-save can find the
     # first name taken in its category folder and the second free. That is why
     # Maker::Addons::LibraryOutput takes a per-file destination.
     #
-    # THE DESTINATION IS THE OCCUPANT'S OWN PARENT, not a folder this method resolves separately —
-    # there is an occupant, so its parent IS the category folder, already created. Nothing here
-    # mkdirs: a save that needs a folder made still lands at the picked folder and the sweep files
-    # it, exactly as before.
-    def resolve_placements(files, parent_node_id)
+    # TWO WAYS TO LAND ON A REPLACE, AND THE SECOND WAS FOUND BY MEASURING RATHER THAN BY READING:
+    #
+    #   1. THE CATEGORY FOLDER IS OCCUPIED. The destination is then the OCCUPANT'S OWN PARENT, not
+    #      a folder this method resolves separately — there IS an occupant, so its parent is the
+    #      category folder and it already exists. Nothing here mkdirs: a save that needs a folder
+    #      made still lands at the picked folder and the sweep files it, exactly as before.
+    #   2. THE PICKED FOLDER ALREADY HOLDS THIS STATE'S OWN OUTPUT. Maker::ProjectIntake
+    #      .destination_for answers nil for anything that is not a project folder's own root, so the
+    #      ordinary "re-save a box that lives in a plain library folder" — the mainline revision
+    #      flow, and the dead end spec §1.3 is about — never reaches arm 1 at all. Without this arm
+    #      such a file clears #refuse_taken_names!'s exemption and then lands as a CREATE: probed on
+    #      chunk, that is a SECOND live node with the same name in the same directory, and on
+    #      share/s3 the port's own clobber refusal turns the exemption straight back into the 422 it
+    #      exists to remove. `owned: true` is a tautology inside this arm, since its condition IS the
+    #      ownership test, and `folder:` is absent because that key exists only for the 409 body an
+    #      owned placement never reaches.
+    #
+    # `owned` MARKS A COLLISION THE CALLER HAS ALREADY CONSENTED TO by naming this state. It still
+    # sets `replace: true` — the write is a replace either way — and is what keeps
+    # #render_would_replace from asking a question the `state_id` already answered.
+    def resolve_placements(files, parent_node_id, owned = {})
       files.map do |f|
         dest = Maker::ProjectIntake.destination_for(user: current_user, parent_node_id:,
                                                     name: f.name)
         occupied = dest&.occupied_by
-        next {} unless occupied
-
-        { folder: dest.folder, parent_node_id: occupied.parent_node_id, replace: true }
+        if occupied
+          { folder: dest.folder, parent_node_id: occupied.parent_node_id, replace: true,
+            owned: owned[[ occupied.parent_node_id, occupied.name ]] == occupied.node_id }
+        elsif owned.key?([ parent_node_id, f.name ])
+          { parent_node_id:, replace: true, owned: true }
+        else
+          {}
+        end
       end
     end
 
@@ -712,27 +791,19 @@ module Tools
     # OLD BUNDLES DEGRADE HONESTLY. They branch on `res.ok` alone, so a 409 reads as "Save failed."
     # — no dialog, but also no silent second copy stranded at the project root, which is what they
     # got before. The dialog itself ships in the bundle repo.
+    #
+    # AN `owned` PLACEMENT IS NEVER ASKED ABOUT. Naming the state IS the consent, so asking again
+    # would put a confirm dialog in front of the ordinary act of saving a design a second time.
     def render_would_replace(files, placements)
       return false if params[:overwrite].present?
 
-      colliding = files.zip(placements).select { |_f, p| p[:replace] }
+      colliding = files.zip(placements).select { |_f, p| p[:replace] && !p[:owned] }
       return false if colliding.empty?
 
       render json: { error: "would_replace",
                      files: colliding.map { |f, p| { name: f.name, folder: p[:folder] } } },
              status: :conflict
       true
-    end
-
-    def refuse_taken_names!(files, parent_node_id)
-      taken = files.map(&:name).select do |name|
-        Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
-      end
-      return if taken.empty?
-
-      raise FileLayer::UnsupportedOperation,
-            "#{taken.map(&:inspect).join(', ')} already #{taken.one? ? 'exists' : 'exist'} in that " \
-            "folder. Rename the save or pick another folder."
     end
 
     # ONE SAVE FILE, NORMALIZED OUT OF EITHER WIRE SHAPE. `bytes` is a String either way, so

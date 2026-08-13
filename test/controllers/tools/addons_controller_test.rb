@@ -436,12 +436,16 @@ module Tools
     # transaction rolls back the `nodes` row but cannot roll back the file — so a fixed name saved
     # by two tests collides on disk in whichever runs second, on one leg only. The sibling test at
     # "save refuses a name already taken…" carries the same warning.
+    #
+    # `body:` IS A KWARG SO A REPLACE CAN BE PROVEN RATHER THAN ASSUMED. Two saves that both write
+    # "<svg/>" leave a byte assertion that passes whether or not the second write happened at all;
+    # a test whose subject IS the second write has to be able to name different bytes.
     def save_box(name:, params: { "h" => "60" }, file: "shelf-box-#{SecureRandom.hex(4)}.svg",
-                 state_id: nil, parent_node_id: nil, overwrite: nil)
+                 body: "<svg/>", state_id: nil, parent_node_id: nil, overwrite: nil)
       post tools_addon_path("widgetkit"), params: {
         name:,
         data: { generator: "tray", params: }.to_json,
-        files: [ { name: file, content_type: "image/svg+xml", body: "<svg/>" } ].to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: } ].to_json,
         # `.compact` so an unset option is ABSENT rather than nil: `state_id: nil` on the wire is
         # the blank the door reads as "no target", but a test asserting the create path must not
         # depend on that reading being right.
@@ -527,6 +531,12 @@ module Tools
     # nudge files the first copy into `design/`, and the re-save then resolves to `replace: true`
     # against that same node (see "confirming the overwrite replaces the filed file in place").
     # This is exactly that save, now carrying a `state_id`.
+    #
+    # AND IT SENDS NO `overwrite`, WHICH IS THIS TEST'S SECOND JOB. It needed one when it was
+    # written — the 409 fired on the box's OWN filed output, because nothing yet knew whose file
+    # that was — and the collision exemption is precisely what removed the need. The evidence is
+    # worth more here than in a purpose-built test: this one predates the exemption and was not
+    # written to prove it.
     test "revising a filed output replaces it in place, keeping one node and one file row" do
       name = "harbor-number-#{SecureRandom.hex(4)}.svg"
       _project, folder = project_with_filed(name)
@@ -535,7 +545,7 @@ module Tools
 
       assert_no_difference [ -> { @user.maker_addon_states.count }, -> { Maker::AddonFile.count } ] do
         save_box(name: "harbor v5", file: name, state_id: state.id,
-                 parent_node_id: folder.node_id, overwrite: "1")
+                 parent_node_id: folder.node_id)
       end
 
       assert_equal 2, state.reload.revision
@@ -639,6 +649,97 @@ module Tools
       assert_response :not_found
       assert_equal 0, foreign.reload.revisions.count
       assert_equal 1, foreign.revision, "a refusal must not bump the counter it refused to advance"
+    end
+
+    # ---- save: the collision exemption ---------------------------------------------------
+    #
+    # THE RULE, IN BOTH DIRECTIONS: a destination collision with a node the TARGET STATE ALREADY
+    # OWNS is an approved replace; every other collision keeps today's answer. The three refusal
+    # tests below are what stop this from being "naming a state turns the collision checks off".
+    #
+    # TWO FOLDERS, TWO CHECKS, AND BOTH NEED THE EXEMPTION. A box that was swept into a project's
+    # category folder collides THERE, at #resolve_placements (answerable, 409). A box sitting in the
+    # plain folder the save dialog picked collides at #refuse_taken_names! (terminal, 422) and never
+    # reaches the other check at all — so exempting only one of them leaves the mainline "open a
+    # saved design, tweak it, re-save it" flow still refused, which is spec §1.3's dead end.
+
+    test "revising replaces its own file in the picked folder, with no 422 and no overwrite flag" do
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box", file:)
+      node_id = state.files.sole.node_id
+
+      state = save_box(name: "shelf box", params: { "h" => "80" }, file:, state_id: state.id,
+                       body: "<svg>v2</svg>")
+
+      assert_equal 2, state.reload.revision
+      # THE NODE SURVIVES, AND THAT IS THE ASSERTION WITH TEETH. A replace written as
+      # delete-then-create passes any bytes-oriented check while orphaning every attachment, BOM
+      # link and tag (§14a) — and on chunk a placement that reached LibraryOutput without
+      # `replace: true` would not even refuse: it would mint a SECOND node with the same name in
+      # the same directory, which is why both halves of the exemption are needed and why the two
+      # assertions below are separate.
+      assert_equal [ node_id ], state.files.pluck(:node_id)
+      assert @user.nodes.present.exists?(node_id:), "the node must still be live"
+      assert_equal 1, @user.nodes.present.where(name: file).count, "no second copy"
+      assert_equal "<svg>v2</svg>", FileLayer.current.read(@user, node_id:),
+                   "and it is the REVISION's bytes at that node, not the original's"
+    end
+
+    test "revising still refuses a name owned by a file this box did not produce" do
+      taken = "taken-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box")
+      save_box(name: "unrelated", file: taken)   # a DIFFERENT state owns this name
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision, "a refused save must not have counted as a revision"
+      assert_equal 1, @user.nodes.present.where(name: taken).count,
+                   "and nothing was written — on chunk a missed refusal is a duplicate sibling"
+    end
+
+    # THE SAME REFUSAL ON THE OTHER CHECK: a name owned by another state, in a project's category
+    # folder, is a 409 question rather than a 422 — and it must STAY a question, not become a
+    # silent replace, just because this save happened to name a state.
+    test "revising still asks before replacing a filed file another box produced" do
+      taken = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(taken)
+      state = save_box(name: "shelf box")   # a different state, owning nothing in that folder
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box", data: "{}", parent_node_id: folder.node_id, state_id: state.id,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+
+      assert_response :conflict
+      assert_equal "would_replace", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      assert_equal "<svg>v1</svg>",
+                   FileLayer.current.read(@user, node_id: @user.nodes.present.find_by!(name: taken).node_id),
+                   "the other box's bytes are untouched until the user answers"
+    end
+
+    # THE DEAD END THIS CLOSES (spec §1.3). WITHOUT a state_id, re-saving into the folder the file
+    # already sits in is a terminal 422 that no confirmation can answer — that is the bug — and it
+    # must STAY refused for a save that does not name the state, or the exemption has quietly
+    # become "anyone may clobber anything".
+    test "a re-save with no state_id is still refused, which is why revising exists" do
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      save_box(name: "shelf box", file:)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
     end
 
     # ---- save: the filename is a filename ------------------------------------------------
