@@ -526,79 +526,117 @@ cannot fail. Read spec §2 and §4.2 before starting.
 
 - [ ] **Step 1: Write the failing tests**
 
+**REWRITTEN AFTER TASK 2 SHIPPED — read this before the code.** The original version of this step
+was written against a `save_box` helper and a collision model that do not exist. Two things changed
+and both affect every test below:
+
+- **`save_box` asserts its own redirect** (`assert_redirected_to tools_addon_path("widgetkit")`)
+  and returns the state the save *targeted*. So it can only be used for a save expected to
+  **succeed**. Every refusal test below must `post` directly.
+- **`save_box` generates a UNIQUE filename per call** (`file:` defaults to
+  `"shelf-box-#{SecureRandom.hex(4)}.svg"`), because fixed names leak across tests on the share
+  leg — the DB row rolls back on a refusal and the file on disk does not. Pass `file:` explicitly
+  whenever a test needs two saves to collide.
+
+There is also an existing Task 2 test, `"revising a filed output replaces it in place, keeping one
+node and one file row"`, which reaches the replace through the **category folder** and needs
+`overwrite: "1"` to get past the 409. **Task 3 is what makes that `overwrite: "1"` unnecessary** —
+so part of your job is deleting that argument from that test and watching it still pass. That is
+the single best proof the exemption works, because the test predates it.
+
 Append to `Tools::AddonsControllerTest`, after the Task 2 block:
 
 ```ruby
     # ---- save: the collision exemption ---------------------------------------------------
     #
     # THE RULE, IN BOTH DIRECTIONS: a destination collision with a node the target state already
-    # owns is an approved replace; every other collision keeps today's answer. The second test is
-    # what stops this from being "revising disables the collision checks".
+    # owns is an approved replace; every other collision keeps today's answer. The refusal tests
+    # are what stop this from being "revising disables the collision checks".
+    #
+    # TWO FOLDERS, TWO CHECKS, AND BOTH NEED THE EXEMPTION. A box that was swept into a project's
+    # category folder collides there, at `resolve_placements` (answerable, 409). A box sitting in
+    # the plain folder the save dialog picked collides at `refuse_taken_names!` (terminal, 422) and
+    # never reaches the other check at all — which is why exempting only one of them leaves the
+    # mainline "open a saved design, tweak, re-save" flow still refused.
 
-    test "revising replaces the box's own file with no 409 and keeps its node_id" do
-      state = save_box(name: "shelf box")
-      node_id = state.files.first.node_id
+    test "revising replaces its own file in the picked folder, with no 422 and no overwrite flag" do
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box", file:)
+      node_id = state.files.sole.node_id
 
-      post tools_addon_path("widgetkit"), params: {
-        name: "shelf box",
-        data: { generator: "tray", params: { "h" => "80" } }.to_json,
-        files: [ { name: "shelf-box.svg", content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
-        state_id: state.id
-      }
+      state = save_box(name: "shelf box", params: { "h" => "80" }, file:, state_id: state.id)
 
-      assert_response :redirect, "a revision must not be asked to confirm replacing its own file"
+      assert_equal 2, state.reload.revision
       # THE NODE SURVIVES. A replace written as delete-then-create passes any bytes-oriented
       # assertion while orphaning every attachment, BOM link and tag (CLAUDE.md §14a).
-      assert_equal [ node_id ], state.reload.files.pluck(:node_id).uniq
-      assert current_user_node(node_id), "the node must still be live"
+      assert_equal [ node_id ], state.files.pluck(:node_id)
+      assert @user.nodes.present.exists?(node_id:), "the node must still be live"
+      assert_equal 1, @user.nodes.present.where(name: file).count, "no second copy"
+      assert_equal "<svg/>", FileLayer.current.read(@user, node_id:)
     end
 
     test "revising still refuses a name owned by a file this box did not produce" do
+      taken = "taken-#{SecureRandom.hex(4)}.svg"
       state = save_box(name: "shelf box")
-      # A DIFFERENT file, at the name the revision is about to want, produced by nothing.
-      save_box(name: "unrelated", file: "taken.svg")
+      save_box(name: "unrelated", file: taken)   # a DIFFERENT state owns this name
 
       post tools_addon_path("widgetkit"), params: {
         name: "shelf box",
         data: { generator: "tray", params: { "h" => "80" } }.to_json,
-        files: [ { name: "taken.svg", content_type: "image/svg+xml", body: "<svg/>" } ].to_json,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg/>" } ].to_json,
         state_id: state.id
       }
 
       assert_response :unprocessable_entity
-      assert_equal 1, state.reload.revision, "the refused save must not have counted as a revision"
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision, "a refused save must not have counted as a revision"
     end
 
-    # THE DEAD END THIS CLOSES (spec §1.3). Without a state_id, re-saving into the folder the file
-    # already sits in is a terminal 422 that no confirmation can answer.
+    # THE SAME REFUSAL ON THE OTHER CHECK: a name owned by another state, in a project's category
+    # folder, is a 409 question rather than a 422 — and it must STAY a question, not become a
+    # silent replace, just because this save named a state.
+    test "revising still asks before replacing a filed file another box produced" do
+      taken = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(taken)
+      state = save_box(name: "shelf box")   # a different state, owning nothing in that folder
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box", data: "{}", parent_node_id: folder.node_id, state_id: state.id,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+      }
+
+      assert_response :conflict
+      assert_equal "would_replace", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+    end
+
+    # THE DEAD END THIS CLOSES (spec §1.3). WITHOUT a state_id, re-saving into the folder the file
+    # already sits in is a terminal 422 that no confirmation can answer — that is the bug, and it
+    # must stay refused for a save that does not name the state, or the exemption has become
+    # "anyone may clobber anything".
     test "a re-save with no state_id is still refused, which is why revising exists" do
-      save_box(name: "shelf box")
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      save_box(name: "shelf box", file:)
+
       post tools_addon_path("widgetkit"), params: {
         name: "shelf box",
         data: { generator: "tray", params: { "h" => "80" } }.to_json,
-        files: [ { name: "shelf-box.svg", content_type: "image/svg+xml", body: "<svg/>" } ].to_json
+        files: [ { name: file, content_type: "image/svg+xml", body: "<svg/>" } ].to_json
       }
       assert_response :unprocessable_entity
-    end
-```
-
-Add this helper beside `save_box`:
-
-```ruby
-    def current_user_node(node_id)
-      @user.nodes.present.find_by(node_id:)
     end
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
 
 ```bash
-bin/rails test test/controllers/tools/addons_controller_test.rb -n "/collision|replaces the box|refuses a name|re-save with no/"
+bin/rails test test/controllers/tools/addons_controller_test.rb -n "/collision|replaces its own file|refuses a name|asks before replacing|re-save with no/"
 ```
 
-Expected: the first test fails with `Expected response to be a <3XX: redirect>, but was <422>` —
-today `refuse_taken_names!` refuses the box's own file. The other two already pass; they are the
-guard rails that must *stay* passing.
+Expected: the first test fails inside `save_box`'s own `assert_redirected_to`, with the response a
+**422** — today `refuse_taken_names!` refuses the box's own file. The three refusal tests already
+pass; they are the guard rails that must *stay* passing, and if any of them goes red later in this
+task you have written an exemption that is too wide.
 
 - [ ] **Step 3: Implement the exemption**
 
@@ -700,7 +738,11 @@ In `app/controllers/tools/addons_controller.rb`, replace `#refuse_taken_names!`,
     end
 ```
 
-Then wire the three call sites in `#create` — replace the three lines added in Task 2:
+Then wire the call sites in `#create`. **Task 2 changed the surrounding lines**, so read the method
+as it actually is now rather than pattern-matching this snippet: `state` is resolved above by
+`resolve_revision_target` (pure) plus a `return render_no_such_state if state.nil?` guard, and the
+`LibraryOutput` call already uses `.slice(:parent_node_id, :replace)` — an **allowlist**, so your
+new `:owned` key is dropped there automatically and you must NOT add it to any `except`.
 
 ```ruby
       parent_node_id = chosen_parent_node_id
@@ -710,6 +752,16 @@ Then wire the three call sites in `#create` — replace the three lines added in
       return if render_would_replace(files, placements)
 ```
 
+- [ ] **Step 3b: Delete the `overwrite: "1"` that Task 2 needed**
+
+`"revising a filed output replaces it in place, keeping one node and one file row"` currently passes
+`overwrite: "1"` to get past the 409 on its own file. **That is exactly what this task removes the
+need for.** Delete the argument and confirm the test still passes.
+
+This is the strongest single piece of evidence in the task, because that test predates the
+exemption and was not written to prove it. Update its comment to say the overwrite is no longer
+needed and why.
+
 - [ ] **Step 4: Run the tests**
 
 ```bash
@@ -718,26 +770,48 @@ bin/rails test test/controllers/tools/addons_controller_test.rb
 
 Expected: 0 failures, 0 errors across the whole file.
 
-- [ ] **Step 5: Mutation-check the exemption in BOTH directions**
+- [ ] **Step 5: Mutation-check the exemption in BOTH directions, on BOTH checks**
 
-Direction one — remove the exemption:
+Four mutations, because the exemption lives in two places and each can fail in two directions. A
+mutation that leaves every test green means the assertion it should have broken does not exist —
+that is a finding, not a pass.
 
-Delete the `next false if owned.key?(...)` line in `#refuse_taken_names!`, then:
+**1. Remove the exemption from the picked-folder check** — delete the `next false if owned.key?(...)`
+line in `#refuse_taken_names!`:
 
 ```bash
-bin/rails test test/controllers/tools/addons_controller_test.rb -n "/replaces the box/"
+bin/rails test test/controllers/tools/addons_controller_test.rb -n "/replaces its own file/"
 ```
 
-Expected: **FAIL**. Restore it.
+Expected: **FAIL**. Restore.
 
-Direction two — make the exemption unconditional (the failure mode that matters, since it silently
-lets a revision overwrite a stranger's file). Change the guard to `next false if owned.any?`:
+**2. Remove the exemption from the category-folder check** — make `resolve_placements` always set
+`owned: false`:
+
+```bash
+bin/rails test test/controllers/tools/addons_controller_test.rb -n "/revising a filed output/"
+```
+
+Expected: **FAIL** (a 409 where a redirect belongs) — this is the test whose `overwrite: "1"` you
+deleted in Step 3b. Restore.
+
+**3. Make the picked-folder exemption unconditional** — the direction that matters, since it
+silently lets a revision overwrite a stranger's file. Change the guard to `next false if owned.any?`:
 
 ```bash
 bin/rails test test/controllers/tools/addons_controller_test.rb -n "/refuses a name/"
 ```
 
-Expected: **FAIL**. Restore it and confirm the file is green again.
+Expected: **FAIL**. Restore.
+
+**4. Make the category-folder exemption unconditional** — set `owned: true` unconditionally in
+`resolve_placements`:
+
+```bash
+bin/rails test test/controllers/tools/addons_controller_test.rb -n "/asks before replacing/"
+```
+
+Expected: **FAIL** (a redirect where a 409 belongs). Restore, and confirm the whole file is green.
 
 - [ ] **Step 6: Commit**
 
