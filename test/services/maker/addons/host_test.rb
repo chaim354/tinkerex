@@ -47,8 +47,15 @@ module Maker
       #
       # The literals are the point rather than a smell: this test is the ledger of which level
       # bought which capabilities, and updating it IS the deliberate act the rule asks for.
+      #
+      # LEVEL 3 IS THE FIRST ENTRY THAT BOUGHT NO CAPABILITY, AND THE UNCHANGED LIST IS THE RECORD
+      # OF THAT rather than an oversight. State revisions are the SAME `library:write` door growing
+      # an optional `state_id`, so there is no name to flip — see Host::LEVEL's own comment. Note
+      # what this test therefore does NOT claim: the implication runs one way only (a capability
+      # flip requires a bump), never the reverse, so a bump on its own is legitimate and the two
+      # literals are updated together whenever either moves.
       test "LEVEL records which capabilities this host has, and moves when they do" do
-        assert_equal 2, Maker::Addons::Host::LEVEL
+        assert_equal 3, Maker::Addons::Host::LEVEL
         assert_equal %w[library:read library:write pick:file pick:folder service state:list],
                      Maker::Addons::Host.capabilities.select { |_, v| v }.keys.sort
       end

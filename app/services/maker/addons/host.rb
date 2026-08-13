@@ -19,9 +19,18 @@ module Maker
     module Host
       module_function
 
-      # 2 — PR 5's file plane. Bumped IN THE SAME COMMIT that flipped `library:read` and
-      # `pick:file` to true, per the rule above.
-      LEVEL = 2
+      # 3 — state revisions: the save door honours an optional `state_id` and revises the item it
+      # names, `#states` carries each item's current `revision`, and `#revisions` serves its history.
+      #
+      # NO CAPABILITY NAME CAME WITH IT, WHICH IS WHY THIS IS THE FIRST BUMP THAT FLIPS NOTHING —
+      # and it is the same decision recorded for binary output below, for the same reason. Revising
+      # is not a new door: it is the SAME `library:write` door growing an optional parameter, so a
+      # capability would be answered `true` for exactly the hosts that answer `library:write` true,
+      # forever, and would carry no information. `min_host: 3` is how a bundle requires it.
+      # `state:crud` stays false and is reserved for the DIRECT PATCH/DELETE state endpoints
+      # (docs/addon-api-v1.md §7.5), which this is not — a save door that revises writes library
+      # bytes and cannot be a rename or a delete.
+      LEVEL = 3
 
       CAPABILITIES = {
         "library:write"   => true,   # POST /tools/:key — the save door

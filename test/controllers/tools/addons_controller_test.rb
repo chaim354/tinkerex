@@ -191,6 +191,16 @@ module Tools
       assert_equal FIXTURE_KEY, ctx.dig("addon", "key")
     end
 
+    # THE LITERAL IS THE POINT, and it is why this test exists beside the one above rather than
+    # inside it: that one derives its expectation from Maker::Addons::Host::LEVEL, so it stays green
+    # through any bump and can only see the value failing to REACH the blob. A bundle declaring
+    # `min_host: 3` is asking about this number, so the number itself is what has to be asserted.
+    # Sibling of host_test.rb's own ledger assertion, one layer down: that one pins the level against
+    # the capability set, this one pins that the shell actually serves it.
+    test "the host announces level 3" do
+      assert_equal 3, rendered_ctx["hostLevel"]
+    end
+
     test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do
       ctx = rendered_ctx
       assert_equal tools_addon_path(FIXTURE_KEY),        ctx.dig("urls", "save")
@@ -1927,6 +1937,43 @@ module Tools
 
       files = JSON.parse(response.body).first["files"]
       assert_equal [ { "node_id" => "n-1", "role" => "output" } ], files
+    end
+
+    test "the states payload carries the current revision number" do
+      state = save_box(name: "shelf box")
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_response :success
+      assert_equal 1, response.parsed_body.first["revision"]
+
+      save_box(name: "shelf box", state_id: state.id)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_equal 2, response.parsed_body.first["revision"]
+    end
+
+    # ONE ENTRY PER BOX, FOR THE LIFE OF api_version 1. This is what lets every already-published
+    # bundle keep working across this change: a bundle draws a gallery from this list, so a revision
+    # showing up as a second saved thing would turn one design into a growing pile — the exact
+    # failure the feature exists to end. The history is a SEPARATE endpoint (#revisions) for the same
+    # reason and one more: a gallery must not pay for histories nobody opened.
+    test "revising does not add a states entry" do
+      state = save_box(name: "shelf box")
+      save_box(name: "shelf box", state_id: state.id)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_equal 1, response.parsed_body.length
+    end
+
+    # ADDITIVE KEYS ONLY, PINNED AS AN EXACT SET. `assert_equal` on the sorted keys is what makes
+    # this catch the change a published bundle would actually break on — a REMOVED or RENAMED key —
+    # and not merely an added one; a `assert_includes` per key would pass through a rename that
+    # dropped the old spelling. Nothing else in this repo can see that break: publishing a bundle IS
+    # the addon deploy and Rails is never rebuilt (§14c), so the consumer is in another repo and
+    # already running.
+    test "the states payload keeps every key a published bundle reads" do
+      save_box(name: "shelf box")
+      get tools_addon_states_path(FIXTURE_KEY)
+      entry = response.parsed_body.first
+      assert_equal %w[data files id name revision updated_at], entry.keys.sort
+      assert_equal %w[node_id role], entry["files"].first.keys.sort
     end
 
     # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb

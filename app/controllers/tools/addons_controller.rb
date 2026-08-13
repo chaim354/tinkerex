@@ -266,11 +266,17 @@ module Tools
     # Scoped by `states_key`, not `key`: they're the same value unless the manifest says otherwise
     # (Maker::Addons::Registry#build), which is how one addon can read another's saves — see the
     # `states_key` comment there for what that widens, and `states_key_permitted?` for who may ask.
+    # ONE ENTRY PER SAVED ITEM, AND `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.
+    # A revision must not look like a second saved thing here, or a gallery built from this list
+    # turns one design back into the growing pile the revision feature exists to end; and the
+    # history is served lazily by #revisions below rather than inlined, so a gallery does not pay for
+    # histories nobody expanded. Both halves are what keep every already-published bundle working
+    # across the change (§14c: publishing a bundle IS the deploy, Rails is never rebuilt).
     def states
       states = current_user.maker_addon_states.for_addon(@addon.states_key)
                             .includes(:files).order(updated_at: :desc, id: :desc)
       render json: states.map { |s|
-        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at,
+        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at, revision: s.revision,
           files: s.files.map { |f| { node_id: f.node_id, role: f.role } } }
       }
     end

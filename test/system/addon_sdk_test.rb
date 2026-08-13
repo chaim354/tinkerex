@@ -316,11 +316,15 @@ class AddonSdkTest < ApplicationSystemTestCase
   end
 
   # A MANIFEST WRITTEN AGAINST AN OLDER HOST STILL RUNS. The sdk-fixture declares `min_host: 1`
-  # while this host is LEVEL 2 — the compatibility direction that has to keep working, since all
-  # three published bundles declare exactly that and Rails is never rebuilt when one is republished.
-  # Asserted through a real mount rather than on the Addon struct: `available?` answering true is
-  # not the same claim as the page rendering.
-  test "a min_host 1 manifest still mounts against a level 2 host" do
+  # while this host is at whatever Maker::Addons::Host::LEVEL currently says — the compatibility
+  # direction that has to keep working, since all three published bundles declare exactly that and
+  # Rails is never rebuilt when one is republished. Asserted through a real mount rather than on the
+  # Addon struct: `available?` answering true is not the same claim as the page rendering.
+  #
+  # NEITHER THE NAME NOR THIS COMMENT NAMES THE HOST'S LEVEL, deliberately: every assertion below
+  # derives it, so a literal here would be prose that goes stale on the next bump with nothing able
+  # to go red — which is exactly what happened to the "level 2" this line used to read.
+  test "a min_host 1 manifest still mounts against a newer host" do
     assert_equal 1, Maker::Addons::Registry.find("sdk-fixture").min_host
     assert_operator Maker::Addons::Host::LEVEL, :>, 1, "this test proves nothing at level 1"
 
