@@ -11,8 +11,8 @@ import { mountShow } from "./show.js"
 // after a Turbo navigation away and back the captured value goes on serving the PREVIOUS,
 // torn-down host's context and CSRF token, with nothing thrown and nothing logged.
 //
-// THIS STATIC IMPORT IS WHAT MAKES THE BUNDLE SDK-ONLY, AND `min_host: 1` DOES NOT PROTECT IT.
-// manifests.json now declares `min_host: 1`, but that key can only bind a host that UNDERSTANDS it:
+// THIS STATIC IMPORT IS WHAT MAKES THE BUNDLE SDK-ONLY, AND `min_host` DOES NOT PROTECT IT.
+// manifests.json declares `min_host: 3`, but that key can only bind a host that UNDERSTANDS it:
 // a host published before `min_host` existed ignores it, lists the addon as usual, loads this
 // module, and then fails to resolve "@maker/addon-sdk" — the page reads "This tool failed to load"
 // and no code here ever runs. The recovery is on the publishing side: `bin/rollback <earlier-sha>`
@@ -46,25 +46,43 @@ export default {
     }
 
     const showGallery = () =>
-      swap(() => mountGallery(page, { generators, states, onOpenGenerator: showEditor, onOpenState: showState }))
+      swap(() => mountGallery(page, {
+        generators, states, onOpenGenerator: showEditor,
+        onEditState: (state) => showEditor(state.data?.generator, state.data?.params || {}, state),
+        onShowState: showState,
+      }))
 
-    const showEditor = (key, prefillValues) => {
+    // `editingState` present -> Save appends a revision to that box; absent -> Save creates one.
+    const showEditor = (key, prefillValues, editingState = null) => {
       const generator = generators.find((g) => g.key === key)
       if (!generator) { showGallery(); return } // an unknown/removed generator key -> back to the gallery
       swap(() => mountEditor(page, {
-        generator, states, ctx, prefillValues,
+        generator, states, ctx, prefillValues, editingState,
         onBack: showGallery,
         onOpenGenerator: showEditor,
         // Refresh the saved-states list in the background so the gallery's rail and any editor
         // reopened later reflect the new save — but deliberately does NOT navigate away: the
         // editor's own inline "Saved." status is the confirmation, matching generators.js's own
         // "stay put after a save" pattern so further tweaks don't require reopening the generator.
-        onSaved: async () => { try { states = await fetchStates() } catch (_e) { /* keep the stale list */ } },
+        //
+        // AND IT RETURNS THE NEW LIST, WHICH THE EDITOR REBINDS. Reassigning `states` here only
+        // moves THIS scope's binding: the editor was handed the old array at mount and goes on
+        // holding it, so a box created in the current session was invisible to its own
+        // findStateOwning — save, tweak, save again minted a SECOND box, the flow a user is most
+        // likely to take. Probed before the fix: count=2, revisions=[1, 1].
+        onSaved: async () => {
+          try { states = await fetchStates() } catch (_e) { /* keep the stale list */ }
+          return states
+        },
       }))
     }
 
+    // `onDuplicate` passes NO editingState, and that is the one place in this bundle where opening a
+    // saved box's params deliberately does not mean editing it: "Duplicate & tweak" forks a design.
     const showState = (state) =>
-      swap(() => mountShow(page, { state, ctx, onBack: showGallery, onDuplicate: showEditor }))
+      swap(() => mountShow(page, {
+        state, onBack: showGallery, onDuplicate: (key, params) => showEditor(key, params),
+      }))
 
     try {
       [ generators, states ] = await Promise.all([ fetchGenerators(), fetchStates() ])
@@ -84,7 +102,29 @@ export default {
       return
     }
 
-    showGallery()
+    // A DEEP LINK FROM THE LIBRARY. `host.launch.stateId` is the host's own validated answer to
+    // `?state=` — it has already refused an id belonging to another user or another addon, and
+    // answers null for a stale bookmark rather than 404ing the tool — so an id that arrives here is
+    // real, and this only has to find it in the list already fetched.
+    //
+    // `===` IS SAFE BECAUSE BOTH SIDES ARE THE SAME AR COLUMN: the host renders `id:` into the
+    // states list and `launch: {stateId:}` from `&.id`, so both cross as JSON numbers. Worth stating
+    // because the failure of a mismatch would be a deep link that silently always lands on the
+    // gallery.
+    //
+    // `?.` IS NOT DECORATION: `min_host: 3` greys the CARD out on an older host but does not make
+    // the page unreachable by URL (tinkerex CLAUDE.md §14c), and a level-2 host's SDK has no
+    // `launch` getter at all — so this must read `undefined` and fall through, not throw.
+    //
+    // A state whose generator the sidecar no longer offers also falls through to the gallery, the
+    // same degrade showEditor already performs for an unknown key.
+    const launchId = host.launch?.stateId
+    const launched = launchId ? states.find((s) => s.id === launchId) : null
+    if (launched) {
+      showEditor(launched.data?.generator, launched.data?.params || {}, launched)
+    } else {
+      showGallery()
+    }
   },
 }
 
