@@ -258,6 +258,18 @@ git commit -m "feat(addons): an addon state gets an immutable revision history"
 
 ### Task 2: The save door revises when handed a `state_id`
 
+> **AS SHIPPED, THIS TASK DIVERGED FROM THE TEXT BELOW — read this before treating the code blocks
+> here as a description of the tree.** Two changes came out of review and are the current truth:
+>
+> - The single `#revision_target` (which both resolved a value AND rendered) was split into a pure
+>   `#resolve_revision_target` plus a sibling renderer `#render_no_such_state`, matching `#file`'s
+>   existing house pattern, and `return if performed?` went with it. References to
+>   `#revision_target` below are historical.
+> - The `LibraryOutput` call uses `.slice(:parent_node_id, :replace)` — an **allowlist** — not the
+>   `.except(:folder, :owned)` skip-list written below. `:owned` is produced by nothing until
+>   Task 3, so a skip-list naming it could never be mutation-checked and would silently stop
+>   covering it if Task 3 chose a different key (§14b's recorded blind spot).
+
 **Files:**
 - Modify: `app/controllers/tools/addons_controller.rb:389-442` (`#create`)
 - Test: `test/controllers/tools/addons_controller_test.rb`
@@ -1099,13 +1111,15 @@ In `#addon_ctx`, add the key after `defaultFolder:`:
         launch: { stateId: launch_state_id }
 ```
 
-And in the private section, beside `#revision_target`:
+And in the private section, beside `#resolve_revision_target` (Task 2 shipped that name — an
+earlier draft of this plan called it `#revision_target`, and the method that renders the 404 is its
+sibling `#render_no_such_state`):
 
 ```ruby
     # THE `?state=` HINT, VALIDATED. Unknown, another user's, another addon's namespace, or plain
     # garbage all answer nil and the page renders normally — a stale bookmark or a deleted box must
-    # never 404 the tool. Contrast #revision_target, which DOES 404: there the id is an instruction
-    # about where to write, and guessing wrong writes to the wrong place.
+    # never 404 the tool. Contrast #resolve_revision_target, whose caller DOES 404: there the id is
+    # an instruction about where to write, and guessing wrong writes to the wrong place.
     def launch_state_id
       raw = params[:state]
       return nil if raw.blank?
@@ -1113,6 +1127,11 @@ And in the private section, beside `#revision_target`:
       current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)&.id
     end
 ```
+
+**`blank?` here, deliberately, and it is the same contract Task 2 pins for `state_id`:** an empty
+`?state=` is "no hint", not "a hint I could not resolve". Both spellings must stay `blank?`/`present?`
+rather than a nil check — Task 2 has a mutation-checked test for its half; this half is cheap to get
+right by copying it, and `""` reaching `find_by(id: "")` is the failure both avoid.
 
 - [ ] **Step 4: Run**
 
