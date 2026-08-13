@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-12 (**`Tools::OpenscadController` retired — the last hand-written addon surface is gone and spec row 7 is closed; plus the greying regression that retirement would otherwise have shipped, and a licence guard that actually runs in `bin/ci`**)
+**Updated:** 2026-08-12 (**the `scan` gate now reports on the code and not on brakeman's own version — closing the structural question the retirement entry below spun out**)
 
 ## What this file is
 
@@ -60,7 +60,116 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-12): `Tools::OpenscadController` retired — the last hand-written addon surface (branch `claude/retire-openscad-controller`)
+## Latest (2026-08-12): the `scan` gate reports on the code, not on brakeman's own version (branch `claude/brakeman-ensure-latest-gate`)
+
+**Closes the structural question the entry below spun out** ("that is a treadmill, not a fix … spun
+out as its own task"). That entry unblocked itself with a 2-line `Gemfile.lock` bump to brakeman
+8.0.6; this removes the mechanism that made a bump necessary at all.
+
+### The defect, isolated
+
+`bin/brakeman` — the untouched Rails 8 scaffold binstub, unchanged since the repo's first commit
+(`ff07b26`) — did `ARGV.unshift("--ensure-latest")`. Brakeman's `ensure_latest` asks rubygems.org
+whether a newer **brakeman** exists (`Gem.latest_spec_for`) and `commandline.rb` exits **5** when
+there is one. So `bin/ci scan` exited **1** on a tree nobody had touched, and under §15 a red
+`bin/ci` blocks opening a PR — an unrelated upstream release stopped all work in the repo.
+
+Isolated by holding the version constant and varying only the flag — same brakeman 8.0.5 binary,
+this app, the gate's own flags:
+
+| | exit | says |
+|---|---|---|
+| `--ensure-latest` present | **5** | `Brakeman 8.0.5 is not the latest version 8.0.6` |
+| absent | **0** | `No warnings found` |
+
+**Offline it does not fail cleanly, it crashes.** Probed with the gem source pointed at a closed
+port: `Gem.latest_spec_for("brakeman")` returns **nil**, and `ensure_latest` then calls
+`latest.date` → `NoMethodError`. The gate could not run at all without reaching rubygems.org — worse
+than the "CI depends on the network" framing suggested.
+
+### The sibling scanners were checked, and neither has this shape
+
+- **`bin/bundler-audit`** — no self-version check anywhere. Its network use is the *advisory
+  database*, and only `if !Database.exists?` (downloaded when absent; refreshed only with `--update`,
+  which the binstub does not pass). That is data the finding depends on, not a check on the tool.
+- **`bin/importmap audit`** — no self-version check. It POSTs our pinned packages to the JSPM API;
+  the network call **is** the finding, about our own code.
+
+Brakeman was the only one conflating "is the tool current" with "is the code safe", so the guard is
+deliberately brakeman-shaped rather than generalised across all three.
+
+### The sharper framing the A/B exposed
+
+The problem is not the literal flag. `config/ci.rb`'s header claims **one definition per gate**, and
+a binstub that injects arguments is a **second, invisible definition** — the gate line in
+`config/ci.rb` did not, and could not, show that `--ensure-latest` was being run. So the invariant
+enforced is *"`bin/brakeman` is a plain loader; flags live in the gate definition"*, which catches
+the next injected flag too, rather than only this one. `bin/bundler-audit`'s legitimate
+`--config config/bundler-audit.yml` is why the rule is **narrow and argued** instead of broad with
+carve-outs: that argument names a file in this repo and has no network or version semantics.
+
+### Freshness moved, not dropped
+
+`.github/dependabot.yml` already runs the bundler ecosystem **weekly** and brakeman is in the
+Gemfile — verified live, not assumed: #172–#175 opened 2026-08-12, #127/#130 merged 2026-08-05. A
+version bump now arrives as a reviewable PR instead of as a red gate on somebody else's branch.
+**Nothing to bump here:** the entry below already moved the pin to 8.0.6.
+
+### The guard — three assertions, four mutations
+
+`test/ci_hygiene_test.rb` (its first extension past `.github/workflows/`; a binstub is CI's actual
+entry point and the Rails process never loads it either). **These are static reads, and the reason
+is the repo's dominant failure shape:** with the flag present and brakeman currently latest,
+`bin/brakeman` exits 0 — identical to the flag being absent — so a run-based guard is green either
+way and only goes red once upstream releases. A test that cannot fail for the reason it exists.
+
+No one assertion carries the invariant, which the mutations prove rather than assert:
+
+| Mutation | Goes red | Proves |
+|---|---|---|
+| re-add `ARGV.unshift("--ensure-latest")` | 1 + 3 | the real regression is caught |
+| inject a **different** flag (`--no-progress`) | **1 only** | the check is structural, not a literal grep |
+| gut the binstub to an empty file | **2 only** | 1 alone is satisfied by an empty file — and an empty binstub silently disables the security gate |
+| move the flag into `config/ci.rb`'s gate line | **3 only** | 1 and 2 cannot see that route |
+
+Assertion 3 is a literal (`--ensure-latest` is brakeman's own spelling; a YAML `run:` string has no
+structural tell) and is documented in the file as the **weakest** of the three — there to close a
+gap, not to be relied on.
+
+### The false green this branch hit, which is the lesson worth keeping
+
+The first verification run in this branch was **green and worthless**. Between the opening probe and
+the branch cut, `main` fast-forwarded `eb526c0 → 8e1c2bc` (PR #178 merging), so the branch point
+already carried brakeman **8.0.6** — the latest — which makes `--ensure-latest` **inert**. The gate
+was green because there was no newer release, not because anything had been fixed; the same run
+would have been green with the defect fully present. Caught only by noticing that
+`bin/brakeman --version` reported 8.0.6 fifteen minutes after reporting 8.0.5, and checking the
+reflog instead of trusting the green. The A/B against the still-installed 8.0.5 gem is what replaced
+it, and needed no `Gemfile.lock` churn.
+
+### Verification
+
+`bin/ci` **exit 0**, judged by exit code, all nine steps. **2 275 runs / 8 212 assertions / 0
+failures / 0 errors / 3 skips, identical on all three legs** (chunk, share, s3); system **87 runs /
+529 assertions**.
+
+Baseline by running the merge-base `8e1c2bc`: **2 272 / 8 205 / 3 skips**, system **87 / 529**. So
+**+3 runs, +7 assertions**, and it reconciles exactly — `ci_hygiene_test.rb` alone goes **5 → 8 runs
+and 29 → 36 assertions** at the same merge-base comparison, so the three new tests are the entire
+delta. No skips added, no system-test change.
+
+The scan gate itself: all three scanners green, brakeman **0 security warnings** (2 ignored).
+
+**Noticed, not fixed, out of scope:** brakeman now reports **2 obsolete ignore entries** in
+`config/brakeman.ignore` — fingerprints that no longer match any code, consistent with the
+controller deleted in the entry below. It does not fail the gate (`--exit-on-warn --exit-on-error`
+still exits 0), so it is recorded rather than folded in here.
+
+**Not deployed, not merged** — this touches CI and documentation only; no application code changed.
+
+---
+
+## 2026-08-12: `Tools::OpenscadController` retired — the last hand-written addon surface (branch `claude/retire-openscad-controller`)
 
 **Spec row 7 closed.** Every addon is now manifest-driven and served by `Tools::AddonsController`.
 This is the third and final PR of that arc — the coercion prerequisite and the dead-Stimulus-controller
