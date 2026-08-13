@@ -132,10 +132,6 @@ module Maker
     # THE QUERY PLAN, NOT THE QUERY COUNT — and it takes TWO assertions, because neither of them
     # catches both reverts and the obvious single assertion catches the wrong one.
     #
-    # A COUNT ASSERTION WOULD BE USELESS HERE. The join spelling this method rejects
-    # (`joins(<string>) + includes`) issues TWO statements of its own whenever it matches a row, so
-    # `assert_equal 2, count_queries` stays green through the exact revert it appears to guard.
-    #
     # THE SHAPE IS ASSERTED STRUCTURALLY AND THE PLAN IS ASSERTED SEPARATELY, because they fail for
     # different reasons and only one of them is content-independent.
     #

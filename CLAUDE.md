@@ -893,16 +893,11 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   becomes a slow Files page for a user who has never opened `/tools`. Pinned with a **counting**
   double, not a raising one: `Registry.manifests` rescues `StandardError` and answers `[]`, so a
   raising stub is swallowed and the regression passes.
-- **`Maker::AddonOrigin` USES TWO STATEMENTS, NOT A JOIN, AND THAT IS MEASURED RATHER THAN
-  PREFERRED.** The obvious `joins(...).where(node_id:, maker_addon_states: {user_id:})` never reaches
-  the `node_id` index — SQLite drives from `maker_addon_states` on `user_id` and probes the composite,
-  so the cost grows with the user's SAVED-STATE COUNT, which no query-count test can see because it
-  is all inside one statement. At 20 000 addon files resolving a 2000-node page: **64.7 ms at 500
-  states against 0.5 ms flat**, and the row that settles it is the all-miss one — **64.6 ms to return
-  ZERO rows** on the ordinary library that has never saved anything from an addon. It does not even
-  save a statement (`joins` + `includes` emits two whenever it matches). The durable half is that
-  **the join's plan is optimiser-dependent and the split's is not** — probed planning three different
-  ways by scale and stats. Postgres is reasoned, not measured (no local Postgres, §13).
+- **DO NOT COLLAPSE `Maker::AddonOrigin.for`'S TWO STATEMENTS INTO A JOIN.** The join never reaches
+  the `node_id` index, so its cost grows with the user's SAVED-STATE COUNT — including on the
+  all-miss path, which is the ordinary library that has never saved anything from an addon — and no
+  query-count test can see it, because it is all inside one statement. Measurements are in the
+  method's own comment and in `docs/STATUS.md`.
 - **THE SDK REFUSES A NON-STRING/NON-INTEGER `stateId` RATHER THAN COERCING IT.** `String(...)` would
   launder the value straight past the server's own allowlist: `String([1, 2])` is `"1,2"`, a perfectly
   good String to `#find_addon_state`, and ActiveRecord's integer cast resolves `find_by(id: "15,16")`

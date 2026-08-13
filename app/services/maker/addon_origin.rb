@@ -142,12 +142,26 @@ module Maker
     # key, so the exact match is the ordinary case; the fallback exists for the one thing states_key
     # is for — a successor addon ("boxes-next") that took over a predecessor's saved-state namespace
     # by mutual declaration — so output saved under the old key still opens in the addon that now
-    # owns it. Where two addons share a states_key this is a deterministic GUESS rather than a fact,
-    # and the failure it can produce is the mild one: the sibling's page opens, which is a wrong PAGE
-    # and never a wrong WRITE. Nothing downstream trusts this choice — Tools::AddonsController
-    # re-resolves `?state=` through its OWN `current_user.maker_addon_states.for_addon(states_key)`
-    # scope, so a page that does not in fact own the state simply gets `launch.stateId: nil` and
-    # renders as a fresh session.
+    # owns it.
+    #
+    # TWO CASES ARE IMPERFECT, NOT ONE, AND NEITHER IS A WRONG WRITE. (a) Where two addons share a
+    # states_key the choice is a deterministic GUESS rather than a fact, and the sibling's page may
+    # open — a wrong PAGE. (b) Where ONE addon's `key` matches a state's `addon_key` while its OWN
+    # `states_key` has diverged, the `key` arm wins and opens the RIGHT page UN-PREFILLED: a state's
+    # `addon_key` is always some addon's states_key (that is the scope it was written through), so a
+    # row predating the divergence still carries the bare key, and Tools::AddonsController then
+    # re-resolves `?state=` through `for_addon(states_key)` — a scope that no longer contains it —
+    # and serves `launch.stateId: nil`. The addon opens as a fresh session instead of on that design.
+    #
+    # (b) IS COMMENT COVERAGE, NOT A LIVE DEFECT: nothing this deployment serves declares a diverging
+    # states_key (the suite's only such manifest is a synthetic "widgetkit-next"), and the case needs
+    # a divergence introduced AFTER states were saved. It is recorded rather than fixed because the
+    # preference order is right for the ordinary case and every alternative trades a wrong page for a
+    # wrong one somewhere else.
+    #
+    # WHAT MAKES BOTH SAFE is that nothing downstream trusts this choice — that same re-resolution
+    # through `for_addon(states_key)` is the authority, so a page that does not in fact own the state
+    # simply renders as a fresh session rather than acting on somebody else's row.
     #
     # nil IS A REAL ANSWER AND THE CALLER MUST DROP THE NODE, not fall back to a guessed path. No
     # registered addon claims the key when a manifest has been withdrawn, when this deployment's

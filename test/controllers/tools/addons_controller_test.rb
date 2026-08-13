@@ -269,10 +269,15 @@ module Tools
     # arrives as an ARRAY and `find_by(id: [...])` is an `IN`: without the type allowlist it
     # RESOLVED, opening whichever of this user's own designs the database returned first — a design
     # nobody named, with nothing anywhere reporting it, and the editor then revising THAT one. Both
-    # scopes still held, so nothing is disclosed; it is refused because it is SILENT and because the
-    # sibling #resolve_revision_target already refuses the same shape. A guard that exists on one of
-    # two identical resolvers and silently does not on the other is this repo's recorded failure
-    # shape (§14c).
+    # scopes still held, so nothing is disclosed; it is refused because it is SILENT, and because the
+    # SAME allowlist has to hold on the save door, where the same shape WRITES.
+    #
+    # ONE RESOLVER, WHICH IS WHY ONE ALLOWLIST COVERS BOTH. The deep link, #create and #revisions all
+    # resolve through #find_addon_state, so the type check cannot exist on one path and silently not
+    # on another — this repo's recorded failure shape (§14c), answered structurally rather than by
+    # two guards somebody has to keep in step. What the three callers disagree about is only what a
+    # MISS means (nil here, 404 there), which is why the shared method renders nothing and raises
+    # nothing.
     test "a ?state= that is not a single id resolves to nothing" do
       first = save_box(name: "first box")
       second = save_box(name: "second box")
@@ -595,9 +600,10 @@ module Tools
     # promise rests on that reading: a bundle rendering an empty hidden `state_id` field is the
     # natural way to say "no target yet", and every such save must CREATE. Swapping the door's
     # `present?` for the plausible tidy-up `unless params[:state_id].nil?` left the entire suite
-    # GREEN while turning every one of those saves into a 404 — the door's only explanation of the
-    # blank lives in #resolve_revision_target's header, one method away from the line that
-    # implements it, which is exactly what makes it easy to "simplify". This test is the guard.
+    # GREEN while turning every one of those saves into a 404. `present?` beside a `params` fetch
+    # reads like a habit rather than a decision, which is exactly what makes it easy to "simplify" —
+    # the rationale now sits directly above the line in #create, and this test is what makes the
+    # rewrite go red rather than quiet.
     test "an empty state_id creates, exactly as an absent one does" do
       assert_difference -> { @user.maker_addon_states.count } => 1 do
         save_box(name: "empty hidden field", state_id: "")

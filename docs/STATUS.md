@@ -277,6 +277,18 @@ the system delta is +4 runs from `addon_sdk_test.rb` plus the +1 in `file_menu_t
    rendered-ctx literal in `addons_controller_test.rb`. Both must move at level 4, by design: one
    asserts the ledger moved with the capabilities, the other that the number actually reaches a
    bundle.
+8. **A rolling-deploy window can produce a saved item with no revision-1 snapshot.** Verified by
+   reading `bin/docker-entrypoint`, which runs `./bin/rails db:prepare` **in the NEW container**
+   before `exec`ing the server, while kamal-proxy keeps the OLD container serving until the new one
+   passes its healthcheck. So between the backfill completing and the traffic cutover, the old
+   (pre-arc) image is writing against the new schema: its `create!` omits `revision`, the column
+   default supplies **1**, and nothing writes the snapshot row because that code does not know the
+   table exists. A later revision then makes the state `revision: 2` and appends **revision 2**, so
+   the item's history starts at 2 and revision 1's params are unrecoverable the moment it is first
+   revised. One lost snapshot per item saved in that window; the state row itself is correct and
+   nothing is corrupted, so no repair is attempted. The window is bounded by the new container's
+   boot-migrate-healthcheck time — `config/deploy.yml` sets no healthcheck options, so it is kamal's
+   default, which was **not** measured here.
 
 ---
 
