@@ -8,6 +8,11 @@ module Maker
     belongs_to :user
     has_many :files, -> { order(:position) }, class_name: "Maker::AddonFile", dependent: :destroy
 
+    # THE HISTORY. Ordered oldest-first here; the endpoint that serves it reverses, because a
+    # reader wants the newest revision at the top and a writer wants `maximum(:revision)`.
+    has_many :revisions, -> { order(:revision) }, class_name: "Maker::AddonStateRevision",
+             foreign_key: :addon_state_id, dependent: :destroy
+
     validates :addon_key, presence: true
     validates :name, presence: true
 

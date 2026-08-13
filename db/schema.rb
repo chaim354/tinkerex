@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_07_054407) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_13_000100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -119,11 +119,21 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_07_054407) do
     t.index ["addon_state_id"], name: "index_maker_addon_files_on_addon_state_id"
   end
 
+  create_table "maker_addon_state_revisions", force: :cascade do |t|
+    t.integer "addon_state_id", null: false
+    t.datetime "created_at", null: false
+    t.json "data", default: {}, null: false
+    t.integer "revision", null: false
+    t.index ["addon_state_id", "revision"], name: "index_maker_addon_state_revisions_on_state_and_revision", unique: true
+    t.index ["addon_state_id"], name: "index_maker_addon_state_revisions_on_addon_state_id"
+  end
+
   create_table "maker_addon_states", force: :cascade do |t|
     t.string "addon_key", null: false
     t.datetime "created_at", null: false
     t.json "data", default: {}, null: false
     t.string "name", null: false
+    t.integer "revision", default: 1, null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "addon_key"], name: "index_maker_addon_states_on_user_id_and_addon_key"
@@ -525,6 +535,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_07_054407) do
   add_foreign_key "chunks", "users"
   add_foreign_key "devices", "users"
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
+  add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
