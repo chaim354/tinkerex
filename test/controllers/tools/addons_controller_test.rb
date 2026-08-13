@@ -233,13 +233,21 @@ module Tools
     # save door, whose caller DOES 404 on an id it cannot resolve: there the id is an instruction
     # about where to WRITE, and guessing wrong writes to the wrong place.
     #
-    # THE BLANK IS IN THIS LIST FOR COMPLETENESS, NOT AS A GUARD, and saying so is the point:
-    # `find_by(id: "")` was measured to return nil rather than raise, so an empty `?state=` answers
-    # a null stateId under `blank?` and under the plausible `nil?` tidy-up alike. That is the
-    # opposite of the save door, where `""` must reach the CREATE branch and a `nil?` there is a 404
-    # on every such save — which is why THAT half has a mutation-checked guard of its own and this
-    # one cannot have.
-    test "an unknown, foreign, other-addon or malformed ?state= renders the page with a null stateId" do
+    # "UNRESOLVABLE", NOT "MALFORMED", AND THE DIFFERENCE IS MEASURED. `"not-a-number"` casts to 0
+    # and matches nothing, which is why it belongs here — but `?state=1abc` CASTS TO 1 and opens
+    # state 1, as do `" 1 "` and `"1.0"`, because ActiveModel's Integer type coerces rather than
+    # refuses. Harmless (a bound parameter inside both scopes, exactly what `find(params[:id])` does
+    # throughout Rails) and shared with the save door, so it is not a property of this endpoint —
+    # but an earlier version of this comment claimed "plain garbage all answers nil", which is a
+    # stronger claim than the code makes. #find_addon_state carries the argument.
+    #
+    # THE BLANK IS IN THIS LIST AS BEHAVIOUR, NOT AS A GUARD, and saying so is the point:
+    # `find_by(id: "")` casts to `WHERE id = NULL` and answers nil on any adapter, so an empty
+    # `?state=` resolved to nothing under the `blank?` short-circuit this once had and resolves to
+    # nothing now that it is gone. That is the opposite of the save door, where `""` must reach the
+    # CREATE branch and a `nil?` there is a 404 on every such save — which is why THAT half has a
+    # mutation-checked guard of its own and this one honestly cannot.
+    test "an unknown, foreign, other-addon or unresolvable ?state= renders the page with a null stateId" do
       other = User.create!(email: "other3@example.com", password: PASSWORD, confirmed_at: Time.current)
       theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
       foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})

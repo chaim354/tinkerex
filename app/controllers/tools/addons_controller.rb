@@ -253,19 +253,11 @@ module Tools
     end
 
     # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
-    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
-    # by addon_key AND by current_user, in that order below.
+    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways,
+    # by `states_key` AND by current_user — see #addon_states, which owns that argument for all four
+    # of this controller's state lookups, including what the addon_key half is NOT (a boundary
+    # between addons).
     #
-    # THE addon_key SCOPE IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
-    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
-    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
-    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
-    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
-    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). The
-    # current_user scope is the real protection here, keeping one user's rows from a stranger's.
-    # Scoped by `states_key`, not `key`: they're the same value unless the manifest says otherwise
-    # (Maker::Addons::Registry#build), which is how one addon can read another's saves — see the
-    # `states_key` comment there for what that widens, and `states_key_permitted?` for who may ask.
     # ONE ENTRY PER SAVED ITEM, AND `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.
     # A revision must not look like a second saved thing here, or a gallery built from this list
     # turns one design back into the growing pile the revision feature exists to end; and the
@@ -273,8 +265,7 @@ module Tools
     # histories nobody expanded. Both halves are what keep every already-published bundle working
     # across the change (§14c: publishing a bundle IS the deploy, Rails is never rebuilt).
     def states
-      states = current_user.maker_addon_states.for_addon(@addon.states_key)
-                            .includes(:files).order(updated_at: :desc, id: :desc)
+      states = addon_states.includes(:files).order(updated_at: :desc, id: :desc)
       render json: states.map { |s|
         { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at, revision: s.revision,
           files: s.files.map { |f| { node_id: f.node_id, role: f.role } } }
@@ -283,11 +274,17 @@ module Tools
 
     # GET /tools/:key/states/:id/revisions — ONE saved item's history, newest first.
     #
-    # SCOPED BY `states_key` AND `current_user`, EXACTLY AS #states IS — the same data scope, and
-    # the same one #resolve_revision_target writes through. A state this addon could not list is not
-    # a state whose history it may read, and the read and the write must not disagree about which
-    # rows are this addon's or the two answers drift the moment `states_key` diverges from `key`.
-    # What that scope is NOT is an inter-addon boundary, for the reason #states states at length.
+    # RESOLVED THROUGH #find_addon_state, THE SAME LOOKUP THE SAVE DOOR WRITES THROUGH — a state
+    # this addon could not list is not a state whose history it may read, and the read and the write
+    # must not disagree about which rows are this addon's, or the two answers drift the moment
+    # `states_key` diverges from `key`.
+    #
+    # THE TYPE ALLOWLIST INSIDE IT IS INERT FOR THIS CALLER AND IS TAKEN ANYWAY. `params[:id]` here
+    # comes from a ROUTE SEGMENT, which is always a String and cannot be overridden by a query
+    # string (`?id[]=…` is ignored), so there is no Array or Hash to refuse. Routing through the
+    # shared lookup regardless costs nothing and means no future caller has to work out whether ITS
+    # id needs the guard — working that out per call site is exactly how the gap between the save
+    # door and the deep link opened in the first place.
     #
     # NEWEST FIRST, WHICH IS WHY THE ASSOCIATION IS ORDERED OLDEST-FIRST AND REVERSED HERE rather
     # than the other way round: a reader wants the latest snapshot at the top of a list, and a
@@ -303,7 +300,7 @@ module Tools
     # `rescue_from` arms above do not cover RecordNotFound — it would land on Rails' own HTML error
     # page, which is not an answer a `fetch` caller can read.
     def revisions
-      state = current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: params[:id])
+      state = find_addon_state(params[:id])
       return render_no_such_state if state.nil?
 
       render json: state.revisions.reverse_order.map { |r|
@@ -548,6 +545,65 @@ module Tools
       head :not_found unless @addon
     end
 
+    # THE DATA SCOPE EVERY STATE READ AND WRITE IN THIS CONTROLLER RESOLVES THROUGH. Four callers
+    # today — #states, #revisions, #resolve_revision_target, #launch_state_id — and the next
+    # state-reading action makes five, which is why it is one definition rather than four copies of
+    # a chain that must agree.
+    #
+    # SCOPED BY `states_key`, NOT `key`: `states_key` is the DATA scope while `key` builds routes.
+    # They are the same value unless the manifest says otherwise (Maker::Addons::Registry#build),
+    # which is how one addon can read another's saves — see the `states_key` comment there for what
+    # that widens, and `states_key_permitted?` for who may ask. Scoping by `key` instead would let a
+    # save under one addon append a revision to a state filed under another's namespace the moment
+    # the two diverge, and would let a read answer from a bucket the write did not use.
+    #
+    # THE addon_key HALF IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
+    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
+    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
+    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
+    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
+    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). What it does
+    # enforce is that a manifest cannot redirect ITS OWN saves or reads into another addon's
+    # namespace by declaration alone. THE `current_user` HALF IS THE REAL PROTECTION, keeping one
+    # user's rows from a stranger's.
+    def addon_states = current_user.maker_addon_states.for_addon(@addon.states_key)
+
+    # ONE saved state by a client-supplied id, or nil.
+    #
+    # IT RENDERS NOTHING AND RAISES NOTHING, AND THAT IS THE WHOLE REASON IT CAN BE SHARED. THE
+    # CALLER DECIDES WHAT A MISS MEANS, and the two callers decide OPPOSITE things: #create answers
+    # 404 (the id says where to WRITE, and guessing wrong writes to the wrong place) while
+    # #addon_ctx serves a null `stateId` and renders the page (the id is a HINT about what to open,
+    # and a stale bookmark must not take the tool down).
+    #
+    # ** DO NOT MOVE A RENDER IN HERE. ** Folding #render_no_such_state into this method is the
+    # tempting next step and it would SILENTLY INVERT the deep link's entire degrade promise: every
+    # stale or deleted `?state=` bookmark would start 404ing the tool instead of opening it empty.
+    # Nothing about the helper would look wrong afterwards — the caller that wanted the 404 would
+    # still get one — which is precisely why the warning is here rather than left to be rediscovered.
+    #
+    # A STRING OR AN INTEGER, ALLOWLISTED, AND THE REFUSAL WAS PROBED RATHER THAN REASONED ABOUT.
+    # `state_id[]=1&state_id[]=2` arrives as an ARRAY and `find_by(id: [...])` is an `IN`: before
+    # this check it RESOLVED, to whichever of the user's own boxes the database returned first — a
+    # design nobody named, with no error anywhere. Both scopes still held, so nothing was disclosed;
+    # it is refused because it is SILENT, and on the save door it WRITES. Integer is on the list
+    # because a JSON request body preserves JSON's types, so a caller posting `{"state_id": 5}`
+    # would otherwise get a 404 whose message is a lie about a state that exists and is theirs. An
+    # allowlist and not a `reject if Array`: a nested `state_id[a]=b` is a Hash, and naming the
+    # shapes we accept covers it (and whatever the next one is) without a second probe.
+    #
+    # WHAT THE ALLOWLIST DOES NOT DO IS VALIDATE THE STRING, and the claim is worth stating exactly
+    # rather than as "garbage answers nil". `ActiveModel::Type::Integer` CASTS, so `?state=1abc`,
+    # `" 1 "` and `"1.0"` all resolve state 1. Harmless and deliberate: it is a bound parameter
+    # inside both scopes, so there is nothing to inject and no row outside this user and this addon
+    # to reach, and it is exactly what `find(params[:id])` does throughout Rails. Refusing it would
+    # buy nothing and would make a hand-typed URL fail in a way no user could read.
+    def find_addon_state(raw)
+      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
+
+      addon_states.find_by(id: raw)
+    end
+
     # THE STATE A SAVE REVISES, for a request that asked for one. ONLY EVER CALLED WHEN A
     # `state_id` WAS SENT, so its nil has exactly one meaning — "that id does not resolve" — and it
     # renders nothing: the caller answers. (An earlier draft resolved and rendered in one method,
@@ -560,30 +616,12 @@ module Tools
     # caller's `present?` is what implements that, and `present?` rather than `!nil?` because a
     # form rendering an empty hidden field sends "".
     #
-    # SCOPED BY `states_key`, NOT `key` — that is the DATA scope (the same one #states reads),
-    # while `key` builds routes. Scoping by `key` would let a save under one addon append a
-    # revision to a state filed under another's namespace whenever the two diverge. Note what this
-    # is NOT: it is not an inter-addon boundary, for the reason #states already gives at length —
-    # a bundle is same-origin browser code in the session and can POST to another addon's own save
-    # URL directly. What it enforces is that a manifest cannot redirect ITS OWN saves into another
-    # addon's namespace by declaration alone.
-    #
-    # A STRING OR AN INTEGER, ALLOWLISTED, AND THE REFUSAL WAS PROBED RATHER THAN REASONED ABOUT.
-    # `state_id[]=1&state_id[]=2` arrives as an ARRAY and `find_by(id: [...])` is an `IN`: before
-    # this check it RESOLVED, writing a revision onto whichever of the user's own boxes the
-    # database returned first — a design nobody named, with no error anywhere. Both scopes still
-    # held, so nothing was disclosed; it is refused because it is SILENT and it WRITES. Integer is
-    # on the list because a JSON request body preserves JSON's types, so a caller posting
-    # `{"state_id": 5}` would otherwise get a 404 whose message is a lie about a state that exists
-    # and is theirs. An allowlist and not a `reject if Array`: a nested `state_id[a]=b` is a Hash,
-    # and naming the shapes we accept covers it (and whatever the next one is) without a second
-    # probe.
-    def resolve_revision_target
-      raw = params[:state_id]
-      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
-
-      current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)
-    end
+    # THE SCOPE AND THE TYPE ALLOWLIST BOTH LIVE IN #find_addon_state, shared with the three other
+    # state lookups here — including the write-vs-read scope argument and the probed array refusal,
+    # which used to be spelled out at this method and is now stated once where all four callers get
+    # it. This method is the SAVE DOOR'S name for that lookup, and it exists for the caller contract
+    # above rather than for anything it adds to the query.
+    def resolve_revision_target = find_addon_state(params[:state_id])
 
     # 404 AND NOT A SILENT FALLBACK TO CREATING. An id that does not resolve is a bundle bug or a
     # stale tab, and creating a new box instead would file a revision of an existing design as an
@@ -604,35 +642,24 @@ module Tools
 
     # THE `?state=` DEEP LINK, VALIDATED — the id of the saved item this page was opened for, or nil.
     #
-    # UNKNOWN, ANOTHER USER'S, ANOTHER ADDON'S NAMESPACE OR PLAIN GARBAGE ALL ANSWER nil AND THE
-    # PAGE RENDERS NORMALLY. A stale bookmark or a box the user has since deleted must never 404 the
-    # tool: the id is a HINT about which item to open, not an authorization decision. Contrast
-    # #resolve_revision_target, whose caller DOES 404 — there the id is an instruction about where
-    # to WRITE, and guessing wrong writes to the wrong place.
+    # UNKNOWN, ANOTHER USER'S, ANOTHER ADDON'S NAMESPACE, OR A VALUE THAT IS NOT ONE ID AT ALL, ALL
+    # ANSWER nil AND THE PAGE RENDERS NORMALLY. A stale bookmark or a box the user has since deleted
+    # must never 404 the tool: the id is a HINT about which item to open, not an authorization
+    # decision. Contrast #resolve_revision_target, whose caller DOES 404 — there the id is an
+    # instruction about where to WRITE, and guessing wrong writes to the wrong place. That is the
+    # opposition #find_addon_state exists to serve: it decides nothing, so the two callers can
+    # decide opposite things off one lookup. (It does NOT reject a merely ill-formed id — `1abc`
+    # casts to 1 and opens state 1; see #find_addon_state's last paragraph for why that is fine.)
     #
-    # SAME SCOPE, SAME ALLOWLIST, SAME SPELLING AS #resolve_revision_target, AND THEY MUST STAY THAT
-    # WAY. The array arm is not hypothetical: `?state[]=1&state[]=2` arrives as an Array and
-    # `find_by(id: [...])` is an `IN`, which — probed — RESOLVED to whichever of this user's own
-    # designs the database returned first, silently opening a design nobody named for the editor to
-    # then revise. Both scopes still held, so nothing is disclosed; it is refused because it is
-    # SILENT, and because a guard that exists on one of two identical resolvers and does not on the
-    # other is this repo's recorded failure shape. Integer is on the list for the reason
-    # #resolve_revision_target gives: JSON preserves its own types.
-    #
-    # `blank?` STATES THE CONTRACT AND SAVES A QUERY; IT IS NOT LOAD-BEARING HERE, AND THE
-    # DIFFERENCE FROM THE SAVE DOOR IS WORTH KNOWING BEFORE "TIDYING" EITHER. An empty `?state=` is
-    # "no hint", and MEASURED, `find_by(id: "")` returns nil rather than raising — so `""` answers a
-    # null stateId under `blank?` and under a `nil?` check alike, and no test here can tell them
-    # apart. On the save door the same swap is a 404 on every save a bundle makes with an empty
-    # hidden field, which is why that half has a mutation-checked guard and this one honestly
-    # cannot.
-    def launch_state_id
-      raw = params[:state]
-      return nil if raw.blank?
-      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
-
-      current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)&.id
-    end
+    # NO `blank?` SHORT-CIRCUIT, AND ITS REMOVAL IS MEASURED RATHER THAN TIDIED. An empty `?state=`
+    # is "no hint", and `find_by(id: "")` was probed TWICE to return nil rather than raise — the
+    # cast is `WHERE id = NULL`, so it is the adapter-independent answer, not a SQLite accident.
+    # `blank?` therefore changed nothing observable and no test could tell it apart from its absence,
+    # which is the definition of a guard that has never been shown to work; it cost seven lines of
+    # comment to explain a line that did nothing. The save door's `present?` is the OPPOSITE case and
+    # STAYS: there `""` must reach the CREATE branch, and swapping it turns every save a bundle makes
+    # with an empty hidden field into a 404 — with a red mutation to prove it.
+    def launch_state_id = find_addon_state(params[:state])&.id
 
     # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
     # FileLayer::NotFound` — which answers 422 with "Your library refused that write." That arm is
