@@ -281,6 +281,36 @@ module Tools
       }
     end
 
+    # GET /tools/:key/states/:id/revisions — ONE saved item's history, newest first.
+    #
+    # SCOPED BY `states_key` AND `current_user`, EXACTLY AS #states IS — the same data scope, and
+    # the same one #resolve_revision_target writes through. A state this addon could not list is not
+    # a state whose history it may read, and the read and the write must not disagree about which
+    # rows are this addon's or the two answers drift the moment `states_key` diverges from `key`.
+    # What that scope is NOT is an inter-addon boundary, for the reason #states states at length.
+    #
+    # NEWEST FIRST, WHICH IS WHY THE ASSOCIATION IS ORDERED OLDEST-FIRST AND REVERSED HERE rather
+    # than the other way round: a reader wants the latest snapshot at the top of a list, and a
+    # writer wants `maximum(:revision)` off the natural order. `reverse_order` flips the
+    # association's own ORDER BY, so there is no second literal to keep in step with it.
+    #
+    # THE REFUSAL IS THE SAVE DOOR'S OWN (#render_no_such_state), NOT A BARE `head :not_found`. It
+    # is the identical condition — an id that does not resolve under this addon's states_key for
+    # this user — and §14a's recorded failure shape is one condition with two answers. It also
+    # keeps the endpoint honest about disclosure: unknown, another user's and another addon's all
+    # answer the same bytes, so this cannot report which state ids exist or who owns them. `find_by`
+    # plus an explicit render rather than `find` for that same reason, and because the class-level
+    # `rescue_from` arms above do not cover RecordNotFound — it would land on Rails' own HTML error
+    # page, which is not an answer a `fetch` caller can read.
+    def revisions
+      state = current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: params[:id])
+      return render_no_such_state if state.nil?
+
+      render json: state.revisions.reverse_order.map { |r|
+        { revision: r.revision, data: r.data, created_at: r.created_at }
+      }
+    end
+
     # GET /tools/:key/file/:node_id — ONE library file's bytes, to the addon that asked for it.
     #
     # THE GATE IS THE MANIFEST DECLARING `library:read`, AND IT IS DECLARATION CONSISTENCY RATHER

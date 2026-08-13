@@ -223,6 +223,21 @@ Rails.application.routes.draw do
   # the service route does.
   get "tools/:key/states", to: "tools/addons#states", as: :tools_addon_states
 
+  # ONE saved state's revision history, newest first. FIVE segments, so — unlike the two-segment
+  # routes this block's long comment is about — it has no ordering hazard with the `tools/:key`
+  # wildcard at all: Rails requires a segment-count match, the same reason
+  # `tools/addon_states/:id/params` is safe wherever it sits. Nor does either glob route above reach
+  # it: both pin their third segment to a literal ("service", "asset"), and this path's third
+  # segment is "states". It sits here to keep the addon surface in one block, not because the order
+  # protects it.
+  #
+  # LAZY BY DESIGN, WHICH IS WHY IT IS A SECOND ENDPOINT RATHER THAN A KEY ON #states. A 20-revision
+  # history of 40-param snapshots, for every saved box, would bloat a gallery's first paint with
+  # data nobody has expanded — and #states' one-entry-per-box shape is itself the compatibility
+  # promise to every published bundle (§14c).
+  get "tools/:key/states/:id/revisions", to: "tools/addons#revisions",
+      as: :tools_addon_state_revisions
+
   # ONE library file's bytes, for an addon whose manifest declares `library:read`. Four segments, so
   # unlike the two-segment sibling routes above there is no ordering hazard with `tools/:key` at all
   # (Rails requires a segment-count match, the same reason tools/addon_states/:id/params is safe) —

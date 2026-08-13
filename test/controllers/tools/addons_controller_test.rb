@@ -1976,6 +1976,63 @@ module Tools
       assert_equal %w[node_id role], entry["files"].first.keys.sort
     end
 
+    # ---- the revision history -----------------------------------------------------------------
+
+    test "revisions are served newest first with their params" do
+      state = save_box(name: "shelf box", params: { "h" => "60" })
+      save_box(name: "shelf box", params: { "h" => "80" }, state_id: state.id)
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, state.id)
+
+      assert_response :success
+      body = response.parsed_body
+      # NEWEST FIRST, and the assertion cannot pass by coincidence: the rows are INSERTED 1 then 2,
+      # so an endpoint that forgot to reverse would answer [1, 2] — the opposite array, not an
+      # equal-looking one. A reader wants the latest at the top; the association itself is ordered
+      # oldest-first because a writer wants maximum(:revision).
+      assert_equal [ 2, 1 ], body.map { |r| r["revision"] }
+      assert_equal "80", body.first.dig("data", "params", "h")
+      assert_equal "60", body.last.dig("data", "params", "h"),
+                   "revision 1 must still hold what was saved AT revision 1"
+      assert body.first["created_at"].present?, "a snapshot without its timestamp cannot be labelled"
+    end
+
+    # THE SAME SCOPE #states READS, ASSERTED AS THREE SEPARATE 404s. A state this addon could not
+    # LIST is not a state whose history it may read, and an id that does not resolve must answer
+    # identically however it failed — otherwise this endpoint reports which state ids exist and who
+    # owns them.
+    test "another user's revisions are a 404" do
+      other = User.create!(email: "other2@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+      get tools_addon_state_revisions_path(FIXTURE_KEY, theirs.id)
+      assert_response :not_found
+    end
+
+    test "revisions of a state in another addon's namespace are a 404" do
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+      get tools_addon_state_revisions_path(FIXTURE_KEY, foreign.id)
+      assert_response :not_found
+    end
+
+    # AN UNKNOWN ID ANSWERS BYTE-FOR-BYTE WHAT A STRANGER'S DOES, which is the property the two
+    # tests above can only half-prove on their own: each of them alone is satisfied by any 404, and
+    # a body that differed between the two causes would make this endpoint an existence oracle.
+    # Compared against the save door's own refusal rather than a literal, because it IS that
+    # refusal — the same condition, resolved through the same scope (#render_no_such_state).
+    test "an unknown state id is the same 404, with the same body, as a stranger's" do
+      other = User.create!(email: "other4@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, 999_999)
+      assert_response :not_found
+      unknown = response.parsed_body
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, theirs.id)
+      assert_response :not_found
+      assert_equal unknown, response.parsed_body
+      assert_equal "not_found", unknown["error"]
+    end
+
     # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb
     # (the counts differ per LIBRARY_BACKEND, so a literal would pin one leg and fail the other two).
     # `includes(:files)` is what this guards: drop it and #states goes from a flat query count to one
