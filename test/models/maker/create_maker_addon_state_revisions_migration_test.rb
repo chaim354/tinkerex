@@ -17,12 +17,20 @@ require Dir[Rails.root.join("db/migrate/*_create_maker_addon_state_revisions.rb"
 # sitting there as genuine pre-existing data when `up` runs again: closer to a real deploy than
 # re-running `up` on an already-migrated schema ever was.
 #
-# `Maker::AddonState.reset_column_information` BRACKETS BOTH CALLS. `setup`'s own `create!` has
-# already warmed the model's column cache; `down` then removes a column that cache still claims
-# exists, and `up` adds it back. Skip either reset and a LATER test in this same worker process
-# could inherit a column cache built during the window the column did not exist — which is why
-# this file is verified to run cleanly alongside the rest of test/models/maker/ in one process,
+# `reset_column_information` BRACKETS BOTH CALLS, ON BOTH MODELS. `setup`'s own `create!` has
+# already warmed `Maker::AddonState`'s column cache; `down` then removes a column that cache still
+# claims exists, and `up` adds it back. Skip either reset and a LATER test in this same worker
+# process could inherit a column cache built during the window the column did not exist — which is
+# why this file is verified to run cleanly alongside the rest of test/models/maker/ in one process,
 # not in isolation.
+#
+# `Maker::AddonStateRevision` IS RESET TOO, AND TODAY THAT IS DEFENCE RATHER THAN A FIX. A model's
+# `@columns_hash` is a per-class memoized ivar that `drop_table`/`create_table` do NOT clear (they
+# clear the CONNECTION's schema cache, which is a different thing), so this model's cache really
+# does survive the cycle stale — it is simply stale-but-ACCURATE, because `down`/`up` recreate the
+# table with exactly the columns it had. That is a property of the migration as written, not a
+# guarantee: the day the two shapes stop matching, the asymmetry would surface as a mystery in some
+# unrelated test rather than here. Resetting both costs nothing and removes the trap.
 #
 # NO SECOND TEST FOR "a second run does not silently duplicate a revision-1 row" — it was here, and
 # it is dropped rather than reworked. It relied on `if_not_exists` to reach the `INSERT` on a
@@ -52,13 +60,20 @@ class CreateMakerAddonStateRevisionsMigrationTest < ActiveSupport::TestCase
 
     migration = CreateMakerAddonStateRevisions.new
     ActiveRecord::Migration.suppress_messages { migration.down }
-    Maker::AddonState.reset_column_information
+    reset_column_caches
     ActiveRecord::Migration.suppress_messages { migration.up }
-    Maker::AddonState.reset_column_information
+    reset_column_caches
 
     revision = state.revisions.sole
     assert_equal 1, revision.revision
     assert_equal "60", revision.data.dig("params", "h")
     assert_equal state.created_at.to_i, revision.created_at.to_i
+  end
+
+  # Both models, for the reason in this file's header — one of them needs it today and the other
+  # is the one that would fail mysteriously and elsewhere if that ever stopped being true.
+  def reset_column_caches
+    Maker::AddonState.reset_column_information
+    Maker::AddonStateRevision.reset_column_information
   end
 end
