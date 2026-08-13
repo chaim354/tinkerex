@@ -602,6 +602,38 @@ module Tools
              status: :not_found
     end
 
+    # THE `?state=` DEEP LINK, VALIDATED — the id of the saved item this page was opened for, or nil.
+    #
+    # UNKNOWN, ANOTHER USER'S, ANOTHER ADDON'S NAMESPACE OR PLAIN GARBAGE ALL ANSWER nil AND THE
+    # PAGE RENDERS NORMALLY. A stale bookmark or a box the user has since deleted must never 404 the
+    # tool: the id is a HINT about which item to open, not an authorization decision. Contrast
+    # #resolve_revision_target, whose caller DOES 404 — there the id is an instruction about where
+    # to WRITE, and guessing wrong writes to the wrong place.
+    #
+    # SAME SCOPE, SAME ALLOWLIST, SAME SPELLING AS #resolve_revision_target, AND THEY MUST STAY THAT
+    # WAY. The array arm is not hypothetical: `?state[]=1&state[]=2` arrives as an Array and
+    # `find_by(id: [...])` is an `IN`, which — probed — RESOLVED to whichever of this user's own
+    # designs the database returned first, silently opening a design nobody named for the editor to
+    # then revise. Both scopes still held, so nothing is disclosed; it is refused because it is
+    # SILENT, and because a guard that exists on one of two identical resolvers and does not on the
+    # other is this repo's recorded failure shape. Integer is on the list for the reason
+    # #resolve_revision_target gives: JSON preserves its own types.
+    #
+    # `blank?` STATES THE CONTRACT AND SAVES A QUERY; IT IS NOT LOAD-BEARING HERE, AND THE
+    # DIFFERENCE FROM THE SAVE DOOR IS WORTH KNOWING BEFORE "TIDYING" EITHER. An empty `?state=` is
+    # "no hint", and MEASURED, `find_by(id: "")` returns nil rather than raising — so `""` answers a
+    # null stateId under `blank?` and under a `nil?` check alike, and no test here can tell them
+    # apart. On the save door the same swap is a 404 on every save a bundle makes with an empty
+    # hidden field, which is why that half has a mutation-checked guard and this one honestly
+    # cannot.
+    def launch_state_id
+      raw = params[:state]
+      return nil if raw.blank?
+      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
+
+      current_user.maker_addon_states.for_addon(@addon.states_key).find_by(id: raw)&.id
+    end
+
     # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
     # FileLayer::NotFound` — which answers 422 with "Your library refused that write." That arm is
     # correct for the SAVE door, where NotFound means the port refused a write the caller could have
@@ -647,7 +679,19 @@ module Tools
           children: library_children_path,
           create: library_folders_path
         },
-        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label }
+        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label },
+        # WHICH SAVED ITEM THIS PAGE WAS OPENED FOR, from `?state=`. Resolved SERVER-SIDE so the
+        # host validates ownership before the id reaches a bundle, and so a bundle never has to
+        # learn the host's URL shape to read it — which is the reason ctx exists at all.
+        #
+        # ALWAYS PRESENT, `stateId` nil when there is nothing to open. A missing key reads as
+        # `undefined` in JS and cannot be told apart from a host that predates this, which is the
+        # same argument Host::CAPABILITIES makes for every capability value being a real boolean.
+        #
+        # A HASH RATHER THAN A BARE `launchStateId`, because what a launch carries will grow (a
+        # revision to open at, a node id the link came from) and a bundle reading `ctx.launch`
+        # should not have to re-learn the shape each time one is added.
+        launch: { stateId: launch_state_id }
       }
     end
 

@@ -201,6 +201,74 @@ module Tools
       assert_equal 3, rendered_ctx["hostLevel"]
     end
 
+    # ---- the ?state= deep link ------------------------------------------------------------------
+
+    # READS THE RESPONSE THE TEST ITSELF JUST ISSUED, unlike #rendered_ctx which does its own bare
+    # GET — every test here needs a query string on the URL, so the request has to be the test's.
+    def launch_from_page
+      JSON.parse(css_select("[data-addon-ctx-value]").first["data-addon-ctx-value"])["launch"]
+    end
+
+    test "a ?state= deep link is resolved into ctx.launch" do
+      state = save_box(name: "shelf box")
+      get tools_addon_path(FIXTURE_KEY, state: state.id)
+      assert_response :success
+      assert_equal state.id, launch_from_page["stateId"]
+    end
+
+    # ALWAYS PRESENT, NEVER MERELY ABSENT. A missing key reads as `undefined` in JS and cannot be
+    # told apart from a host that predates this — the same argument Host::CAPABILITIES makes for
+    # every value being a real boolean. `key?` is what asserts that; `assert_nil` alone passes for a
+    # blob that has no `launch` at all.
+    test "no ?state= means a null stateId, not a missing key" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert launch_from_page.key?("stateId"), "the key must always be present"
+      assert_nil launch_from_page["stateId"]
+    end
+
+    # SILENTLY IGNORED, NOT A 404 AND NOT A 500. A stale bookmark, a deleted box or a hand-mangled
+    # URL must not take the tool down — the id is a HINT about which item to open, never an
+    # authorization decision, so the page renders and the bundle simply starts empty. Contrast the
+    # save door, whose caller DOES 404 on an id it cannot resolve: there the id is an instruction
+    # about where to WRITE, and guessing wrong writes to the wrong place.
+    #
+    # THE BLANK IS IN THIS LIST FOR COMPLETENESS, NOT AS A GUARD, and saying so is the point:
+    # `find_by(id: "")` was measured to return nil rather than raise, so an empty `?state=` answers
+    # a null stateId under `blank?` and under the plausible `nil?` tidy-up alike. That is the
+    # opposite of the save door, where `""` must reach the CREATE branch and a `nil?` there is a 404
+    # on every such save — which is why THAT half has a mutation-checked guard of its own and this
+    # one cannot have.
+    test "an unknown, foreign, other-addon or malformed ?state= renders the page with a null stateId" do
+      other = User.create!(email: "other3@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+
+      [ 999_999, theirs.id, foreign.id, "not-a-number", "" ].each do |bad|
+        get tools_addon_path(FIXTURE_KEY, state: bad)
+        assert_response :success, "?state=#{bad.inspect} must still render the tool"
+        assert_nil launch_from_page["stateId"], "?state=#{bad.inspect} must not resolve"
+      end
+    end
+
+    # A LIST OF IDS RESOLVES TO NOTHING, AND THIS WAS PROBED RATHER THAN REASONED ABOUT. `?state[]=`
+    # arrives as an ARRAY and `find_by(id: [...])` is an `IN`: without the type allowlist it
+    # RESOLVED, opening whichever of this user's own designs the database returned first — a design
+    # nobody named, with nothing anywhere reporting it, and the editor then revising THAT one. Both
+    # scopes still held, so nothing is disclosed; it is refused because it is SILENT and because the
+    # sibling #resolve_revision_target already refuses the same shape. A guard that exists on one of
+    # two identical resolvers and silently does not on the other is this repo's recorded failure
+    # shape (§14c).
+    test "a ?state= that is not a single id resolves to nothing" do
+      first = save_box(name: "first box")
+      second = save_box(name: "second box")
+
+      get tools_addon_path(FIXTURE_KEY, state: [ first.id, second.id ])
+
+      assert_response :success
+      assert_nil launch_from_page["stateId"]
+    end
+
     test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do
       ctx = rendered_ctx
       assert_equal tools_addon_path(FIXTURE_KEY),        ctx.dig("urls", "save")
