@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_13_000100) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -117,6 +117,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000100) do
     t.datetime "updated_at", null: false
     t.index ["addon_state_id", "node_id"], name: "index_maker_addon_files_on_addon_state_id_and_node_id", unique: true
     t.index ["addon_state_id"], name: "index_maker_addon_files_on_addon_state_id"
+    t.index ["node_id"], name: "index_maker_addon_files_on_node_id"
   end
 
   create_table "maker_addon_state_revisions", force: :cascade do |t|
