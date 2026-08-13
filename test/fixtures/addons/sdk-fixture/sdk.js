@@ -4,9 +4,10 @@ import { host, WouldReplaceError } from "@maker/addon-sdk"
 // and touches `ctx` for nothing. Its job is to prove, in a real browser, that (a) the host pin
 // resolves inside an addon's merged importmap, (b) initHost ran before this module was imported,
 // (c) capabilities() answers the server's own map, (d) files.save absorbs the 409 overwrite dance
-// every bundle copies today, and (e) the service plane — its transport, its URL builder and its
+// every bundle copies today, (e) the service plane — its transport, its URL builder and its
 // abort handling — behaves in a real browser, which for the transport is the ONLY place it can be
-// observed at all (see ART below).
+// observed at all (see ART below), and (f) the state-revision surface (`stateId` on save,
+// state.revisions, host.launch) reaches the host with its id intact.
 //
 // The destination and filename come from the QUERY STRING so the Ruby test can point the fixture at
 // whatever project folder it just built, rather than the fixture hard-coding library state.
@@ -60,7 +61,15 @@ export default {
       <button data-role="sdk-roundtrip">Save and read back</button>
       <p data-role="sdk-roundtrip-result"></p>
       <button data-role="sdk-pick">Pick a file</button>
-      <p data-role="sdk-picked"></p>`
+      <p data-role="sdk-picked"></p>
+      <input data-role="sdk-state-id">
+      <button data-role="sdk-save-revision">Save revision</button>
+      <p data-role="sdk-revision-out"></p>
+      <button data-role="sdk-revisions">Load revisions</button>
+      <p data-role="sdk-revisions-out"></p>
+      <button data-role="sdk-revisions-probe">Probe state id guards</button>
+      <p data-role="sdk-revisions-guards"></p>
+      <p data-role="sdk-launch"></p>`
 
     // Rendering the LEVEL proves initHost ran before this module was imported — a fixture that only
     // asserted its own text would pass with the binding still null.
@@ -237,5 +246,91 @@ export default {
         out.textContent = `${e.name}:${e.code}`
       }
     })
+
+    // ---- state revisions (host level 3) ------------------------------------------------------
+
+    // The id the three controls below operate on. An <input> rather than a query parameter because
+    // the Ruby side only learns the id AFTER driving a real save through this same page, so there is
+    // no URL left to put it in. Filling a field keeps the save and the revision on ONE mount; a
+    // second `visit` is a hard browser load that tears the whole JS runtime down and rebuilds it
+    // (the Turbo test at the foot of addon_sdk_test.rb spells that out).
+    const stateId = el.querySelector("[data-role=sdk-state-id]")
+
+    // REVISING IS THE SAME SAVE PLUS ONE FIELD. Deliberately writes a DIFFERENT filename from the
+    // first save: whether a revision may replace its OWN file is Task 3's collision exemption and is
+    // pinned server-side, while what this control exists to prove is narrower and can only be proved
+    // here — that `stateId` survives the browser's own multipart serializer and reaches the door.
+    //
+    // A NUMBER HERE AND A STRING IN `Load revisions` BELOW, ON PURPOSE: the SDK accepts both
+    // spellings of an id (state.list() answers integers, an <input> answers a string), so driving
+    // one through each door is what stops either coercion from rotting unobserved.
+    el.querySelector("[data-role=sdk-save-revision]").addEventListener("click", async () => {
+      const out = el.querySelector("[data-role=sdk-revision-out]")
+      try {
+        const result = await host.files.save({
+          name: "sdk fixture revised",
+          folderNodeId: q.get("parent") || "",
+          data: { n: 2 },
+          stateId: Number(stateId.value),
+          files: [ { name: q.get("rname") || "revised.txt", contentType: "text/plain", body: "v2" } ],
+        })
+        out.textContent = result.cancelled ? "Not saved." : "Saved."
+      } catch (e) {
+        out.textContent = `${e.name}:${e.code}`
+      }
+    })
+
+    // THE HISTORY, NEWEST FIRST, WITH EACH SNAPSHOT'S OWN PARAMS. Rendering `data` as well as the
+    // revision number is what gives the assertion teeth: a `revisions` that returned the CURRENT
+    // data for every row — the shape a naive implementation reading `state.data` would produce —
+    // renders identical params twice and fails, while a bare "v2,v1" would pass it happily.
+    el.querySelector("[data-role=sdk-revisions]").addEventListener("click", async () => {
+      const out = el.querySelector("[data-role=sdk-revisions-out]")
+      try {
+        const rows = await host.state.revisions(stateId.value)
+        out.textContent = rows.map((r) => `v${r.revision}:${r.data.n ?? "-"}`).join(",")
+      } catch (e) {
+        out.textContent = `${e.name}:${e.code}`
+      }
+    })
+
+    // THE ID GUARD, AT BOTH DOORS, WHICH IS THE ONLY PLACE HALF OF IT IS OBSERVABLE. ".", ".." and
+    // "" are the only strings encodeURIComponent leaves untouched, so a revisions URL built from one
+    // is normalized BY THE BROWSER before the request is sent — the server's own route never sees
+    // it and the call misroutes silently. That half can only be caught in a real browser.
+    //
+    // THE ARRAY IS THE OTHER HALF AND IT IS NOT A PATH PROBLEM AT ALL — it is the one an ordinary
+    // request test cannot see either, because the laundering happens in JS. `String([n, n])` is
+    // "n,n", which the server's String-or-Integer allowlist cannot refuse (JS already flattened it
+    // to a String) and which ActiveRecord's integer cast turns straight back into n.
+    //
+    // IT IS BUILT FROM THE ID IN THE INPUT — a REAL row — rather than a made-up [1, 2], and that is
+    // the whole difference between this probe and one that proves nothing. §14c records the shape:
+    // a traversal test that could only ever reach a 404 passed under mutation, because "refused"
+    // and "not found" both produce one. Aimed at a row that exists, removing the guard makes this
+    // read answer `no-error` — a history nobody asked for — and makes the write below append a
+    // revision to a design nobody named.
+    el.querySelector("[data-role=sdk-revisions-probe]").addEventListener("click", async () => {
+      const attempt = async (fn) => {
+        try { await fn(); return "no-error" } catch (e) { return `${e.name}:${e.code}` }
+      }
+      const read = async (id) => attempt(() => host.state.revisions(id))
+      const laundered = [ stateId.value, stateId.value ]
+      const write = await attempt(() => host.files.save({
+        name: "guard probe", folderNodeId: q.get("parent") || "", stateId: laundered,
+        files: [ { name: "guard-probe.txt", contentType: "text/plain", body: "x" } ],
+      }))
+      el.querySelector("[data-role=sdk-revisions-guards]").textContent =
+        `empty=${await read("")} dot=${await read(".")} dotdot=${await read("..")} ` +
+        `array=${await read(laundered)} write=${write}`
+    })
+
+    // THE DEEP-LINK HINT, READ STRAIGHT THROUGH FROM ctx. No `?.` on `host.launch`, deliberately:
+    // the host's contract is that `launch` is ALWAYS an object with a `stateId` key that may be null
+    // (the same argument capabilities() makes for every value being a real boolean), so an optional
+    // chain here would quietly render "launch:none" for a host that stopped sending it at all —
+    // exactly the case a bundle cannot tell apart from "nothing to open".
+    el.querySelector("[data-role=sdk-launch]").textContent =
+      `launch:${host.launch.stateId ?? "none"}`
   },
 }
