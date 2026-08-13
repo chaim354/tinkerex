@@ -414,6 +414,169 @@ module Tools
       assert_equal "3mm birch test", state.name
       assert_equal "material-test-grid", state.data["generator"]
       assert_equal 1, state.files.count
+      assert_equal [ 1 ], state.revisions.pluck(:revision),
+                   "a create is revision 1, so a state's history is complete from its first save"
+    end
+
+    # ---- save: revising an existing state --------------------------------------------------
+    #
+    # `state_id` MEANS "THIS SAVE IS A NEW REVISION OF THAT SAVED ITEM", and its ABSENCE is the
+    # compatibility contract: every already-published bundle sends none and must keep creating,
+    # byte for byte, because publishing a bundle IS the addon deploy and Rails is never rebuilt
+    # (§14c). Every other save test in this file sends no `state_id`, which is what pins that.
+    #
+    # Saves once and returns the state, so every revision test starts from a REAL save rather than
+    # a hand-built row — for two reasons this file already carries scars from: a fixture with no
+    # AddonFile rows cannot exercise the file upsert at all, and a `nodes.create!` fixture has a
+    # NULL `storage_path`, which is a file that cannot exist on share/s3, where the port addresses
+    # a file BY that column (§14a). See the mixed-save test below for the same note at length.
+    #
+    # THE OUTPUT NAME IS UNIQUE PER CALL BY DEFAULT, which is a property of the share leg rather
+    # than fussiness: FileLayer::Share#write puts a real FILE under LIBRARY_PATH, and the test
+    # transaction rolls back the `nodes` row but cannot roll back the file — so a fixed name saved
+    # by two tests collides on disk in whichever runs second, on one leg only. The sibling test at
+    # "save refuses a name already taken…" carries the same warning.
+    def save_box(name:, params: { "h" => "60" }, file: "shelf-box-#{SecureRandom.hex(4)}.svg",
+                 state_id: nil, parent_node_id: nil, overwrite: nil)
+      post tools_addon_path("widgetkit"), params: {
+        name:,
+        data: { generator: "tray", params: }.to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: "<svg/>" } ].to_json,
+        # `.compact` so an unset option is ABSENT rather than nil: `state_id: nil` on the wire is
+        # the blank that #revision_target reads as "no target", but a test asserting the create
+        # path must not depend on that reading being right.
+        **{ state_id:, parent_node_id:, overwrite: }.compact
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      @user.maker_addon_states.order(:id).last
+    end
+
+    test "a save carrying state_id revises the box instead of creating a second one" do
+      state = save_box(name: "shelf box", params: { "h" => "60" })
+
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        save_box(name: "shelf box", params: { "h" => "80" }, state_id: state.id)
+      end
+
+      state.reload
+      assert_equal 2, state.revision
+      assert_equal "80", state.data.dig("params", "h"), "the state carries the LATEST params"
+      assert_equal [ 1, 2 ], state.revisions.pluck(:revision)
+      assert_equal "60", state.revisions.find_by(revision: 1).data.dig("params", "h"),
+                   "revision 1 still holds what was saved AT revision 1, not the state's later data"
+      assert_equal "80", state.revisions.find_by(revision: 2).data.dig("params", "h")
+    end
+
+    # A REVISION RENAMES THE BOX. `name` is a property of the design, not of one snapshot — a
+    # revision row records `data` and nothing else, so a rename has nowhere else to land, and a
+    # design the user has renamed must not go on showing its old name in every list.
+    test "revising updates the box name" do
+      state = save_box(name: "shelf box")
+      save_box(name: "shelf box mk2", params: { "h" => "80" }, state_id: state.id)
+      assert_equal "shelf box mk2", state.reload.name
+    end
+
+    # THE AddonFile ROWS ARE UPSERTED, BECAUSE A REPLACE KEEPS THE NODE (§14a). `maker_addon_files`
+    # is unique on [addon_state_id, node_id], so a revision that rewrites the same node in place
+    # hands Maker::Addons::LibraryOutput a node its OWN state already has a row for — and creating
+    # blindly there is a bare ActiveRecord::RecordNotUnique 500, not a refusal anybody designed.
+    #
+    # REACHABLE THROUGH THE ORDINARY DOOR, which is why this is the shape the test takes rather
+    # than something narrower: the save dialog defaults to the current project's folder, the eager
+    # nudge files the first copy into `design/`, and the re-save then resolves to `replace: true`
+    # against that same node (see "confirming the overwrite replaces the filed file in place").
+    # This is exactly that save, now carrying a `state_id`.
+    test "revising a filed output replaces it in place, keeping one node and one file row" do
+      name = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      filed = @user.nodes.present.find_by!(name:)
+      state = @user.maker_addon_states.order(:id).last
+
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { Maker::AddonFile.count } ] do
+        save_box(name: "harbor v5", file: name, state_id: state.id,
+                 parent_node_id: folder.node_id, overwrite: "1")
+      end
+
+      assert_equal 2, state.reload.revision
+      assert_equal 1, state.files.count
+      assert_equal filed.node_id, state.files.first.node_id,
+                   "the replace kept the node, so the state's own file row is the same row (§14a)"
+      assert_equal 1, @user.nodes.present.where(name:).count
+      assert_equal "<svg/>", FileLayer.current.read(@user, node_id: filed.node_id),
+                   "the revision's bytes are what is in the library now"
+    end
+
+    # 404 AND NO WRITE — never a 500, and never a silent fallback to CREATING, which would file a
+    # revision of someone else's design as a new one of yours: the pile-up this whole feature
+    # exists to end, reintroduced by its own error path. Resolved BEFORE any write, so a bad
+    # `state_id` costs nothing — hence the `nodes.count` assertion, which is what proves the 404
+    # short-circuits #create rather than merely being rendered after the bytes landed.
+    test "a state_id belonging to another user is a 404 and writes nothing" do
+      other = User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: "widgetkit", name: "not yours", data: {})
+
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "mine now",
+          data: { generator: "tray", params: {} }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: theirs.id
+        }
+      end
+      assert_response :not_found
+      assert_equal 0, theirs.reload.revisions.count
+    end
+
+    test "an unknown state_id is a 404 and writes nothing" do
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "ghost",
+          data: { generator: "tray", params: {} }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: 999_999
+        }
+      end
+      assert_response :not_found
+    end
+
+    # A `state_id` THAT IS NOT ONE ID IS NOT A TARGET. `state_id[]=1&state_id[]=2` arrives as an
+    # ARRAY, and `find_by(id: [...])` is an `IN` — it resolves, to whichever of your own boxes the
+    # database hands back first, and the revision lands on a design nobody named. Both scopes hold
+    # (it is still your own state, under this addon), so nothing is disclosed and nothing crosses a
+    # tenant line: what makes it worth refusing is that it is SILENT and it WRITES.
+    test "a state_id that is not a single id is a 404" do
+      a = save_box(name: "box a")
+      b = save_box(name: "box b")
+
+      assert_no_difference [ -> { Maker::AddonStateRevision.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "which one?",
+          data: { generator: "tray", params: { "h" => "99" } }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: [ a.id, b.id ]
+        }
+      end
+      assert_response :not_found
+      assert_equal [ 1, 1 ], [ a.reload.revision, b.reload.revision ]
+    end
+
+    # THE states_key SCOPE, NOT JUST THE USER SCOPE. A state saved under another addon's namespace
+    # is not a target, or one addon could append revisions to another's saved work by id alone —
+    # and `states_key` is the DATA scope (#states reads the same one), while `key` builds routes.
+    test "a state_id from another addon's namespace is a 404" do
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+      post tools_addon_path("widgetkit"), params: {
+        name: "mine",
+        data: { generator: "tray", params: {} }.to_json,
+        files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                   body: "<svg/>" } ].to_json,
+        state_id: foreign.id
+      }
+      assert_response :not_found
+      assert_equal 0, foreign.reload.revisions.count
     end
 
     # ---- save: the filename is a filename ------------------------------------------------
