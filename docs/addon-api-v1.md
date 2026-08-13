@@ -146,7 +146,7 @@ You do not need to pin `@maker/addon-sdk`. The host pins it for every addon page
 
 `min_host` is compared against `host.level` (§3). If it is **higher** than this host's level, your
 addon is still built and still **listed** — greyed out, with a reason naming both numbers
-("asks for level 3, this host is level 2"). It is deliberately not hidden: an addon that silently
+("asks for level 4, this host is level 3"). It is deliberately not hidden: an addon that silently
 never appears reads as a broken deploy, which sends an operator looking in the wrong place.
 
 Two things to know before you rely on it:
@@ -392,17 +392,23 @@ and is not a way to ask whether a real host is present. Use `await host.capabili
 
 ### `host.level`
 
-An integer — the host's capability level. **`2` today.** It rises when the host gains capabilities,
+An integer — the host's capability level. **`3` today.** It rises when the host gains capabilities,
 in the same change that flips them on, so `min_host` (§2) can name a floor.
 
 | Level | Added |
 |---|---|
 | 1 | The SDK itself: `files.save`, `files.pickFolder`, `files.url`, `state.list`, `service.*`, `capabilities()`, `on("teardown")` |
 | 2 | The file plane: binary bodies on `files.save`, `files.read`, `files.pickFile` |
+| 3 | State revisions: `stateId` on `files.save`, `state.revisions`, `host.launch`, and `revision` on each entry from `state.list` |
 
 ```js
-console.log(host.level)  // 2
+console.log(host.level)  // 3
 ```
+
+**Level 3 flipped no capability, and that is the point.** Revising is the same `library:write` door
+growing an optional parameter, so a capability name would be `true` for exactly the hosts that
+answer `library:write` true and would tell you nothing — the same reasoning as binary output at
+level 2 (§7). `min_host: 3` is how you require it; there is nothing to feature-detect.
 
 ### `host.addon`
 
@@ -413,6 +419,43 @@ host.addon.key  // "hole-jig"
 ```
 
 Only `key` is present at this level.
+
+### `host.launch` (host level 3)
+
+Synchronous. `{ stateId }` — which saved item this page was opened for, or `stateId: null` when it
+was not opened for one.
+
+```js
+export default {
+  async mount(el, ctx) {
+    const states = await host.state.list()
+    const opening = host.launch.stateId && states.find((s) => String(s.id) === String(host.launch.stateId))
+    if (opening) openEditor(opening)          // prefilled, editing that item
+    else openGallery(states)
+  },
+}
+```
+
+The user reaches this through `/tools/<key>?state=<id>` — a link the **host** builds, from the
+library's "Edit in <your addon>" entries. **The id is resolved server-side**, so by the time you see
+it the host has already checked it belongs to this user and to your addon's `states_key`; you never
+parse `window.location` and never learn the host's URL shape.
+
+Three things to know:
+
+- **An unknown, deleted or foreign id resolves to `null` and the page renders normally.** It is a
+  *hint* about which item to open, never an authorization decision, so a stale bookmark must not
+  break your tool. Note the deliberate asymmetry: **the same id sent as `stateId` to `save`, or to
+  `state.revisions`, answers 404.** There it is a bug in your bundle, and doing something else
+  silently would be worse.
+- **It is always an object**, on every host, including one that predates it — `host.launch.stateId`
+  is safe to read without a guard. Older hosts send nothing, and the SDK fills in the `null`.
+- **It is SDK-only.** The raw `ctx` handed to `mount` does not carry it, so a bundle still on the
+  raw-`ctx` path (§6) cannot read the deep link at all. This is the first thing the SDK offers that
+  raw `ctx` does not.
+
+And, like everything else here, read it through `host` **at call time** — a `const { launch } = host`
+at module top level goes on reporting the previous mount's deep link after a client-side navigation.
 
 ### `host.capabilities()`
 
@@ -471,6 +514,52 @@ await host.files.save({ name, folderNodeId: folder.nodeId, files })
 request, naming the file. Without that check the key would vanish during serialisation and the file
 would be written with no content type at all — discovered days later as a file that will not
 preview.
+
+#### `stateId` — revising instead of creating (host level 3)
+
+Pass the `id` of a saved item and the save **revises** it: same row, `name` and `data` updated, its
+`revision` incremented, a snapshot appended to its history, and the library file it produced
+**rewritten in place, keeping its node**. Omit it — or pass `null` — and you get exactly what you
+have always got: a new item at revision 1.
+
+```js
+await host.files.save({
+  name: editing.name,
+  folderNodeId: folder.nodeId,
+  data: params,
+  files: [ { name: `${slug}.svg`, contentType: "image/svg+xml", body: svg } ],
+  stateId: editing.id,                 // omit for a new item
+})
+```
+
+- **Hitting your own file is no longer a collision.** A destination already occupied by a file *that
+  saved item produced* is an approved replace: no 422, no 409, no `onReplace` prompt. Naming the item
+  is the consent. Every other collision keeps its existing answer, including a same-named file the
+  item did not write — that is still the terminal 422.
+- **A revision renames the item** whenever the `name` you send differs, because the name belongs to
+  the design and not to one snapshot. There is no rename-only path (that would be `state:crud`, §7);
+  renaming happens by revising. Watch the consequence if your bundle derives output filenames from
+  the name, as most do: the file you send is then at a *new* filename, so it is not a collision with
+  the item's old file at all — you get a new file, and the old one stays in the library under its old
+  name. The host renames nothing on disk and moves nothing.
+- **An unknown, deleted or foreign id is a 404**, not a silent fall back to creating. Creating
+  instead would file a revision of an existing design as an unrelated one, which is the pile-up this
+  feature exists to end. The error is a plain `AddonError` with `code === "not_found"` — see §5,
+  where two endpoints answer that code meaning different things.
+- **`""` behaves as absent** and creates, so an empty hidden field is a safe way to say "no target
+  yet". `null` does the same. What is *refused*, before any request, is a `stateId` that is neither a
+  string nor a whole number: an array would otherwise be flattened by JavaScript into `"15,16"`,
+  which the server resolves to item **15** — a save against a design you never named.
+- **No file is ever removed.** If a revision stops emitting a file an earlier one wrote, that file
+  stays in your library and stays linked to the item. It is an ordinary library file the user may
+  have renamed, attached to a project or put in a BOM.
+- **On a host below level 3 the field is ignored and the save creates.** There is nothing to
+  feature-detect — declare `min_host: 3` if revising is load-bearing for your bundle.
+
+**There is no per-revision archive of the bytes.** One file per item, overwritten. On a chunk-backed
+host the old bytes survive in the library's own version chain; on a share- or S3-backed host they do
+not. The **params** always survive, in the history below — which is what makes an old design
+recoverable: load its values and save, and that becomes the next revision.
 
 #### `body` may be text or bytes (host level 2)
 
@@ -672,18 +761,57 @@ Lists this addon's saved states for the signed-in user, newest first.
 ```js
 const states = await host.state.list()
 // [
-//   { id: 41, name: "8mm jig", data: { holes: 6 }, updated_at: "…",
+//   { id: 41, name: "8mm jig", data: { holes: 6 }, updated_at: "…", revision: 3,
 //     files: [ { node_id: "…", role: "output" } ] },
 //   …
 // ]
 ```
 
 `data` is whatever you passed to `save`. `files` relinks each save to the library files it produced,
-so you can offer "open what I made last time". The list is scoped both to the current user and to
+so you can offer "open what I made last time". `revision` (host level 3) is the item's **current**
+revision number — `1` for something saved once. The list is scoped both to the current user and to
 your addon's `states_key`; there is no way to read another user's states.
+
+**One entry per saved item, always.** A revision never appears here as a second entry, and this is a
+promise for the life of `api_version: "1"` — it is what let every bundle published before level 3
+keep working unchanged across the change, and simply stop accumulating duplicates. The history is a
+separate call, below.
 
 A non-JSON response raises an `AddonError` with code `invalid_response` rather than a bare
 `SyntaxError`.
+
+### `host.state.revisions(id)` — capability `state:list` (host level 3)
+
+One saved item's history, **newest first**.
+
+```js
+const history = await host.state.revisions(41)
+// [
+//   { revision: 3, data: { holes: 8, spacing: 32 }, created_at: "…" },
+//   { revision: 2, data: { holes: 6, spacing: 32 }, created_at: "…" },
+//   { revision: 1, data: { holes: 6, spacing: 25 }, created_at: "…" },
+// ]
+```
+
+Each entry's `data` is the params **as they were saved at that revision** — an immutable snapshot the
+host never rewrites. Loading one back into your form and saving is how a user restores an old design;
+that save becomes the next revision, and the history keeps growing forwards. There is no delete, no
+prune, no diff, and no way to annotate a revision.
+
+- **`state:list`, not `state:crud`.** This is a read of rows the same scope already lists. `state:crud`
+  is still `false` and still means something else (§4).
+- **It is lazy on purpose** and is not folded into `list()`: a 20-revision history across every saved
+  item would bloat your gallery's first paint for data nobody has expanded. Fetch it when a user opens
+  the history, not before.
+- **The response is the whole history, unbounded**, and the SDK does not cap it either. A cap without
+  paging would be a silent truncation — a history that quietly stops at N is indistinguishable from a
+  design saved N times, and there is no `truncated` flag to tell you.
+- **An unknown, deleted or foreign id answers 404** — `code === "not_found"`, the same body the save
+  door answers for a bad `stateId`, and deliberately the same for an id that never existed, one
+  belonging to another user, and one belonging to another addon, so the endpoint cannot be used to
+  discover which item ids are real.
+- **The item's own current params live on `state.list()`'s `data`**, not only in the newest revision.
+  They agree; read whichever is already in your hand.
 
 ### `host.service.get(name, path, params?, options?)` / `host.service.post(name, path, params?, options?)` / `host.service.url(name, path, params?)` — capability `service`
 
@@ -843,14 +971,22 @@ lights up on its own when the host gains it.
 |---|---|---|
 | `library:write` | **true** | `host.files.save` — writing output files into the library |
 | `library:read` | **true** | `host.files.read` — reading the bytes of a library file |
-| `state:list` | **true** | `host.state.list` — listing this addon's saved states |
-| `state:crud` | false | Creating, updating and deleting states directly |
+| `state:list` | **true** | `host.state.list` and `host.state.revisions` — reading this addon's saved states and their history |
+| `state:crud` | false | Creating, updating and deleting states **directly** — see the note below |
 | `data` | false | Addon-owned collections (records that are not files or states) |
 | `maker:read` | false | Reading maker data — inventory, projects, BOM |
 | `project:current` | false | Reading the user's current project |
 | `service` | **true** | `host.service.get` / `host.service.post` — the sidecar proxy |
 | `pick:folder` | **true** | `host.files.pickFolder` — the host's folder chooser |
 | `pick:file` | **true** | `host.files.pickFile` — the host's file chooser |
+
+> **`state:crud` is `false`, and revising a saved item is NOT it.** Passing `stateId` to
+> `files.save` (§3) updates an item's name, params, revision and output file — but it does so
+> *through the save door*, which writes library bytes and always has. `state:crud` names the thing
+> that still does not exist: a direct `PATCH`/`DELETE` on a state, letting you rename an item without
+> re-saving its file, or delete one at all. Neither is possible today, and this capability stays
+> `false` until they are. Gate on `host.level >= 3` (or declare `min_host: 3`) for revising; keep any
+> `caps["state:crud"]` check you have written for what it actually announces.
 
 ### The rule: check before you call
 
@@ -984,7 +1120,8 @@ only when you did not.
 | `unsupported_operation` | 422 | `NameTakenError` | An output name is already taken in the folder you picked. |
 | `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** What does: an output `name` the library cannot index — `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, or `.trash` at the library root (plus `.maker-tmp-*` on a share-backed host). Rename the output. Raised only on a share/S3-backed host; a chunk-backed host accepts those names. 422 rather than 404 because the endpoint is fine and the request was refused. |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
-| `not_found` | 404 | `AddonError` | **`files.read` only.** No such file: a node id that is not yours, one that never existed, one that has been deleted, or a folder. All four answer identically on purpose — a split would tell you which node ids are real. Note the status: this is the only place `not_found` is a 404, and the 422 row above is a different condition on a different endpoint. |
+| `not_found` | 404 | `AddonError` | **`files.read`.** No such file: a node id that is not yours, one that never existed, one that has been deleted, or a folder. All four answer identically on purpose — a split would tell you which node ids are real. |
+| `not_found` | 404 | `AddonError` | **`files.save` with a `stateId`, and `state.revisions`.** No such saved item for this addon: an id that never existed, one belonging to another user, or one under another addon's `states_key`. Identical for all three, for the same reason. A save that answers this **wrote nothing** — the item is resolved before any byte is written. |
 | `forbidden_capability` | 403 | `AddonError` | **`files.read` only.** Your manifest does not declare the `library:read` permission. Add it; nothing about the file changed. |
 | `request_failed` | any | `AddonError` | The fallback when a failure response carries no code at all. A save rejected for a malformed or oversized payload answers a body-less 422 and arrives this way. |
 | `name_taken` | — | `NameTakenError` | **Reserved.** The SDK already maps it, but this host does not emit it yet; today the same condition arrives as `unsupported_operation`. |
@@ -1013,13 +1150,34 @@ reserved code maps to the same class as the code the host emits for that conditi
 `fetch_error` are both `ServiceUnavailableError`), so an `instanceof` check keeps working when the
 host starts emitting the newer spelling, and a `e.code === "…"` check quietly stops matching.
 
+> **`not_found` is one code with three meanings, so key on the call, never on the code alone.** It is
+> a 422 about an output **name** the library cannot index, a 404 about a **file** that is not there,
+> and a 404 about a **saved item** that is not there. The SDK deliberately gives it **no class of its
+> own**: one class covering all three would be a class whose meaning depends on which method threw,
+> which is exactly what `instanceof` cannot express — while your own code always knows which call it
+> just made. So catch it as a plain `AddonError` and disambiguate at the call site.
+>
+> ```js
+> try {
+>   await host.files.save({ name, folderNodeId, files, stateId })
+> } catch (e) {
+>   if (e.code === "not_found") {           // here, it can only mean the stateId
+>     openFresh("That saved item is gone — starting a new one.")
+>   }
+> }
+> ```
+>
+> If a bundle ever genuinely needs to branch inside one call, the answer is a **subclass** — and that
+> needs the host to send two distinct codes first. Inventing two classes over one wire code in the
+> SDK would only move the guess.
+
 ### Codes the SDK raises itself, before or around a request
 
 | Code | Class | When |
 |---|---|---|
 | `host_not_initialized` | `AddonError` | You read `host` before the host was ready (module top-level code) or after your addon was torn down (a stale closure). The message says which. |
 | `host_misconfigured` | `AddonError` | The capability map advertises `pick:folder` but the host provided no chooser. Not a user cancel. |
-| `invalid_argument` | `AddonError` | A missing `folderNodeId`, a file part with no `contentType`, an empty / `.` / `..` segment in a service path, or a service **name** that is empty, `.`, `..`, or contains `/`. |
+| `invalid_argument` | `AddonError` | A missing `folderNodeId`, a file part with no `contentType`, an empty / `.` / `..` segment in a service path, a service **name** that is empty, `.`, `..`, or contains `/`, or a `stateId` that is neither a string nor a whole number (and, for `state.revisions`, one that is empty, `.` or `..`). |
 | `unsupported_capability` | `UnsupportedCapabilityError` | The capability is in the map and false. |
 | `unknown_capability` | `UnsupportedCapabilityError` | The capability is not in the map at all. |
 | `network_error` | `ServiceUnavailableError` | The request never reached the host — offline, DNS failure, a dropped connection. Reads the same way as a 503: retry later. |
@@ -1108,6 +1266,15 @@ built against the other.
    capabilities by raising `host.level` and flipping the map, which is why feature detection written
    today keeps working without a version check.
 
+7. **`state.list()` stays one entry per saved item.** Keys are added to an entry — `revision` arrived
+   at level 3 — but a revision, or any other per-item history, will never appear as a *second entry*.
+   A gallery built from this list can count on one row per design. This is why level 3 required no
+   change to any already-published bundle.
+
+8. **`host.level` only ever rises**, and a level that shipped keeps meaning what it meant. Reading
+   `host.level >= N` is a stable way to require a feature the host announced without a capability of
+   its own (binary output at 2, revising at 3).
+
 ---
 
 ## 7. Not in this version
@@ -1118,12 +1285,16 @@ up when the host ships it — no new release of your bundle required.
 
 | Not available | Will be announced by |
 |---|---|
-| Creating, updating and deleting saved states from your bundle | `state:crud` |
+| Renaming a saved state without re-saving it, and deleting one at all | `state:crud`. **Revising is not this** — `stateId` on `files.save` (shipped at level 3) updates an item through the *save* door, which writes library bytes. A rename-only or delete path needs the direct `PATCH`/`DELETE` endpoints this capability names, and neither exists. |
+| Deleting, pruning, diffing or annotating a **revision** | Not reserved. The history is deliberately thin: append on save, read back, load old params into your form. Nothing else was built, and nothing is planned under a name you can detect. |
+| Paging on `state.list()` or `state.revisions()` | Not reserved. Both are unbounded today and stay that way; if either ever needs bounding it will be a cursor plus a `has_more`, not a silent cap. |
+| A per-revision archive of the output bytes | Not reserved. One file per item, overwritten (§3). The params are the history; on a chunk-backed host the old bytes also survive in the library's own version chain, but that is the host's storage backend and not something your bundle can require. |
 | Addon-owned collections — structured records that are neither files nor states | `data` |
 | Reading maker data: inventory, projects, BOM | `maker:read` |
 | Reading the user's current project | `project:current` |
 | Outbound HTTP to anything but a declared sidecar | Not reserved. The host makes no arbitrary outbound requests on an addon's behalf, by design; a future permission model would name specific origins. |
 | ~~Binary file output~~ | **Shipped at host level 2.** It never got a capability of its own: it is the same `library:write` door growing a second body type, so a second name would be `true` exactly when `library:write` is and would carry no information. `min_host: 2` is how a bundle requires it. |
+| ~~Revising a saved state instead of creating a second one~~ | **Shipped at host level 3**, as `stateId` on `files.save`, with `state.revisions` for the history and `host.launch` for the deep link. Same reasoning as the row above — an optional parameter on an existing door, so no capability name. `min_host: 3` is how a bundle requires it. |
 | Async / long-running jobs — submit, poll, collect | Not reserved. Every sidecar call is synchronous and holds a host thread for its duration, which is why `service_timeouts` (§2) has a ceiling; a job surface would be named `jobs:*` once something needs one. |
 
 ```js

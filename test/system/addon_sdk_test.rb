@@ -315,12 +315,144 @@ class AddonSdkTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # ---- state revisions (host level 3) -------------------------------------------------------
+
+  # A REAL SAVE THROUGH THE REAL DOOR, DRIVEN BY THE FIXTURE ITSELF, returning the state it created.
+  # Deliberately not `maker_addon_states.create!`: that produces a shape the product never does — a
+  # state with no AddonFile rows at all — so every later question about the item's own output
+  # (owned_destinations, what a revision may replace) would be asked of a row that has none. This is
+  # also the only way to reach the door from a system test, which has no integration POST helper.
+  #
+  # A PLAIN FOLDER, NEVER A PROJECT'S, for the reason the pickFile test one screen up records: §14f's
+  # eager intake nudge files a project folder's outputs into category subfolders the moment they
+  # land, which moves the very nodes a revision is about between the save and the assertion.
+  def save_through_sdk_fixture(user, folder, fname:)
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&fname=#{fname}"
+    click_button "Save"
+    assert_selector "[data-role=sdk-status]", text: "Saved."
+    user.maker_addon_states.order(:id).last
+  end
+
+  def fill_in_state_id(value)
+    find("[data-role=sdk-state-id]").set(value.to_s)
+  end
+
+  # THE WIRE FIELD, ASSERTED ON WHAT THE SERVER RECORDED. `state.revision` and the snapshot rows are
+  # the far side of the whole chain (bundle -> FormData -> the browser's own serializer -> Rack ->
+  # #create), which is the only vantage point from which "the field survived" is a fact rather than
+  # a hope — the rule this file already follows for service.post. A test asserting the fixture said
+  # "Saved." would pass just as happily on a save that silently created a SECOND item, which is
+  # exactly the pile-up this feature exists to end.
+  test "files.save carries stateId through to the save door as a revision" do
+    user = User.find_by!(email: "sdk@example.com")
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "sdk-revise")
+
+    state = save_through_sdk_fixture(user, folder, fname: "revise-one.svg")
+    assert_equal 1, state.revision
+
+    fill_in_state_id(state.id)
+    click_button "Save revision"
+    assert_selector "[data-role=sdk-revision-out]", exact_text: "Saved."
+
+    assert_equal 1, user.maker_addon_states.count, "a revision must not create a second saved item"
+    assert_equal 2, state.reload.revision
+    assert_equal [ 1, 2 ], state.revisions.pluck(:revision)
+    assert_equal 2, state.revisions.find_by(revision: 2).data["n"]
+    # THE RENAME LANDS ON THE ITEM, NOT THE SNAPSHOT — a second, independent reading of the same
+    # fact, since a save that had taken the CREATE branch would have left this name on a new row.
+    assert_equal "sdk fixture revised", state.name
+    assert_no_console_errors
+  end
+
+  # NEWEST FIRST, WITH EACH SNAPSHOT'S OWN PARAMS. EXACT text, not a substring — this file's own
+  # onReplace assertion records why: "v2:2" is a substring of "v2:2,v1:-", so a `text:` match would
+  # pass on a history that returned only the current revision, which is the likeliest way for this
+  # endpoint to be wrong.
+  test "state.revisions reads the history newest first, each with the params it was saved with" do
+    user = User.find_by!(email: "sdk@example.com")
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "sdk-history")
+
+    state = save_through_sdk_fixture(user, folder, fname: "history-one.svg")
+    fill_in_state_id(state.id)
+    click_button "Save revision"
+    assert_selector "[data-role=sdk-revision-out]", exact_text: "Saved."
+
+    click_button "Load revisions"
+    assert_selector "[data-role=sdk-revisions-out]", exact_text: "v2:2,v1:-"
+    assert_no_console_errors
+  end
+
+  # REJECTED, NOT ENCODED, AT BOTH DOORS. `encodeURIComponent("..")` is ".." verbatim, so a URL built
+  # from one is normalized by THE BROWSER before the request is sent — the route the server guards is
+  # never reached and the call misroutes SILENTLY instead of being refused. Only a real browser can
+  # observe that, which is why this lives here and not in a request test.
+  #
+  # THE ARRAY IS A DIFFERENT DEFECT IN THE SAME LINE and is invisible to a request test for the
+  # opposite reason — it never survives to become a request at all. `String([n, n])` is "n,n", which
+  # the server's own String-or-Integer allowlist (Tools::AddonsController#find_addon_state) cannot
+  # refuse because JS already flattened it to a String, and which ActiveRecord's integer cast turns
+  # back into n. On the READ door that serves a history nobody asked for; on the WRITE door it
+  # appends a revision to a design nobody named.
+  #
+  # A REAL STATE IS SAVED FIRST, AND THAT IS WHAT MAKES THE ARRAY HALF MEAN ANYTHING. The fixture
+  # builds the laundered value out of the id in the input, so removing the guard makes those two
+  # calls SUCCEED against a live row rather than 404 — §14c's recorded lesson, where a traversal
+  # test aimed at nothing passed under mutation because "refused" and "not found" both produce a 404.
+  test "a state id that cannot be spelled is refused before any request, at both doors" do
+    user = User.find_by!(email: "sdk@example.com")
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "sdk-guards")
+
+    state = save_through_sdk_fixture(user, folder, fname: "guards-one.svg")
+    fill_in_state_id(state.id)
+
+    click_button "Probe state id guards"
+    refused = "AddonError:invalid_argument"
+    assert_selector "[data-role=sdk-revisions-guards]",
+                    exact_text: "empty=#{refused} dot=#{refused} dotdot=#{refused} " \
+                                "array=#{refused} write=#{refused}"
+    # A SECOND, INDEPENDENT DETECTOR, and deliberately not the primary one — nothing reached the
+    # network, so there is no failed fetch for Chrome to log SEVERE. The same reasoning as the
+    # service-traversal test above.
+    assert_no_console_errors
+  end
+
+  # THE DEEP LINK, AND THE ABSENCE OF ONE. Both halves in one test because the distinction IS the
+  # contract: `launch` is always an object and `stateId` is null when there is nothing to open, so a
+  # bundle can tell "no deep link" from "a host too old to have one" — which a missing key could not.
+  #
+  # `old:` IS THE HALF WITH NOTHING ELSE PINNING IT, and it is here because the first version of this
+  # test could not fail for it. Every ctx this server serves carries `launch`, so the getter's
+  # compatibility default is unreachable from a real page: dropping `stateId: null` while keeping the
+  # spread left the whole file GREEN, because the spread still found the server's own key. The
+  # fixture calls the getter with a level-2 ctx (no `launch` at all) so the answer a published bundle
+  # would get from an older host is a string this assertion can read.
+  LEVEL_2_LAUNCH = '{"stateId":null}'.freeze
+
+  test "host.launch carries the resolved deep link, and none is not an error" do
+    user = User.find_by!(email: "sdk@example.com")
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "sdk-launch")
+
+    state = save_through_sdk_fixture(user, folder, fname: "launch-one.svg")
+
+    visit "/tools/sdk-fixture?state=#{state.id}"
+    assert_selector "[data-role=sdk-launch]",
+                    exact_text: "launch:#{state.id} old:#{LEVEL_2_LAUNCH}"
+
+    visit "/tools/sdk-fixture"
+    assert_selector "[data-role=sdk-launch]", exact_text: "launch:none old:#{LEVEL_2_LAUNCH}"
+    assert_no_console_errors
+  end
+
   # A MANIFEST WRITTEN AGAINST AN OLDER HOST STILL RUNS. The sdk-fixture declares `min_host: 1`
-  # while this host is LEVEL 2 — the compatibility direction that has to keep working, since all
-  # three published bundles declare exactly that and Rails is never rebuilt when one is republished.
-  # Asserted through a real mount rather than on the Addon struct: `available?` answering true is
-  # not the same claim as the page rendering.
-  test "a min_host 1 manifest still mounts against a level 2 host" do
+  # while this host is at whatever Maker::Addons::Host::LEVEL currently says — the compatibility
+  # direction that has to keep working, since all three published bundles declare exactly that and
+  # Rails is never rebuilt when one is republished. Asserted through a real mount rather than on the
+  # Addon struct: `available?` answering true is not the same claim as the page rendering.
+  #
+  # NEITHER THE NAME NOR THIS COMMENT NAMES THE HOST'S LEVEL, deliberately: every assertion below
+  # derives it, so a literal here would be prose that goes stale on the next bump with nothing able
+  # to go red — which is exactly what happened to the "level 2" this line used to read.
+  test "a min_host 1 manifest still mounts against a newer host" do
     assert_equal 1, Maker::Addons::Registry.find("sdk-fixture").min_host
     assert_operator Maker::Addons::Host::LEVEL, :>, 1, "this test proves nothing at level 1"
 

@@ -130,6 +130,19 @@ const ERROR_CLASSES = {
   service_unavailable: ServiceUnavailableError,
   // service_error is deliberately ABSENT — sidecar failures never reach errorFrom at all; see
   // service.get/post and serviceErrorFrom below.
+  //
+  // not_found IS ALSO ABSENT, AND UNLIKE service_error IT IS A CODE THAT REALLY DOES ARRIVE HERE —
+  // from TWO endpoints meaning TWO different things. #file answers "No such file in your library."
+  // (files.read) and #create/#revisions answer "No such saved item for this addon."
+  // (files.save with a stateId, state.revisions). ONE class covering both would be a class whose
+  // meaning depends on which method threw, which is precisely what `instanceof` cannot express: a
+  // bundle catching around a block that both reads a file and loads a history could not tell them
+  // apart, while the SAME bundle already knows which call it made. So this stays a plain AddonError
+  // carrying `code === "not_found"` and `status === 404`, and the call site is the disambiguator.
+  //
+  // §14a's rule if a caller ever genuinely must branch: the answer is a SUBCLASS — and that needs
+  // the HOST to send two distinct codes first. Inventing two classes over one wire code here would
+  // only move the guess into the SDK.
 }
 
 // READS BOTH BODY SHAPES ON PURPOSE. The nested {error: {code, message}} contract lands in PR 3;
@@ -225,7 +238,13 @@ function encodePathSegments(path) {
 // escapes all four. The backslash is the one worth naming — a browser treats it as a path separator
 // in a special-scheme URL, so `"..\\..\\evil"` would normalize like the slash form — but the encoding
 // runs while we are still building a string, before any URL parser sees it, so "%5C" is what ships.
-// Only ".", ".." and "" survive encodeURIComponent untouched, and those are exactly the clauses here.
+// A GREAT DEAL survives encodeURIComponent untouched — every alphanumeric plus `- . _ ~ ! * ' ( )`,
+// so "a.b" and "..." come through verbatim; an earlier draft of this line claimed these three were
+// the only survivors and that is simply false. The true claim is narrower and is the one the guard
+// rests on: ".", ".." and "" are the only survivors A URL PARSER ACTS ON — the two dot-segments it
+// resolves away, and the empty segment that builds a double slash — so those are exactly the clauses
+// here. (The %2e spellings WHATWG also treats as dot-segments need no clause of their own: the "%"
+// escapes to "%25", so "%2e%2e" ships as "%252e%252e" and is inert. Verified, not reasoned.)
 //
 // The type check earns its place rather than mirroring encodePathSegments (which throws a bare
 // TypeError off `.split`): `encodeURIComponent(undefined)` is the STRING "undefined", so a missing
@@ -240,6 +259,56 @@ function encodeServiceName(name) {
     )
   }
   return encodeURIComponent(name)
+}
+
+// A SAVED ITEM'S ID, AS THE STRING THAT WILL BE SENT — a String or an INTEGER Number and nothing
+// else, mirroring the allowlist Tools::AddonsController#find_addon_state applies on the other end.
+// Both spellings are ordinary: `state.list()` answers integers, while an id read out of an <input>
+// or a URL is a string.
+//
+// THE REFUSAL EXISTS BECAUSE `String(…)` WOULD LAUNDER THE VALUE PAST THAT SERVER GUARD, and the
+// server's own comment records what it costs when something does: an Array reached `find_by(id:)`
+// and RESOLVED, "to whichever of the user's own boxes the database returned first — a design nobody
+// named, with no error anywhere". It refuses an Array today — but only because Rack hands it one.
+// `String([1, 2])` is the string "1,2", which is a perfectly good String to that allowlist and
+// which ActiveRecord's integer cast turns into the FIRST id in the list — probed against real rows:
+// `find_by(id: "15,16")` returned state 15. So coercing here would re-open, from the client,
+// exactly the hole the server closed — silently, and on the save door it WRITES.
+//
+// NOT A VALIDATION OF THE STRING ITSELF, deliberately, and the server says the same: "1abc" casts
+// to 1 and opens state 1. That is a bound parameter inside both the user and addon scopes, so there
+// is nothing to reach and nothing to inject, and refusing it would make a hand-typed URL fail in a
+// way no user could read. What is refused here is only the shape JS itself would flatten.
+function stateIdString(id) {
+  if (typeof id !== "string" && !Number.isInteger(id)) {
+    throw new AddonError(
+      "invalid_argument",
+      `Invalid state id ${JSON.stringify(id)}: a state id is a string or a whole number — the id ` +
+        "from state.list(), ctx.launch, or a saved item's own id.",
+    )
+  }
+  return String(id)
+}
+
+// THE SAME ID AS A URL PATH SEGMENT, WHICH ADDS THE ENCODING RULE encodeServiceName AND
+// encodePathSegments ALREADY HOLD: REJECT, NEVER NORMALIZE. `encodeURIComponent("..")` leaves ".."
+// untouched, so `/tools/k/states/../revisions` is resolved by THE BROWSER'S OWN URL PARSER before
+// the request is sent — the route the server guards is never asked, and the call misroutes silently
+// instead of failing loudly. ".", ".." and "" are the only values that survive encodeURIComponent
+// AND mean something to a URL parser — plenty of others survive it untouched ("a.b", "..."), they
+// just are not dot-segments; "/", "#", "?", "%" and "\" all escape. encodeServiceName's own comment
+// works through both halves of that list.
+//
+// An empty id is refused for the second reason too: left alone it builds ".../states//revisions".
+function encodeStateId(id) {
+  const s = stateIdString(id)
+  if (s === "" || s === "." || s === "..") {
+    throw new AddonError(
+      "invalid_argument",
+      `Invalid state id ${JSON.stringify(s)}: it cannot be empty, "." or "..".`,
+    )
+  }
+  return encodeURIComponent(s)
 }
 
 // IS THIS BODY BYTES RATHER THAN TEXT? `File extends Blob`, so the first clause covers a File the
@@ -359,7 +428,17 @@ class Host {
     // chooser, and null is deliberately not the same folder as "" (the library root) — defaulting a
     // null to "" is exactly how `folderNodeId: (await host.files.pickFolder())?.nodeId` would
     // silently save to the root on Esc. Pass "" explicitly when the root really is the destination.
-    save: async ({ name, data = {}, folderNodeId, files: outputFiles = [], onReplace = null }) => {
+    //
+    // `stateId` NAMES THE SAVED ITEM THIS SAVE REVISES, and omitting it is what every bundle
+    // published so far does — so a save without it sends a byte-identical request to what it always
+    // has, and creates a new item. Requires host level 3; an OLDER host ignores the field entirely
+    // and creates, which is why a bundle that depends on revising declares `min_host: 3` rather than
+    // feature-detecting a capability. There is none, on purpose: revising is this same
+    // `library:write` door growing an optional parameter, so a capability would be true for exactly
+    // the hosts that answer `library:write` true and would carry no information
+    // (Maker::Addons::Host::LEVEL says so at length).
+    save: async ({ name, data = {}, folderNodeId, files: outputFiles = [], onReplace = null,
+                   stateId = null }) => {
       this._require("library:write")
       if (folderNodeId === null || folderNodeId === undefined) {
         throw new AddonError(
@@ -417,11 +496,27 @@ class Host {
         return { name: f.name, content_type: f.contentType, body: f.body }
       })
 
+      // RESOLVED ONCE, OUT HERE, RATHER THAN INSIDE build() — which runs a second time for the
+      // overwrite retry, so the same string is sent both times by construction.
+      //
+      // NOT "so an unusable id is refused before the first request", WHICH AN EARLIER DRAFT OF THIS
+      // COMMENT CLAIMED AND WHICH IS FALSE. `build(false)` is evaluated as an ARGUMENT to _post
+      // below, so a throw inside build precedes the request just as surely. Measured rather than
+      // argued: with the validation moved inside build, the number of requests reaching #create was
+      // still ZERO. There is no round trip here to save.
+      //
+      // `null` MEANS "CREATE" AND IS THE ONLY VALUE THAT OMITS THE FIELD. A caller passing `""` gets
+      // `state_id=""` on the wire, which the door treats exactly as an absent one (`present?`) —
+      // that is the compatibility promise a bundle rendering an empty hidden field depends on, and
+      // it has a mutation-checked test of its own server-side. Nothing to special-case here.
+      const stateIdField = stateId === null ? null : stateIdString(stateId)
+
       const build = (overwrite) => {
         const body = new FormData()
         body.append("name", name)
         body.append("data", JSON.stringify(data))
         body.append("parent_node_id", folderNodeId)
+        if (stateIdField !== null) body.append("state_id", stateIdField)
         // THE JSON ARRAY IS THE ORDERED MANIFEST FOR BOTH SHAPES — a part entry names its part
         // rather than carrying its bytes, so there is exactly one list and one index. The server
         // pairs `files[i]` with the destination it resolved for `files[i]`; two collections with
@@ -543,7 +638,58 @@ class Host {
         throw new AddonError("invalid_response", "The host returned a non-JSON states list.", null, res.status)
       }
     },
+
+    // ONE SAVED ITEM'S REVISION HISTORY, NEWEST FIRST — [{revision, data, created_at}].
+    //
+    // LAZY BY DESIGN, WHICH IS WHY IT IS A SECOND CALL RATHER THAN A KEY ON list(). `state.list()`
+    // carries only each item's current `revision` NUMBER, so a gallery pays nothing for histories
+    // nobody expanded; this is what a bundle calls when one is.
+    //
+    // `state:list` AND NOT `state:crud`. The capability names the READ side of the state surface,
+    // which this is — a GET of rows the same scope already lists (Tools::AddonsController#revisions
+    // resolves through the very lookup #states does). `state:crud` is still false and still reserved
+    // for creating, updating and deleting states DIRECTLY (docs/addon-api-v1.md §4's capability
+    // table and §7's reserved list); requiring it here would make this method throw on every host
+    // there is.
+    //
+    // THE RESPONSE IS THE WHOLE HISTORY, UNBOUNDED, AND THE SDK DOES NOT CAP IT EITHER. The host
+    // refuses to (its own #revisions comment argues it): a limit with no paging is a silent
+    // truncation, and a bundle handed a history that quietly stops at N cannot tell that from a
+    // design saved N times. Slicing here would reintroduce exactly that, one layer further from
+    // anything able to notice.
+    revisions: async (id) => {
+      this._require("state:list")
+      const res = await this._fetch(`${this._ctx.urls.states}/${encodeStateId(id)}/revisions`,
+                                    { headers: { Accept: "application/json" } })
+      if (!res.ok) throw await errorFrom(res)
+      try {
+        return await res.json()
+      } catch {
+        throw new AddonError("invalid_response", "The host returned a non-JSON revision list.",
+                             null, res.status)
+      }
+    },
   }
+
+  // WHICH SAVED ITEM THIS PAGE WAS OPENED FOR — `{stateId}`, resolved server-side from `?state=`,
+  // with `stateId` null when there is nothing to open.
+  //
+  // ALWAYS AN OBJECT, NEVER undefined, AND THAT IS THE WHOLE CONTRACT. A host that predates this
+  // sends no `launch` key at all, which reads as `undefined` in JS and cannot be told apart from
+  // "no deep link" — the same argument Host::CAPABILITIES makes for every capability value being a
+  // real boolean. Object spread ignores a nullish operand, so the one literal below covers both an
+  // old host (no key) and a new one (a key whose `stateId` may be null).
+  //
+  // A GETTER RETURNING A FRESH OBJECT, for capabilities()'s own stated reason a few methods up:
+  // `_ctx` is private by design, and handing back a live reference into it would let a bundle mutate
+  // the host's own view of what it was opened for. SYNCHRONOUS, unlike capabilities(), matching
+  // `level` and `addon` — like those this is a fact fixed when the page was served, not something a
+  // Ring-2 host would have to answer over RPC.
+  //
+  // AND IT IS READ THROUGH `host` AT CALL TIME, like everything else here: a bundle that captures
+  // `const { launch } = host` at module top level goes on serving the PREVIOUS mount's deep link
+  // after a Turbo re-mount, because an ES module is evaluated once per URL per page (see the header).
+  get launch() { return { stateId: null, ...this._ctx.launch } }
 
   // ONE URL BUILDER FOR ALL THREE VERBS, WHICH IS WHAT MAKES THE GUARDS UNFORGEABLE. get, post and
   // url all land here, so `encodeServiceName` and `encodePathSegments` cannot be applied to two of

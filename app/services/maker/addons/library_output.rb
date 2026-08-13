@@ -20,7 +20,9 @@ module Maker
       module_function
 
       # files: [{ name:, bytes:, content_type:, role:, parent_node_id?, replace? }].
-      # Returns the created AddonFiles.
+      # Returns this save's AddonFiles — created, or UPDATED IN PLACE where a replace kept the node
+      # and the state already had a row for it (see #upsert_file!). Not "the created AddonFiles",
+      # which is what this line said while the door only ever created.
       #
       # TWO PER-FILE OPTIONS, both defaulting to today's behaviour so no existing caller changes:
       #
@@ -44,8 +46,32 @@ module Maker
           replace = f[:replace].present?
           node_id = caps.port_writable? ? write_port(user, dest, f, replace) : write_chunk(user, dest, f, replace)
           enqueue_preview(user, node_id, f[:name])
-          state.files.create!(node_id:, role: f[:role], content_type: f[:content_type], position: i)
+          upsert_file!(state, node_id:, role: f[:role], content_type: f[:content_type], position: i)
         end
+      end
+
+      # UPSERT, NOT CREATE, BECAUSE A REPLACE KEEPS THE NODE. `maker_addon_files` is unique on
+      # [addon_state_id, node_id], so a second save AGAINST THE SAME STATE — a revision, which
+      # rewrites the same node in place — hands this method a node the state already has a row for,
+      # and `create!` there is a bare ActiveRecord::RecordNotUnique 500 rather than any refusal
+      # somebody designed. Identical behaviour for a first save, and for every save that creates a
+      # new state: there is no row, so this creates one.
+      #
+      # A ROW WHOSE FILE THE BUNDLE STOPPED EMITTING IS LEFT ALONE, deliberately. That file is
+      # still an ordinary library file the user may have renamed, attached to a project or put in a
+      # BOM, and "a migration must not delete user bytes" (§14c) binds a save door too — the row is
+      # the only record that this state produced it.
+      #
+      # THE COST, STATED PROPERLY: `position` IS NOW ONLY UNIQUE WITHIN ONE SAVE, AND NOTHING ON
+      # THE ROW SAYS WHICH SAVE THAT WAS. A revision emitting a differently-named file leaves the
+      # old row at position 0 and writes a new one at position 0 — verified, two rows, both zero —
+      # so the relative order of a stale row and a current one is arbitrary and unrecoverable.
+      # Maker::AddonState orders by (position, id) so at least the JSON #states hands a bundle is
+      # stable request to request; that is a tiebreak, not a repair.
+      def upsert_file!(state, node_id:, role:, content_type:, position:)
+        row = state.files.find_or_initialize_by(node_id:)
+        row.update!(role:, content_type:, position:)
+        row
       end
 
       # The live file already at (parent, name), or nil — what a replace rewrites. Shared by both

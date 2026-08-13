@@ -18,6 +18,11 @@ class ProjectsController < ApplicationController
   # come from either.
   include MoveConflicts
 
+  # "Edit in <Addon>" for an attached file an addon produced — the attachment tiles carry the same
+  # right-click menu as the Files page, so they need the same attribute. Read-only, like everything
+  # else this controller does with the library.
+  include AddonOrigins
+
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
   # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
   # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
@@ -55,6 +60,11 @@ class ProjectsController < ApplicationController
     # disappears on its own when the reaper clears the rows.
     @missing_attachment_count = missing.size
     @thumbs = Maker::Previews::ThumbnailMap.for(current_user, @attachments.map(&:node_id))
+    # ATTACHMENTS ONLY, NOT THE BUILD-LOG PHOTOS BELOW. `_attachment_group` is the only partial on
+    # this page whose tiles carry `contextmenu->filemenu#open`; `_log_entry`'s photos are spans
+    # driven by the `thumbs` controller alone, with no menu to add an entry to — so an origin
+    # resolved for one would be work nothing reads.
+    @addon_origins = addon_origins_for(@attachments.map(&:node_id))
     # :rich_text_body is Action Text's association for `has_rich_text :body`. Without it, each
     # entry's body is its own query — 15 entries cost 15 extra round-trips. Pinned by
     # test/integration/web/page_query_budget_test.rb.

@@ -191,6 +191,103 @@ module Tools
       assert_equal FIXTURE_KEY, ctx.dig("addon", "key")
     end
 
+    # THE LITERAL IS THE POINT, and it is why this test exists beside the one above rather than
+    # inside it: that one derives its expectation from Maker::Addons::Host::LEVEL, so it stays green
+    # through any bump and can only see the value failing to REACH the blob. A bundle declaring
+    # `min_host: 3` is asking about this number, so the number itself is what has to be asserted.
+    # Sibling of host_test.rb's own ledger assertion, one layer down: that one pins the level against
+    # the capability set, this one pins that the shell actually serves it.
+    test "the host announces level 3" do
+      assert_equal 3, rendered_ctx["hostLevel"]
+    end
+
+    # ---- the ?state= deep link ------------------------------------------------------------------
+
+    # READS THE RESPONSE THE TEST ITSELF JUST ISSUED, unlike #rendered_ctx which does its own bare
+    # GET — every test here needs a query string on the URL, so the request has to be the test's.
+    def launch_from_page
+      JSON.parse(css_select("[data-addon-ctx-value]").first["data-addon-ctx-value"])["launch"]
+    end
+
+    test "a ?state= deep link is resolved into ctx.launch" do
+      state = save_box(name: "shelf box")
+      get tools_addon_path(FIXTURE_KEY, state: state.id)
+      assert_response :success
+      assert_equal state.id, launch_from_page["stateId"]
+    end
+
+    # ALWAYS PRESENT, NEVER MERELY ABSENT. A missing key reads as `undefined` in JS and cannot be
+    # told apart from a host that predates this — the same argument Host::CAPABILITIES makes for
+    # every value being a real boolean. `key?` is what asserts that; `assert_nil` alone passes for a
+    # blob that has no `launch` at all.
+    test "no ?state= means a null stateId, not a missing key" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert launch_from_page.key?("stateId"), "the key must always be present"
+      assert_nil launch_from_page["stateId"]
+    end
+
+    # SILENTLY IGNORED, NOT A 404 AND NOT A 500. A stale bookmark, a deleted box or a hand-mangled
+    # URL must not take the tool down — the id is a HINT about which item to open, never an
+    # authorization decision, so the page renders and the bundle simply starts empty. The save door
+    # answers the opposite way for the same id; #find_addon_state states why, once.
+    #
+    # "UNRESOLVABLE", NOT "MALFORMED", AND THE DIFFERENCE IS MEASURED. `?state=1abc` CASTS TO 1 and
+    # opens state 1, as do `" 1 "` and `"1.0"`, because ActiveModel's Integer type coerces rather
+    # than refuses — harmless (a bound parameter inside both scopes, exactly what `find(params[:id])`
+    # does throughout Rails), shared with the save door, and so not a property of this endpoint.
+    # #find_addon_state carries that argument. An earlier version of this comment claimed "plain
+    # garbage all answers nil", which is a stronger claim than the code makes.
+    #
+    # BOTH UNRESOLVABLE ENTRIES BELOW TAKE THE SAME PATH, AND IT IS `WHERE id = NULL` FOR BOTH.
+    # `"not-a-number"` and `""` are stopped by `ActiveModel::Type::Integer#serialize`'s
+    # `non_numeric_string?` guard, which returns nil BEFORE `cast` runs — so neither reaches a
+    # comparison that could ever be true. (An earlier version of this comment said `"not-a-number"`
+    # "casts to 0 and matches nothing", which is what `cast` alone does and is where that came from;
+    # it was both wrong and weaker, since `= 0` merely happens to match no row while `= NULL` cannot
+    # match one. #launch_state_id's own comment already described this mechanism correctly for `""`,
+    # and two comments in one file must not disagree about one behaviour.)
+    #
+    # THE BLANK IS HERE AS BEHAVIOUR, NOT AS A GUARD: it answered nil under the `blank?`
+    # short-circuit this code once had and answers nil now that it is gone, on any adapter. That is
+    # the opposite of the save door, where `""` must reach the CREATE branch and a `nil?` there is a
+    # 404 on every such save — which is why THAT half has a mutation-checked guard of its own and
+    # this one honestly cannot.
+    test "an unknown, foreign, other-addon or unresolvable ?state= renders the page with a null stateId" do
+      other = User.create!(email: "other3@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+
+      [ 999_999, theirs.id, foreign.id, "not-a-number", "" ].each do |bad|
+        get tools_addon_path(FIXTURE_KEY, state: bad)
+        assert_response :success, "?state=#{bad.inspect} must still render the tool"
+        assert_nil launch_from_page["stateId"], "?state=#{bad.inspect} must not resolve"
+      end
+    end
+
+    # A LIST OF IDS RESOLVES TO NOTHING, AND THIS WAS PROBED RATHER THAN REASONED ABOUT. `?state[]=`
+    # arrives as an ARRAY and `find_by(id: [...])` is an `IN`: without the type allowlist it
+    # RESOLVED, opening whichever of this user's own designs the database returned first — a design
+    # nobody named, with nothing anywhere reporting it, and the editor then revising THAT one. Both
+    # scopes still held, so nothing is disclosed; it is refused because it is SILENT, and because the
+    # SAME allowlist has to hold on the save door, where the same shape WRITES.
+    #
+    # ONE RESOLVER, WHICH IS WHY ONE ALLOWLIST COVERS BOTH. The deep link, #create and #revisions all
+    # resolve through #find_addon_state, so the type check cannot exist on one path and silently not
+    # on another — this repo's recorded failure shape (§14c), answered structurally rather than by
+    # two guards somebody has to keep in step. What the three callers disagree about is only what a
+    # MISS means (nil here, 404 there), which is why the shared method renders nothing and raises
+    # nothing.
+    test "a ?state= that is not a single id resolves to nothing" do
+      first = save_box(name: "first box")
+      second = save_box(name: "second box")
+
+      get tools_addon_path(FIXTURE_KEY, state: [ first.id, second.id ])
+
+      assert_response :success
+      assert_nil launch_from_page["stateId"]
+    end
+
     test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do
       ctx = rendered_ctx
       assert_equal tools_addon_path(FIXTURE_KEY),        ctx.dig("urls", "save")
@@ -414,6 +511,445 @@ module Tools
       assert_equal "3mm birch test", state.name
       assert_equal "material-test-grid", state.data["generator"]
       assert_equal 1, state.files.count
+      assert_equal [ 1 ], state.revisions.pluck(:revision),
+                   "a create is revision 1, so a state's history is complete from its first save"
+    end
+
+    # ---- save: revising an existing state --------------------------------------------------
+    #
+    # `state_id` MEANS "THIS SAVE IS A NEW REVISION OF THAT SAVED ITEM", and its ABSENCE is the
+    # compatibility contract: every already-published bundle sends none and must keep creating,
+    # byte for byte, because publishing a bundle IS the addon deploy and Rails is never rebuilt
+    # (§14c). Every other save test in this file sends no `state_id`, which is what pins that.
+    #
+    # Saves once and returns the state, so every revision test starts from a REAL save rather than
+    # a hand-built row — for two reasons this file already carries scars from: a fixture with no
+    # AddonFile rows cannot exercise the file upsert at all, and a `nodes.create!` fixture has a
+    # NULL `storage_path`, which is a file that cannot exist on share/s3, where the port addresses
+    # a file BY that column (§14a). See the mixed-save test below for the same note at length.
+    #
+    # THE OUTPUT NAME IS UNIQUE PER CALL BY DEFAULT, which is a property of the share leg rather
+    # than fussiness: FileLayer::Share#write puts a real FILE under LIBRARY_PATH, and the test
+    # transaction rolls back the `nodes` row but cannot roll back the file — so a fixed name saved
+    # by two tests collides on disk in whichever runs second, on one leg only. The sibling test at
+    # "save refuses a name already taken…" carries the same warning.
+    #
+    # `body:` IS A KWARG SO A REPLACE CAN BE PROVEN RATHER THAN ASSUMED. Two saves that both write
+    # "<svg/>" leave a byte assertion that passes whether or not the second write happened at all;
+    # a test whose subject IS the second write has to be able to name different bytes.
+    def save_box(name:, params: { "h" => "60" }, file: "shelf-box-#{SecureRandom.hex(4)}.svg",
+                 body: "<svg/>", state_id: nil, parent_node_id: nil, overwrite: nil)
+      post tools_addon_path("widgetkit"), params: {
+        name:,
+        data: { generator: "tray", params: }.to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: } ].to_json,
+        # `.compact` so an unset option is ABSENT rather than nil: `state_id: nil` on the wire is
+        # the blank the door reads as "no target", but a test asserting the create path must not
+        # depend on that reading being right.
+        **{ state_id:, parent_node_id:, overwrite: }.compact
+      }
+      assert_redirected_to tools_addon_path("widgetkit")
+      # RETURNS THE STATE THIS SAVE TARGETED, which for a revision is `state_id` and NOT
+      # `order(:id).last`. The two agree only while a test has one state; a test that creates a
+      # second box and then revises the first would silently get the wrong row back, and every
+      # assertion after it would be about a state the save never touched. Still user-scoped, so a
+      # helper cannot reach across tenants either.
+      #
+      # `present?`, NOT PLAIN TRUTHINESS, BECAUSE IT MUST ASK THE DOOR'S OWN QUESTION. `""` is
+      # truthy in Ruby and `"".present?` is false, so a `state_id: ""` save — which #create
+      # correctly treats as "no target" and lets CREATE — would send this line looking for a state
+      # with id `""` and raise RecordNotFound from the HELPER, on a request that succeeded. Two
+      # spellings of one question is the drift this file has scars from; keep them identical.
+      if state_id.present?
+        @user.maker_addon_states.find(state_id)
+      else
+        @user.maker_addon_states.order(:id).last
+      end
+    end
+
+    test "a save carrying state_id revises the box instead of creating a second one" do
+      state = save_box(name: "shelf box", params: { "h" => "60" })
+
+      assert_no_difference -> { @user.maker_addon_states.count } do
+        save_box(name: "shelf box", params: { "h" => "80" }, state_id: state.id)
+      end
+
+      state.reload
+      assert_equal 2, state.revision
+      assert_equal "80", state.data.dig("params", "h"), "the state carries the LATEST params"
+      assert_equal [ 1, 2 ], state.revisions.pluck(:revision)
+      assert_equal "60", state.revisions.find_by(revision: 1).data.dig("params", "h"),
+                   "revision 1 still holds what was saved AT revision 1, not the state's later data"
+      assert_equal "80", state.revisions.find_by(revision: 2).data.dig("params", "h")
+
+      # THE STALE ROW STAYS AND ITS POSITION COLLIDES WITH THE NEW ONE. This revision emitted a
+      # DIFFERENTLY-NAMED file, so it wrote a new node rather than replacing one, and
+      # Maker::Addons::LibraryOutput leaves the previous save's row alone on purpose (that file is
+      # still an ordinary library file the user may have renamed or attached, §14c). The visible
+      # cost is here: `position` is this save's index into its own outputs, so two rows now hold 0
+      # and the number means nothing ACROSS saves. Asserted so the wart is recorded rather than
+      # discovered. (Maker::AddonState orders by (position, id) so #states at least serialises them
+      # the same way twice — that tiebreak is deliberately NOT asserted here, because SQLite
+      # returns rowid order for the tied rows anyway and a test that passes with or without the
+      # `:id` cannot show the guard works.)
+      assert_equal [ 0, 0 ], state.files.pluck(:position)
+    end
+
+    # AN EMPTY `state_id` IS "NO TARGET", NOT A TARGET THAT FAILED TO RESOLVE — AND NOTHING GUARDED
+    # THIS UNTIL NOW. `#create` asks `params[:state_id].present?`, and the whole §14c compatibility
+    # promise rests on that reading: a bundle rendering an empty hidden `state_id` field is the
+    # natural way to say "no target yet", and every such save must CREATE. Swapping the door's
+    # `present?` for the plausible tidy-up `unless params[:state_id].nil?` left the entire suite
+    # GREEN while turning every one of those saves into a 404. `present?` beside a `params` fetch
+    # reads like a habit rather than a decision, which is exactly what makes it easy to "simplify" —
+    # the rationale now sits directly above the line in #create, and this test is what makes the
+    # rewrite go red rather than quiet.
+    test "an empty state_id creates, exactly as an absent one does" do
+      assert_difference -> { @user.maker_addon_states.count } => 1 do
+        save_box(name: "empty hidden field", state_id: "")
+      end
+    end
+
+    # A REVISION RENAMES THE BOX. `name` is a property of the design, not of one snapshot — a
+    # revision row records `data` and nothing else, so a rename has nowhere else to land, and a
+    # design the user has renamed must not go on showing its old name in every list.
+    test "revising updates the box name" do
+      state = save_box(name: "shelf box")
+      save_box(name: "shelf box mk2", params: { "h" => "80" }, state_id: state.id)
+      assert_equal "shelf box mk2", state.reload.name
+    end
+
+    # THE AddonFile ROWS ARE UPSERTED, BECAUSE A REPLACE KEEPS THE NODE (§14a). `maker_addon_files`
+    # is unique on [addon_state_id, node_id], so a revision that rewrites the same node in place
+    # hands Maker::Addons::LibraryOutput a node its OWN state already has a row for — and creating
+    # blindly there is a bare ActiveRecord::RecordNotUnique 500, not a refusal anybody designed.
+    #
+    # REACHABLE THROUGH THE ORDINARY DOOR, which is why this is the shape the test takes rather
+    # than something narrower: the save dialog defaults to the current project's folder, the eager
+    # nudge files the first copy into `design/`, and the re-save then resolves to `replace: true`
+    # against that same node (see "confirming the overwrite replaces the filed file in place").
+    # This is exactly that save, now carrying a `state_id`.
+    #
+    # AND IT SENDS NO `overwrite`, WHICH IS THIS TEST'S SECOND JOB. It needed one when it was
+    # written — the 409 fired on the box's OWN filed output, because nothing yet knew whose file
+    # that was — and the collision exemption is precisely what removed the need. The evidence is
+    # worth more here than in a purpose-built test: this one predates the exemption and was not
+    # written to prove it.
+    test "revising a filed output replaces it in place, keeping one node and one file row" do
+      name = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      filed = @user.nodes.present.find_by!(name:)
+      state = @user.maker_addon_states.order(:id).last
+
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { Maker::AddonFile.count } ] do
+        save_box(name: "harbor v5", file: name, state_id: state.id,
+                 parent_node_id: folder.node_id)
+      end
+
+      assert_equal 2, state.reload.revision
+      assert_equal 1, state.files.count
+      assert_equal filed.node_id, state.files.first.node_id,
+                   "the replace kept the node, so the state's own file row is the same row (§14a)"
+      assert_equal 1, @user.nodes.present.where(name:).count
+      assert_equal "<svg/>", FileLayer.current.read(@user, node_id: filed.node_id),
+                   "the revision's bytes are what is in the library now"
+    end
+
+    # 404 AND NO WRITE — never a 500, and never a silent fallback to CREATING, which would file a
+    # revision of someone else's design as a new one of yours: the pile-up this whole feature
+    # exists to end, reintroduced by its own error path. Resolved BEFORE any write, so a bad
+    # `state_id` costs nothing — hence the `nodes.count` assertion, which is what proves the 404
+    # short-circuits #create rather than merely being rendered after the bytes landed.
+    test "a state_id belonging to another user is a 404 and writes nothing" do
+      other = User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: "widgetkit", name: "not yours", data: {})
+
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "mine now",
+          data: { generator: "tray", params: {} }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: theirs.id
+        }
+      end
+      assert_response :not_found
+      assert_equal "not_found", response.parsed_body["error"]
+      assert_equal 0, theirs.reload.revisions.count
+      assert_equal 1, theirs.revision, "a refusal must not bump the counter it refused to advance"
+    end
+
+    test "an unknown state_id is a 404 and writes nothing" do
+      assert_no_difference [ -> { @user.maker_addon_states.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "ghost",
+          data: { generator: "tray", params: {} }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: 999_999
+        }
+      end
+      assert_response :not_found
+      assert_equal "not_found", response.parsed_body["error"]
+    end
+
+    # A NUMERIC `state_id` RESOLVES. A JSON request body preserves JSON's own types, so a caller
+    # posting `{"state_id": 5}` hands the door an Integer — refusing it would answer 404 "no such
+    # saved item" about a state that exists and is the caller's own. The allowlist widened; the
+    # Array refusal below did not move.
+    test "a numeric state_id revises, like the string one" do
+      state = save_box(name: "shelf box")
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box", data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: "n-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                   body: "<svg/>" } ].to_json,
+        state_id: state.id
+      }.to_json, headers: { "CONTENT_TYPE" => "application/json" }
+
+      assert_redirected_to tools_addon_path("widgetkit")
+      assert_equal 2, state.reload.revision
+    end
+
+    # A `state_id` THAT IS NOT ONE ID IS NOT A TARGET. `state_id[]=1&state_id[]=2` arrives as an
+    # ARRAY, and `find_by(id: [...])` is an `IN` — it resolves, to whichever of your own boxes the
+    # database hands back first, and the revision lands on a design nobody named. Both scopes hold
+    # (it is still your own state, under this addon), so nothing is disclosed and nothing crosses a
+    # tenant line: what makes it worth refusing is that it is SILENT and it WRITES.
+    test "a state_id that is not a single id is a 404" do
+      a = save_box(name: "box a")
+      b = save_box(name: "box b")
+
+      assert_no_difference [ -> { Maker::AddonStateRevision.count }, -> { @user.nodes.count } ] do
+        post tools_addon_path("widgetkit"), params: {
+          name: "which one?",
+          data: { generator: "tray", params: { "h" => "99" } }.to_json,
+          files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                     body: "<svg/>" } ].to_json,
+          state_id: [ a.id, b.id ]
+        }
+      end
+      assert_response :not_found
+      assert_equal [ 1, 1 ], [ a.reload.revision, b.reload.revision ]
+    end
+
+    # THE states_key SCOPE, NOT JUST THE USER SCOPE. A state saved under another addon's namespace
+    # is not a target, or one addon could append revisions to another's saved work by id alone —
+    # and `states_key` is the DATA scope (#states reads the same one), while `key` builds routes.
+    test "a state_id from another addon's namespace is a 404" do
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+      post tools_addon_path("widgetkit"), params: {
+        name: "mine",
+        data: { generator: "tray", params: {} }.to_json,
+        files: [ { name: "x-#{SecureRandom.hex(4)}.svg", content_type: "image/svg+xml",
+                   body: "<svg/>" } ].to_json,
+        state_id: foreign.id
+      }
+      assert_response :not_found
+      assert_equal 0, foreign.reload.revisions.count
+      assert_equal 1, foreign.revision, "a refusal must not bump the counter it refused to advance"
+    end
+
+    # ---- save: the collision exemption ---------------------------------------------------
+    #
+    # THE RULE, IN BOTH DIRECTIONS: a destination collision with a node the TARGET STATE ALREADY
+    # OWNS is an approved replace; every other collision keeps today's answer. The three refusal
+    # tests below are what stop this from being "naming a state turns the collision checks off".
+    #
+    # TWO FOLDERS, TWO CHECKS, AND BOTH NEED THE EXEMPTION. A box that was swept into a project's
+    # category folder collides THERE, at #resolve_placements (answerable, 409). A box sitting in the
+    # plain folder the save dialog picked collides at #refuse_taken_names! (terminal, 422) and never
+    # reaches the other check at all — so exempting only one of them leaves the mainline "open a
+    # saved design, tweak it, re-save it" flow still refused, which is spec §1.3's dead end.
+
+    test "revising replaces its own file in the picked folder, with no 422 and no overwrite flag" do
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box", file:)
+      node_id = state.files.sole.node_id
+
+      state = save_box(name: "shelf box", params: { "h" => "80" }, file:, state_id: state.id,
+                       body: "<svg>v2</svg>")
+
+      assert_equal 2, state.reload.revision
+      # THE NODE SURVIVES, AND THAT IS THE ASSERTION WITH TEETH. A replace written as
+      # delete-then-create passes any bytes-oriented check while orphaning every attachment, BOM
+      # link and tag (§14a) — and on chunk a placement that reached LibraryOutput without
+      # `replace: true` would not even refuse: it would mint a SECOND node with the same name in
+      # the same directory, which is why both halves of the exemption are needed and why the two
+      # assertions below are separate.
+      assert_equal [ node_id ], state.files.pluck(:node_id)
+      assert @user.nodes.present.exists?(node_id:), "the node must still be live"
+      assert_equal 1, @user.nodes.present.where(name: file).count, "no second copy"
+      assert_equal "<svg>v2</svg>", FileLayer.current.read(@user, node_id:),
+                   "and it is the REVISION's bytes at that node, not the original's"
+    end
+
+    test "revising still refuses a name owned by a file this box did not produce" do
+      taken = "taken-#{SecureRandom.hex(4)}.svg"
+      state = save_box(name: "shelf box")
+      save_box(name: "unrelated", file: taken)   # a DIFFERENT state owns this name
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision, "a refused save must not have counted as a revision"
+      assert_equal 1, @user.nodes.present.where(name: taken).count,
+                   "and nothing was written — on chunk a missed refusal is a duplicate sibling"
+    end
+
+    # THE SAME REFUSAL ON THE OTHER CHECK: a name owned by another state, in a project's category
+    # folder, is a 409 question rather than a 422 — and it must STAY a question, not become a
+    # silent replace, just because this save happened to name a state.
+    test "revising still asks before replacing a filed file another box produced" do
+      taken = "harbor-number-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(taken)
+      state = save_box(name: "shelf box")   # a different state, owning nothing in that folder
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box", data: "{}", parent_node_id: folder.node_id, state_id: state.id,
+        files: [ { name: taken, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+
+      assert_response :conflict
+      assert_equal "would_replace", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      assert_equal "<svg>v1</svg>",
+                   FileLayer.current.read(@user, node_id: @user.nodes.present.find_by!(name: taken).node_id),
+                   "the other box's bytes are untouched until the user answers"
+    end
+
+    # THE EXEMPTION IS KEYED BY (parent, name), NOT BY NAME, and nothing pinned that until this
+    # test. Owning `clash.svg` SOMEWHERE must not license overwriting a stranger's `clash.svg`
+    # in a folder this state owns nothing in — which is what a name-only lookup would do, silently.
+    # Every other test here varies the exemption's CONDITIONALITY; this one varies its KEY.
+    #
+    # ITS MEASURED STATUS, STATED SO IT IS NOT OVER-TRUSTED: against the CURRENT structure this
+    # test catches no mutation, and that is a property of the fix rather than a weakness of the
+    # test. `except_node_id:` excludes one NODE instead of skipping the query, so even a name-only
+    # lookup leaves the stranger's node in the result set and the 422 stands. It bites the moment
+    # the exemption is rewritten as a SKIP — the shape this door shipped with for exactly one
+    # commit: with that form restored, a name-only lookup turns THIS test red while a
+    # parent-scoped one leaves it green. So it is the pin on the KEY, and the sibling below is the
+    # pin on the IDENTITY; neither substitutes for the other.
+    test "the exemption is scoped to the folder it owns, not to the name" do
+      clash = "clash-#{SecureRandom.hex(4)}.svg"
+      subfolder = Maker::LibraryFolder.ensure_path!(@user, [ "boxes-#{SecureRandom.hex(4)}" ])
+      state = save_box(name: "shelf box", file: clash, parent_node_id: subfolder.node_id)
+      save_box(name: "unrelated", file: clash)   # a DIFFERENT state owns that name AT THE ROOT
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: clash, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      root_copy = @user.nodes.present.find_by!(parent_node_id: nil, name: clash)
+      assert_equal "<svg/>", FileLayer.current.read(@user, node_id: root_copy.node_id),
+                   "the stranger's file at the picked folder is untouched"
+    end
+
+    # A NAME THIS STATE OWNS CAN STILL BE HELD BY SOMEBODY ELSE'S NODE, AND THE EXEMPTION MUST NOT
+    # COVER IT. Two live siblings sharing (parent, name) are reachable on chunk by construction —
+    # Sync::Commit validates a manifest exhaustively and the name not at all (§14a), so a device
+    # push can land one — and the door's own job is to stop the SAVE side adding more. Before the
+    # `except_node_id:` scoping this save answered 302, rewrote the STRANGER's node and adopted it
+    # into `state.files`: §14a's orphaning shape with the sign flipped, introduced by the very
+    # commit that added the exemption.
+    #
+    # THE FIXTURE NODES ARE DELIBERATE AND THE §14a WARNING TWO SCREENS UP DOES NOT APPLY. That
+    # warning is about a NULL `storage_path` making a replace miss on share/s3 — it bites a test
+    # whose save must SUCCEED. This save must be REFUSED, at the door, before a backend is chosen,
+    # so the assertion is identical on all three legs and no real bytes are needed to reach it.
+    #
+    # THE CREATION ORDER IS A CONVENIENCE, NOT WHAT MAKES THIS TEST BITE — worth separating,
+    # because it reads like load-bearing setup. `existing_at` is a bare `find_by` with NO `order`,
+    # so "the stranger was created first, therefore it is the one returned" is a property of
+    # SQLite's rowid scan (what all three legs run here), not of the query. Under the pre-fix skip
+    # form the FIRST assertion below goes red either way — that save answered 302 whichever node
+    # `existing_at` picked — and only the adoption assertion depends on the stranger being the one
+    # it reached.
+    test "revising refuses a name it owns when a node it does NOT own also holds it" do
+      clash = "clash-#{SecureRandom.hex(4)}.svg"
+      stranger = @user.nodes.create!(node_id: SecureRandom.uuid, name: clash, kind: "file")
+      state = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "shelf box", data: {})
+      mine = @user.nodes.create!(node_id: SecureRandom.uuid, name: clash, kind: "file")
+      state.files.create!(node_id: mine.node_id, role: "output", position: 0)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: clash, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json,
+        state_id: state.id
+      }
+
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
+      assert_equal 1, state.reload.revision
+      assert_equal [ mine.node_id ], state.files.pluck(:node_id),
+                   "the stranger's node must not be ADOPTED into this state's bundle"
+      assert_equal 2, @user.nodes.present.where(name: clash).count, "and nothing new was written"
+      # THE CONTENT COLUMNS, NOT `updated_at`. The first spelling of this compared `updated_at.to_i`
+      # — whole SECONDS, against a write that lands in the same second — so it passed whether or not
+      # the stranger was rewritten. These three are nil on a fixture node and a real write sets at
+      # least one on every backend (measured: chunk fills current_version_id, share and s3 fill size
+      # and content_hash), so the assertion is precision-independent and identical on all three legs.
+      assert_equal [ nil, nil, nil ],
+                   stranger.reload.slice(:size, :content_hash, :current_version_id).values,
+                   "the stranger's node is untouched"
+    end
+
+    # WHEN BOTH PLACEMENT ARMS APPLY, ARM 1 WINS — asserted because the comment on
+    # #resolve_placements says so and an `if`/`elsif` is one edit away from saying the opposite.
+    # Here the picked folder (the project's own root) holds THIS state's copy while the category
+    # folder holds a STRANGER's file of the same name. Taking arm 1 asks the question; taking arm 2
+    # would treat the save as an approved replace of the state's own copy, answer 302, and leave the
+    # sweep unable to file the result. The conservative answer is the right one, and it is the one
+    # that goes red if the arms are reordered.
+    test "when both placement arms apply the category folder wins and the save asks" do
+      name = "prec-#{SecureRandom.hex(4)}.svg"
+      _project, folder = project_with_filed(name)
+      stranger_filed = @user.nodes.present.find_by!(name:)
+      state = @user.maker_addon_states.create!(addon_key: "widgetkit", name: "mine", data: {})
+      mine = @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
+                                 parent_node_id: folder.node_id)
+      state.files.create!(node_id: mine.node_id, role: "output", position: 0)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "mine", data: "{}", parent_node_id: folder.node_id, state_id: state.id,
+        files: [ { name:, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+
+      assert_response :conflict
+      assert_equal [ { "name" => name, "folder" => "design" } ], response.parsed_body["files"],
+                   "the 409 names the CATEGORY folder, which is where the save would land"
+      assert_equal "<svg>v1</svg>", FileLayer.current.read(@user, node_id: stranger_filed.node_id)
+      assert_equal 1, state.reload.revision
+    end
+
+    # THE DEAD END THIS CLOSES (spec §1.3). WITHOUT a state_id, re-saving into the folder the file
+    # already sits in is a terminal 422 that no confirmation can answer — that is the bug — and it
+    # must STAY refused for a save that does not name the state, or the exemption has quietly
+    # become "anyone may clobber anything".
+    test "a re-save with no state_id is still refused, which is why revising exists" do
+      file = "shelf-box-#{SecureRandom.hex(4)}.svg"
+      save_box(name: "shelf box", file:)
+
+      post tools_addon_path("widgetkit"), params: {
+        name: "shelf box",
+        data: { generator: "tray", params: { "h" => "80" } }.to_json,
+        files: [ { name: file, content_type: "image/svg+xml", body: "<svg>v2</svg>" } ].to_json
+      }
+      assert_response :unprocessable_entity
+      assert_equal "unsupported_operation", response.parsed_body["error"]
     end
 
     # ---- save: the filename is a filename ------------------------------------------------
@@ -1491,8 +2027,114 @@ module Tools
       assert_equal [ { "node_id" => "n-1", "role" => "output" } ], files
     end
 
-    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb
-    # (the counts differ per LIBRARY_BACKEND, so a literal would pin one leg and fail the other two).
+    test "the states payload carries the current revision number" do
+      state = save_box(name: "shelf box")
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_response :success
+      assert_equal 1, response.parsed_body.first["revision"]
+
+      save_box(name: "shelf box", state_id: state.id)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_equal 2, response.parsed_body.first["revision"]
+    end
+
+    # ONE ENTRY PER BOX, FOR THE LIFE OF api_version 1. This is what lets every already-published
+    # bundle keep working across this change: a bundle draws a gallery from this list, so a revision
+    # showing up as a second saved thing would turn one design into a growing pile — the exact
+    # failure the feature exists to end. The history is a SEPARATE endpoint (#revisions) for the same
+    # reason and one more: a gallery must not pay for histories nobody opened.
+    test "revising does not add a states entry" do
+      state = save_box(name: "shelf box")
+      save_box(name: "shelf box", state_id: state.id)
+      get tools_addon_states_path(FIXTURE_KEY)
+      assert_equal 1, response.parsed_body.length
+    end
+
+    # ADDITIVE KEYS ONLY, PINNED AS AN EXACT SET. `assert_equal` on the sorted keys is what makes
+    # this catch the change a published bundle would actually break on — a REMOVED or RENAMED key —
+    # and not merely an added one; a `assert_includes` per key would pass through a rename that
+    # dropped the old spelling. Nothing else in this repo can see that break: publishing a bundle IS
+    # the addon deploy and Rails is never rebuilt (§14c), so the consumer is in another repo and
+    # already running.
+    test "the states payload keeps every key a published bundle reads" do
+      save_box(name: "shelf box")
+      get tools_addon_states_path(FIXTURE_KEY)
+      entry = response.parsed_body.first
+      assert_equal %w[data files id name revision updated_at], entry.keys.sort
+      assert_equal %w[node_id role], entry["files"].first.keys.sort
+    end
+
+    # ---- the revision history -----------------------------------------------------------------
+
+    test "revisions are served newest first with their params" do
+      state = save_box(name: "shelf box", params: { "h" => "60" })
+      save_box(name: "shelf box", params: { "h" => "80" }, state_id: state.id)
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, state.id)
+
+      assert_response :success
+      body = response.parsed_body
+      # NEWEST FIRST, and the assertion cannot pass by coincidence: the rows are INSERTED 1 then 2,
+      # so an endpoint that forgot to reverse would answer [1, 2] — the opposite array, not an
+      # equal-looking one. A reader wants the latest at the top; the association itself is ordered
+      # oldest-first because a writer wants maximum(:revision).
+      assert_equal [ 2, 1 ], body.map { |r| r["revision"] }
+      assert_equal "80", body.first.dig("data", "params", "h")
+      assert_equal "60", body.last.dig("data", "params", "h"),
+                   "revision 1 must still hold what was saved AT revision 1"
+      assert body.first["created_at"].present?, "a snapshot without its timestamp cannot be labelled"
+      # PINNED AS AN EXACT SET, for the reason the states payload's own key test gives one screen
+      # up: a removed or renamed key is what breaks a published bundle, and nothing in this repo can
+      # see that break. Asserted here while this wire contract still has NO consumer — Task 9's SDK
+      # is the first — because an added key (`id`, `addon_state_id`) is easiest to refuse before
+      # anything reads it, and the individual assertions above cannot see one arrive.
+      assert_equal %w[created_at data revision], body.first.keys.sort
+    end
+
+    # THE SAME SCOPE #states READS, ASSERTED AS THREE SEPARATE 404s. A state this addon could not
+    # LIST is not a state whose history it may read, and an id that does not resolve must answer
+    # identically however it failed — otherwise this endpoint reports which state ids exist and who
+    # owns them.
+    test "another user's revisions are a 404" do
+      other = User.create!(email: "other2@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+      get tools_addon_state_revisions_path(FIXTURE_KEY, theirs.id)
+      assert_response :not_found
+    end
+
+    test "revisions of a state in another addon's namespace are a 404" do
+      foreign = @user.maker_addon_states.create!(addon_key: "someone-else", name: "theirs", data: {})
+      get tools_addon_state_revisions_path(FIXTURE_KEY, foreign.id)
+      assert_response :not_found
+    end
+
+    # AN UNKNOWN ID ANSWERS BYTE-FOR-BYTE WHAT A STRANGER'S DOES, which is the property the two
+    # tests above can only half-prove on their own: each of them alone is satisfied by any 404, and
+    # a body that differed between the two causes would make this endpoint an existence oracle. The
+    # two responses are asserted EQUAL TO EACH OTHER rather than each against its own expected
+    # literal — recomputing an expectation twice cannot see the two drift apart, which is the same
+    # reasoning the ctx-vs-legacy-attributes test above states at length.
+    test "an unknown state id is the same 404, with the same body, as a stranger's" do
+      other = User.create!(email: "other4@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.maker_addon_states.create!(addon_key: FIXTURE_KEY, name: "not yours", data: {})
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, 999_999)
+      assert_response :not_found
+      unknown = response.parsed_body
+
+      get tools_addon_state_revisions_path(FIXTURE_KEY, theirs.id)
+      assert_response :not_found
+      assert_equal unknown, response.parsed_body
+      assert_equal "not_found", unknown["error"]
+    end
+
+    # CONSTANCY IN N, not a literal — same reasoning as test/integration/web/page_query_budget_test.rb:
+    # GROWTH with the data is the defect, and a literal would additionally go red on any unrelated
+    # query this endpoint gains. NOT "the counts differ per LIBRARY_BACKEND", which is what this said
+    # until 2026-08-13: #states reads maker_addon_states and nothing else, so the backend cannot enter
+    # the measurement. Probed with the eager load dropped, on all three legs and with the adapter
+    # genuinely resolved differently on each (this test pins none): **5 at 3 states and 17 at 15,
+    # identically**.
     # `includes(:files)` is what this guards: drop it and #states goes from a flat query count to one
     # extra SELECT per saved state, invisible to every other test here because none of them save more
     # than one or two states.

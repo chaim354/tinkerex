@@ -826,6 +826,86 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `WouldReplaceError` and `NameTakenError` as distinct classes for exactly this, the same
   distinction §14f draws server-side. Collapse them and a bundle offers an Overwrite button for a
   save that can never succeed on retry.
+- **A SAVE CARRYING `state_id` REVISES, AND THE OWN-FILE EXEMPTION COVERS BOTH COLLISION CHECKS, NOT
+  ONE.** `Tools::AddonsController#create` resolves the target through `#addon_states` (404 if it does
+  not, never a silent fallback to creating — that would file a revision of an existing design as an
+  unrelated one, the pile-up the feature exists to end), and a collision with one of THAT item's own
+  `AddonFile` nodes is an approved replace while every other collision keeps today's answer. Both
+  halves are needed and they fail in OPPOSITE directions, which is why `owned` is a **required**
+  parameter on each rather than a defaulted one: `refuse_taken_names!` (picked folder, terminal 422)
+  is the only check a box in a plain library folder ever reaches, so exempting only
+  `resolve_placements` leaves the mainline re-save the dead end this arc exists to close; exempting
+  only `refuse_taken_names!` lets the write land as a **CREATE** — probed on chunk, a second live
+  node with the same name in one directory, and on share/s3 the port's own clobber refusal turns the
+  exemption straight back into the 422. An **absent OR empty** `state_id` creates, byte-identical to
+  before: `present?`, never `!nil?`, because a bundle rendering an empty hidden field is the natural
+  way to say "no target yet" and the whole suite stayed green over the `!nil?` spelling.
+- **THAT EXEMPTION IS BY NODE IDENTITY, NOT BY `(parent, name)` — `except_node_id:`, the parameter
+  `Maker::MoveNode.collision?` has always had for this and was being passed nil.** Skipping the query
+  instead ("this state owns that (parent, name), so wave it through") is a DIFFERENT rule, and the
+  difference is a live defect on chunk: two live siblings sharing one `(parent, name)` are reachable
+  there, since `Sync::Commit` validates a manifest exhaustively and the name not at all (§14a), so a
+  device push can land one. With the check skipped that save answered **302, rewrote the node this
+  state does NOT own, and ADOPTED it into `state.files`** — §14a's orphaning shape with the sign
+  flipped, introduced by the very commit that added the exemption. `resolve_placements`' cheaper
+  `.key?` arm is safe only because it runs AFTER this one; reorder the two and it stops being.
+- **A REVISION ROW IS IMMUTABLE, AND `attr_readonly` IS WHAT REFUSES THE REWRITE — NOT THE MISSING
+  `updated_at`.** `Maker::AddonStateRevision` marks `addon_state_id`/`revision`/`data` readonly, so
+  assignment, `update!` AND `update_columns` all raise on a persisted row (the last with the parent
+  class `ActiveRecordError`, not `ReadonlyAttributeError` — a `rescue` written for one will not catch
+  the other). `update_all` and raw SQL bypass it entirely, the §14e refcount blind spot again; the
+  migration's own backfill is the one legitimate writer that goes around it. **`created_at` is
+  deliberately OUTSIDE the list**, so "immutable" means the snapshot — identity, number, params.
+  There being no `updated_at` column stops nothing by itself; what it buys is that a rewrite forced
+  through one of those doors has no timestamp to bump, so it cannot look like a sanctioned save.
+- **`maker_addon_states.revision` IS THE CURRENT NUMBER AND THERE IS NO COUNT COLUMN**, because
+  nothing deletes a revision, so the count equals the number. Add one with the deletion, not before —
+  today it would be a second value to keep in step for no present reader.
+- **`Host::LEVEL` 3 IS THE WHOLE FEATURE DETECT FOR REVISING, AND IT IS THE FIRST BUMP THAT FLIPPED
+  NO CAPABILITY.** No name was added, for the same reason binary output has none at level 2: revising
+  is the SAME `library:write` door growing an optional parameter, so a capability would answer `true`
+  for exactly the hosts that answer `library:write` true and would carry no information. `min_host: 3`
+  is how a bundle requires it. **`state:crud` stays reserved and false** and keeps its own meaning —
+  the direct `PATCH`/`DELETE /tools/:key/states/:id` endpoints, which this is not; `host.state
+  .revisions` therefore gates on **`state:list`**, the read side it actually belongs to, or it would
+  throw on every host there is. The level is pinned in **two** places on purpose (`host_test.rb`'s
+  ledger and the rendered-ctx literal), and both must move at level 4.
+- **`GET /tools/:key/states` STAYS ONE ENTRY PER SAVED ITEM FOR THE LIFE OF `api_version: "1"`, AND
+  `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.** That is exactly what let every
+  already-published bundle keep working across this change (§14c: publishing a bundle IS the deploy,
+  Rails is never rebuilt), and a revision appearing as a second entry would turn one design back into
+  the growing pile the feature ends. The history is served lazily by `#revisions`, **unbounded on
+  purpose**: a cap without paging is §14b's silent truncation, and a bundle handed a history that
+  quietly stops at N cannot tell that from a design saved N times. If human save frequency ever stops
+  bounding it, the fix is **paging**, not a bare limit.
+- **`?state=` IS A HINT AND ANSWERS nil; THE SAME ID AT `#create`/`#revisions` IS A 404. DO NOT
+  HARMONISE THEM.** An unknown, foreign or other-addon id must never 404 the tool — a stale bookmark
+  or a deleted box would take the page down — while a save or a history read naming one is a bundle
+  bug that must not silently do something else. `#find_addon_state` decides nothing itself for
+  exactly that reason. The SDK's `host.launch` getter answers `{stateId: null, ...ctx.launch}` so a
+  bundle on a LEVEL-2 host (which sends no `launch` key at all) still reads an object rather than
+  `undefined` — which means dropping `stateId` from inside the server's hash would NOT surface as a
+  missing value. **Keep the key in `addon_ctx`.**
+- **THE FILE→STATE REVERSE LOOKUP CONSULTS THE REGISTRY ONLY WHEN THE NODE QUERY FOUND A HIT.**
+  `Maker::AddonOrigin.for` makes no `Registry` call at all and `AddonOrigins#addon_origins_for` returns
+  early when it is empty, so a library with no addon output never touches the addon source — a
+  manifest fetch over HTTP behind a 5-minute cache. Collapse the two steps and an addon-source outage
+  becomes a slow Files page for a user who has never opened `/tools`. Pinned with a **counting**
+  double, not a raising one: `Registry.manifests` rescues `StandardError` and answers `[]`, so a
+  raising stub is swallowed and the regression passes.
+- **DO NOT COLLAPSE `Maker::AddonOrigin.for`'S TWO STATEMENTS INTO A JOIN.** The join never reaches
+  the `node_id` index, so its cost grows with the user's SAVED-STATE COUNT — including on the
+  all-miss path, which is the ordinary library that has never saved anything from an addon — and no
+  query-count test can see it, because it is all inside one statement. Measurements are in the
+  method's own comment and in `docs/STATUS.md`.
+- **THE SDK REFUSES A NON-STRING/NON-INTEGER `stateId` RATHER THAN COERCING IT.** `String(...)` would
+  launder the value straight past the server's own allowlist: `String([1, 2])` is `"1,2"`, a perfectly
+  good String to `#find_addon_state`, and ActiveRecord's integer cast resolves `find_by(id: "15,16")`
+  to state **15** — probed against real rows. So a save would have renamed a different design, bumped
+  its revision and attached a file to it, silently, on the door that WRITES. It is deliberately not a
+  validation of the string itself (`"1abc"` casts to 1 and opens state 1 — a bound parameter inside
+  both the user and addon scopes, with nothing to reach); what is refused is only the shape JS itself
+  would flatten.
 - **`defaultFolder` NAMES TWO DIFFERENT SHAPES, DELIBERATELY.** The raw `ctx.defaultFolder` handed
   to `mount` is a **STRING node id**; the server's ctx blob carries `defaultFolder: {nodeId,
   label}`. Harmless only because the SDK never exposes its copy — so **never add a
@@ -1342,7 +1422,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   that can never take one. `destination_for` **creates nothing** — looking up a category folder must
   not mkdir it (`#relocate`'s recorded bug) — and takes its folder name from
   `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
-  behaviour cannot disagree.
+  behaviour cannot disagree. **Since 2026-08-13 the 422 has ONE exemption, and only one:** an addon
+  save carrying `state_id` may land on a node that saved item itself produced, in either check —
+  §14c's own-file rule. Naming the state is the consent; nothing else moved, and "the destination is
+  taken" is still terminal for every collision with a file this save did not write.
 - **THE `state.id`-IN-THE-FILENAME EXEMPTION IS GONE WITH ITS DOOR, AND THAT IS A WIDENING, NOT A
   TIDY-UP.** `Tools::OpenscadController#create` could not reach the collision above because its
   output name embedded `state.id`, a fresh autoincrement per save, so two saves of one design under
@@ -1764,6 +1847,12 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   **Assert the narrowest true thing, then mutate to prove each assertion carries weight** — in
   `ArchitectureInvariantsTest`, a mutation that keeps the count at 1 while *moving* the reference
   is caught only by the second assertion; count alone would have passed.
+  **A TIMESTAMP COMPARED AT `.to_i` IS A GUARD THAT USUALLY CANNOT FAIL** — a recurring near-miss,
+  twice in one arc (2026-08-13). `.to_i` is whole **seconds**, and the row you are asserting about
+  was written in the same second as the thing you fear overwrote it, so the mutation stays green.
+  Two fixes, both cheap: separate the two events in time (`travel_to(3.days.ago)` around the setup,
+  so a `now()`-style regression fails by three orders of magnitude instead of by nothing), or assert
+  a **content** column that is nil until something writes it rather than a timestamp at all.
 - Write tests; verify end-to-end against the live server when wiring sync. Prefer a **probe
   over an argument** — §14e.
 

@@ -176,8 +176,8 @@ module Tools
     # first — but the sentence costs nothing, and narrowing it to the race alone would be a
     # user-facing change made on the strength of an unreachability argument, which is the kind of
     # argument §14e says to probe rather than trust. Prefer widening the arm's own test over
-    # trimming the sentence. None of #show, #asset, #service or #states touches FileLayer at all,
-    # so this class-level arm covers those four vacuously.
+    # trimming the sentence. None of #show, #asset, #service, #states or #revisions touches
+    # FileLayer at all, so this class-level arm covers those five vacuously.
     #
     # A 404 on a POST to the save endpoint would read as "this endpoint is gone", which sends an
     # addon author looking in entirely the wrong place; the honest answer is that the request was
@@ -253,25 +253,72 @@ module Tools
     end
 
     # The addon's own saved states, for the current user, as JSON. A bundle has no database access —
-    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways —
-    # by addon_key AND by current_user, in that order below.
+    # this is how it lists (and relinks the output files of) a user's prior saves. Scoped BOTH ways,
+    # by `states_key` AND by current_user — see #addon_states, which owns that argument for every
+    # state read and write in this controller, including what the addon_key half is NOT (a boundary
+    # between addons).
     #
-    # THE addon_key SCOPE IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
-    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
-    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
-    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
-    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
-    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). The
-    # current_user scope is the real protection here, keeping one user's rows from a stranger's.
-    # Scoped by `states_key`, not `key`: they're the same value unless the manifest says otherwise
-    # (Maker::Addons::Registry#build), which is how one addon can read another's saves — see the
-    # `states_key` comment there for what that widens, and `states_key_permitted?` for who may ask.
+    # ONE ENTRY PER SAVED ITEM, AND `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.
+    # A revision must not look like a second saved thing here, or a gallery built from this list
+    # turns one design back into the growing pile the revision feature exists to end; and the
+    # history is served lazily by #revisions below rather than inlined, so a gallery does not pay for
+    # histories nobody expanded. Both halves are what keep every already-published bundle working
+    # across the change (§14c: publishing a bundle IS the deploy, Rails is never rebuilt).
     def states
-      states = current_user.maker_addon_states.for_addon(@addon.states_key)
-                            .includes(:files).order(updated_at: :desc, id: :desc)
+      states = addon_states.includes(:files).order(updated_at: :desc, id: :desc)
       render json: states.map { |s|
-        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at,
+        { id: s.id, name: s.name, data: s.data, updated_at: s.updated_at, revision: s.revision,
           files: s.files.map { |f| { node_id: f.node_id, role: f.role } } }
+      }
+    end
+
+    # GET /tools/:key/states/:id/revisions — ONE saved item's history, newest first.
+    #
+    # RESOLVED THROUGH #find_addon_state, THE SAME LOOKUP THE SAVE DOOR WRITES THROUGH — a state
+    # this addon could not list is not a state whose history it may read, and the read and the write
+    # must not disagree about which rows are this addon's, or the two answers drift the moment
+    # `states_key` diverges from `key`.
+    #
+    # THE TYPE ALLOWLIST INSIDE IT IS INERT FOR THIS CALLER AND IS TAKEN ANYWAY. `params[:id]` here
+    # comes from a ROUTE SEGMENT, which is always a String and cannot be overridden by a query
+    # string (`?id[]=…` is ignored), so there is no Array or Hash to refuse. Routing through the
+    # shared lookup regardless costs nothing and means no future caller has to work out whether ITS
+    # id needs the guard — working that out per call site is exactly how the gap between the save
+    # door and the deep link opened in the first place.
+    #
+    # NEWEST FIRST, WHICH IS WHY THE ASSOCIATION IS ORDERED OLDEST-FIRST AND REVERSED HERE rather
+    # than the other way round: a reader wants the latest snapshot at the top of a list, and a
+    # writer wants `maximum(:revision)` off the natural order. `reverse_order` flips the
+    # association's own ORDER BY, so there is no second literal to keep in step with it.
+    #
+    # THE REFUSAL IS THE SAVE DOOR'S OWN (#render_no_such_state), NOT A BARE `head :not_found`. It
+    # is the identical condition — an id that does not resolve under this addon's states_key for
+    # this user — and §14a's recorded failure shape is one condition with two answers. It also
+    # keeps the endpoint honest about disclosure: unknown, another user's and another addon's all
+    # answer the same bytes, so this cannot report which state ids exist or who owns them. `find_by`
+    # plus an explicit render rather than `find` for that same reason, and because the class-level
+    # `rescue_from` arms above do not cover RecordNotFound — it would land on Rails' own HTML error
+    # page, which is not an answer a `fetch` caller can read.
+    #
+    # UNBOUNDED, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT — it is the whole history, every
+    # revision, each carrying its full `data` snapshot. A `limit(N)` was considered and REFUSED: a
+    # cap without paging is a SILENT TRUNCATION, which §14b names in terms as the failure where a
+    # bounded surface reads as "covered everything" when it did not. A bundle handed a history that
+    # quietly stops at N cannot tell that from a design saved N times, and there is no `truncated`
+    # flag and no cursor to tell it — so the cap would trade an unbounded response for a wrong one.
+    # Paging is out of scope for this arc and the spec excludes it for /states too.
+    #
+    # WHAT ACTUALLY BOUNDS IT IS HUMAN SAVE FREQUENCY: a revision costs a deliberate save of one
+    # design by one person, so a history reaching a size that matters means somebody saved that
+    # design thousands of times. IF THAT EVER STOPS BEING TRUE — an addon that saves on a timer, an
+    # import that replays a history — the fix is PAGING (a cursor plus a `has_more`), not a bare
+    # limit. Change this and change the lazy-loading argument in config/routes.rb with it.
+    def revisions
+      state = find_addon_state(params[:id])
+      return render_no_such_state if state.nil?
+
+      render json: state.revisions.reverse_order.map { |r|
+        { revision: r.revision, data: r.data, created_at: r.created_at }
       }
     end
 
@@ -390,28 +437,99 @@ module Tools
       files = parse_files
       return head(:unprocessable_entity) if files.nil?
 
+      # THE TARGET OF A REVISION, or nil for a new box — resolved BEFORE any write, so an id this
+      # door cannot honour costs nothing. #find_addon_state renders nothing and raises nothing, which
+      # is what lets THIS caller answer 404 while the deep link answers a null and renders the page;
+      # the `if` around it is what keeps its nil to one meaning here.
+      #
+      # 404 AND NOT A SILENT FALLBACK TO CREATING: an id that does not resolve is a bundle bug or a
+      # stale tab, and creating a new box instead would file a revision of an existing design as an
+      # unrelated one — the pile-up this whole feature exists to end, reintroduced by its own error
+      # path.
+      #
+      # `present?` AND NOT `!params[:state_id].nil?`, WHICH IS THE TIDY-UP TO REFUSE. A bundle
+      # rendering an EMPTY hidden `state_id` field is the natural way to say "no target yet", and
+      # `""` must therefore CREATE — that is the §14c compatibility promise this whole method rests
+      # on. The `!nil?` spelling turns every one of those saves into a 404, and left the entire
+      # suite green until "an empty state_id creates, exactly as an absent one does" was written
+      # for it.
+      state = nil
+      if params[:state_id].present?
+        state = find_addon_state(params[:state_id])
+        return render_no_such_state if state.nil?
+      end
+
       parent_node_id = chosen_parent_node_id
-      refuse_taken_names!(files, parent_node_id)
+      # WHAT THIS REVISION MAY OVERWRITE — `{}` for a new box, so a save sending no `state_id` hands
+      # LibraryOutput a byte-identical argument to before.
+      owned = owned_destinations(state)
       # TWO COLLISION CHECKS, AGAINST TWO DIFFERENT FOLDERS, AND THAT IS THE POINT rather than
-      # redundancy. #refuse_taken_names! asks about the folder the user PICKED and is terminal
-      # ("pick another name"). This asks about the CATEGORY folder the sweep will file into, which
-      # is where a re-save actually collides — and is answerable ("overwrite?"). The gap between
-      # them is the bug: after the first save is filed, the picked folder is vacant again, so the
-      # first check passes and the sweep is left holding a file it cannot place.
-      placements = resolve_placements(files, parent_node_id)
+      # redundancy: #refuse_taken_names! asks about the folder the user PICKED and is terminal,
+      # #resolve_placements asks about the CATEGORY folder the sweep will file into and is
+      # answerable. Both take `owned` because a revision meets whichever one its own file is
+      # sitting in. Each method states its own half at length — deliberately not restated here,
+      # since the argument moving in three places at once is how it drifts.
+      refuse_taken_names!(files, parent_node_id, owned)
+      placements = resolve_placements(files, parent_node_id, owned)
       return if render_would_replace(files, placements)
 
-      state = nil
+      # HOISTED OUT OF BOTH BRANCHES so they cannot drift on what a save's name and data are. Kept
+      # HERE, immediately before the transaction rather than at the top of the action, because
+      # `require` raises ParameterMissing (-> 400) and these used to be the transaction's first
+      # statement: moving them any earlier would answer 400 where a nameless save with a taken
+      # filename answers 422 today.
+      name = params.require(:name)
+      data = parse_data
+
       addon_files = nil
       ApplicationRecord.transaction do
-        state = current_user.maker_addon_states.create!(
-          addon_key: @addon.states_key, name: params.require(:name), data: parse_data
-        )
+        if state
+          # A REVISION RENAMES THE BOX when the name changed — `name` is a property of the design,
+          # not of one snapshot, so a rename has nowhere else to land. The snapshot below records
+          # `data` only.
+          #
+          # THE INCREMENT IS A READ-MODIFY-WRITE AND IS DELIBERATELY NOT LOCKED. `state.revision`
+          # was read before this transaction opened, so two concurrent revisions of the SAME item
+          # by the SAME user — a double-click — both compute N+1. What the snapshot row's unique
+          # index on [addon_state_id, revision] buys is that the loser gets a RecordNotUnique 500
+          # instead of the two things that would otherwise both happen: a DUPLICATE REVISION NUMBER
+          # (two rows at N+1 carrying different `data`, with nothing to say which is the real one)
+          # and a LOST UPDATE on the state row itself. ACCEPTED: the transaction rolls back before
+          # `LibraryOutput.write` runs, so nothing reaches the library, no snapshot is lost, and a
+          # retry succeeds. A `state.lock!` here would buy that at the price of a NEW LOCK-ORDERING
+          # EDGE inside a transaction that goes on to take `Sync::`'s own `FOR UPDATE` on the users
+          # row via `next_seq!` (chunk mode) — precisely where §14e's deadlock rule lives, and a
+          # deadlock this repo has already paid for once. Small race, right failure direction, not
+          # worth a new lock next to that one.
+          state.update!(name:, data:, revision: state.revision + 1)
+        else
+          # THROUGH #addon_states, WHICH IS THE ONE SITE WHERE A DIVERGENCE WOULD FILE ROWS UNDER
+          # THE WRONG KEY — the read side merely fails to find them, this side creates them there.
+          # `for_addon`'s `where(addon_key:)` populates the attribute through the relation, so this
+          # is the same row the hand-built `create!(addon_key: @addon.states_key, …)` produced.
+          state = addon_states.create!(name:, data:)
+        end
+        # THE CREATE BRANCH TAKES THIS LINE TOO, so a state's history is complete from its first
+        # save — revision 1 is the schema default on `maker_addon_states.revision`, and the
+        # migration's backfill wrote the same row for every state that predates this door. A
+        # history that starts at 2 would make "restore the original" impossible for exactly the
+        # designs a user has revised most.
+        state.revisions.create!(revision: state.revision, data: state.data)
         addon_files = Maker::Addons::LibraryOutput.write(
           user: current_user, state:, parent_node_id:,
           files: files.each_with_index.map do |f, i|
+            # AN ALLOWLIST OF THE TWO KEYS LibraryOutput ACTUALLY READS, not a skip-list of the
+            # ones it does not — §14b's blind spot is this repo's recorded failure shape, and a
+            # placement key this method does not read would be silently ignored downstream rather
+            # than refused, with no test able to go red. TWO ARE DROPPED HERE TODAY, both for the
+            # same reason: `:folder` is #render_would_replace's business (it names the folder in
+            # the 409 body) and `:owned` is too (it suppresses that 409 for a revision landing on
+            # its own file). Neither means anything to a WRITE. A non-colliding file's placement is
+            # `{}`, and
+            # `{}.slice` is `{}`, so `fetch(:parent_node_id, …)`'s absent-vs-nil distinction over
+            # in LibraryOutput survives this untouched.
             { name: f.name, bytes: f.bytes, content_type: f.content_type, role: "output" }
-              .merge(placements[i].except(:folder))
+              .merge(placements[i].slice(:parent_node_id, :replace))
           end
         )
       end
@@ -447,6 +565,110 @@ module Tools
       @addon = Maker::Addons::Registry.find(params[:key])
       head :not_found unless @addon
     end
+
+    # THE DATA SCOPE EVERY STATE READ AND WRITE IN THIS CONTROLLER RESOLVES THROUGH — and the claim
+    # is exhaustive rather than a summary: `grep maker_addon_states` finds this line and nothing but
+    # comments. Four sites today — #states lists, #revisions and #launch_state_id look one up (both
+    # via #find_addon_state), and #create both looks one up and CREATES one — with the next
+    # state-reading action making five.
+    #
+    # #create's create! IS THE SITE THAT MATTERS MOST, and it was the last to be converted: every
+    # other caller merely fails to FIND a row if the scope drifts, while that one FILES rows under
+    # the wrong key, where nothing would look wrong until a later read came up empty.
+    #
+    # SCOPED BY `states_key`, NOT `key`: `states_key` is the DATA scope while `key` builds routes.
+    # They are the same value unless the manifest says otherwise (Maker::Addons::Registry#build),
+    # which is how one addon can read another's saves — see the `states_key` comment there for what
+    # that widens, and `states_key_permitted?` for who may ask. Scoping by `key` instead would let a
+    # save under one addon append a revision to a state filed under another's namespace the moment
+    # the two diverge, and would let a read answer from a bucket the write did not use.
+    #
+    # THE addon_key HALF IS A DATA-SCOPING RULE, NOT A BOUNDARY BETWEEN ADDONS — it decides which
+    # bucket THIS request's own resolved addon (`@addon`, via `load_addon` off `params[:key]`) reads
+    # from, and nothing more. It cannot stop a script from calling a DIFFERENT addon's own
+    # `/tools/<other-key>/states` directly — no `states_key` needed — because nothing binds a request
+    # to "the addon whose page is open"; a bundle is browser code running same-origin in the
+    # authenticated session and can just ask (audit §2.1, `docs/AUDIT-2026-08-03.md`). What it does
+    # enforce is that a manifest cannot redirect ITS OWN saves or reads into another addon's
+    # namespace by declaration alone. THE `current_user` HALF IS THE REAL PROTECTION, keeping one
+    # user's rows from a stranger's.
+    def addon_states = current_user.maker_addon_states.for_addon(@addon.states_key)
+
+    # ONE saved state by a client-supplied id, or nil.
+    #
+    # IT RENDERS NOTHING AND RAISES NOTHING, AND THAT IS THE WHOLE REASON IT CAN BE SHARED. THE
+    # CALLER DECIDES WHAT A MISS MEANS, and the three callers do not agree: #create and #revisions
+    # answer 404 (there the id is an INSTRUCTION — where to write, whose history to serve — and
+    # guessing wrong acts on the wrong row), while #addon_ctx serves a null `stateId` and renders
+    # the page (there it is a HINT about what to open, and a stale bookmark must not take the tool
+    # down). This is the one place that opposition is written out; the callers point here.
+    #
+    # ** DO NOT MOVE A RENDER IN HERE. ** Folding #render_no_such_state into this method is the
+    # tempting next step and it would SILENTLY INVERT the deep link's entire degrade promise: every
+    # stale or deleted `?state=` bookmark would start 404ing the tool instead of opening it empty.
+    # SILENTLY IS EXACT: #addon_ctx is called from the ACTION, not from the view, so the fold would
+    # serve a plain 404 rather than the loud DoubleRenderError a view-time render would raise.
+    # Nothing about the helper would look wrong afterwards — the caller that wanted the 404 would
+    # still get one — which is precisely why the warning is here rather than left to be rediscovered.
+    #
+    # A STRING OR AN INTEGER, ALLOWLISTED, AND THE REFUSAL WAS PROBED RATHER THAN REASONED ABOUT.
+    # `state_id[]=1&state_id[]=2` arrives as an ARRAY and `find_by(id: [...])` is an `IN`: before
+    # this check it RESOLVED, to whichever of the user's own boxes the database returned first — a
+    # design nobody named, with no error anywhere. Both scopes still held, so nothing was disclosed;
+    # it is refused because it is SILENT, and on the save door it WRITES. Integer is on the list
+    # because a JSON request body preserves JSON's types, so a caller posting `{"state_id": 5}`
+    # would otherwise get a 404 whose message is a lie about a state that exists and is theirs. An
+    # allowlist and not a `reject if Array`: a nested `state_id[a]=b` is a Hash, and naming the
+    # shapes we accept covers it (and whatever the next one is) without a second probe.
+    #
+    # WHAT THE ALLOWLIST DOES NOT DO IS VALIDATE THE STRING, and the claim is worth stating exactly
+    # rather than as "garbage answers nil". `ActiveModel::Type::Integer` CASTS, so `?state=1abc`,
+    # `" 1 "` and `"1.0"` all resolve state 1. Harmless and deliberate: it is a bound parameter
+    # inside both scopes, so there is nothing to inject and no row outside this user and this addon
+    # to reach, and it is exactly what `find(params[:id])` does throughout Rails. Refusing it would
+    # buy nothing and would make a hand-typed URL fail in a way no user could read.
+    def find_addon_state(raw)
+      return nil unless raw.is_a?(String) || raw.is_a?(Integer)
+
+      addon_states.find_by(id: raw)
+    end
+
+    # 404 AND NOT A SILENT FALLBACK TO CREATING. An id that does not resolve is a bundle bug or a
+    # stale tab, and creating a new box instead would file a revision of an existing design as an
+    # unrelated one — the pile-up this whole feature exists to end, reintroduced by its own error
+    # path. JSON with a real status for the same reason the rescue_from arms above use it: the only
+    # caller is a `fetch` that branches on `res.ok`, and fetch FOLLOWS a 302, so answering an error
+    # the way success is answered would report "Saved." over a save that never happened.
+    #
+    # ONE ANSWER FOR FOUR CAUSES — no such id, another user's, another addon's, and not one id at
+    # all — deliberately, so this door cannot be used to report which state ids exist or who owns
+    # them. Sibling of #render_file_not_found below, and note the two share the `not_found` code
+    # while meaning different things ("no such file" there, "no such saved item" here); anything
+    # mapping these codes to exceptions has to key on the endpoint, not the string alone.
+    def render_no_such_state
+      render json: { error: "not_found", message: "No such saved item for this addon." },
+             status: :not_found
+    end
+
+    # THE `?state=` DEEP LINK, VALIDATED — the id of the saved item this page was opened for, or nil.
+    #
+    # UNKNOWN, ANOTHER USER'S, ANOTHER ADDON'S NAMESPACE, OR A VALUE THAT IS NOT ONE ID AT ALL, ALL
+    # ANSWER nil AND THE PAGE RENDERS NORMALLY. A stale bookmark or a box the user has since deleted
+    # must never 404 the tool: the id is a HINT about which item to open, not an authorization
+    # decision — the opposite of what the same id means to #create and #revisions, which 404. See
+    # #find_addon_state, which states that opposition once and is why it decides nothing itself.
+    # (It does NOT reject a merely ill-formed id — `1abc` casts to 1 and opens state 1; the same
+    # method's last paragraph says why that is fine.)
+    #
+    # NO `blank?` SHORT-CIRCUIT, AND ITS REMOVAL IS MEASURED RATHER THAN TIDIED. An empty `?state=`
+    # is "no hint", and `find_by(id: "")` was probed TWICE to return nil rather than raise — the
+    # cast is `WHERE id = NULL`, so it is the adapter-independent answer, not a SQLite accident.
+    # `blank?` therefore changed nothing observable and no test could tell it apart from its absence,
+    # which is the definition of a guard that has never been shown to work; it cost seven lines of
+    # comment to explain a line that did nothing. The save door's `present?` is the OPPOSITE case and
+    # STAYS: there `""` must reach the CREATE branch, and swapping it turns every save a bundle makes
+    # with an empty hidden field into a 404 — with a red mutation to prove it.
+    def launch_state_id = find_addon_state(params[:state])&.id
 
     # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
     # FileLayer::NotFound` — which answers 422 with "Your library refused that write." That arm is
@@ -493,7 +715,27 @@ module Tools
           children: library_children_path,
           create: library_folders_path
         },
-        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label }
+        defaultFolder: { nodeId: @default_parent_node_id, label: @default_folder_label },
+        # WHICH SAVED ITEM THIS PAGE WAS OPENED FOR, from `?state=`. Resolved SERVER-SIDE so the
+        # host validates ownership before the id reaches a bundle, and so a bundle never has to
+        # learn the host's URL shape to read it — which is the reason ctx exists at all.
+        #
+        # ALWAYS PRESENT, `stateId` nil when there is nothing to open. A missing key reads as
+        # `undefined` in JS and cannot be told apart from a host that predates this, which is the
+        # same argument Host::CAPABILITIES makes for every capability value being a real boolean.
+        #
+        # A HASH RATHER THAN A BARE `launchStateId`, matching `defaultFolder` above: the blob names
+        # a thing with a small object, so a key added inside it later is additive to a namespace a
+        # bundle already reads rather than a new top-level name every bundle must learn.
+        #
+        # THE SDK NOW EXPOSES THIS WHOLE HASH as `host.launch` (app/javascript/maker/addon_sdk.js),
+        # and its getter re-asserts the always-present rule from the other side — it answers
+        # `{stateId: null, ...ctx.launch}`, so a bundle running against a LEVEL-2 host, which sends
+        # no `launch` key at all, still reads an object rather than `undefined`. Note the
+        # consequence for anyone changing this line: emitting the key but dropping `stateId` from
+        # inside it would NOT surface as a missing value on that path, since the getter's default
+        # would silently supply the null. Keep the key here.
+        launch: { stateId: launch_state_id }
       }
     end
 
@@ -532,6 +774,37 @@ module Tools
       Maker::Addons::Services.url_for(name)
     end
 
+    # THE (parent, name) PAIRS THE TARGET STATE ALREADY OWNS — what a revision is entitled to
+    # overwrite, and nothing else. `{}` for a new box, which is what keeps every save that sends no
+    # `state_id` byte-identical to today: publishing a bundle IS the addon deploy and Rails is never
+    # rebuilt (§14c), so this door may never assume bundles moved with it.
+    #
+    # KEYED BY (parent, name) RATHER THAN BY node_id, because that is the question both collision
+    # checks below actually ask — "is something already sitting at this destination?" A set of
+    # node_ids would still need the destination lookup to compare against, and resolving them here
+    # means ONE query for the whole save instead of one per file.
+    #
+    # A STALE ROW STILL COUNTS, and that is the rule rather than an exception to it. A state keeps
+    # the AddonFile row of an output a later revision stopped emitting — Maker::Addons::LibraryOutput
+    # #upsert_file! leaves it alone on purpose (§14c: a save door must not delete user bytes) — so a
+    # revision that re-emits that old name replaces the file this same box produced.
+    #
+    # `.present` MATTERS: a tombstoned output is not a destination anybody can collide with, and
+    # #refuse_taken_names!'s own query scopes the same way, so the two cannot disagree about what is
+    # there. The `current_user` scope is defence in depth — `state` was already resolved through
+    # `current_user.maker_addon_states` — kept because a node_id list is the one thing here that
+    # came out of another table.
+    def owned_destinations(state)
+      return {} if state.nil?
+
+      node_ids = state.files.pluck(:node_id)
+      return {} if node_ids.empty?
+
+      current_user.nodes.present.where(node_id: node_ids)
+                  .pluck(:parent_node_id, :name, :node_id)
+                  .to_h { |parent, name, node_id| [ [ parent, name ], node_id ] }
+    end
+
     # ALL THE NAMES, CHECKED BEFORE ANY BYTE IS WRITTEN — which closes two different defects.
     #
     # 1. CHUNK MODE HAD NO CLOBBER CHECK AT ALL. Share and S3 refuse a taken destination inside
@@ -554,27 +827,105 @@ module Tools
     # Raises UnsupportedOperation rather than returning a flag so it lands on the one mapping at
     # the top of this class — §14a: "the destination is taken" IS UnsupportedOperation, and a
     # second spelling of that answer is the exact drift that bullet was written about.
+    #
+    # AN OWNED DESTINATION IS EXEMPT, AND ONLY AN OWNED ONE. Hitting the file this same state
+    # produced is what revising a design IS — naming the state is the consent — while a name held
+    # by a file this state did not produce stays the terminal 422 it has always been, because no
+    # `overwrite` can make somebody else's file the right thing to rewrite.
+    #
+    # THE EXEMPTION EXCLUDES ONE NODE, IT DOES NOT SKIP THE QUESTION — `except_node_id:` is the
+    # parameter Maker::MoveNode.collision? has always had for exactly this, and it was being passed
+    # nil. Skipping the query instead ("this state owns that (parent, name), so wave it through")
+    # is not the same rule, and the difference is a live defect measured on chunk: two live
+    # siblings sharing (parent, name) are reachable there, since Sync::Commit validates a manifest
+    # exhaustively and the name not at all (§14a), so a device push can land one. With the check
+    # skipped, that save answered 302, rewrote the node this state does NOT own and adopted it into
+    # `state.files` — §14a's orphaning shape with the sign flipped. Excluding the owned node leaves
+    # the stranger's node in the result set, so the answer is the 422 it should always have been.
+    #
+    # §14a DOES NOT ARGUE AGAINST THIS, WHICH IS WHERE THE FIRST READING WENT WRONG. Its rule
+    # governs how a replace RESOLVES its target — `existing_at` by (parent, name) on chunk, because
+    # chunk nodes have no `storage_path` — and says nothing about how a door decides a replace is
+    # AUTHORIZED. #resolve_placements' arm 1 already does the identity comparison; this is the same
+    # question, asked the same way, on the folder that arm cannot see.
+    #
+    # IT ALSO CLOSES ARM 2 WITHOUT ARM 2 CHANGING, and that composition is why arm 2 keeps its
+    # cheaper `.key?`: arm 2 is only reachable once this check has passed, and passing it means
+    # nothing but the owned node holds that (parent, name) — so `existing_at` there can only find
+    # the owned node. Reorder the two and that stops being true.
+    #
+    # EXEMPTING HERE IS STILL ONLY HALF THE ANSWER, and the halves must move together: this check
+    # asks about the PICKED folder, and #resolve_placements has to mark that same file
+    # `replace: true` or the write lands as a CREATE. See arm 2 of its own note for what that
+    # looked like when measured.
+    # `owned` IS REQUIRED, NOT DEFAULTED, and that is the paragraph above made structural. A default
+    # would let a future caller take half the pair — and the two halves fail in opposite directions,
+    # so neither omission is a safe fallback: dropping it here fails toward a REFUSAL, dropping it
+    # on #resolve_placements fails toward arm 2 never firing, which is the CREATE that puts a second
+    # live node at one name on chunk. Both callers already pass it; the parameter is what stops the
+    # rule from living only in prose.
+    def refuse_taken_names!(files, parent_node_id, owned)
+      taken = files.map(&:name).select do |name|
+        Maker::MoveNode.collision?(current_user, parent_node_id:, name:,
+                                   except_node_id: owned[[ parent_node_id, name ]])
+      end
+      return if taken.empty?
+
+      raise FileLayer::UnsupportedOperation,
+            "#{taken.map(&:inspect).join(', ')} already #{taken.one? ? 'exists' : 'exist'} in that " \
+            "folder. Rename the save or pick another folder."
+    end
+
     # Per file: where it should go and whether it replaces what is there. An EMPTY hash is "the
-    # picked folder, create" — today's behaviour, and the answer for every save that is not a
-    # re-save into a project folder's root.
+    # picked folder, create" — today's behaviour, and the answer for every save that is neither a
+    # re-save into a project folder's root nor a revision landing on its own output.
     #
     # PER FILE, NOT PER SAVE, because one save can collide on some outputs and not others: the
     # boxes addon emits `<base>.svg` and `<base>-plan.svg` together, and a re-save can find the
     # first name taken in its category folder and the second free. That is why
     # Maker::Addons::LibraryOutput takes a per-file destination.
     #
-    # THE DESTINATION IS THE OCCUPANT'S OWN PARENT, not a folder this method resolves separately —
-    # there is an occupant, so its parent IS the category folder, already created. Nothing here
-    # mkdirs: a save that needs a folder made still lands at the picked folder and the sweep files
-    # it, exactly as before.
-    def resolve_placements(files, parent_node_id)
+    # TWO WAYS TO LAND ON A REPLACE, AND THE SECOND WAS FOUND BY MEASURING RATHER THAN BY READING:
+    #
+    #   1. THE CATEGORY FOLDER IS OCCUPIED. The destination is then the OCCUPANT'S OWN PARENT, not
+    #      a folder this method resolves separately — there IS an occupant, so its parent is the
+    #      category folder and it already exists. Nothing here mkdirs: a save that needs a folder
+    #      made still lands at the picked folder and the sweep files it, exactly as before.
+    #   2. THE PICKED FOLDER ALREADY HOLDS THIS STATE'S OWN OUTPUT. Maker::ProjectIntake
+    #      .destination_for answers nil for anything that is not a project folder's own root, so the
+    #      ordinary "re-save a box that lives in a plain library folder" — the mainline revision
+    #      flow, and the dead end spec §1.3 is about — never reaches arm 1 at all. Without this arm
+    #      such a file clears #refuse_taken_names!'s exemption and then lands as a CREATE: probed on
+    #      chunk, that is a SECOND live node with the same name in the same directory, and on
+    #      share/s3 the port's own clobber refusal turns the exemption straight back into the 422 it
+    #      exists to remove. `owned: true` is a tautology inside this arm, since its condition IS the
+    #      ownership test, and `folder:` is absent because that key exists only for the 409 body an
+    #      owned placement never reaches.
+    #
+    # ARM 1 WINS WHEN BOTH APPLY, AND THAT IS THE CONSERVATIVE ANSWER RATHER THAN AN ACCIDENT OF
+    # `if`/`elsif`. Both apply when the picked folder holds this state's own output while the
+    # CATEGORY folder holds a stranger's file of the same name. Taking arm 1 there yields a 409
+    # naming the category folder and writes nothing — the sweep's destination is where the file
+    # would end up, so refusing to guess is right, and the user gets the question rather than a
+    # silent replace of either file. Probed; do not "simplify" the order away.
+    #
+    # `owned` MARKS A COLLISION THE CALLER HAS ALREADY CONSENTED TO by naming this state. It still
+    # sets `replace: true` — the write is a replace either way — and is what keeps
+    # #render_would_replace from asking a question the `state_id` already answered.
+    # `owned` IS REQUIRED HERE FOR THE SAME REASON — see #refuse_taken_names!'s note on the pair.
+    def resolve_placements(files, parent_node_id, owned)
       files.map do |f|
         dest = Maker::ProjectIntake.destination_for(user: current_user, parent_node_id:,
                                                     name: f.name)
         occupied = dest&.occupied_by
-        next {} unless occupied
-
-        { folder: dest.folder, parent_node_id: occupied.parent_node_id, replace: true }
+        if occupied
+          { folder: dest.folder, parent_node_id: occupied.parent_node_id, replace: true,
+            owned: owned[[ occupied.parent_node_id, occupied.name ]] == occupied.node_id }
+        elsif owned.key?([ parent_node_id, f.name ])
+          { parent_node_id:, replace: true, owned: true }
+        else
+          {}
+        end
       end
     end
 
@@ -592,27 +943,19 @@ module Tools
     # OLD BUNDLES DEGRADE HONESTLY. They branch on `res.ok` alone, so a 409 reads as "Save failed."
     # — no dialog, but also no silent second copy stranded at the project root, which is what they
     # got before. The dialog itself ships in the bundle repo.
+    #
+    # AN `owned` PLACEMENT IS NEVER ASKED ABOUT. Naming the state IS the consent, so asking again
+    # would put a confirm dialog in front of the ordinary act of saving a design a second time.
     def render_would_replace(files, placements)
       return false if params[:overwrite].present?
 
-      colliding = files.zip(placements).select { |_f, p| p[:replace] }
+      colliding = files.zip(placements).select { |_f, p| p[:replace] && !p[:owned] }
       return false if colliding.empty?
 
       render json: { error: "would_replace",
                      files: colliding.map { |f, p| { name: f.name, folder: p[:folder] } } },
              status: :conflict
       true
-    end
-
-    def refuse_taken_names!(files, parent_node_id)
-      taken = files.map(&:name).select do |name|
-        Maker::MoveNode.collision?(current_user, parent_node_id:, name:, except_node_id: nil)
-      end
-      return if taken.empty?
-
-      raise FileLayer::UnsupportedOperation,
-            "#{taken.map(&:inspect).join(', ')} already #{taken.one? ? 'exists' : 'exist'} in that " \
-            "folder. Rename the save or pick another folder."
     end
 
     # ONE SAVE FILE, NORMALIZED OUT OF EITHER WIRE SHAPE. `bytes` is a String either way, so
