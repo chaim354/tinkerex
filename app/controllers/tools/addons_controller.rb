@@ -394,6 +394,13 @@ module Tools
       # door cannot honour costs nothing. #resolve_revision_target owns the argument for why that
       # is a 404 rather than a create, and renders nothing itself; the `if` is what keeps its nil
       # to one meaning.
+      #
+      # `present?` AND NOT `!params[:state_id].nil?`, WHICH IS THE TIDY-UP TO REFUSE. A bundle
+      # rendering an EMPTY hidden `state_id` field is the natural way to say "no target yet", and
+      # `""` must therefore CREATE — that is the §14c compatibility promise this whole method rests
+      # on. The `!nil?` spelling turns every one of those saves into a 404, and left the entire
+      # suite green until "an empty state_id creates, exactly as an absent one does" was written
+      # for it.
       state = nil
       if params[:state_id].present?
         state = resolve_revision_target
@@ -435,9 +442,11 @@ module Tools
           #
           # THE INCREMENT IS A READ-MODIFY-WRITE AND IS DELIBERATELY NOT LOCKED. `state.revision`
           # was read before this transaction opened, so two concurrent revisions of the SAME item
-          # by the SAME user — a double-click — both compute N+1, and the snapshot row's unique
-          # index on [addon_state_id, revision] gives the loser a RecordNotUnique 500 rather than a
-          # silently overwritten history. ACCEPTED: the transaction rolls back before
+          # by the SAME user — a double-click — both compute N+1. What the snapshot row's unique
+          # index on [addon_state_id, revision] buys is that the loser gets a RecordNotUnique 500
+          # instead of the two things that would otherwise both happen: a DUPLICATE REVISION NUMBER
+          # (two rows at N+1 carrying different `data`, with nothing to say which is the real one)
+          # and a LOST UPDATE on the state row itself. ACCEPTED: the transaction rolls back before
           # `LibraryOutput.write` runs, so nothing reaches the library, no snapshot is lost, and a
           # retry succeeds. A `state.lock!` here would buy that at the price of a NEW LOCK-ORDERING
           # EDGE inside a transaction that goes on to take `Sync::`'s own `FOR UPDATE` on the users

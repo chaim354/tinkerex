@@ -443,8 +443,8 @@ module Tools
         data: { generator: "tray", params: }.to_json,
         files: [ { name: file, content_type: "image/svg+xml", body: "<svg/>" } ].to_json,
         # `.compact` so an unset option is ABSENT rather than nil: `state_id: nil` on the wire is
-        # the blank that #revision_target reads as "no target", but a test asserting the create
-        # path must not depend on that reading being right.
+        # the blank the door reads as "no target", but a test asserting the create path must not
+        # depend on that reading being right.
         **{ state_id:, parent_node_id:, overwrite: }.compact
       }
       assert_redirected_to tools_addon_path("widgetkit")
@@ -453,7 +453,17 @@ module Tools
       # second box and then revises the first would silently get the wrong row back, and every
       # assertion after it would be about a state the save never touched. Still user-scoped, so a
       # helper cannot reach across tenants either.
-      state_id ? @user.maker_addon_states.find(state_id) : @user.maker_addon_states.order(:id).last
+      #
+      # `present?`, NOT PLAIN TRUTHINESS, BECAUSE IT MUST ASK THE DOOR'S OWN QUESTION. `""` is
+      # truthy in Ruby and `"".present?` is false, so a `state_id: ""` save — which #create
+      # correctly treats as "no target" and lets CREATE — would send this line looking for a state
+      # with id `""` and raise RecordNotFound from the HELPER, on a request that succeeded. Two
+      # spellings of one question is the drift this file has scars from; keep them identical.
+      if state_id.present?
+        @user.maker_addon_states.find(state_id)
+      else
+        @user.maker_addon_states.order(:id).last
+      end
     end
 
     test "a save carrying state_id revises the box instead of creating a second one" do
@@ -482,6 +492,20 @@ module Tools
       # returns rowid order for the tied rows anyway and a test that passes with or without the
       # `:id` cannot show the guard works.)
       assert_equal [ 0, 0 ], state.files.pluck(:position)
+    end
+
+    # AN EMPTY `state_id` IS "NO TARGET", NOT A TARGET THAT FAILED TO RESOLVE — AND NOTHING GUARDED
+    # THIS UNTIL NOW. `#create` asks `params[:state_id].present?`, and the whole §14c compatibility
+    # promise rests on that reading: a bundle rendering an empty hidden `state_id` field is the
+    # natural way to say "no target yet", and every such save must CREATE. Swapping the door's
+    # `present?` for the plausible tidy-up `unless params[:state_id].nil?` left the entire suite
+    # GREEN while turning every one of those saves into a 404 — the door's only explanation of the
+    # blank lives in #resolve_revision_target's header, one method away from the line that
+    # implements it, which is exactly what makes it easy to "simplify". This test is the guard.
+    test "an empty state_id creates, exactly as an absent one does" do
+      assert_difference -> { @user.maker_addon_states.count } => 1 do
+        save_box(name: "empty hidden field", state_id: "")
+      end
     end
 
     # A REVISION RENAMES THE BOX. `name` is a property of the design, not of one snapshot — a
