@@ -11,8 +11,8 @@ import { mountShow } from "./show.js"
 // after a Turbo navigation away and back the captured value goes on serving the PREVIOUS,
 // torn-down host's context and CSRF token, with nothing thrown and nothing logged.
 //
-// THIS STATIC IMPORT IS WHAT MAKES THE BUNDLE SDK-ONLY, AND `min_host: 1` DOES NOT PROTECT IT.
-// manifests.json now declares `min_host: 1`, but that key can only bind a host that UNDERSTANDS it:
+// THIS STATIC IMPORT IS WHAT MAKES THE BUNDLE SDK-ONLY, AND `min_host` DOES NOT PROTECT IT.
+// manifests.json declares `min_host: 3`, but that key can only bind a host that UNDERSTANDS it:
 // a host published before `min_host` existed ignores it, lists the addon as usual, loads this
 // module, and then fails to resolve "@maker/addon-sdk" — the page reads "This tool failed to load"
 // and no code here ever runs. The recovery is on the publishing side: `bin/rollback <earlier-sha>`
@@ -64,7 +64,16 @@ export default {
         // reopened later reflect the new save — but deliberately does NOT navigate away: the
         // editor's own inline "Saved." status is the confirmation, matching generators.js's own
         // "stay put after a save" pattern so further tweaks don't require reopening the generator.
-        onSaved: async () => { try { states = await fetchStates() } catch (_e) { /* keep the stale list */ } },
+        //
+        // AND IT RETURNS THE NEW LIST, WHICH THE EDITOR REBINDS. Reassigning `states` here only
+        // moves THIS scope's binding: the editor was handed the old array at mount and goes on
+        // holding it, so a box created in the current session was invisible to its own
+        // findStateOwning — save, tweak, save again minted a SECOND box, the flow a user is most
+        // likely to take. Probed before the fix: count=2, revisions=[1, 1].
+        onSaved: async () => {
+          try { states = await fetchStates() } catch (_e) { /* keep the stale list */ }
+          return states
+        },
       }))
     }
 
@@ -72,7 +81,7 @@ export default {
     // saved box's params deliberately does not mean editing it: "Duplicate & tweak" forks a design.
     const showState = (state) =>
       swap(() => mountShow(page, {
-        state, ctx, onBack: showGallery, onDuplicate: (key, params) => showEditor(key, params),
+        state, onBack: showGallery, onDuplicate: (key, params) => showEditor(key, params),
       }))
 
     try {

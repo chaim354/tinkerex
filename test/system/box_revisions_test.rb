@@ -21,6 +21,11 @@ require_relative "../support/fake_boxes_sidecar"
 class BoxRevisionsTest < ApplicationSystemTestCase
   SAMPLE_404 = %r{/tools/boxes/service/boxes/sample/\w+ - Failed to load resource.+404}
 
+  # The join offer is provoked ON PURPOSE, and the 409 that asks the question is a failed fetch,
+  # which Chrome logs at SEVERE — the same argument SAMPLE_404 above makes for the gallery's missing
+  # sample photos. Without this the deliberate refusal would mask a genuine error logged beside it.
+  SAVE_409 = %r{/tools/boxes - Failed to load resource.+409}
+
   setup do
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
@@ -35,6 +40,10 @@ class BoxRevisionsTest < ApplicationSystemTestCase
 
   test "a left click on a saved box opens the editor, editing that box" do
     create_box("Shelf box", x: "123")
+    # A FRESH GENERATOR HAS NOTHING TO FORK FROM, so the button is not there to press. Asserted from
+    # the editor create_box just saved in, which is that state exactly.
+    assert_no_selector '[data-role="save-as-new"]'
+
     open_saved("Shelf box")
 
     assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v1"
@@ -83,12 +92,9 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     assert_equal [ "Shelf box", "Shelf box mk2" ], Maker::AddonState.order(:id).map(&:name)
   end
 
-  test "the history panel lists the revisions and loads one back into the form" do
+  test "the history panel is lazy, refetches after a save, and loads a revision back" do
     create_box("Shelf box", x: "111")
     open_saved("Shelf box")
-    find('[data-param="x"]').set("222")
-    find('[data-role="save"]').click
-    assert_selector '[data-role="save-status"]', text: "Saved."
 
     # NOTHING IS FETCHED UNTIL IT IS EXPANDED — the states list carries only the current revision
     # number, and this is the call that pays for one box's history.
@@ -99,8 +105,17 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     # stayed GREEN with a `load()` moved to mount.
     assert_equal 0, revision_requests
     find('[data-role="history"] summary').click
-    assert_selector '[data-role="history"] li', count: 2
+    assert_selector '[data-role="history"] li', count: 1
     assert_equal 1, revision_requests
+
+    find('[data-param="x"]').set("222")
+    find('[data-role="save"]').click
+    assert_selector '[data-role="save-status"]', text: "Saved."
+
+    # THE PANEL WAS OPEN WHEN THE REVISION LANDED, so it refetches rather than sitting one behind —
+    # mountHistory#refresh's own `if (details.open)` branch, which nothing else here drives.
+    assert_selector '[data-role="history"] li', count: 2
+    assert_equal 2, revision_requests
 
     find('[data-role="history"] button', text: "v1").click
     assert_equal "111", find('[data-param="x"]').value
@@ -137,13 +152,7 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   # STILL mint a second box. This is the assertion that proves the second call happened: one row,
   # revision 2.
   test "a same-name save into a project folder offers to join that box's lineage" do
-    project = @user.maker_projects.create!(name: "Lamp")
-    project.ensure_library_folder!(@user)
-    # The current project is what makes the save dialog default to Projects/lamp — set through the
-    # top-bar select the way a user does, since it is session-scoped and has no other browser door.
-    visit tools_path
-    select "Lamp", from: "project_id"
-    assert_selector ".current-project select"
+    use_current_project
 
     create_box("Shelf box", x: "111")
     original = Maker::AddonState.sole
@@ -167,6 +176,38 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     assert_equal [ 1, 2 ], original.revisions.map(&:revision)
   end
 
+  # THE FLOW SOMEBODY ITERATING ACTUALLY TAKES — save, tweak a param, save again, with no navigation
+  # in between — and the one that survived this branch's first round. `mountEditor` is handed
+  # `states` at mount and the router used to rebind only its own copy, so a box created moments
+  # earlier was invisible to the lookup that offers to join it: probed at count=2, revisions=[1, 1],
+  # two boxes both called "Shelf box". Every other test in this file navigates first, which is
+  # exactly why none of them could see it.
+  test "save, tweak, save again in one mount joins the box it just created" do
+    use_current_project
+
+    visit tools_addon_path("boxes")
+    open_addon_card("ABox")
+    find('[data-param="x"]').set("111")
+    find('[data-role="name"]').set("Shelf box")
+    find('[data-role="save"]').click
+    assert_selector '[data-role="save-status"]', text: "Saved."
+
+    find('[data-param="x"]').set("222")
+    accept_confirm(/Save as revision 2 of “Shelf box”/) { find('[data-role="save"]').click }
+    wait_for_revision(2)
+    assert_equal 1, Maker::AddonState.count
+    assert_equal "222", Maker::AddonState.sole.data["params"]["x"]
+
+    # AND THE OFFER COUNTS UP. The same staleness would quote "revision 2" a second time, because
+    # the number is read from a list fetched before the first save — so this asserts the rebind
+    # happens after EVERY save, not just the one that created the box.
+    find('[data-param="x"]').set("333")
+    accept_confirm(/Save as revision 3 of “Shelf box”/) { find('[data-role="save"]').click }
+    wait_for_revision(3)
+    assert_equal 1, Maker::AddonState.count
+    assert_no_console_errors ignoring: [ SAMPLE_404, SAVE_409 ]
+  end
+
   test "a right click on a saved box offers the detail view and the file" do
     state = create_box("Shelf box")
     visit tools_addon_path("boxes")
@@ -178,7 +219,7 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     # it opens the editor like any left click and would test nothing here.
     find(".box-saved-link", text: "Shelf box").right_click
     assert_selector ".file-menu"
-    assert_selector ".file-menu button", text: "Open prefilled"
+    assert_selector ".file-menu button", text: "Edit this box"
     # The file link is `host.files.url(node_id)` — the SDK's builder for a library file's detail
     # page. Asserted as the URL a user would follow, not as the string the bundle passed in.
     assert_match %r{/files/#{state.files.sole.node_id}\z}, find(".file-menu a", text: "Open the file")[:href]
@@ -202,6 +243,34 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     find('[data-role="save"]').click
     assert_selector '[data-role="save-status"]', text: "Saved."
     Maker::AddonState.order(:id).last
+  end
+
+  # A project whose library folder the save dialog will default to — which is what puts a save on the
+  # one path that reaches a 409 rather than the terminal 422 (see the join test). Set through the
+  # top-bar select the way a user does, since the current project is session-scoped and has no other
+  # browser door.
+  def use_current_project(name = "Lamp")
+    @user.maker_projects.create!(name:).ensure_library_folder!(@user)
+    visit tools_path
+    select name, from: "project_id"
+    assert_selector ".current-project select"
+  end
+
+  # POLLS THE ROW, NOT THE STATUS LINE, and that is not fussiness: "Saved." is already on screen from
+  # the previous save in the same mount, so an assert_selector for it can pass before the save under
+  # test has been sent at all. Same shape as box_save_folder_test.rb's own wait_for_node. A save that
+  # minted a second box instead leaves the newest row at revision 1, so this times out and says so.
+  def wait_for_revision(number)
+    deadline = Time.now + 5
+    state = nil
+    while Time.now < deadline
+      state = Maker::AddonState.order(:id).last
+      break if state&.revision == number
+
+      sleep 0.05
+    end
+    assert_equal number, state&.revision, "no save ever reached revision #{number}"
+    state
   end
 
   # How many times this page has asked the host for a revision history. The resource timeline is the

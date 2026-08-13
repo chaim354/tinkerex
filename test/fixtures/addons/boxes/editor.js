@@ -101,7 +101,7 @@ export function mountEditor(root, {
           </div>
           <div class="page-actions">
             <button type="button" data-role="preview-btn" class="btn ghost">Preview</button>
-            <button type="button" data-role="save-as-new" class="btn ghost" hidden>Save as new box</button>
+            <button type="button" data-role="save-as-new" class="btn ghost">Save as new box</button>
             <button type="button" data-role="save" class="btn">Save to library</button>
           </div>
         </div>
@@ -166,7 +166,15 @@ export function mountEditor(root, {
 
   // ONLY MEANINGFUL WHILE EDITING — a fresh generator's Save already creates a new box, so a second
   // button saying so would be two controls for one act.
-  $("save-as-new").hidden = !editingState
+  //
+  // REMOVED RATHER THAN `hidden`, WHICH IS DECORATIVE ON THIS ELEMENT. The host's `.btn` rule sets
+  // `display: inline-block`, and an author rule beats the UA's `[hidden] { display: none }` — so the
+  // attribute does nothing here. Probed, not reasoned: with `hidden` in the markup the fork button
+  // was VISIBLE on a fresh generator, offering to fork a box that does not exist. The host's own
+  // stylesheet carries `.addon-card[hidden]` and `.box-toc-list li[hidden]` rules for exactly this
+  // collision; a bundle cannot add a third (it ships no CSS), so it removes the node instead. Every
+  // other `hidden` in this file sits on a class that sets no `display` and works as written.
+  if (!editingState) $("save-as-new").remove()
 
   // The third argument is where the chooser reports a failure it cannot handle itself (a host that
   // advertises pick:folder and wired up no chooser, a capability answered false). Without it the
@@ -383,7 +391,14 @@ export function mountEditor(root, {
           renderEditingHeader()
           historyPanel?.refresh(revision)
         }
-        onSaved()
+        // REBOUND, NOT MERELY TRIGGERED. `states` is the array this mount was handed and
+        // findStateOwning reads it at call time, so without taking the refreshed list back a box
+        // created in THIS session stays invisible to the next save in it — save, tweak, save again
+        // then mints a SECOND box (probed: count=2, revisions=[1, 1]), which is exactly the flow
+        // somebody iterating on a design takes. It is also what makes a second offer in one session
+        // count up rather than quoting the same revision number twice. The `|| states` keeps the old
+        // list when the caller answers nothing, as onSaved's own catch does when the refetch fails.
+        states = await onSaved() || states
       }
     } catch (e) {
       setSaveStatus(saveFailure(e), true)
@@ -398,7 +413,8 @@ export function mountEditor(root, {
   const onSave = () => onSaveClick(false)
   const onSaveNew = () => onSaveClick(true)
   $("save").addEventListener("click", onSave)
-  $("save-as-new").addEventListener("click", onSaveNew)
+  // `?.` because the button is REMOVED, not hidden, when there is nothing to fork (see above).
+  $("save-as-new")?.addEventListener("click", onSaveNew)
 
   const onBackClick = () => onBack()
   $("back").addEventListener("click", onBackClick)
@@ -407,7 +423,7 @@ export function mountEditor(root, {
     for (const d of destroyers) d?.destroy?.()
     $("preview-btn").removeEventListener("click", preview.preview)
     $("save").removeEventListener("click", onSave)
-    $("save-as-new").removeEventListener("click", onSaveNew)
+    $("save-as-new")?.removeEventListener("click", onSaveNew)
     $("back").removeEventListener("click", onBackClick)
   }
 }

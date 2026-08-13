@@ -157,7 +157,10 @@ function createSavedMenu({ onEditState, onShowState }) {
       el.appendChild(b)
     }
 
-    entry("Open prefilled", () => onEditState(state))
+    // NAMED FOR THE ACT, like the two callbacks themselves. "Open prefilled" described what a left
+    // click used to do on its way somewhere else; this menu's whole job is to keep editing this box
+    // apart from the two things that are not that.
+    entry("Edit this box", () => onEditState(state))
     entry("Details", () => onShowState(state))
 
     // THE FIRST OUTPUT FILE — a cut sheet for every box this bundle saves, since the states endpoint

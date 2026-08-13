@@ -18,7 +18,11 @@ import { host } from "@maker/addon-sdk"
 // that URL: a hardcoded assumption about Rails' routing, which is the one thing ctx exists so a
 // bundle would not have to make. The SDK grew the builder, so that assumption is gone from here and
 // from gallery.js's menu entry together.
-export function mountShow(root, { state, ctx, onBack, onDuplicate }) {
+//
+// AND WITH IT THE `ctx` PARAMETER. It was the last thing in this module that looked like it might
+// need the mount context, and it never read one — gallery.js's own header states the rule: an unread
+// parameter reads as "something here still needs the mount context".
+export function mountShow(root, { state, onBack, onDuplicate }) {
   root.innerHTML = `
     <div class="page-head">
       <h1 data-role="title"></h1>

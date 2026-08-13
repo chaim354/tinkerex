@@ -268,7 +268,7 @@ plan, which asked only for the mirror: the five existing bundle system tests are
 that cannot reach any of this, and the spec's §10 line "Bundle: its own tests" has no repo to land
 in — that one has no headless harness.
 
-**Seven guards mutation-checked**, each broken and watched go red. One did not: `assert_no_selector`
+**Twelve guards mutation-checked**, each broken and watched go red. One did not: `assert_no_selector`
 for the history panel's laziness stayed **green** with the fetch moved to mount, because it returns
 the moment the list is absent — equally true of an eager fetch that has not resolved. Replaced with
 a count of the `/revisions` requests the browser actually made, which goes red. §15's rule earning
@@ -276,7 +276,34 @@ its keep again. Also measured while writing it: **chromedriver's ctrl+click is a
 click** (`mousedown`/`click`, `button=0`, no `contextmenu`), so `right_click` is the only way a test
 reaches that menu.
 
-System suite **92 → 99 runs / 561 → 626 assertions**, 0 failures, 0 skips (whole suite run, not
+Review found two more, both now closed and both invisible to everything that existed before:
+
+3. **Save, tweak, save again — in ONE mount — still minted a second box.** `mountEditor` is handed
+   `states` at mount and the router rebound only its own binding, so a box created in the current
+   session was never in the list `findStateOwning` searches: the join offer could not fire and the
+   dialog fell back to the plain "Replace?". Probed at **count=2, revisions=[1, 1]**, two boxes both
+   called "Shelf box" — and it is the flow somebody iterating on a design actually takes. `onSaved`
+   now RETURNS the refreshed list and the editor rebinds it. Every other test navigates first, which
+   is exactly why none of them could see it. **Adopting the newly created box as `editingState`
+   instead was declined**: the save door redirects rather than answering JSON, so `files.save`
+   resolves `data: {}` and the bundle cannot learn the new id without re-fetching and guessing by
+   name. *Recorded as a future host change: the save door should return the state id.*
+4. **`hidden` is DECORATIVE on a `.btn`.** The host's `.btn` rule sets `display: inline-block`, and
+   an author rule beats the UA's `[hidden] { display: none }` — so "Save as new box" was **visible on
+   a fresh generator**, offering to fork a box that does not exist. Found by the one assertion the
+   review asked for (nothing asserted the button's *absence*); the node is now removed rather than
+   hidden. The host's stylesheet already carries `.addon-card[hidden]` and `.box-toc-list li[hidden]`
+   rules for this same collision, and a bundle cannot add a third — it ships no CSS.
+
+**`bin/check-fixture-drift` does not cover `addons/manifests.json`**, and that is now stated in the
+script rather than left to be discovered. The host's copy is deliberately not a mirror (two synthetic
+addons, a `description` documenting the snapshot, no `layout`/`permissions`), so equality is wrong and
+a chosen subset of keys would be a third definition of which keys matter. The cost, stated there:
+**nothing asserts the `min_host: 3` floor** — harmless while `Tools::AddonsController` never gates on
+`available?`, since `min_host` decides whether the /tools card greys and never whether the bundle
+loads.
+
+System suite **92 → 100 runs / 561 → 639 assertions**, 0 failures, 0 skips (whole suite run, not
 extrapolated). The five pre-existing bundle files are unchanged and green.
 
 ### Left open, deliberately — none of these were fixed here
