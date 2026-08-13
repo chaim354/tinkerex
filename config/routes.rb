@@ -159,56 +159,55 @@ Rails.application.routes.draw do
     resources :print_runs, only: %i[create destroy], module: :models, shallow: true
   end
 
-  # --- Addons (Tools) — the /tools gallery + each addon's server-rendered UI ---
-  # `generators` and `boxes` have both migrated to the generic manifest-driven surface
-  # (Tools::AddonsController, `tools/:key` below) — neither has a controller/routes of its own any
-  # more. OpenSCAD has not migrated yet and keeps its own controller.
+  # --- Addons (Tools) — the /tools gallery + every addon's UI ---
+  # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,
+  # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no
+  # addon has a controller or routes of its own any more, and adding one needs no edit to this file.
   get "tools", to: "tools/home#index", as: :tools
-
-  # OpenSCAD addon. TWO naming traps here, both about the inflector, and the routes are written out
-  # by hand to dodge both.
-  #
-  # 1. NOT `resources :openscad`. Rails derives the collection helper from name.pluralize
-  #    ("openscads") and the member helper from name.singularize ("openscad"), so `resources` would
-  #    leave tools_openscad_path meaning SHOW — which requires an id. The /tools gallery calls
-  #    send("tools_#{addon.key}_path") with NO arguments, so /tools would raise UrlGenerationError
-  #    for every user the moment this addon is registered. (Guarded by a test.)
-  # 2. NOT inside `namespace :tools`. A namespace prefixes `as:`, so `as: :new_openscad` in there
-  #    yields tools_new_openscad_path — while `resources` inside the same namespace yields
-  #    new_tools_box_path for the sibling addon. Declared at top level, `as:` is the whole helper
-  #    name, so these read the same way the other addons' do.
-  #
-  # `new` and `preview` precede `:id` so neither is swallowed as an id.
-  get  "tools/openscad",         to: "tools/openscad#index",   as: :tools_openscad
-  get  "tools/openscad/new",     to: "tools/openscad#new",     as: :new_tools_openscad
-  post "tools/openscad/preview", to: "tools/openscad#preview", as: :preview_tools_openscad
-  post "tools/openscad",         to: "tools/openscad#create"
-  get  "tools/openscad/:id",     to: "tools/openscad#show",    as: :tools_openscad_design
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
-  # Declared at top level so the helper reads like its sibling `tools_openscad_design_path`. The
-  # two inflector traps documented above do NOT apply here — `addon_state` inflects cleanly both
-  # ways; this is about the helper name matching, nothing more.
+  # Declared at top level so the helper reads like its `tools_addon_*` siblings below.
+  #
+  # ITS LAST HOST-SIDE CALLER WENT WITH THE OPENSCAD SHOW PAGE (which rendered
+  # `tools/shared/_params`, the only view that ever linked here). The endpoint is deliberately KEPT:
+  # it is addon-agnostic, it still serves any addon's saved state to a bundle that asks, and
+  # deleting a working download endpoint is a user-visible removal the migration does not require.
+  # So "no caller in this repo" is the intended state, not rot — do not read it as dead code.
   get "tools/addon_states/:id/params", to: "tools/addon_params#show", as: :tools_addon_params
 
-  # DECLARED LAST, AND THAT IS LOAD-BEARING. `tools/:key` matches any TWO-segment /tools/* path, so
-  # it collides with the sibling addon routes above it (`tools/openscad`) — route recognition is
-  # first-match-wins by declaration order, regardless of which named helper built the URL.
-  # Mutation-checked once for real, against `boxes` while it still had its own `resources :boxes`
-  # block here: moving `tools/:key` above it turned `bin/rails test
-  # test/controllers/tools/boxes_controller_test.rb` from green to 12 failures + 2 errors, all
-  # 404s/UrlGenerationErrors where `/tools/boxes` and `/tools/boxes/:id` used to resolve — because
-  # `tools/:key` (key="boxes") beat `resources :boxes`'s own index route to the match. Restoring
-  # this order fixed it. (Both `generators` and `boxes` have since migrated to the generic
-  # `tools/:key` surface itself — `tools/:key` matching `key="boxes"` is now the CORRECT resolution,
-  # not a collision — so `tools/openscad` is the one sibling left for this ordering to protect.)
+  # DECLARED LAST, AND THAT IS STILL LOAD-BEARING — THOUGH ITS JUSTIFICATION HAS CHANGED. `tools/:key`
+  # matches any TWO-segment /tools/* path, so it collides with ANY two-segment `/tools/*` route
+  # declared after it — route recognition is first-match-wins by declaration order, regardless of
+  # which named helper built the URL.
   #
-  # It does NOT collide with `tools/addon_states/:id/params`: that path has four segments
-  # (tools/addon_states/:id/params) and Rails requires a segment-count match, so no ordering hazard
-  # exists between them — moving `tools/:key` above that one specific route left
-  # `addon_params_controller_test.rb` green. (An earlier draft of this comment claimed the opposite;
-  # verified false with `Rails.application.routes.recognize_path`.)
+  # WHAT CHANGED: this ordering used to protect live siblings. It no longer protects anything that
+  # exists. `boxes` and `generators` migrated first, and `openscad` — the last hand-written
+  # two-segment `/tools/*` route, and the one this comment previously named as "the one sibling left
+  # for this ordering to protect" — is now gone too. `tools/:key` matching `key="openscad"` is the
+  # CORRECT resolution, not a collision.
+  #
+  # SO WHY KEEP THE ORDER? Because it is the invariant a FUTURE two-segment `/tools/*` route needs,
+  # and the failure it prevents is a 404 on a route that is right there in this file — read as "my
+  # route isn't registered", which sends you to look at the wrong thing. Anything two-segment added
+  # under /tools must go ABOVE this block or it is unreachable. The three multi-segment routes below
+  # (`states`, `file/:node_id`, `asset/*path`) sit above for tidiness, not safety — see the
+  # segment-count note.
+  #
+  # THE MUTATION CHECK, KEPT BECAUSE IT IS THE EVIDENCE AND IT IS NO LONGER REPRODUCIBLE HERE. Done
+  # for real against `boxes` while it still had its own `resources :boxes` block: moving `tools/:key`
+  # above it turned `bin/rails test test/controllers/tools/boxes_controller_test.rb` from green to
+  # 12 failures + 2 errors, all 404s/UrlGenerationErrors where `/tools/boxes` and `/tools/boxes/:id`
+  # used to resolve, because `tools/:key` (key="boxes") beat that block's own index route to the
+  # match. Restoring this order fixed it. With no hand-written sibling left there is nothing to
+  # re-run that against — which is exactly why the anecdote stays written down.
+  #
+  # IT DOES NOT COLLIDE WITH `tools/addon_states/:id/params`: that path has four segments and Rails
+  # requires a segment-count match, so no ordering hazard exists between them — moving `tools/:key`
+  # above that one specific route left `addon_params_controller_test.rb` green. (An earlier draft of
+  # this comment claimed the opposite; verified false with
+  # `Rails.application.routes.recognize_path`.) That is still true and is the reason the
+  # four-segment routes below are safe wherever they sit.
   #
   # An addon reaching its sidecar. The manifest names WHICH service; the host's own env says WHERE —
   # a manifest-supplied URL would be an SSRF primitive aimed at the internal network (spec §4.1).

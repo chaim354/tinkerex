@@ -19,11 +19,40 @@ module Maker
       # A REASON, NOT A BOOLEAN, because the gallery previously hardcoded "Not configured on this
       # deployment" as the only explanation there could be. A too-new addon greying out under that
       # label would send an operator to check env vars that are fine.
+      #
+      # TWO ARMS, AND THE SECOND IS A REGRESSION FIX RATHER THAN A NEW FEATURE. Until openscad
+      # migrated, the /tools gallery greyed its hardcoded card out by asking
+      # `OpenscadClient.configured?` — an env check written into the view. That card is gone and
+      # nothing replaced the check, so an addon declaring a service this deployment has no URL for
+      # rendered ENABLED and clickable: the bundle mounted, its first `host.service.*` call 404'd
+      # (Tools::AddonsController#service head(:not_found) on a nil URL), and the user got a broken
+      # page instead of a greyed tile with a sentence. `boxes` already had this hole and it was
+      # unobserved only because every leg that serves addons happens to set BOXES_SIDECAR_URL.
+      #
+      # NAMES THE SERVICE *AND* ITS ENV VAR. "Not configured" was the old label this method exists
+      # to replace, and an addon with two sidecars makes it ambiguous in exactly the way that label
+      # was — the operator has to know WHICH one to set. Maker::Addons::Services owns the derivation
+      # so this sentence and the proxy's own lookup cannot disagree about the spelling.
+      #
+      # ORDER IS min_host FIRST, and it matters only for an addon that is BOTH too new and
+      # unconfigured. The host level is the more fundamental answer: on a host that cannot run the
+      # addon at all, sending an operator to set a sidecar URL is advice that will not help.
+      #
+      # STILL ONLY COSMETIC, exactly as the min_host arm is. `Tools::AddonsController` does not gate
+      # on `available?` (see states_key_permitted?'s note below) — a greyed addon stays reachable by
+      # URL. This makes the gallery honest; it is not an access control, and reading it as one is
+      # how a real gate ends up not being written.
       def unavailable_reason
-        return unless min_host > Maker::Addons::Host::LEVEL
+        if min_host > Maker::Addons::Host::LEVEL
+          return "Needs a newer version of this host (asks for level #{min_host}, this host is " \
+                 "level #{Maker::Addons::Host::LEVEL})"
+        end
 
-        "Needs a newer version of this host (asks for level #{min_host}, this host is level " \
-          "#{Maker::Addons::Host::LEVEL})"
+        missing = services.find { |name| Maker::Addons::Services.url_for(name).blank? }
+        return if missing.nil?
+
+        "This deployment has no #{missing} service configured " \
+          "(set #{Maker::Addons::Services.env_key_for(missing)})"
       end
 
       # DOES THIS MANIFEST SAY IT WANTS `name`? Read by Tools::AddonsController#file, the one

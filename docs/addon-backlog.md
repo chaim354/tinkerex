@@ -99,9 +99,13 @@ Interactive inspection to complement the server-rendered grid thumbnails:
 ## Server add-ons (grouped by engine)
 
 ### Engine ① — OpenSCAD sidecar (GPL-isolated) · `.scad` + params → 3MF ✅ **BUILT** (2026-07-27)
-Shipped as the `/tools/openscad` addon: `sidecar/openscad` + `OpenscadClient`, bundled permissive
-catalog **and** bring-your-own `.scad` from the library, content-addressed render cache, 3MF output
+Shipped as the OpenSCAD addon: `sidecar/openscad` plus a bundled permissive catalog **and**
+bring-your-own `.scad` from the library, content-addressed render cache, 3MF output
 with a grid thumbnail. Spec: `docs/superpowers/specs/2026-07-27-openscad-sidecar-addon-design.md`.
+**The Rails half is gone as of 2026-08-12** — `Tools::OpenscadController` and `OpenscadClient` were
+retired when this addon moved onto the generic manifest-driven surface, so the UI is now a bundle in
+`chaim354/tinkerex-addons` and the sidecar is reached through the addon service proxy. The sidecar,
+its catalog and the §2 rule below are unaffected.
 **Multiboard is NOT and will not be in the bundled catalog** — its generated models are CC
 BY-NC-SA 4.0 (NonCommercial + ShareAlike, on the *output*). It is served by the bring-your-own path.
 Remaining ideas below are now "add a `.scad` to the catalog", not new engine work. Each one still

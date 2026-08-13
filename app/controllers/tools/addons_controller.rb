@@ -519,10 +519,17 @@ module Tools
 
     # The manifest must DECLARE the service, and the host must have a URL for it. Both, not either —
     # an addon naming a service the host never configured must not fall back to a guess.
+    #
+    # THE DECLARATION CHECK STAYS HERE; ONLY THE ENV LOOKUP MOVED. The two halves answer different
+    # questions and only one of them is per-request: "did THIS addon's manifest declare this
+    # service" is about `@addon`, and it is the spec §4.1 SSRF guard — without it any addon could
+    # name any service the deployment configures. "Where does that service live" is deployment-wide,
+    # and `Addon#unavailable_reason` now asks it too in order to grey an unconfigured addon out, so
+    # the derivation lives once in Maker::Addons::Services rather than being spelled here and there.
     def sidecar_url_for(name)
       return nil unless @addon.services.include?(name.to_s)
 
-      ENV["#{name.to_s.upcase.tr('-', '_')}_SIDECAR_URL"].presence
+      Maker::Addons::Services.url_for(name)
     end
 
     # ALL THE NAMES, CHECKED BEFORE ANY BYTE IS WRITTEN — which closes two different defects.

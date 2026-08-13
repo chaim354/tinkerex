@@ -629,6 +629,26 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   filter silently skipped the **worse** case: a sidecar whose author never committed a
   `LICENSE` at all was invisible to the guard written to catch exactly that. Found by
   planting a synthetic sidecar and watching the test stay green, not by reading it.
+- **A BUNDLED THIRD-PARTY `.scad` MUST CARRY ITS OWN LICENCE, AND THAT IS GUARDED IN RUBY BECAUSE
+  `bin/ci` DOES NOT RUN pytest.** `sidecar/openscad/catalog/` redistributes other people's designs
+  inside an image we push, so §9 binds per FILE, not per repo — and the catalog's own `NOTICE`
+  records why: of four candidates, **two declared a different (more restrictive) licence in their
+  own header than their repo's `LICENSE` file did**, one of them NonCommercial. *Read the file, not
+  the repo.* `sidecar/openscad/tests/test_catalog.py` checks this thoroughly — and **none of
+  `bin/ci`'s seven gates runs it**, so until 2026-08-12 the only licence guard that actually
+  EXECUTED was `openscad_controller_test.rb`'s per-tile assertion, which died with that controller.
+  Its replacement is in **`test/deploy_hygiene_test.rb`** (directory-driven over
+  `sidecar/*/catalog/catalog.json`): every entry has a licence, an attribution and a pinned commit;
+  no forbidden term (NC/SA/GPL); every `.scad` on disk is listed; every listed file and ref appears
+  in `NOTICE`. It guards the **DATA, upstream of every renderer** — a catalogued file with no
+  licence makes the display correct and empty — and it is mutation-checked four ways, including the
+  lowercased-needle bug the Python original shipped with (`"-NC" in "cc-by-nc-sa-4.0"` is false).
+  **The DISPLAY half is now the bundles repo's obligation** (`chaim354/tinkerex-addons`): the
+  OpenSCAD UI is a bundle, `GET /generators` hands it `license`/`attribution`/`source_url` per
+  entry, and nothing in THIS repo can assert that a tile paints them. That was a deliberate choice
+  over vendoring the bundle into `test/fixtures/addons/` — the vendored `boxes` copy has **no sync
+  guard on this side**, so a licence assertion against a stale snapshot would go green while the
+  live bundle dropped the line, which is the worst possible failure for a compliance check.
 - **Addons are manifest-driven, not listed in this repo.** `Maker::Addons::Registry` builds
   `Addon`s from manifests fetched by `Maker::Addons::Source` and caches the index (`CACHE_KEY`,
   5-minute `TTL`) — republishing a bundle *is* the deploy. Three refusals matter: a manifest
@@ -638,14 +658,41 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `rescue` sits **outside** `Rails.cache.fetch` — inside, a two-second blip greys every addon out
   for the whole TTL (also mutation-checked, and only against a real `MemoryStore`: the suite's
   default `:null_store` can't observe caching at all — same shape as §14e's rate-limiting note).
-- **ONE generic surface serves every addon** — `Tools::AddonsController` (shell / same-origin
-  asset proxy / save), which is why a new addon needs no Rails redeploy. **Route order is
-  load-bearing**: `tools/:key` matches any two-segment `/tools/*` path and collides with the
-  sibling addon routes above it, mutation-checked by moving it above `resources :boxes` and
-  watching `boxes_controller_test.rb` go from green to 12 failures + 2 errors. It does **not**
-  collide with `tools/addon_states/:id/params` (four segments; Rails requires a segment-count
-  match) — an earlier draft of the routes comment claimed it did and was verified false via
-  `Rails.application.routes.recognize_path`.
+- **ONE generic surface serves EVERY addon, with NO EXCEPTIONS LEFT** — `Tools::AddonsController`
+  (shell / same-origin asset proxy / save), which is why a new addon needs no Rails redeploy.
+  `generators`, `boxes` and — last, 2026-08-12 — `openscad` have all migrated:
+  `Tools::OpenscadController`, its five views, its five hand-written routes, `OpenscadClient` and
+  the hardcoded gallery card are **gone**. Any statement elsewhere that qualifies this rule
+  ("except openscad", "the last bespoke addon surface") is stale — the gallery is now
+  manifest-only, guarded by a CARD COUNT in `home_controller_test.rb`, which is the only assertion
+  shape that can see a card the `@addons` loop did not produce.
+  **Route order is still load-bearing, but its justification changed**: `tools/:key` matches any
+  two-segment `/tools/*` path and shadows any such route declared after it. It no longer protects a
+  live sibling — there are none — so the ordering is now kept for the NEXT two-segment `/tools/*`
+  route somebody adds, and `config/routes.rb` says exactly that. The mutation check is kept as the
+  evidence precisely because it can no longer be re-run here: moving `tools/:key` above
+  `resources :boxes`, while boxes still had its own block, took `boxes_controller_test.rb` from
+  green to 12 failures + 2 errors. It does **not** collide with `tools/addon_states/:id/params`
+  (four segments; Rails requires a segment-count match) — an earlier draft of the routes comment
+  claimed it did and was verified false via `Rails.application.routes.recognize_path`.
+- **AN ADDON DECLARING A SERVICE THIS DEPLOYMENT HAS NO URL FOR GREYS OUT, NAMING THE SERVICE AND
+  ITS ENV VAR.** This is a REGRESSION the openscad retirement would otherwise have shipped: the
+  hardcoded gallery card greyed itself out on `OpenscadClient.configured?` — an env check living in
+  a view — so deleting the card deleted the only thing that asked before rendering, and a
+  deployment without the accessory would show an ENABLED tile whose bundle 404s on its first
+  `host.service.*` call. `boxes` already had the same latent hole, unobserved only because every
+  leg serving addons happens to set `BOXES_SIDECAR_URL`. It is the second arm of
+  `Addon#unavailable_reason`, after `min_host` — the host level wins when both are wrong, because
+  on a host that cannot run the addon at all "go and set a sidecar URL" is advice that will not
+  help. **`Maker::Addons::Services` owns the env-name derivation, once**, because
+  `Tools::AddonsController#sidecar_url_for` needs the same answer and a second
+  `"#{name.upcase}_SIDECAR_URL"` is a string that drifts silently — get it wrong and the lookup
+  returns nil, which reads as "not deployed". The manifest-vs-ENV split (spec §4.1) is untouched:
+  the **declaration** check stays in the controller because that is the per-addon SSRF guard, and
+  only the deployment-wide lookup is shared. A **blank** counts as unconfigured — Kamal's
+  `env.clear` blanks rather than removes, which is exactly the shape OVH has. Cosmetic only:
+  `Tools::AddonsController` never gates on `available?`, so a greyed addon stays reachable by URL —
+  do not read this as an access control.
 - **Asset paths are REJECTED, never normalized** (§14a's `key_for` rule) — one guard,
   `Source.validate_asset_path!`, shared by the HTTP and local (`Source::Local`, dev/test)
   backends. The controller-level traversal test passed under mutation until the fake was seeded
@@ -805,14 +852,18 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   an out-of-range number rather than ignoring it, so refusing one adds false rejections and prevents
   nothing; and messages are **truncated** so a pasted value cannot become the message.
 - **THE SIDECAR ANSWERS 422 FOR TWO DIFFERENT THINGS, AND ONLY `code: "invalid_params"` TELLS THEM
-  APART.** A `.scad` it cannot parse and a *value* it refuses are both client conditions and both
-  422, but Rails must react differently — a rejected value comes back as a form error with the
-  user's own entries still in it (`editor_again`), a broken source bounces to the index. So
-  `OpenscadClient` raises **`InvalidParams`, a SUBCLASS of `Error`** (§14a's rule: a caller that must
-  branch on WHY gets a subclass, so every existing `rescue Error` keeps working), matching on the
-  **code and never the prose** — the prose is a human sentence a sidecar release can reword without
-  ever rebuilding Rails. `#create`'s two rescue arms are ordered subclass-first; reverse them and
-  every refused value silently bounces to the index instead.
+  APART — AND THE CONSUMER OF THAT DISTINCTION IS NOW A BUNDLE, NOT RAILS.** A `.scad` it cannot
+  parse and a *value* it refuses are both client conditions and both 422, but they want different
+  UI: a rejected value must come back as a form error with the user's own entries still in it, a
+  broken source has to send the user back to the catalog. That branch used to be Rails' —
+  `OpenscadClient::InvalidParams`, a subclass of `Error`, with `#create`'s two rescue arms ordered
+  subclass-first — and **all of it went with `Tools::OpenscadController` on 2026-08-12**. The rule
+  that survives is the one about the WIRE: **branch on the `code`, never on the prose**, because
+  the prose is a human sentence a sidecar release can reword without anything downstream being
+  rebuilt — which is now doubly true, since the downstream is a bundle published from another repo.
+  Note the SDK does not do this branching for you: `service.*` raises `ServiceError` built from the
+  status and the RAW TEXT, deliberately (see the sidecar-error bullet above), so a bundle that needs
+  the distinction reads `code` out of the body itself.
 - **THE SDK REJECTS A `.`, `..` OR EMPTY PATH SEGMENT RATHER THAN ENCODING IT** —
   `encodeURIComponent("..")` is `".."`, so the **browser** normalizes the path before the request
   is sent and it never reaches the route the server guards: it misroutes **silently** instead of
@@ -1065,7 +1116,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   panel for **nine days**. `openscad_controller_test.rb` stayed green throughout because it POSTs the
   preview endpoint DIRECTLY and therefore cannot see that the only thing which issues that POST has
   become inert — a request test proves the endpoint works and nothing about whether anything calls
-  it. Guarded by **`test/stimulus_hygiene_test.rb`**, which DERIVES every registered identifier from
+  it. *(Both controllers were restored in #177 and then deleted again — for real this time — with
+  the views that were their only callers, when openscad was retired. The reverse direction, a
+  controller file no view names, is deliberately NOT an error here, which is what made that
+  deletion safe.)* Guarded by **`test/stimulus_hygiene_test.rb`**, which DERIVES every registered identifier from
   the filenames by replicating stimulus-loading's own rule rather than listing them (a new controller
   needs no test edit), and sweeps **both** spellings — `data-controller="a b"` (several names per
   attribute) and the Rails `data: { controller: "a" }` hash, which
@@ -1280,14 +1334,20 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   not mkdir it (`#relocate`'s recorded bug) — and takes its folder name from
   `Maker::ProjectFolders.folder_for`, the same pure function `#place` uses, so prediction and
   behaviour cannot disagree.
-- **`Tools::OpenscadController#create` CANNOT REACH THAT BUG, and the guard is on the property that
-  makes it so** — its output name embeds `state.id`, a fresh autoincrement per save, so two saves of
-  one design under one name still produce two filenames. A confirm dialog there would be UI for an
-  unreachable branch. Drop `state.id` from the name and `openscad_controller_test.rb` goes red,
-  which is exactly when that door needs what the other one has.
-- **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there are TWO of them**
-  (`Tools::AddonsController#create`, `Tools::OpenscadController#create`), and the concern is
-  included on `Tools::BaseController` so a third inherits it. This was the last
+- **THE `state.id`-IN-THE-FILENAME EXEMPTION IS GONE WITH ITS DOOR, AND THAT IS A WIDENING, NOT A
+  TIDY-UP.** `Tools::OpenscadController#create` could not reach the collision above because its
+  output name embedded `state.id`, a fresh autoincrement per save, so two saves of one design under
+  one name still produced two filenames — a confirm dialog there would have been UI for an
+  unreachable branch, and dropping `state.id` turned `openscad_controller_test.rb` red. That door
+  was retired on 2026-08-12 and **openscad now saves through `Tools::AddonsController#create` like
+  every other addon**, where the name is whatever the BUNDLE sends. So the branch that was
+  unreachable is now reachable for openscad too, and the 409 `would_replace` / 422 `name_taken`
+  distinction below is what covers it. If a bundle chooses to embed a unique token in its output
+  name it gets the old property back — but that is now the bundle's choice, made in another repo,
+  and nothing in this one can assert it.
+- **EVERY ADDON SAVE DOOR FIRES THE EAGER NUDGE — there is now exactly ONE**
+  (`Tools::AddonsController#create`), and the concern is included on `Tools::BaseController` so a
+  second inherits it. It was TWO until openscad's own door was retired. This was the last
   browser-facing door without one: the save dialog DEFAULTS to the current project's folder,
   so the user watched the redirect land on a file that visibly did not sort — 15 minutes on
   chunk, and on share/s3 there is no `project_folder_intake` schedule at all
@@ -1328,11 +1388,13 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   flash (before the eager nudge existed) to a silent "Uploaded x." with no sign the file
   stayed at the project root (after it, before this fix).
   `ProjectFolderIntake#left_unfiled_by_conflict?` / `#project_intake_notice` read the
-  `:conflict` entry out of `Result#skips` for exactly this — but only in the **four** doors
+  `:conflict` entry out of `Result#skips` for exactly this — but only in the **three** doors
   whose response a user actually sees (`FilesController#create`'s HTML branch,
-  `Projects::UploadsController#create`, and both addon save doors); the JSON-only branches
+  `Projects::UploadsController#create`, and the addon save door); the JSON-only branches
   still run the intake and still file what they can, they just don't surface the fact,
-  because nothing downstream reads that response key today.
+  because nothing downstream reads that response key today. *(It was four until
+  `Tools::OpenscadController#create` was retired on 2026-08-12 — openscad now goes through
+  `Tools::AddonsController#create` with every other addon.)*
 
 ### 14g. Deploy secrets
 

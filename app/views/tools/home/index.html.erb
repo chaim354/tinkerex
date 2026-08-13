@@ -24,22 +24,8 @@
       </div>
     <% end %>
   <% end %>
-
-  <%# TEMPORARY — openscad still has its own controller and is not yet manifest-driven. This block
-      disappears when that addon migrates to a bundle too. `generators` and `boxes` have both
-      migrated (both are now served by the @addons loop above); availability still keys on the
-      sidecar env var, exactly as the old Registry entries did. %>
-  <% if OpenscadClient.configured? %>
-    <%= link_to tools_openscad_path, class: "addon-card" do %>
-      <span class="addon-icon">🧊</span>
-      <span class="addon-title">OpenSCAD</span>
-      <span class="addon-desc muted">Parametric .scad + params → 3MF</span>
-    <% end %>
-  <% else %>
-    <div class="addon-card disabled" title="Not configured on this deployment">
-      <span class="addon-icon">🧊</span>
-      <span class="addon-title">OpenSCAD</span>
-      <span class="addon-desc muted">Unavailable here</span>
-    </div>
-  <% end %>
+  <%# NO HARDCODED CARDS. The last one was openscad's, kept while it still had its own controller;
+      it migrated to a bundle and the block went with it. Every card above comes from a manifest,
+      which is what makes publishing a bundle the whole deploy. A card that has to be written here
+      is the signal that an addon has not actually migrated. %>
 </div>
