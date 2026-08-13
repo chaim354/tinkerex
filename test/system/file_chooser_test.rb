@@ -1,7 +1,6 @@
 require "application_system_test_case"
-require_relative "../support/fake_openscad"
 
-# The reusable folder chooser, driven in a real browser.
+# The reusable folder/file chooser, driven in a real browser.
 #
 # WHY THIS TIER AND NOT AN INTEGRATION TEST. Everything this modal is made of only exists in a
 # browser: the Stimulus controller has to be REGISTERED (importmap `pin_all_from` +
@@ -15,75 +14,93 @@ require_relative "../support/fake_openscad"
 # eval would pass every Ruby test, log a violation only in a visitor's browser, and then break for
 # real on the day that policy is flipped to enforcing. §14e: "a CSP header that parses is not a CSP
 # that works — only a browser knows." assert_no_console_errors is what makes that check real here.
+#
+# ── THE HOST PAGE MOVED, AND SO DID THE MODE ──────────────────────────────────────────────────
+# This file used to open `/tools/openscad/new`, whose own comment said the chooser is addon-agnostic
+# and that page "is simply the one page on `main` that renders it". Retiring Tools::OpenscadController
+# took that page away, and `app/views/projects/_form.html.erb` is now the ONLY view in the app that
+# renders `shared/_folder_field` — so the project form is the host page.
+#
+# IT RENDERS THE FIELD IN `mode: "file"` (the cover-image picker), AND THAT IS NOT A DETAIL TO SKIM
+# PAST. The retired editor used the folder-mode default, so this move changes which arm of
+# lib/file_chooser.js each test drives. Four of the five subjects are mode-independent and are
+# unchanged in substance — the trigger opens the modal, the columns fetch and descend, "＋ New
+# Folder" writes through the real port, a refused name reports inline, Esc commits nothing, and a
+# commit has to move the BUTTON LABEL and the HIDDEN INPUT together. What genuinely does not survive
+# is the *seeding* half of the reopen case: `FileChooser#open` seeds a selection only when
+# `mode === "folder"` (`{nodeId: this.value, path: this.label || this.rootLabel}`), because in file
+# mode there is no "current file" to resume from. That behaviour is not lost, it MOVED — see
+# addon_bundle_test.rb's "the chooser resumes from the folder it was seeded with", which drives the
+# same seeding through `ctx.chooseFolder`, the one path on which folder mode still ships. The
+# file-mode reopen contract that DOES live here (reopening and backing out must not clear a choice
+# the field is already carrying) is `filechooser_controller.js`'s own, and is tested below.
+#
+# WHAT THIS FILE IS STILL FOR, given addon_bundle_test.rb drives the same modal: this is the
+# FORM-FIELD face — `shared/_folder_field` + filechooser_controller.js, a hidden input inside a real
+# `form_with`, on a server-rendered page with no bundle, no proxied ESM and no context object. That
+# controller is the only thing that writes a chosen node_id into a form, and nothing else covers it.
 class FileChooserTest < ApplicationSystemTestCase
   include WebHelpers
 
-  # THE HOST PAGE PREVIEWS ITSELF, and on a box without the `stl-thumbnailer` binary that preview
-  # honestly cannot succeed. boxpreview_controller fires on connect, #rasterize has no binary to
-  # shell out to, and the endpoint answers a correct 422 ("no preview image could be made") — which
-  # Chrome logs at SEVERE like any failed fetch, masking anything genuine logged beside it.
-  #
-  # Nothing to do with the chooser, and NOT a hole that widens with the environment: on a box that
-  # HAS the binary the preview succeeds and this pattern matches nothing at all. (Between 6095b87
-  # and this branch it also matched nothing — the controller was missing, so no preview was ever
-  # requested. That silence is exactly what test/stimulus_hygiene_test.rb now refuses to allow.)
-  PREVIEW_422 = %r{/tools/openscad/preview - Failed to load resource.+422}
-
   setup do
-    # The chooser is addon-agnostic; /tools/openscad is simply the one page on `main` that renders
-    # it. The sidecar stub is this page's own precondition, not the chooser's — the editor needs a
-    # catalog to render at all, and OpenscadClient.current prefers @stub over the URL so nothing
-    # here reaches the network.
-    @prior_sidecar_url = ENV["OPENSCAD_SIDECAR_URL"]
-    ENV["OPENSCAD_SIDECAR_URL"] = "http://openscad.invalid"
-    OpenscadClient.stub = FakeOpenscad.new
     @user = sign_in_as("chooser@example.com")
-    Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "harbor" ])
+    harbor = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "harbor" ])
+    # A CATALOG ROW IS ALL THE CHOOSER READS. `/library/children` lists `nodes`; nothing here
+    # fetches bytes, so `nodes.create!` is honest rather than a shortcut past the port — and it is
+    # what keeps this test identical on all three LIBRARY_BACKEND legs. (Contrast the save-door
+    # tests, which must go through the real write door because a `nodes.create!` node has a NULL
+    # storage_path — §14a.) The folders above still go through Maker::LibraryFolder, because the
+    # "＋ New Folder" test asserts against that same door.
+    @file = @user.nodes.create!(node_id: SecureRandom.uuid, name: "beacon.stl", kind: "file",
+                                parent_node_id: harbor.node_id)
   end
 
-  teardown do
-    ENV["OPENSCAD_SIDECAR_URL"] = @prior_sidecar_url
-    OpenscadClient.reset!
-  end
-
-  # Straight to the editor rather than clicking through the index: the tile's visible text is the
-  # generator KEY, so navigating by click couples this file to the gallery's markup for no coverage
-  # — the gallery has its own tests, and nothing about the chooser is exercised on the way in.
-  def open_editor
-    visit new_tools_openscad_path(generator: "hex_plate")
+  # The project form's cover-image field. Straight to `new` rather than clicking through the
+  # projects index: nothing about the chooser is exercised on the way in, and navigating by click
+  # would couple this file to that page's markup for no coverage.
+  #
+  # "Choose automatically" is this caller's `root_label`, not the partial's "/ (library root)"
+  # default — a reminder that the label is caller-supplied and the modal must show what it is given.
+  def open_form
+    visit new_project_path
     assert_selector ".folder-field-btn"
   end
 
-  test "the trigger opens a modal, a folder can be descended and chosen, and the form carries it" do
-    open_editor
-    assert_text "/ (library root)", count: 1
+  def cover_input = find("input[name='project[cover_node_id]']", visible: false)
+
+  test "the trigger opens a modal, a file can be found by descending, and the form carries it" do
+    open_form
+    assert_text "Choose automatically", count: 1
 
     find(".folder-field-btn").click
     assert_selector ".filechooser-overlay"
-    # Root column, dirs only — the seeded tree's top level.
+    # Root column, the seeded tree's top level.
     within(".filechooser-cols") { assert_text "Projects" }
 
-    # Descending is what selects, in folder mode — there is no separate "select" click.
+    # IN FILE MODE, DESCENDING SELECTS NOTHING — folders navigate and only a file click commits.
+    # Asserting the placeholder is what makes that an assertion rather than an assumption: were
+    # descending to select (the folder-mode behaviour), "Open" would already be live here and the
+    # user could commit a directory into a field that means "an image".
     find(".filechooser-row", text: "Projects").click
     within(".filechooser-cols") { assert_text "harbor" }
     find(".filechooser-row", text: "harbor").click
-    assert_text "Selected: /Projects/harbor"
+    assert_text "Select a file"
 
-    click_on "Choose"
+    find(".filechooser-row", text: "beacon.stl").click
+    assert_text "Selected: /Projects/harbor/beacon.stl"
+
+    click_on "Open" # the file-mode label for Choose
     assert_no_selector ".filechooser-overlay"
 
-    # BOTH halves of the commit, because they are two different contracts and only one of them is
+    # BOTH HALVES OF THE COMMIT, because they are two different contracts and only one of them is
     # visible: the button LABEL is what the user reads, the hidden INPUT is what the form submits.
-    # A chooser that updated only the label would look perfect and save to the wrong folder.
-    assert_text "/Projects/harbor"
-    chosen = @user.nodes.present.find_by(name: "harbor", kind: "dir")
-    assert_equal chosen.node_id, find("input[name='parent_node_id']", visible: false).value
-
-    assert_no_console_errors ignoring: [ PREVIEW_422 ]
+    # A chooser that updated only the label would look perfect and save the wrong node_id.
+    assert_text "/Projects/harbor/beacon.stl"
+    assert_equal @file.node_id, cover_input.value
   end
 
   test "New Folder creates a real dir through the port and steps into it" do
-    open_editor
+    open_form
     find(".folder-field-btn").click
     find(".filechooser-row", text: "Projects").click
 
@@ -91,18 +108,24 @@ class FileChooserTest < ApplicationSystemTestCase
     find(".filechooser-newform input").set("exports")
     click_on "Create"
 
+    # THE DOM ASSERTION COMES FIRST, AND THE ORDER IS LOAD-BEARING RATHER THAN STYLISTIC. Creating
+    # a folder is a `fetch` the test does not await; only Capybara's own retrying matchers wait for
+    # it. A bare ActiveRecord `exists?` does not retry, so asserting the row first races the POST
+    # and fails intermittently — for a reason ("Expected false to be truthy") that says nothing
+    # about what actually happened. Asserted on the CRUMBS rather than on "Selected:", because in
+    # file mode `descend` deliberately leaves nothing selected, so the folder-mode spelling of this
+    # assertion would fail here for a reason unrelated to whether the new folder was opened.
+    assert_selector ".filechooser-crumbs", text: /exports/
+
     # A REAL NODE, not just a row in the modal. This is the one action in the chooser that writes,
     # and it goes through Maker::LibraryFolder — the cross-backend mkdir seam — so asserting the DOM
-    # alone would pass over a modal that draws an optimistic entry for a folder that was never made.
-    assert_text "Selected: /Projects/exports"
+    # alone would pass over a modal that draws an optimistic entry for a folder never made.
     parent = @user.nodes.present.find_by(name: "Projects", kind: "dir")
     assert @user.nodes.present.exists?(name: "exports", parent_node_id: parent.node_id, kind: "dir")
-
-    assert_no_console_errors ignoring: [ PREVIEW_422 ]
   end
 
   test "a rejected folder name reports inline and creates nothing" do
-    open_editor
+    open_form
     find(".folder-field-btn").click
 
     click_on "＋ New Folder"
@@ -117,46 +140,50 @@ class FileChooserTest < ApplicationSystemTestCase
 
     # `ignoring:` the 422: Chrome logs any non-2xx fetch at SEVERE, and this refusal IS the flow —
     # same reason addon_bundle_test ignores its own 409.
-    assert_no_console_errors(ignoring: [ /library\/folders.*422/, PREVIEW_422 ])
+    assert_no_console_errors(ignoring: [ %r{library/folders.*422} ])
   end
 
-  # REOPENING MUST NOT FORGET WHAT IS ALREADY CHOSEN — a defect in the original controller, fixed
-  # when the modal was split out into lib/file_chooser.js.
+  # REOPENING MUST NOT DISCARD WHAT IS ALREADY CHOSEN. In file mode the modal cannot resume a
+  # selection (see the header), so what is under test here is narrower and belongs entirely to
+  # filechooser_controller.js: `#open` awaits the modal and returns early on a null answer
+  # (`if (!selection) return`), leaving the input and the button exactly as they were. Delete that
+  # early return and backing out of a reopened chooser silently blanks a cover the user had already
+  # picked — reverting a field by cancelling out of it, which is the opposite of what Cancel means.
   #
-  # It seeded the modal's selection as {nodeId: <the field's value>, path: <the ROOT label>}, two
-  # halves describing different folders. Nothing looked wrong until you pressed Choose without
-  # navigating: #choose writes nodeId (unchanged, still the subfolder) to the hidden input and the
-  # path to the button, so the form submitted the subfolder under a label reading "/ (library
-  # root)". Wrong in the direction that looks like it worked, and only ever on the SECOND open —
-  # which is why the original suite, whose every case opened once, could not see it.
-  test "reopening after a choice keeps the chosen folder, in both halves" do
-    open_editor
+  # The ONLY-ON-THE-SECOND-OPEN shape is why this is worth its own test: every assertion in the
+  # first test above is made after one open, and would stay green.
+  test "reopening and backing out leaves an existing choice untouched, in both halves" do
+    open_form
     find(".folder-field-btn").click
     find(".filechooser-row", text: "Projects").click
-    click_on "Choose"
-    assert_text "/Projects"
+    find(".filechooser-row", text: "harbor").click
+    find(".filechooser-row", text: "beacon.stl").click
+    click_on "Open"
+    assert_text "/Projects/harbor/beacon.stl"
 
     find(".folder-field-btn").click
-    assert_text "Selected: /Projects" # NOT "/ (library root)"
-    click_on "Choose"
+    assert_selector ".filechooser-overlay"
+    find(".filechooser").send_keys(:escape)
+    assert_no_selector ".filechooser-overlay"
 
-    chosen = @user.nodes.present.find_by(name: "Projects", kind: "dir")
-    assert_text "/Projects"
-    assert_equal chosen.node_id, find("input[name='parent_node_id']", visible: false).value,
-                 "the label and the submitted node_id must name the same folder"
-    assert_no_console_errors ignoring: [ PREVIEW_422 ]
+    assert_text "/Projects/harbor/beacon.stl"
+    assert_equal @file.node_id, cover_input.value,
+                 "the label and the submitted node_id must still name the same file"
+    assert_no_console_errors
   end
 
   test "Escape closes the modal without committing a selection" do
-    open_editor
+    open_form
     find(".folder-field-btn").click
     find(".filechooser-row", text: "Projects").click
-    assert_text "Selected: /Projects"
+    find(".filechooser-row", text: "harbor").click
+    find(".filechooser-row", text: "beacon.stl").click
+    assert_text "Selected: /Projects/harbor/beacon.stl"
 
     find(".filechooser").send_keys(:escape)
     assert_no_selector ".filechooser-overlay"
-    # Cancelling must leave the FIELD untouched — the selection lives in the modal until "Choose".
-    assert_equal "", find("input[name='parent_node_id']", visible: false).value
-    assert_no_console_errors ignoring: [ PREVIEW_422 ]
+    # Cancelling must leave the FIELD untouched — the selection lives in the modal until "Open".
+    assert_equal "", cover_input.value
+    assert_no_console_errors
   end
 end

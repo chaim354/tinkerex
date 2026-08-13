@@ -356,6 +356,107 @@ module Maker
                      Maker::Addons::ServiceProxy.read_timeout_for(9_999),
                      "the clamp belongs to the proxy, and must actually happen there"
       end
+
+      # ---- an unconfigured sidecar greys the addon out -----------------------------------------
+      #
+      # THE REGRESSION THESE CLOSE. While openscad had its own controller, the /tools gallery greyed
+      # its hardcoded card out by asking `OpenscadClient.configured?` — an env check living in a
+      # view. Retiring that controller deleted the card AND the only thing that consulted a
+      # sidecar's env var before rendering, so a deployment missing the accessory would show an
+      # ENABLED tile whose bundle 404s on its first service call. `boxes` had the same latent hole,
+      # unobserved only because every leg serving addons happens to set BOXES_SIDECAR_URL.
+      #
+      # DRIVEN THROUGH `Registry.find`, NOT BY CONSTRUCTING AN `Addon` BY HAND: the manifest's
+      # `services` array has to survive `build` for any of this to fire, and a hand-built Data
+      # object would assert the method while skipping the parsing that feeds it.
+
+      test "an addon whose declared service has no configured URL is listed but unavailable" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("services" => [ "boxes" ]) ])
+        with_env("BOXES_SIDECAR_URL" => nil) do
+          addon = Registry.find("generators")
+          assert_not_nil addon, "the addon must still be listed, exactly as a too-new one is"
+          assert_not addon.available?
+          # BOTH the service and the env var. "Not configured on this deployment" was the fixed
+          # label this whole method exists to replace; an operator needs to know WHICH variable to
+          # set, and an addon with two sidecars makes the bare sentence ambiguous in the old way.
+          assert_match(/boxes/, addon.unavailable_reason)
+          assert_match(/BOXES_SIDECAR_URL/, addon.unavailable_reason)
+        end
+      end
+
+      test "the same addon is available once the deployment configures that service" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("services" => [ "boxes" ]) ])
+        with_env("BOXES_SIDECAR_URL" => "http://boxes.test") do
+          assert Registry.find("generators").available?
+          assert_nil Registry.find("generators").unavailable_reason
+        end
+      end
+
+      # A BLANK IS THE SHAPE A REAL UNCONFIGURED DEPLOYMENT HAS, not a contrived one: Kamal's
+      # `env.clear` BLANKS a key rather than removing it on a destination with no such accessory
+      # (deploy.ovh.yml does exactly this for both sidecars — CLAUDE.md §14c), so an `ENV.key?`
+      # test would read OVH as configured and hand "" to URI.parse at the first service call.
+      test "a blank sidecar URL counts as unconfigured, the way Kamal's env.clear leaves it" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("services" => [ "boxes" ]) ])
+        with_env("BOXES_SIDECAR_URL" => "") do
+          assert_not Registry.find("generators").available?
+        end
+      end
+
+      # A KEBAB-CASE SERVICE NAME, because the test fixture addons use one (`fixture-svc`) and an
+      # env var cannot carry a hyphen portably. If the two spellings ever drifted, every addon with
+      # a hyphenated service would grey out on a deployment that HAS configured it — a false
+      # refusal, which is a worse failure than the hole this arm closes.
+      test "a hyphenated service name maps to the underscored env var the proxy reads" do
+        Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("services" => [ "fixture-svc" ]) ])
+        with_env("FIXTURE_SVC_SIDECAR_URL" => "http://svc.test") do
+          assert Registry.find("generators").available?
+        end
+      end
+
+      # THE MISSING ONE IS WHAT GETS NAMED, and a configured sibling must not mask it — `find` over
+      # `all?` is what makes the sentence able to name a service at all.
+      test "with two services, one configured and one not, the missing one is what is reported" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("services" => [ "boxes", "openscad" ])
+        ])
+        with_env("BOXES_SIDECAR_URL" => "http://boxes.test", "OPENSCAD_SIDECAR_URL" => nil) do
+          addon = Registry.find("generators")
+          assert_not addon.available?
+          assert_match(/openscad/, addon.unavailable_reason)
+          assert_match(/OPENSCAD_SIDECAR_URL/, addon.unavailable_reason)
+        end
+      end
+
+      # AN ADDON DECLARING NO SERVICES IS UNAFFECTED — the arm must not grey out every addon that
+      # simply has no sidecar. `generators` is exactly that in production, so this is the case a
+      # too-eager implementation (`services.any?` inverted, `all?` over an empty array misread)
+      # breaks first and most visibly.
+      test "an addon with no declared services is unaffected by the service check" do
+        assert_equal [], Registry.find("generators").services
+        assert Registry.find("generators").available?
+      end
+
+      # min_host WINS WHEN BOTH ARE WRONG. On a host that cannot run the addon at all, telling an
+      # operator to go and set a sidecar URL is advice that will not help.
+      test "a too-new addon reports the host level even when its service is also unconfigured" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("services" => [ "boxes" ], "min_host" => Maker::Addons::Host::LEVEL + 1)
+        ])
+        with_env("BOXES_SIDECAR_URL" => nil) do
+          assert_match(/newer version of this host/, Registry.find("generators").unavailable_reason)
+        end
+      end
+
+      private
+
+      def with_env(pairs)
+        prior = pairs.keys.index_with { |key| ENV[key] }
+        pairs.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+        yield
+      ensure
+        prior.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+      end
     end
   end
 end

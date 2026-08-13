@@ -341,6 +341,18 @@ class AddonSdkTest < ApplicationSystemTestCase
   # regression in that handoff. Neither hop below opts out of Turbo (grep app/views/layouts and this
   # controller's own view: no `data: { turbo: false }` on either link), so both are soft navigations.
   test "a Turbo soft navigation away and back re-mounts the bundle cleanly" do
+    # THE ONLY TEST HERE THAT REACHES THE ADDON THROUGH THE GALLERY, so it is the only one that
+    # needs the addon to be AVAILABLE. `sdk-fixture`'s manifest declares `services: ["fixture-svc"]`,
+    # and an addon whose declared service has no configured URL now greys out with a reason naming
+    # it (Maker::Addons::Registry#unavailable_reason) — the check that used to live in the /tools
+    # view as `OpenscadClient.configured?` and was lost with that hardcoded card. A greyed card
+    # renders as a <div>, not an <a>, so `click_link "SDK Fixture"` finds nothing. Every other test
+    # in this file reaches the addon by `visit`, which does not consult `available?` at all.
+    #
+    # No FakeServiceProxy here on purpose: this test never calls the sidecar, it only needs the
+    # deployment to LOOK configured. `install_sidecar` is for the tests that actually call one.
+    ENV["FIXTURE_SVC_SIDECAR_URL"] = SIDECAR_URL
+
     visit "/tools/sdk-fixture"
     assert_selector "[data-role=sdk-level]", text: "level #{Maker::Addons::Host::LEVEL}"
 

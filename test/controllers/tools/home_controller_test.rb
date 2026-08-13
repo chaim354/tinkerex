@@ -39,7 +39,19 @@ module Tools
       get tools_path
       assert_response :success
       assert_select ".addon-card", text: /Generators/ # from the registry-driven @addons loop
-      assert_select ".addon-card", text: /OpenSCAD/    # openscad's own hardcoded card, untouched
+    end
+
+    # EVERY CARD COMES FROM A MANIFEST — asserted as a COUNT, which is the only form that can see a
+    # card the @addons loop did not produce. Until openscad migrated, this view ended with a
+    # hand-written block rendering an OpenSCAD card whether or not the Registry had anything in it,
+    # and the assertion guarding it (`assert_select ".addon-card", text: /OpenSCAD/`) matched BOTH
+    # branches of that block — so it could not tell "this addon is registered" from "somebody
+    # hardcoded a card". One manifest is stubbed above, so one card; a reintroduced hardcoded card
+    # makes this 2 and fails here.
+    test "the gallery renders no card the registry did not produce" do
+      get tools_path
+      assert_response :success
+      assert_select ".addon-card", count: 1
     end
 
     # THE GALLERY SHOWS THE REASON, NOT A FIXED SENTENCE. Before this, the disabled card's tooltip

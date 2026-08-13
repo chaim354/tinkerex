@@ -124,6 +124,9 @@ class AddonBundleTest < ApplicationSystemTestCase
   # shared/_folder_field on a server-rendered page — a path with no bundle, no proxied ESM and no
   # context object. It would stay green through a typo in addon_controller.js's values or the
   # show.html.erb data attributes that feed it, which is precisely the seam this test exists for.
+  # Since openscad's retirement that file also drives the modal in FILE mode — the project form's
+  # cover picker is the last `shared/_folder_field` caller in the app — so `ctx.chooseFolder` is now
+  # the ONLY path on which folder mode ships, and these tests are the only ones that exercise it.
   test "a bundle can drive the host's folder chooser and save into what it picked" do
     user = User.find_by!(email: "bundle@example.com")
     Maker::LibraryFolder.ensure_path!(user, [ "Projects", "harbor" ])
@@ -168,6 +171,77 @@ class AddonBundleTest < ApplicationSystemTestCase
     assert_no_selector ".filechooser-overlay"
 
     assert_selector "[data-role=fixture-folder]", text: "(cancelled)"
+    assert_no_console_errors
+  end
+
+  # THE SEEDED SELECTION — MOVED HERE FROM file_chooser_test.rb, WHICH CAN NO LONGER EXPRESS IT.
+  #
+  # `FileChooser#open` seeds a selection ONLY in folder mode:
+  #   this.selection = this.mode === "folder" ? { nodeId: this.value, path: this.label || rootLabel } : null
+  # and `addon_controller.js` feeds it the matched pair the server resolved (`value:
+  # defaultFolderValue`, `label: defaultFolderLabelValue`). That file used to guard this through the
+  # OpenSCAD editor's folder field; retiring it left the project form's cover picker as the only
+  # `shared/_folder_field` caller, and that one is `mode: "file"` — where seeding is `null` BY
+  # DESIGN, because there is no "current file" to resume from. So the behaviour did not become
+  # untestable, it moved to the one caller that still uses folder mode.
+  #
+  # THE DEFECT IT GUARDS, restored from the original: seeding nodeId from the field while taking the
+  # path from the ROOT LABEL made the two halves of one selection describe DIFFERENT folders from
+  # the first frame. Open a chooser already pointing at a project folder, press Choose without
+  # navigating, and the caller received the right id under a label reading "/ (library root)" —
+  # wrong in the direction that looks like it worked.
+  #
+  # BOTH DIRECTIONS ARE COVERED, which is why the save assertion is here and not just the label:
+  #   - seeding present but mismatched -> the LABEL assertion fails (it would read the root label);
+  #   - seeding absent altogether      -> `selection` is null, "Choose" is DISABLED, nothing
+  #     resolves, `chosen` stays null in the fixture and the save falls back to the `parent` query
+  #     param — deliberately omitted below — so the file lands at the library ROOT and the
+  #     parent_node_id assertion fails.
+  # Asserting only the visible half would pass in the second case, because the fixture already
+  # prints `ctx.defaultFolderLabel` before the modal is ever opened.
+  test "the chooser resumes from the folder it was seeded with, in both halves" do
+    user = User.find_by!(email: "bundle@example.com")
+    project = user.maker_projects.create!(name: "Lamp")
+    folder = project.ensure_library_folder!(user)
+
+    # THE CURRENT PROJECT IS WHAT MAKES THE DEFAULT FOLDER NON-ROOT — `AddonsController#show` reads
+    # `current_project_folder_node_id`. Set through the top-bar select the way a user does (it is
+    # session-scoped, so there is no other door from a browser), and that form is `turbo: false`,
+    # so this is a full page load rather than a soft navigation.
+    visit tools_path
+    select "Lamp", from: "project_id"
+    assert_selector ".current-project select"
+
+    visit "/tools/fixture?fname=seeded.svg" # NO `parent=` — see the header
+    assert_selector "[data-role=fixture-output]", text: "pinned-ok"
+
+    # The label the server resolved, before the modal is involved at all.
+    expected_path = "/Projects/#{folder.name}"
+    assert_selector "[data-role=fixture-folder]", text: expected_path
+
+    click_button "Choose folder"
+    assert_selector ".filechooser-overlay"
+    # WITHOUT NAVIGATING. That is the whole point: the selection under test is the seeded one, and
+    # any descent would replace it with a freshly built one that cannot be wrong in this way.
+    assert_text "Selected: #{expected_path}"
+    click_on "Choose"
+
+    assert_selector "[data-role=fixture-folder]", text: expected_path
+
+    click_button "Save"
+    assert_selector "[data-role=fixture-status]", text: "Saved."
+
+    # UNDER the seeded folder, not necessarily IN it — and that is §14f, not slack in the
+    # assertion. The save door fires the eager project-folder intake nudge, which files anything
+    # landing at `Projects/<slug>/`'s own root into a category subfolder (an .svg -> design/). So
+    # the honest question is whether the bytes went where the SEEDED selection pointed, which is
+    # answered by the project folder being the parent or the parent's parent. The library ROOT —
+    # what a missing or unresolved seeding produces — is neither, so this still fails in exactly
+    # the direction the test is for.
+    saved = user.nodes.present.find_by!(name: "seeded.svg")
+    filed_into = user.nodes.present.where(parent_node_id: folder.node_id, kind: "dir").pluck(:node_id)
+    assert_includes [ folder.node_id, *filed_into ], saved.parent_node_id,
+                    "the seeded selection's node_id must be the folder its label named"
     assert_no_console_errors
   end
 end

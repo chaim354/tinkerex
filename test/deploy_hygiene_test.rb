@@ -129,6 +129,124 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # ── third-party catalogs bundled INSIDE a sidecar image ───────────────────────────────────────
+  #
+  # WHY THIS IS HERE, AND WHY IT IS NOT A SECOND COPY OF sidecar/openscad/tests/test_catalog.py.
+  # `bin/ci` has seven gates (setup, style, scan, test, test-share, test-s3, system) and NONE of
+  # them runs pytest — nothing in config/ci.rb or .github/workflows does. So the Python guards on
+  # this data are real, thorough and mutation-checked, and they DO NOT RUN in the gate that decides
+  # whether a branch ships; they run by hand, inside the image. Until openscad migrated, the only
+  # licence guard `bin/ci` actually executed was
+  # `test/controllers/tools/openscad_controller_test.rb`'s "index shows each bundled generator's
+  # licence on its OWN tile" — and that died with the controller. This is its replacement, and it is
+  # the FIRST RUNNING COPY rather than a duplicate.
+  #
+  # IT DELIBERATELY GUARDS THE DATA, NOT THE RENDERING. The retired assertion checked that a licence
+  # string reached a tile in a Rails view; there is no such view any more — the OpenSCAD UI is a
+  # bundle in chaim354/tinkerex-addons, and a guard on its markup has to live there (CLAUDE.md
+  # §14c). What can be guarded here is stronger anyway, because it sits UPSTREAM of every renderer:
+  # if a catalogued .scad carries no licence, no bundle anywhere can display one, and a display test
+  # would faithfully render an empty string and stay green.
+  #
+  # AND THIS REPO IS THE REDISTRIBUTOR. These .scad files are baked into the GPL sidecar image we
+  # build and push to a registry — the same act the licence test above exists for. The obligation is
+  # ours at the moment that image is built, which is here.
+  #
+  # DIRECTORY-DRIVEN, for the reason the test above spells out: a second sidecar that ever bundles
+  # third-party sources is covered the day it appears, not the day someone remembers.
+  CATALOG_GLOB = "sidecar/*/catalog/catalog.json".freeze
+
+  # Spec §2: PERMISSIVE ONLY. Tinkerex is sold AND this image is redistributed to self-hosters, so
+  # both "commercial use" and "redistribution" have to be permitted — which NonCommercial,
+  # ShareAlike and the GPL family each break.
+  #
+  # THE NEEDLES ARE LOWERCASE BECAUSE THE HAYSTACK IS LOWERCASED, and that is a bug fix carried
+  # across from the Python guard rather than a style choice. That list was originally written
+  # ("-NC", "-SA", …) and compared against `.lower()`ed text, so `"-NC" in "cc-by-nc-sa-4.0"` was
+  # false and THE TWO TERMS THE CATALOG EXISTS TO EXCLUDE COULD NEVER MATCH. Reproducing that
+  # mistake here would be free, so the self-test below exists to make it impossible.
+  FORBIDDEN_LICENCE_TERMS = %w[-nc noncommercial -sa sharealike gpl agpl lgpl].freeze
+
+  def forbidden_licence?(licence)
+    low = licence.to_s.downcase
+    FORBIDDEN_LICENCE_TERMS.any? { |term| low.include?(term) }
+  end
+
+  def catalogs
+    ROOT.glob(CATALOG_GLOB).map { |path| [ path, JSON.parse(path.read) ] }
+  end
+
+  test "every bundled third-party generator records a permissive licence and attribution" do
+    found = catalogs
+    # NOT A VACUOUS PASS. A sweep that discovers nothing reports success, which is exactly the
+    # failure shape the sidecar-licence test above records ("a discovery filter silently skipped the
+    # worse case"). If the catalog is ever moved or renamed, this line is what says so.
+    refute_empty found, "expected at least one #{CATALOG_GLOB} — has the catalog moved?"
+
+    found.each do |path, entries|
+      where = path.relative_path_from(ROOT)
+      refute_empty entries, "#{where} is empty"
+      entries.each do |entry|
+        key = entry["key"].to_s
+        # ALL THREE, because they answer different questions and only together do they let any
+        # downstream renderer state the terms: WHAT the licence is, WHO to credit, and WHICH commit
+        # the bytes came from.
+        assert entry["license"].present?,     "#{where}: #{key} has no licence"
+        assert entry["attribution"].present?, "#{where}: #{key} has no attribution"
+        assert entry["source_ref"].present?,  "#{where}: #{key} has no pinned upstream commit"
+        refute forbidden_licence?(entry["license"]),
+               "#{where}: #{key} declares #{entry['license'].inspect}, which spec §2 forbids in a " \
+               "redistributed commercial image (CLAUDE.md §9)"
+      end
+    end
+  end
+
+  # THE GUARD IS ONLY WORTH HAVING IF IT CAN GO RED, and the Python original could not (see
+  # FORBIDDEN_LICENCE_TERMS). These are real spellings, not invented ones: CC-BY-NC-SA-4.0 is what
+  # the REJECTED `universal_stand` declares in its own header while its repo LICENSE file says MIT
+  # — sidecar/openscad/catalog/NOTICE tells that story at length — and it is the single string this
+  # check most needs to reject.
+  test "the forbidden-licence matcher rejects what it names and admits what spec §2 allows" do
+    %w[CC-BY-NC-SA-4.0 CC-BY-NC-4.0 CC-BY-SA-4.0 GPL-2.0 GPL-3.0 AGPL-3.0 LGPL-2.1
+       NonCommercial ShareAlike].each do |bad|
+      assert forbidden_licence?(bad), "the matcher failed to reject #{bad}"
+    end
+    # …and the permissive set must SURVIVE it, or the check merely blocks everything and the
+    # assertion above proves nothing about where the line actually is.
+    %w[MIT Apache-2.0 BSD-3-Clause BSD-2-Clause CC0-1.0 CC-BY-4.0 Unlicense].each do |ok|
+      refute forbidden_licence?(ok), "the matcher wrongly rejected #{ok}"
+    end
+  end
+
+  test "no bundled source file is redistributed without a catalog record and a NOTICE credit" do
+    catalogs.each do |path, entries|
+      dir = path.dirname
+      where = path.relative_path_from(ROOT)
+      listed = entries.map { |e| e["file"].to_s }.to_set
+
+      # BOTH DIRECTIONS. The catalog naming a file that is not there is a broken build; a file that
+      # IS there and is not in the catalog is the worse case and is invisible from the other side —
+      # it ships inside the image with no licence record anywhere.
+      listed.each { |file| assert dir.join(file).exist?, "#{where}: #{file} is listed but missing" }
+      on_disk = dir.glob("*.scad").map { |f| f.basename.to_s }.to_set
+      assert_equal listed, on_disk,
+                   "#{where}: unlisted .scad file(s) #{(on_disk - listed).to_a.inspect} would be " \
+                   "redistributed with no licence record at all"
+
+      # The NOTICE is the human-readable half of the same obligation, and it has to name the exact
+      # commit — "some version of this file" is not a provenance record.
+      notice = dir.join("NOTICE")
+      assert notice.exist?, "#{where.dirname}/NOTICE is missing"
+      text = notice.read
+      entries.each do |entry|
+        assert_includes text, entry["file"].to_s,
+                        "#{entry['file']} is bundled but not credited in NOTICE"
+        assert_includes text, entry["source_ref"].to_s,
+                        "#{entry['file']}'s pinned commit is not recorded in NOTICE"
+      end
+    end
+  end
+
   # ── .kamal/secrets* ────────────────────────────────────────────────────────────────────────
   # Kamal reads [secrets-common, secrets.<destination>] and NEVER executes these files in the
   # Rails process, so nothing else in the suite can see a mistake in them. All three tests below

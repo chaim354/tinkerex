@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-12 (**two Stimulus controllers deleted out from under the views that declared them — a nine-day silent regression on `/tools/openscad`, plus the repo-wide guard that would have caught it**)
+**Updated:** 2026-08-12 (**`Tools::OpenscadController` retired — the last hand-written addon surface is gone and spec row 7 is closed; plus the greying regression that retirement would otherwise have shipped, and a licence guard that actually runs in `bin/ci`**)
 
 ## What this file is
 
@@ -60,7 +60,201 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-12): two Stimulus controllers deleted out from under the views that declared them (branch `claude/openscad-dead-controllers`)
+## Latest (2026-08-12): `Tools::OpenscadController` retired — the last hand-written addon surface (branch `claude/retire-openscad-controller`)
+
+**Spec row 7 closed.** Every addon is now manifest-driven and served by `Tools::AddonsController`.
+This is the third and final PR of that arc — the coercion prerequisite and the dead-Stimulus-controller
+fix are the two entries immediately below, and this closes the "What still stands between here and
+retiring the controller" list at the end of the coercion entry.
+
+**The replacement was live and user-verified before anything was deleted.** `openscad-next` is
+published from `chaim354/tinkerex-addons` (`available=true`, `min_host=2`), and its editor, three.js
+preview, both file pickers and the save round-trip were checked in a browser against the deployed
+box. The host repo's job here was almost entirely deletion.
+
+### What went — 16 files, 1 784 lines
+
+| | lines | |
+|---|---:|---|
+| `app/controllers/tools/openscad_controller.rb` | 230 | the surface itself |
+| `app/views/tools/openscad/` (5 views) | 249 | index / new / show / _form / _field |
+| `app/services/openscad_client.rb` | 118 | the typed HTTP client; the bundle talks to the sidecar through the service proxy |
+| `app/helpers/tools/openscad_helper.rb` | 19 | the "duplicate & tweak" prefill link |
+| `app/views/tools/shared/_params.html.erb` | 27 | see below |
+| `app/javascript/controllers/{boxpreview,boxfilter}_controller.js` | 140 | see below |
+| `test/controllers/tools/openscad_controller_test.rb` | 517 | 26 tests |
+| `test/system/openscad_preview_test.rb` | 131 | 2 tests |
+| `test/support/fake_openscad.rb` | 120 | the sidecar stub |
+| `test/integration/tools/openscad_live_test.rb` | 119 | 7 tests, all **skipped** without a live sidecar |
+| `test/services/openscad_client_test.rb` | 114 | 8 tests |
+
+Plus the five hand-written routes and the hardcoded gallery card, whose own comment already said it
+"disappears when that addon migrates."
+
+**Three deletions are judgement calls rather than obvious ones, and each has a reason:**
+
+- **`shared/_params.html.erb`** had exactly ONE caller — `tools/openscad/show.html.erb:22` — despite
+  its own comment claiming "boxes, generators and openscad all render it unchanged" (stale since the
+  first two migrated). **`Tools::AddonParamsController` and its route STAY**, deliberately: they are
+  addon-agnostic, still serve any addon's saved state, and deleting a working download endpoint is a
+  user-visible removal this migration does not require. So the endpoint is now *reachable but
+  unlinked* — recorded in `config/routes.rb` beside it so the next reader does not read it as rot.
+- **`boxpreview` / `boxfilter`** were restored in #177 for these views and had no other caller.
+  `stimulus_hygiene_test.rb` guards declared-but-missing and deliberately NOT the converse, which is
+  what makes deleting them safe.
+- **`openscad_live_test.rb`** contributed **7 skips and 0 executed assertions** on every box without
+  a sidecar, including CI. Its subject was `OpenscadClient`, which no longer exists; the sidecar's
+  own `tests/test_api.py` covers the same endpoints from inside the image.
+
+`Tools::LibraryFolders` STAYS — `Tools::AddonsController` includes it too.
+
+### The regression this would otherwise have shipped, and the fix
+
+`Addon#unavailable_reason` checked only `min_host`. The greying-out for a **missing sidecar** was not
+in the Registry at all — it was `OpenscadClient.configured?`, an env check written into the /tools
+view, and it died with the hardcoded card. Without a replacement, a deployment with a blank
+`OPENSCAD_SIDECAR_URL` would render an **enabled, clickable** tile whose bundle 404s on its first
+`host.service.*` call: a broken page instead of a greyed tile with a sentence. **`boxes` already had
+this hole**, unobserved only because every leg serving addons happens to set `BOXES_SIDECAR_URL`.
+
+The fix is a second arm on `unavailable_reason` naming both the service and its env var, plus
+**`Maker::Addons::Services`** — one definition of the env-name derivation, because
+`Tools::AddonsController#sidecar_url_for` asks the same question and a second
+`"#{name.upcase}_SIDECAR_URL"` is a string that drifts silently. The **declaration** check stays in
+the controller: that is the per-addon SSRF guard (spec §4.1), and only the deployment-wide lookup is
+shared. A blank counts as unconfigured — Kamal's `env.clear` blanks rather than removes, which is
+exactly OVH's shape.
+
+**Mutation-checked twice.** Making the services arm a no-op → **3 failures** (the unconfigured, blank
+and two-service cases) while the three "available" tests stayed green. Dropping `tr("-", "_")` from
+the env-name derivation → **1 failure**, the hyphenated-service case, which is the only assertion
+that carries that weight. `fixture-svc` is a real hyphenated service name, so getting this wrong
+would grey out addons on deployments that HAVE configured them — a false refusal, worse than the hole.
+
+**One knock-on, and it is the fix working.** `addon_sdk_test.rb`'s Turbo re-mount test is the only
+test in that file reaching the addon through the **gallery** rather than by `visit`, and
+`sdk-fixture` declares `services: ["fixture-svc"]` — so its card correctly became a `<div>` and
+`click_link` found nothing. It now sets the env var, with a comment saying why.
+
+### The licence guard: what it was, and what replaced it
+
+`openscad_controller_test.rb:178` asserted each generator's licence renders **on its own tile**. The
+catalog is third-party work redistributed inside an image we push, so CLAUDE.md §9 and
+`sidecar/openscad/catalog/NOTICE` make that a hard requirement, not decoration — and the NOTICE
+records why it is sharp: of four audited candidates, **two declared a more restrictive licence in
+their own header than their repo's `LICENSE` file did**, one of them NonCommercial. *Read the file,
+not the repo.*
+
+**The finding that decided this, and the scope study missed it: `bin/ci` has seven gates and NONE of
+them runs pytest.** Nothing in `config/ci.rb` or `.github/workflows/` does. So
+`sidecar/openscad/tests/test_catalog.py`'s thorough, mutation-checked licence guards **do not run in
+the gate that decides whether a branch ships** — they run by hand, inside the image. That made the
+deleted controller test the *only* licence guard `bin/ci` actually executed.
+
+**Chosen: guard the DATA in Ruby, in `test/deploy_hygiene_test.rb`; hand the DISPLAY to the bundles
+repo, in writing.** Three new tests, directory-driven over `sidecar/*/catalog/catalog.json`: every
+entry has a licence, attribution and pinned commit; no forbidden term (NC/SA/GPL); every `.scad` on
+disk is listed; every listed file and ref appears in `NOTICE`. It sits **upstream of every renderer**
+— a catalogued file with no licence makes any display correct and empty — and this repo is the
+redistributor at the moment the image is built, which is what makes the obligation ours here.
+
+**Rejected: vendoring the bundle into `test/fixtures/addons/`.** The existing vendored `boxes` copy is
+byte-identical to the addons repo today with **nothing on this side keeping it so**. A licence
+assertion against a stale snapshot would go green while the live bundle dropped the line — a guard
+that looks like coverage and is not, which is the worst possible outcome for a compliance check and
+this repo's recorded dominant failure shape.
+
+**Mutation-checked four ways**, each with a distinct message: blank a licence → "washer has no
+licence"; set one to `CC-BY-NC-SA-4.0` → the §2 refusal; drop an unlisted `.scad` into the catalog dir
+→ "would be redistributed with no licence record at all"; and uppercase the forbidden-term needles
+against a lowercased haystack → "the matcher failed to reject CC-BY-NC-SA-4.0". That last one is the
+**exact bug the Python original shipped with** (`"-NC" in "cc-by-nc-sa-4.0"` is false, so the two
+terms the catalog exists to exclude could never match), reproduced deliberately to prove the Ruby
+copy cannot inherit it.
+
+### Rehosting `file_chooser_test.rb`, and the mode nobody noticed
+
+Five system tests used `/tools/openscad/new` as their host page. `app/views/projects/_form.html.erb`
+is now the **only** view in the app rendering `shared/_folder_field` — but it renders it in
+**`mode: "file"`** (the cover-image picker), and the retired editor used the folder-mode default. The
+scope study proposed the repoint without noticing that; four of the five subjects are
+mode-independent and moved unchanged, and one is not:
+
+**`FileChooser#open` seeds a selection only when `mode === "folder"`** —
+`{nodeId: this.value, path: this.label || this.rootLabel}` — because in file mode there is no
+"current file" to resume from. The reopen test existed for a real defect in exactly that seeding
+(nodeId from the field, path from the ROOT label: two halves of one selection describing different
+folders, "wrong in the direction that looks like it worked"). So it **moved to
+`addon_bundle_test.rb`**, where `ctx.chooseFolder` is now the only path folder mode ships on, and
+where `addon_controller.js` feeds the chooser the same matched pair. The new test opens a chooser
+seeded from the current project's folder and presses Choose **without navigating**; the save
+assertion covers the other direction, because absent seeding leaves "Choose" disabled and the file
+lands at the library root. **Mutation-checked** by restoring the original defect
+(`path: this.rootLabel`) — exactly that one test goes red.
+
+What stayed in `file_chooser_test.rb` is the **form-field face**: `shared/_folder_field` +
+`filechooser_controller.js`, a hidden input inside a real `form_with`. Its file-mode reopen case
+guards that controller's own contract (`if (!selection) return` — backing out must not blank a
+choice already in the field); **mutation-checked** by removing that early return → 2 failures.
+
+One test of mine was genuinely wrong first: it asserted the created node before the DOM, racing a
+`fetch` that only Capybara's retrying matchers wait for. Fixed by asserting the crumbs first, with
+the ordering written down as load-bearing.
+
+### Two smaller things
+
+- **The routes comment was rewritten, not deleted.** `tools/:key` is still declared last, but its
+  justification changed: it no longer protects a live sibling, because there are none. It is now kept
+  for the NEXT two-segment `/tools/*` route somebody adds, and the mutation-check anecdote is kept
+  precisely *because it can no longer be re-run here*. The four-segment note stays true and is why
+  `tools/addon_states/:id/params` is safe.
+- **`home_controller_test.rb` gained a CARD COUNT.** Its old assertion (`.addon-card`, text
+  `/OpenSCAD/`) matched **both** branches of the hardcoded block, so it could not tell "this addon is
+  registered" from "somebody hardcoded a card". A count is the only shape that can see a card the
+  `@addons` loop did not produce.
+
+### Verification
+
+`bin/ci` **exit 0**, judged by exit code, all seven gates. **2 272 runs / 8 205 assertions / 0
+failures / 3 skips, identical on all three legs** (chunk, share, s3); system **87 runs / 529
+assertions**.
+
+Baseline by **running the merge-base `eb526c0`**, not by arithmetic: **2 302 / 8 315 / 10 skips** per
+leg, system **88 / 529**. So **−30 server tests, −110 assertions, −7 skips, −1 system test**.
+
+The removed tests reconcile exactly, and **none covered behaviour that still exists**: −26
+(`openscad_controller_test`), −8 (`openscad_client_test`), −7 (`openscad_live_test`, all skipped
+anyway) = −41, against +7 `registry_test`, +3 `deploy_hygiene_test`, +1 `home_controller_test` = +11.
+System: −2 (`openscad_preview_test`), +1 (`addon_bundle_test`). The 7 vanished skips are the live
+test's.
+
+**`bin/ci` WAS ALREADY RED AT THE MERGE-BASE, for a reason unrelated to any code.** The baseline run
+exited **1**: `bin/brakeman` (the Rails scaffold binstub) unconditionally prepends `--ensure-latest`,
+and Brakeman exits **5** when a newer version has been published — 8.0.5 was pinned, 8.0.6 was out.
+Brakeman itself reported **"No warnings found"**. Unblocked here with a 2-line `Gemfile.lock` bump to
+8.0.6 (still 0 warnings, 0 new ignores); that is a treadmill, not a fix, so the structural question —
+the gate depends on rubygems.org and on nobody publishing a release — is spun out as its own task.
+
+One **s3-leg-only** error appeared in the first full run: `SQLite3::BusyException: database is locked`
+in `Library::ReconcilerTest`'s setup. That is **CLAUDE.md §12 item 7**, the known undiagnosed
+intermittent, in code this branch does not touch; the s3 leg re-run alone gave **2 272 / 8 205 / 0
+failures**, identical to the other two.
+
+**Not deployed, not merged** — by instruction. **One step remains and it is a bundle publish, not a
+code change:** renaming `openscad-next` → `openscad` in `chaim354/tinkerex-addons`, which could not
+happen sooner because the explicit `tools/openscad` route shadowed any manifest claiming that key.
+It must FOLLOW this deploy.
+
+`docs/openscad-retirement-scope.md` — the analysis this branch was built from — is **deliberately not
+committed**. It is a decision record whose conclusions now live where they are enforced (this entry,
+CLAUDE.md §14c, the routes comment, the guards themselves), and four of its five headline blockers
+dissolved on contact with the evidence; committing it would add a second, weaker account of settled
+questions. Its two findings that outlived it — the pytest gap and the file-mode mismatch — are
+recorded above, and both are corrections to it rather than quotations of it.
+
+---
+
+## 2026-08-12: two Stimulus controllers deleted out from under the views that declared them (branch `claude/openscad-dead-controllers`)
 
 A **live user-facing regression**, nine days old, plus the guard that would have caught it in the
 commit that caused it. A bug fix, not an arc.
@@ -366,7 +560,18 @@ nothing from it into Rails, so `/sidecar/` in `.dockerignore`, the blanked `OPEN
 
 ### What still stands between here and retiring the controller
 
-Named plainly, because an optimistic list here is what makes the next reader stop looking:
+> **CLOSED 2026-08-12 by `claude/retire-openscad-controller` — see the Latest entry.** Left in place
+> because the *shape* of the list is the lesson: **four of these five did not survive contact with
+> the evidence.** Item 2 dissolved (`GET /generators` already returns the byte-identical normalized
+> schema `POST /params` does — one function, `schema.normalize`); 3 dissolved three ways (three.js is
+> a HOST importmap pin, so a bundle renders the 3MF client-side with zero bytes of its own, and the
+> server-side rasterize measured *slower*: 0.31 s render + 0.60 s rasterize, holding a Puma thread
+> for the second one; the folder-path label and the prior-designs filter were both **already
+> shipped** in the `boxes` bundle); 4 was doubly wrong — the generic door persists `parse_data`, any
+> JSON object, so there is no host-imposed shape to diverge from, and there were **0 `openscad`
+> `Maker::AddonState` rows on all three live legs** anyway. Only **item 1** was real, and item 5 was
+> real but had the wrong owner — see the Latest entry's licence section. Named plainly below, as
+> written at the time:
 
 1. **No bundle exists.** The manifest + editor UI live in `chaim354/tinkerex-addons`, a separate
    repo, and publishing that image *is* the deploy.

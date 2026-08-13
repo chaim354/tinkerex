@@ -208,6 +208,27 @@ declaration.
 > is never rebuilt: the card is where scope drift becomes visible. The list is **not** a sandbox,
 > not an allowlist, and not a thing to design a security argument around. See §4.
 
+#### Declaring a service the deployment does not have
+
+A service you list in `services` is one the operator has to point somewhere. The host resolves each
+from its **own environment** — `<SERVICE>_SIDECAR_URL`, upper-cased with hyphens turned into
+underscores, so `"fixture-svc"` reads `FIXTURE_SVC_SIDECAR_URL` — and a manifest never supplies a
+URL, because one would be an SSRF primitive aimed at the deployment's internal network.
+
+**If any declared service has no URL there, your addon is greyed out in the gallery**, with a reason
+naming the service and the exact variable to set — the same way a too-new `min_host` greys it out. A
+blank counts as missing, not as configured. That is deliberate, and better than the alternative:
+before this, such an addon rendered as a normal clickable tile, mounted, and then failed on its first
+`service.*` call with a bare 404 — which reads as "this addon is broken" rather than "this deployment
+does not have it".
+
+Two consequences worth designing around:
+
+- **Declare only what you actually call.** A service listed "just in case" makes your addon
+  unavailable on every deployment that has not deployed that sidecar.
+- **Greying is cosmetic, not a gate.** The addon's URL still resolves and its endpoints still answer;
+  what changes is the card. Do not build a security argument on it.
+
 #### `service_timeouts` — asking for longer, within a ceiling you do not set
 
 The host gives every sidecar call a **30-second** read timeout. That is too short for some real
