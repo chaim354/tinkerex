@@ -37,6 +37,28 @@ module Maker
       # renderer only invalidates its cache by bumping PAST this — silence changes nothing.
       BASE_REVISION = 1
 
+      # HOW LONG A `pending`/`processing` ROW IS BELIEVED WHEN IT CLAIMS A JOB IS COMING.
+      #
+      # Those two statuses are ASSERTIONS about work that exists elsewhere, and nothing verified
+      # them. When the assertion was false the row became unrecoverable: every branch of the guard
+      # in `call` returned early, so the 15-minute scan, `backfill_thumbnails`, `#show` and the
+      # addon door all no-op'd on it forever while the grid spun until its poll gave up. `failed`
+      # re-enqueues, `ready` is done and `unsupported` is terminal by design — these two were the
+      # only statuses with no way back. Three rows were wedged this way on the live share library,
+      # the oldest for over a week (docs/STATUS.md).
+      #
+      # A WINDOW, NOT A BARE "pending → re-enqueue", because `backfill_thumbnails` calls this once
+      # per row on every Files page render: without one, every spinner on screen would enqueue a
+      # duplicate job on every load. 15 minutes is far beyond any render (the deployed box runs one
+      # in ~70-90 ms) plus any realistic queue wait, and it matches `library_scan`'s interval, so a
+      # wedged row self-heals on the next scan at the latest.
+      #
+      # A DUPLICATE ENQUEUE IS SAFE, WHICH IS WHY A WINDOW CAN BE A HEURISTIC HERE: the job is
+      # idempotent and `commit_if_current` compares both staleness axes before writing anything.
+      # Erring toward one extra render is the right direction when the alternative is a spinner
+      # nothing in the system will ever resolve.
+      STALLED_AFTER = 15.minutes
+
       def call(user:, node_id:, name:, version_id:, kind: "thumbnail")
         renderer = Maker::Previews::Registry.for_filename(name)
         return nil if renderer.nil?
@@ -51,7 +73,12 @@ module Maker
         # nothing else was being compared.
         content_moved = preview.version_id != version_id
         rebuilt       = preview.renderer_revision != revision
-        return preview unless preview.new_record? || content_moved || rebuilt || preview.status == "failed"
+        # THE FOURTH REASON, and the only one that is not about the artifact being out of date: the
+        # row says work is in flight and it no longer is. See STALLED_AFTER.
+        stalled = preview.persisted? && %w[pending processing].include?(preview.status) &&
+                  preview.updated_at < STALLED_AFTER.ago
+        return preview unless preview.new_record? || content_moved || rebuilt ||
+                              preview.status == "failed" || stalled
 
         preview.version_id = version_id
         preview.renderer_revision = revision
@@ -69,6 +96,13 @@ module Maker
         # and both are written here before it is enqueued, so a run that started under an older
         # revision still cannot stamp its output onto this row.
         preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
+        # RESTAMP A HEALED ROW, OR THE HEAL REPEATS ON EVERY CALLER FOREVER. Re-enqueueing a
+        # stalled row changes no other attribute, and `save!` on an unchanged record is a NO-OP
+        # that leaves `updated_at` where it was — so the row would still read as stalled to the
+        # next scan, the next page load, and every one after that, each adding another duplicate
+        # job. Assigning the column explicitly is what makes the write happen AND fixes its value
+        # (ActiveRecord only auto-stamps `updated_at` when it has not been changed by hand).
+        preview.updated_at = Time.current if stalled
         preview.save!
         Maker::GeneratePreviewJob.perform_later(preview.id, filename: name)
         preview

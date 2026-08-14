@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-13 (**a saved addon item gains an immutable revision history, and a library file can find its way back to the generator that made it**)
+**Updated:** 2026-08-14 (**a preview job lost to its own caller's transaction, and the `pending` row nothing could ever repair**)
 
 ## What this file is
 
@@ -60,7 +60,128 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-13): a saved addon item gets a revision history, and a file gets a way back to its generator (branch `claude/addon-state-revisions`)
+## Latest (2026-08-14): a preview job lost to its own caller's transaction, and the `pending` row nothing could ever repair (branch `claude/preview-pending-wedge`)
+
+Reported as "the thumbnail is not loading" for `history-test.svg` and `washer-test.3mf` on the
+deployed **share** library. Two independent defects, both required to produce the symptom, and
+neither visible to any existing test.
+
+### What was actually happening
+
+`Maker::Previews::Enqueue` does two writes that are **not one unit**: `preview.save!` on the
+**primary** database, then `perform_later` on the **queue** database. `enqueue_after_transaction_commit`
+was `false` (Rails 8.1's default; verified on the box, not assumed), so the second write committed on
+its own connection **immediately** while the first was still inside the caller's open transaction.
+Every addon save runs inside one — `Tools::AddonsController#create`'s `ApplicationRecord.transaction`
+— and Solid Queue runs **in the Puma process** here (`SOLID_QUEUE_IN_PUMA: true`), polling sub-second.
+So the worker won the race, `Maker::Preview.find` could not see the uncommitted row, and
+`discard_on ActiveRecord::RecordNotFound` **swallowed the job**: no failure, no log, marked finished.
+
+Then the second defect made it permanent. `Enqueue`'s guard read:
+
+```ruby
+return preview unless preview.new_record? || content_moved || rebuilt || preview.status == "failed"
+```
+
+A `pending` row at the current token and current revision matches none of those, so it returned
+early — **from every caller**. `Library::ScanJob` (every 15 min), `FilesController`'s
+`backfill_thumbnails`, `#current_thumbnail` and the addon door all no-op'd on it forever. `failed`
+re-enqueues, `ready` is done, `unsupported` is terminal by design; `pending` and `processing` were
+the only statuses with **no way back**. `Maker::Previews::MissingBackfill` cannot reach them either —
+it looks only for content with **no row**, and documents that.
+
+The user-visible end of it: `files/_thumb.html.erb` renders a spinner when the row is nil-or-pending,
+and `thumbs_controller.js` resolves a cell only on `ready`/`unsupported`/`failed` — so the cell spun
+for 40 polls and then stopped, spinning.
+
+### The evidence, measured on the live box
+
+| | |
+|---|---|
+| Wedged rows on the share library | **3** — `gamebox-v6.svg` (2026-08-05), `washer-test.3mf` (08-13), `history-test.svg` (08-13) |
+| Oldest wedged | **over a week** |
+| The smoking gun | job **15583** for preview **1747** created *and* finished at `2026-08-13 23:09:20`, while the row's `created_at` still equalled its `updated_at` |
+| Queue state | `ready=0 claimed=0 scheduled=0` — nothing was coming |
+| Worker health | heartbeats current; **82** `GeneratePreviewJob`s, all finished |
+| Renderer toolchain | `resvg` and `stl-thumbnailer` both present in the image — ruled out first |
+| Control | the *other* user's byte-identical `washer-test.3mf` and `history-test.svg` were `ready`, having arrived through a door with no enclosing transaction |
+
+### What shipped
+
+- **`Maker::GeneratePreviewJob.enqueue_after_transaction_commit = true`.** Set per job, not
+  globally: it is a statement about *this* job's argument being a primary-DB row id, and it belongs
+  beside the `discard_on` whose interaction makes the loss silent. `after_all_transactions_commit`
+  runs the block immediately when no transaction is open, so callers outside one are unchanged.
+- **`Enqueue::STALLED_AFTER = 15.minutes`**, a fourth escape from the early return — the only one
+  that is not about the artifact being out of date. It covers `processing` as well as `pending`,
+  which makes `GeneratePreviewJob`'s own comment true for the first time: a `FetchError` that
+  exhausts its retries deliberately leaves the row non-terminal "so a later manual/scheduled
+  re-enqueue can still succeed", and there was no such re-enqueue.
+- **An explicit restamp of a healed row.** Re-enqueueing changes no other attribute, and `save!` on
+  an unchanged record is a **no-op that leaves `updated_at` alone** — so without it the row stays
+  stalled forever and every scan and page load adds another duplicate job.
+
+A window rather than a bare "pending → re-enqueue" because `backfill_thumbnails` calls `Enqueue`
+once per row on **every** Files render; without one, every spinner on screen would enqueue a
+duplicate on every load. 15 minutes is far beyond any render (~70–90 ms measured on the box) plus
+any realistic queue wait, and matches `library_scan`'s interval, so a wedged row self-heals on the
+next scan at the latest. A duplicate enqueue is safe: the job is idempotent and `commit_if_current`
+compares both staleness axes before writing.
+
+### The three wedged rows were repaired in place
+
+Re-enqueued directly on the box; all three came back `ready` with attached 512×512 artifacts. The
+code fix prevents recurrence but cannot heal rows already stamped — nothing re-reads them until
+`STALLED_AFTER` makes them eligible, which the fix now does automatically on the next scan.
+
+### Verification
+
+`bin/ci` green — seven gates, three backend legs at **identical** counts: **2337 runs, 8503
+assertions, 0 failures, 0 errors, 3 skips**; system 100/639.
+
+Five new tests in `enqueue_test.rb`, **mutation-checked three ways**:
+
+| mutation | result |
+|---|---|
+| drop `enqueue_after_transaction_commit = true` | 1 failure (`Expected: 0, Actual: 1` — the job was visible pre-commit) |
+| drop `\|\| stalled` | **2** failures (pending and processing) |
+| drop the `updated_at` restamp | 1 failure (the next caller enqueues a duplicate) |
+
+The `\|\| stalled` mutation **first came back green**, and that is the part worth keeping: the perl
+substitution had not matched, because the `\|\|` it anchored on sits at a line break. A mutation you
+do not confirm *applied* is not a mutation — §15's own failure shape, one level up. `git diff --stat`
+before running is the cheap fix.
+
+Staleness is proven with `travel_to 3.days.ago` around the setup rather than a same-second
+comparison — §15's recorded remedy for the `.to_i` timestamp guard that cannot fail.
+
+### Found in passing, deliberately NOT fixed here
+
+**`Maker::Previews::ThumbnailMap` has no enqueue seam and no revision filter.** It backs the Models
+page, project covers and `ProjectsController#show`'s attachment tiles. `FilesController#index`
+self-heals via `backfill_thumbnails`; nothing in the ThumbnailMap path ever calls `Enqueue`, and
+unlike `thumbnails_for` it does not drop rows from an older renderer — so a missing row spins
+forever there, and a stale-revision row shows an **old picture**. That is §14h's recorded
+"172 of 174 LightBurn thumbnails" shape sitting one layer over from where it was fixed. It is a
+separate defect from this one and did not cause this symptom; bundling it would have broken the
+one-change-at-a-time rule.
+
+### Not a code defect: the "every tab is slow on first load" report
+
+Same session, different cause entirely, and worth recording because the app looked guilty.
+`share.tinkerex.local` resolves in **5.011 s**; `localhost` in **0.004 s**; the same request by IP
+with a `Host:` header in **0.013 s**. macOS reserves `.local` for mDNS (RFC 6762), so
+`mDNSResponder` multicasts and waits out a flat **5-second** timeout before falling back to
+`/etc/hosts` — the hosts entry is correct, it just does not win the race. Nothing server-side was
+wrong: the slowest request in the entire container log is **497 ms**.
+
+`chunk.tinkerex.home`, `share.tinkerex.home` and `s3.tinkerex.home` are **already registered in the
+proxy and routing** (verified: 200 in 15–23 ms). The fix is one `/etc/hosts` line on the client and
+no server change — which is exactly why `deploy.yml` keeps both names.
+
+---
+
+## 2026-08-13: a saved addon item gets a revision history, and a file gets a way back to its generator (branch `claude/addon-state-revisions`)
 
 **Design:** `docs/superpowers/specs/2026-08-13-addon-state-revisions-design.md`. **Plan:**
 `docs/superpowers/plans/2026-08-13-addon-state-revisions-host.md`. Ten tasks. **This is the host half

@@ -16,6 +16,24 @@ module Maker
 
     Unsupported = Class.new(StandardError)
 
+    # THIS JOB'S ARGUMENT IS A PRIMARY-DATABASE ROW ID, AND THE JOB ITSELF LIVES IN THE QUEUE
+    # DATABASE — so without this, `perform_later` is NOT covered by the caller's transaction. It
+    # commits to the queue DB on its own connection, immediately, while the `maker_previews` row is
+    # still uncommitted on primary. `Maker::Previews::Enqueue` is called from inside a transaction
+    # by every addon save (`Tools::AddonsController#create`), and Solid Queue runs IN THE PUMA
+    # PROCESS here (SOLID_QUEUE_IN_PUMA) polling sub-second, so the worker won that race, found no
+    # row, and `discard_on ActiveRecord::RecordNotFound` below swallowed the job — no failure, no
+    # log, marked finished. The row then sat at `pending` forever, which is a permanent spinner.
+    #
+    # MEASURED, NOT REASONED: on the deployed share library, job 15583 was created and finished
+    # within the same second (2026-08-13 23:09:20) while preview 1747 was never touched.
+    #
+    # SET PER JOB RATHER THAN GLOBALLY (it is an ActiveJob `class_attribute`, default false in
+    # Rails 8.1) because this is a statement about THIS job's argument, and it belongs beside the
+    # `discard_on` whose interaction makes the loss silent. `after_all_transactions_commit` runs
+    # the block immediately when no transaction is open, so callers outside one are unaffected.
+    self.enqueue_after_transaction_commit = true
+
     # THE CEILING A PREVIEW IS WORTH, WHICH IS NOT THE CEILING A FILE IS ALLOWED TO BE.
     #
     # Rendering buffers the WHOLE file (Maker::FileBytes.read returns a String), and the only bound
