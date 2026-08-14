@@ -237,8 +237,13 @@ class FilesController < ApplicationController
     # whole page at a time rather than per row (page_query_budget_test.rb asserts the constancy).
     # Both list and grid read it, so it is set here rather than in either branch above.
     @addon_origins = addon_origins_for(@nodes.map(&:node_id))
-    @thumb_by_node = thumbnails_for(@nodes, @info_by_node)
-    backfill_thumbnails(@nodes, @info_by_node, @thumb_by_node)
+    # Current-version, current-build thumbnails, plus a bounded backfill of the ones that have no
+    # row yet. ONE call, and it is the same class the Models and Projects pages go through: this
+    # controller held the only copy of both rules (the renderer-revision filter and the backfill),
+    # which is exactly how those pages came to have neither. `@info_by_node` is passed in rather
+    # than re-stat'd — on share a second stat_all is a filesystem stat per node, doubled.
+    @thumb_by_node = Maker::Previews::ThumbnailMap.from_info(current_user, @nodes.map(&:node_id),
+                                                            @info_by_node, backfill: true)
     # The current project's folder, for the upload button's default-into-project wiring (spec
     # 2026-07-23). `current_project_folder_node_id` (CurrentProject concern) is deliberately NOT a
     # helper_method — like ProjectsController#show's @upload_parent_node_id, a view must not create
@@ -256,15 +261,20 @@ class FilesController < ApplicationController
   # for the grid's poll-until-ready. Session-authed (this is the web UI, not the device-token v1
   # API), user-scoped. Shape: { "<node_id>": { status:, url: } }. A node with no thumbnail row is
   # simply absent from the payload.
+  #
+  # `backfill: false`, and it is the one caller that opts out. This runs every 2 seconds for up to
+  # 40 tries per open page; enqueueing here would be a per-node write on every tick for work the
+  # page render that produced these spinners has already done. The rows it is polling for are the
+  # ones #index created.
   def thumbnails
     ids = params[:ids].to_s.split(",").first(200) # bound the batch
     nodes = current_user.nodes.present.where(node_id: ids).to_a
     info = FileLayer.current.stat_all(current_user, node_ids: nodes.map(&:node_id))
-    by_node = thumbnails_for(nodes, info)
+    map = Maker::Previews::ThumbnailMap.from_info(current_user, nodes.map(&:node_id), info,
+                                                 backfill: false)
 
     out = nodes.each_with_object({}) do |n, h|
-      token = info[n.node_id]&.content_token
-      p = token && by_node[[ n.node_id, token ]]
+      p = map.thumb(n.node_id)
       next unless p
 
       h[n.node_id] = { status: p.status, url: (p.status == "ready" && p.asset.attached? ? url_for(p.asset) : nil) }
@@ -635,30 +645,6 @@ class FilesController < ApplicationController
   # name as the tie-break so "beta"/"Beta" still order deterministically.
   def name_key(project) = [ project.name.downcase, project.name ]
 
-  # Current-version thumbnail per node, in ONE query (never N+1). Keyed by [node_id, content_token]
-  # where content_token is what @info_by_node already carries, so we show the thumbnail for the
-  # version on screen, not a stale one. `nodes` is an Array, `info` a Hash (FileInfo per node_id).
-  def thumbnails_for(nodes, info)
-    tokens = nodes.filter_map { |n| info[n.node_id]&.content_token }
-    return {} if tokens.empty?
-
-    # A ROW FROM AN OLDER RENDERER IS NOT "EXISTING", and leaving that out is what made the whole
-    # renderer_revision mechanism unreachable for thumbnails. `Enqueue` compares revisions
-    # correctly — but the only thing that CALLS it for a thumbnail is backfill_thumbnails, which
-    # skips any node this method reports a row for. So a stale row satisfied the check, nothing
-    # re-enqueued, and 172 of 174 LightBurn thumbnails sat at revision 1 through two deploys that
-    # had bumped it. The mechanism was right and simply never asked.
-    #
-    # FILTERED IN RUBY, NOT SQL, because the current revision depends on the RENDERER and so on
-    # each node's filename — there is no single value to put in a WHERE. Still one query, which is
-    # what page_query_budget_test.rb asserts; this only drops rows from its result.
-    name_by_node = nodes.to_h { |n| [ n.node_id, n.name ] }
-    current_user.maker_previews
-                .where(kind: "thumbnail", node_id: nodes.map(&:node_id), version_id: tokens)
-                .select { |p| current_revision?(p, name_by_node[p.node_id]) }
-                .index_by { |p| [ p.node_id, p.version_id ] }
-  end
-
   # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
   #
   # #show USED TO ONLY READ, and that is why a bumped revision never reached the detail page: the
@@ -677,56 +663,6 @@ class FilesController < ApplicationController
 
     Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                   name: node.name, version_id: token, kind: "thumbnail")
-  end
-
-  def current_revision?(preview, name)
-    return false if name.blank?
-
-    preview.renderer_revision == Maker::Previews::Enqueue.revision_for_name(name, preview.kind)
-  end
-
-  # How many missing thumbnails ONE page load may enqueue.
-  #
-  # THIS IS A BUDGET, NOT A CORRECTNESS LIMIT, and the difference is why a cap is safe. The eager
-  # seams (upload, commit, scan) already cover every file that arrives from now on; this pass
-  # exists only to drain the BACKLOG left by libraries indexed before previews shipped. A backlog
-  # does not have to clear in one request -- each visit takes the next slice, because the rows this
-  # pass creates are exactly what makes the following visit skip them.
-  #
-  # Measured on a 2500-file library (both chunk and share): uncapped, one `GET /files?ext=stl` ran
-  # 6008 queries, inserted 2000 maker_previews rows, enqueued 2000 jobs and took ~1.4 s.
-  #
-  # THE CAP IS UNIFORM, not flat-mode-only, because the hazard is not the mode -- it is a page
-  # whose row count is not user-shaped. `?ext=stl` on a big library is one click and reaches the
-  # whole thing; a 2000-child folder is rarer but identical in shape once you are in it. Below the
-  # cap nothing changes, which is every ordinary folder.
-  BACKFILL_LIMIT = 100
-
-  # LAZY BACKFILL. The eager seams (upload/commit/scan) only cover files that arrive AFTER the
-  # feature shipped; a library indexed before it has files but no preview rows. Without this, every
-  # such file shows a spinner the grid polls forever (a job is never coming). So when a folder is
-  # viewed, enqueue a thumbnail for each renderable file that has no row for its current version.
-  # Idempotent (Enqueue no-ops on an existing non-failed row) and renderable-only (non-renderable
-  # names get no row and render as a static icon, never a spinner). `existing` is @thumb_by_node,
-  # already loaded — the new pending rows aren't in it, so the view shows nil -> spinner, which is
-  # now truthful because a job IS coming.
-  #
-  # Walks in DISPLAY order, so the budget is spent on what the user is most likely looking at
-  # first, and the rows past it keep the static-icon fallback until a later visit reaches them.
-  def backfill_thumbnails(nodes, info, existing)
-    budget = BACKFILL_LIMIT
-    nodes.each do |node|
-      break if budget.zero?
-      next unless node.file?
-
-      token = info[node.node_id]&.content_token
-      next if token.nil? || existing.key?([ node.node_id, token ])
-      next if Maker::Previews::Registry.for_filename(node.name).nil?
-
-      ::Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
-                                      name: node.name, version_id: token)
-      budget -= 1
-    end
   end
 
   # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token

@@ -1660,22 +1660,41 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture on a
   page that doesn't poll. Same mechanism, opposite right answers; do not unify them.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
-  it did not.** `Enqueue` compared revisions correctly from the day it shipped, but the only things
-  that CALL it for a thumbnail are the index's `backfill_thumbnails` and (now) `#show`. Backfill
-  skips any node `thumbnails_for` reports a row for, and that query matched on `(kind, node_id,
-  version_id)` alone — so a stale row satisfied it, nothing re-enqueued, and **172 of 174 LightBurn
-  thumbnails sat at revision 1 through two deploys that had bumped it**, leaving the layer colours
-  those deploys added invisible. `thumbnails_for` now drops rows from an older renderer, and
-  `#show` enqueues instead of only reading. **Every test of the mechanism passed throughout**,
-  because they all called `Enqueue` directly and none drove the thing a user does — open a page.
+  it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
+  that CALLS it can act on that, and the caller skips any node the read reports a row for. That
+  query matched on `(kind, node_id, version_id)` alone — so a stale row satisfied it, nothing
+  re-enqueued, and **172 of 174 LightBurn thumbnails sat at revision 1 through two deploys that had
+  bumped it**, leaving the layer colours those deploys added invisible. **Every test of the
+  mechanism passed throughout**, because they all called `Enqueue` directly and none drove the thing
+  a user does — open a page. `test/integration/web/maker_page_thumbnails_test.rb` exists for exactly
+  that gap and drives real requests.
+- **`Maker::Previews::ThumbnailMap` IS THE ONE IMPLEMENTATION OF BOTH THE REVISION FILTER AND THE
+  BACKFILL, AND `FilesController` CALLS IT RATHER THAN KEEPING ITS OWN.** The bug above was fixed in
+  `FilesController#thumbnails_for`/`#backfill_thumbnails` and nowhere else, so the Models page, the
+  project covers and `ProjectsController#show`'s two maps — five call sites that go through
+  `ThumbnailMap` — had **neither**: a missing row spun forever (nothing in that path ever called
+  `Enqueue`, and `/files/thumbnails` omits a row-less node from its JSON, so the client's
+  `if (!entry) continue` gives up after 40 polls, still spinning) and a stale row was **served**, an
+  old picture presented as the file's current thumbnail. Those three controller privates are **gone**,
+  not duplicated — the enqueue belongs to the service and not the callers (§14d) because its inputs
+  are precisely what this class computes and does not expose, and because a sixth caller must get it
+  without knowing to ask. Two consequences to keep: **`from_info`'s `backfill:` is REQUIRED, not
+  defaulted**, because its two callers disagree and both wrong answers are silent (`#index` must
+  self-heal; `#thumbnails` is polled every 2 s for 40 ticks and must not write) — guarded by driving
+  the real endpoint, since no unit test of the map can see which flag an action passes; and the
+  **renderable-only check earns its place at the BUDGET, not at correctness** — `Enqueue` already
+  refuses a name no renderer handles, so deleting the check creates no rows and enqueues no jobs and
+  came back GREEN under mutation, while `budget -= 1` runs unconditionally, so a wall of `.gcode`
+  ahead of the models would spend the whole budget on files that can never have a thumbnail and the
+  backlog would never drain.
 - **`pending` AND `processing` ARE ASSERTIONS THAT A JOB EXISTS, AND `Enqueue::STALLED_AFTER` IS THE
   ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues, `ready` is done, `unsupported` is
   terminal by design — those two were the only statuses with **no way back**, so a lost job wedged
   the row FOREVER: `Enqueue`'s early return fires for every caller, so the 15-minute scan,
-  `backfill_thumbnails`, `#current_thumbnail` and the addon door all no-op'd on it, and
+  `ThumbnailMap`'s backfill, `#current_thumbnail` and the addon door all no-op'd on it, and
   `MissingBackfill` looks only for content with NO row. Three rows sat wedged on the live share
   library, the oldest over a week, spinning. **The window is what keeps the escape from becoming a
-  stampede** (`backfill_thumbnails` calls `Enqueue` per row on every Files render), and **the
+  stampede** (the backfill calls `Enqueue` per row on every Files render), and **the
   explicit `updated_at` restamp is what keeps the heal from repeating** — healing changes no other
   attribute and `save!` on an unchanged record is a NO-OP that leaves the timestamp alone, so
   without it every scan and page load adds another duplicate job. All three halves are

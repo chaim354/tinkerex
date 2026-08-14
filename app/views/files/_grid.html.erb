@@ -14,7 +14,7 @@
         <span class="grid-name"><%= node.name %></span>
       <% end %>
     <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
-      <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+      <% thumb = @thumb_by_node.thumb(node.node_id) %>
       <%# data-download-url puts "Download" in the right-click menu — the grid's ONLY route to the
           bytes without opening the file first, since a card has no row-actions cell. Folders take
           the branch above and get no contextmenu action, so none of this reaches a directory.
