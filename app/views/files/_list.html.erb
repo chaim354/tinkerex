@@ -29,7 +29,7 @@
                 non-renderable file (pdf, txt, image, ...) renders as a plain name link, exactly
                 as before — no thumbnail, and crucially no spinner the poll would chase forever. %>
             <% if Maker::Previews::Registry.for_filename(node.name).present? %>
-              <% thumb = info&.content_token && @thumb_by_node[[ node.node_id, info.content_token ]] %>
+              <% thumb = @thumb_by_node.thumb(node.node_id) %>
               <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
               <%# data-download-url puts "Download" in the right-click menu (filemenu#open). The
                   same blob URL the row's own Download link uses, ?download=1 and all, so the two

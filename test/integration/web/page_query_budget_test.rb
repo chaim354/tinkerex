@@ -70,9 +70,21 @@ module Web
                    "large one — it grows with the data. Add the missing eager load."
     end
 
+    # A FILE SHAPED LIKE ONE IN A REAL LIBRARY, AND THE CONTENT TOKEN IS THE LOAD-BEARING PART.
+    # Without `current_version_id` the port reports no content, so `ThumbnailMap` short-circuits
+    # before its preview query ever runs — every page here was budgeting a thumbnail path that was
+    # not executing, and an N+1 in it would have been invisible. `files_type_filter_test.rb` learned
+    # this the same way: its first version seeded token-less rows and measured a page that was
+    # doing 6008 queries.
+    #
+    # THE BACKFILL IS ABSORBED BY THE WARM-UP RENDER, not disabled. `assert_constant_queries`
+    # renders once before each measurement, and SMALL/LARGE are both far under BACKFILL_LIMIT, so
+    # every row already has its preview by the time the counted request runs — the measurement is
+    # of the steady state, which is the state a page is in for all but its first view.
     def node!(id, name)
       @user.nodes.create!(node_id: id, name: name, kind: "file", size: 1,
-                          mtime: 1_700_000_000_000_000_000)
+                          mtime: 1_700_000_000_000_000_000,
+                          content_hash: "h-#{id}", current_version_id: "v-#{id}")
     end
 
     test "projects#show does not grow with attachments, tasks or build-log entries" do
@@ -94,9 +106,18 @@ module Web
                               "projects#show")
     end
 
+    # EVERY PROJECT GETS A COVER, and without one this test could not see the page's cover map at
+    # all: `cover_node_id` falls back to the first attachment, so a project with none contributes
+    # no node id, `ThumbnailMap.for` is handed an empty list and returns before it queries. N covers
+    # resolved in one query is the property this page most needs held — it is the one index whose
+    # thumbnail count grows with the row count.
     test "projects#index does not grow with the number of projects" do
       add = lambda do |prefix, count|
-        count.times { |i| @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active") }
+        count.times do |i|
+          project = @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active")
+          node!("pc-#{prefix}#{i}", "pc-#{prefix}#{i}.stl")
+          project.file_attachments.create!(user: @user, node_id: "pc-#{prefix}#{i}", role: "image")
+        end
       end
       assert_constant_queries(projects_path,
                               -> { add.call("s", SMALL) },
@@ -104,10 +125,14 @@ module Web
                               "projects#index")
     end
 
+    # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
+    # the grid's `@covers` map was being budgeted while resolving nothing.
     test "models#index does not grow with the number of models" do
       add = lambda do |prefix, count|
         count.times do |i|
-          @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
+          model = @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
+          node!("mc-#{prefix}#{i}", "mc-#{prefix}#{i}.stl")
+          model.file_attachments.create!(user: @user, node_id: "mc-#{prefix}#{i}", role: "image")
         end
       end
       assert_constant_queries(models_path,

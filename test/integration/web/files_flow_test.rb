@@ -84,6 +84,29 @@ module Web
       assert_not data.key?(without), "a node with no thumbnail row is absent from the payload"
     end
 
+    # THE POLL IS THE ONE READ THAT MUST NOT WRITE, and it shares its implementation with the page
+    # render that must. `Maker::Previews::ThumbnailMap.from_info` takes `backfill:` as a REQUIRED
+    # argument precisely because these two callers disagree; this drives the real endpoint, because
+    # a unit test of the map can only prove the flag works, never that this action passes it. The
+    # cost of getting it wrong is a per-node write every 2 seconds, for up to 40 ticks, per open
+    # page — for work the render that produced those spinners has already done.
+    test "the thumbnails poll never enqueues, however long it is polled" do
+      user = sign_in
+      stl = upload("poller.stl", "solid p\nendsolid\n".b)
+      user.maker_previews.where(node_id: stl).delete_all
+      clear_enqueued_jobs
+
+      assert_no_enqueued_jobs do
+        3.times do
+          get thumbnails_files_path, params: { ids: stl },
+                                     headers: { "Accept" => "application/json" }
+          assert_response :success
+        end
+      end
+      assert_not user.maker_previews.exists?(node_id: stl),
+                 "the poll created a preview row — it is a read, and #index is what heals"
+    end
+
     test "viewing a folder backfills thumbnails for renderable files that lack one, not others" do
       user = sign_in
       stl   = upload("gear.stl", "solid gear\nendsolid\n".b)  # eager seam creates a pending row

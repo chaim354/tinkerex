@@ -504,14 +504,14 @@ module Web
 
     # THE COST OF THE PAGE, NOT JUST OF ONE METHOD, AND THE FIXTURES ARE WHY. An earlier version of
     # this test seeded bare `nodes` rows: with no content token, stat_all reports no content,
-    # backfill_thumbnails skips every row, and the assertion could not see the per-row work it
+    # the backfill skips every row, and the assertion could not see the per-row work it
     # exists to forbid. With production-shaped rows the same assertion read few=17 many=44 —
     # and on a 2500-file library one uncapped load ran 6008 queries and enqueued 2000 jobs.
     #
     # Constant IN N, not against a literal, for the reason the port's stat_all contract gives: a
     # literal would pin one backend's query shape into a test all three legs run.
     test "the flat view's cost does not grow with the number of rows" do
-      with_controller_const(:BACKFILL_LIMIT, 2) do
+      with_backfill_limit(2) do
         6.times { |i| stl_with_content("small#{i}.stl") }
         few = count_queries { get files_path(ext: "stl") }
 
@@ -527,7 +527,7 @@ module Web
     # then never cleared, so both halves are asserted: one load enqueues at most the cap, and the
     # NEXT load takes the next slice rather than re-offering the same one.
     test "one page load enqueues at most BACKFILL_LIMIT thumbnails, and the backlog still drains" do
-      with_controller_const(:BACKFILL_LIMIT, 3) do
+      with_backfill_limit(3) do
         10.times { |i| stl_with_content("m#{i}.stl") }
 
         assert_difference -> { @user.maker_previews.count }, 3 do
@@ -645,17 +645,24 @@ module Web
     # giveaway), and Minitest runs the tests inside one worker serially: nothing calls
     # `parallelize_me!`. A threaded runner would make this a race that reorders another test's
     # results, so if that ever changes, this helper is the thing to revisit.
-    def with_controller_const(name, value)
-      original = FilesController.const_get(name)
-      FilesController.send(:remove_const, name)
-      FilesController.const_set(name, value)
+    def with_const(owner, name, value)
+      original = owner.const_get(name)
+      owner.send(:remove_const, name)
+      owner.const_set(name, value)
       yield
     ensure
-      FilesController.send(:remove_const, name)
-      FilesController.const_set(name, original)
+      owner.send(:remove_const, name)
+      owner.const_set(name, original)
     end
 
-    def with_flat_limit(limit, &) = with_controller_const(:FLAT_LIMIT, limit, &)
+    def with_flat_limit(limit, &) = with_const(FilesController, :FLAT_LIMIT, limit, &)
+
+    # The cap lives on `Maker::Previews::ThumbnailMap`, not this controller — the Models and
+    # Projects pages back onto the same class and get the same budget. Both tests below still
+    # drive a real `GET /files`, which is the point: they measure the PAGE, not the method.
+    def with_backfill_limit(limit, &)
+      with_const(Maker::Previews::ThumbnailMap, :BACKFILL_LIMIT, limit, &)
+    end
 
     # A file shaped like one in a real library: a content token, so stat_all reports content and
     # the thumbnail paths actually run. Bare `nodes` rows have none, which is how the first version

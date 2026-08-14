@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-14 (**a preview job lost to its own caller's transaction, and the `pending` row nothing could ever repair**)
+**Updated:** 2026-08-14 (**the same two thumbnail rules, absent from the five call sites that were not the Files page**)
 
 ## What this file is
 
@@ -60,7 +60,126 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-14): a preview job lost to its own caller's transaction, and the `pending` row nothing could ever repair (branch `claude/preview-pending-wedge`)
+## Latest (2026-08-14): the same two thumbnail rules, absent from the five call sites that were not the Files page (branch `claude/thumbnail-map-enqueue-and-revision`)
+
+The immediately preceding arc fixed a wedged `pending` row and recorded, under "Found in passing",
+that `Maker::Previews::ThumbnailMap` had **neither** of the two rules `FilesController` had grown.
+This closes that. Nothing here was reported by a user; it was found by reading the other path.
+
+### The two gaps
+
+`ThumbnailMap.for` only READ. Its callers are `ModelsController#index`/`#show` (`@covers`),
+`ProjectsController#index` (`@covers`) and `ProjectsController#show` (`@thumbs` for the attachment
+tiles, `@entry_thumbs` for the build-log photos) — **five call sites, two of them in one action**.
+
+1. **No enqueue seam.** A node with no preview row rendered `thumb: nil`, which
+   `files/_thumb.html.erb` paints as a spinner. `thumbs_controller.js` then polls
+   `/files/thumbnails`, which **also** never enqueued and **omits a row-less node from its JSON
+   entirely**, so the client's `if (!entry) continue` ran 40 times and stopped — still spinning.
+   Nothing anywhere in that path ever created the row: not the page, not the poll, and not
+   `MissingBackfill`, which looks only for content with no row *and* is a rake task, not a request.
+   `FilesController#index` self-healed via `backfill_thumbnails`; these pages had no equivalent.
+2. **No renderer-revision filter.** `FilesController#thumbnails_for` deliberately drops rows from an
+   older build — §14h's recorded "172 of 174 LightBurn thumbnails sat at revision 1 through two
+   deploys" bug. `ThumbnailMap` did not, so a stale row satisfied the has-a-row check twice over:
+   nothing re-enqueued it, **and it was served** — an out-of-date picture presented as the file's
+   current thumbnail. The live example is every STL/3MF rendered before the Z-up fix, still framed
+   lying on its side on the Models grid while the same file is upright on the Files page.
+
+### What shipped: one implementation, not a second copy of each rule
+
+The fix is in `ThumbnailMap`, and `FilesController` now **calls it**. `#thumbnails_for`,
+`#backfill_thumbnails`, `#current_revision?` and `BACKFILL_LIMIT` are gone from the controller; the
+two views index the map by `thumb(node_id)` instead of rebuilding the `[node_id, token]` key.
+
+Why the enqueue belongs to the service (§14d — a verb more than one controller performs gets a
+named service), and not to the five callers:
+
+- The backfill's inputs are exactly what this class computes and **does not expose**: the port's
+  per-node `FileInfo` (name, kind, token) and the set of rows that count as *current*, which the
+  revision filter defines. A controller-side backfill re-derives both — a second `stat_all` per page
+  (on share, a filesystem stat per node, doubled) plus a second spelling of "which rows exist".
+- Coupling it to the read is what makes forgetting impossible. The two-call shape
+  (`thumbnails_for` then `backfill_thumbnails`) is what `FilesController` had, and forgetting the
+  second call is *precisely* how these five sites diverged.
+
+Two design points that are load-bearing:
+
+- **`from_info(user, ids, info, backfill:)` — the kwarg is REQUIRED, not defaulted.** Its two
+  callers disagree and both wrong answers are silent: `#index` must self-heal; `#thumbnails` is
+  polled every 2 s for up to 40 ticks per open page and must not write. `.for` (the five maker-page
+  callers, which hold ids only) backfills unconditionally — every caller of that door is a page
+  render.
+- **`node_ids` is walked in order**, not `info`'s. The port answers a Hash in database order, and
+  the budget should be spent on what the user is looking at first.
+
+### Verification
+
+`bin/ci` green — seven gates, three backend legs at **identical** counts: **2357 runs, 8585
+assertions, 0 failures, 0 errors, 3 skips**; system 100/639. (Baseline before this branch: 2337 /
+8503.) 20 new tests.
+
+Mutation-checked, every guard, with the mutation confirmed applied before the result was believed —
+the §15 failure shape the previous arc hit:
+
+| mutation | result |
+|---|---|
+| drop the revision filter | 3 failures — incl. `Web::LbrnGeometryTest`, a **pre-existing FilesController guard**, which is the evidence the delegation is real |
+| remove the backfill entirely | 8 failures + 1 error — incl. `FilesFlowTest`'s and `FilesTypeFilterTest`'s existing page-level guards |
+| drop the `kind != "file"` check | 1 failure (the new directory test — the old `node.file?` had no test at all) |
+| drop `break if budget.zero?` | 3 failures across the unit and both page-level budget guards |
+| drop the already-current skip | 2 failures (the enqueue becomes per-row) |
+| `#thumbnails` passes `backfill: true` | **GREEN at first** — see below |
+| drop the renderable-only check | **GREEN at first** — see below |
+| the whole pre-fix `ThumbnailMap` vs the new page tests | 5 of 7 red; the 2 that stay green assert behaviour that was already correct |
+
+**Two mutations came back green, and both were real holes in the tests rather than dead code.**
+
+- **The `#thumbnails` opt-out had no guard.** A unit test of the map can only prove the flag works,
+  never that the action passes it. Closed by driving the real endpoint three times over and
+  asserting no row appears (`files_flow_test.rb`).
+- **The renderable-only check is not load-bearing for correctness — it is load-bearing for the
+  BUDGET.** `Enqueue` already refuses a name no renderer handles, so removing the check creates no
+  rows and enqueues no jobs. What it buys sits one line further down: `budget -= 1` runs
+  unconditionally, so without it every unrenderable file **spends a slot**. A folder with a wall of
+  `.gcode` ahead of its models drains the whole budget onto files that can never have a thumbnail,
+  and the models behind them spin on every visit forever — the backlog never draining is the exact
+  failure the budget exists to prevent. `FilesController` had the same untested property from the
+  day it shipped. Now asserted directly.
+
+### `page_query_budget_test.rb` was budgeting a path that was not executing
+
+Found while checking this change did not make the maker pages linear. Its `node!` fixture created
+rows with **no `current_version_id`**, so the port reported no content and `ThumbnailMap`
+short-circuited *before its preview query ever ran* — on every page in that file. This is the same
+defect `files_type_filter_test.rb` already records fixing in its own suite ("an earlier version
+seeded bare `nodes` rows … the assertion could not see the per-row work it exists to forbid").
+
+Two further pages resolved **nothing**: `projects#index` and `models#index` seeded rows with no
+attachments, and `cover_node_id` falls back to the first attachment — so `ThumbnailMap.for` was
+handed an empty list on the two index pages whose thumbnail count grows with the row count.
+
+Fixed by giving the fixtures content tokens and covers. The backfill is absorbed by
+`assert_constant_queries`' own warm-up render (SMALL/LARGE are far below `BACKFILL_LIMIT`), so the
+measurement is of the steady state — which is the state a page is in for all but its first view.
+
+| | before | after |
+|---|---|---|
+| budget tests that catch an N+1 in the previews read | **0 of 7** | **5 of 7** |
+
+The two that stay green are `models#show` and `trash#index`: a model's hero cover is a single node
+id, so an N+1 over one node is still one query, and the trash page resolves no thumbnails at all.
+
+### Not fixed here
+
+`FilesController#thumbnails` still does not enqueue, deliberately (above). A row wedged *between*
+page views therefore heals on the next render of a page that lists it, or on `Library::ScanJob`'s
+15-minute pass via `Enqueue::STALLED_AFTER` — not from the poll itself. That is the intended
+division: the poll observes, the render repairs.
+
+---
+
+## 2026-08-14: a preview job lost to its own caller's transaction, and the `pending` row nothing could ever repair (branch `claude/preview-pending-wedge`)
 
 Reported as "the thumbnail is not loading" for `history-test.svg` and `washer-test.3mf` on the
 deployed **share** library. Two independent defects, both required to produce the symptom, and
@@ -155,7 +274,7 @@ before running is the cheap fix.
 Staleness is proven with `travel_to 3.days.ago` around the setup rather than a same-second
 comparison — §15's recorded remedy for the `.to_i` timestamp guard that cannot fail.
 
-### Found in passing, deliberately NOT fixed here
+### Found in passing, deliberately NOT fixed here — **now closed, see the entry above**
 
 **`Maker::Previews::ThumbnailMap` has no enqueue seam and no revision filter.** It backs the Models
 page, project covers and `ProjectsController#show`'s attachment tiles. `FilesController#index`
@@ -165,6 +284,8 @@ forever there, and a stale-revision row shows an **old picture**. That is §14h'
 "172 of 174 LightBurn thumbnails" shape sitting one layer over from where it was fixed. It is a
 separate defect from this one and did not cause this symptom; bundling it would have broken the
 one-change-at-a-time rule.
+
+Fixed on branch `claude/thumbnail-map-enqueue-and-revision` — the entry above this one.
 
 ### Not a code defect: the "every tab is slow on first load" report
 
