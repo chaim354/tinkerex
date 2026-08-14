@@ -156,6 +156,91 @@ module Maker
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.obj", version_id: "v1")
         end
       end
+
+      # THE ROW AND THE JOB ARE IN DIFFERENT DATABASES, so `perform_later` is NOT covered by the
+      # caller's transaction: it commits to the QUEUE database immediately while `preview.save!` is
+      # still uncommitted on PRIMARY. Every addon save runs inside one
+      # (`Tools::AddonsController#create`'s `ApplicationRecord.transaction`), Solid Queue runs in
+      # the Puma process on this deployment (SOLID_QUEUE_IN_PUMA) and polls sub-second, so the
+      # worker claimed the job, could not see the row, and `discard_on RecordNotFound` swallowed it
+      # — no failure, no log, job marked finished.
+      #
+      # NOT THEORETICAL. On the deployed share library, job 15583 was created AND finished at
+      # 2026-08-13 23:09:20 while preview 1747 ("history-test.svg") was never touched — its
+      # created_at still equalled its updated_at days later, and the file span forever.
+      test "the job is not enqueued until the caller's transaction has committed" do
+        ApplicationRecord.transaction do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+          assert_equal 0, enqueued_jobs.size,
+                       "the worker could see the job before its preview row committed"
+        end
+        assert_equal 1, enqueued_jobs.size, "and it must still be enqueued once the transaction commits"
+      end
+
+      # A `pending` ROW ASSERTS "A JOB IS COMING FOR ME", AND NOTHING VERIFIES THAT ASSERTION. When
+      # it is false the row is unrecoverable: every other branch of the guard above returns early,
+      # so the 15-minute scan, the Files-page backfill, #show and the addon door all no-op on it
+      # forever while the grid spins until its poll gives up. `failed` re-enqueues, `ready` is done
+      # and `unsupported` is terminal by design — `pending` was the one status with no way back.
+      #
+      # Three rows were wedged this way on the live share library (2026-08-05, 08-13 and 08-13),
+      # the oldest for over a week.
+      test "a pending row whose job never ran is re-enqueued rather than wedged forever" do
+        travel_to 3.days.ago do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+        clear_enqueued_jobs # the job was discarded; the row still says pending
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+      end
+
+      # THE OTHER HALF, and the one that keeps the recovery from becoming a stampede: a row that
+      # only just went pending is believed. `backfill_thumbnails` calls this once per row on every
+      # Files page load, so a window-less "re-enqueue any pending" would enqueue a duplicate job
+      # for every spinner on screen, every render.
+      test "a freshly pending row is left alone — its job really is still coming" do
+        Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        clear_enqueued_jobs
+
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+      end
+
+      # `processing` NEEDS THE SAME ESCAPE, and GeneratePreviewJob's own comment already promised
+      # it: a FetchError that exhausts its retries deliberately leaves the row non-terminal "so a
+      # later manual/scheduled re-enqueue can still succeed". There was no such re-enqueue — this
+      # guard returned early on `processing` too, so that sentence described something that could
+      # not happen.
+      test "a processing row stalled past the window is re-enqueued too" do
+        travel_to 3.days.ago do
+          @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                       status: "processing",
+                                       renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        end
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+      end
+
+      # THE RESTAMP IS LOAD-BEARING AND IS THE EASIEST HALF TO LEAVE OUT. Healing a stalled row
+      # changes no other attribute, and `save!` on an unchanged record is a NO-OP that does not
+      # touch `updated_at` — so without an explicit restamp the row stays stale forever and every
+      # caller after it enqueues yet another duplicate, on every scan and every page load.
+      test "healing a stalled row restamps it, so the next caller does not enqueue again" do
+        travel_to 3.days.ago do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+        Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        clear_enqueued_jobs
+
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+      end
     end
   end
 end

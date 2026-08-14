@@ -1668,6 +1668,29 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   those deploys added invisible. `thumbnails_for` now drops rows from an older renderer, and
   `#show` enqueues instead of only reading. **Every test of the mechanism passed throughout**,
   because they all called `Enqueue` directly and none drove the thing a user does — open a page.
+- **`pending` AND `processing` ARE ASSERTIONS THAT A JOB EXISTS, AND `Enqueue::STALLED_AFTER` IS THE
+  ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues, `ready` is done, `unsupported` is
+  terminal by design — those two were the only statuses with **no way back**, so a lost job wedged
+  the row FOREVER: `Enqueue`'s early return fires for every caller, so the 15-minute scan,
+  `backfill_thumbnails`, `#current_thumbnail` and the addon door all no-op'd on it, and
+  `MissingBackfill` looks only for content with NO row. Three rows sat wedged on the live share
+  library, the oldest over a week, spinning. **The window is what keeps the escape from becoming a
+  stampede** (`backfill_thumbnails` calls `Enqueue` per row on every Files render), and **the
+  explicit `updated_at` restamp is what keeps the heal from repeating** — healing changes no other
+  attribute and `save!` on an unchanged record is a NO-OP that leaves the timestamp alone, so
+  without it every scan and page load adds another duplicate job. All three halves are
+  mutation-checked; dropping `|| stalled` must produce **two** failures, not one.
+- **A JOB WHOSE ARGUMENT IS A PRIMARY-DB ROW ID MUST SET `enqueue_after_transaction_commit`, BECAUSE
+  THE JOB LIVES IN A DIFFERENT DATABASE FROM THE ROW.** Rails 8.1 defaults it to **false**, so
+  `perform_later` commits to the QUEUE database on its own connection **immediately** while the row
+  is still inside the caller's open transaction — and Solid Queue runs IN THE PUMA PROCESS here
+  (`SOLID_QUEUE_IN_PUMA`) polling sub-second, so it wins that race. `Maker::GeneratePreviewJob`'s
+  own `discard_on ActiveRecord::RecordNotFound` then made the loss **silent**: no failure, no log,
+  job marked finished, row stranded at `pending`. Proven on the box — job 15583 created *and*
+  finished at 2026-08-13 23:09:20 while preview 1747 was never touched. **Every addon save is inside
+  a transaction** (`Tools::AddonsController#create`), which is why addon output was hit and uploads
+  were not. Set PER JOB, not globally: it is a claim about that job's argument, and it belongs
+  beside the `discard_on` it interacts with.
 - **A PREVIEW IS STALE ON TWO INDEPENDENT AXES, AND `version_id` IS ONLY THE FIRST.** It asks
   whether an artifact was made from the file's current CONTENT; `renderer_revision` asks whether it
   was made by the current CODE. With only the first, a payload change invalidated **nothing** —
