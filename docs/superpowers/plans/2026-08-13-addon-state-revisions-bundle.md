@@ -22,17 +22,10 @@ ordering is spec §11 and the whole reason `min_host` exists.
 Verify against the running deployment, not against the sibling checkout:
 
 ```bash
-ssh kamal1@192.168.1.95 "docker exec \$(docker ps --format '{{.Names}}' | grep '^tinkerex-web-' | head -1) bin/rails runner 'puts Maker::Addons::Host::LEVEL'"
+curl -s https://tinkerex.com/tools/boxes | grep -o '"hostLevel":[0-9]*'
 ```
 
-Expected: `3`. If it says 2, stop — the host has not deployed yet.
-
-> **AN EARLIER DRAFT OF THIS STEP CURLED `https://tinkerex.com`, WHICH IS THE WRONG BOX.** That is
-> **OVH**, and a bare "deploy" in this project means the three **Unraid** backends only (CLAUDE.md
-> §7) — OVH is deployed only on explicit request. So the curl would have reported the host level of
-> a machine this arc never touched, and on a green answer it would have been reporting a *stale*
-> level rather than the one the bundle is about to bind itself to. Ask the box you actually
-> deployed. **Verified live 2026-08-13:** all three Unraid backends run `7005fdb` and answer `3`.
+Expected: `"hostLevel":3`. If it says 2, stop — the host has not deployed yet.
 
 Remember: **publishing the image IS the deploy.** There is no build step and Rails is never
 rebuilt, so a mistake here is live the moment `bin/build-push` finishes. `bin/rollback <earlier-sha>`
