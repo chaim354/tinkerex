@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-14 (**the same two thumbnail rules, absent from the five call sites that were not the Files page**)
+**Updated:** 2026-08-17 (**`CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot**)
 
 ## What this file is
 
@@ -60,7 +60,35 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-14): the same two thumbnail rules, absent from the five call sites that were not the Files page (branch `claude/thumbnail-map-enqueue-and-revision`)
+## Latest (2026-08-17): `CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot (branch `claude/chunk-endpoint-seaweedfs-ip`)
+
+One line of config, but the cause is worth recording because it will recur on any container this
+host runs.
+
+SeaweedFS is the `miniweeed` container on Unraid's `br0`, which is a **macvlan** network. Docker's
+macvlan driver uses its **own IPAM** and never sends a DHCP request — so the UniFi DHCP reservation
+that was supposed to hold its address was never consulted. Unpinned, that IPAM allocates from the
+subnet in **container start order**, so a reboot shuffled the assignments: SeaweedFS moved from
+`.8` to `.2` and **Redis took `.8`**. `CHUNK_ENDPOINT: http://192.168.1.8:8333` then resolved to
+Redis, so every presigned URL pointed at the wrong service and `verify_finalize`'s exists-check
+would fail every commit. Probed 2026-08-17: `.2:8333` answers an S3 **403** (auth required),
+`.8:8333` **refuses the connection**, `.8:6379` is open.
+
+Both halves were fixed: the containers now carry `IPAMConfig.ipv4_address` (Unraid's "Fixed IP
+address" field; for the one container managed by a Portainer compose stack, an `ipv4_address:` under
+a `networks:` **map** rather than a list), and this endpoint now names `.2`. The argument lives in
+`config/deploy.yml` beside the value, because that is the line someone would otherwise "correct"
+back.
+
+Only the **chunk** deployment was affected — share and s3 do not use `CHUNK_*` at all (§14a), and
+the live library is share-backed, so no user data was involved.
+
+**Verification:** `bin/ci` green, three backend legs identical — 2357 runs, 8585 assertions,
+0 failures, 3 skips; system 100/639.
+
+---
+
+## 2026-08-14: the same two thumbnail rules, absent from the five call sites that were not the Files page (branch `claude/thumbnail-map-enqueue-and-revision`)
 
 The immediately preceding arc fixed a wedged `pending` row and recorded, under "Found in passing",
 that `Maker::Previews::ThumbnailMap` had **neither** of the two rules `FilesController` had grown.

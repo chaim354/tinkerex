@@ -120,7 +120,16 @@ env:
     # store is unreachable from the server, commits fail loudly rather than creating versions
     # pointing at bytes that never arrived. Set SYNC_VERIFY_FINALIZE=0 to opt out.
     STORAGE_BACKEND: s3
-    CHUNK_ENDPOINT: http://192.168.1.8:8333
+    # THIS ADDRESS IS PINNED ON THE CONTAINER, AND A UNIFI DHCP RESERVATION CANNOT HOLD IT.
+    # SeaweedFS is the `miniweeed` container on Unraid's `br0`, which is a **macvlan** network:
+    # Docker's own IPAM assigns the address and the container never sends a DHCP request, so the
+    # router never sees it and a reservation is never consulted. Unpinned, that IPAM hands out
+    # addresses in container START ORDER — so a reboot moved SeaweedFS from .8 to .2 and gave .8
+    # to Redis, at which point this endpoint pointed at Redis and every chunk read/write failed.
+    # The fix is `IPAMConfig.ipv4_address` per container (Unraid's "Fixed IP address" field, or
+    # `ipv4_address:` under a compose `networks:` map). Verified 2026-08-17: .2:8333 answers an
+    # S3 403 (auth required), .8:8333 refuses the connection.
+    CHUNK_ENDPOINT: http://192.168.1.2:8333
     CHUNK_BUCKET: my-bucket
     CHUNK_REGION: us-east-1
     # Authoritative source = 1Password item "seaweednew" (op://tinkerex/seaweednew/access key).
