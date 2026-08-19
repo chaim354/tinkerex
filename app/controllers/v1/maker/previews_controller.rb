@@ -21,22 +21,12 @@ module V1
       # (20260730001500_one_preview_per_node_and_kind.rb). `version_id` is therefore no longer a
       # thing a client CHOOSES; it records which content the stored asset was rendered from.
       #
-      # THE LIFECYCLE IS `Maker::Previews::Enqueue`'S, NOT THIS CONTROLLER'S. It used to be inlined
-      # here and had drifted to TWO of Enqueue's FOUR staleness axes: it checked `version_id` and
-      # `failed`, and knew nothing of `renderer_revision` or `STALLED_AFTER`. Two consequences, both
-      # silent: it wrote `version_id` while leaving `renderer_revision` at the column default of 1,
-      # so a `.stl`/`.3mf`/`.lbrn2`/`.mage` row created through this door was born LYING (their
-      # renderers declare 2, 2, 4 and 4) — the job then rendered with current code and marked it
-      # `ready`, and every reader comparing revisions judged a correct current artifact stale and
-      # re-enqueued it forever; and a renderer bump was invisible to the API entirely, since
-      # `version_id` is all this door compared and a finished design's content never changes. It is
-      # reachable in production: `client/sync-client`'s `enqueue_preview` (Tauri command
-      # `maker_enqueue_preview`) POSTs here, and for an API-only desktop user nothing else repaired
-      # the row.
-      #
-      # TEACHING THIS DOOR ABOUT `renderer_revision` WOULD FIX ONE AXIS OF FOUR and leave a fifth
-      # copy of a rule that has already drifted three times (`8cbe740`, `b32b6e8`, `c3bc2f5` all
-      # touched `enqueue.rb` only). Delegating is what makes the drift structurally impossible.
+      # THE LIFECYCLE IS `Maker::Previews::Enqueue`'S, NOT THIS CONTROLLER'S. It was inlined here
+      # and had drifted to TWO of Enqueue's FOUR staleness axes, writing `version_id` while leaving
+      # `renderer_revision` at the column default — so a `.stl`/`.3mf`/`.lbrn2`/`.mage` row born
+      # through this door was stale by construction and re-enqueued forever. Teaching it one axis
+      # would leave a fifth copy of a rule that has already drifted; delegating makes the drift
+      # structurally impossible. (Arc, SHAs and reachability: the commit message and STATUS.md.)
       #
       # OBSERVABLE WIRE CHANGE, AND IT IS THE CORRECT ONE: after a renderer bump this endpoint now
       # answers `ready` (the old artifact stays served while the rebuild runs) rather than a fresh

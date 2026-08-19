@@ -26,11 +26,9 @@ module Maker
     # SHARE, and it is now a `skip_unrenderable:` kwarg rather than a second implementation. That
     # controller DOES create a row for a non-renderable name, so an API client can poll and observe
     # the terminal `unsupported` state; here the trigger is automatic/eager, so skipping is right
-    # and stays the default. Everything else — all four staleness axes — is shared. It was not,
-    # until 2026-08-19: the controller inlined a two-axis copy that wrote `version_id` while leaving
-    # `renderer_revision` at the column default, and three separate fixes to the axes below landed
-    # in this file only. One branch differing is a parameter; four axes differing was a second,
-    # stale writer of the same two-coordinate invariant.
+    # and stays the default. Everything else — all four staleness axes — is shared. One branch
+    # differing is a parameter; four axes differing was a second, stale writer of the same
+    # two-coordinate invariant.
     #
     # NOT a controller concern and NOT sync-coupled: it reads a filename + content id and enqueues a
     # job. Callable from a controller, a service, or a scan loop (§10 tripwire stays intact).
