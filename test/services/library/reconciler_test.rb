@@ -40,6 +40,23 @@ module Library
                                      reader: ->(rel) { contents.fetch(rel) }).call
     end
 
+    # A library of its own USER, so the query-count fixtures below can vary independently without
+    # one appearing as a mass deletion in another's pass. Returns what #reconcile_tree replays.
+    def build_tree!(dirs:, files:)
+      user = User.create!(email: "tree-#{SecureRandom.hex(6)}@example.com")
+      observations = dirs.times.map { |i| dir_obs("d#{i}") } +
+                     files.times.map { |i| obs("d#{i % dirs}/f#{i}.stl", "body-#{i}") }
+      contents = files.times.to_h { |i| [ "d#{i % dirs}/f#{i}.stl", "body-#{i}" ] }
+      tree = [ user, observations, contents ]
+      reconcile_tree(tree) # index it once, so every later pass is a NO-OP
+      tree
+    end
+
+    def reconcile_tree((user, observations, contents))
+      Library::Reconciler.new(user, observations:, unreadable_dirs: [], max_delete_pct: 100,
+                                    reader: ->(rel) { contents.fetch(rel) }).call
+    end
+
     test "a new file becomes a node" do
       reconcile([ obs("a.stl", "aaa") ], { "a.stl" => "aaa" })
       node = @user.nodes.find_by!(storage_path: "a.stl")
@@ -544,6 +561,159 @@ module Library
         Library::Reconciler.new(@user, observations: obs, unreadable_dirs: [], reader: ->(_) { "aaa" }).call
       end
       assert_equal before, node.reload.updated_at, "an unchanged identity must not rewrite the row"
+    end
+
+    # ------------------------------------------------- the one live-tree read (#live) and its skip
+
+    # THE S3 SHAPE, AND THE WHOLE REASON THESE TESTS EXIST SEPARATELY FROM `dir_obs`. That helper
+    # stamps a real T0 mtime, which is the SHARE shape -- a stat. Every S3 directory observation
+    # carries `mtime: nil, size: nil` (s3_observer.rb#dir_observations), so a skip predicate
+    # written as the twin of #unchanged? -- `mtime == o.mtime && size == o.size` -- evaluates
+    # `nil == nil && nil == nil` and is TRUE for every directory on every S3 pass, forever. A
+    # fixture built from `dir_obs` cannot see that: T0 != nil, so it compares two real values and
+    # passes either way. These use s3_dir_obs deliberately.
+    def s3_dir_obs(rel) = Library::Observation.new(rel_path: rel, size: nil, mtime: nil, dir: true)
+
+    def count_reconciler_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          n += 1
+        end
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    # UNCOVERED BEFORE THIS: a directory whose parent_node_id must be repaired while every other
+    # column it is compared on is unchanged. `parent_node_id` is one of the columns ensure_dirs
+    # WRITES, so it has to be one of the columns the skip COMPARES -- and on the S3 shape it is
+    # the only one left that can differ, since mtime is nil on both sides.
+    test "a dir whose parent_node_id is wrong is repaired even though nothing else changed" do
+      reconcile([ s3_dir_obs("cad"), s3_dir_obs("cad/brackets") ], {})
+      brackets = @user.nodes.find_by!(storage_path: "cad/brackets")
+      cad      = @user.nodes.find_by!(storage_path: "cad")
+      assert_equal cad.node_id, brackets.parent_node_id
+      brackets.update_columns(parent_node_id: nil) # the drift the skip must notice
+
+      reconcile([ s3_dir_obs("cad"), s3_dir_obs("cad/brackets") ], {})
+      assert_equal cad.node_id, brackets.reload.parent_node_id,
+                   "a skip that compares only (mtime, size) is TRUE for every S3 dir forever, so " \
+                   "this repair would never happen"
+    end
+
+    # The OTHER column the skip must compare, and it needs its own test: the parent-repair case
+    # above passes if only `parent_node_id` is in the predicate, so without this one nothing
+    # would notice `name` being dropped from it. Each clause of a skip has to be shown to carry
+    # weight separately (§15), or the predicate is only as strong as its most-tested term.
+    test "a dir whose name drifted from its path is repaired even though nothing else changed" do
+      reconcile([ s3_dir_obs("cad") ], {})
+      cad = @user.nodes.find_by!(storage_path: "cad")
+      cad.update_columns(name: "stale")
+
+      reconcile([ s3_dir_obs("cad") ], {})
+      assert_equal "cad", cad.reload.name
+    end
+
+    # NOT a guard on #unchanged_dir? and deliberately not claimed as one: #live holds `present`
+    # rows only, so a TOMBSTONED directory has no row in it, the skip is never reached, and this
+    # stays green however that predicate is written. It pins the revive-by-path behaviour itself
+    # on the S3 shape, which is worth having on its own.
+    test "a tombstoned dir is revived on the next pass, on the S3 shape too" do
+      reconcile([ s3_dir_obs("cad"), obs("cad/a.stl", "x") ], { "cad/a.stl" => "x" })
+      cad = @user.nodes.find_by!(storage_path: "cad")
+      cad.update_columns(deleted: true)
+
+      reconcile([ s3_dir_obs("cad"), obs("cad/a.stl", "x") ], { "cad/a.stl" => "x" })
+      assert_not cad.reload.deleted, "the same node_id must come back, not a new node"
+      assert_equal "dir", cad.kind
+    end
+
+    # The other direction: a real mtime that MOVED must still be written. The skip must not be so
+    # broad that it stops ensure_dirs doing its job on a share.
+    test "a dir whose mtime changed is still written" do
+      reconcile([ dir_obs("cad"), obs("cad/a.stl", "x") ], { "cad/a.stl" => "x" })
+      cad = @user.nodes.find_by!(storage_path: "cad")
+      assert_equal T0, cad.mtime
+
+      later = Library::Observation.new(rel_path: "cad", size: nil, mtime: T0 + 5_000, dir: true)
+      reconcile([ later, obs("cad/a.stl", "x") ], { "cad/a.stl" => "x" })
+      assert_equal T0 + 5_000, cad.reload.mtime
+    end
+
+    # A no-op pass reads the live tree ONCE. Asserted as CONSTANT rather than against a literal,
+    # the shape #count_contract_queries uses for the same reason: a literal encodes today's
+    # arithmetic and fails for a change that is not a regression. The finding this closes was
+    # exactly a count that grew -- SELECT = dirs + 3 -- so growth in EITHER dimension is the
+    # thing to forbid, and the fixtures vary dirs and files independently.
+    test "a no-op pass costs a number of queries that grows with neither files nor directories" do
+      small = build_tree!(dirs: 2, files: 4)
+      wide  = build_tree!(dirs: 2, files: 40)
+      deep  = build_tree!(dirs: 20, files: 4)
+
+      count_reconciler_queries { reconcile_tree(small) } # warm
+      a = count_reconciler_queries { reconcile_tree(small) }
+      b = count_reconciler_queries { reconcile_tree(wide) }
+      c = count_reconciler_queries { reconcile_tree(deep) }
+
+      assert_equal a, b, "cost grew with FILE count (#{a} -> #{b}) — the live tree is being read " \
+                         "more than once per pass"
+      assert_equal a, c, "cost grew with DIRECTORY count (#{a} -> #{c}) — ensure_dirs is querying " \
+                         "per directory again, which is the N+1 this closed"
+    end
+
+    # THE FRESHNESS MITIGATION, and it is NOT optional. #live is plucked before the first write;
+    # ensure_dirs then creates a LIVE dir node at "cad" and must write that back, or
+    # match_live_paths reads a snapshot in which "cad" is unclaimed, the file observation falls
+    # through to create_or_revive!, and the create lands on
+    # `index_nodes_on_user_id_and_storage_path` (unique, WHERE deleted = false, kind-AGNOSTIC) as
+    # a raw RecordNotUnique that kills this scan and every scan after it.
+    #
+    # The observations are built by hand rather than taken from S3Observer, which no longer emits
+    # this pair at all -- that is the point of the sequencing. The Reconciler is a separate unit
+    # handed a list, and it must not corrupt data on input it is handed; a share can also present
+    # a path that was a file and is now a directory.
+    # SCOPE: this asserts only that the pass SURVIVES the contradiction and leaves the unique
+    # index intact. WHICH kind should win is not the Reconciler's question and is not asserted
+    # here -- S3Observer drops the colliding file observation so this pair never reaches a
+    # production Reconciler, and s3_observer_test.rb pins that end to end. Asserting tree health
+    # here would be asserting the observer's fix through the wrong unit.
+    test "a dir and a file observed at ONE path does not raise and leaves one live node" do
+      obs = [ s3_dir_obs("cad"), obs("cad", "i am an object"), obs("cad/x.stl", "child") ]
+      contents = { "cad" => "i am an object", "cad/x.stl" => "child" }
+
+      assert_nothing_raised { reconcile(obs, contents) }
+      assert_nothing_raised { reconcile(obs, contents) }
+
+      assert_equal 1, @user.nodes.present.where(storage_path: "cad").count,
+                   "the partial unique index on (user_id, storage_path) WHERE deleted = false is " \
+                   "kind-agnostic and unvalidated in the model — a second live row here is a raw " \
+                   "RecordNotUnique that kills every scan from then on"
+    end
+
+    # THE MASS-DELETION DENOMINATOR, which the `kind: "file"` filter now enforces in RUBY rather
+    # than in SQL. Dropping it does not produce a wrong list -- it produces a guard that FAILS
+    # OPEN, and only on a shape this backend explicitly targets. 90 files / 120 dirs is a
+    # directory-heavy archive: 20 deletions are 22.2% of the files (REFUSE) and 9.5% of all nodes
+    # (PERMIT). The real default threshold, deliberately -- `max_delete_pct: 100` would make this
+    # test unable to fail.
+    test "directory rows are not in the guard's denominator — a dir-heavy archive still refuses" do
+      dirs  = 120.times.map { |i| s3_dir_obs("d#{i}") }
+      files = 90.times.map { |i| obs("d#{i}/f#{i}.stl", "b#{i}") }
+      contents = files.each_with_index.to_h { |o, i| [ o.rel_path, "b#{i}" ] }
+
+      Library::Reconciler.new(@user, observations: dirs + files, unreadable_dirs: [],
+                                     reader: ->(rel) { contents.fetch(rel) }).call
+      assert_equal 90, @user.nodes.present.where(kind: "file").count
+      assert_equal 120, @user.nodes.present.where(kind: "dir").count
+
+      survivors = files.first(70)
+      assert_raises(Library::Scanner::UnsafeScan) do
+        Library::Reconciler.new(@user, observations: dirs + survivors, unreadable_dirs: [],
+                                       reader: ->(rel) { contents.fetch(rel) }).call
+      end
     end
 
     # The Scanner's four-argument call sites must keep working, and a nil content_hash must be
