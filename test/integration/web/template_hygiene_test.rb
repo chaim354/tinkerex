@@ -48,7 +48,11 @@ module Web
     #
     #   users/          — Devise's own pages, rendered LOGGED OUT; this sweep is a signed-in session.
     #   layouts/        — mailer + Action Text layouts, driven by a mailer/rich-text render, not a page.
-    #                     (`layouts/application` is swept anyway, as every page below wraps in it.)
+    #                     (TWO of them are swept anyway: `layouts/application`, which every page below
+    #                     wraps in, and `layouts/action_text/contents/_content`, which the project
+    #                     detail page's build-log entry renders. So of the 7 excused `<%#` sites, only
+    #                     3 go genuinely unswept — all Devise. Every one of the 59 is still counted by
+    #                     the balance check above, which needs no request at all.)
     #   pwa/            — a manifest, not HTML; it has no ERB comments and no prose to leak.
     #   active_storage/ — an engine template we neither own nor edit.
     UNSWEPT_DIRS = %w[users/ layouts/ pwa/ active_storage/].freeze
@@ -106,10 +110,20 @@ module Web
 
     def token_for(node_id) = FileLayer.current.stat(@user, node_id:).content_token
 
+    # `renderer_revision` is DERIVED, not the literal 1 this first shipped as — the same rule the
+    # coverage assertion below states for the template set. `.lbrn2`'s live thumbnail revision is
+    # 4, so a hardcoded 1 makes `FilesController#current_thumbnail`'s `find_by(… renderer_revision:)`
+    # MISS and fall through to `Enqueue.call`. The page still rendered, but only because §14h's "A
+    # CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT" preserved `status` and
+    # `metadata` while repointing 1 → 4 — i.e. it worked by way of an invariant this file is not
+    # about. It would have failed LOUD if that ever changed, which is the right direction, but the
+    # message would have been "no page renders these templates", sending the reader to add a page
+    # when the fix is a fixture number. Deriving it also drops the spurious enqueue (2 → 1).
     def recipe!(node_id, metadata)
+      name = FileLayer.current.stat(@user, node_id:).name
       @user.maker_previews.create!(node_id:, version_id: token_for(node_id), kind: "thumbnail",
                                    status: "ready", metadata:,
-                                   renderer_revision: 1)
+                                   renderer_revision: Maker::Previews::Enqueue.revision_for_name(name, "thumbnail"))
     end
 
     # EVERY PAGE THIS SWEEP CAN REACH, and the coverage assertion below is what keeps that true —
@@ -153,8 +167,11 @@ module Web
       # below still runs and still reports it.
       erb_templates.each do |rel, src|
         assert_equal src.scan("<%").size, src.scan("%>").size,
-                     "#{rel} has unbalanced ERB delimiters — an opener inside a `<%# … %>` comment " \
-                     "swallows its terminator and leaks the comment's prose into the page"
+                     "#{rel} has unbalanced ERB delimiters. The usual cause is an opener inside a " \
+                     "`<%# … %>` comment swallowing its terminator, which leaks the comment's prose " \
+                     "into the page — but this check counts TOKENS and has not established that. It " \
+                     "also fires on a Ruby string literal containing `<%` inside a tag, which leaks " \
+                     "nothing (probed). Read the count, then find out which"
       end
 
       pages.each do |name, path|
