@@ -806,6 +806,131 @@ module FileLayer
       assert_nil @fake.objects["plus/bad.stl"], "nothing may be written by a copy that must fail"
     end
 
+    # --- a copy re-tags, and the row must follow it ----------------------------------------
+
+    # F-65. THE FAKE'S OWN CONTRACT, asserted directly, because everything below it rests on the
+    # fake disagreeing with the code where a real store disagrees with it.
+    #
+    # `Obj` has five fields and `do_copy` used to re-derive exactly one of them (last_modified,
+    # itself forced by a bug of this shape — see trash_purge_job_test.rb). `etag` was inherited,
+    # which is verbatim the adapter's own unstated assumption, so a `move` leaving `content_hash`
+    # stale and a `move` refreshing it produced IDENTICAL suite results. A fake that shares the
+    # code's misunderstanding confirms it (CLAUDE.md §14e).
+    #
+    # This test does not go through the adapter on purpose: the property belongs to the fake, and
+    # every test below it would go green again if this rule were reverted, so this is the one that
+    # has to name it. Reverting do_copy to `{ etag: o.etag }` turns THIS red.
+    test "FakeS3: a copy mints its ETag from its own bytes — a seeded override does not survive" do
+      body = "multipart-uploaded bytes"
+      @fake.seed!("src.stl", body, etag: "#{'a' * 32}-7") # what a real multipart upload carries
+
+      res = @fake.client.copy_object(bucket: "b", key: "dst.stl", copy_source: "b/src.stl")
+
+      expected = %Q("#{Digest::MD5.hexdigest(body)}")
+      assert_equal expected, res.copy_object_result.etag,
+                   "the RESPONSE carries the copy's ETag — that value is what #move stores"
+      assert_equal expected, @fake.objects["dst.stl"].etag,
+                   "and the stored object must agree with what the response claimed"
+      assert_equal %Q("#{'a' * 32}-7"), @fake.objects["src.stl"].etag,
+                   "the SOURCE is untouched: only the copy is re-tagged"
+    end
+
+    # F-04's three cases below all install this rather than leaning on the fixed do_copy above, and
+    # the independence is the whole point: if they relied on the fake to produce the re-tag, then
+    # reverting do_copy would make them pass vacuously — the false green this pair exists to end.
+    # So the re-tag is forced here, by a value the bytes could never produce.
+    #
+    # It HONORS copy_source_if_match, which is the assertion's entire mechanism: a stub that
+    # ignored the precondition would let a stale content_hash through and every test below would
+    # pass with the fix reverted.
+    def retag_copies!(new_etag)
+      @fake.client.stub_responses(:copy_object, lambda { |ctx|
+        src = URI::DEFAULT_PARSER.unescape(ctx.params[:copy_source].to_s.split("/", 2).last)
+        o = @fake.objects[src] or return "NoSuchKey"
+        return "PreconditionFailed" if (m = ctx.params[:copy_source_if_match]) && m != o.etag
+
+        @fake.objects[ctx.params[:key]] =
+          o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
+        { copy_object_result: { etag: new_etag } }
+      })
+    end
+
+    # F-04. THE ORDINARY UI SEQUENCE — move a file, then delete it — against the object population
+    # this backend exists to serve. A store re-tags a copy whenever the source ETag was not
+    # md5(bytes): a multipart-origin object (rung 3) or an SSE-KMS one (which wears a 32-hex ETag
+    # and is therefore misfiled onto rung 2). Leave content_hash naming the SOURCE's ETag and the
+    # next copy_source_if_match names an ETag no object has: PreconditionFailed -> FetchError ->
+    # 503 "try again", until Library::ScanJob's next pass repairs the row.
+    #
+    # Drop `content_hash:` from #move's node.update! and this is the test that dies.
+    test "move refreshes the row's identity from the copy, so the next delete still matches" do
+      id = create_file!(name: "moved.stl", bytes: "bracket")
+      retag_copies!('"7b1f0c9e"') # the destination is not what the source was
+
+      adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "renamed.stl")
+
+      # THE USER-VISIBLE SYMPTOM FIRST: a stale precondition raises FetchError here, which the web
+      # layer renders as a 503 "try again" on the file they just moved, for up to fifteen minutes.
+      # (`delete` writes only `deleted`/`storage_path`, so the identity assertion below still reads
+      # what `move` left.)
+      assert_nothing_raised { adapter.delete(@user, node_id: id) }
+      assert @user.nodes.find_by!(node_id: id).deleted
+      assert_equal "etag:7b1f0c9e", @user.nodes.find_by!(node_id: id).content_hash,
+                   "the row must name the ETag the BUCKET now has, through ObjectIdentity"
+    end
+
+    # F-04, the second half — and it fails INDEPENDENTLY of the first: restored_stat already holds
+    # the HEAD that carries `.etag` and dropped it, while its own comment says its purpose is "so
+    # the next scan skips it" and Reconciler#unchanged? tests content_hash FIRST.
+    test "undelete refreshes the row's identity from its HEAD, so the next delete still matches" do
+      id = create_file!(name: "restored.stl", bytes: "lamp")
+      retag_copies!('"3c4d5e6f"')
+
+      adapter.delete(@user, node_id: id)
+      adapter.undelete(@user, node_id: id)
+
+      # A restored file must not be undeletable — same 503, one verb over.
+      assert_nothing_raised { adapter.delete(@user, node_id: id) }
+      assert_equal "etag:3c4d5e6f", @user.nodes.find_by!(node_id: id).content_hash
+    end
+
+    # THE GUARD, and why it is a presence test rather than a rescue. ObjectIdentity.for RAISES
+    # ArgumentError on a blank ETag (deliberately: the ladder must be total, and a nil identity
+    # means Reconciler#plan_moves drops the object and never indexes it at all). ArgumentError is
+    # not an Aws ServiceError, so #move's rescue would not catch it — and by the line that would
+    # raise, delete_object has ALREADY removed the source.
+    #
+    # SO THE RAISE IS CAUGHT BY HAND RATHER THAN BY assert_nothing_raised, and "the source is gone"
+    # is asserted FIRST and unconditionally. That ordering is the evidence: under the mutation both
+    # facts have to be visible at once — the store answered nothing, the source key is already
+    # deleted, and an unguarded refresh blows up there — or the test proves only that something
+    # raised somewhere, which says nothing about whether the guard sits where it matters.
+    # A raise in that window leaves the bytes only at the new key with the row still naming the
+    # old one: §14a's orphaning landmine, reached by a store merely being unhelpful.
+    #
+    # Make the refresh unconditional and this goes red with ArgumentError.
+    test "a copy that reports no ETag leaves the previous identity in place rather than raising" do
+      id = create_file!(name: "quiet.stl", bytes: "hush")
+      before = @user.nodes.find_by!(node_id: id).content_hash
+      retag_copies!("") # a store that answers a copy with no ETag at all
+
+      raised = nil
+      begin
+        adapter.move(@user, node_id: id, new_name: "quieter.stl")
+      rescue StandardError => e
+        raised = e
+      end
+
+      assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
+                 "the source is already deleted by the line that derives the new identity"
+      assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
+      assert_equal before, node.content_hash,
+                   "keep the previous value — NEVER nil, which un-indexes the object"
+    end
+
     # --- the 5GB copy cap -----------------------------------------------------------------
 
     # copy_object is capped at 5GiB: it ERRORS, it does not truncate. Both delete and move are

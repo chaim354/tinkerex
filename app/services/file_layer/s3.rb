@@ -474,13 +474,49 @@ module FileLayer
         # makes the identical argument; the port cannot tolerate the two diverging on it.)
         raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(dest_key)
 
-        copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
+        copied = copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
         @client.delete_object(bucket: @bucket, key: src_key)
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
       end
 
-      node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+      # THE COPY'S ETAG, NOT THE SOURCE'S — and this refresh is what keeps the row's identity one
+      # a real bucket agrees with. A store re-tags a copy whenever the source ETag was not
+      # md5(bytes): multipart-origin objects (rung 3, `etag:`) and SSE-KMS objects (which wear a
+      # 32-hex ETag and are therefore misfiled on rung 2). Leave content_hash naming the SOURCE's
+      # ETag and it names an ETag no object has, so the NEXT delete or move sends it as
+      # copy_source_if_match, gets PreconditionFailed, and answers FetchError -> 503 "try again"
+      # until Library::ScanJob's 15-minute pass repairs the row. Single-part unencrypted objects
+      # re-derive the same md5 and are unaffected — which is exactly why this stayed invisible.
+      #
+      # FROM THE RESPONSE WE ALREADY HOLD. Never a HEAD afterwards: that is a billed request for a
+      # value copy_object handed us, and #etag_precondition's own note already refuses the
+      # HEAD-for-the-current-ETag move.
+      #
+      # ACCEPTED CONSEQUENCE, on a re-tagging store only: content_hash IS content_token
+      # (see #file_info), so a moved object gets a new token and re-renders its thumbnail once even
+      # though its bytes did not change. The scan produced exactly that re-render 15 minutes later
+      # anyway — this only moves it earlier, and it is the price of the row being true NOW.
+      #
+      # PRESENCE-GUARDED, and the guard is load-bearing rather than defensive. ObjectIdentity.for
+      # RAISES ArgumentError on a blank ETag (deliberately — see its normalize_etag), ArgumentError
+      # is NOT a ServiceError so the rescue above would not catch it, and by this line
+      # delete_object has ALREADY removed the source. An unguarded call against a store that
+      # answers no ETag would raise with the bytes only at the new key and the row still naming the
+      # old one — the orphaning landmine, from a store being merely unhelpful. Absent an ETag we
+      # keep the PREVIOUS value (never nil: Reconciler#plan_moves DROPS a nil-hash observation, so
+      # the object would never be indexed at all) and let the scan correct it.
+      #
+      # mtime is deliberately NOT refreshed here. copy_object's response carries no last_modified,
+      # and the fake returns none either — so a "refresh" of it would be reading nil through
+      # nanos() and would be green against the fake and wrong against every real store, which is
+      # the exact defect this change exists to close. The header above already records that the
+      # scan owns a moved object's mtime.
+      attrs = { storage_path: rel, name: new_name, parent_node_id: new_parent_node_id }
+      copied_etag = copied&.copy_object_result&.etag
+      attrs[:content_hash] = ObjectIdentity.for(etag: copied_etag) if copied_etag.present?
+
+      node.update!(**attrs)
       stat(user, node_id: node.node_id)
     end
 
@@ -757,14 +793,30 @@ module FileLayer
             "delete and move are copy-then-delete here. Refusing rather than half-deleting it."
     end
 
-    # The restored object's own size/mtime, so the next scan skips it instead of re-indexing.
-    # Best-effort: the undelete has already succeeded by the time this runs, and a HEAD blip is not
-    # worth failing a restore the user can see — the next scan corrects both columns anyway. The
-    # SIZE comes from the HEAD too rather than from the node, because the node's may predate a
-    # change we never saw.
+    # The restored object's own size/mtime/identity, so the next scan skips it instead of
+    # re-indexing. Best-effort: the undelete has already succeeded by the time this runs, and a
+    # HEAD blip is not worth failing a restore the user can see — the next scan corrects all three
+    # columns anyway. The SIZE comes from the HEAD too rather than from the node, because the
+    # node's may predate a change we never saw.
+    #
+    # THE IDENTITY IS PART OF "the restored object's own", for the same reason as the other two and
+    # with a sharper failure: undelete is copy-then-revive, and a store re-tags a copy whenever the
+    # source ETag was not md5(bytes) (multipart-origin, SSE-KMS). Return only size/mtime and the
+    # revived row names the ETag the object carried at its ORIGINAL key — so the next delete or
+    # move sends it as copy_source_if_match and gets PreconditionFailed -> FetchError -> 503, and
+    # Reconciler#unchanged? tests content_hash FIRST, so its own stated purpose ("the next scan
+    # skips it") is defeated by the very column it omits. The HEAD is already made and already
+    # carries `.etag`; this adds no request.
+    #
+    # PRESENCE-GUARDED for the same reason as #move's: ObjectIdentity.for raises ArgumentError on a
+    # blank ETag, which no rescue here is written for, and the undelete has already put the bytes
+    # back by the time this runs. No ETag -> keep the previous value (never nil) and let the scan
+    # correct it, which is what the rest of this method already does on a HEAD blip.
     def restored_stat(key)
       head = @client.head_object(bucket: @bucket, key:)
-      { size: head.content_length, mtime: nanos(head.last_modified) }
+      attrs = { size: head.content_length, mtime: nanos(head.last_modified) }
+      attrs[:content_hash] = ObjectIdentity.for(etag: head.etag) if head.etag.present?
+      attrs
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError
       {}
     end
