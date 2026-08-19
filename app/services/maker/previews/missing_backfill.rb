@@ -38,10 +38,9 @@ module Maker
     # updated and nothing else, so its preview row stayed keyed to content that no longer exists
     # while every surface that resolves one by the current `content_token` — `FilesController#show`
     # and the file grid's `ThumbnailMap` — found none. That is fixed at the source, but the fix
-    # cannot reach
-    # backwards: those files are now `unchanged?` and the next scan skips them WITHOUT re-reading
-    # them, which is exactly the behaviour that keeps a 2TB archive cheap. So the backlog needs
-    # its own pass. This was modelled on a `LbrnBackfill` that has since been DELETED, and the
+    # cannot reach backwards: those files are now `unchanged?` and the next scan skips them WITHOUT
+    # re-reading them, which is exactly the behaviour that keeps a 2TB archive cheap. So the backlog
+    # needs its own pass. This was modelled on a `LbrnBackfill` that has since been DELETED, and the
     # reason is worth carrying: it enqueued without repointing the row first, so the job's
     # `commit_if_current` captured that row's own values and compared it to itself, landing
     # new-code bytes on a row still claiming the old revision. `Enqueue` writes both axes before

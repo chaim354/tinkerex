@@ -165,6 +165,18 @@ module Maker
       # made the lookup silently never match (an endless re-enqueue) or match on the wrong kind's
       # revision. A single parameter cannot be half wrong.
       #
+      # ONE OF THOSE TWO ARMS WAS COMPLETELY SILENT, AND IT IS SILENT ONLY BY COINCIDENCE — probed
+      # at review, on the old two-spelling code. Getting the FIND_BY half wrong reddened 5 tests and
+      # 1 error. Getting the REVISION half wrong — `revision_for_name(node.name, "thumbnail")` sitting
+      # beside `kind: "geometry"` — reddened NOTHING: 2444 runs, 0 failures. It is silent because
+      # `Lbrn2.payload_revision("thumbnail")` and `payload_revision("geometry")` both happen to be 4
+      # today. But the entire REASON revisions are per-kind is that those two numbers are MEANT to
+      # diverge — §14h: "bumping geometry must not rebuild ~1400 thumbnails as a side effect of an
+      # unrelated fix" — so that defect would go live the first time somebody does the thing the
+      # mechanism exists for, and the suite would still be green. That is a better argument for
+      # naming `kind` once than the one this comment originally made, and it was not available
+      # without running the mutation.
+      #
       # DO NOT FOLD `status` INTO EITHER OF THESE. It is the obvious next thought — "current" sounds
       # like it should mean servable — and it is wrong in both directions at once: `#current_thumbnail`
       # deliberately serves a `ready` artifact straight through a renderer rebuild (the picture is
