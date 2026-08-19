@@ -286,12 +286,19 @@ module FileLayer
     #
     # THE TRAP, and it is the reason these two tests look the way they do: `download` captures
     # `store = Storage::ChunkStore.current` EAGERLY, at the top of the method, OUTSIDE the
-    # Enumerator. Install the fault after calling `adapter.download` and the enumerator has
-    # already closed over the ORIGINAL store — it drains clean and nothing raises (probed
-    # exactly that way first: the drain returned "streamed" with an http_get stubbed to raise
-    # unconditionally, which was never reached). THE FAULT MUST BE INSTALLED BEFORE
+    # Enumerator. Install THE STORE after calling `adapter.download` and the enumerator has
+    # already closed over the ORIGINAL — it drains clean and nothing raises (probed exactly
+    # that way first: the drain returned "streamed" with an http_get stubbed to raise
+    # unconditionally, which was never reached). SO THE STORE MUST BE SWAPPED BEFORE
     # `adapter.download` IS CALLED. §14e's "the suite being green is not evidence a guard
     # works if the guard's precondition is never established in test", one layer down.
+    #
+    # PRECISELY THE STORE, AND ONLY THE STORE. An earlier version of this comment said "the
+    # fault", which bundles two things that do not behave alike: `http_get` is a class method
+    # RESOLVED AT CALL TIME inside the enumerator, so stubbing it afterwards still fires —
+    # verified in review by driving both halves separately. Only the eager capture is
+    # order-sensitive. The imperative was on the right line; the sentence was wider than the
+    # mechanism, which is how a reader ends up defending against the wrong thing.
     #
     # These live here and NOT in adapter_contract.rb: `Delivery::Stream` is chunk-only (share
     # answers `SendFile`, s3 answers `Redirect`), so there is no cross-backend drain to share.
