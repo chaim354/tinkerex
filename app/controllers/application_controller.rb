@@ -2,6 +2,26 @@ class ApplicationController < ActionController::Base
   # Only allow modern browsers supporting webp images, web push, badges, import maps, CSS nesting, and CSS :has.
   allow_browser versions: :modern
 
+  # DEFAULT-DENY: the web app is session-authed (CLAUDE.md §14d), so a new subclass is private
+  # from the moment it exists rather than from whenever someone remembers the line. Enforced by
+  # test/architecture_invariants_test.rb, which reads the callback chain of every descendant.
+  #
+  # THE `unless:` IS MANDATORY, NOT DEFENSIVE. `Devise.parent_controller` defaults to
+  # "ApplicationController", so DeviseController and its eleven subclasses inherit this callback
+  # — and a bare `before_action :authenticate_user!` makes /users/sign_in redirect to itself.
+  # It fails LOUD, not silently: auth_pages_test.rb's five anonymous GETs and
+  # account_enumeration_test.rb's three anonymous POSTs are what pin this arm, because the
+  # invariants guard excludes Devise controllers by construction and structurally cannot see it.
+  #
+  # Placed immediately after `allow_browser` so the chain index is unchanged from when the
+  # sixteen subclasses each declared it: `require_capability!`, `require_scannable!`,
+  # `set_project`, `load_addon` and `set_model` all still run AFTER auth, since a parent's
+  # callbacks run before a child's.
+  #
+  # Does NOT reach ActiveStorage::BaseController (an ActionController::Base descendant) — the
+  # direct_uploads hole in §15 is closed by the route shadow, not by this.
+  before_action :authenticate_user!, unless: :devise_controller?
+
   include CurrentProject
 
   # Changes to the importmap will invalidate the etag for HTML responses
