@@ -28,15 +28,58 @@ set -uo pipefail
 volume=$1; ops=$2; stale_hours=$3; tz_expect=$4; want_log=${5:-}
 
 echo "== schedule"
-if crontab -l 2>/dev/null | grep -q tinkerex-nightly-backup; then
-  crontab -l | grep tinkerex-nightly-backup | sed 's/^/    /'
+schedule=$(crontab -l 2>/dev/null | grep tinkerex-nightly-backup || true)
+if [ -n "$schedule" ]; then
+  printf '%s\n' "$schedule" | sed 's/^/    /'
 else
   echo "    NOT INSTALLED — run bin/backup-cron-install"
 fi
+
+# THE CRONTAB LINE IS THE CONTRACT — READ IT, DO NOT RE-DERIVE IT. bin/backup-cron-install writes
+# `--to-volume $VOLUME --keep $KEEP $DESTS` into that one line, and this script used to PRINT it and
+# then answer every question from this repo's own defaults anyway. On a box installed with
+# BACKUP_DESTS="share" that reported `chunk none / share 2 kept (0h ago) / s3 none` and exited 1
+# PERMANENTLY — over two destinations the operator deliberately does not have, with a sentence
+# ("the newest archive is 99999h old") that was not even true. A monitor that cries wolf gets
+# ignored, which is the one thing this file exists to prevent.
+#
+# `set -f` IS MANDATORY, NOT TIDINESS. The schedule's three `*` fields are subject to pathname
+# expansion: probed under the same `bash -s` this heredoc runs, in a cwd holding files named
+# `chunk` and `s3`, `set -- $line` yielded 24 fields and a destination list of
+# `chunk s3 chunk s3 chunk s3 chunk share s3`. With `set -f` it is 18 fields and `chunk share s3`.
+# Destinations also stay the CLOSED SET ops/backup-db.sh itself accepts, so nothing else on the
+# line — the log path, `2>&1`, the marker comment — can be mistaken for one.
+set -f
+set -- $(printf '%s\n' "$schedule" | head -1)
+set +f
+line_volume=""; line_dests=""; want_value=""
+for tok in "$@"; do
+  # if-blocks, not `[ x ] && y`: a bare test-and-assign returns the TEST's status. Same trap the
+  # inner script's own comment names below, and bin/backup-cron-install:73.
+  if [ -n "$want_value" ]; then
+    if [ "$want_value" = volume ]; then line_volume=$tok; fi
+    want_value=""
+    continue
+  fi
+  case $tok in
+    --to-volume) want_value=volume ;;
+    --keep)      want_value=other ;;    # consume the VALUE so it can never be read as a destination
+    chunk|share|s3) line_dests="${line_dests:+$line_dests }$tok" ;;
+  esac
+done
+# A hand-edited, absent or unparseable line falls back to what this script always assumed — NEVER
+# to an empty list. `for dest in` over nothing prints no rows, measures no age and exits 0, which
+# is the single answer a backup monitor must never give.
+volume=${line_volume:-$volume}
+dests=${line_dests:-chunk share s3}
+
 # THE CRONTAB LINE IS A LOCAL TIME, so it says nothing on its own about when the job actually runs.
 # bin/backup-cron-install asserts this at install time; re-reading it here means a timezone changed
 # on the box afterwards cannot go on quietly contradicting docs/DEPLOY.md §6 — the installer's
-# check is a moment, and this one is every time anyone looks.
+# check is a moment, and this one is every time anyone looks. NOTE the limit, which is why the
+# crontab line above is not consulted for it: the line records NO zone, so the comparison is
+# against THIS script's own BACKUP_TZ default. A box whose zone was ACCEPTED at install time
+# (`BACKUP_TZ=$BOX_TZ bin/backup-cron-install`) is reported as a mismatch here from then on.
 box_tz=""
 if command -v timedatectl >/dev/null 2>&1; then
   box_tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
@@ -49,6 +92,9 @@ if [ "${box_tz:-UNKNOWN}" = "$tz_expect" ]; then
 else
   echo "    !! timezone is ${box_tz:-unreadable}, but the schedule is documented as $tz_expect"
   echo "       the nightly is firing at a different hour than docs/DEPLOY.md §6 claims."
+  if [ -n "$box_tz" ]; then
+    echo "       (if you installed with BACKUP_TZ=$box_tz on purpose, re-run with it set here too.)"
+  fi
 fi
 
 echo
@@ -60,7 +106,7 @@ else
 fi
 
 echo
-echo "== archives on $volume"
+echo "== archives on $volume ($dests)"
 cid=$(docker ps -a -qf name='^tinkerex-web-share-' | head -1)
 image=$(docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null)
 if [ -z "${image:-}" ] || ! docker volume inspect "$volume" >/dev/null 2>&1; then
@@ -70,12 +116,14 @@ fi
 echo "    -> $(docker volume inspect --format '{{.Options.device}}' "$volume")"
 
 docker run --rm -v "$volume:/b" --user 0 "$image" sh -eu -c '
-  stale_hours=$1
+  stale_hours=$1; dests=$2
   cd /b
-  now=$(date +%s); worst=0
-  for dest in chunk share s3; do
+  now=$(date +%s); worst=0; missing=""
+  for dest in $dests; do
     set -- $(ls -1t "tinkerex-$dest-"*.tar.gz 2>/dev/null || true)
-    if [ $# -eq 0 ]; then printf "    %-6s  none\n" "$dest"; worst=99999; continue; fi
+    if [ $# -eq 0 ]; then
+      printf "    %-6s  none\n" "$dest"; missing="${missing:+$missing }$dest"; continue
+    fi
     newest=$1; count=$#
     age=$(( (now - $(date -r "$newest" +%s)) / 3600 ))
     # `[ x ] && y` as a bare statement returns the test'"'"'s status, which under `set -e` exits the
@@ -85,13 +133,24 @@ docker run --rm -v "$volume:/b" --user 0 "$image" sh -eu -c '
       "$dest" "$count" "$newest" "$age" "$(du -h "$newest" | cut -f1)"
   done
   echo "    total    $(du -sh /b | cut -f1)   free $(df -h /b | tail -1 | awk "{print \$4}")"
+  status=0
+  # A DESTINATION WITH NO ARCHIVE AT ALL IS ITS OWN FAILURE, NOT A 99999-HOUR ONE. Folding it into
+  # `worst` printed an age nothing had measured, and buried WHICH destination was empty in a
+  # sentence about staleness. Both conditions are reported, then one exit.
+  if [ -n "$missing" ]; then
+    echo
+    echo "!! NO ARCHIVE AT ALL for: $missing" >&2
+    echo "!! Check ~/tinkerex-ops/backup.log — the nightly is not running, or it is failing." >&2
+    status=1
+  fi
   if [ "$worst" -gt "$stale_hours" ]; then
     echo
     echo "!! STALE: the newest archive is ${worst}h old (threshold ${stale_hours}h)." >&2
     echo "!! Check ~/tinkerex-ops/backup.log — the nightly is not running, or it is failing." >&2
-    exit 1
+    status=1
   fi
-' _ "$stale_hours"
+  exit $status
+' _ "$stale_hours" "$dests"
 rc=$?
 
 if [ "$want_log" = --log ] && [ -f "$HOME/$ops/backup.log" ]; then

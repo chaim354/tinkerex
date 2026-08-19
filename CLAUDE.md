@@ -1859,7 +1859,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   looking wrong. `CRON_TZ` looks like the stronger move and is worse: a cron that does not implement
   it (busybox; it is not POSIX) parses the line as an ordinary environment assignment and ignores it
   — a guard that silently does nothing. The installer reads the zone back and refuses *before*
-  touching anything; `bin/backup-status` re-reads it, so drift AFTER install cannot hide either.
+  touching anything; `bin/backup-status` re-reads the BOX's zone, but the LINE records none — so it
+  compares against its own `BACKUP_TZ` default, and a zone ACCEPTED at install reads as a mismatch.
 - **The archives are UNENCRYPTED on a guest-writable CIFS share, and that is a recorded decision, not
   an oversight** — readable *and deletable* by anyone on the LAN. Accepted for a home LAN; the
   catalog and every preview blob are in the clear (the digests are the least of it). Revisit before
