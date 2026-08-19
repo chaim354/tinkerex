@@ -96,12 +96,25 @@ GATES = {
   # entry in the runner's .path). If it ever is not, this goes RED — which is the right direction
   # for a gate whose whole content is the suite it runs.
   #
-  # THE GLOB IS LOAD-BEARING, not style. `node --test test/` over a directory with no test files
-  # exits 0 (verified, node 18.20.8), so deleting the suite would leave this gate green about
-  # nothing — this repo's dominant failure shape. An unmatched glob reaches node as a literal and
-  # exits 1. It still picks up a NEW *.test.js with no edit here.
+  # THE EMPTY-SUITE CHECK IS IN RUBY, AND NEITHER `node --test test/` NOR `node --test test/*.test.js`
+  # IS A SUBSTITUTE — because which of them is safe DEPENDS ON THE NODE VERSION, and they invert.
+  # Measured on this box: node 18.20.8 over an empty test dir gives directory-form exit 0 and
+  # glob-form exit 1; node 24.16.0 gives the OPPOSITE, directory-form exit 1 and glob-form exit 0
+  # (>=20 treats the argument as a pattern itself, so an unmatched pattern is 0 tests and success).
+  # The runner's .path pins 18.20.8 today, but 24.16.0 is already installed on the same machine, so
+  # a PATH bump would silently turn a gate written to refuse an empty suite into one that green-lights
+  # it — this repo's dominant failure shape, one `nvm alias` away.
+  #
+  # So the file list is resolved HERE and passed to node EXPLICITLY. node then runs exactly those
+  # files and its argument handling stops being load-bearing at all. A deleted suite aborts by name
+  # instead of passing; a NEW *.test.js is still picked up with no edit here.
   "test-app" => ->(ci) do
-    ci.step "Tests: Desktop app (node)", "cd client/maker-app && node --test test/*.test.js"
+    app   = File.expand_path("../client/maker-app", __dir__)
+    files = Dir.glob("test/**/*.test.js", base: app).sort
+    if files.empty?
+      abort "bin/ci test-app: no *.test.js under client/maker-app/test — refusing to pass vacuously."
+    end
+    ci.step "Tests: Desktop app (node)", "cd client/maker-app && node --test #{files.join(" ")}"
   end
 }.freeze
 
