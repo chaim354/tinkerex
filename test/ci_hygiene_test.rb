@@ -151,6 +151,58 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "give it a ci.yml job."
   end
 
+  # ---------------------------------------------------------------------------------------------
+  # ci.yml's `paths:` trigger.
+  #
+  # WHAT THIS CANNOT DO, STATED FIRST: the filter is evaluated by GITHUB before any job starts, so
+  # no test in this suite ever runs on the PRs it skips. A guard that tried to catch the real
+  # failure would be one that cannot fail for the reason it exists — the shape argued against in
+  # the brakeman block below. The `ci.yml` change IS the fix; this is a regression guard on the
+  # parsed filter only.
+  #
+  # WHAT IT DOES PIN is where that fix can silently regress. GitHub evaluates the patterns in
+  # order and the LAST match wins, so `client/maker-app/**` re-includes what `!client/**` just
+  # excluded — swap those two lines and the desktop app's own sources stop triggering the
+  # `test-app` gate that tests them, with nothing else in the repo noticing.
+  #
+  # Both lists are files a bin/ci gate actually reads (or, for the skip list, prose no gate
+  # executes), not invented paths.
+  PATHS_THAT_MUST_RUN_CI = [
+    ".dockerignore",                        # deploy_hygiene_test: GPL sidecars out of the app image
+    ".rubocop.yml",                         # the style gate's own config
+    ".kamal/secrets.share",                 # deploy_hygiene_test: per-destination secrets
+    ".github/workflows/nightly.yml",        # ci_hygiene_test globs EVERY workflow, not just ci.yml
+    "sidecar/openscad/catalog/catalog.json", # deploy_hygiene_test: the bundled-.scad licence sweep
+    "client/maker-app/package.json",        # `"type": "module"` — remove it and `bin/ci test-app` dies
+    "client/maker-app/test/session.test.js", # the test-app gate's suite
+    "app/models/user.rb"                    # the ordinary case, and the old allowlist's first entry
+  ].freeze
+
+  PATHS_THAT_MUST_SKIP_CI = [
+    "docs/STATUS.md",
+    "CLAUDE.md",                    # root-level markdown: `**.md`, not `**/*.md`
+    "client/sync-engine/src/lib.rs", # the Rust crates gate via rust-client.yml
+    "client/maker-app/README.md"     # inside the re-include, but still prose
+  ].freeze
+
+  test "ci.yml's paths filter runs CI for every file a bin/ci gate reads" do
+    PATHS_THAT_MUST_RUN_CI.each do |path|
+      assert Rails.root.join(path).exist?, "#{path} no longer exists — fix the list, not the filter"
+      assert ci_paths_filter_runs?(path),
+             "ci.yml's paths filter SKIPS `#{path}`, which a bin/ci gate reads. A PR touching " \
+             "only that file would run zero jobs and report nothing."
+    end
+  end
+
+  test "ci.yml's paths filter still skips docs and the Rust crates" do
+    PATHS_THAT_MUST_SKIP_CI.each do |path|
+      assert Rails.root.join(path).exist?, "#{path} no longer exists — fix the list, not the filter"
+      assert_not ci_paths_filter_runs?(path),
+                 "ci.yml's paths filter now runs the full job set for `#{path}`. Prose and the " \
+                 "Rust crates are the whole reason the filter exists; keep them excluded."
+    end
+  end
+
   test "every linux or windows job is preflight-gated so it can never queue against a missing runner" do
     # THE CORE INVARIANT. A job whose labels match no online runner does not fail — it queues for
     # 24h at 0 elapsed and is then auto-cancelled, leaving mergeStateStatus UNSTABLE and the merge
@@ -285,6 +337,45 @@ class CiHygieneTest < ActiveSupport::TestCase
     def ci_yml_jobs
       YAML.load_file(WORKFLOW_DIR.join("ci.yml"), aliases: true).fetch("jobs")
     end
+
+    # ci.yml's pull_request `paths:` list, in file order. Psych resolves YAML 1.1 booleans, so the
+    # workflow's `on:` key parses as the BOOLEAN true — see each_job's note.
+    def ci_paths_filter
+      YAML.load_file(WORKFLOW_DIR.join("ci.yml"), aliases: true)
+          .fetch(true).fetch("pull_request").fetch("paths")
+    end
+
+    # GitHub's own evaluation order: walk every pattern, LAST match wins, `!` negates.
+    def ci_paths_filter_runs?(path)
+      ci_paths_filter.reduce(false) do |included, pattern|
+        negated = pattern.start_with?("!")
+        glob    = negated ? pattern.delete_prefix("!") : pattern
+        path_filter_regexp(glob).match?(path) ? !negated : included
+      end
+    end
+
+    # One GitHub filter pattern as a Regexp. GitHub documents `*` as "zero or more characters but
+    # does not match /" and `**` as "zero or more of ANY character, including /" — which is why
+    # `**.md` matches a root-level CLAUDE.md as well as docs/STATUS.md.
+    #
+    # It also documents `?`, `+` and `[]`, and they do NOT mean what a shell glob means by them
+    # (`?` is "zero or one of the PRECEDING character"). Rather than model those wrongly, this
+    # refuses them: a filter edit reaching for one turns this file red instead of being evaluated
+    # by a translator that quietly disagrees with GitHub.
+    def path_filter_regexp(glob)
+      assert_no_match(/[?+\[\]{}]/, glob,
+                      "this test models only `*` and `**`; #{glob.inspect} uses a construct whose " \
+                      "GitHub meaning differs from a shell glob — extend path_filter_regexp first")
+      source = glob.scan(/\*\*|\*|[^*]+/).map do |token|
+        case token
+        when "**" then ".*"
+        when "*"  then "[^/]*"
+        else           Regexp.escape(token)
+        end
+      end.join
+      /\A#{source}\z/
+    end
+
     # Yields [basename, job_name, job_hash] for every job in every workflow.
     #
     # Reads only the "jobs" key. NOTE for anyone extending this: Psych resolves YAML 1.1 booleans,

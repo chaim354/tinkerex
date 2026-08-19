@@ -2,25 +2,53 @@ name: CI
 
 on:
   pull_request:
-    # Rails app only — skip on docs-only or client/** (Rust) changes (those gate via
-    # rust-client.yml). The ONE exception is the desktop app's JavaScript, whose gate lives here
-    # because config/ci.rb is the single definition of every gate and ci_hygiene_test asserts
-    # ci.yml is where they are invoked. Cost of the exception: a JS-only PR also runs the Rails
-    # jobs, which is a minute of work on a free self-hosted runner.
+    # A CLOSED SET: everything runs CI except the three classes below. This USED to be an
+    # allowlist of thirteen paths while the comment above it described a denylist, and the gap
+    # between the two silently disabled guards. `bin/ci test` reads far more of this tree than the
+    # allowlist named — deploy_hygiene_test.rb reads `.dockerignore` (the §14c.1 guard keeping the
+    # GPL sidecar trees out of the permissive Rails image, a §9 hard constraint) and
+    # `sidecar/*/{Dockerfile,catalog/catalog.json}`; ci_hygiene_test.rb globs EVERY workflow, not
+    # just this one; the lint gate reads `.rubocop.yml`; deploy_hygiene_test.rb reads all five
+    # `.kamal/secrets*`. Counted: TWENTY files a bin/ci gate opens matched no entry, so a PR
+    # touching only one of them ran ZERO jobs. It has happened: 69742ac changed `build-app.yml` +
+    # CLAUDE.md — a PR *about* hosted-vs-self-hosted runners — and skipped the test that forbids
+    # hosted runners. e866bfc and 932eb91 are the same shape.
+    #
+    # DRIFT WAS ONE-DIRECTIONAL AND SILENT: a new top-level path defaulted to NOT running CI, and
+    # nothing anywhere said so. The `push: main` leg below is unfiltered, so the failure surfaced
+    # as red on main AFTER the merge. Closing the class, rather than enumerating the instances, is
+    # the same argument ci_hygiene_test.rb:44-52 makes for the self-hosted-label check and
+    # deploy_hygiene_test.rb makes for the licence sweep.
+    #
+    # ORDER IS LOAD-BEARING — GitHub evaluates these top to bottom and the LAST match wins, so
+    # every positive re-include must sit AFTER the negation it re-opens. `client/maker-app/**`
+    # after `!client/**` is what keeps the `test-app` gate's own sources in CI; swap those two
+    # lines and a JS-only PR silently runs nothing again. `paths` and `paths-ignore` cannot both
+    # appear on one event, which is why the negations live inside `paths`.
+    #
+    # THE TWO DOT LINES ARE INSURANCE, NOT DECORATION. GitHub documents `**` as "matches all
+    # characters, including /", which implies it also matches a leading dot — but that is an
+    # argument, and the only probe would be merging a PR to watch what fires. Every file this
+    # rewrite exists for lives at a root-level dot path (`.dockerignore`, `.rubocop.yml`,
+    # `.github/**`, `.kamal/**`), so they are named as a CLASS: `.*` for root dotfiles and `.*/**`
+    # for root dot-directories. They cost nothing if `**` already covered them.
+    #
+    # Excluded, and why each is safe: `docs/**` and `**.md` are prose no gate executes;
+    # `client/**` is the Rust crates, gated by rust-client.yml. Cost of the re-include: a JS-only
+    # PR also runs the Rails jobs — a minute of work on a free self-hosted runner.
+    #
+    # COST, MEASURED over 835 non-merge commits since 2026-05-01: 327 skipped CI under the old
+    # allowlist, 275 still skip, so 52 newly run. On the free self-hosted mac, serialized by the
+    # concurrency group below. Dependabot's `github-actions` PRs now run the full job set — that
+    # is the point, not a side effect.
     paths:
-      - 'app/**'
-      - 'client/maker-app/src/**'
-      - 'client/maker-app/test/**'
-      - 'config/**'
-      - 'db/**'
-      - 'lib/**'
-      - 'test/**'
-      - 'bin/**'
-      - 'ci/**'
-      - 'Gemfile'
-      - 'Gemfile.lock'
-      - '.ruby-version'
-      - '.github/workflows/ci.yml'
+      - '**'
+      - '.*'
+      - '.*/**'
+      - '!docs/**'
+      - '!client/**'
+      - 'client/maker-app/**'
+      - '!**.md'
   push:
     branches: [ main ]
 
