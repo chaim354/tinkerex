@@ -12,12 +12,15 @@ module Maker
     module DxfGeometry
       module_function
 
-      # WHICH BUILD PRODUCED A STORED PAYLOAD — see `LbrnGeometry::PAYLOAD_REVISION` for the full
-      # argument, and `Geometry::REVISIONED_BY` for the rule that a change in the SHARED payload
-      # builder must bump this too, not only the format that prompted the change.
+      # WHICH BUILD OF *THIS FILE* PRODUCED A STORED PAYLOAD — see `LbrnGeometry::FORMAT_REVISION`
+      # for the full argument. A change in the SHARED payload builder does NOT belong here; it
+      # belongs in `Geometry::SHARED_REVISION`, which the line below adds in.
       #
       #   1  original
-      PAYLOAD_REVISION = 1
+      FORMAT_REVISION = 1
+
+      # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
+      PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
 
       # Returns { bytes:, content_type: } — the shape GeneratePreviewJob attaches.
       def render(dxf_bytes)
