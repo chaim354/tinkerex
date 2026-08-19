@@ -73,12 +73,20 @@ rather than accepting a report. Roughly 90 agents.
 
 **Verification.** `bin/ci` bare and green at each batch boundary, always with the three
 `LIBRARY_BACKEND` legs reporting **identical** counts (§15): end of Tier 1 **2375 / 8652 / 0**;
-end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**. System 102/656 throughout,
-plus a new `test-app` node gate (F-64) — eight gates now, not seven, which is itself a thing three
-present-tense claims in the tree had to be corrected for. `bin/ci` runs **no cargo and no pytest**,
-so separately and by hand: `fs-provider` **203/0** (was 192), `sync-engine` **92/0**, `fs-cfapi`
-**50/0** (was 42), `sidecar/openscad` **71 passed / 13 skipped** (was 66/13), `sidecar/boxes`
-**22 passed** (was 18).
+end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**; **final 2452 runs / 9424
+assertions / 0 failures / 3 skips**. System 102/656 throughout, plus a new `test-app` node gate
+(F-64) — **eight** gates now, not seven, which three present-tense claims in the tree had to be
+corrected for.
+
+`bin/ci` runs **no cargo and no pytest**, so the suites it cannot see were run by hand and are
+listed separately rather than folded into a number that would overstate what the gate covers:
+`fs-provider` **203/0** (was 192), `sync-client` **37/0**, `sync-engine` **92/0**, `fs-cfapi`
+**50/0** (was 42), `fs-webdav` **8/0** (was 4 — **and those 4 had never run in CI at all**; F-58
+added the workflow line in the same commit), `sidecar/boxes` **22 passed** (was 18). The
+`sidecar/openscad` figure — **71 passed / 13 skipped**, was 66/13 — is as reported by its
+implementer and reviewer; it needs its own virtualenv, which is git-ignored and absent from a
+worktree, so it was not re-run at the coordinator level. Saying which numbers were re-verified and
+which were relayed is cheaper than a footnote later.
 
 ### The measured wins
 
