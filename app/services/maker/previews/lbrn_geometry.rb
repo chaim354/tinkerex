@@ -23,10 +23,11 @@ module Maker
     module LbrnGeometry
       module_function
 
-      # WHICH BUILD OF THIS FILE PRODUCED A STORED PAYLOAD. Bump on ANY change that alters the
-      # output, whether or not the schema moves: `Maker::Previews::Enqueue` compares it against
-      # `maker_previews.renderer_revision` and re-renders whatever no longer matches. THAT
-      # INCLUDES A CHANGE IN `Geometry`, which every format shares — see `Geometry::REVISIONED_BY`.
+      # WHICH BUILD OF *THIS FILE* PRODUCED A STORED PAYLOAD. Bump on ANY change here that alters
+      # the output, whether or not the schema moves: `Maker::Previews::Enqueue` compares
+      # PAYLOAD_REVISION below against `maker_previews.renderer_revision` and re-renders whatever
+      # no longer matches. A CHANGE IN `Geometry` IS NOT ONE OF THESE — that file carries its own
+      # term, and bumping this one for a shared change leaves .dxf and .svg stale forever.
       #
       # THIS IS THE ONE TO BUMP, and `Geometry::SCHEMA_VERSION` is the easy thing to reach for
       # instead. They answer different questions — the schema says whether the CLIENT can parse a
@@ -39,7 +40,11 @@ module Maker
       #   2  error-bounded simplification against SIMPLIFY_TOLERANCE
       #   3  carries per-layer colours so the Measure view draws in LightBurn's palette
       #   4  a MillMage shape's layer reads from OpIndex, so .mage shapes stop reporting layer nil
-      PAYLOAD_REVISION = 4
+      FORMAT_REVISION = 4
+
+      # What `Enqueue` actually reads. The shared term is added rather than remembered — see
+      # `Geometry::SHARED_REVISION`. Mage delegates to THIS constant, so .mage moves with it too.
+      PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
 
       # Returns { bytes:, content_type: } — the shape GeneratePreviewJob attaches.
       def render(bytes)

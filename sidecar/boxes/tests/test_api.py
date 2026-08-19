@@ -254,3 +254,117 @@ def test_sample_serves_a_thumbnail_and_guards_the_name(tmp_path):
         assert c.get("/sample/bad.name").status_code == 404  # non-alnum name rejected by the guard
     finally:
         appmod.SAMPLES_DIR = old
+
+
+# --- catalogue memoization (F-61) ---------------------------------------------------------
+#
+# VALIDATION REALITY, stated because it is not obvious from anywhere else in the tree: NOTHING
+# RUNS THESE. `bin/ci --list` has no python gate, and `grep pytest .github/workflows/` returns
+# nothing, so every test in this file is executed by no gate and no workflow — it runs only when
+# a person types the command. `sidecar/boxes/.venv` is git-ignored on top of that, so a fresh
+# clone cannot run it at all without building the venv first. Treat what follows as documentation
+# with an assert in it. Adding a gate is its own decision: CLAUDE.md §14e requires config/ci.rb and
+# .github/workflows/ci.yml to move together, and it would put a python toolchain on the critical
+# path of every PR for a GPL tree the Rails process never loads.
+
+
+def test_the_catalogue_is_memoized_but_callers_still_get_their_own_dict():
+    """_all_generators() returned a FRESH dict per call before it was memoized, so handing back the
+    cached object would silently turn a local into shared process state. Poison what one caller got
+    and the next caller must be unaffected."""
+    first = appmod._all_generators()
+    assert "ABox" in first
+    first["POISON"] = object()
+    first.pop("ABox")
+
+    second = appmod._all_generators()
+    assert "POISON" not in second, "a caller mutated the shared catalogue"
+    assert "ABox" in second, "a caller's deletion reached the shared catalogue"
+    assert first is not second
+
+    # Same contract on the derived view.
+    off_first = appmod._offered_catalogue()
+    off_first["POISON"] = object()
+    assert "POISON" not in appmod._offered_catalogue()
+
+
+def test_the_offered_catalogue_is_a_view_of_the_full_one_not_a_replacement():
+    """_seeded_default drives TrayLayoutFile, which _offered() excludes — so the full catalogue must
+    stay reachable. Collapsing the two would break TrayLayout's seeded textarea, which is a silent
+    failure (the form just comes back with a blank layout that then 422s on render)."""
+    everything = appmod._all_generators()
+    offered = appmod._offered_catalogue()
+    assert "TrayLayoutFile" in everything
+    assert "TrayLayoutFile" not in offered
+    assert set(offered) < set(everything)
+    assert offered == {k: c for k, c in everything.items() if appmod._offered(c)}
+
+
+def test_two_generators_calls_return_identical_json():
+    """The catalogue is immutable for the life of the process (BOXES_GENERATOR_PATH is set nowhere,
+    and upstream mutates __path__ in place if it ever is), so memoizing must not change a single
+    byte of what this endpoint answers. Compares two REAL responses to each other rather than to a
+    recomputed expectation, which could drift the same way twice."""
+    c = client()
+    first = c.get("/generators").get_json()
+    second = c.get("/generators").get_json()
+    assert first == second
+    assert len(first) > 150
+    assert {g["key"] for g in first} == {g["key"] for g in second}
+
+
+def test_the_flat_params_key_is_the_non_advanced_groups_and_nothing_else():
+    """F-62. PINS the back-compat `params` key; it is deliberately NOT deleted here.
+
+    What it is: `params` was the whole schema before `param_groups` existed, and it is now the
+    non-advanced groups flattened. Measured against the live sidecar, it therefore OMITS 2403 of
+    the 5082 params in `param_groups` -- 47%, across 150 of the 181 offered generators. Everything
+    in every advanced group is gone: `Settings for Finger Joints` (on 144 generators), `Settings
+    for the Lid`, every `Mounting_*`, `Settings for Stackable Edges` (30), `Settings for Flex` (19).
+    A consumer reading only this key renders a form that silently cannot reach half the knobs.
+
+    WHY THE DELETION CANNOT HONESTLY BE MADE FROM THIS REPO, which is the point of pinning it
+    rather than removing it:
+
+      1. Nothing in this tree reads it. The vendored bundle snapshot under test/fixtures/addons/
+         reads `param_groups` (editor.js) and `group.params` (fields.js); every other in-repo hit
+         for "params" is `state.data["params"]` -- a saved box's VALUES -- or `request.params`,
+         unrelated things sharing the name.
+      2. But the DEPLOYED bundle is chaim354/tinkerex-addons, out of this tree, and CLAUDE.md 14c
+         is explicit that publishing a bundle IS the deploy with Rails never rebuilt. So an older
+         published bundle still reading this key would get an EMPTY FORM, not an error -- the
+         quietest possible failure, and invisible to every gate here.
+      3. The vendored copy has no sync guard on this side, so its agreement proves nothing about
+         what is live.
+
+    SO, BEFORE DELETING THE KEY: grep chaim354/tinkerex-addons for `.params` on a generator object
+    -- AND any pinned older build still being served, not just the tip. Until then this test makes
+    the eventual deletion a one-line visible diff instead of a silent contract change.
+
+    NOTE this key has nothing to do with CLAUDE.md 14c's license/attribution/source_url rule. That
+    belongs to the OPENSCAD sidecar's /generators (sidecar/openscad/app.py, which has a catalog);
+    the boxes sidecar carries no licence field at all and no catalog directory, so nothing here is
+    load-bearing for a compliance display.
+    """
+    data = client().get("/generators").get_json()
+    assert len(data) > 150
+
+    total = flat_total = 0
+    for g in data:
+        expected = [p for grp in g["param_groups"] if not grp["advanced"] for p in grp["params"]]
+        assert g["params"] == expected, f"{g['key']}: flat `params` is not the non-advanced groups"
+        total += sum(len(grp["params"]) for grp in g["param_groups"])
+        flat_total += len(g["params"])
+
+    # The omission is the reason the key is worth a comment at all — assert it is real, so this
+    # test cannot pass on a build where `params` quietly became a full copy of `param_groups`.
+    assert flat_total < total
+    assert total - flat_total > 2000, f"only {total - flat_total} params omitted, of {total}"
+
+    # Named instances, so a reader can see the shape of what is missing rather than a number.
+    abox = next(g for g in data if g["key"] == "ABox")
+    flat_names = {p["name"] for p in abox["params"]}
+    grouped_names = {p["name"] for grp in abox["param_groups"] for p in grp["params"]}
+    assert {"x", "y", "h"} <= flat_names
+    assert "FingerJoint_style" in grouped_names
+    assert "FingerJoint_style" not in flat_names

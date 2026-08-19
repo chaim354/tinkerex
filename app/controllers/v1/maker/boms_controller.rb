@@ -39,8 +39,36 @@ module V1
 
       private
 
+      # AN ABSENT `bom` KEY CREATES A DEFAULTED BOM; AN EXPLICIT `null` IS A MALFORMED BODY.
+      # `fetch`'s default fires on ABSENCE ONLY, so `{"bom": null}` returned nil and `.permit`
+      # raised `NoMethodError: undefined method 'permit' for nil` — an UNRESCUED 500, since
+      # `V1::BaseController` maps `ParameterMissing`/`RecordInvalid` and nothing maps that.
+      #
+      # NOT "the one", which an earlier draft of this comment claimed and review disproved:
+      # `{"bom": ""}` and `{"bom": []}` still raise `NoMethodError` on the line below, while the
+      # siblings answer **400** for both — so this line is still divergent for two reachable
+      # inputs. (`{"bom": false}`, `"abc"`, `7` raise across the whole API, `projects` included, so
+      # those are pre-existing and not this endpoint's.) Closing the remaining two wants a TYPE
+      # check rather than a truthiness one — `raise ParameterMissing, :bom unless
+      # raw.is_a?(ActionController::Parameters)` — which keeps the 201 where `||` cannot, since
+      # `""` is truthy in Ruby. Deliberately not done here: it is a second condition, and the fix
+      # for it should arrive with its own tests rather than riding this one.
+      #
+      # THE ABSENT HALF IS DELIBERATE AND STAYS: a BOM needs no attributes (`{"bom": {}}` and a
+      # bodyless POST both create one, name "BOM", revision 1), so `require(:bom)` outright would
+      # turn today's 201 into a 400 for a request that is fine. Only the null arm moves.
+      #
+      # 400, NOT 422, AND THAT WAS PROBED RATHER THAN REASONED. Every sibling body-param
+      # controller here (`projects`, `items`, `tasks`, `suppliers`, …) uses `params.require` and
+      # answers 400 `param is missing…` for an explicit null — identical to absent. The 422s
+      # elsewhere in this family come from a MODEL validation refusing a nil SCALAR
+      # (`inventory_items#adjust`'s `fetch(:reason, "adjusted")` → "Reason is not included in the
+      # list"); `bom` is an attributes hash with no such validation waiting for it — `{"bom": {}}`
+      # saves — so there would be nothing for a 422 to name. Answering 422 here would make this
+      # the only endpoint in the API giving one condition a second answer, CLAUDE.md §14a's
+      # recorded failure shape.
       def bom_params
-        params.fetch(:bom, {}).permit(:name, :revision)
+        (params.fetch(:bom, {}) || params.require(:bom)).permit(:name, :revision)
       end
 
       def bom_json(bom, full: false)

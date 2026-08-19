@@ -71,17 +71,34 @@ module Maker
       # mm, to 0.01.
       PRECISION = 2
 
-      # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY
-      # format's PAYLOAD_REVISION, not one of them. `Maker::Previews::Enqueue` compares a stored
-      # artifact's `renderer_revision` against the renderer that would build it now, and each
-      # format declares its own — so a fix to `simplify` that bumps only LbrnGeometry leaves every
-      # already-measured .dxf and .svg serving output from the old algorithm, forever, because a
-      # finished design's content never changes. That is exactly how four LightBurn files kept
-      # serving mangled curves after the thinning fix deployed.
+      # A CHANGE IN THIS FILE IS A CHANGE TO EVERY FORMAT'S OUTPUT, so it must bump EVERY format's
+      # PAYLOAD_REVISION, not one of them. `Maker::Previews::Enqueue` compares a stored artifact's
+      # `renderer_revision` against the renderer that would build it now — so a fix to `simplify`
+      # that bumped only LbrnGeometry would leave every already-measured .dxf and .svg serving
+      # output from the old algorithm, FOREVER, because a finished design's content never changes.
       #
+      # BUMP THIS AND ALL OF THEM MOVE, because each format's number is `SHARED_REVISION + its
+      # own`. It was three hand-edited integers held together by the paragraph above, and prose is
+      # not a mechanism: `(Lbrn=5, Dxf=1, Svg=1)` after a shared change is a reachable state that
+      # nothing anywhere reports — silent, permanent, and per-backend. The repo already writes the
+      # rule down one file over, in `Mage.payload_revision`: a second constant is free to drift
+      # from the code that produces the bytes it claims to version, so delegate instead of
+      # declaring. This is that, as arithmetic, for the three formats that cannot delegate outright
+      # (each has its OWN revision too).
+      #
+      # SEEDED AT 0, DELIBERATELY: the totals it produces are exactly the three integers it
+      # replaced (4 / 1 / 1), so introducing it re-rendered nothing. Any future edit here bumps it
+      # by one and re-measures the library once, which is the whole point.
+      #
+      # RESIDUAL, STATED RATHER THAN HIDDEN: this makes the CORRECT edit one line; it does not stop
+      # an editor bumping a format's FORMAT_REVISION for a change that actually lives here. The
+      # absolute-value pins in `GeometryTest` are what make that mistake visible.
+      SHARED_REVISION = 0
+
       # Listed so the next editor has the set in front of them rather than having to grep for it;
-      # `GeometryContractTest` asserts this list matches the renderers that actually build a
-      # geometry payload, so a fifth format cannot be added without appearing here.
+      # `GeometryTest` asserts this list matches the renderers that actually build a geometry
+      # payload, so a fifth format cannot be added without appearing here — and therefore cannot
+      # be added without picking up the shared term above.
       REVISIONED_BY = %w[LbrnGeometry DxfGeometry SvgGeometry].freeze
 
       # Collects one contour at a time from a format's traversal. Not a bare Array because it also

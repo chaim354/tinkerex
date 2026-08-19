@@ -97,7 +97,7 @@ module Tools
     # that load apart from a hostile one, so it must go for the endpoint's one real caller to work
     # at all.
     #
-    # Residual, stated plainly: `asset` still sits behind `authenticate_user!` (Tools::BaseController),
+    # Residual, stated plainly: `asset` still sits behind `authenticate_user!` (ApplicationController — F-44 moved it there; this file no longer declares it),
     # so this is not made anonymous. But a signed-in user's browser will run ANY page's embedded
     # `<script src>` with that user's session cookie attached, same-origin check or not — that is
     # what this skip removes. A third-party page can still `<script src>` a chosen addon key/path

@@ -70,12 +70,17 @@
       </div>
     <% end %>
 
+    <%# @by_role IS BUILT FROM THE LIVE ATTACHMENTS ONLY (ModelsController#show partitions against
+        @page_nodes), which is what lets both dereferences below drop their `&.`. The count matters
+        as much as the tile: this gallery renders only when there is more than one image, so an
+        unfiltered dead entry did not merely paint a broken <img> — it summoned a gallery around a
+        single live one. %>
     <% images = Array(@by_role["image"]) %>
     <% if images.size > 1 %>
       <div class="image-gallery">
         <% images.each do |a| %>
           <%= link_to file_path(a.node_id) do %>
-            <%= image_tag blob_file_path(a.node_id), alt: @nodes[a.node_id]&.name, loading: "lazy" %>
+            <%= image_tag blob_file_path(a.node_id), alt: @page_nodes[a.node_id].name, loading: "lazy" %>
           <% end %>
         <% end %>
       </div>
@@ -86,7 +91,7 @@
       <section class="model-instructions">
         <h2>Instructions</h2>
         <% instructions.each do |a| %>
-          <iframe class="preview-pdf" src="<%= blob_file_path(a.node_id) %>" title="<%= @nodes[a.node_id]&.name %>"></iframe>
+          <iframe class="preview-pdf" src="<%= blob_file_path(a.node_id) %>" title="<%= @page_nodes[a.node_id].name %>"></iframe>
         <% end %>
       </section>
     <% end %>
@@ -132,6 +137,20 @@
         <div class="file-tree-box"><%= render "file_tree", nodes: @file_tree %></div>
       <% else %>
         <p class="muted">No files yet.</p>
+      <% end %>
+
+      <%# NOT SILENT — the same sentence, class and Trash link the project panel uses, because it is
+          the same event: an attachment whose node was tombstoned now disappears from the hero, the
+          gallery and the instructions instead of rendering broken, and a user who deleted a file by
+          accident otherwise has no thread to pull. It counts ATTACHMENTS, which is a different
+          question from the heading above (that one counts what is in Models/<slug>/ on disk); a
+          file can be missing here and present there, and vice versa. It clears itself when
+          Maker::AttachmentReaper destroys the rows after the undo window. %>
+      <% if @missing_attachment_count.positive? %>
+        <p class="muted attachments-missing">
+          <%= pluralize(@missing_attachment_count, "attached file") %> no longer in your library.
+          <%= link_to "Check the trash", trash_index_path %>
+        </p>
       <% end %>
     </section>
 

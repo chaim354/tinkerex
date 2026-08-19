@@ -136,10 +136,60 @@ module Library
       end
 
       warn_unpairable(unpairable)
+      # LANDMINE 7 — ONE `rel_path`, TWO CONTRADICTORY OBSERVATIONS. `files` and `dirs` are built
+      # as two independent collections with no shared key, but `rel_path` IS the Reconciler's key,
+      # so a bucket holding both `<prefix>/cad` and `<prefix>/cad/x.stl` used to emit
+      # Observation("cad", dir: false) AND Observation("cad", dir: true). A flat keyspace permits
+      # that and an existing bucket is exactly this backend's stated on-ramp, so it is ordinary,
+      # not pathological — and it must be resolved HERE, because the Reconciler is handed a list
+      # and cannot tell a contradiction from two legitimate entries.
+      #
+      # Measured before this filter, on `cad` + `cad/x.stl`, steady across three passes: FOUR
+      # UPDATEs per pass, forever (ensure_dirs tombstones the file and revives the dir;
+      # match_live_paths tombstones the dir; create_or_revive! revives the file), net state
+      # unchanged. A control library with no collision writes NOTHING. Worse than the churn:
+      # `cad/x.stl` stays LIVE with `parent_node_id` pointing at the tombstoned dir node —
+      # unreachable from the tree, and never repaired, because it is `unchanged?` and skipped.
+      # None of it reaches the mass-deletion guard: both paths ARE observed, so `vanished_paths`
+      # is empty and the tombstones come from kind-collision branches the guard does not count.
+      # (An earlier account of this also claimed a redundant thumbnail enqueue every 15 minutes.
+      # It does not happen — probed at ZERO jobs per steady-state pass, with a renderable
+      # colliding name. The four writes are the whole cost; do not repeat the larger claim.)
+      #
+      # THE DIRECTION IS FORCED, NOT PREFERRED. Dropping the DIR instead breaks ancestor-closure
+      # of `dirs`: `parent_id_for("cad")` then resolves to the FILE node and every descendant is
+      # parented to a file. So the file observation is what goes.
+      #
+      # STATED CONSEQUENCE, because it is a real decision and not a tidy-up: the OBJECT at `cad`
+      # is then not indexed at all — it has no node, and only this log line says so. That also
+      # FLIPS the marker-only sub-case (an empty `cad/` marker beside a real `cad` object), where
+      # today the FILE is what survives; after this the directory does. Accepted: a prefix with
+      # children is positive evidence of a tree the whole catalog hangs off, and the alternative
+      # loses that tree rather than one object. It is the standing objection at
+      # object_identity.rb's ladder — an object silently never indexed — which is why it warns.
+      shadowed, files = files.partition { |o| dirs.include?(o.rel_path) }
+      warn_shadowed_by_dir(shadowed)
       dir_observations(dirs) + files
     end
 
     private
+
+    # ONCE PER SCAN, WITH A COUNT AND A FEW KEYS — the `warn_unpairable` precedent below, for the
+    # same reason: a bucket this backend targets can hold millions, and a line per object is how a
+    # log stops being read. warn, not info: an object the user can see in their bucket has no node
+    # in their library, and nothing else in this system would ever mention it.
+    def warn_shadowed_by_dir(shadowed)
+      return if shadowed.empty?
+
+      sample = shadowed.first(3).map { |o| o.rel_path.inspect }.join(", ")
+      Rails.logger.warn(
+        "library s3 scan: #{shadowed.size} object(s) share a key with a directory prefix in this " \
+        "bucket (#{sample}#{'...' if shadowed.size > 3}) — S3's keyspace is flat, so `cad` and " \
+        "`cad/x.stl` can both exist, but a library path is one or the other. The directory wins " \
+        "(its children need it as their parent) and these objects are NOT indexed: they will not " \
+        "appear in the library until they are renamed or the colliding prefix is emptied."
+      )
+    end
 
     # THE ONE THING THE LADDER'S RUNG 3 CANNOT SAY FOR ITSELF. An `etag:` identity is not
     # content-determined, so a move of that object does not pair: the Reconciler sees the old path

@@ -136,4 +136,55 @@ class FilesHelperTest < ActiveSupport::TestCase
 
     assert_equal [ "3mf", "obj", "stl" ], groups.first.last.map(&:first)
   end
+
+  # --- the file-cell data builders -------------------------------------------
+  #
+  # `file_menu_data` and `thumb_cell_data` need route helpers; the module is mixed in above, so mix
+  # those in too rather than moving the whole file to ActionView::TestCase.
+  include Rails.application.routes.url_helpers
+
+  # A NIL ORIGIN MUST YIELD nil, NOT "". Rails renders `data: { x: nil }` as NO attribute and
+  # `data: { x: "" }` as `data-x=""` — and the regression net over these surfaces
+  # (file_menu_wiring_test.rb, addon_origin_surfaces_test.rb) matches on ATTRIBUTE PRESENCE, so a
+  # blank would be counted as a cell offering an addon link and break tests asserting exact sets.
+  # (It would NOT, as one might assume, put an entry with no href in the menu: `""` is falsy in JS
+  # and filemenu_controller.js is truthiness-guarded, so it produces no entry either way. The test
+  # net is the reason, not the menu.)
+  test "file_menu_data omits the addon keys entirely when no addon made the file" do
+    data = file_menu_data("n-1", nil)
+
+    assert_nil data[:addon_open_url],
+               "a blank renders data-addon-open-url=\"\", which the presence selectors count as a link"
+    assert_nil data[:addon_open_label]
+  end
+
+  # THE PAIR TRAVELS TOGETHER, out of the one hash AddonOrigins builds — a cell carrying the url
+  # with no label puts "undefined" in the menu.
+  test "file_menu_data carries both addon keys when one is present" do
+    data = file_menu_data("n-1", { url: "/tools/boxes?state=7", label: "Edit in Box Generator" })
+
+    assert_equal "/tools/boxes?state=7", data[:addon_open_url]
+    assert_equal "Edit in Box Generator", data[:addon_open_label]
+  end
+
+  # THE MENU IS GATED ON note_url (`if (!noteUrl) return`), and download_url must force the
+  # attachment rather than trust the browser's `download` attribute — on chunk and s3 the endpoint
+  # 302s to a presigned CROSS-ORIGIN URL, where `download` is ignored.
+  test "file_menu_data always carries the note url and a forcing download url" do
+    data = file_menu_data("n-1", nil)
+
+    assert_equal file_notes_path("n-1"), data[:note_url]
+    assert_includes data[:download_url], "download=1"
+    assert_equal "contextmenu->filemenu#open", data[:action]
+  end
+
+  # `ext_label` IS AN ARGUMENT, NEVER DERIVED FROM THE NAME. `models/_hero_poster` passes "" and
+  # `projects/_log_entry` passes "IMG"; neither is any file's extension, so a builder that derived
+  # it would break both — and would put a second copy of the extension vocabulary in this file
+  # beside EXT_FAMILIES, which is derived from ROLE_BY_EXT precisely so there is only one.
+  test "thumb_cell_data passes its ext label through verbatim" do
+    assert_equal({ thumbs_target: "cell", node_id: "n-1", ext: "IMG" },
+                 thumb_cell_data("n-1", "IMG"))
+    assert_equal "", thumb_cell_data("n-1", "")[:ext]
+  end
 end

@@ -288,8 +288,9 @@ def test_coercing_BEFORE_the_cache_key_keeps_pre_move_cache_entries_valid():
 @pytest.fixture
 def client(monkeypatch):
     """A test client whose schema derivation is stubbed, so the ROUTE's error mapping is exercised
-    on a box with no OpenSCAD binary. Patched on the module, which is where _coerced and
-    _safe_params look it up."""
+    on a box with no OpenSCAD binary. Patched on the module, which is where _coerced looks it
+    up. (_safe_params was named here too until F-59 deleted it — the whole point of that commit
+    was that the second derivation existed.)"""
     sidecar.app.config.update(TESTING=True)
     monkeypatch.setattr(sidecar, "_schema_for",
                         lambda scad: {"params": [p for g in GROUPS for p in g["params"]],
@@ -354,6 +355,31 @@ def test_a_good_value_reaches_the_renderer_COERCED(client, monkeypatch):
                                                          render.Result(b"PK", cached=False))[1])
     assert client.post("/render", json={"scad": SRC, "params": {"cols": "6"}}).status_code == 200
     assert seen == {"cols": 6}, "the renderer must see the coerced int, not the form's string"
+
+
+def _renderer_sees(client, monkeypatch, params):
+    seen = {}
+    monkeypatch.setattr(render, "render",
+                        lambda scad, p, fmt, **kw: (seen.update(p),
+                                                    render.Result(b"PK", cached=False))[1])
+    assert client.post("/render", json={"scad": SRC, "params": params}).status_code == 200
+    return seen
+
+
+def test_a_ONE_ELEMENT_vector_reaches_the_renderer_ALREADY_BRACKETED(client, monkeypatch):
+    # THE END-TO-END LINK, and the reason /render can stop computing a vector_names set at all.
+    # param_set_json's re-bracketing heuristic needs a comma to fire, so it could NEVER have helped
+    # a one-element vector — only coerce._vector can, and this asserts it does, through the route
+    # rather than at the unit level where it was already pinned. A bare `10` reaching OpenSCAD where
+    # a vector is declared is a type mismatch, which OpenSCAD IGNORES: 200, default geometry, no
+    # diagnostic. Mutation-checked by making coerce._vector return its value unbracketed.
+    assert _renderer_sees(client, monkeypatch, {"span": "10"}) == {"span": "[10]"}
+
+
+def test_a_MULTI_ELEMENT_vector_reaches_the_renderer_BRACKETED_WITHOUT_the_heuristic(client, monkeypatch):
+    # The case the removed vector_names wiring WAS covering, so it is the one that proves removing
+    # it changed nothing: the brackets still arrive, and they arrive from coerce.
+    assert _renderer_sees(client, monkeypatch, {"span": "10, 20,30"}) == {"span": "[10,20,30]"}
 
 
 # --- the premise, against the real binary ----------------------------------------------------------

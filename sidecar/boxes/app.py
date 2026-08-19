@@ -52,9 +52,63 @@ def _offered(cls):
     return getattr(cls, "webinterface", True)
 
 
+# The catalogue, built once per process. Two entries, because the two questions differ — see
+# _offered_catalogue().
+_CATALOGUE = None
+_OFFERED_CATALOGUE = None
+
+
 def _all_generators():
-    # {"ABox": <class>, ...} — boxes keys by full module path; we expose the class name.
-    return {full.split(".")[-1]: cls for full, cls in boxes.generators.getAllBoxGenerators().items()}
+    """{"ABox": <class>, ...} — boxes keys by full module path; we expose the class name.
+
+    MEMOIZED, and the catalogue is genuinely immutable for the life of the process. Upstream's
+    getAllBoxGenerators() re-walks the package on every call (pkgutil.walk_packages) and re-imports
+    each module — the imports are cheap after the first, since importlib.import_module hits
+    sys.modules, but the filesystem walk is not amortised. Measured here: 194 keys, 185 after the
+    dedup below, 1.1-1.2 ms per call warm; POST /generate is 7.5 ms and makes ONE call, GET
+    /generators is 69.6 ms and makes TWO.
+
+    The one thing that could make it vary is BOXES_GENERATOR_PATH, which upstream reads inside
+    getAllBoxGenerators. It appears in no config, Dockerfile or deploy file in this repo, so it is
+    never set for this sidecar — and note that if it ever IS set, upstream does `path = __path__`
+    then `path.extend(...)`, MUTATING the package's own __path__ list in place, so the extra
+    directories are permanent from the first call anyway. Either way the answer does not change
+    between calls, which is what makes memoizing it safe rather than merely faster.
+
+    RETURNS A COPY, DELIBERATELY. This function returned a FRESH dict on every call before it was
+    memoized (verified by poisoning the result and re-calling), so handing back the cached object
+    would quietly convert a local dict into shared process state that any caller could mutate. The
+    copy costs microseconds against the 1.1 ms it saves. The VALUES are classes and were always
+    shared — that is unchanged.
+
+    A race between two threads on first call is harmless: both compute the same mapping and the
+    later assignment wins.
+    """
+    global _CATALOGUE
+    if _CATALOGUE is None:
+        _CATALOGUE = {full.split(".")[-1]: cls
+                      for full, cls in boxes.generators.getAllBoxGenerators().items()}
+    return dict(_CATALOGUE)
+
+
+def _offered_catalogue():
+    """The generators this API actually offers — ONE definition, for both endpoints.
+
+    /generate and /generators each used to ask _all_generators() for everything and then apply
+    _offered() themselves. Gating both on one rule was already the design (see _offered's own note
+    that a hidden generator must not stay reachable by a direct POST); this makes it one PLACE as
+    well as one rule, so the two cannot drift.
+
+    Deliberately NOT the same thing as _all_generators(): _seeded_default drives TrayLayoutFile,
+    which is one of the four generators _offered() excludes, so it must keep asking for the full
+    catalogue. Collapsing these two would break TrayLayout's seeded textarea.
+
+    Same copy-on-return contract as _all_generators(), for the same reason.
+    """
+    global _OFFERED_CATALOGUE
+    if _OFFERED_CATALOGUE is None:
+        _OFFERED_CATALOGUE = {k: c for k, c in _all_generators().items() if _offered(c)}
+    return dict(_OFFERED_CATALOGUE)
 
 
 def _actions(box):
@@ -189,7 +243,11 @@ def _param_groups_for(cls):
     # boxes.py organises each generator's argparser into titled groups: the generator's own settings,
     # "Default Settings", then one "Settings for <edge/part>" group per used edge (Finger Joints, Lid,
     # …). Preserve that grouping so the UI can render sections like boxes.py's own web form.
-    box = cls()  # instantiating builds its argparser
+    # A FRESH INSTANCE PER CALL, and it must stay that way — the CATALOGUE is memoized, a box is
+    # not. Instantiating builds the argparser, and /generate then mutates that instance
+    # (argparser.error is replaced, parseArgs writes the user's values onto it, render() draws into
+    # it), so a cached box would carry one request's state into the next.
+    box = cls()
     exposed = _exposed(box)  # the SAME set /generate will accept — see _exposed()
     groups = []
     for g in box.argparser._action_groups:
@@ -256,10 +314,12 @@ def _raise_param_error(message):
 @app.post("/generate")
 def generate():
     body = request.get_json(force=True, silent=True) or {}
-    cls = _all_generators().get(body.get("generator"))
-    if cls is None or not _offered(cls):
-        # Not offered == not generatable. Gating BOTH endpoints on one rule is what stops a hidden
-        # generator staying reachable by a direct POST (and answering ASCII as image/svg+xml).
+    # Not offered == not generatable, and _offered_catalogue() IS that rule — asking it is what
+    # stops a hidden generator staying reachable by a direct POST (and answering ASCII as
+    # image/svg+xml). A miss here covers both "no such generator" and "not offered", which is the
+    # same 404 the two-step version answered.
+    cls = _offered_catalogue().get(body.get("generator"))
+    if cls is None:
         return jsonify({"error": "unknown generator"}), 404
     try:
         box = cls()
@@ -288,9 +348,7 @@ def generate():
 @app.get("/generators")
 def generators():
     out = []
-    for key, cls in sorted(_all_generators().items()):
-        if not _offered(cls):
-            continue
+    for key, cls in sorted(_offered_catalogue().items()):
         try:
             grps = _param_groups_for(cls)
             out.append({

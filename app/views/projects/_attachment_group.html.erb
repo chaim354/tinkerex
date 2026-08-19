@@ -20,26 +20,18 @@
     </summary>
     <div class="attachments-grid">
       <% group.each do |att| %>
-        <% node = @att_nodes[att.node_id] %>
+        <% node = @page_nodes[att.node_id] %>
         <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
         <div class="attachment-tile">
-          <%# data-download-url is what puts "Download" in the right-click menu (filemenu#open).
-              Same blob endpoint the file page's own Download button uses, with ?download=1 so the
-              disposition is `attachment` whatever the type would otherwise allow inline.
-
-              data-addon-open-url and data-addon-open-label are the same mechanism for "Edit in the
-              addon that made this file"; nil for anything an addon did not produce, which renders
-              no attribute and so no menu entry. @addon_origins is keyed on node_id, so the same
-              lookup serves this partial and the Files page. See the fuller note in
-              files/_list.html.erb. %>
+          <%# THE SAME TWO BUILDERS THE FILES PAGE USES (FilesHelper), which is the point: these
+              tiles carry the identical right-click menu, and written out here they were a fifth
+              copy of one seven-key wire contract free to drift from the four over there.
+              @addon_origins is keyed on node_id, so one lookup serves both — but the builder takes
+              the ORIGIN, not the ivar, so a surface without one can still adopt it. %>
           <%= link_to file_path(att.node_id), class: "grid-card file-cell",
-                      data: { thumbs_target: "cell", node_id: att.node_id, ext: ext,
-                              action: "contextmenu->filemenu#open",
-                              note_url: file_notes_path(att.node_id),
-                              download_url: blob_file_path(att.node_id, download: 1),
-                              addon_open_url: @addon_origins.dig(att.node_id, :url),
-                              addon_open_label: @addon_origins.dig(att.node_id, :label) } do %>
-            <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
+                      data: thumb_cell_data(att.node_id, ext)
+                              .merge(file_menu_data(att.node_id, @addon_origins[att.node_id])) do %>
+            <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: ext %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
           <div class="tile-meta">

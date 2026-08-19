@@ -635,7 +635,9 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   records why: of four candidates, **two declared a different (more restrictive) licence in their
   own header than their repo's `LICENSE` file did**, one of them NonCommercial. *Read the file, not
   the repo.* `sidecar/openscad/tests/test_catalog.py` checks this thoroughly — and **none of
-  `bin/ci`'s seven gates runs it**, so until 2026-08-12 the only licence guard that actually
+  `bin/ci`'s gates runs it** (seven when this was written, eight since `test-app` landed
+  2026-08-19 — the count moves, the fact that none of them is pytest does not), so until
+  2026-08-12 the only licence guard that actually
   EXECUTED was `openscad_controller_test.rb`'s per-tile assertion, which died with that controller.
   Its replacement is in **`test/deploy_hygiene_test.rb`** (directory-driven over
   `sidecar/*/catalog/catalog.json`): every entry has a licence, an attribution and a pinned commit;
@@ -722,13 +724,18 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `port_writable?`. It is also the **one legitimate direct `Storage::ChunkStore` call in the
   maker layer** (addon output has no client to presign for). So the phase-1 decoupling proof
   is *"one hit, and it is `library_output.rb`"*, **not** "no hits":
-  `grep -rn "manifest_chunks\|ChunkStore" app/services/maker/ app/models/maker/ app/jobs/maker/ | grep -v ':[0-9]*: *#'`
+  `grep -rn "manifest_chunks\|ChunkStore" $(find app -type d -name maker) --include='*.rb' | grep -v ':[0-9]*: *#'`
   The `grep -v` is load-bearing, not noise — without it the check reports comments that
-  *describe* the removed coupling. **A proof that cries wolf gets ignored.**
-  **`test/architecture_invariants_test.rb` now RUNS this**, asserting both the count *and* the
-  file, so the claim can no longer drift the way it did before (it read "no hits" for months
-  after the addon framework made the true answer one). Change the code and the test tells you;
-  change the exception on purpose and update the test and this bullet together.
+  *describe* the removed coupling. **A proof that cries wolf gets ignored.** So is the `find`:
+  it must cover **every** `app/**/maker` directory (six today), not three, and **`grep -r` does
+  not honour `**`** — spelling the set out named `services`/`models`/`jobs` and silently skipped
+  `app/controllers/v1/maker` (14 files) and `app/models/concerns/maker` (1).
+  **`test/architecture_invariants_test.rb` now RUNS this and DERIVES the directory set from the
+  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting both the count *and* the
+  file — so the claim can no longer drift the way it did before (it read "no hits" for months
+  after the addon framework made the true answer one), and a NEW `app/<x>/maker/` is covered the
+  day it is created. Change the code and the test tells you; change the exception on purpose and
+  update the test and this bullet together.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
@@ -1495,7 +1502,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   locked vault makes `bin/secret` exit 1, the substitution yields `""`, and `Kamal::Secrets#[]`
   returns that empty string **without raising**. A *missing* key raises; an *empty* one does not,
   so the failure surfaces later and elsewhere (an empty `KAMAL_REGISTRY_PASSWORD` becomes a
-  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.11.
+  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.12.0.
 - **SECRETS ARE PER-DESTINATION, AND `.kamal/secrets` IS THE *BASE* FILE, NOT A SHARED ONE.** Kamal
   reads `[secrets-common, secrets.<dest>]`, so anything added to `.kamal/secrets` is invisible
   under `-d`. Required, not tidiness: `CHUNK_SECRET_ACCESS_KEY` is **SeaweedFS on Unraid and
@@ -1536,7 +1543,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   **forever** — a finished design's content never changes. That is exactly how four LightBurn files
   kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
   and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
-  format cannot be added without appearing there.
+  format cannot be added without appearing there. **Since 2026-08-19 the CORRECT EDIT is one
+  line**: each format is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`, so a
+  shared change bumps the shared term and all five names move together. The outcome above is
+  unchanged — what moved is that the arithmetic now does it, instead of three remembered edits.
 - **`available?` IS ABOUT THE THUMBNAIL, `available_for?(kind)` IS WHAT THE JOB ASKS.** The 2D
   vector renderers gate `available?` on **resvg**, because their thumbnail is a rasterized SVG; the
   measure payload is Nokogiri and arithmetic and needs nothing external. One gate marked a
@@ -1851,7 +1861,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   looking wrong. `CRON_TZ` looks like the stronger move and is worse: a cron that does not implement
   it (busybox; it is not POSIX) parses the line as an ordinary environment assignment and ignores it
   — a guard that silently does nothing. The installer reads the zone back and refuses *before*
-  touching anything; `bin/backup-status` re-reads it, so drift AFTER install cannot hide either.
+  touching anything; `bin/backup-status` re-reads the BOX's zone, but the LINE records none — so it
+  compares against its own `BACKUP_TZ` default, and a zone ACCEPTED at install reads as a mismatch.
 - **The archives are UNENCRYPTED on a guest-writable CIFS share, and that is a recorded decision, not
   an oversight** — readable *and deletable* by anyone on the LAN. Accepted for a home LAN; the
   catalog and every preview blob are in the clear (the digests are the least of it). Revisit before

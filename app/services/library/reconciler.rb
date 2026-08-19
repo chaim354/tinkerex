@@ -56,6 +56,14 @@ module Library
     # lie rather than the user's intent.
     DEFAULT_MAX_DELETE_PCT = 20
 
+    # One row of #live. A Struct rather than the bare Array this used to destructure, because the
+    # row grew from five values to eight and a mis-ordered destructure of eight is silent — and
+    # MUTABLE rather than a Data, because the write sites below re-stamp the fields they just
+    # wrote (see #live's invariant). It costs one object per live node over the Array the pluck
+    # block allocated anyway.
+    LiveRow = Struct.new(:id, :node_id, :kind, :name, :mtime, :size, :content_hash,
+                         :parent_node_id, keyword_init: true)
+
     # `root` is where a rel_path resolves to real bytes; `reader` replaces reading them at all
     # (tests inject it, so the algorithm needs no filesystem). One of the two is required.
     #
@@ -139,7 +147,21 @@ module Library
       guard_mass_deletion!(doomed.size, observable_count)
 
       apply_moves!(moves)                                      # 2 (apply)
-      doomed.each { |node| node.update!(deleted: true) }
+      # `live.delete` is what keeps #live's stated invariant UNCONDITIONAL. This is the FIFTH
+      # site that tombstones, and the one a review found the invariant's own comment omitting.
+      # Harmless today by luck, not by design: the only readers after this line are #parent_id_for
+      # (keyed on DIRECTORY paths, and #ensure_dirs has already evicted any file row sitting at
+      # one) and #tombstone_vanished_dirs (filters kind == "dir"), so a stale FILE key is never
+      # consulted. That is an argument about today's call order, and #create_or_revive!'s own
+      # comment says why not to rely on one — a claim with an exception a future reader has to
+      # find is worse than a claim that is simply true. One line makes it true.
+      #
+      # Probed both ways: without the delete, a doomed "d/b.stl" stays in #live while `present`
+      # has dropped it. With it, the two sets are identical.
+      doomed.each do |node|
+        node.update!(deleted: true)
+        live.delete(node.storage_path)
+      end
       leftovers.each do |o, hash|                                # 3 & 4
         enqueue_thumbnail(create_or_revive!(o, hash), hash)
       end
@@ -241,7 +263,10 @@ module Library
     def match_live_paths(files)
       # PLUCKED, not loaded: the decisions below read exactly four columns (kind, mtime, size,
       # content_hash) and in the common case write NOTHING, so instantiating an AR object per live
-      # node buys nothing and costs the whole tree's worth of memory.
+      # node buys nothing and costs the whole tree's worth of memory. The pluck itself now lives
+      # in #live — this method used to take its OWN, which is the duplication that finding closed;
+      # everything the paragraphs below argue about its shape and cost is unchanged, and #live
+      # carries the three columns the dir half additionally needs.
       #
       # THE COMMON CASE IS A NO-OP SCAN — every 15 minutes, forever, with nothing changed. The
       # previous `index_by(&:storage_path)` loaded a full AR object per live node to discover
@@ -269,29 +294,25 @@ module Library
       # the skip cannot compare an identity it did not read, and (mtime, size) alone is provably
       # too coarse for S3 (see #unchanged?). It does not scale with library SIZE any differently
       # than the five columns already did.
-      live = @user.nodes.present.where.not(storage_path: nil)
-                  .pluck(:storage_path, :id, :kind, :mtime, :size, :content_hash)
-                  .to_h { |path, id, kind, mtime, size, hash| [ path, [ id, kind, mtime, size, hash ] ] }
-
       files.reject do |o|
         row = live[o.rel_path]
         next false if row.nil?
-        id, kind, mtime, size, content_hash = row
 
         # NOTE: `kind` is the RAW DB value here (pluck bypasses the model), not `node.file?`.
         # Identical today — kind is a plain string column. But if it ever became an AR enum,
         # pluck would hand back the integer and this branch would fire for EVERY node,
         # tombstoning the whole library on the next scan. Remote; cheap to say; and this file
         # has punished exactly this shape of assumption before.
-        if kind != "file"
+        if row.kind != "file"
           # The path used to be a directory (or a symlink) and is now a file. Reusing the row
           # would silently change a node's kind under everything that points at it; a clean
           # break is the honest answer.
-          @user.nodes.find(id).update!(deleted: true)
+          @user.nodes.find(row.id).update!(deleted: true)
+          live.delete(o.rel_path)
           next false # ...and the observation still needs a node: hand it to step 2.
         end
 
-        if unchanged?(o, mtime, size, content_hash)
+        if unchanged?(o, row.mtime, row.size, row.content_hash)
           # Skip WITHOUT hashing, and — note the early return — without ever loading the row. In
           # a no-op scan every file lands here, which is what makes that pass cost a single
           # pluck, and the no-op scan is the one that runs every 15 minutes forever.
@@ -304,8 +325,11 @@ module Library
         # so nothing below can tombstone it. The next pass picks it up when the blip clears.
         # The row is loaded only once `hash` proves there is something to write.
         if hash
-          node = @user.nodes.find(id)
+          node = @user.nodes.find(row.id)
           node.update!(size: o.size, mtime: o.mtime, content_hash: hash)
+          row.size = o.size
+          row.mtime = o.mtime
+          row.content_hash = hash
           # THIS IS THE SAVE PATH, and the enqueue is not optional here. Reaching this line means
           # the bytes under a path the catalog already knew have CHANGED — a file re-saved in
           # place, which for a share library is the single most ordinary thing that happens to
@@ -413,12 +437,20 @@ module Library
       [ moves, doomed, candidates.reject { |p| claimed.key?(p) } ]
     end
 
-    # Step 2, APPLY.
+    # Step 2, APPLY. Re-keys the moved node in #live for that index's stated invariant — a move
+    # is the one write here that changes a row's KEY rather than its columns, so a stale entry
+    # would leave the old path claimed by a node that no longer sits there.
     def apply_moves!(moves)
       moves.each do |node, o, hash|
+        was = node.storage_path
         node.update!(storage_path: o.rel_path, name: File.basename(o.rel_path),
                      parent_node_id: parent_id_for(o.rel_path),
                      mtime: o.mtime, size: o.size, content_hash: hash)
+        live.delete(was)
+        live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: node.kind,
+                                       name: node.name, mtime: node.mtime, size: node.size,
+                                       content_hash: node.content_hash,
+                                       parent_node_id: node.parent_node_id)
       end
     end
 
@@ -508,11 +540,20 @@ module Library
                 size: o.size, mtime: o.mtime, content_hash: hash }
       # Return the NODE in both branches (update! returns true, so we can't return it directly) —
       # the caller enqueues an eager thumbnail for the file the scan just brought in.
-      if tomb
+      node = if tomb
         tomb.update!(**attrs)
-        return tomb
+        tomb
+      else
+        @user.nodes.create!(node_id: SecureRandom.uuid, **attrs)
       end
-      @user.nodes.create!(node_id: SecureRandom.uuid, **attrs)
+      # #live's invariant — it mirrors `present`, and this path is how a row BECOMES present.
+      # No later reader in #call consults a file row, so this is the cheap half of keeping the
+      # claim unconditional rather than one with an exception a future reader has to find.
+      live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: "file",
+                                     name: node.name, mtime: node.mtime, size: node.size,
+                                     content_hash: node.content_hash,
+                                     parent_node_id: node.parent_node_id)
+      node
     end
 
     def common_prefix_len(a, b)
@@ -533,23 +574,74 @@ module Library
     # reconciler_test pins; this sort means the Reconciler does not depend on it.)
     def ensure_dirs(dirs)
       dirs.sort_by { |o| o.rel_path.count("/") }.each do |o|
-        node = @user.nodes.present.find_by(storage_path: o.rel_path)
-        if node && !node.dir?
+        row = live[o.rel_path]
+        if row && row.kind != "dir"
           # The path used to be a file and is now a directory. Same reasoning as the inverse
           # case above: break cleanly rather than mutate a node's kind under its references.
-          node.update!(deleted: true)
-          node = nil
+          @user.nodes.find(row.id).update!(deleted: true)
+          live.delete(o.rel_path)
+          row = nil
         end
+
+        # Computed BEFORE the skip because the skip compares it — a directory whose parent moved
+        # is unchanged in every other column, and that is the case the naive skip drops.
+        parent_node_id = parent_id_for(o.rel_path)
+
+        if row && unchanged_dir?(row, o, parent_node_id)
+          # THE `@dir_ids` STAMP IS NOT OPTIONAL ON THE SKIP PATH. Children read their parent out
+          # of this map (see the shallowest-first note above); skipping without filling it makes
+          # every file under an unchanged directory resolve its parent through #parent_id_for's
+          # DB fallback at best, and to nil at worst — the tree, silently flattened.
+          @dir_ids[o.rel_path] = row.node_id
+          next
+        end
+
+        node = row && @user.nodes.find(row.id)
         # Reviving a tombstoned directory is right for the same reason it is right for a file,
         # and is why this cannot simply be `present.find_or_initialize_by`: that would ignore
-        # `deleted` and pick an arbitrary row when both a tombstone and a live node exist.
+        # `deleted` and pick an arbitrary row when both a tombstone and a live node exist. It
+        # stays a LIVE query — #live holds `present` rows only and a tombstone is exactly what it
+        # cannot answer for.
         node ||= @user.nodes.where(storage_path: o.rel_path, kind: "dir").order(id: :desc).first
         node ||= @user.nodes.new(node_id: SecureRandom.uuid)
         node.update!(name: File.basename(o.rel_path), kind: "dir", deleted: false,
-                     storage_path: o.rel_path, parent_node_id: parent_id_for(o.rel_path),
-                     mtime: o.mtime)
+                     storage_path: o.rel_path, parent_node_id:, mtime: o.mtime)
         @dir_ids[o.rel_path] = node.node_id
+        # THE WRITE-BACK, AND IT IS THE ONE LINE THAT MAKES THE MEMOIZED INDEX SAFE. #live is
+        # plucked before any write; #match_live_paths reads the SAME index afterwards. Without
+        # this, a path that has just become a directory still reads as the old FILE row there, a
+        # file observation for it falls through to #create_or_revive!, and that create hits
+        # `index_nodes_on_user_id_and_storage_path` (unique, WHERE deleted = false, KIND-AGNOSTIC,
+        # and unvalidated in the model) — a raw ActiveRecord::RecordNotUnique that kills this scan
+        # and every scan after it. The old code survived that case only by accident, because
+        # `match_live_paths` re-plucked AFTER this method ran.
+        live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: "dir",
+                                       name: node.name, mtime: node.mtime, size: node.size,
+                                       content_hash: node.content_hash,
+                                       parent_node_id: node.parent_node_id)
       end
+    end
+
+    # "The row already equals what #ensure_dirs would write" — the dir twin of #unchanged?, and
+    # DELIBERATELY NOT ITS COPY.
+    #
+    # #unchanged? compares (mtime, size), which is right for a file and catastrophic here: EVERY
+    # S3 directory observation carries `mtime: nil, size: nil` (s3_observer.rb#dir_observations
+    # explains why — S3 has no directory mtime, and every available invention is worse than nil).
+    # So a literal twin evaluates `nil == nil && nil == nil` and is TRUE for every directory on
+    # every S3 pass, forever: a tombstoned dir is never revived, a re-pointed parent_node_id is
+    # never repaired, a drifted name is never fixed. On share, dir mtime is a real stat value, so
+    # the bug would be S3-ONLY — this repo's recorded failure shape (§14b), and the reason the
+    # tests for this pin the S3 leg specifically.
+    #
+    # So it compares the COLUMNS ensure_dirs writes. Two of the six are equal by construction and
+    # are therefore not compared: `storage_path` is this index's key, and `deleted` is false for
+    # every row #live holds. `kind` IS compared even though the caller has already handled the
+    # collision — it is one of the written columns, and a skip predicate that trusts its caller's
+    # control flow is a skip predicate that stops being true when the caller is edited.
+    def unchanged_dir?(row, o, parent_node_id)
+      row.kind == "dir" && row.name == File.basename(o.rel_path) &&
+        row.parent_node_id == parent_node_id && row.mtime == o.mtime
     end
 
     # A directory that is gone is gone: without this, deleting `cad/` tombstones its files but
@@ -562,27 +654,103 @@ module Library
     # observed (its parent listed it) but everything BENEATH it is not, so `secret/sub` is
     # missing from the observations only because Dir.children(secret) raised. Tombstoning it
     # would delete a directory we were never able to look inside.
+    # Reads #live rather than loading every live directory as a full AR object — the common pass
+    # tombstones NONE of them, so the old version's whole cost was instantiating the tree to
+    # discover that. Rows are loaded only for the ones actually being written, which in a steady
+    # state is zero.
+    #
+    # Ordered by [-depth, path]: deepest-first is the requirement above, and the path is the
+    # tie-break the old `.order(:storage_path)` supplied — `sort_by` is not stable, so leaving
+    # depth alone as the key would make same-depth order arbitrary between runs.
     def tombstone_vanished_dirs(dirs)
       observed = dirs.map(&:rel_path).to_set
-      @user.nodes.present.where(kind: "dir").where.not(storage_path: nil)
-           .order(:storage_path).to_a
-           .reject { |n| observed.include?(n.storage_path) || unobserved?(n.storage_path) }
-           .sort_by { |n| -n.storage_path.count("/") }
-           .each { |n| n.update!(deleted: true) }
+      live.filter_map { |path, row|
+        path if row.kind == "dir" && !observed.include?(path) && !unobserved?(path)
+      }.sort_by { |path| [ -path.count("/"), path ] }
+        .each do |path|
+          @user.nodes.find(live[path].id).update!(deleted: true)
+          live.delete(path)
+        end
     end
 
     # A hash hit for any directory this scan observed (ensure_dirs filled the map before any
     # file could ask). The DB fallback covers a parent that is NOT among the observations — a
     # partial scan, or a caller passing files without their dirs.
+    # The fallback reads #live — the SAME index #tombstone_vanished_dirs and #ensure_dirs read.
+    # Two readings of the tree taken at two points in one pass is what this change exists to end,
+    # and re-querying here would reintroduce exactly that: a parent resolved against a snapshot
+    # newer than the one the rest of the pass decided from.
     def parent_id_for(rel)
       dir = File.dirname(rel)
       return nil if dir == "."
-      @dir_ids[dir] || @user.nodes.present.find_by(storage_path: dir)&.node_id
+      @dir_ids[dir] || live[dir]&.node_id
     end
 
+    # ONE READ OF THE LIVE TREE PER PASS — `storage_path => LiveRow`, over `present` rows only.
+    #
+    # There used to be FOUR readings of the same table per pass, taken at four different points
+    # relative to this pass's own writes: `match_live_paths`' pluck, `live_file_paths`' pluck,
+    # `ensure_dirs`' find_by PER OBSERVED DIRECTORY, and `tombstone_vanished_dirs` loading every
+    # live dir as a full AR object to discover that none should be tombstoned. Both observers emit
+    # an observation for every directory on every pass (scanner.rb, s3_observer.rb#dir_observations),
+    # so the per-directory SELECT was not amortized by anything. Measured on a no-op scan before
+    # this change, and the shape is the finding: SELECT = dirs + 3, INDEPENDENT OF FILE COUNT —
+    # 20 dirs/80 files = 23, 20 dirs/400 files = 23, 50 dirs/80 files = 53. It is now a flat 1 at
+    # every one of those, and at 200 dirs.
+    #
+    # A/B on one machine, the SAME no-op pass over 500 dirs / 5000 files, old code vs new:
+    #
+    #   queries   503     ->  1
+    #   objects   286,349 ->  79,832
+    #   time      0.179s  ->  0.011s
+    #
+    # The nine columns are NOT free and the number is here so nobody has to re-derive it: this
+    # pluck costs +2.0 objects/node over the six-column one it replaces (7.0/node -> 9.0/node,
+    # A/B'd at 20k live nodes, and ~+11ms on the pluck itself). It is paid back many times over
+    # because the SECOND full pluck of the same table is gone, along with an AR object per
+    # directory in two places.
+    #
+    # The file half already made exactly this argument one level down (#match_live_paths, and
+    # #observable_live_paths' "literally one snapshot rather than two independent plucks that
+    # merely happen to agree"). The dir half never got it. This is that.
+    #
+    # THE INVARIANT: this mirrors `present`. Every site that tombstones, revives or re-stamps a
+    # node maintains it — FIVE of them: #ensure_dirs, #match_live_paths, #apply_moves!,
+    # #tombstone_vanished_dirs, and #call's own `doomed.each`. (That last one was missing, and
+    # an earlier version of this very comment enumerated only four while claiming "every" —
+    # probed in review, one stale key. Count them against the code, not against this sentence.) That is not tidiness in one of those cases: see
+    # #ensure_dirs, where dropping the write-back is a RecordNotUnique that kills every scan
+    # forever.
+    #
+    # PLUCKED BEFORE THE FIRST WRITE, and #call is what guarantees it — its first statement is
+    # `vanished_paths`, which reads #live_file_paths, which forces this. Lazily memoized rather
+    # than built in the constructor so a Reconciler that is never #call'd costs no query.
+    #
+    # `present` ROWS ONLY, which is load-bearing and not an optimization: #create_or_revive! and
+    # #ensure_dirs both query for TOMBSTONES by path, and those stay live queries. §14a's two
+    # tombstone kinds must not be collapsed, and an index that held both could not tell them
+    # apart by path alone.
+    def live
+      @live ||= @user.nodes.present.where.not(storage_path: nil)
+                    .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size,
+                           :content_hash, :parent_node_id)
+                    .to_h { |path, id, node_id, kind, name, mtime, size, hash, parent|
+                      [ path, LiveRow.new(id:, node_id:, kind:, name:, mtime:, size:,
+                                          content_hash: hash, parent_node_id: parent) ]
+                    }
+    end
+
+    # THE `kind: "file"` FILTER MOVED OUT OF SQL AND INTO RUBY HERE, and forgetting it is a
+    # FAIL-OPEN bug in the mass-deletion guard rather than a wrong list. This feeds
+    # #observable_live_paths, which is the guard's DENOMINATOR — so letting directory rows
+    # through inflates it and quietly raises the number of files a pass may tombstone. Measured
+    # on this backend's own stated shape, a directory-heavy archive (90 files, 120 dirs): 20
+    # deletions read as 22.2% with the filter and REFUSE, and 9.5% without it and PERMIT.
+    #
+    # Sorted here rather than by SQL, and verified set-identical to the old
+    # `.where(kind: "file").order(:storage_path).pluck` it replaces.
     def live_file_paths
-      @user.nodes.present.where(kind: "file").where.not(storage_path: nil)
-           .order(:storage_path).pluck(:storage_path)
+      live.select { |_path, row| row.kind == "file" }.keys.sort
     end
 
     # Hash on demand — only for a file whose (path, mtime, size) says it actually changed, and

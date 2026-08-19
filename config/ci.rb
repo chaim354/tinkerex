@@ -25,10 +25,13 @@
 # Usage:
 #   bin/ci                 # every gate, in this order
 #   bin/ci test test-s3    # exactly those gates
-#   bin/ci --list          # the gate names, one per line (what ci_hygiene_test reads)
+#   bin/ci --list          # the gate names, one per line
+#   bin/ci --list-ci       # the gates ci.yml must have a job for (what ci_hygiene_test reads)
 
 GATES = {
   # Local convenience only — ci.yml does its own `bundle install` per job and never calls this.
+  # This is the ONE gate CI deliberately does not run, which is why it is named in
+  # LOCAL_ONLY_GATES below rather than being a sentence somebody has to remember.
   "setup" => ->(ci) do
     ci.step "Setup", "bin/setup --skip-server"
   end,
@@ -85,11 +88,61 @@ GATES = {
 
   "system" => ->(ci) do
     ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
+  end,
+
+  # The desktop app's JavaScript — the only JS gate in the repo. client/maker-app had no `test`
+  # script, no test files and nothing in CI at all until 2026-08-19; the Rust `mod tests` next
+  # door covers Prefs/creds_key/atomic writes and none of the frontend. §14c is the precedent for
+  # landing the gate WITH the file rather than after it.
+  #
+  # No install step: `node` is on the mac runner's service PATH already (nvm 18.20.8, the first
+  # entry in the runner's .path). If it ever is not, this goes RED — which is the right direction
+  # for a gate whose whole content is the suite it runs.
+  #
+  # THE EMPTY-SUITE CHECK IS IN RUBY, AND NEITHER `node --test test/` NOR `node --test test/*.test.js`
+  # IS A SUBSTITUTE — because which of them is safe DEPENDS ON THE NODE VERSION, and they invert.
+  # Measured on this box: node 18.20.8 over an empty test dir gives directory-form exit 0 and
+  # glob-form exit 1; node 24.16.0 gives the OPPOSITE, directory-form exit 1 and glob-form exit 0
+  # (>=20 treats the argument as a pattern itself, so an unmatched pattern is 0 tests and success).
+  # The runner's .path pins 18.20.8 today, but 24.16.0 is already installed on the same machine, so
+  # a PATH bump would silently turn a gate written to refuse an empty suite into one that green-lights
+  # it — this repo's dominant failure shape, one `nvm alias` away.
+  #
+  # So the file list is resolved HERE and passed to node EXPLICITLY. node then runs exactly those
+  # files and its argument handling stops being load-bearing at all. A deleted suite aborts by name
+  # instead of passing; a NEW *.test.js is still picked up with no edit here.
+  "test-app" => ->(ci) do
+    app   = File.expand_path("../client/maker-app", __dir__)
+    files = Dir.glob("test/**/*.test.js", base: app).sort
+    if files.empty?
+      abort "bin/ci test-app: no *.test.js under client/maker-app/test — refusing to pass vacuously."
+    end
+    ci.step "Tests: Desktop app (node)", "cd client/maker-app && node --test #{files.join(" ")}"
   end
 }.freeze
 
+# THE ONE EXCEPTION TO "every gate has a ci.yml job", AS DATA RATHER THAN AS PROSE. It used to be
+# a third hand-maintained list — test/ci_hygiene_test.rb carried its own REQUIRED_GATES literal
+# and compared it against this file, never against ci.yml — so the contract lived in three places
+# and only one direction was ever checked. Three mutations passed that whole test file: deleting
+# ci.yml's `system-test` job (the browser tier silently off CI), adding a gate here with no job
+# (exactly what the header above forbids), and deleting the `test-app-js` job. The hand-copied
+# list had already gone stale: `test-app` landed on 2026-08-19 and was never added to it.
+#
+# With this here, `--list` and `--list-ci` are derived from ONE definition and ci_hygiene_test
+# asserts SET EQUALITY between `--list-ci` and ci.yml's gate jobs — both directions, no literal.
+# Adding a gate CI genuinely must not run means adding it here, in the same commit, deliberately.
+LOCAL_ONLY_GATES = %w[setup].freeze
+
 if ARGV.include?("--list")
   puts GATES.keys
+  exit 0
+end
+
+# The gates ci.yml must have a job for. Answered BEFORE the unknown-gate abort below, which would
+# otherwise reject `--list-ci` as a gate name.
+if ARGV.include?("--list-ci")
+  puts GATES.keys - LOCAL_ONLY_GATES
   exit 0
 end
 

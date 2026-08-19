@@ -57,8 +57,12 @@ jobs:
     # RUNS ON macos, NOT linux. This job is `git diff` plus bash — it has no Linux dependency — and
     # every other job in this workflow `needs:` it, INCLUDING mac-tests, which targets the runner
     # that is actually online. So a linux label here took the whole workflow down with the Linux
-    # box, and moving it is what revives the hermetic Rust suite (fs-provider 192 tests,
+    # box, and moving it is what revives the hermetic Rust suite (fs-provider,
     # sync-client, fs-cfapi, fs-fskit, the windows-gnu FFI cross-check, the native macOS build).
+    # NO TEST COUNT HERE, deliberately: this comment's point is WHICH suites revive, not how many
+    # tests they hold, and docs/STATUS.md section 6 already records why a count written in two
+    # places becomes a count that is wrong in one of them. It carried "192" until 2026-08-19,
+    # by which time the answer was 203.
     runs-on: [self-hosted, macos]
     outputs:
       mac: ${{ steps.f.outputs.mac }}
@@ -121,11 +125,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi, fs-fskit)
+      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi, fs-fskit, fs-webdav)
         run: |
           cargo test --manifest-path client/fs-provider/Cargo.toml
           cargo test --manifest-path client/sync-client/Cargo.toml
           cargo test --manifest-path client/fs-cfapi/Cargo.toml
+          # fs-webdav was BUILT below and never TESTED, so its inline suite — including the
+          # two-connection concurrency guards — had never run on any runner. Near-free: this
+          # job already compiles the crate.
+          cargo test --manifest-path client/fs-webdav/Cargo.toml
           # fs-fskit: pure logic + the FFI bridge dispatch (the Swift .appex is
           # account-gated and not built here — see client/fs-fskit/BUILD.md).
           cargo test --manifest-path client/fs-fskit/Cargo.toml --features ffi

@@ -1,9 +1,17 @@
 <%# The static hero content: an image cover, else a server-rendered thumbnail of the cover file,
     else the empty placeholder. Reused as the resting poster behind the 3D viewer. Reads the
-    @cover_att / @model / @covers ivars set by ModelsController#show. %>
+    @cover_att / @model / @covers / @page_nodes ivars set by ModelsController#show.
+
+    BOTH LIVE BRANCHES ASK ABOUT LIVENESS, AND THE SECOND ONE IS THE EASY MISS. @cover_att comes out
+    of the already-partitioned @attachments, so the image branch is covered by construction; the
+    thumb branch reads @model.cover_node_id, which is a raw column NOTHING validates against a live
+    node (see ProjectsController#project_params for why that is deliberate). Unguarded it rendered a
+    poll cell for a tombstone — /files/thumbnails omits a node with no row, so thumbs_controller's
+    `if (!entry) continue` runs 40 times and the spinner never resolves. The empty placeholder is
+    the honest answer. %>
 <% if @cover_att&.role == "image" %>
   <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
-<% elsif @model.cover_node_id %>
+<% elsif @page_nodes.key?(@model.cover_node_id) %>
   <span class="thumb file-cell model-hero-thumb"
         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
         data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">

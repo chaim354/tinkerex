@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-17 (**`CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot**)
+**Updated:** 2026-08-19 (**the 2026-08-19 simplification audit, worked**)
 
 ## What this file is
 
@@ -60,7 +60,154 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-17): `CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot (branch `claude/chunk-endpoint-seaweedfs-ip`)
+## Latest (2026-08-19): the 2026-08-19 simplification audit, worked (branch `claude/audit-2026-08-19-fixes`)
+
+`docs/AUDIT-2026-08-19.md` was produced read-only against `main` @ `dc739c3` — 84 findings over 57
+subsystem rows. This arc implements them. `docs/FIX-LOG-2026-08-19.md` is the per-finding record;
+this entry is the arc.
+
+**Process.** Every finding passed through three independent Opus agents — assess, fix, review — with
+no stage skipped. Assessors were read-only and judged *necessity* against the brief; implementers
+worked in isolated worktrees and mutation-checked per §15; reviewers re-ran every mutation themselves
+rather than accepting a report. Roughly 90 agents.
+
+**Verification.** `bin/ci` bare and green at each batch boundary, always with the three
+`LIBRARY_BACKEND` legs reporting **identical** counts (§15): end of Tier 1 **2375 / 8652 / 0**;
+end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**; **final 2452 runs / 9424
+assertions / 0 failures / 3 skips**. System 102/656 throughout, plus a new `test-app` node gate
+(F-64) — **eight** gates now, not seven, which three present-tense claims in the tree had to be
+corrected for.
+
+`bin/ci` runs **no cargo and no pytest**, so the suites it cannot see were run by hand and are
+listed separately rather than folded into a number that would overstate what the gate covers:
+`fs-provider` **203/0** (was 192), `sync-client` **37/0**, `sync-engine` **92/0**, `fs-cfapi`
+**50/0** (was 42), `fs-webdav` **8/0** (was 4 — **and those 4 had never run in CI at all**; F-58
+added the workflow line in the same commit), `sidecar/boxes` **22 passed** (was 18). The
+`sidecar/openscad` figure — **71 passed / 13 skipped**, was 66/13 — is as reported by its
+implementer and reviewer; it needs its own virtualenv, which is git-ignored and absent from a
+worktree, so it was not re-run at the coordinator level. Saying which numbers were re-verified and
+which were relayed is cheaper than a footnote later.
+
+### The measured wins
+
+| finding | before | after |
+|---|---|---|
+| F-02 `Sync::Commit#finalize` verify | 20 queries at n=5, **115 at n=100** | 16 at both |
+| F-34 `/v1/trash` | 5 / 9 / **29** at N=1/5/25 | flat **5** |
+| F-06+F-07 no-op S3 scan (500 dirs / 5000 files) | **503 queries, 286,349 objects, 0.179s** | **1 query, 79,832 objects, 0.011s** |
+| F-39 `manifest_chunks` 250k `insert_all` | 2725 ms (audit's PG figure, **not reproduced here**) | SQLite A/B **~11%, directional only** |
+| F-39 index bytes on the real 116 MB dev DB | — | **5,169,152 B freed, 4.44%**, 90% of it on the two hottest write paths |
+| F-39 the index that must be **KEPT** | `SEARCH nodes … (user_id=? AND rowid>?)` **0.0163 s** | without it **2.9766 s** — **183×**, for 0.21% of the DB |
+| F-61 boxes `_all_generators()` | 1.054 ms per request | **0.001 ms** |
+
+### The two findings that would have made things worse
+
+Worth recording separately, because in both cases the audit's *proposal* — not merely its evidence —
+was the defect, and only a probe could tell:
+
+- **F-66 would have replaced a weak guard with one that cannot fire.** `TemplateHygieneTest` catches
+  a real shipped bug (§14d: an ERB comment ends at its first `%>`, so one quoting a snippet prints
+  its own prose into the page, and no `assert_select` can see it — the defect is a TEXT NODE). Its
+  needles are 4/5 inert, which the audit found. Its proposed repair was to DERIVE the needles from
+  the rendered templates' own `<%#` bodies. That cannot work: ERB terminates at the first `%>`, so
+  the extracted body is exactly the text that got **consumed**, never the text that **leaks**.
+  Probed with Erubi against the canonical defect — `needle present? FALSE`. The proposal measured
+  "zero false positives at a 30-char floor", which is true and worthless: it is a property of a
+  needle set with zero true positives. What the assessment found instead is a leak neither the audit
+  nor the existing guard catches — a comment quoting TWO snippets, where the second opener swallows
+  the trailing delimiter, leaving a body with **no `<%` and no `%>` at all** — caught by a five-line
+  static `<%`/`%>` count balance (openers 3, closers 2) over all 59 templates, including the 16 no
+  request sweep will ever render.
+- **F-15's headline justification does not exist.** It rests on a claimed live divergence between the
+  port's `fi.name` and the catalog's `node.name`. All three adapters build `FileInfo#name` from
+  `node.name`, and `stat_all` reads the catalog rather than the store, so the two cannot disagree —
+  probed by renaming a file on disk under `LIBRARY_BACKEND=share` with the row left unreconciled.
+  The finding survives on narrower grounds it also states, chiefly that `kind` is spelled twice per
+  call site in `FilesController` with nothing coupling the two spellings.
+
+### What the audit got wrong, and how we know
+
+The audit was unusually well-evidenced, and its citations resolved literally — but working it
+surfaced errors that only probing could find:
+
+- **F-75's severity is FALSE and is annotated in place.** It claimed deleting one `Dockerfile` line
+  means "every render 500s in production". The extracted binary carries `DT_RUNPATH = $ORIGIN/../lib`,
+  the bundled libs carry `$ORIGIN`, and the dlopen'd Qt plugins `$ORIGIN/../../lib:$ORIGIN` — and
+  **`DT_RUNPATH` is not transitive**, so all three levels are required and all three are present. Two
+  real `docker buildx build` runs with that line deleted came back green, all six assertions passing.
+  **The audit reached that conclusion by its own dominant pattern, one level up**: its verification
+  harness built in the assumption that the raw binary dies without the variable. Reclassified Tier 3.
+- **F-50's stated consequence does not occur at all** — both drains push through the same
+  `ServerClient`, and `Sync::Commit` has a same-device exemption with a passing test. Code change
+  dropped; six comments stating the opposite of the code were fixed instead.
+- **F-24's narrowed fix would have had zero readers**, and the narrowing had carved away the half
+  carrying the real evidence.
+- **F-60's proposed `lru_cache(maxsize=1)` would have introduced a new invalid state** — remembering a
+  failed version probe for the worker's lifetime, widening the stale-cache window from one request to
+  one worker.
+- **F-04's proposed `object_attrs(etag:, last_modified:, size:)` would have refreshed `mtime`** from a
+  response that does not carry it — green against the fake, wrong against every real store. A fresh
+  instance of the very defect F-04/F-65 exist to fix, introduced by the fix for it.
+- **F-26's proposed `dependent: :destroy`** makes the audit's own required test unwritable and deletes
+  user data. Landed `:nullify`.
+- **F-71 has a FOURTH `rclone check` exit-0 case** the audit never names (`--size-only`), and its
+  proposed remedy would print "N/N verified by hash" over a run that hashed nothing.
+- **F-39 is eleven indexes, not nine**, and its migration is not reversible as written.
+- **F-17's proposed assertion is false today** (`> BASE_REVISION` fails for two formats that *are* the
+  base); **F-64's site count is 64, not 68**; **F-44's** validation list names three uncovered
+  controllers when only one is; **F-29's** hole is worse than stated (the dead blob 302s, so the user's
+  entire Files listing renders inside the Instructions iframe).
+- **§9.4, which the audit's preamble calls "the work plan", ranks only 51 of 84 findings.**
+
+### Corrections to the work itself, found by reviewers probing rather than reading
+
+The recurring one was **a comment asserting a mechanism that does not exist** — five instances, each
+corrected in place. The sharpest: F-02's slice header claimed a Postgres wire-protocol limit that
+ActiveRecord structurally prevents (it recompiles unprepared and inlines above `bind_params_length`;
+an unsliced 100_000-hash lookup succeeds as one ~6.8 MB statement).
+
+**Seven times a worker refused a mutation check the coordinator specified, with evidence, and was
+right.** Two are worth carrying into future work:
+- **Rails compiles an empty `IN` to a `1=0` contradiction and short-circuits before the adapter**, so
+  `where(id: [])` issues **zero** queries — and `to_sql` still renders the SQL, which is exactly what
+  makes the wrong answer look confirmed.
+- **`node:test` abandons a test at its first failed assertion** (probed with a flag set between two
+  failing assertions), as minitest does. **N assertions in one block prove that ONE of them carries
+  weight.** This now applies to both of the repo's test tiers.
+
+### New findings raised during the work, not in the audit
+
+- **N4 — `[nil].any?` is `false`.** `Sync::Commit.begin` accepts a manifest entry with no `hash` key
+  and persists `{"hash" => nil}`. `PendingCommitReaper`'s storage-age guard then calls
+  `store.last_modified(uid, nil)`, which raises `NoMethodError` on `LocalChunkStore` from a line
+  **outside** the `begin/rescue` — so `reap!` dies before `destroy_all` and `reap_all!` swallows it.
+  Probed: three consecutive hourly runs each returned 0, both a nil-hash row and a co-expired good row
+  survived all three, and `ChunkReaper.reap!` then returned `[]`. **The good object had already been
+  deleted from storage**, so the bytes are gone while the row protects a hash that no longer exists,
+  and both reapers report success at reaping nothing. Self-sustaining, silent, reachable by any
+  authenticated device on `STORAGE_BACKEND=local`. Fix is at the door, **not** `.compact` in the reaper.
+- **N1 — `Maker::Task#taskable_belongs_to_owner` failed open** on a type its `case` could not resolve.
+  Held shut only by an `inclusion` validation, so the edit that opened it was adding one string to a
+  constant 17 lines away.
+- **N3 — a pushed sidecar image could not name the build it came from**, and a SHA tag does not fix
+  that (no digest→tag reverse lookup; `kamal accessory details` is `docker ps`). An OCI label does.
+- **N2 — `{"bom": null}` was a real unrescued 500**, found by sweeping the siblings of a finding whose
+  own claim turned out to be false.
+
+### Still open from this arc
+
+- Tier 2/3 items still in flight at the time of writing: F-39, F-55, F-58, F-61, F-62, F-13b, D-01.
+- **33 of the audit's 84 findings are ranked nowhere in §9.4**, including F-45 (the web session's
+  Device identified by a magic string in a client-settable column, which feeds conflict suppression).
+- `scripts/r2-cutover/` is in the identical position to `ops/` — nothing in `bin/ci` can go red for any
+  line in it — and **CLAUDE.md §14i does not say so**.
+- `test/jobs/pending_commit_reaper_job_test.rb` still does not exist; the hourly job has no job-level
+  coverage while its weekly sibling does.
+- The G2 pooler probe still executes in **no CI leg at all** (no leg sets a Postgres `DATABASE_URL`).
+
+---
+
+## 2026-08-17: `CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot (branch `claude/chunk-endpoint-seaweedfs-ip`)
 
 One line of config, but the cause is worth recording because it will recur on any container this
 host runs.
@@ -3655,7 +3802,7 @@ in `secrets-common` makes `-d share` shell out for something a share container n
 
 **Why `bin/secrets-preflight` exists — kamal cannot notice an unreadable secret.** It expands
 `$(…)` through Ruby **backticks, which discard exit status**, so a locked vault yields `""` and
-`Kamal::Secrets#[]` returns that empty string **without raising**. Verified against kamal 2.11: a
+`Kamal::Secrets#[]` returns that empty string **without raising**. Verified against kamal 2.12.0: a
 deliberately-failing substitution parsed to `{"EMPTY" => ""}`, `key?` said false while `[]` said
 `""`, and kamal reads `[]`. A *missing* key raises; an *empty* one does not. That is the recorded
 failure where an empty `KAMAL_REGISTRY_PASSWORD` reached `docker login` and was reported as exit 0.
@@ -4461,8 +4608,12 @@ empty list and enqueues nothing.
 **A SCAN CANNOT HEAL THE BACKLOG, and that is not a gap in the fix — it is `unchanged?` working.**
 Those files now record their current hash, mtime and size, so the next pass skips them WITHOUT
 re-reading them, which is the behaviour that keeps a 2TB archive cheap. Hence
-`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`), modelled on
-`LbrnBackfill`: enqueue a thumbnail for every live file whose current `content_token` has no row.
+`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`): enqueue a thumbnail for
+every live file whose current `content_token` has no row. It was modelled on `LbrnBackfill`, which
+was **deleted on 2026-08-19** (audit F-14) — that template enqueued without repointing the row
+first, so the job compared the row to itself and stamped new-code bytes onto a row still claiming
+the old revision. Going through `Enqueue`, which writes both staleness axes before `perform_later`,
+is the part of the shape worth keeping.
 Backend-neutral through `stat_all` — the port's bulk read, DB-only on all three — and idempotent,
 since the rows it creates are what the next run finds. **Deliberately NOT the `unsupported`-row
 sweep still open below:** a row saying `unsupported` for the current content is present and terminal,
@@ -4763,9 +4914,14 @@ to `Mesh` since 2026-07-20 and `backfill_thumbnails` walks every renderable file
 so those rows almost certainly exist on all three deployed backends already. **Consequence: the
 feature reaches only content that arrives after the deploy; every CAD file already in a library keeps
 its static "unsupported" badge until its bytes change.** A one-off sweep clearing `unsupported` rows
-whose extension now has an available renderer is what closes it — `app/services/maker/previews/lbrn_backfill.rb`
-is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
-migration-shaped operation, not an audit fix) and left as an open item below.
+whose extension now has an available renderer is what closes it. **The `lbrn_backfill.rb` this
+paragraph used to name as the pattern was deleted on 2026-08-19 (audit F-14), and it was the WRONG
+pattern** — it enqueued straight to `GeneratePreviewJob.perform_later` without repointing the row
+first, so the job's `commit_if_current` compared the row against itself and stamped new-code bytes
+onto a row still claiming the old revision. Whoever writes this sweep should take the shape from
+`MissingBackfill` instead, and specifically must go through `Maker::Previews::Enqueue`, which
+writes both staleness axes before enqueueing. **Not done here** (it is a migration-shaped
+operation, not an audit fix) and left as an open item below.
 
 **The image cost — SETTLED BY THE DEPLOY, after two local tools disagreed 4x.** On the Unraid box,
 which is the only measurement that decides anything: **887 MB → 1.57 GB, +683 MB (+77 %)**. Per-layer
@@ -4848,7 +5004,8 @@ suite, in the same list, for the same reason.
 
 **So the deferral has to land somewhere, and this is it:**
 
-- `client/fs-provider` — **192 / 0**, 20 binaries, hermetic (no server). Re-measured this arc.
+- `client/fs-provider` — **203 / 0**, 20 binaries, hermetic (no server). (Was 192/0 when this
+  arc measured it; F-48 added `staging.rs`'s 8 unit tests and 3 deadlock arms on 2026-08-19.)
 - `client/sync-engine` `tests/integration.rs` — **NOT re-measured here**; it needs a running server
   and skips cleanly without one. Last recorded figure in this file is **19/0** (2026-06-14 entry).
   Treat that as dated, not current.
@@ -4866,8 +5023,13 @@ project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced ab
   Detailed in item 3 above. Nothing re-enqueues an `unsupported` row, so every `.obj`/`.step`/`.iges`
   already in a deployed library keeps its badge until its bytes change, and the shipped feature will
   read as broken to anyone looking at files they already had. The fix is a one-off sweep clearing
-  `unsupported` rows whose extension now resolves to an available renderer, modelled on
-  `app/services/maker/previews/lbrn_backfill.rb`. Deliberately not done in an audit-fix branch: it is
+  `unsupported` rows whose extension now resolves to an available renderer. **This bullet used to
+  say "modelled on `app/services/maker/previews/lbrn_backfill.rb`"; that file was deleted on
+  2026-08-19 (audit F-14) because the pattern itself was defective** — it enqueued without
+  repointing the row, so the job compared the row to itself and landed new-code bytes on a row
+  still claiming the old revision. Model it on `MissingBackfill`, and enqueue through
+  `Maker::Previews::Enqueue` rather than calling `GeneratePreviewJob.perform_later` directly.
+  Deliberately not done in an audit-fix branch: it is
   a data migration over deployed rows, and it wants its own verification against a real library.
 
 - **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —

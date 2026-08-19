@@ -151,6 +151,43 @@ module V1
         post "/v1/maker/previews", params: {}, as: :json, headers: auth(token)
         assert_response :bad_request
       end
+
+      # AN EXPLICIT `"kind": null` IS A CLIENT ERROR, AND THIS PINS THAT IT STAYS ONE.
+      #
+      # `attrs.fetch(:kind, "thumbnail")` defaults on an ABSENT key only, so a null reaches the
+      # model and the `kind` inclusion validation refuses it — 422 via `V1::BaseController`'s
+      # `rescue_from RecordInvalid`, zero rows. That is the right answer and is NOT a bug to be
+      # tidied into a default: coercing an explicit null is normalization, and this repo rejects
+      # rather than normalizes at every comparable seam (CLAUDE.md §14a's `key_for`, §14c's
+      # `validate_asset_path!`, the addon SDK's path-segment rule).
+      #
+      # The client that was sending nulls was `sync-client`'s `enqueue_preview`, whose inline
+      # `serde_json::json!` body had nowhere to hang `skip_serializing_if`; that was fixed on the
+      # SENDING end. This test exists so the next reader who finds the 422 does not "fix" it here
+      # instead — into a silent default, or into the 500 it would be without the rescue.
+      #
+      # NO ROWS, asserted separately from the status: a 422 rendered AFTER a save would look
+      # identical from the status line alone.
+      test "an explicit null kind is refused rather than defaulted" do
+        token = register
+        assert_no_difference -> { ::Maker::Preview.count } do
+          post "/v1/maker/previews",
+               params: { preview: { node_id: "n.svg", kind: nil } },
+               as: :json, headers: auth(token)
+        end
+        assert_response :unprocessable_entity
+        assert_match(/Kind/, JSON.parse(response.body)["error"])
+      end
+
+      # The absent-key half of the same line: omitting `kind` DOES get the documented default.
+      # Both arms are needed — a fix that defaulted the null would keep this one green.
+      test "an absent kind gets the thumbnail default" do
+        token = register
+        post "/v1/maker/previews", params: { preview: { node_id: "n.svg" } },
+             as: :json, headers: auth(token)
+        assert_response :created
+        assert_equal "thumbnail", JSON.parse(response.body)["kind"]
+      end
     end
   end
 end

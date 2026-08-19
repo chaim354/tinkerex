@@ -20,8 +20,6 @@
 # #destroy does. Deletes are versioned tombstones in chunk mode and moved bytes on share/s3 —
 # what "restore" MEANS differs, which is why the port answers it and this controller does not.
 class TrashController < ApplicationController
-  before_action :authenticate_user!
-
   include LibraryCapabilities
 
   # Deliberately the same shape as FilesController's, and the same argument: from the browser's

@@ -183,6 +183,55 @@ module FileLayerWritableContract
     end
   end
 
+  # A DIRECTORY OCCUPIES A NAME EXACTLY AS A FILE DOES, and this is the CROSS-KIND half of the
+  # test above rather than a repeat of it. The two adapters answer the same-kind case identically
+  # and diverged on this one, which is precisely the shape this module exists to catch: Share
+  # answers in ONE namespace (File.exist? is true for a directory), while S3 has two — a flat
+  # keyspace where a file is `<key>` and a directory is `<key>/`, plus the `nodes` catalog, whose
+  # only uniqueness rule is a KIND-AGNOSTIC partial unique index. Asking the bucket alone let all
+  # four verbs through to a raw ActiveRecord::RecordNotUnique — a 500, after the object had been
+  # written — and `move` reached it with the SOURCE ALREADY DELETED (§14a's copy -> delete ->
+  # orphaned-node landmine). Share passed this the day it was written; that is the mechanism
+  # working, not a reason to keep the test in one adapter's suite.
+  #
+  # THE CLASS IS WHAT THIS PINS, per the note above — plus the one backend-agnostic consequence
+  # that makes "refused" mean something: the source is still there afterwards. Where the bytes
+  # were NOT left (a stray marker, an undeleted source key) is storage layout and lives in the
+  # adapter's own suite.
+  def test_write_contract_a_directory_occupies_a_name_for_every_verb_that_writes
+    adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+    mover = adapter.write(@user, parent_node_id: nil, name: "mover.stl", io: StringIO.new("bytes"))
+
+    err = assert_raises(FileLayer::UnsupportedOperation, "write onto a directory's name") do
+      adapter.write(@user, parent_node_id: nil, name: "cad", io: StringIO.new("file over a folder"))
+    end
+    assert_match(/already exists/, err.message,
+                 "the same sentence the same-kind clobber gets — one condition, one answer")
+
+    # The kinds swapped: mkdir over a FILE's name is the same condition read the other way.
+    assert_raises(FileLayer::UnsupportedOperation, "mkdir over a file's name") do
+      adapter.mkdir(@user, parent_node_id: nil, name: "mover.stl")
+    end
+
+    assert_raises(FileLayer::UnsupportedOperation, "move onto a directory's name") do
+      adapter.move(@user, node_id: mover.node_id, new_parent_node_id: nil, new_name: "cad")
+    end
+    assert_equal "bytes", adapter.read(@user, node_id: mover.node_id),
+                 "a refused move must leave the source readable — it is copy-then-delete on S3"
+    assert_equal "mover.stl", @user.nodes.find_by!(node_id: mover.node_id).storage_path,
+                 "and the row must still name where the bytes actually are"
+
+    restorable = adapter.write(@user, parent_node_id: nil, name: "restore.stl", io: StringIO.new("r"))
+    adapter.delete(@user, node_id: restorable.node_id)
+    adapter.mkdir(@user, parent_node_id: nil, name: "restore.stl") # a folder takes the vacated name
+
+    assert_raises(FileLayer::UnsupportedOperation, "undelete into a directory's name") do
+      adapter.undelete(@user, node_id: restorable.node_id)
+    end
+    assert @user.nodes.find_by!(node_id: restorable.node_id).deleted,
+           "a refused undelete must leave the node trashed, not half-restored"
+  end
+
   # THE SKIP-LIST COUPLING, pinned for every writable backend. The observers skip OS clutter
   # (.DS_Store, ._*, __MACOSX/, macOS volume metadata) so it never becomes a node; the moment they
   # do, those names join `.trash`/`.maker-tmp-` as UNOBSERVABLE, so the write path must refuse them

@@ -81,9 +81,11 @@ module Web
       assert @user.maker_previews.exists?(node_id: node, kind: "thumbnail")
     end
 
-    # BOTH MAPS ON THIS PAGE, in one request: `@thumbs` for the attachment tiles and
-    # `@entry_thumbs` for the build-log photos are two separate `ThumbnailMap.for` calls, and
-    # a fix applied to one call site rather than to the class would cover only one of them.
+    # BOTH SURFACES ON THIS PAGE, in one request: the attachment tiles and the build-log photos.
+    # They were two separate `ThumbnailMap.for` calls until PageNodes merged them into `@page_thumbs`
+    # over the page's whole union — so this now proves the merged call still reaches BOTH sets of
+    # ids, where before it proved a fix had been applied to the class rather than to one call site.
+    # Either way the failure it catches is the same: a surface whose thumbnails never enqueue.
     test "projects#show enqueues missing thumbnails for attachments AND build-log photos" do
       project = @user.maker_projects.create!(name: "Bench")
       att = file!("ps-att", "jig.stl")

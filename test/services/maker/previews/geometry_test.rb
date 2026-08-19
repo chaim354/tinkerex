@@ -57,6 +57,38 @@ module Maker
                      "a change to the shared builder would leave its output stale forever"
       end
 
+      # `Geometry` OWNS PART OF EVERY FORMAT'S BYTES — simplify, diameter, job_box, the entry hash,
+      # PRECISION — so it carries a term in every format's revision instead of the prose reminder it
+      # used to carry. Enumerated from REVISIONED_BY, so a fifth format inherits this guard the day
+      # it is added rather than the day someone remembers to extend the list.
+      test "each format's geometry revision is the shared term plus its own" do
+        Geometry::REVISIONED_BY.each do |name|
+          mod = Maker::Previews.const_get(name)
+          assert_equal Geometry::SHARED_REVISION + mod::FORMAT_REVISION, mod::PAYLOAD_REVISION,
+                       "#{name}::PAYLOAD_REVISION must be Geometry::SHARED_REVISION + FORMAT_REVISION, " \
+                       "or a change to the shared builder stops invalidating this format"
+        end
+      end
+
+      # THE ABSOLUTE VALUES, AND THE RELATIONSHIP ABOVE IS NOT A SUBSTITUTE FOR THEM. A
+      # relationship-only pin is satisfied by seeding SHARED_REVISION at 1 and shifting all three
+      # totals — arithmetic that stays internally consistent while silently re-measuring every
+      # geometry payload in the library, on the one backend of three that holds real files. It also
+      # catches the residual the arithmetic cannot close: a shared change bumped into a format's own
+      # FORMAT_REVISION still moves that format's total, and lands here.
+      #
+      # FIVE NAMES, NOT THREE: .lbrn and .mage both route to LbrnGeometry, so a three-name check
+      # cannot see a delegation regression.
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 4, "a.lbrn" => 4, "a.mage" => 4, "a.dxf" => 1, "a.svg" => 1 }.freeze
+
+      test "introducing the shared term left every format's stored payloads valid" do
+        GEOMETRY_REVISIONS.each do |filename, expected|
+          assert_equal expected, Enqueue.revision_for_name(filename, "geometry"),
+                       "#{filename} changed geometry revision — every stored payload of that format " \
+                       "re-renders. Confirm that is intended before updating this number."
+        end
+      end
+
       test "each measurable renderer versions its geometry independently of its thumbnail" do
         MEASURABLE_FIXTURES.each_key do |ext|
           renderer = Registry.for(ext)

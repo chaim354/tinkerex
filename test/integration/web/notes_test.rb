@@ -16,6 +16,22 @@ module Web
       user
     end
 
+    # NotesController had no refusal assertion of its own — roughly seven of the sixteen
+    # session-authed controllers did, never as a completeness check (CLAUDE.md §14d). The
+    # completeness half now lives in architecture_invariants_test.rb, which reads the callback
+    # chain; this is the request that proves the chain actually turns an anonymous visitor away.
+    #
+    # A POST rather than a GET because NotesController routes no GET at all, and it is the
+    # stronger assertion for it: the redirect proves the action never ran. Without the callback
+    # `current_user` is nil and `current_user.nodes` raises, so the count alone would not tell a
+    # refused write from a crashed one — the 302 is what carries the weight.
+    test "creating a note requires a session" do
+      assert_no_difference "Maker::Note.count" do
+        post file_notes_path("f-1"), params: { note: { body: "anonymous" } }
+      end
+      assert_redirected_to new_user_session_path
+    end
+
     test "create a note on a file the user owns (HTML)" do
       user = sign_in
       user.nodes.create!(node_id: "f-1", name: "part.stl", kind: "file")

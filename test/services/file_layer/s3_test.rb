@@ -394,6 +394,159 @@ module FileLayer
       FileLayer.const_set(:MAX_BYTES, original)
     end
 
+    # ------------------------------------------------------------------------------------------
+    # CROSS-KIND OCCUPANCY — a directory occupying a file's name, and the reverse.
+    #
+    # The write contract pins the CLASS for all four verbs on both writable backends. These pin
+    # the half only this backend can show: WHICH namespace answered, and what was left in the
+    # bucket when the answer was "no".
+    #
+    # THE DIRECTORY IN MOST OF THESE HAS NO MARKER OBJECT, deliberately. A dir this adapter's own
+    # mkdir created carries `<key>/`, which the bucket half of destination_vacant! sees unaided; a
+    # dir the SCAN synthesized from a bare prefix (Library::S3Observer#dir_chain — an ordinary
+    # bucket the user already had, which is this backend's whole premise) carries nothing at all,
+    # and the CATALOG is the only namespace that knows it is there. Build these with mkdir instead
+    # and the node half could be deleted with every one of them still green.
+    def scan_derived_dir!(rel)
+      @fake.seed!("#{PREFIX}/#{rel}/keeper.stl", "k", last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+      @user.nodes.present.find_by!(storage_path: rel, kind: "dir")
+    end
+
+    test "write over a scan-derived directory's name refuses rather than 500ing, and writes nothing" do
+      scan_derived_dir!("cad")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.write(@user, parent_node_id: nil, name: "cad", io: StringIO.new("file over a folder"))
+      end
+      assert_match(/already exists/, err.message)
+      assert_nil @fake.objects["#{PREFIX}/cad"],
+                 "an exact-key HEAD reads `cad` as vacant, so the object landed and only the row raised"
+      assert_equal "k", @fake.objects["#{PREFIX}/cad/keeper.stl"].body, "the folder's contents are untouched"
+    end
+
+    test "mkdir over a file's name refuses rather than 500ing, and leaves no stray marker" do
+      create_file!(name: "report", bytes: "r") # no extension — an ordinary object and a plausible folder name
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.mkdir(@user, parent_node_id: nil, name: "report")
+      end
+      assert_match(/already exists/, err.message)
+      assert_nil @fake.objects["#{PREFIX}/report/"], "no dir marker may be minted beside the file"
+      assert_equal "r", @fake.objects["#{PREFIX}/report"].body
+    end
+
+    test "a move onto a scan-derived directory's name is refused, not answered with a 500" do
+      scan_derived_dir!("cad")
+      id = create_file!(name: "a.stl", bytes: "solid")
+
+      assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "cad")
+      end
+    end
+
+    # THE SECOND HALF OF THE SAME REFUSAL, IN ITS OWN TEST AND SWALLOWING THE CLASS ON PURPOSE.
+    # Asserting both in one method proves only the first: assert_raises fails and aborts before the
+    # bucket is ever looked at, so a "refusal" that had already copied and DELETED THE SOURCE would
+    # read exactly like a clean one (§15 — prove each assertion carries weight). This is the verb
+    # where that matters: move is copy-then-delete here, so everything the row write raises over
+    # has already happened to the bytes. §14a's copy -> delete -> orphan landmine.
+    test "a refused move onto a directory's name leaves the source key where the row says it is" do
+      scan_derived_dir!("cad")
+      id = create_file!(name: "a.stl", bytes: "solid")
+
+      begin
+        adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "cad")
+      rescue StandardError # deliberate: the CLASS belongs to the test above, the BYTES to this one
+        nil
+      end
+
+      assert_equal "solid", @fake.objects["#{PREFIX}/a.stl"]&.body,
+                   "the source object must still be there — a refusal that got as far as the copy deleted it"
+      assert_equal "a.stl", @user.nodes.find_by!(node_id: id).storage_path,
+                   "and the row must still name the key the bytes are actually at"
+      assert_nil @fake.objects["#{PREFIX}/cad"], "nothing may have landed at the folder's own name"
+    end
+
+    test "undelete into a name a folder has taken refuses, keeping the trashed bytes in the trash" do
+      id = create_file!(name: "bracket.stl", bytes: "solid")
+      adapter.delete(@user, node_id: id)
+      # Someone made a FOLDER of that name on the other side and the scan indexed it — a bare
+      # prefix, so there is no marker object for a HEAD to find.
+      @fake.seed!("#{PREFIX}/bracket.stl/inner.stl", "i", last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+
+      assert_raises(FileLayer::UnsupportedOperation) { adapter.undelete(@user, node_id: id) }
+      assert_equal "solid", @fake.objects["#{PREFIX}/.trash/#{id}/bracket.stl"]&.body,
+                   "the trashed bytes stay in the trash — a refusal after the copy strands them at both keys"
+      assert_nil @fake.objects["#{PREFIX}/bracket.stl"], "and nothing may have landed at the taken name"
+      assert @user.nodes.find_by!(node_id: id).deleted, "the node stays trashed, not half-restored"
+    end
+
+    # `replace: true` IS AN APPROVED OVERWRITE OF A FILE, AND A DIRECTORY IS NOT ONE. The opt-in
+    # waives the clobber refusal for the file a user was shown and confirmed; replacing a folder
+    # with a file is not that, and `existing` is looked up `kind: "file"` — so before this it fell
+    # through to create! and the kind-agnostic unique index, i.e. a 500 with the object written.
+    test "replace: true replaces the FILE at a name and never the DIRECTORY at one" do
+      scan_derived_dir!("cad")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.write(@user, parent_node_id: nil, name: "cad", io: StringIO.new("x"), replace: true)
+      end
+      assert_match(/already exists/, err.message)
+      assert_nil @fake.objects["#{PREFIX}/cad"]
+      assert_equal 1, @user.nodes.present.where(storage_path: "cad").count
+      assert_equal "dir", @user.nodes.present.find_by!(storage_path: "cad").kind, "still the folder"
+    end
+
+    # A SCAN TOMBSTONE IS NOT AN OCCUPANT, and this is the whole reason destination_vacant!'s node
+    # lookup is `.present` and not a bare `user.nodes`. §14a's two tombstone kinds: a SCAN tombstone
+    # KEEPS its storage_path — that is what lets a file that comes back revive with the same
+    # node_id, and every attachment with it — while the unique index ignores it (WHERE deleted =
+    # false). Ask unscoped and every re-upload over a file the scan tombstoned is refused with
+    # "already exists" about a file that is not there: the ordinary repair after someone removes
+    # something on the NAS side and puts it back through the app, broken on every write in the
+    # library. It is the failure this fix is one line away from at all times.
+    test "a path a SCAN tombstoned is vacant again — both write and mkdir may take it" do
+      gone = create_file!(name: "gone.stl", bytes: "b")
+      folder = create_file!(name: "folder-to-be", bytes: "b")
+      delete_file!(gone)   # the object left the bucket; the scan tombstoned the node
+      delete_file!(folder)
+      assert_equal "gone.stl", @user.nodes.find_by!(node_id: gone).storage_path,
+                   "the precondition — a scan tombstone keeps its path, unlike a trash tombstone"
+
+      adapter.write(@user, parent_node_id: nil, name: "gone.stl", io: StringIO.new("back"))
+      assert_equal "back", @fake.objects["#{PREFIX}/gone.stl"].body
+
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "folder-to-be")
+      assert_equal "dir", @user.nodes.find_by!(node_id: info.node_id).kind
+    end
+
+    # THE BUCKET HALF, WHICH THE CATALOG CANNOT ANSWER: a dir marker the S3 console minted, in a
+    # bucket nothing has scanned yet. No node exists, so the node half reads vacant; writing a file
+    # at that exact key would leave `cad` and `cad/` side by side, which the next scan sees as a
+    # file observation AND a dir observation for one rel_path.
+    test "an unindexed dir marker occupies a file's name too" do
+      @fake.seed!("#{PREFIX}/cad/", "", last_modified: Time.now)
+
+      assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.write(@user, parent_node_id: nil, name: "cad", io: StringIO.new("x"))
+      end
+      assert_nil @fake.objects["#{PREFIX}/cad"]
+    end
+
+    # ...AND THE SAME MARKER IS NOT A COLLISION FOR MKDIR, which is what `kind:` is for. Same kind,
+    # so this is the idempotent case one layer down from mkdir's own short-circuit (which asks the
+    # catalog, and the catalog has never heard of this folder). Refusing here would make creating a
+    # folder over an existing, unscanned bucket prefix impossible — the on-ramp this backend is for.
+    test "mkdir over an unindexed dir marker creates the folder rather than refusing itself" do
+      @fake.seed!("#{PREFIX}/cad/", "", last_modified: Time.now)
+
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+      assert_equal "dir", @user.nodes.find_by!(node_id: info.node_id).kind
+      assert_equal "cad", @user.nodes.find_by!(node_id: info.node_id).storage_path
+    end
+
     test "stat reports the identity as the content token" do
       id = create_file!(name: "a.stl", bytes: "hello")
       info = adapter.stat(@user, node_id: id)
@@ -804,6 +957,174 @@ module FileLayer
                                  copy_source: "b/plus/Bracket+Mount.stl")
       end
       assert_nil @fake.objects["plus/bad.stl"], "nothing may be written by a copy that must fail"
+    end
+
+    # --- a copy re-tags, and the row must follow it ----------------------------------------
+
+    # F-65. THE FAKE'S OWN CONTRACT, asserted directly, because everything below it rests on the
+    # fake disagreeing with the code where a real store disagrees with it.
+    #
+    # `Obj` has five fields and `do_copy` used to re-derive exactly one of them (last_modified,
+    # itself forced by a bug of this shape — see trash_purge_job_test.rb). `etag` was inherited,
+    # which is verbatim the adapter's own unstated assumption, so a `move` leaving `content_hash`
+    # stale and a `move` refreshing it produced IDENTICAL suite results. A fake that shares the
+    # code's misunderstanding confirms it (CLAUDE.md §14e).
+    #
+    # This test does not go through the adapter on purpose: the property belongs to the fake, and
+    # every test below it would go green again if this rule were reverted, so this is the one that
+    # has to name it. Reverting do_copy to `{ etag: o.etag }` turns THIS red.
+    test "FakeS3: a copy mints its ETag from its own bytes — a seeded override does not survive" do
+      body = "multipart-uploaded bytes"
+      @fake.seed!("src.stl", body, etag: "#{'a' * 32}-7") # what a real multipart upload carries
+
+      res = @fake.client.copy_object(bucket: "b", key: "dst.stl", copy_source: "b/src.stl")
+
+      expected = %Q("#{Digest::MD5.hexdigest(body)}")
+      assert_equal expected, res.copy_object_result.etag,
+                   "the RESPONSE carries the copy's ETag — that value is what #move stores"
+      assert_equal expected, @fake.objects["dst.stl"].etag,
+                   "and the stored object must agree with what the response claimed"
+      assert_equal %Q("#{'a' * 32}-7"), @fake.objects["src.stl"].etag,
+                   "the SOURCE is untouched: only the copy is re-tagged"
+    end
+
+    # F-04's three cases below all install this rather than leaning on the fixed do_copy above, and
+    # the independence is the whole point: if they relied on the fake to produce the re-tag, then
+    # reverting do_copy would make them pass vacuously — the false green this pair exists to end.
+    # So the re-tag is forced here, by a value the bytes could never produce.
+    #
+    # It HONORS copy_source_if_match, which is the assertion's entire mechanism: a stub that
+    # ignored the precondition would let a stale content_hash through and every test below would
+    # pass with the fix reverted.
+    def retag_copies!(new_etag)
+      @fake.client.stub_responses(:copy_object, lambda { |ctx|
+        src = URI::DEFAULT_PARSER.unescape(ctx.params[:copy_source].to_s.split("/", 2).last)
+        o = @fake.objects[src] or return "NoSuchKey"
+        return "PreconditionFailed" if (m = ctx.params[:copy_source_if_match]) && m != o.etag
+
+        @fake.objects[ctx.params[:key]] =
+          o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
+        { copy_object_result: { etag: new_etag } }
+      })
+    end
+
+    # F-04. THE ORDINARY UI SEQUENCE — move a file, then delete it — against the object population
+    # this backend exists to serve. A store re-tags a copy whenever the source ETag was not
+    # md5(bytes): a multipart-origin object (rung 3) or an SSE-KMS one (which wears a 32-hex ETag
+    # and is therefore misfiled onto rung 2). Leave content_hash naming the SOURCE's ETag and the
+    # next copy_source_if_match names an ETag no object has: PreconditionFailed -> FetchError ->
+    # 503 "try again", until Library::ScanJob's next pass repairs the row.
+    #
+    # Drop `content_hash:` from #move's node.update! and this is the test that dies.
+    test "move refreshes the row's identity from the copy, so the next delete still matches" do
+      id = create_file!(name: "moved.stl", bytes: "bracket")
+      retag_copies!('"7b1f0c9e"') # the destination is not what the source was
+
+      adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "renamed.stl")
+
+      # THE USER-VISIBLE SYMPTOM FIRST: a stale precondition raises FetchError here, which the web
+      # layer renders as a 503 "try again" on the file they just moved, for up to fifteen minutes.
+      # (`delete` writes only `deleted`/`storage_path`, so the identity assertion below still reads
+      # what `move` left.)
+      assert_nothing_raised { adapter.delete(@user, node_id: id) }
+      assert @user.nodes.find_by!(node_id: id).deleted
+      assert_equal "etag:7b1f0c9e", @user.nodes.find_by!(node_id: id).content_hash,
+                   "the row must name the ETag the BUCKET now has, through ObjectIdentity"
+    end
+
+    # F-04, the second half — and it fails INDEPENDENTLY of the first: restored_stat already holds
+    # the HEAD that carries `.etag` and dropped it, while its own comment says its purpose is "so
+    # the next scan skips it" and Reconciler#unchanged? tests content_hash FIRST.
+    test "undelete refreshes the row's identity from its HEAD, so the next delete still matches" do
+      id = create_file!(name: "restored.stl", bytes: "lamp")
+      retag_copies!('"3c4d5e6f"')
+
+      adapter.delete(@user, node_id: id)
+      adapter.undelete(@user, node_id: id)
+
+      # A restored file must not be undeletable — same 503, one verb over.
+      assert_nothing_raised { adapter.delete(@user, node_id: id) }
+      assert_equal "etag:3c4d5e6f", @user.nodes.find_by!(node_id: id).content_hash
+    end
+
+    # THE GUARD, and why it is a presence test rather than a rescue. ObjectIdentity.for RAISES
+    # ArgumentError on a blank ETag (deliberately: the ladder must be total, and a nil identity
+    # means Reconciler#plan_moves drops the object and never indexes it at all). ArgumentError is
+    # not an Aws ServiceError, so #move's rescue would not catch it — and by the line that would
+    # raise, delete_object has ALREADY removed the source.
+    #
+    # SO THE RAISE IS CAUGHT BY HAND RATHER THAN BY assert_nothing_raised, and "the source is gone"
+    # is asserted FIRST and unconditionally. That ordering is the evidence: under the mutation both
+    # facts have to be visible at once — the store answered nothing, the source key is already
+    # deleted, and an unguarded refresh blows up there — or the test proves only that something
+    # raised somewhere, which says nothing about whether the guard sits where it matters.
+    # A raise in that window leaves the bytes only at the new key with the row still naming the
+    # old one: §14a's orphaning landmine, reached by a store merely being unhelpful.
+    #
+    # Make the refresh unconditional and this goes red with ArgumentError.
+    test "a copy that reports no ETag leaves the previous identity in place rather than raising" do
+      id = create_file!(name: "quiet.stl", bytes: "hush")
+      before = @user.nodes.find_by!(node_id: id).content_hash
+      retag_copies!("") # a store that answers a copy with no ETag at all
+
+      raised = nil
+      begin
+        adapter.move(@user, node_id: id, new_name: "quieter.stl")
+      rescue StandardError => e
+        raised = e
+      end
+
+      assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
+                 "the source is already deleted by the line that derives the new identity"
+      assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
+
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
+      assert_equal before, node.content_hash,
+                   "keep the previous value — NEVER nil, which un-indexes the object"
+    end
+
+    # THE SAME GUARD, ONE VERB OVER — and it went in unmutated. Removing `if head.etag.present?`
+    # from #restored_stat ALONE left all 286 tests green, so nothing had ever shown that half to
+    # work (CLAUDE.md §15: a guard that has never failed has not been shown to work).
+    #
+    # ITS FAILURE MODE IS WORSE THAN #move'S, which is why it earns its own test rather than an
+    # argument-by-symmetry. #restored_stat's own rescue lists ServiceError/NetworkingError only, so
+    # an ArgumentError from the refresh escapes it AND escapes into #undelete's caller — after the
+    # copy has landed and BEFORE `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH
+    # keys, the node still tombstoned, and the trash copy never swept: the user's file is restored
+    # in the bucket and still in the Trash in the app, and the next undelete hits the
+    # "occupied — undelete must not clobber" refusal against a copy of itself.
+    #
+    # Make the refresh unconditional and this goes red with ArgumentError.
+    test "a HEAD that reports no ETag leaves the restore complete rather than raising" do
+      id = create_file!(name: "quietly-restored.stl", bytes: "shade")
+      before = @user.nodes.find_by!(node_id: id).content_hash
+      adapter.delete(@user, node_id: id)
+
+      # Blank the ETag on HEAD only, delegating everything else to the fake — object_exists? asks
+      # this same verb and must keep answering truthfully, or the test passes for the wrong reason.
+      @fake.client.stub_responses(:head_object, lambda { |ctx|
+        o = @fake.objects[ctx.params[:key]] or return "NotFound"
+        { content_length: o.body.bytesize, etag: "", last_modified: o.last_modified }
+      })
+
+      raised = nil
+      begin
+        adapter.undelete(@user, node_id: id)
+      rescue StandardError => e
+        raised = e
+      end
+
+      # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the raise
+      # so the test cannot pass by proving merely that something raised somewhere.
+      node = @user.nodes.find_by!(node_id: id)
+      assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+      assert_not node.deleted, "the node must be live again, not stranded mid-restore"
+      assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+
+      assert_equal before, node.content_hash,
+                   "keep the previous value — NEVER nil, which un-indexes the object"
     end
 
     # --- the 5GB copy cap -----------------------------------------------------------------

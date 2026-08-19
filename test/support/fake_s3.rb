@@ -180,8 +180,29 @@ class FakeS3
     # store IS the delete time. Inherit it and a two-year-old file deleted today is born aged, and a
     # 30-day window purges it the same day, inside the window the operator configured, with no
     # version to restore. The bytes are the ETag's; the timestamp is the copy's.
-    @objects[ctx.params[:key]] = o.dup.tap { |c| c.last_modified = Time.now }
-    { copy_object_result: { etag: o.etag } }
+    #
+    # AND A COPY MINTS ITS OWN ETAG FROM ITS OWN BYTES, which is the SAME LESSON one field over
+    # and was left inherited when last_modified was fixed. `seed!`/`do_put` derive the ETag as the
+    # md5 of the body; only `do_copy` inherited it -- two contradictory rules for one field, and
+    # the inherited one happened to be the adapter's own unstated assumption, so neither the bug
+    # nor its fix was observable (`FileLayer::S3#move` leaving `content_hash` stale read exactly
+    # like fixing it). That is the CGI.escape shape again, on the third of these five fields.
+    # Real S3 re-tags a copy whenever the source ETag is not md5(bytes) -- multipart-origin and
+    # SSE-KMS objects, which is precisely the population this backend exists to serve. A seeded
+    # `etag:` override models such a source; it must NOT survive the copy, because on a real store
+    # it does not.
+    #
+    # `checksum_sha256`/`checksum_type` are STILL inherited, deliberately and not by oversight: no
+    # production path mints a `sha256:` identity today (LIBRARY_S3_HEAD_FOR_CHECKSUM is not
+    # implemented — see seed!'s note above), and no seed! call in the suite passes either field, so
+    # changing them here would be unobservable in both directions. Two fields re-derived, two
+    # inherited on an argument, and this comment is the argument.
+    copy = o.dup.tap do |c|
+      c.last_modified = Time.now
+      c.etag = %Q("#{Digest::MD5.hexdigest(o.body)}")
+    end
+    @objects[ctx.params[:key]] = copy
+    { copy_object_result: { etag: copy.etag } }
   end
 
   # Pagination is REAL here, at 2 keys a page: a fake that returns everything in one page

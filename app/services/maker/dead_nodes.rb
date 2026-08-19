@@ -1,8 +1,8 @@
 module Maker
   # WHEN A MAKER-LAYER ROW POINTING AT A NODE MAY BE DESTROYED. One definition, shared by
   # `Maker::Previews::DeadNodeReaper` (thumbnails) and `Maker::AttachmentReaper` (project/model
-  # attachments and project covers), because they ask exactly the same question about exactly the
-  # same `nodes` rows and a second copy would answer it differently the first time either changed.
+  # attachments and their chosen covers), because they ask exactly the same question about exactly
+  # the same `nodes` rows and a second copy would answer it differently the first time either changed.
   #
   # THE WHOLE DESIGN QUESTION IS REVIVABILITY, and the two cases genuinely differ:
   #

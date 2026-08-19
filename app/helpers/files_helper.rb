@@ -17,6 +17,52 @@ module FilesHelper
     end
   end
 
+  # THE RIGHT-CLICK MENU'S WIRE CONTRACT, BUILT ONCE. `filemenu_controller.js` never assembles a URL
+  # — it reads these attributes and nothing else — so this hash IS the menu, and a surface that
+  # spells it out itself is a surface free to lose an entry silently. That already happened: the
+  # menu worked on the Files list while the grid's cards carried no download-url, invisible to a
+  # browser test that only ever visits one of them (file_menu_wiring_test.rb's own header records
+  # it). The keys are read POSITIONALLY, so representable-but-broken combinations exist —
+  # `#open` returns early on a missing `noteUrl`, which makes a Download entry with no menu to put
+  # it in.
+  #
+  # `origin` IS AN ARGUMENT, NOT `@addon_origins`. The three Files-page cells and the project
+  # attachment tiles read the same ivar today, but the models page and the project/model cards do
+  # not have one — taking it as a parameter is what lets those adopt this without the coupling.
+  # A nil origin must yield NIL and not `""`: `tag.a(data: {x: ""})` renders `data-x=""`, and the
+  # existing net matches on ATTRIBUTE PRESENCE (`css_select("[data-addon-open-url]")`), so a blank
+  # would be counted as a live cell and break the tests that watch this. (It would not, as an
+  # earlier note claimed, "produce a menu entry with no href" — `""` is falsy and every consumer is
+  # truthiness-guarded, so it produces no entry at all. The reason to keep nil is the test net.)
+  #
+  # NOT A SHARED `_file_cell` PARTIAL: the four `link_to` block bodies genuinely differ, and only
+  # the data hash is the identical part.
+  def file_menu_data(node_id, origin)
+    { action: "contextmenu->filemenu#open",
+      note_url: file_notes_path(node_id),
+      download_url: blob_file_path(node_id, download: 1),
+      addon_open_url: origin&.dig(:url),
+      addon_open_label: origin&.dig(:label) }
+  end
+
+  # THE POLL CELL'S HALF — what `thumbs_controller.js` reads (`dataset.nodeId`; a cell without one
+  # sends `ids=undefined`). Separate from the menu because they are not co-extensive: a folder gets
+  # NEITHER, a non-renderable file gets the menu and no cell, and four surfaces outside this file's
+  # boundary get the cell and no menu.
+  #
+  # THOSE FOUR ARE THE ADOPTERS, NOT OVERSIGHTS — `projects/_log_entry.html.erb`,
+  # `projects/_card.html.erb`, `models/_card.html.erb` and `models/_hero_poster.html.erb` write this
+  # payload as RAW HTML ATTRIBUTES today, and none of them is covered by the presence sweeps in
+  # file_menu_wiring_test.rb / addon_origin_surfaces_test.rb. They are deliberately left alone here
+  # (F-30's stated boundary) and are the reason this builder exists as a separate one at all.
+  #
+  # `ext_label` IS AN ARGUMENT AND MUST NOT BE DERIVED FROM THE NAME: `_hero_poster` passes `""` and
+  # `_log_entry` passes `"IMG"`, neither of which is any file's extension. Deriving it would break
+  # both, and would put a second copy of the extension vocabulary here besides (§14d).
+  def thumb_cell_data(node_id, ext_label)
+    { thumbs_target: "cell", node_id:, ext: ext_label }
+  end
+
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY
   # (FilesController#sort_key's "type" branch): the file's extension, or "Symlink" for a symlink.
   # This column used to be headed "Kind" and render `node.kind`, which is the word "file" on every

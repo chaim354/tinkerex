@@ -4,8 +4,6 @@
 # creates folders through the one cross-backend seam, Maker::LibraryFolder. No bytes flow through
 # here — metadata reads and dir-node creates only (§15).
 class LibraryBrowseController < ApplicationController
-  before_action :authenticate_user!
-
   # GET /library/children?parent=<node_id>&files=0|1 -> one folder's children as JSON:
   #   { parent: <id|null>, crumbs: [{node_id,name}…], entries: [{node_id,name,kind}…] }
   # A blank/foreign/stale `parent` resolves to the library root (never another user's tree) — the

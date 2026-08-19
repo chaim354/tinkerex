@@ -296,9 +296,13 @@ module FileLayer
         # What this stops is the ORDINARY case — a user re-uploading a name that is already there
         # — which is the case that actually destroys data. It does not claim atomicity.
         #
-        # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant"
-        # and clobber: object_exists? lets those through to the rescue below. Fail safe.
-        raise UnsupportedOperation, "#{rel.inspect} already exists" if !replace && object_exists?(key)
+        # AND IT ASKS BOTH NAMESPACES, because this backend has two. An exact-key HEAD cannot see
+        # a DIR node holding this same rel (its marker is `<key>/`), and the index that actually
+        # refuses the row is kind-agnostic — so the bucket question alone let a file written over
+        # a folder's name reach a raw RecordNotUnique with the object already put. `replace:`
+        # waives only the file it was told about; destination_vacant! carries the whole argument,
+        # including the fail-safe rule for a HEAD that fails for some OTHER reason.
+        destination_vacant!(user, rel, key, kind: "file", replace:)
 
         put = @client.put_object(bucket: @bucket, key:, body: bytes)
         # The ONLY source of the object's mtime. put_object's response carries no last_modified
@@ -354,8 +358,15 @@ module FileLayer
       existing = user.nodes.present.find_by(kind: "dir", storage_path: rel)
       return stat(user, node_id: existing.node_id) if existing
 
-      marker = "#{key_for_rel(rel)}/"
+      key = key_for_rel(rel)
+      marker = "#{key}/"
       begin
+        # STRICTLY AFTER the idempotence short-circuit above, never before it: a repeat mkdir must
+        # keep returning the same dir node rather than start refusing itself. What is left for this
+        # to catch is the CROSS-KIND case — a live FILE node, or a file object, at this exact rel —
+        # which this verb asked nothing about at all until now (it looked up `kind: "dir"` only)
+        # and answered with a raw RecordNotUnique plus a stray marker.
+        destination_vacant!(user, rel, key, kind: "dir")
         @client.put_object(bucket: @bucket, key: marker, body: "")
         head = @client.head_object(bucket: @bucket, key: marker)
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
@@ -472,15 +483,56 @@ module FileLayer
         # be clobbered. What this stops is the ORDINARY case — a user moving onto a name that is
         # already there. It does not claim an atomicity S3 does not offer. (write's clobber check
         # makes the identical argument; the port cannot tolerate the two diverging on it.)
-        raise UnsupportedOperation, "#{rel.inspect} already exists" if object_exists?(dest_key)
+        #
+        # BOTH NAMESPACES (see destination_vacant!). This verb is where the bucket-only question
+        # was worst: the HEAD passed over a dir node's rel, the copy ran, the SOURCE WAS DELETED,
+        # and `node.update!` below then raised RecordNotUnique — bytes moved, row still naming a
+        # key that no longer exists. §14a's copy -> delete -> orphan landmine, in the ordinary UI.
+        destination_vacant!(user, rel, dest_key, kind: "file")
 
-        copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
+        copied = copy!(src_key, dest_key, if_match: etag_precondition(node.content_hash))
         @client.delete_object(bucket: @bucket, key: src_key)
       rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError => e
         raise FetchError, "#{node_id.inspect}: #{e.class} (#{e.message})"
       end
 
-      node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+      # THE COPY'S ETAG, NOT THE SOURCE'S — and this refresh is what keeps the row's identity one
+      # a real bucket agrees with. A store re-tags a copy whenever the source ETag was not
+      # md5(bytes): multipart-origin objects (rung 3, `etag:`) and SSE-KMS objects (which wear a
+      # 32-hex ETag and are therefore misfiled on rung 2). Leave content_hash naming the SOURCE's
+      # ETag and it names an ETag no object has, so the NEXT delete or move sends it as
+      # copy_source_if_match, gets PreconditionFailed, and answers FetchError -> 503 "try again"
+      # until Library::ScanJob's 15-minute pass repairs the row. Single-part unencrypted objects
+      # re-derive the same md5 and are unaffected — which is exactly why this stayed invisible.
+      #
+      # FROM THE RESPONSE WE ALREADY HOLD. Never a HEAD afterwards: that is a billed request for a
+      # value copy_object handed us, and #etag_precondition's own note already refuses the
+      # HEAD-for-the-current-ETag move.
+      #
+      # ACCEPTED CONSEQUENCE, on a re-tagging store only: content_hash IS content_token
+      # (see #file_info), so a moved object gets a new token and re-renders its thumbnail once even
+      # though its bytes did not change. The scan produced exactly that re-render 15 minutes later
+      # anyway — this only moves it earlier, and it is the price of the row being true NOW.
+      #
+      # PRESENCE-GUARDED, and the guard is load-bearing rather than defensive. ObjectIdentity.for
+      # RAISES ArgumentError on a blank ETag (deliberately — see its normalize_etag), ArgumentError
+      # is NOT a ServiceError so the rescue above would not catch it, and by this line
+      # delete_object has ALREADY removed the source. An unguarded call against a store that
+      # answers no ETag would raise with the bytes only at the new key and the row still naming the
+      # old one — the orphaning landmine, from a store being merely unhelpful. Absent an ETag we
+      # keep the PREVIOUS value (never nil: Reconciler#plan_moves DROPS a nil-hash observation, so
+      # the object would never be indexed at all) and let the scan correct it.
+      #
+      # mtime is deliberately NOT refreshed here. copy_object's response carries no last_modified,
+      # and the fake returns none either — so a "refresh" of it would be reading nil through
+      # nanos() and would be green against the fake and wrong against every real store, which is
+      # the exact defect this change exists to close. The header above already records that the
+      # scan owns a moved object's mtime.
+      attrs = { storage_path: rel, name: new_name, parent_node_id: new_parent_node_id }
+      copied_etag = copied&.copy_object_result&.etag
+      attrs[:content_hash] = ObjectIdentity.for(etag: copied_etag) if copied_etag.present?
+
+      node.update!(**attrs)
       stat(user, node_id: node.node_id)
     end
 
@@ -536,9 +588,12 @@ module FileLayer
           raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
         end
 
-        if object_exists?(dest_key)
-          raise UnsupportedOperation, "#{rel.inspect} is occupied — undelete must not clobber"
-        end
+        # BOTH NAMESPACES (see destination_vacant!), and the same sentence the other three verbs
+        # answer with. It used to have its own ("is occupied — undelete must not clobber"), which
+        # is one condition wearing two answers inside one adapter — the thing §14a forbids — and
+        # its bucket-only half let a restore onto a folder's name copy the bytes back, raise
+        # RecordNotUnique on the revive, and leave the object stray with the trash copy still held.
+        destination_vacant!(user, rel, dest_key, kind: "file")
 
         # No if_match: the trashed bytes are ours, written by our own delete, and their identity is
         # not what node.content_hash records (that is the identity of the object at its ORIGINAL
@@ -757,14 +812,30 @@ module FileLayer
             "delete and move are copy-then-delete here. Refusing rather than half-deleting it."
     end
 
-    # The restored object's own size/mtime, so the next scan skips it instead of re-indexing.
-    # Best-effort: the undelete has already succeeded by the time this runs, and a HEAD blip is not
-    # worth failing a restore the user can see — the next scan corrects both columns anyway. The
-    # SIZE comes from the HEAD too rather than from the node, because the node's may predate a
-    # change we never saw.
+    # The restored object's own size/mtime/identity, so the next scan skips it instead of
+    # re-indexing. Best-effort: the undelete has already succeeded by the time this runs, and a
+    # HEAD blip is not worth failing a restore the user can see — the next scan corrects all three
+    # columns anyway. The SIZE comes from the HEAD too rather than from the node, because the
+    # node's may predate a change we never saw.
+    #
+    # THE IDENTITY IS PART OF "the restored object's own", for the same reason as the other two and
+    # with a sharper failure: undelete is copy-then-revive, and a store re-tags a copy whenever the
+    # source ETag was not md5(bytes) (multipart-origin, SSE-KMS). Return only size/mtime and the
+    # revived row names the ETag the object carried at its ORIGINAL key — so the next delete or
+    # move sends it as copy_source_if_match and gets PreconditionFailed -> FetchError -> 503, and
+    # Reconciler#unchanged? tests content_hash FIRST, so its own stated purpose ("the next scan
+    # skips it") is defeated by the very column it omits. The HEAD is already made and already
+    # carries `.etag`; this adds no request.
+    #
+    # PRESENCE-GUARDED for the same reason as #move's: ObjectIdentity.for raises ArgumentError on a
+    # blank ETag, which no rescue here is written for, and the undelete has already put the bytes
+    # back by the time this runs. No ETag -> keep the previous value (never nil) and let the scan
+    # correct it, which is what the rest of this method already does on a HEAD blip.
     def restored_stat(key)
       head = @client.head_object(bucket: @bucket, key:)
-      { size: head.content_length, mtime: nanos(head.last_modified) }
+      attrs = { size: head.content_length, mtime: nanos(head.last_modified) }
+      attrs[:content_hash] = ObjectIdentity.for(etag: head.etag) if head.etag.present?
+      attrs
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError
       {}
     end
@@ -779,6 +850,64 @@ module FileLayer
       @client.delete_object(bucket: @bucket, key:)
     rescue ::Aws::S3::Errors::ServiceError, ::Seahorse::Client::NetworkingError
       nil
+    end
+
+    # IS THIS DESTINATION FREE? Asked in BOTH namespaces, once, by all four mutating verbs.
+    #
+    # THIS BACKEND HAS TWO NOTIONS OF OCCUPANCY AND THEY DO NOT SEE EACH OTHER. `nodes` is the
+    # catalog every verb writes a row into, and what actually refuses a duplicate there is ONE
+    # partial index — index_nodes_on_user_id_and_storage_path, UNIQUE, WHERE deleted = false, and
+    # KIND-AGNOSTIC (there is no model-level uniqueness, so it surfaces as a raw
+    # ActiveRecord::RecordNotUnique, i.e. a 500). The bucket is a flat keyspace where a file lives
+    # at `<key>` and a directory at `<key>/`, so object_exists? — an EXACT-key HEAD — structurally
+    # cannot see the other kind. Ask only the bucket and every cross-kind collision passes the
+    # check and then explodes at the row write, with the object already put.
+    #
+    # NEITHER HALF IS SUFFICIENT ALONE, which is why this ADDS to the bucket question instead of
+    # moving authority to the DB. The catalog cannot see an object that is in the bucket and not
+    # yet indexed — a bucket the user already had is this backend's whole premise — and the bucket
+    # cannot see the cross-kind collision the index enforces.
+    #
+    # STILL A CHECK, NOT A LOCK. Asking a second namespace changes nothing about that: see
+    # #write's own paragraph for the full argument (TOCTOU; S3 has no portable conditional put on
+    # R2/SeaweedFS/Ceph). The row write is later still, so `move` can ALSO race to
+    # RecordNotUnique with the source already deleted — this narrows the ordinary case, one user
+    # onto a destination that is already taken, and claims no atomicity.
+    #
+    # `.present`, NEVER an unscoped lookup. A SCAN tombstone KEEPS its storage_path (§14a's two
+    # tombstone kinds) and the partial index ignores it, so a tombstone at this rel is not an
+    # occupant — blocking on one would refuse every re-upload over a file the scan tombstoned,
+    # which is the ordinary repair path, on every write in the library.
+    #
+    # `kind:` IS REQUIRED because the two callers genuinely disagree about what occupies a
+    # destination, and both wrong answers are real. For a FILE destination a dir marker at
+    # `<key>/` is a collision. For `mkdir` it is the SAME kind — its idempotence short-circuit
+    # owns that case — and refusing it would make creating a folder over an UNINDEXED bucket
+    # prefix impossible, which is the on-ramp this backend exists for.
+    #
+    # A HEAD that fails for any OTHER reason (AccessDenied, a 5xx) must not read as "vacant" and
+    # clobber: object_exists? lets those through to the caller's rescue. Fail safe.
+    #
+    # ONE CONDITION, ONE ANSWER, ONE MESSAGE (§14a). UnsupportedOperation — never NotFound (the
+    # occupant is right there, and "File not found." about a file in the list is the answer this
+    # port already had to correct once) and never FetchError (a clobber never succeeds on retry).
+    #
+    # RESIDUAL, recorded rather than argued away: an UNINDEXED directory that exists in the bucket
+    # as a bare PREFIX with no marker object (`<key>/x.stl` and no `<key>/`) is invisible to a
+    # HEAD, so a file written at `<key>` still lands beside it. Only until the scan runs — after
+    # that there is a dir node and the catalog half answers — and closing it before then needs a
+    # LIST per write rather than a HEAD, which is a cost this file has already refused elsewhere.
+    def destination_vacant!(user, rel, key, kind:, replace: false)
+      occupant = user.nodes.present.find_by(storage_path: rel)
+      # A replace waives what it was told about and nothing else: the FILE at this rel, and with
+      # it the bucket half, since that key holds that very node's object. A DIR node is NEVER the
+      # file a caller confirmed replacing — replacing a folder with a file is not a replace — and
+      # a replace onto a vacant rel stays an ordinary create, as it is on Share.
+      return if replace && (occupant.nil? || occupant.kind == "file")
+
+      taken = occupant.present? || object_exists?(key) ||
+              (kind == "file" && object_exists?("#{key}/"))
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if taken
     end
 
     # Does an object already live at this key? NotFound/NoSuchKey mean vacant — the fake and the

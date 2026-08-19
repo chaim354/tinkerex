@@ -59,7 +59,7 @@ module Maker
       # --- the renderer-revision axis -------------------------------------------
 
       # THE GAP THIS SWEEP HAD. A row built by an OLDER build sits at the current content, so a
-      # check keyed on (node_id, version_id) alone called it covered — while `thumbnails_for` and
+      # check keyed on (node_id, version_id) alone called it covered — while `ThumbnailMap` and
       # `current_thumbnail`, which DO compare revisions, treated the very same row as absent. Two
       # answers to one question, and the sweep held the wrong one: `rake previews:backfill_missing`
       # reported "Enqueued 0" over a library whose every STL thumbnail was drawn by the pre-Z-up
@@ -76,6 +76,44 @@ module Maker
         end
         assert_equal current_revision("old-build.stl"),
                      user.maker_previews.find_by!(node_id: stale.node_id).renderer_revision
+      end
+
+      # THE POPULATION `LbrnBackfill` USED TO SWEEP, PINNED HERE BECAUSE THAT SERVICE IS GONE.
+      # It re-rendered `.lbrn`/`.lbrn2` thumbnail rows with `metadata: nil` — rows built before the
+      # column existed — but it called `perform_later` WITHOUT repointing the row first, so the
+      # job's `commit_if_current` captured the row's own current values and compared it to itself.
+      # Revision-4 bytes landed on a row still claiming the 1 that migration 20260806120000 stamped,
+      # every read path then correctly judged that row stale, and the grid showed a spinner over a
+      # row that was `ready` and correct. `Enqueue` writes BOTH axes before enqueueing, which is
+      # what makes the general sweep able to make the assertion the deleted path could not.
+      #
+      # Every such row sits at revision 1 against a renderer past it, so this sweep covers the whole
+      # target population — and covers it on the CONDITION THAT WAS ACTUALLY MEANT. `metadata: nil`
+      # was never that condition: `LbrnMetadata.parse` legitimately answers nil (`.compact.presence`,
+      # and a blanket rescue), so a file that simply has nothing to report re-rendered on every run,
+      # forever. Here it is swept once and then left alone — asserted by the second call.
+      test "enqueues a lightburn row with no metadata, and repoints it, then leaves it alone" do
+        lbrn = node!("design.lbrn2", "tok-cur")
+        Maker::Preview.create!(user:, node_id: lbrn.node_id, version_id: token_for(lbrn),
+                               kind: "thumbnail", status: "ready", renderer_revision: 1,
+                               metadata: nil)
+        assert_operator current_revision("design.lbrn2"), :>, 1,
+                        "this fixture needs a renderer that has actually moved past revision 1"
+
+        assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
+          assert_equal 1, Maker::Previews::MissingBackfill.call
+        end
+        # THE ASSERTION THE DELETED PATH COULD NOT MAKE. A job count alone is GREEN over the
+        # revision mutation below (drop `enqueue.rb`'s `renderer_revision =` and only this line
+        # catches it) — PROBED, not reasoned; it does red under the seen-key collapse, so "passes
+        # over both mutations" would be false. A count was the whole of `lbrn_backfill_test.rb`,
+        # which is why that sat green over this defect for as long as the service shipped.
+        assert_equal current_revision("design.lbrn2"),
+                     user.maker_previews.find_by!(node_id: lbrn.node_id).renderer_revision
+
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          assert_equal 0, Maker::Previews::MissingBackfill.call
+        end
       end
 
       # THE SWEEP AND THE READ PATH MUST RESOLVE ON THE SAME TRIPLE. Asserted as an AGREEMENT

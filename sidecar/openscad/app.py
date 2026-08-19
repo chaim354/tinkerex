@@ -153,9 +153,8 @@ def do_render():
         # The schema comes from the SAME source the render is about to parse, so a derivation
         # failure here IS the .scad's own complaint, and it is the useful thing to say.
         return jsonify({"error": str(e)}), 422
-    vectors = {p["name"] for p in _safe_params(scad)["params"] if p["type"] == "vector"}
     try:
-        result = render.render(scad, params, fmt, vector_names=vectors)
+        result = render.render(scad, params, fmt)
     except render.RenderError as e:
         # A client condition (bad source / bad params), never a 500.
         return jsonify({"error": str(e)}), 422
@@ -175,25 +174,17 @@ def _coerced(scad, submitted):
     values. Hashing the coerced values keeps the key on what actually determines the bytes, so the
     existing cache stays valid across this move rather than silently re-rendering the library.
 
-    A schema that will not derive propagates RenderError to the caller above, rather than being
-    swallowed the way _safe_params swallows it: without the schema there is nothing to check the
-    values against, and forwarding them unchecked is the bug. `submitted` empty is the exception and
-    is handled inside coerce() — nothing to check means nothing to derive.
+    THIS IS THE ONLY SCHEMA DERIVATION ON THE RENDER PATH, AND THEREFORE THE ONLY FAILURE POLICY
+    ON IT: a source whose schema will not derive propagates RenderError to the caller above.
+    /render used to ask the same question a second time through a `_safe_params` wrapper that
+    swallowed a bare `Exception` into an empty schema — a sentinel BYTE-IDENTICAL to a legitimate
+    zero-parameter file, so nothing downstream could tell "derivation blew up" from "this .scad
+    declares nothing", and a KeyError inside schema.py degraded silently to "no params". Do not
+    reintroduce a second, softer reader: without the schema there is nothing to check the values
+    against, and forwarding them unchecked is the bug. `submitted` empty is the exception and is
+    handled inside coerce() — nothing to check means nothing to derive.
     """
     submitted = submitted or {}
     if not submitted:
         return {}
     return coerce.coerce(submitted, _schema_for(scad)["param_groups"])
-
-
-def _safe_params(scad):
-    """Vector params need re-bracketing on the way in, which means knowing which they are. A schema
-    failure here must not fail the render — worst case a vector field is passed through verbatim,
-    and the render itself reports the real problem. (Belt and braces now that coerce.py emits the
-    bracketed literal itself: a coerced vector already starts with "[", so param_set_json's
-    heuristic no longer fires for one. It stays because render.render is callable without going
-    through coercion at all.)"""
-    try:
-        return _schema_for(scad)
-    except Exception:
-        return {"params": [], "param_groups": []}

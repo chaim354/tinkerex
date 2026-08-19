@@ -22,10 +22,13 @@ module Maker
     # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
     # depicts this exact file; only the code that built it moved on.
     #
-    # This is deliberately a DIFFERENT policy from V1::Maker::PreviewsController#create, which DOES
-    # create a row for a non-renderable name so an API client can poll and observe the terminal
-    # `unsupported` state. Here the trigger is automatic/eager, so skipping non-renderable files is
-    # the right call. The two are not merged for that reason.
+    # THE NON-RENDERABLE BRANCH IS THE ONLY POLICY V1::Maker::PreviewsController#create DOES NOT
+    # SHARE, and it is now a `skip_unrenderable:` kwarg rather than a second implementation. That
+    # controller DOES create a row for a non-renderable name, so an API client can poll and observe
+    # the terminal `unsupported` state; here the trigger is automatic/eager, so skipping is right
+    # and stays the default. Everything else — all four staleness axes — is shared. One branch
+    # differing is a parameter; four axes differing was a second, stale writer of the same
+    # two-coordinate invariant.
     #
     # NOT a controller concern and NOT sync-coupled: it reads a filename + content id and enqueues a
     # job. Callable from a controller, a service, or a scan loop (§10 tripwire stays intact).
@@ -59,9 +62,23 @@ module Maker
       # nothing in the system will ever resolve.
       STALLED_AFTER = 15.minutes
 
-      def call(user:, node_id:, name:, version_id:, kind: "thumbnail")
+      # `skip_unrenderable:` DEFAULTS TRUE SO EVERY EAGER CALLER IS BYTE-IDENTICAL — nine of them
+      # (three in `FilesController`, `V1::CommitsController`, `Projects::UploadsController`,
+      # `Library::Reconciler`, `Addons::LibraryOutput`, `ThumbnailMap`, `MissingBackfill`) and none
+      # passes it. It is the ONE branch the comment above calls a deliberately different policy from
+      # `V1::Maker::PreviewsController#create`, which is now the one caller that passes `false`: an
+      # API client polls, so it needs a row to poll even for a name no renderer handles. Everything
+      # BELOW this line is shared, which is the point — the four staleness axes had drifted into a
+      # second, two-axis copy in that controller.
+      #
+      # WITH A NIL RENDERER THE ROW IS STILL COHERENT: `revision_for(nil, kind)` answers
+      # BASE_REVISION (nil does not respond to `payload_revision`), which is exactly the column
+      # default, so nothing is stamped that a later reader could judge stale. The job is still
+      # enqueued and writes the terminal `unsupported` itself — the only place that can tell "no
+      # renderer for this type" from "toolchain missing on this box".
+      def call(user:, node_id:, name:, version_id:, kind: "thumbnail", skip_unrenderable: true)
         renderer = Maker::Previews::Registry.for_filename(name)
-        return nil if renderer.nil?
+        return nil if renderer.nil? && skip_unrenderable
 
         revision = revision_for(renderer, kind)
         preview  = user.maker_previews.find_or_initialize_by(node_id:, kind:)
@@ -128,6 +145,76 @@ module Maker
       def revision_for_name(name, kind)
         renderer = Maker::Previews::Registry.for_filename(name)
         renderer.nil? ? BASE_REVISION : revision_for(renderer, kind)
+      end
+
+      # WHICH STORED ROW COUNTS AS CURRENT FOR A FILE — the read-path counterpart of `call`'s own
+      # staleness test, in the two shapes its callers need: a QUERY (`current_preview`, for a
+      # caller holding one node) and a PREDICATE (`current_preview?`, for a caller that has
+      # already loaded a page of rows in one query and must filter them in Ruby).
+      #
+      # BOTH AXES, ONE DEFINITION. `version_id` asks "was this artifact made from the file's
+      # CURRENT CONTENT?" and `renderer_revision` asks "was it made by the CURRENT CODE?" — the
+      # same two independent questions `call` compares above, and the same pair every reader has
+      # to get right. They were spelled out three times: twice in `FilesController` (330 lines
+      # apart, byte-identical but for the `kind` string) and once in `ThumbnailMap`, which is this
+      # repo's recorded failure shape — §14h's "172 of 174 LightBurn thumbnails" bug WAS one of
+      # these copies missing the revision half, and the fix landed in one door and not the others.
+      #
+      # `kind` IS NAMED ONCE. In `FilesController` it was written twice per site — once to pick the
+      # revision, once in the `find_by` — with nothing coupling them, so mis-spelling either half
+      # made the lookup silently never match (an endless re-enqueue) or match on the wrong kind's
+      # revision. A single parameter cannot be half wrong.
+      #
+      # ONE OF THOSE TWO ARMS WAS COMPLETELY SILENT, AND IT IS SILENT ONLY BY COINCIDENCE — probed
+      # at review, on the old two-spelling code. Getting the FIND_BY half wrong reddened 5 tests and
+      # 1 error. Getting the REVISION half wrong — `revision_for_name(node.name, "thumbnail")` sitting
+      # beside `kind: "geometry"` — reddened NOTHING: 2444 runs, 0 failures. It is silent because
+      # `Lbrn2.payload_revision("thumbnail")` and `payload_revision("geometry")` both happen to be 4
+      # today. But the entire REASON revisions are per-kind is that those two numbers are MEANT to
+      # diverge — §14h: "bumping geometry must not rebuild ~1400 thumbnails as a side effect of an
+      # unrelated fix" — so that defect would go live the first time somebody does the thing the
+      # mechanism exists for, and the suite would still be green. That is a better argument for
+      # naming `kind` once than the one this comment originally made, and it was not available
+      # without running the mutation.
+      #
+      # DO NOT FOLD `status` INTO EITHER OF THESE. It is the obvious next thought — "current" sounds
+      # like it should mean servable — and it is wrong in both directions at once: `#current_thumbnail`
+      # deliberately serves a `ready` artifact straight through a renderer rebuild (the picture is
+      # still of this file), while `#geometry` deliberately never reads `status` here at all and
+      # answers `pending` on any miss (an older build's payload is DATA that is wrong, not merely
+      # old). §14h states the rule outright — "Same mechanism, opposite right answers; do not unify
+      # them." What is shared is only WHICH ROW IS CURRENT; what each door does with the answer is
+      # each door's own business and must stay there.
+      def current_preview(user:, node_id:, name:, version_id:, kind:)
+        return nil if name.blank? || version_id.blank?
+
+        user.maker_previews.find_by(node_id:, kind:, version_id:,
+                                    renderer_revision: revision_for_name(name, kind))
+      end
+
+      # The same rule against a row already in memory. `kind` comes off the row itself, which is
+      # what keeps the two members from being able to disagree about it.
+      #
+      # BOTH BLANK GUARDS ARE LOAD-BEARING AND NEITHER IS DECORATION:
+      #
+      # `version_id.blank?` — `maker_previews.version_id` is NULLABLE and `Enqueue.call` really
+      # writes a nil one (`V1::Maker::PreviewsController#create` permits the parameter, and
+      # `refuse_stale_version!` returns false on a blank one and falls through). The port answers
+      # `content_token: nil` for a node with no content, which the page renders as "No content
+      # yet." Without this line `nil == nil` is true and that row is served as the file's current
+      # thumbnail — a coincidence of representation dressed up as an answer about content.
+      #
+      # `name.blank?` — `revision_for_name(nil, kind)` walks Registry -> nil -> BASE_REVISION,
+      # which is exactly the column's own default (`renderer_revision default: 1, null: false`),
+      # so a row at revision 1 would be judged CURRENT for a file whose name is unknown. It is not
+      # reachable from either of today's callers (`ThumbnailMap` scopes its query to the nodes the
+      # port answered for; `Node` validates `name` for presence), WHICH IS PRECISELY WHY it can be
+      # deleted without a test going red. Leave it.
+      def current_preview?(preview, name:, version_id:)
+        return false if name.blank? || version_id.blank?
+
+        preview.version_id == version_id &&
+          preview.renderer_revision == revision_for_name(name, preview.kind)
       end
     end
   end

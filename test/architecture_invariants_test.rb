@@ -41,8 +41,13 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # The assertion is "one hit, and it is library_output.rb" — NOT "no hits". Asserting zero would
     # be asserting something false, and asserting only the count would let the coupling migrate to
     # some other file while the test stayed green.
-    hits = offending(%w[app/services/maker app/models/maker app/jobs/maker],
-                     /manifest_chunks|ChunkStore/)
+    # The directory set is DERIVED FROM THE TREE — `app/**/maker` is every maker directory there
+    # is — so a NEW `app/<x>/maker/` is covered the day it is created. It was a remembered list
+    # of three and silently missed `app/controllers/v1/maker` + `app/models/concerns/maker` (15
+    # files), where a ChunkStore call left this test GREEN over a live §14a breach — in the very
+    # file §14a introduced to replace a remembered grep. Derive, don't enumerate: the same rule as
+    # stimulus_hygiene_test.rb's registered_identifiers.
+    hits = offending(%w[app/**/maker], /manifest_chunks|ChunkStore/)
 
     assert_equal 1, hits.size,
                  "expected exactly ONE chunk-internals reference in the maker layer, got #{hits.size}:\n" \
@@ -75,5 +80,158 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "  #{hits.join("\n  ")}\n" \
                  "It is a ScriptError, so this rescue does not do what it looks like it does. " \
                  "Gate on the capability before the call instead — see LibraryCapabilities."
+  end
+
+  test "every ApplicationController descendant requires a signed-in session" do
+    # CLAUDE.md §14d: the web app is session-authed, and "every server-rendered page requires a
+    # session" was stated sixteen times — once per controller — and enforced nowhere. A NEW
+    # subclass, or one extracted from an existing controller, was public by default and nothing
+    # went red. §15 records the sibling failure for `direct_uploads`; this is that shape from
+    # inside `ApplicationController` rather than outside it.
+    #
+    # UNLIKE THE TWO GREPS ABOVE, THIS ONE READS THE CONSTANT GRAPH, NOT FILES — and that is the
+    # point of it rather than a deviation from the file's style. A file scan cannot see the three
+    # `Tools::*` controllers that INHERIT the callback from `Tools::BaseController` rather than
+    # declaring it; cannot tell `app/controllers/users/*.rb` (Devise subclasses, which must NOT
+    # have it) from an app controller; and once the base class carries the callback there is no
+    # subclass line left on disk to read at all. Same derive-don't-enumerate rule the greps use
+    # for their directory set, one layer up.
+    #
+    # THE DEVISE EXCLUSION IS DERIVED, NEVER A LIST. `Devise.parent_controller` defaults to
+    # "ApplicationController", so `DeviseController` and all eleven of its subclasses ARE
+    # descendants here — and sign-in, sign-up, confirm, reset and the OmniAuth callback must
+    # stay anonymous or `/users/sign_in` redirects to itself. `<= DeviseController` answers for
+    # a twelfth the day it appears.
+    #
+    # NOT COVERED, DELIBERATELY, AND BOTH ARE STATED SO NOBODY READS MORE INTO A GREEN RUN:
+    #   * The `unless: :devise_controller?` half of the base-class callback — and NOTHING ELSE
+    #     covers it either. Devise controllers are excluded from this set by construction, so
+    #     nothing here can observe that arm; but neither can any other test, because Devise's own
+    #     `authenticate_user!` already no-ops on `devise_controller?` internally, which makes the
+    #     condition redundant today. Deleting it leaves the entire web suite green. The reasoning
+    #     is at application_controller.rb, beside the line; do not add a test that asserts the
+    #     condition is present, which would pin a spelling rather than a behaviour.
+    #   * A `before_action :authenticate_user!, only: [:show]` on a subclass, which satisfies this
+    #     assertion while leaving every other action open — a child's symbol declaration REPLACES
+    #     the inherited conditional entry outright (CallbackChain#append_one deletes the duplicate
+    #     before pushing), which is the same mechanism that makes the base-class callback a strict
+    #     no-op while the subclass lines stand. Re-deriving each callback's conditions here would
+    #     be a second, weaker copy of Rails' own filter logic; the answer if it ever matters is a
+    #     request test, not more reflection.
+    #   * `CspReportsController` and `DevBlobsController`, which descend from
+    #     `ActionController::Base` on purpose — as does `ActiveStorage::BaseController`, so this
+    #     guard would NOT have caught the `direct_uploads` hole §15 describes. That one is closed
+    #     by the route shadow, not by this.
+    Rails.application.eager_load!
+
+    guarded = ApplicationController.descendants.reject { |klass| klass <= DeviseController }
+
+    # Defeats a vacuous pass. Without eager loading — or if the Devise reject ever widened to
+    # swallow the app's own controllers — `guarded` would be empty and the assertion below would
+    # be green over nothing at all.
+    assert_includes guarded, FilesController,
+                    "the guarded set should contain the app's own controllers; got " \
+                    "#{guarded.size} classes. Did eager loading fail, or did the Devise " \
+                    "exclusion widen?"
+
+    unprotected = guarded.reject { |klass|
+      klass._process_action_callbacks.any? { |cb| cb.kind == :before && cb.filter == :authenticate_user! }
+    }.map(&:name).sort
+
+    assert_empty unprotected,
+                 "every ApplicationController descendant must run `authenticate_user!` " \
+                 "(CLAUDE.md §14d), but these do not:\n  #{unprotected.join("\n  ")}\n" \
+                 "It is declared on ApplicationController for all of them, so a controller " \
+                 "reaches this list only by a `skip_before_action :authenticate_user!` — or by " \
+                 "that base-class declaration having been removed. A page that is genuinely " \
+                 "public needs an argument here and in §14d, not a skip."
+  end
+
+  # THE TWO INDEXES ALLOWED TO BE A STRICT PREFIX OF ANOTHER, as "table" => "index name".
+  #
+  # Both are the SAME mechanism and neither is discoverable from a fixture, which is why they are
+  # written down here rather than left for a future reader to rediscover: SQLite APPENDS THE ROWID
+  # to every index key, so a narrow `(a)` index can seek `a = ? AND rowid <cmp> ?` and yield rows
+  # already in id order. A composite `(a, b)` cannot — within the `a` group it is ordered by `b`,
+  # so the planner adds `USE TEMP B-TREE FOR ORDER BY` and reads the whole group. The effect is
+  # SCALE-DEPENDENT and invisible at fixture size; both entries cite a MEASUREMENT taken at
+  # production scale, and a third candidate should not be added without one.
+  #
+  # TWO SCOPE LIMITS ON THAT MECHANISM, both of which a reader will otherwise assume away.
+  #
+  # It is SQLITE-ONLY. Postgres does not append the rowid to index keys, so neither ratio below
+  # transfers and neither exemption is justified there — on PG these two would be droppable. The
+  # entries stay because the deployment that pages a 200,000-node library is the SELF-HOST one,
+  # which is SQLite (§7); do not read the numbers as adapter-neutral.
+  #
+  # And it is a NO-STATISTICS result. Re-measured at review: with `ANALYZE` run, the without-index
+  # plan becomes `SEARCH nodes USING INTEGER PRIMARY KEY (rowid>?)` and the two reach PARITY. The
+  # exemption still stands, because no-stats IS the production configuration — nothing in this repo
+  # runs `ANALYZE` or `PRAGMA optimize`, and neither `storage/development.sqlite3` nor
+  # `storage/test.sqlite3` contains `sqlite_stat1`. Said explicitly because
+  # `app/services/maker/addon_origin.rb:64-69` already records the stance that "then just run
+  # ANALYZE" is a misleading half-answer, and a measurement that depends on which side of that
+  # line it sits on should say which side it sits on.
+  #
+  #   maker_addon_states — `app/services/maker/addon_origin.rb:114-119` records the probe: at 5,000
+  #     states, from 4 ids up the plan is `SEARCH maker_addon_states USING INDEX
+  #     index_maker_addon_states_on_user_id (user_id=? AND rowid=?)`.
+  #
+  #   nodes — `Sync::Tree.call` (`app/services/sync/tree.rb:12`) pages the DEVICE INITIAL SYNC with
+  #     `where("id > ?", after).order(:id).limit(1000)`. Dropping this index turns each page from
+  #     one early-terminating seek into a full read-and-sort of the user's node set, so a whole
+  #     export goes from O(N) to O(N^2/limit). Measured on 200,000 nodes, twenty pages, warm cache:
+  #     0.0163 s with the index against 2.9766 s without — 183x. (This line first said 30x, from a
+  #     smaller run; a reviewer rebuilt it at scale and the gap was WIDER, not narrower. The index
+  #     costs 249,856 bytes, 0.21% of the database.) `#find_each`/`#in_batches` page identically,
+  #     so `Maker::Previews::MissingBackfill` rides the same seek — verified, not assumed.
+  PREFIX_INDEX_EXEMPTIONS = {
+    "maker_addon_states" => "index_maker_addon_states_on_user_id",
+    "nodes" => "index_nodes_on_user_id"
+  }.freeze
+
+  test "no index's column list is a strict prefix of another index's on the same table" do
+    # An index on `(a)` is redundant beside one on `(a, b)`: any seek the narrow one answers, the
+    # wide one answers too. The narrow one still costs a btree write on every insert, update and
+    # delete of the row, plus its own copy of the leading column on disk. These regrow silently —
+    # `t.references :user, foreign_key: true` auto-indexes `user_id`, and a composite led by
+    # `user_id` then gets added on top — which is exactly how ten of them accumulated before
+    # `20260819120000_drop_redundant_prefix_indexes.rb`. Nothing else in the suite asserts anything
+    # about indexes at all, so without this the next `t.references` puts one straight back.
+    #
+    # A PARTIAL SUPERSET DOES NOT COUNT, AND THAT EXCLUSION IS LOAD-BEARING. `nodes` carries
+    # `(user_id, storage_path) WHERE deleted = false`; it cannot answer an unfiltered `user_id`
+    # predicate, so treating it as a superset would license removing a prefix that nothing else
+    # covers. The check therefore only reads NON-PARTIAL indexes as supersets — it can miss a
+    # redundancy, never invent one, which is the safe direction for a guard whose output is read
+    # as permission to delete.
+    conn = ActiveRecord::Base.lease_connection
+    pairs = conn.tables.sort.flat_map do |table|
+      indexes = conn.indexes(table).select { |i| i.columns.is_a?(Array) }
+      indexes.flat_map do |narrow|
+        indexes.filter_map do |wide|
+          next if wide.name == narrow.name
+          next unless wide.where.nil?
+          # STRICT, so two indexes on EXACTLY the same columns slip through — equally redundant,
+          # and this guard says nothing about them. Zero such pairs exist today (checked at review),
+          # so it is a recorded limit rather than a defect; widening it means deciding WHICH of an
+          # identical pair to name, which a `>` comparison never has to.
+          next unless wide.columns.length > narrow.columns.length
+          next unless wide.columns.first(narrow.columns.length) == narrow.columns
+          next if PREFIX_INDEX_EXEMPTIONS[table] == narrow.name
+
+          "#{table}: #{narrow.name} #{narrow.columns.inspect} " \
+            "is a strict prefix of #{wide.name} #{wide.columns.inspect}"
+        end
+      end
+    end.uniq
+
+    assert_empty pairs,
+                 "PREFIX_PAIRS=#{pairs.size}\n  #{pairs.join("\n  ")}\n" \
+                 "Each narrow index above is fully served by the wider one and only costs writes. " \
+                 "Drop it in a migration. If it came from `t.references :user, foreign_key: true`, " \
+                 "pass `index: false` there instead. If you believe one must STAY, it needs a " \
+                 "measured query plan showing SQLite's appended-rowid seek is load-bearing for a " \
+                 "real query — then add it to PREFIX_INDEX_EXEMPTIONS citing that measurement."
   end
 end

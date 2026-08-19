@@ -144,6 +144,32 @@ module V1
         assert_equal "M3 bolt", line.reload.part_name
       end
 
+      # THE SAME SHAPE ONE MODEL OVER — `Maker::Item` had no `has_many :tasks` at all, so a deleted
+      # item left every task that named it holding a dangling `taskable_id`, and
+      # `Task#taskable_belongs_to_owner` (guarded on `taskable_id.present?`) then refused every
+      # later save of that row. `:nullify` where the BOM line above needed a callback: `taskable`
+      # is `optional: true` and nothing else refuses a task with no owner.
+      #
+      # THE PATCH IS THE ASSERTION THAT CARRIES THE WEIGHT, and it is the only half that can tell
+      # the two handlers apart: `dependent: :destroy` satisfies "the pointer is nil" vacuously by
+      # deleting the user's own to-do, and this request 404s instead of succeeding.
+      test "deleting an item leaves the tasks that pointed at it editable" do
+        item = @user.maker_items.create!(title: "Bracket")
+        task = @user.maker_tasks.create!(title: "Print it", taskable: item)
+
+        delete "/v1/maker/items/#{item.id}", headers: auth(@token)
+        assert_response :no_content
+
+        patch "/v1/maker/tasks/#{task.id}",
+              params: { task: { title: "Print it in PETG" } }, as: :json, headers: auth(@token)
+        assert_response :success
+        assert_equal "Print it in PETG", JSON.parse(response.body)["title"]
+
+        task.reload
+        assert_nil task.taskable_id
+        assert_nil task.taskable_type
+      end
+
       # WHY NO BACKFILL MIGRATION SHIPS WITH THIS FIX: a row stranded before it is still recoverable
       # by its owner through the same API. Reproducing that state needs update_columns — no
       # controller can produce it any more. What recovery COSTS differs by column, and this test and

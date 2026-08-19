@@ -210,6 +210,55 @@ module Library
                    "the attachment must resolve to the bytes again after an undelete"
     end
 
+    # THE OBJECT THIS BACKEND EXISTS TO SERVE, end to end: one somebody else uploaded MULTIPART, so
+    # its ETag is an md5-of-md5s and not the md5 of anything (rung 3 of the identity ladder). Every
+    # copy a real store makes of such an object lands under a DIFFERENT ETag — and the same is true
+    # of an SSE-KMS object, which additionally wears a 32-hex ETag and is therefore misfiled onto
+    # rung 2, where the value looks trustworthy and is not.
+    #
+    # move-then-delete is an ordinary sequence in the UI, and both `move` and `undelete` used to
+    # leave `nodes.content_hash` naming the ETag the object had BEFORE the copy. The next
+    # copy_source_if_match then names an ETag no object has: PreconditionFailed -> FetchError ->
+    # 503 "try again" on the file the user just moved, until Library::ScanJob's next pass (≤15 min)
+    # repairs the row. A single-part unencrypted object re-derives the same md5 and is unaffected,
+    # which is exactly why this was invisible.
+    #
+    # It lives HERE and not only in s3_test.rb because only this file establishes the premise it
+    # depends on: a bucket the user filled with someone else's uploads, indexed by the real
+    # observer, attached to a real project, and read back THROUGH the attachment. Its unit siblings
+    # force the re-tag with a stub; this one lets the fake behave like a store and never mentions
+    # an ETag after the seed.
+    test "a multipart-uploaded object survives move, delete and undelete without a 503" do
+      seed!("cad/frame.stl", "welded frame", etag: "#{'d' * 32}-4")
+      3.times { |i| seed!("misc/keep#{i}.stl", "ballast #{i}") }
+      scan!
+
+      node = @user.nodes.find_by!(storage_path: "cad/frame.stl")
+      assert_equal "etag:#{'d' * 32}-4", node.content_hash,
+                   "rung 3: a multipart ETag is not content-determined, and is stored verbatim"
+      project = @user.maker_projects.create!(name: "Welding jig")
+      attachment = project.file_attachments.create!(user: @user, node_id: node.node_id,
+                                                    role: "model")
+
+      # No scan anywhere below: the claim is that each row is correct the MOMENT its verb returns,
+      # not fifteen minutes later.
+      @adapter.move(@user, node_id: node.node_id, new_parent_node_id: node.parent_node_id,
+                    new_name: "frame-v2.stl")
+      @adapter.delete(@user, node_id: attachment.node_id)
+      @adapter.undelete(@user, node_id: attachment.node_id)
+
+      assert_equal "welded frame", @adapter.read(@user, node_id: attachment.node_id),
+                   "the attachment must still resolve to the bytes"
+      assert_equal "cad/frame-v2.stl",
+                   @user.nodes.find_by!(node_id: attachment.node_id).storage_path
+      # Once more, so the whole sequence closes rather than stopping at the restore. NOTE what this
+      # line does NOT prove: `undelete`'s own half of the defect is invisible here, because by this
+      # point `move` has already replaced the multipart ETag with the copy's md5 and every later
+      # copy re-derives the same value. Forcing a re-tag at THAT step needs a stub, which is what
+      # s3_test.rb's undelete sibling does. Two tests, two halves — do not merge them.
+      assert_nothing_raised { @adapter.delete(@user, node_id: attachment.node_id) }
+    end
+
     # The structural hazard the whole delete design is shaped around (spec §6): bytes copied into
     # `.trash` are in the one region the observer refuses to list, so a live node still pointing at
     # the old key could never be paired and the scan would want to tombstone it — or, in the other

@@ -8,7 +8,13 @@ module Maker
     # superseded content. Both are handled the same way — `Enqueue` creates or repoints.
     #
     # THE `seen` KEY IS THE (node_id, version_id, renderer_revision) TRIPLE, AND IT MUST BE THE
-    # SAME TRIPLE `FilesController#thumbnails_for` AND `#current_thumbnail` RESOLVE ON. It was the
+    # SAME TRIPLE THE READ PATH RESOLVES ON — which has ONE definition, `Enqueue.current_preview`
+    # / `.current_preview?`, used by `FilesController#current_thumbnail`, `#geometry` and
+    # `Maker::Previews::ThumbnailMap`. This sweep cannot call either: it holds a plucked TUPLE for
+    # a whole batch, not a row and not one node, so what it needs is a `where` it can compare a
+    # Set against rather than a per-node membership test — an N+1 is the thing the batching
+    # exists to avoid. Keeping the triple in step by hand is the price of that; if a FOURTH
+    # coordinate is ever added to `current_preview?`, it must be added here too. It was the
     # PAIR (node_id, version_id) until 2026-08-07, and that omission is the whole reason this sweep
     # could not repair a renderer bump: a row built by an older build sits at the current content,
     # so it satisfied a pair-keyed check and was skipped — while the read path, which does compare
@@ -31,10 +37,15 @@ module Maker
     # thumbnail only for files it had never seen; a file re-saved in place had its `content_hash`
     # updated and nothing else, so its preview row stayed keyed to content that no longer exists
     # while every surface that resolves one by the current `content_token` — `FilesController#show`
-    # and `#thumbnails_for` — found none. That is fixed at the source, but the fix cannot reach
-    # backwards: those files are now `unchanged?` and the next scan skips them WITHOUT re-reading
-    # them, which is exactly the behaviour that keeps a 2TB archive cheap. So the backlog needs
-    # its own pass. Same shape as [[LbrnBackfill]], different condition.
+    # and the file grid's `ThumbnailMap` — found none. That is fixed at the source, but the fix
+    # cannot reach backwards: those files are now `unchanged?` and the next scan skips them WITHOUT
+    # re-reading them, which is exactly the behaviour that keeps a 2TB archive cheap. So the backlog
+    # needs its own pass. This was modelled on a `LbrnBackfill` that has since been DELETED, and the
+    # reason is worth carrying: it enqueued without repointing the row first, so the job's
+    # `commit_if_current` captured that row's own values and compared it to itself, landing
+    # new-code bytes on a row still claiming the old revision. `Enqueue` writes both axes before
+    # `perform_later`, which is what this sweep relies on — do not reintroduce a caller that goes
+    # straight to `GeneratePreviewJob.perform_later`.
     #
     # NOT the `unsupported`-row sweep docs/STATUS.md still leaves open. A row saying `unsupported`
     # for the current content is present and terminal; this only ever looks for content with NO
@@ -84,7 +95,8 @@ module Maker
 
             # RESOLVED FROM THE RENDERER, NOT FROM A CONSTANT, because the current revision depends
             # on the file's own extension — there is no single value to compare a whole batch
-            # against, which is the same reason `thumbnails_for` filters in Ruby rather than SQL.
+            # against, which is the same reason `ThumbnailMap.previews_for` filters in Ruby
+            # rather than SQL.
             #
             # A name nothing renders is skipped HERE rather than being left to Enqueue's own nil
             # return. Enqueue would still do the right thing, but `revision_for_name` answers

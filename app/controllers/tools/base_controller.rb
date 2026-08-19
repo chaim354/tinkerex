@@ -1,8 +1,6 @@
 module Tools
   # Shared base for every addon's web UI. Session-authed like the rest of the web app.
   class BaseController < ApplicationController
-    before_action :authenticate_user!
-
     # HERE RATHER THAN IN THE TWO SAVE DOORS, because every addon door writes through
     # Maker::Addons::LibraryOutput into a folder the save dialog defaults to the CURRENT PROJECT's —
     # so needing the eager nudge is a property of being an addon door, not of these two in

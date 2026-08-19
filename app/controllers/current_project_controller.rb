@@ -1,8 +1,6 @@
 # Sets or clears the session-scoped current project (spec §3.2). Session-authed like the rest of the
 # web UI. Never stores an id that isn't the user's own project.
 class CurrentProjectController < ApplicationController
-  before_action :authenticate_user!
-
   # PATCH /current_project { project_id }. A present, owned id becomes current; a blank id clears (so
   # the top-bar "— none —" option flows through here too); a foreign/unknown id is ignored.
   def update

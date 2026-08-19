@@ -36,7 +36,9 @@ production:
   # Targeted pending-commit-TTL reaper — the cheap, FREQUENT complement to orphan_chunk_reaper
   # above. It does NO bucket list (so it is not billed per request): it finds expired,
   # never-finalized pending_commits and deletes precisely the chunk hashes their manifests
-  # uploaded, applying the SAME dedup-committed + live-pending guards. Because it is DB-only +
+  # uploaded. Its live-pending guard is NARROWER than G4's, deliberately (G4 filters no rows by
+#   age; this one excludes the expired rows it destroys) -- see Sync::PendingCommitReaper.
+#   Because it is DB-only +
   # targeted deletes, it runs HOURLY so the common abandoned-upload leak is reclaimed promptly
   # instead of waiting up to a week for the list-based backstop.
   pending_commit_reaper:
@@ -84,15 +86,15 @@ production:
     queue: background
     schedule: every saturday at 5am
 
-  # Project/model file ATTACHMENTS (and chosen project covers) pointing at a node the library no
-  # longer has. The scan tombstones a deleted file rather than destroying it, so no `dependent:`
+  # Project/model file ATTACHMENTS (and chosen project/model covers) pointing at a node the library
+  # no longer has. The scan tombstones a deleted file rather than destroying it, so no `dependent:`
   # callback fires and nothing else was sweeping these — a file deleted on the NAS stayed in every
   # project it was attached to, as an "unavailable" tile, forever.
   #
   # DAILY, WHERE dead_node_preview_reaper ABOVE IS WEEKLY, and not by inheritance: both are DB-only
   # and both wait out the same 30-day grace, so cadence buys neither cost nor timeliness against the
   # window. The difference is what a late sweep leaves visible — a stale preview row renders
-  # nowhere, a stale attachment is a row the user can see. Two queries per user, so daily is cheap.
+  # nowhere, a stale attachment is a row the user can see. Four queries per user, so daily is cheap.
   #
   # Backend-neutral (no `command:` gate): a dead node is dead on all three backends.
   dead_node_attachment_reaper:

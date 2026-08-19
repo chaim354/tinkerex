@@ -99,6 +99,63 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_equal @file.node_id, cover_input.value
   end
 
+  # THE ROOT COLUMN IS THE ONE DEPTH AT WHICH THE COMPOSED PATH CAN BE WRONG, and nothing reached
+  # it until now: the assertion above descends twice and addon_sdk_test.rb's `pickFile` case
+  # descends once, so BOTH compose correctly and neither can fail for this reason. `pickFile` builds
+  # `pathPrefix(depth) + "/" + name`, and at depth 0 `pathPrefix` used to answer the caller's
+  # `rootLabel` — a display label — so this pick came back as "Choose automatically/hero.png".
+  #
+  # THE NON-DEFAULT root_label IS THE WHOLE TRAP, not incidental to the host page: with the
+  # partial's "/ (library root)" default the broken string starts with a "/" too, so a fix that
+  # merely hardcoded "/" would look right here while leaving the label in the path for every other
+  # caller. The project form passes "Choose automatically", which shares no prefix with the answer.
+  test "a file picked in the root column gets a path, not the chooser's root label" do
+    # CREATED IN THE TEST, NOT IN setup: this is the only case that needs a file at the root, and
+    # every other test in this file reads the root column, so seeding one there would silently
+    # change what five passing tests are looking at.
+    root_file = @user.nodes.create!(node_id: SecureRandom.uuid, name: "hero.png", kind: "file",
+                                    parent_node_id: nil)
+
+    open_form
+    find(".folder-field-btn").click
+    # PIN THE TRAP LOCALLY. The paragraph above turns on the host page passing a non-default
+    # root_label; nothing in this test named it, so if projects/_form.html.erb ever reverted to the
+    # partial's "/ (library root)" default the trap would weaken with NOTHING going red. The crumbs
+    # render rootLabel verbatim, so asserting it here fails loudly instead.
+    assert_selector ".filechooser-crumbs", text: "Choose automatically"
+    find(".filechooser-row", text: "hero.png").click # NO descent — depth 0 is the subject
+    assert_text "Selected: /hero.png"
+
+    click_on "Open"
+    assert_no_selector ".filechooser-overlay"
+
+    # BOTH HALVES, for the reason the first test states: the committed label is what was wrong, and
+    # a fix that got the string right while dropping the node_id would pass on the label alone.
+    assert_selector ".ff-path", exact_text: "/hero.png"
+    assert_equal root_file.node_id, cover_input.value
+    assert_no_console_errors
+  end
+
+  # BACK CLEARS A FILE-MODE PICK. `pickFile` collapses the trail to the file's own depth, so popping
+  # a level removes the column that file was IN — leaving the footer naming a file that is no longer
+  # on screen, with Open live. `descend` has always cleared here; `back` wrapped its whole selection
+  # update in `if (mode === "folder")` and did not. Nothing in this suite clicked Back in either
+  # mode before this test.
+  test "Back clears a file-mode selection, because the column holding it is gone" do
+    open_form
+    find(".folder-field-btn").click
+    find(".filechooser-row", text: "Projects").click
+    find(".filechooser-row", text: "harbor").click
+    find(".filechooser-row", text: "beacon.stl").click
+    assert_text "Selected: /Projects/harbor/beacon.stl"
+
+    find(".filechooser-back").click
+    assert_no_text "Selected: /Projects/harbor/beacon.stl"
+    assert_text "Select a file"           # the placeholder `render` shows for an empty file-mode pick
+    assert_button "Open", disabled: true  # and the commit is refused, not merely unlabelled
+    assert_no_console_errors
+  end
+
   test "New Folder creates a real dir through the port and steps into it" do
     open_form
     find(".folder-field-btn").click
