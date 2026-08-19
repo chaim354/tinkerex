@@ -2,6 +2,7 @@
 and param-file construction are pure logic and are tested directly."""
 import json
 import os
+import subprocess
 import tempfile
 
 import pytest
@@ -45,6 +46,70 @@ def test_a_comma_string_from_a_vector_field_is_rebracketed():
     # bracketed OpenSCAD vector, not the bare string.
     values = json.loads(render.param_set_json({"span": "10,20,30"}, vector_names={"span"}))["parameterSets"]["s"]
     assert values["span"] == "[10,20,30]"
+
+
+# --- the version probe, which is IN THE CACHE KEY -------------------------------------------------
+
+REAL = "OpenSCAD version 2026.07.26"
+
+
+@pytest.fixture
+def cold_version_memo():
+    """openscad_version memoizes on a module global, so a test about it must start from cold — and
+    must put back whatever a real-binary test in this file already resolved."""
+    before = render._VERSION
+    render._VERSION = None
+    yield
+    render._VERSION = before
+
+
+def _probe(monkeypatch, forks, healthy):
+    """Stand in for `openscad --version`, counting forks. `healthy` is read at CALL time so a test
+    can flip the box's behaviour between calls."""
+    def fake_run(cmd, **kw):
+        forks.append(cmd)
+        if not healthy[0]:
+            raise OSError("fork: Resource temporarily unavailable")
+        return subprocess.CompletedProcess(cmd, 0, stdout=REAL + "\n", stderr="")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
+def test_the_version_probe_forks_ONCE_PER_PROCESS_not_once_per_render(cold_version_memo, monkeypatch):
+    # The version is a CONSTANT OF THE PROCESS — OPENSCAD_BIN resolves once at import and the
+    # Dockerfile bakes the binary in — but it was being asked per request, before the cache lookup,
+    # so even a pure cache hit forked a Qt-linked binary before touching the disk.
+    forks = []
+    _probe(monkeypatch, forks, [True])
+    assert [render.openscad_version() for _ in range(4)] == [REAL] * 4
+    assert len(forks) == 1, "the probe must be memoized, not re-run per render"
+
+
+def test_a_BLIPPED_probe_cannot_give_IDENTICAL_INPUT_A_SECOND_CACHE_KEY(cold_version_memo, monkeypatch):
+    # THE INVALID STATE BEING REMOVED. openscad_version swallows any failure into the literal
+    # "unknown", and that string is hashed into cache_key — so one transient fork failure used to
+    # write the same (scad, params, fmt) under a second key no healthy request would ever read, and
+    # (probed against a persistent cache dir) served the PRE-UPGRADE mesh after an OpenSCAD bump.
+    forks, healthy = [], [True]
+    _probe(monkeypatch, forks, healthy)
+    first = render.cache_key(SIMPLE, {"cols": 2}, "3mf", render.openscad_version())
+
+    healthy[0] = False                      # the box blips under load
+    assert render.openscad_version() == REAL, "a known version must survive a failing probe"
+    assert render.cache_key(SIMPLE, {"cols": 2}, "3mf", render.openscad_version()) == first
+
+
+def test_a_FAILED_probe_is_NOT_remembered(cold_version_memo, monkeypatch):
+    # THE HALF A PLAIN functools.lru_cache GETS WRONG, and the reason this is hand-rolled. lru_cache
+    # would memoize "unknown" as readily as a real answer, and the gunicorn CMD sets no
+    # --max-requests, so one blipped probe at worker start would key every render that worker ever
+    # serves under "unknown" — widening the stale-cache window above from one request to a whole
+    # worker lifetime. Only a SUCCESS may be remembered.
+    forks, healthy = [], [False]
+    _probe(monkeypatch, forks, healthy)
+    assert render.openscad_version() == "unknown"
+
+    healthy[0] = True
+    assert render.openscad_version() == REAL, "a failed probe must not become the process's answer"
 
 
 @pytest.mark.skipif(not os.path.exists(os.environ.get("OPENSCAD_BIN", "/nope")),

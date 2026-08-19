@@ -38,10 +38,41 @@ class Result:
     cached: bool
 
 
+_VERSION = None
+
+
 def openscad_version():
+    """The binary's version string — MEMOIZED ON SUCCESS ONLY, never on failure.
+
+    It goes into cache_key, so it is not a label: two requests that disagree about it write the SAME
+    input under TWO keys. /cache is a docker volume that outlives an image upgrade (deploy.yml), so a
+    probe that blipped before the upgrade and again after it collides both on the literal "unknown"
+    and SERVES THE OLD MESH FOR THE NEW BINARY — verified by probe, cached=True with the pre-upgrade
+    bytes, which is exactly what putting the version in the key is meant to prevent.
+
+    A PLAIN functools.lru_cache IS THE WRONG FIX, WHICH IS WHY THIS IS HAND-ROLLED: it remembers
+    "unknown" too, and the Dockerfile's gunicorn CMD sets no --max-requests, so a worker is never
+    recycled — ONE blipped probe would key every render for that worker's whole lifetime. Measured
+    over five calls where the probe blips once and recovers: per-request 'unknown' then real,
+    5 forks; lru_cache 'unknown' then 'unknown', 1 fork, STICKY FOREVER; this 'unknown' then real,
+    2 forks. Identical saving, with the sticky state unreachable.
+
+    Read the guarantee precisely: this NARROWS the "unknown" window to before a worker's first
+    SUCCESSFUL probe, it does not abolish it. A blip on the very first call still answers "unknown"
+    for that one request — it is simply not remembered, so the next call asks again. Abolishing it
+    would mean failing the request instead, which trades a rare wrong cache key for a hard outage.
+
+    Lazy, never an import-time constant — that would fork OpenSCAD during `import render`, which
+    every test module does on a box with no binary. A dev upgrading the binary under a live process
+    needs a restart; inside the image the binary is baked in and cannot change.
+    """
+    global _VERSION
+    if _VERSION is not None:
+        return _VERSION
     try:
         out = subprocess.run([OPENSCAD_BIN, "--version"], capture_output=True, text=True, timeout=15)
-        return (out.stdout + out.stderr).strip().splitlines()[0]
+        _VERSION = (out.stdout + out.stderr).strip().splitlines()[0]
+        return _VERSION
     except Exception:
         return "unknown"
 
