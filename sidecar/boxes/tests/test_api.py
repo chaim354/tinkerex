@@ -254,3 +254,60 @@ def test_sample_serves_a_thumbnail_and_guards_the_name(tmp_path):
         assert c.get("/sample/bad.name").status_code == 404  # non-alnum name rejected by the guard
     finally:
         appmod.SAMPLES_DIR = old
+
+
+# --- catalogue memoization (F-61) ---------------------------------------------------------
+#
+# VALIDATION REALITY, stated because it is not obvious from anywhere else in the tree: NOTHING
+# RUNS THESE. `bin/ci --list` has no python gate, and `grep pytest .github/workflows/` returns
+# nothing, so every test in this file is executed by no gate and no workflow — it runs only when
+# a person types the command. `sidecar/boxes/.venv` is git-ignored on top of that, so a fresh
+# clone cannot run it at all without building the venv first. Treat what follows as documentation
+# with an assert in it. Adding a gate is its own decision: CLAUDE.md §14e requires config/ci.rb and
+# .github/workflows/ci.yml to move together, and it would put a python toolchain on the critical
+# path of every PR for a GPL tree the Rails process never loads.
+
+
+def test_the_catalogue_is_memoized_but_callers_still_get_their_own_dict():
+    """_all_generators() returned a FRESH dict per call before it was memoized, so handing back the
+    cached object would silently turn a local into shared process state. Poison what one caller got
+    and the next caller must be unaffected."""
+    first = appmod._all_generators()
+    assert "ABox" in first
+    first["POISON"] = object()
+    first.pop("ABox")
+
+    second = appmod._all_generators()
+    assert "POISON" not in second, "a caller mutated the shared catalogue"
+    assert "ABox" in second, "a caller's deletion reached the shared catalogue"
+    assert first is not second
+
+    # Same contract on the derived view.
+    off_first = appmod._offered_catalogue()
+    off_first["POISON"] = object()
+    assert "POISON" not in appmod._offered_catalogue()
+
+
+def test_the_offered_catalogue_is_a_view_of_the_full_one_not_a_replacement():
+    """_seeded_default drives TrayLayoutFile, which _offered() excludes — so the full catalogue must
+    stay reachable. Collapsing the two would break TrayLayout's seeded textarea, which is a silent
+    failure (the form just comes back with a blank layout that then 422s on render)."""
+    everything = appmod._all_generators()
+    offered = appmod._offered_catalogue()
+    assert "TrayLayoutFile" in everything
+    assert "TrayLayoutFile" not in offered
+    assert set(offered) < set(everything)
+    assert offered == {k: c for k, c in everything.items() if appmod._offered(c)}
+
+
+def test_two_generators_calls_return_identical_json():
+    """The catalogue is immutable for the life of the process (BOXES_GENERATOR_PATH is set nowhere,
+    and upstream mutates __path__ in place if it ever is), so memoizing must not change a single
+    byte of what this endpoint answers. Compares two REAL responses to each other rather than to a
+    recomputed expectation, which could drift the same way twice."""
+    c = client()
+    first = c.get("/generators").get_json()
+    second = c.get("/generators").get_json()
+    assert first == second
+    assert len(first) > 150
+    assert {g["key"] for g in first} == {g["key"] for g in second}
