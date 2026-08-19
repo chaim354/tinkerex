@@ -28,19 +28,37 @@ module Projects
       end
     end
 
+    # ONE VALIDATED WRITE, with the completed_at stamp derived IN MEMORY from the same params it is
+    # persisted with — so the refusal is total and the invalid pair is unrepresentable rather than
+    # merely unlikely. This was three APIs in one action (`complete!` bang, `update` silent-false,
+    # `update_column` no-validation) and both branches were wrong:
+    #
+    #   the else branch decided from the PARAMS, not the record, so a write the model REFUSED still
+    #     ran `update_column(:completed_at, nil)` — persisting `status="done", completed_at=NULL`,
+    #     which no sanctioned path can produce, by the one API that skips validation to get there;
+    #   the done branch committed `complete!` first and could then fail the second write, marking a
+    #     task done while it kept the title the user was replacing.
+    #
+    # Both were invisible to a green suite: every existing status test sends a VALID status, so
+    # `update` always succeeded and the guard never ran for the reason it exists (§14e).
+    # `Time.current`, not v1's `completed_at ||=`, reproduces `Maker::Task#complete!` exactly — this
+    # is not a fourth spelling of the derivation rule.
     def update
-      task = project_task!(params[:id])
-      new_status = task_params[:status]
-      # Route "done" through the model op so completed_at is stamped consistently.
-      if new_status == "done" && task.status != "done"
-        task.complete!
-        task.update(task_params.except(:status))
-      else
-        task.update(task_params)
-        # Moving OUT of done: drop the stale completion timestamp.
-        task.update_column(:completed_at, nil) if new_status.present? && new_status != "done" && task.completed_at
+      task  = project_task!(params[:id])
+      attrs = task_params.to_h
+      case attrs["status"]
+      when nil, ""  then nil                                   # no status change: leave the stamp alone
+      when "done"   then attrs["completed_at"] = Time.current
+      else               attrs["completed_at"] = nil           # out of done: drop the stale stamp
       end
-      render_tasks(task.taskable)
+      if task.update(attrs)
+        render_tasks(task.taskable)
+      else
+        # Same reason `create` passes one: a turbo_stream response replaces the panel and nothing
+        # else, so without this the user presses a button, watches the panel redraw unchanged, and
+        # is told nothing. `render_tasks` re-queries, so the panel shows the persisted row.
+        render_tasks(task.taskable, alert: task.errors.full_messages.to_sentence)
+      end
     end
 
     def destroy

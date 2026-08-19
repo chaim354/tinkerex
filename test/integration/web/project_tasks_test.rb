@@ -102,6 +102,57 @@ module Web
       assert_nil task.reload.completed_at
     end
 
+    # --- a REFUSED update must change nothing, and must say so ---------------------
+    #
+    # Both status tests above send a VALID status, so the write always succeeded and neither could
+    # ever see the defect below — §14e's "a green suite over something that never worked". `#update`
+    # decided whether to null completed_at from the PARAMS and wrote it with `update_column`, which
+    # skips validation, so a refused write persisted `status="done", completed_at=NULL`: a pair no
+    # sanctioned path can produce.
+    test "a refused status change leaves status and completed_at consistent" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "A", status: "done", completed_at: Time.current)
+
+      patch task_path(task), params: { task: { status: "bogus" } }
+
+      task.reload
+      assert_equal "done", task.status, "an invalid status must not be persisted"
+      # A NIL/NON-NIL claim, deliberately — NOT "the stamp is unchanged" compared at `.to_i` (§15):
+      # the request lands in the same whole second as the fixture, so that spelling would stay green
+      # over exactly the write this pins.
+      assert_not_nil task.completed_at, "a refused write must not null the stamp behind it"
+    end
+
+    # Silence was the other half: the action rendered the panel with no `alert:`, so the user pressed
+    # a button, watched the panel redraw unchanged, and was told nothing — the same failure `create`
+    # was already fixed for (the invalid-add test further down).
+    test "a refused update reports itself inside the replaced panel" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "A", status: "done", completed_at: Time.current)
+
+      patch task_path(task), params: { task: { status: "bogus" } }, as: :turbo_stream
+
+      assert_select "turbo-stream[target=project-tasks]"
+      assert_match(/task-error/, response.body)
+    end
+
+    # THE DONE BRANCH WAS NON-ATOMIC: `complete!` committed first and the second write could then
+    # fail, leaving a task marked done still carrying the title the user was replacing. One
+    # validated write makes the refusal total.
+    test "a done transition the model refuses leaves the task not done" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "A", status: "todo")
+
+      patch task_path(task), params: { task: { status: "done", title: "" } }
+
+      task.reload
+      assert_equal "todo", task.status, "a refused done transition must not half-commit"
+      assert_nil task.completed_at
+    end
+
     # --- Turbo Streams: adding a task must not repaint the whole page --------------
 
     # THE COMPLAINT: adding one row re-ran the ENTIRE show action — build log rich text, the Files
