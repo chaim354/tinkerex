@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-17 (**`CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot**)
+**Updated:** 2026-08-19 (**the 2026-08-19 simplification audit, worked**)
 
 ## What this file is
 
@@ -60,7 +60,114 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-17): `CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot (branch `claude/chunk-endpoint-seaweedfs-ip`)
+## Latest (2026-08-19): the 2026-08-19 simplification audit, worked (branch `claude/audit-2026-08-19-fixes`)
+
+`docs/AUDIT-2026-08-19.md` was produced read-only against `main` @ `dc739c3` — 84 findings over 57
+subsystem rows. This arc implements them. `docs/FIX-LOG-2026-08-19.md` is the per-finding record;
+this entry is the arc.
+
+**Process.** Every finding passed through three independent Opus agents — assess, fix, review — with
+no stage skipped. Assessors were read-only and judged *necessity* against the brief; implementers
+worked in isolated worktrees and mutation-checked per §15; reviewers re-ran every mutation themselves
+rather than accepting a report. Roughly 90 agents.
+
+**Verification at the end of the Tier 1 batch:** `bin/ci` bare and green — **2375 runs, 8652
+assertions, 0 failures, identical on all three `LIBRARY_BACKEND` legs**, system 102/656, plus a new
+`test-app` node gate. After the phase-2 batch: **2409 / 8956 / 0**, again identical across the three
+legs. `bin/ci` runs no cargo, so separately: `fs-provider` **203/0** (was 192), `sync-engine` **92/0**.
+
+### The measured wins
+
+| finding | before | after |
+|---|---|---|
+| F-02 `Sync::Commit#finalize` verify | 20 queries at n=5, **115 at n=100** | 16 at both |
+| F-34 `/v1/trash` | 5 / 9 / **29** at N=1/5/25 | flat **5** |
+| F-06+F-07 no-op S3 scan (500 dirs / 5000 files) | **503 queries, 286,349 objects, 0.179s** | **1 query, 79,832 objects, 0.011s** |
+| F-39 (assessed) `manifest_chunks` 250k `insert_all` | 2725 ms | **2141 ms, −21%** |
+
+### What the audit got wrong, and how we know
+
+The audit was unusually well-evidenced, and its citations resolved literally — but working it
+surfaced errors that only probing could find:
+
+- **F-75's severity is FALSE and is annotated in place.** It claimed deleting one `Dockerfile` line
+  means "every render 500s in production". The extracted binary carries `DT_RUNPATH = $ORIGIN/../lib`,
+  the bundled libs carry `$ORIGIN`, and the dlopen'd Qt plugins `$ORIGIN/../../lib:$ORIGIN` — and
+  **`DT_RUNPATH` is not transitive**, so all three levels are required and all three are present. Two
+  real `docker buildx build` runs with that line deleted came back green, all six assertions passing.
+  **The audit reached that conclusion by its own dominant pattern, one level up**: its verification
+  harness built in the assumption that the raw binary dies without the variable. Reclassified Tier 3.
+- **F-50's stated consequence does not occur at all** — both drains push through the same
+  `ServerClient`, and `Sync::Commit` has a same-device exemption with a passing test. Code change
+  dropped; six comments stating the opposite of the code were fixed instead.
+- **F-24's narrowed fix would have had zero readers**, and the narrowing had carved away the half
+  carrying the real evidence.
+- **F-60's proposed `lru_cache(maxsize=1)` would have introduced a new invalid state** — remembering a
+  failed version probe for the worker's lifetime, widening the stale-cache window from one request to
+  one worker.
+- **F-04's proposed `object_attrs(etag:, last_modified:, size:)` would have refreshed `mtime`** from a
+  response that does not carry it — green against the fake, wrong against every real store. A fresh
+  instance of the very defect F-04/F-65 exist to fix, introduced by the fix for it.
+- **F-26's proposed `dependent: :destroy`** makes the audit's own required test unwritable and deletes
+  user data. Landed `:nullify`.
+- **F-71 has a FOURTH `rclone check` exit-0 case** the audit never names (`--size-only`), and its
+  proposed remedy would print "N/N verified by hash" over a run that hashed nothing.
+- **F-39 is eleven indexes, not nine**, and its migration is not reversible as written.
+- **F-17's proposed assertion is false today** (`> BASE_REVISION` fails for two formats that *are* the
+  base); **F-64's site count is 64, not 68**; **F-44's** validation list names three uncovered
+  controllers when only one is; **F-29's** hole is worse than stated (the dead blob 302s, so the user's
+  entire Files listing renders inside the Instructions iframe).
+- **§9.4, which the audit's preamble calls "the work plan", ranks only 51 of 84 findings.**
+
+### Corrections to the work itself, found by reviewers probing rather than reading
+
+The recurring one was **a comment asserting a mechanism that does not exist** — five instances, each
+corrected in place. The sharpest: F-02's slice header claimed a Postgres wire-protocol limit that
+ActiveRecord structurally prevents (it recompiles unprepared and inlines above `bind_params_length`;
+an unsliced 100_000-hash lookup succeeds as one ~6.8 MB statement).
+
+**Seven times a worker refused a mutation check the coordinator specified, with evidence, and was
+right.** Two are worth carrying into future work:
+- **Rails compiles an empty `IN` to a `1=0` contradiction and short-circuits before the adapter**, so
+  `where(id: [])` issues **zero** queries — and `to_sql` still renders the SQL, which is exactly what
+  makes the wrong answer look confirmed.
+- **`node:test` abandons a test at its first failed assertion** (probed with a flag set between two
+  failing assertions), as minitest does. **N assertions in one block prove that ONE of them carries
+  weight.** This now applies to both of the repo's test tiers.
+
+### New findings raised during the work, not in the audit
+
+- **N4 — `[nil].any?` is `false`.** `Sync::Commit.begin` accepts a manifest entry with no `hash` key
+  and persists `{"hash" => nil}`. `PendingCommitReaper`'s storage-age guard then calls
+  `store.last_modified(uid, nil)`, which raises `NoMethodError` on `LocalChunkStore` from a line
+  **outside** the `begin/rescue` — so `reap!` dies before `destroy_all` and `reap_all!` swallows it.
+  Probed: three consecutive hourly runs each returned 0, both a nil-hash row and a co-expired good row
+  survived all three, and `ChunkReaper.reap!` then returned `[]`. **The good object had already been
+  deleted from storage**, so the bytes are gone while the row protects a hash that no longer exists,
+  and both reapers report success at reaping nothing. Self-sustaining, silent, reachable by any
+  authenticated device on `STORAGE_BACKEND=local`. Fix is at the door, **not** `.compact` in the reaper.
+- **N1 — `Maker::Task#taskable_belongs_to_owner` failed open** on a type its `case` could not resolve.
+  Held shut only by an `inclusion` validation, so the edit that opened it was adding one string to a
+  constant 17 lines away.
+- **N3 — a pushed sidecar image could not name the build it came from**, and a SHA tag does not fix
+  that (no digest→tag reverse lookup; `kamal accessory details` is `docker ps`). An OCI label does.
+- **N2 — `{"bom": null}` was a real unrescued 500**, found by sweeping the siblings of a finding whose
+  own claim turned out to be false.
+
+### Still open from this arc
+
+- Tier 2/3 items still in flight at the time of writing: F-39, F-55, F-58, F-61, F-62, F-13b, D-01.
+- **33 of the audit's 84 findings are ranked nowhere in §9.4**, including F-45 (the web session's
+  Device identified by a magic string in a client-settable column, which feeds conflict suppression).
+- `scripts/r2-cutover/` is in the identical position to `ops/` — nothing in `bin/ci` can go red for any
+  line in it — and **CLAUDE.md §14i does not say so**.
+- `test/jobs/pending_commit_reaper_job_test.rb` still does not exist; the hourly job has no job-level
+  coverage while its weekly sibling does.
+- The G2 pooler probe still executes in **no CI leg at all** (no leg sets a Postgres `DATABASE_URL`).
+
+---
+
+## 2026-08-17: `CHUNK_ENDPOINT` pointed at Redis after an Unraid reboot (branch `claude/chunk-endpoint-seaweedfs-ip`)
 
 One line of config, but the cause is worth recording because it will recur on any container this
 host runs.
