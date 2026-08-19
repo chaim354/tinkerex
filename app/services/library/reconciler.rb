@@ -147,7 +147,21 @@ module Library
       guard_mass_deletion!(doomed.size, observable_count)
 
       apply_moves!(moves)                                      # 2 (apply)
-      doomed.each { |node| node.update!(deleted: true) }
+      # `live.delete` is what keeps #live's stated invariant UNCONDITIONAL. This is the FIFTH
+      # site that tombstones, and the one a review found the invariant's own comment omitting.
+      # Harmless today by luck, not by design: the only readers after this line are #parent_id_for
+      # (keyed on DIRECTORY paths, and #ensure_dirs has already evicted any file row sitting at
+      # one) and #tombstone_vanished_dirs (filters kind == "dir"), so a stale FILE key is never
+      # consulted. That is an argument about today's call order, and #create_or_revive!'s own
+      # comment says why not to rely on one — a claim with an exception a future reader has to
+      # find is worse than a claim that is simply true. One line makes it true.
+      #
+      # Probed both ways: without the delete, a doomed "d/b.stl" stays in #live while `present`
+      # has dropped it. With it, the two sets are identical.
+      doomed.each do |node|
+        node.update!(deleted: true)
+        live.delete(node.storage_path)
+      end
       leftovers.each do |o, hash|                                # 3 & 4
         enqueue_thumbnail(create_or_revive!(o, hash), hash)
       end
@@ -701,8 +715,10 @@ module Library
     # merely happen to agree"). The dir half never got it. This is that.
     #
     # THE INVARIANT: this mirrors `present`. Every site that tombstones, revives or re-stamps a
-    # node maintains it — #ensure_dirs, #match_live_paths, #apply_moves! and
-    # #tombstone_vanished_dirs all write back. That is not tidiness in one of those cases: see
+    # node maintains it — FIVE of them: #ensure_dirs, #match_live_paths, #apply_moves!,
+    # #tombstone_vanished_dirs, and #call's own `doomed.each`. (That last one was missing, and
+    # an earlier version of this very comment enumerated only four while claiming "every" —
+    # probed in review, one stale key. Count them against the code, not against this sentence.) That is not tidiness in one of those cases: see
     # #ensure_dirs, where dropping the write-back is a RecordNotUnique that kills every scan
     # forever.
     #
