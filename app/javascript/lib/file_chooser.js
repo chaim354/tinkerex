@@ -191,14 +191,14 @@ export class FileChooser {
   descend(depth, folder) {
     this.trail = this.trail.slice(0, depth).concat([ { id: folder.node_id, name: folder.name } ])
     this.selection = this.mode === "folder"
-      ? { nodeId: folder.node_id, kind: "dir", path: this.pathFor(this.trail.length) }
+      ? { nodeId: folder.node_id, kind: "dir", path: this.pathPrefix(this.trail.length) }
       : null // in file mode, descending leaves nothing selected until a file is clicked
     this.render()
   }
 
   pickFile(depth, file) {
     this.trail = this.trail.slice(0, depth) // collapse any deeper folder columns
-    this.selection = { nodeId: file.node_id, kind: "file", path: this.pathFor(depth) + "/" + file.name }
+    this.selection = { nodeId: file.node_id, kind: "file", path: this.pathPrefix(depth) + "/" + file.name }
     this.render()
   }
 
@@ -208,16 +208,42 @@ export class FileChooser {
     if (this.mode === "folder") {
       const last = this.trail[this.trail.length - 1]
       this.selection = last
-        ? { nodeId: last.id, kind: "dir", path: this.pathFor(this.trail.length) }
+        ? { nodeId: last.id, kind: "dir", path: this.pathPrefix(this.trail.length) }
         : { nodeId: "", kind: "dir", path: this.rootLabel }
+    } else {
+      // FILE MODE CLEARS, exactly as `descend` does one method up, and the asymmetry used to run
+      // the other way: this branch did not exist, so popping a level left the footer reading
+      // "Selected: /a/b/x.svg" with Open live while the crumbs read "/ › a". Popping removes the
+      // COLUMN THE PICKED FILE WAS IN — `pickFile` already collapsed the trail to that file's own
+      // depth — so after a Back there is nothing on screen the stale selection corresponds to, and
+      // Open would commit a file the user can no longer see.
+      //
+      // This is a modal-INTERNAL null, not a resolved one: `choose` returns early on it, so the
+      // promise's null keeps meaning cancel and only cancel (file mode has no "chose the root"
+      // answer). The folder arm above is untouched and must stay so — it names the root with the
+      // caller's own `rootLabel`, which is a label by design and not the path this file's
+      // `pathPrefix` builds.
+      this.selection = null
     }
     this.render()
   }
 
-  // "/" + the names of the first `n` descended folders (n counts levels below root).
-  pathFor(n) {
+  // "/" + the names of the first `n` descended folders (n counts levels below root), or "" at the
+  // root. TOTAL OVER PATHS AND NEVER A LABEL — that is the whole point of the name, and it used to
+  // be false: this returned `rootLabel` at n === 0, so the one caller that can pass 0 composed a
+  // display label into a path. `pickFile` builds `pathPrefix(depth) + "/" + name`, so a file picked
+  // in the ROOT column came back as "Choose automatically/hero.png" — the project form's own
+  // root_label — where it means "/hero.png". The other two callers never reach 0 (`descend` calls
+  // this after a `.concat`, `back` inside `if (last)`), so the label branch was reachable from
+  // exactly one call site and wrong at all of it.
+  //
+  // The same conflation as the seeding defect recorded at #open, one method away. A caller that
+  // WANTS the root's label supplies it literally — #open at the seed, `back`'s root arm — because
+  // only the caller knows whether it is composing a path or naming the root, and folder mode
+  // deliberately names the root with the caller's own word for it.
+  pathPrefix(n) {
     const parts = this.trail.slice(0, n).map((f) => f.name)
-    return parts.length ? "/" + parts.join("/") : this.rootLabel
+    return parts.length ? "/" + parts.join("/") : ""
   }
 
   // ---- new folder ----------------------------------------------------------
