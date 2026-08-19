@@ -2,9 +2,15 @@ name: CI
 
 on:
   pull_request:
-    # Rails app only — skip on docs-only or client/** (Rust) changes (those gate via rust-client.yml).
+    # Rails app only — skip on docs-only or client/** (Rust) changes (those gate via
+    # rust-client.yml). The ONE exception is the desktop app's JavaScript, whose gate lives here
+    # because config/ci.rb is the single definition of every gate and ci_hygiene_test asserts
+    # ci.yml is where they are invoked. Cost of the exception: a JS-only PR also runs the Rails
+    # jobs, which is a minute of work on a free self-hosted runner.
     paths:
       - 'app/**'
+      - 'client/maker-app/src/**'
+      - 'client/maker-app/test/**'
       - 'config/**'
       - 'db/**'
       - 'lib/**'
@@ -172,6 +178,19 @@ jobs:
         env:
           RAILS_ENV: test
         run: bin/ci test-s3
+
+  # The desktop app's JS suite (client/maker-app/test/). The gate itself is `node --test` and
+  # nothing else — node is already on the runner's service PATH, so there is no install step for
+  # it — but `bin/ci` boots bundler to read config/ci.rb, hence the gems. See the `test-app` gate
+  # in config/ci.rb for why the command is a glob rather than a directory.
+  test-app-js:
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Run the desktop app's JS tests
+        run: bin/ci test-app
 
   # The browser tier. Its own job so its cost stays visible as it grows, rather than inflating the
   # unit-test job. See test/system/README.md for what earns a place in it.

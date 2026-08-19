@@ -85,6 +85,23 @@ GATES = {
 
   "system" => ->(ci) do
     ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
+  end,
+
+  # The desktop app's JavaScript — the only JS gate in the repo. client/maker-app had no `test`
+  # script, no test files and nothing in CI at all until 2026-08-19; the Rust `mod tests` next
+  # door covers Prefs/creds_key/atomic writes and none of the frontend. §14c is the precedent for
+  # landing the gate WITH the file rather than after it.
+  #
+  # No install step: `node` is on the mac runner's service PATH already (nvm 18.20.8, the first
+  # entry in the runner's .path). If it ever is not, this goes RED — which is the right direction
+  # for a gate whose whole content is the suite it runs.
+  #
+  # THE GLOB IS LOAD-BEARING, not style. `node --test test/` over a directory with no test files
+  # exits 0 (verified, node 18.20.8), so deleting the suite would leave this gate green about
+  # nothing — this repo's dominant failure shape. An unmatched glob reaches node as a literal and
+  # exits 1. It still picks up a NEW *.test.js with no edit here.
+  "test-app" => ->(ci) do
+    ci.step "Tests: Desktop app (node)", "cd client/maker-app && node --test test/*.test.js"
   end
 }.freeze
 
