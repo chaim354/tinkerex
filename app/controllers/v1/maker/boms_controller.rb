@@ -41,9 +41,18 @@ module V1
 
       # AN ABSENT `bom` KEY CREATES A DEFAULTED BOM; AN EXPLICIT `null` IS A MALFORMED BODY.
       # `fetch`'s default fires on ABSENCE ONLY, so `{"bom": null}` returned nil and `.permit`
-      # raised `NoMethodError: undefined method 'permit' for nil` — the one UNRESCUED 500 in the
-      # v1 maker controllers, since `V1::BaseController` maps `ParameterMissing`/`RecordInvalid`
-      # and nothing maps that.
+      # raised `NoMethodError: undefined method 'permit' for nil` — an UNRESCUED 500, since
+      # `V1::BaseController` maps `ParameterMissing`/`RecordInvalid` and nothing maps that.
+      #
+      # NOT "the one", which an earlier draft of this comment claimed and review disproved:
+      # `{"bom": ""}` and `{"bom": []}` still raise `NoMethodError` on the line below, while the
+      # siblings answer **400** for both — so this line is still divergent for two reachable
+      # inputs. (`{"bom": false}`, `"abc"`, `7` raise across the whole API, `projects` included, so
+      # those are pre-existing and not this endpoint's.) Closing the remaining two wants a TYPE
+      # check rather than a truthiness one — `raise ParameterMissing, :bom unless
+      # raw.is_a?(ActionController::Parameters)` — which keeps the 201 where `||` cannot, since
+      # `""` is truthy in Ruby. Deliberately not done here: it is a second condition, and the fix
+      # for it should arrive with its own tests rather than riding this one.
       #
       # THE ABSENT HALF IS DELIBERATE AND STAYS: a BOM needs no attributes (`{"bom": {}}` and a
       # bodyless POST both create one, name "BOM", revision 1), so `require(:bom)` outright would
