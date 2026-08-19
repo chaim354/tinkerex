@@ -41,8 +41,13 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # The assertion is "one hit, and it is library_output.rb" — NOT "no hits". Asserting zero would
     # be asserting something false, and asserting only the count would let the coupling migrate to
     # some other file while the test stayed green.
-    hits = offending(%w[app/services/maker app/models/maker app/jobs/maker],
-                     /manifest_chunks|ChunkStore/)
+    # The directory set is DERIVED FROM THE TREE — `app/**/maker` is every maker directory there
+    # is — so a NEW `app/<x>/maker/` is covered the day it is created. It was a remembered list
+    # of three and silently missed `app/controllers/v1/maker` + `app/models/concerns/maker` (15
+    # files), where a ChunkStore call left this test GREEN over a live §14a breach — in the very
+    # file §14a introduced to replace a remembered grep. Derive, don't enumerate: the same rule as
+    # stimulus_hygiene_test.rb's registered_identifiers.
+    hits = offending(%w[app/**/maker], /manifest_chunks|ChunkStore/)
 
     assert_equal 1, hits.size,
                  "expected exactly ONE chunk-internals reference in the maker layer, got #{hits.size}:\n" \
