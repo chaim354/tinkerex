@@ -132,6 +132,15 @@ Expect `PRESIGNED ROUNDTRIP OK` (device A → R2 → device B, byte-for-byte). T
 presign + PUT + GET + `head_object` verify all work against R2. If it fails, **roll back**
 (§9) before proceeding. Optionally re-run the latency harness (`docs/r2-migration.md` §5).
 
+It also prints a **`store identity`** line — the endpoint and bucket the server actually
+presigned against, read out of a real presigned URL (path-style, so origin + first path
+segment carry both; the signed query string is never printed). **Run this with `r2.env`
+sourced** (§2) and `smoke.sh` compares that identity to `R2_ENDPOINT`/`R2_BUCKET` and fails on
+a mismatch; without them it prints a NOTICE saying the identity was shown but not checked.
+That comparison is the *only* thing anywhere that cross-checks the server's `CHUNK_BUCKET`
+against the bucket `migrate-chunks.sh` filled — a byte-perfect roundtrip against the wrong
+bucket looks exactly like a byte-perfect roundtrip against the right one.
+
 ---
 
 ## 8. Final incremental copy (RIGHT AFTER the flip) + monitor
