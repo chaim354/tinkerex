@@ -4857,7 +4857,8 @@ suite, in the same list, for the same reason.
 
 **So the deferral has to land somewhere, and this is it:**
 
-- `client/fs-provider` — **192 / 0**, 20 binaries, hermetic (no server). Re-measured this arc.
+- `client/fs-provider` — **203 / 0**, 20 binaries, hermetic (no server). (Was 192/0 when this
+  arc measured it; F-48 added `staging.rs`'s 8 unit tests and 3 deadlock arms on 2026-08-19.)
 - `client/sync-engine` `tests/integration.rs` — **NOT re-measured here**; it needs a running server
   and skips cleanly without one. Last recorded figure in this file is **19/0** (2026-06-14 entry).
   Treat that as dated, not current.

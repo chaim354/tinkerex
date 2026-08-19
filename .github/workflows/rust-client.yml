@@ -57,8 +57,12 @@ jobs:
     # RUNS ON macos, NOT linux. This job is `git diff` plus bash — it has no Linux dependency — and
     # every other job in this workflow `needs:` it, INCLUDING mac-tests, which targets the runner
     # that is actually online. So a linux label here took the whole workflow down with the Linux
-    # box, and moving it is what revives the hermetic Rust suite (fs-provider 192 tests,
+    # box, and moving it is what revives the hermetic Rust suite (fs-provider,
     # sync-client, fs-cfapi, fs-fskit, the windows-gnu FFI cross-check, the native macOS build).
+    # NO TEST COUNT HERE, deliberately: this comment's point is WHICH suites revive, not how many
+    # tests they hold, and docs/STATUS.md section 6 already records why a count written in two
+    # places becomes a count that is wrong in one of them. It carried "192" until 2026-08-19,
+    # by which time the answer was 203.
     runs-on: [self-hosted, macos]
     outputs:
       mac: ${{ steps.f.outputs.mac }}
