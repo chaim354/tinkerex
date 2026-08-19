@@ -609,3 +609,18 @@ bin/kamal accessory boot boxes        # first time; later: bin/kamal accessory r
 
 Then redeploy the app leg(s) so they pick up `BOXES_SIDECAR_URL`. Verify from an app container:
 `curl -s http://tinkerex-boxes:8000/up` → `ok`. The addon then shows as available at `/tools`.
+
+### Which build is this accessory running?
+
+Both sidecar build scripts bake the source commit into the image as an OCI label, so a **running**
+accessory can name its own build — no registry access, no tag enumeration. Ask the container:
+
+```sh
+ssh unraid 'docker inspect tinkerex-openscad \
+  --format "{{index .Config.Labels \"org.opencontainers.image.revision\"}}"'
+```
+
+(Same for `tinkerex-boxes`.) A `-dirty` suffix means the sidecar directory had uncommitted **or
+untracked** changes at build time, so the commit named is not the whole story. `docker ps` and
+`kamal accessory details` cannot answer this — they print the run reference, `:latest`, and the
+registry has no digest→tag reverse lookup, so the tags say only which builds exist.

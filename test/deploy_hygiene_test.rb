@@ -129,6 +129,46 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  test "every sidecar build script bakes the source revision into the image" do
+    # WHAT THIS COVERS, AND — the more important half — WHAT IT CANNOT.
+    # It reads the build scripts as TEXT and asserts only that each one passes an
+    # `org.opencontainers.image.revision` label whose value is computed rather than written down.
+    # Nothing in `bin/ci` builds or pushes a Docker image, so this test does NOT and CANNOT show
+    # that the pushed image carries the label, or that the accessory running on the box carries one.
+    # Read it as "the scripts still ask for provenance", never as "provenance is present".
+    #
+    # WHY THE LABEL AT ALL: both scripts push `:latest` and config/deploy.yml pulls `:latest`, so
+    # before this there was nothing on the box that could name the build it was running — and for
+    # sidecar/openscad that matters twice over, because assert-capabilities.sh runs ONLY inside its
+    # own Dockerfile (`bin/ci` never executes it), making those assertions the image's only gate.
+    # A git-SHA TAG does not close it: the OCI distribution API has no digest->tag reverse lookup,
+    # and `kamal accessory details` is `docker ps`, which prints `:latest` rather than a digest. The
+    # label answers from the container itself. An extra `-t <sha>` is fine beside it and is NOT
+    # asserted here — it is inventory, not the mechanism.
+    #
+    # DIRECTORY-DRIVEN, never a hard-coded pair, for the reason the licence test above records: a
+    # third sidecar's build script is covered the day it appears, not the day someone remembers.
+    scripts = ROOT.glob("bin/build-*-sidecar")
+    assert scripts.any?, "expected at least one bin/build-<name>-sidecar"
+
+    scripts.each do |script|
+      where = script.relative_path_from(ROOT)
+      label = script.read[/--label\s+"?org\.opencontainers\.image\.revision=([^"'\s]*)/, 1]
+
+      assert label,
+             "#{where} must pass --label org.opencontainers.image.revision=… to docker buildx " \
+             "build. Without it a running accessory cannot name the build it came from: both " \
+             "scripts push :latest and config/deploy.yml pulls :latest, and no tag scheme can " \
+             "recover it (no digest->tag reverse lookup; `kamal accessory details` is docker ps)."
+      # A LITERAL VALUE WOULD SATISFY THE LINE ABOVE AND MEAN NOTHING — a pasted SHA goes stale on
+      # the next commit, silently, and a stale provenance label is worse than none because it is
+      # believed. Requiring a shell expansion is the narrowest way to say "computed at build time".
+      assert_includes label, "$",
+                      "#{where}'s revision label must be computed from the tree at build time " \
+                      "(a shell expansion), not a literal — got #{label.inspect}."
+    end
+  end
+
   # ── third-party catalogs bundled INSIDE a sidecar image ───────────────────────────────────────
   #
   # WHY THIS IS HERE, AND WHY IT IS NOT A SECOND COPY OF sidecar/openscad/tests/test_catalog.py.
