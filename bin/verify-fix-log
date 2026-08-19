@@ -1,0 +1,67 @@
+#!/bin/bash
+# Verify that every commit a fix-log ledger row NAMES actually reached main.
+#
+# WHY THIS EXISTS. The 2026-08-19 audit's ledger was wrong about its own contents twice, and
+# neither error was reachable by any gate — nothing in `bin/ci` reads a ledger row:
+#
+#   * F-71/F-72 was recorded as LANDED with a commit SHA belonging to a DIFFERENT fix. The work
+#     existed only on an unmerged agent branch and was one `git branch -D` from being lost. It
+#     surfaced because a claim ("their content is already on main") was tested before deleting.
+#   * N5's row still said NOT FIXED after N5 was fixed and merged — the section heading and prose
+#     were updated and the row was not, so the table contradicted the section it indexes.
+#
+# THE CHECK THAT MATTERS is MISSING: a row names a real commit whose work never reached main. That
+# is the F-71/F-72 class, and it is the one a reader cannot detect by eye — the SHA looks fine.
+#
+# DELIBERATELY NOT A `bin/ci` GATE. It reads a dated snapshot of finished work, so gating it would
+# run a check over frozen history on every PR forever, and §14e's "a stale open-list is worse than
+# none" cuts the other way here: the value was at audit time, and the audit is closed. Run it by
+# hand when a ledger is being written or amended. Same stance `/ops` takes (§14i) — no gate, with
+# the reasoning in the file rather than in someone's memory.
+#
+# THREE TIERS, because "not an ancestor of main" is not by itself an error:
+#   on main   — the SHA is an ancestor of main. Nothing to do.
+#   PICKED    — the SHA is not on main but a commit with the SAME SUBJECT is. The row names a
+#               pre-cherry-pick SHA; the work shipped under a different one. Misleading, not lost.
+#               Worth rewriting, because deleting the source branch makes the SHA unresolvable.
+#   MISSING   — the SHA resolves, is not on main, and nothing with its subject is either. The work
+#               did not ship. This is the failure this script exists for.
+#   BAD-SHA   — does not resolve at all. Usually a PICKED row whose source branch was since
+#               deleted, so the original commit became unreachable. Verify by CONTENT, then rewrite.
+#
+# Mutation-checked three ways when written: a garbage SHA reports BAD-SHA; a real commit from an
+# unmerged branch reports MISSING; a LANDED row with no SHA reports NO-SHA. Exit is non-zero for
+# MISSING or NO-SHA only — PICKED is a warning, since the work did ship.
+#
+# Usage: bin/verify-fix-log [docs/FIX-LOG-YYYY-MM-DD.md]
+DOC="${1:-docs/FIX-LOG-2026-08-19.md}"
+onmain=0; picked=0; missing=0; norefs=0
+while IFS= read -r row; do
+  id=$(echo "$row" | sed 's/^| \*\*\([^*]*\)\*\*.*/\1/')
+  status=$(echo "$row" | grep -o 'LANDED[A-Z ()]*\|DROPPED[A-Z + ()a-z]*\|RECORDED ONLY' | head -1)
+  shas=$(echo "$row" | grep -oE '`[0-9a-f]{7,40}`' | tr -d '`')
+  if [ -z "$shas" ]; then
+    case "$status" in
+      LANDED*) echo "  NO-SHA   $id  (row says $status but names no commit)"; norefs=$((norefs+1));;
+    esac
+    continue
+  fi
+  for s in $shas; do
+    if ! git cat-file -e "$s^{commit}" 2>/dev/null; then
+      echo "  BAD-SHA  $id  $s does not resolve"; missing=$((missing+1)); continue
+    fi
+    if git merge-base --is-ancestor "$s" main 2>/dev/null; then
+      onmain=$((onmain+1))
+    else
+      subj=$(git log -1 --format=%s "$s")
+      if [ -n "$(git log main --format=%H --fixed-strings --grep="$subj" | head -1)" ]; then
+        echo "  PICKED   $id  $s not on main; same subject shipped under another SHA"; picked=$((picked+1))
+      else
+        echo "  MISSING  $id  $s NOT on main and no equivalent found  -- \"$subj\""; missing=$((missing+1))
+      fi
+    fi
+  done
+done < <(grep '^| \*\*' "$DOC")
+echo "---"
+echo "on main: $onmain   cherry-picked (SHA differs): $picked   MISSING: $missing   landed-but-no-SHA: $norefs"
+[ "$missing" -eq 0 ] && [ "$norefs" -eq 0 ]
