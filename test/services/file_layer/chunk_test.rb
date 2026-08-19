@@ -143,12 +143,19 @@ module FileLayer
       def presign_put(_user_id, hash) = "https://example.invalid/#{hash}"
     end
 
-    def with_http_get_raising(err)
+    # Swap the HTTP seam for an arbitrary implementation. `with_http_get_raising` is the
+    # unconditional case; the download drain tests need a SELECTIVE fault (first chunk fine,
+    # second missing) so they can prove the raise happens with bytes already yielded.
+    def with_http_get(impl)
       original = FileLayer::Chunk.method(:http_get)
-      FileLayer::Chunk.define_singleton_method(:http_get) { |_url| raise err }
+      FileLayer::Chunk.define_singleton_method(:http_get, &impl)
       yield
     ensure
       FileLayer::Chunk.define_singleton_method(:http_get, original)
+    end
+
+    def with_http_get_raising(err, &block)
+      with_http_get(->(_url) { raise err }, &block)
     end
 
     def http_error(status)
@@ -266,6 +273,77 @@ module FileLayer
       delete_file!(id)
       assert_raises(FileLayer::NotFound) do
         adapter.download(@user, node_id: id, disposition: "attachment")
+      end
+    end
+
+    # --- download's FAULT behaviour (D-01) -------------------------------------------------
+    #
+    # A VALIDATION GAP, NOT A REFACTOR: download's answers to a missing chunk and to a
+    # credentials outage were already correct, and entirely unasserted. All five fault tests
+    # below, and the shared adapter contract's transient-failure hook, call `read` — `download`
+    # was drained only on the happy path, so nothing anywhere pinned what a fault does to a
+    # stream that has already started.
+    #
+    # THE TRAP, and it is the reason these two tests look the way they do: `download` captures
+    # `store = Storage::ChunkStore.current` EAGERLY, at the top of the method, OUTSIDE the
+    # Enumerator. Install the fault after calling `adapter.download` and the enumerator has
+    # already closed over the ORIGINAL store — it drains clean and nothing raises (probed
+    # exactly that way first: the drain returned "streamed" with an http_get stubbed to raise
+    # unconditionally, which was never reached). THE FAULT MUST BE INSTALLED BEFORE
+    # `adapter.download` IS CALLED. §14e's "the suite being green is not evidence a guard
+    # works if the guard's precondition is never established in test", one layer down.
+    #
+    # These live here and NOT in adapter_contract.rb: `Delivery::Stream` is chunk-only (share
+    # answers `SendFile`, s3 answers `Redirect`), so there is no cross-backend drain to share.
+
+    # Two chunks, and the SECOND one is the one that vanishes — so the raise happens with the
+    # first chunk's bytes already yielded, which is the condition download's own comment names:
+    # "by here the response has already begun, so quiet corruption is the one outcome worth
+    # refusing". Without the raise, `y << nil` yields nil into the stream and the drain joins to
+    # a SHORT FILE with a hole in it, 200 and correctly named.
+    test "a chunk that vanishes MID-DRAIN raises NotFound rather than streaming a hole" do
+      node_id = SecureRandom.uuid
+      store = Storage::ChunkStore.current
+      h1 = Digest::SHA256.hexdigest("AAA")
+      h2 = Digest::SHA256.hexdigest("BB")
+      store.put!(@user.id, h1, "AAA")
+      store.put!(@user.id, h2, "BB")
+      cid = SecureRandom.uuid
+      Sync::Commit.begin(
+        user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
+        name: "holed.stl", base_version_id: nil, size: 5,
+        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
+        manifest: [
+          { "hash" => h1, "offset" => 0, "length" => 3 },
+          { "hash" => h2, "offset" => 3, "length" => 2 }
+        ]
+      )
+      Sync::Commit.finalize(user: @user, commit_id: cid)
+
+      # BEFORE the download call — see THE TRAP above.
+      Storage::ChunkStore.current = PresignOnlyStore.new
+      # PresignOnlyStore signs "https://example.invalid/<hash>", so the URL names the chunk.
+      # The error is built HERE, not inside the lambda: define_singleton_method rebinds `self`
+      # to FileLayer::Chunk, so a test helper called from inside the body is a NoMethodError.
+      # Closed-over locals are unaffected, which is how `with_http_get_raising` gets away with it.
+      missing = http_error(404)
+      serve = ->(url) { url.end_with?(h2) ? raise(missing) : "AAA" }
+      with_http_get(serve) do
+        d = adapter.download(@user, node_id:, disposition: "attachment")
+        assert_kind_of FileLayer::Delivery::Stream, d
+        assert_raises(FileLayer::NotFound) { d.enum.to_a }
+      end
+    end
+
+    # The terminal/retryable split §14a draws for `read` binds on `download` too, and for the
+    # same reason: a credentials outage is a 503 the user retries, not a 404 that says their
+    # file is permanently gone. 403 is the exact shape of the original incident.
+    test "a 403 mid-drain is TRANSIENT on download too (FetchError, not NotFound)" do
+      id = create_file!(name: "creds.stl", bytes: "secret")
+      Storage::ChunkStore.current = PresignOnlyStore.new # BEFORE the download call
+      with_http_get_raising(http_error(403)) do
+        d = adapter.download(@user, node_id: id, disposition: "attachment")
+        assert_raises(FileLayer::FetchError) { d.enum.to_a }
       end
     end
 
