@@ -1,7 +1,7 @@
 require "test_helper"
 
 module Web
-  # A RENDERED PAGE MUST NEVER CONTAIN ERB DELIMITERS.
+  # A RENDERED PAGE MUST NEVER CONTAIN ERB DELIMITERS, AND THE TEMPLATES MUST BALANCE.
   #
   # THIS EXISTS BECAUSE IT HAPPENED, and because nothing else in the suite could see it. An ERB
   # comment ends at its FIRST `%>`, so a comment that quotes a snippet containing one terminates
@@ -11,51 +11,152 @@ module Web
   # user's Files page. Caught by opening the page in a browser, which is the argument for probing
   # over reasoning in one screenshot.
   #
-  # A STATIC SCAN OF THE TEMPLATES WAS TRIED FIRST AND IS THE WEAKER GUARD: it has to guess whether
-  # the text after a comment's terminator was meant to be markup or prose. Asserting on the RENDERED
-  # OUTPUT needs no such guess — a delimiter in the response is wrong however it got there, which
-  # also covers escaping mistakes and half-written tags this rule was not aimed at.
+  # THERE ARE TWO GUARDS HERE BECAUSE THE DEFECT HAS TWO SHAPES, AND EACH GUARD IS BLIND TO THE
+  # OTHER'S. Both were reproduced against real Erubi before this file was written:
   #
-  # BACKEND-NEUTRAL BY CONSTRUCTION: it drives pages, and every page here renders on all three.
+  #   ONE quoted snippet  — `<%# … as <%= raw(svg) %> because … %>`
+  #     renders  " because\n    scripts in the document would then run. … %>"
+  #     The trailing `%>` LEAKS, so the RENDERED-OUTPUT check below catches it.
+  #     The source still counts 2 openers and 2 closers, so the BALANCE check does not.
+  #
+  #   TWO quoted snippets — `<%# … write <%= a %> rather than … the <%= b %>`
+  #     renders  " rather than … the BBB"
+  #     The second opener swallows the comment's own terminator, so the output contains NO
+  #     delimiter at all and the rendered-output check is GREEN. The source counts 3 openers
+  #     against 2 closers, so only the BALANCE check catches it.
+  #
+  # THE BALANCE CHECK IS NOT THE STATIC SCAN THIS FILE ONCE REJECTED. That one had to guess whether
+  # the text after a comment's terminator was meant to be markup or prose, which is why asserting on
+  # the rendered output replaced it. This one guesses nothing: it counts two literal tokens and
+  # compares the totals. It is also the only guard here that reaches a template no request renders.
+  #
+  # A DERIVED-NEEDLE SCAN WAS PROPOSED AND IS UNSOUND — do not build it. Extracting the body of a
+  # `<%# … %>` and searching the response for it can never match, in EITHER shape above: the
+  # extracted body is the material ERB CONSUMED, and the leak is the material AFTER it. Probed both
+  # ways; the needle was absent from the output every time. A needle set with zero true positives
+  # has zero false positives, which is what makes that measurement look good.
+  #
+  # BACKEND-NEUTRAL: the fixtures carry BOTH `current_version_id` (chunk's content_token) and
+  # `content_hash` (share's and S3's), so every page here renders the same branches on all three
+  # legs. Verified by running the three `LIBRARY_BACKEND` legs and comparing counts.
   class TemplateHygieneTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # Directories the request sweep is not expected to reach, each for a stated reason. This is the
+    # ONLY escape from the coverage assertion below, and it is deliberately coarse and few:
+    # everything outside it must be swept or the test fails.
+    #
+    #   users/          — Devise's own pages, rendered LOGGED OUT; this sweep is a signed-in session.
+    #   layouts/        — mailer + Action Text layouts, driven by a mailer/rich-text render, not a page.
+    #                     (`layouts/application` is swept anyway, as every page below wraps in it.)
+    #   pwa/            — a manifest, not HTML; it has no ERB comments and no prose to leak.
+    #   active_storage/ — an engine template we neither own nor edit.
+    UNSWEPT_DIRS = %w[users/ layouts/ pwa/ active_storage/].freeze
+
     setup do
+      # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
+      # sibling `tinkerex-addons` checkout a fresh clone does not have.
+      @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
+      ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+
       @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
-      @user.nodes.create!(node_id: "n-stl", name: "bracket.stl", kind: "file", mtime: 1, size: 5)
-      @user.nodes.create!(node_id: "n-bak", name: "sign_backup.lbrn2", kind: "file",
-                          parent_node_id: "d-laser", mtime: 1, size: 5)
+      file!("n-stl", "bracket.stl")
+      file!("n-bak", "sign_backup.lbrn2", parent_node_id: "d-laser")
+      file!("n-mill", "panel.mage", parent_node_id: "d-laser")
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
                                         label: "ghost.stl", position: 2)
       @project.tasks.create!(user: @user, title: "Cut the base", status: "todo", position: 0)
+      @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
+                                         logged_at: Time.current)
+      @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
+                                       data: Maker::Sheet.blank_data)
+      @model = @user.maker_models.create!(title: "Bracket", slug: "bracket",
+                                          cover_node_id: "n-stl", folder_node_id: "d-laser")
+      @model.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
+      # THE RECIPE PANELS ARE ONLY REACHABLE THROUGH A THUMBNAIL ROW CARRYING METADATA, and they
+      # branch on the KEY, not the extension (`operations` → MillMage, else LightBurn). Without
+      # both rows, `files/_lbrn_settings` and `files/_mage_settings` are unreachable from any
+      # request and would have to be excluded from the coverage assertion instead of covered.
+      recipe!("n-bak", "layers" => [ { "name" => "Score", "color" => "#ff0000", "speed" => 100 } ])
+      recipe!("n-mill", "operations" => [ { "name" => "Pocket", "tool" => "3mm flat" } ])
     end
 
-    # Every page touched by this branch, plus the ones whose partials it shares. The filtered and
-    # grid variants are listed separately because they render DIFFERENT partials — the leak that
-    # prompted this was in `files/_ext_filter`, which the grid renders and the file page does not.
+    teardown do
+      ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
+    end
+
+    # A file shaped like one in a real library. THE CONTENT TOKEN IS LOAD-BEARING, not decoration:
+    # `files/show.html.erb` opens its preview tree with `if @info.content_token.nil?` → "No content
+    # yet.", so a bare `nodes` row short-circuits the whole tree. With the fixtures this file used
+    # to carry, the sweep visited the file page and entered NONE of its branches — not :image, not
+    # :text, not :model3d, not :measure, not :thumbnail — and none of the three partials behind
+    # them. BOTH columns, because `content_token` is `current_version_id` on chunk and
+    # `content_hash` on share/s3 (§14a).
+    def file!(node_id, name, **extra)
+      @user.nodes.create!(node_id:, name:, kind: "file", mtime: 1_000_000_000, size: 5,
+                          content_hash: "h-#{node_id}", current_version_id: "v-#{node_id}", **extra)
+      node_id
+    end
+
+    def token_for(node_id) = FileLayer.current.stat(@user, node_id:).content_token
+
+    def recipe!(node_id, metadata)
+      @user.maker_previews.create!(node_id:, version_id: token_for(node_id), kind: "thumbnail",
+                                   status: "ready", metadata:,
+                                   renderer_revision: 1)
+    end
+
+    # EVERY PAGE THIS SWEEP CAN REACH, and the coverage assertion below is what keeps that true —
+    # this list stopped being "every page touched by one branch" the moment a template could be
+    # added without anything noticing. The filtered and grid variants are listed separately because
+    # they render DIFFERENT partials — the leak that prompted this file was in `files/_ext_filter`,
+    # which the grid renders and the file page does not.
     def pages
       {
         "files (list)" => files_path(view: "list"),
         "files (grid)" => files_path(view: "grid"),
         "files (filtered)" => files_path(ext: "stl"),
         "files (in a folder)" => files_path(folder: "d-laser"),
-        "file detail" => file_path("n-stl"),
+        "file detail (3d)" => file_path("n-stl"),
+        "file detail (measure, lbrn)" => file_path("n-bak"),
+        "file detail (measure, mage)" => file_path("n-mill"),
         "projects index" => projects_path,
         "project detail" => project_path(@project),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
+        "project attachment new" => new_project_attachment_path(@project),
+        "project sheet" => sheet_path(@sheet),
         "models index" => models_path,
+        "model detail" => model_path(@model),
+        "model new" => new_model_path,
+        "model edit" => edit_model_path(@model),
+        "tools gallery" => tools_path,
+        "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path
       }
     end
 
+    # KEEP THIS FILE AT EXACTLY TWO TEST METHODS. Minitest abandons a method at its first failure,
+    # so a mutation that breaks two independent guards can only report two failures if the guards
+    # live in two methods. Collapsing them costs that signal.
+
     test "no page renders an ERB delimiter into its output" do
+      # STATIC AND FIRST, because it needs no fixtures, covers every template on disk including the
+      # ones no request renders, and is the only thing here that sees the two-snippet shape. It
+      # masks nothing: a leak that this check would miss leaves the counts balanced, so the sweep
+      # below still runs and still reports it.
+      erb_templates.each do |rel, src|
+        assert_equal src.scan("<%").size, src.scan("%>").size,
+                     "#{rel} has unbalanced ERB delimiters — an opener inside a `<%# … %>` comment " \
+                     "swallows its terminator and leaks the comment's prose into the page"
+      end
+
       pages.each do |name, path|
         get path
         assert_response :success, "#{name} (#{path}) did not render"
@@ -67,19 +168,76 @@ module Web
     end
 
     # THE OTHER HALF OF THE SAME FAILURE, and the one a delimiter check alone would miss: a comment
-    # can leak prose that happens to contain no delimiter at all. These are phrases that only ever
-    # appear in the code comments of the templates this branch touched, so finding one in a response
-    # means a comment is being rendered.
-    LEAKED_PROSE = [ "BOOLEAN attribute", "NOT AN OVERSIGHT", "mutation-check", "§14", "§15" ].freeze
+    # can leak prose that happens to contain no delimiter at all. These are phrases that appear ONLY
+    # in the code comments of templates this sweep renders, so finding one in a response means a
+    # comment is being rendered.
+    #
+    # EVERY ENTRY MUST BE A LIVE PHRASE, and the `refute_empty` below is what enforces it. Three of
+    # the five this list shipped with — "BOOLEAN attribute", "NOT AN OVERSIGHT", "mutation-check" —
+    # matched NO template at all, so they were incapable of ever firing while the comment above them
+    # claimed they were drawn from the templates. A needle nothing contains is not a lenient guard,
+    # it is an absent one, and deleting it reds nothing.
+    LEAKED_PROSE = [
+      "§14",
+      "§15",
+      "ONE BUTTON, TWO FLOWS",
+      "TWO CONTROLS, ONE JOB EACH",
+      "WHERE THE USER CAME FROM",
+      "BACKUPS COME OUT FIRST",
+      "NO HARDCODED CARDS"
+    ].freeze
 
     test "no page renders the prose of its own code comments" do
-      pages.each do |name, path|
-        get path
-        LEAKED_PROSE.each do |phrase|
-          assert_not_includes response.body, phrase,
-                              "#{name} rendered a code comment into the page (found #{phrase.inspect})"
+      templates = erb_templates
+      LEAKED_PROSE.each do |phrase|
+        refute_empty templates.select { |_rel, src| src.include?(phrase) },
+                     "#{phrase.inspect} is in no template, so this needle can never fire — " \
+                     "reword it to a phrase a live comment actually contains, or drop it"
+      end
+
+      rendered = Set.new
+      sub = ActiveSupport::Notifications.subscribe(/render_(template|partial)\.action_view/) do |*args|
+        id = args.last[:identifier].to_s
+        rendered << id.delete_prefix(views_root) if id.start_with?(views_root)
+      end
+
+      begin
+        pages.each do |name, path|
+          get path
+          LEAKED_PROSE.each do |phrase|
+            assert_not_includes response.body, phrase,
+                                "#{name} rendered a code comment into the page (found #{phrase.inspect})"
+          end
         end
+      ensure
+        ActiveSupport::Notifications.unsubscribe(sub)
+      end
+
+      # DERIVED FROM THE TREE, NOT A LIST TO KEEP IN STEP — the same shape that fixed
+      # `deploy_hygiene_test.rb` (§14e). Every guard above only sees a template some page in `pages`
+      # actually renders, so without this a new template is unguarded from the day it is added and
+      # nothing says so: `models/show.html.erb` was grown to five comment sites by a commit on this
+      # very branch while this file could not see it. A new template must be swept or explicitly
+      # excused.
+      uncovered = templates.keys.reject { |rel| rendered.include?(rel) || excused?(rel) }
+      assert_empty uncovered,
+                   "no page in `pages` renders these templates, so nothing here can see a leaked " \
+                   "comment in them — add a page that renders each, or add its directory to " \
+                   "UNSWEPT_DIRS with a reason"
+    end
+
+    private
+
+    def views_root = @views_root ||= "#{Rails.root.join('app/views')}/"
+
+    # `encoding: "UTF-8"` is required, not tidiness: these templates contain §, ⌀, ✕ and …, and a
+    # bare read leaves the string tagged US-ASCII, where `String#scan` raises on the first one.
+    def erb_templates
+      @erb_templates ||= Dir.glob(Rails.root.join("app/views/**/*.erb")).sort.to_h do |abs|
+        [ abs.delete_prefix(views_root), File.read(abs, encoding: "UTF-8") ]
       end
     end
+
+    def excused?(rel) = UNSWEPT_DIRS.any? { |dir| rel.start_with?(dir) }
   end
 end
