@@ -725,18 +725,15 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `grep -rn "manifest_chunks\|ChunkStore" $(find app -type d -name maker) --include='*.rb' | grep -v ':[0-9]*: *#'`
   The `grep -v` is load-bearing, not noise — without it the check reports comments that
   *describe* the removed coupling. **A proof that cries wolf gets ignored.** So is the `find`:
-  there are **SIX** `app/**/maker` directories, not three, and **`grep -r` does not honour `**`**
-  — spelling the set out named `services`/`models`/`jobs` and silently skipped
+  it must cover **every** `app/**/maker` directory (six today), not three, and **`grep -r` does
+  not honour `**`** — spelling the set out named `services`/`models`/`jobs` and silently skipped
   `app/controllers/v1/maker` (14 files) and `app/models/concerns/maker` (1).
   **`test/architecture_invariants_test.rb` now RUNS this and DERIVES the directory set from the
   tree** (`%w[app/**/maker]`) rather than repeating the list, asserting both the count *and* the
   file — so the claim can no longer drift the way it did before (it read "no hits" for months
   after the addon framework made the true answer one), and a NEW `app/<x>/maker/` is covered the
-  day it is created. The list was remembered until 2026-08-19, in the very file §14a
-  introduces as the fix for a remembered grep: a `Storage::ChunkStore` call in an unscanned
-  controller left `hits.size == 1` and the test **GREEN over a live §14a breach**. Change the
-  code and the test tells you; change the exception on purpose and update the test and this
-  bullet together.
+  day it is created. Change the code and the test tells you; change the exception on purpose and
+  update the test and this bullet together.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
