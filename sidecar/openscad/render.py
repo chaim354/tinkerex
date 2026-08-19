@@ -71,6 +71,14 @@ def param_set_json(params, vector_names=frozenset()):
             values[k] = "[" + ",".join(str(x) for x in v) + "]"
         elif k in vector_names and isinstance(v, str) and "," in v and not v.startswith("["):
             # schema.py renders a vector as "10,20,30" for a plain text input; put the brackets back.
+            #
+            # FOR A DIRECT CALLER ONLY, AND NOT DEAD CODE. /render passes no vector_names: every
+            # value arriving over HTTP has been through coerce._vector, which emits the bracketed
+            # literal itself — it has to, because a ONE-element vector has no comma and this guard
+            # could never fire for one. So nothing in production reaches this branch, and deleting
+            # it on that basis would remove the only defence a caller of render.render has. What it
+            # defends against is silent: OpenSCAD IGNORES a vector it cannot parse and renders the
+            # DEFAULT geometry, with a 200 and no diagnostic anywhere.
             values[k] = "[" + v.replace(" ", "") + "]"
         else:
             values[k] = str(v)
