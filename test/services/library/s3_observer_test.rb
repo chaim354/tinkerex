@@ -169,6 +169,91 @@ module Library
       assert @user.nodes.find_by(storage_path: "fine.stl")
     end
 
+    # ------------------------------------------- LANDMINE 7: one rel_path claimed by both kinds
+
+    # The observer's own half. `files` and `dirs` are built as two collections with no shared key,
+    # but `rel_path` IS the Reconciler's key, so this asserts the emitted SET, not just that the
+    # dir is present -- "both were emitted" is exactly the defect and both-present passes it.
+    test "one rel_path never yields two observations — the file is dropped, the directory stays" do
+      @fake.seed!("#{PREFIX}/cad", "an object at a prefix's own key")
+      @fake.seed!("#{PREFIX}/cad/x.stl", "its child")
+
+      obs = Library::S3Observer.new(@user, adapter: adapter).observe
+
+      dupes = obs.group_by(&:rel_path).select { |_, v| v.size > 1 }
+      assert_empty dupes, "no rel_path may carry two observations: #{dupes.keys.inspect}"
+      cad = obs.select { |o| o.rel_path == "cad" }
+      assert_equal 1, cad.size
+      assert cad.first.dir, "the DIRECTORY is what survives — dropping it instead would leave " \
+                            "parent_id_for resolving 'cad' to a file node and parenting every " \
+                            "descendant to a file"
+    end
+
+    # The ancestor case, which the single-level fixture cannot reach: the colliding path is a
+    # DERIVED ancestor ("a/b" from the key "a/b/c/d.stl"), not the immediate parent, and the chain
+    # below it must survive intact.
+    test "a collision on a derived ancestor drops the file and keeps the whole dir chain" do
+      @fake.seed!("#{PREFIX}/a/b", "an object at an ancestor's key")
+      @fake.seed!("#{PREFIX}/a/b/c/d.stl", "a grandchild")
+      scan!
+
+      assert_equal %w[a a/b a/b/c a/b/c/d.stl],
+                   @user.nodes.present.order(:storage_path).pluck(:storage_path)
+      assert_equal %w[dir dir dir file],
+                   @user.nodes.present.order(:storage_path).pluck(:kind)
+    end
+
+    # THE TEST THAT CATCHES REGRESSION, and the reason it is end-to-end rather than observer-level.
+    # Before the filter this oscillated forever -- four UPDATEs every pass, net state unchanged --
+    # while `cad/x.stl` stayed LIVE beneath a TOMBSTONED dir node: unreachable from the tree and
+    # never repaired. Asserting "three nodes exist" would pass in both worlds; what has to be
+    # asserted is that the child's parent resolves to a LIVE directory.
+    test "a dir/file collision is stable across passes and the child keeps a live parent" do
+      @fake.seed!("#{PREFIX}/cad", "an object at a prefix's own key")
+      @fake.seed!("#{PREFIX}/cad/x.stl", "its child")
+      scan!
+
+      before = @user.nodes.order(:id).pluck(:id, :storage_path, :kind, :deleted, :parent_node_id)
+      scan!
+      after = @user.nodes.order(:id).pluck(:id, :storage_path, :kind, :deleted, :parent_node_id)
+      assert_equal before, after, "the second pass must write nothing — this oscillated forever"
+
+      child = @user.nodes.find_by!(storage_path: "cad/x.stl")
+      assert_not child.deleted
+      parent = @user.nodes.find_by!(node_id: child.parent_node_id)
+      assert_equal "dir", parent.kind
+      assert_not parent.deleted, "the child's parent must be LIVE — a tombstoned parent makes it " \
+                                 "unreachable from the tree, silently and permanently"
+    end
+
+    # The dropped object is not indexed, and only this line says so — the standing objection at
+    # ObjectIdentity's ladder is an object silently never indexed, so it must not be silent.
+    test "the dropped object is warned about once, with a count and a sample key" do
+      @fake.seed!("#{PREFIX}/cad", "dropped")
+      @fake.seed!("#{PREFIX}/cad/x.stl", "kept")
+
+      log = capture_log { scan! }
+
+      assert_match(/WARN .*1 object\(s\) share a key with a directory prefix/, log)
+      assert_match(/"cad"/, log)
+      assert_nil @user.nodes.find_by(storage_path: "cad", kind: "file"),
+                 "the object is genuinely not indexed — that is what the warning is for"
+    end
+
+    # THE STATED SUB-CASE, pinned because it is a DECISION and not a side effect: an empty `cad/`
+    # marker beside a real `cad` object. Before the filter the FILE survived here; now the
+    # directory does, and a real object goes unindexed with only a log line. Recorded so a future
+    # reader meets the choice rather than discovering it.
+    test "marker-only collision: the directory wins and the object is dropped — a flip, stated" do
+      @fake.seed!("#{PREFIX}/cad/", "")
+      @fake.seed!("#{PREFIX}/cad", "a real object")
+      scan!
+
+      node = @user.nodes.present.find_by!(storage_path: "cad")
+      assert_equal "dir", node.kind
+      assert_equal 1, @user.nodes.present.count
+    end
+
     # ---------------------------------------------------------------- OS-generated clutter
 
     # OS clutter is never indexed, exactly as on the share walk — the same Library::OsClutter
