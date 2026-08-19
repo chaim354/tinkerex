@@ -8,11 +8,16 @@
 require "postgres_pooler_check"
 
 Rails.application.config.after_initialize do
-  next if ENV["DB_SKIP_POOLER_CHECK"] == "1"
-
+  # The whole eligibility decision — adapter prefix AND the DB_SKIP_POOLER_CHECK escape hatch —
+  # is PostgresPoolerCheck.probe?, so it can be asserted without a database. THE CALL MUST STAY
+  # INSIDE THIS `begin`. It reads db_config.adapter, which is config-only (it opens no
+  # connection) but can still raise NoDatabaseError/ConnectionNotEstablished — both rescued
+  # below, which is the only reason folding the env check in is behaviour-preserving. Hoist it
+  # above the `begin` and those two become uncaught boot failures on a box whose DB is not
+  # reachable yet, for an operator who had explicitly opted out.
   begin
     pool = ActiveRecord::Base.connection_pool
-    next unless pool.db_config.adapter.to_s.start_with?("postgres")
+    next unless PostgresPoolerCheck.probe?(adapter: pool.db_config.adapter)
   rescue ActiveRecord::NoDatabaseError, ActiveRecord::ConnectionNotEstablished
     next # DB not reachable yet (asset precompile, etc.) — the check is advisory.
   end
