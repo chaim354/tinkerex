@@ -15,8 +15,6 @@ module Projects
   # per-status counts and the button set stay in one place — the partial — instead of being
   # duplicated in a Stimulus controller that would then have to agree with it forever.
   class TasksController < ApplicationController
-    before_action :authenticate_user!
-
     def create
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       next_pos = (project.tasks.maximum(:position) || -1) + 1

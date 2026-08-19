@@ -4,7 +4,6 @@ module Models
   # uploads bytes, so no capability gating and no §10 surface. Role is derived SERVER-SIDE from the
   # node name (authoritative), mirroring Projects::AttachmentsController.
   class AttachmentsController < ApplicationController
-    before_action :authenticate_user!
     before_action :set_model, only: %i[create destroy]
 
     # POST /models/:model_id/attachments (JSON) { node_id, cover? }

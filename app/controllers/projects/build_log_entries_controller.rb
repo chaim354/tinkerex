@@ -1,8 +1,6 @@
 module Projects
   # Build-log entries for a project. Create is nested under a project; destroy is shallow.
   class BuildLogEntriesController < ApplicationController
-    before_action :authenticate_user!
-
     def create
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       entry = project.build_log_entries.new(entry_params.merge(user: current_user))

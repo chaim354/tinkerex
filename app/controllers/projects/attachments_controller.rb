@@ -21,7 +21,6 @@ module Projects
   # #create answers JSON as well as HTML: the chunk inline-upload flow (uploader_controller.js)
   # uploads via /files/{begin,finalize}_upload, then POSTs the node_id here to finish the attach.
   class AttachmentsController < ApplicationController
-    before_action :authenticate_user!
     before_action :set_project, only: %i[new create relocate]
 
     RECENT_LIMIT = 40

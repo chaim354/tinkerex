@@ -7,7 +7,6 @@ module Projects
   # sync engine (spec §10) — it is the SAME write door FilesController already uses on these
   # backends. One controller serves both a project target and a build-log-entry target.
   class UploadsController < ApplicationController
-    before_action :authenticate_user!
     before_action :require_port_writable!
 
     # The eager nudge (Task 11) — #intake_project_folder, called from #create below. Shared with

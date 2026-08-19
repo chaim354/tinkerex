@@ -6,7 +6,6 @@
 # page. This controller stays on the maker side of the FileLayer port — it only READS file
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
-  before_action :authenticate_user!
   before_action :set_project, only: %i[show edit update destroy unarchive]
 
   # Exposes the `capabilities` helper the attachments panel's upload control branches on

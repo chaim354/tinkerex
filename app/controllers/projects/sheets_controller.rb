@@ -6,7 +6,6 @@ module Projects
   # its "a proof that cries wolf gets ignored" lesson: a comment merely NAMING what this file
   # avoids would itself trip that grep and read as a false positive.)
   class SheetsController < ApplicationController
-    before_action :authenticate_user!
     before_action :set_sheet, only: %i[show update destroy]
 
     def create

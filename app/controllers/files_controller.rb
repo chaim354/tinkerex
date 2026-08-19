@@ -19,8 +19,6 @@
 # as the desktop client, so a web upload produces a valid content-addressed manifest +
 # immutable version with correct refcounts. No second, bytes-through-Rails write path.
 class FilesController < ApplicationController
-  before_action :authenticate_user!
-
   # ONE named mechanism for what this deployment can do, reachable from the views AND from the v1
   # API. Not two: a view reaching for FileLayer.current.capabilities inline while a controller
   # also sets @caps is how the two answers drift apart, which is §9a-3's complaint and Landmine

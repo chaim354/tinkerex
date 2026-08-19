@@ -3,7 +3,6 @@
 # (via LibraryFolder), never bytes — the importer uploads files through the existing /files
 # endpoints, so §15/§10 are untouched here.
 class ModelsController < ApplicationController
-  before_action :authenticate_user!
   before_action :set_model, only: %i[show edit update destroy]
 
   include LibraryCapabilities

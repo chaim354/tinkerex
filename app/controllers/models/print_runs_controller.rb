@@ -2,8 +2,6 @@ module Models
   # Log a print against a model / delete a logged print. The Maker::PrintRun after_save/destroy
   # callback keeps the model's print_status in sync (latest run wins).
   class PrintRunsController < ApplicationController
-    before_action :authenticate_user!
-
     # POST /models/:model_id/print_runs
     def create
       model = current_user.maker_models.find_by!(slug: params[:model_id])

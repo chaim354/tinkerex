@@ -3,8 +3,6 @@
 # blocks noting a file the user owns. Answers HTML (the detail-page form) and JSON (the right-click
 # popover).
 class NotesController < ApplicationController
-  before_action :authenticate_user!
-
   # POST /files/:node_id/notes  { note: { body } }
   def create
     node_id = params.require(:node_id)

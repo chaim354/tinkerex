@@ -3,8 +3,6 @@ module Projects
   # reference. Same rules as project attachments — a reference, DB-scoped ownership, no byte writes.
   # #create answers JSON too, for the chunk inline-upload flow (uploader_controller.js).
   class EntryPhotosController < ApplicationController
-    before_action :authenticate_user!
-
     def create
       entry = current_user.maker_build_log_entries.find(params[:build_log_entry_id])
       node = current_user.nodes.present.find_by(node_id: params.require(:node_id))
