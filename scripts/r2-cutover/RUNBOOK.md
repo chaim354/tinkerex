@@ -84,8 +84,14 @@ The source stays live and serving during this — it's a non-destructive copy.
 ./migrate-chunks.sh check          # verify by hash (authoritative for content-addressed data)
 ```
 
-`check` exits non-zero on any mismatch. For a brand-new managed deploy with no prior data,
-skip this whole section.
+`check` exits non-zero on any mismatch — and also on a run it could not honestly call a
+verification: an **empty source keyspace** (a wrong bucket/endpoint/prefix, which bare
+`rclone check` reports as "0 differences found" and exits 0 for), or objects rclone could
+only compare **by size** because their ETag is not a usable md5. On success it prints
+`N/N chunks verified by hash`, with N the real source object count.
+
+For a brand-new managed deploy with no prior data, **skip this whole section** — `check`
+deliberately FAILS on an empty source rather than passing over nothing.
 
 ---
 
@@ -131,6 +137,15 @@ SERVER_URL=https://<your-server> ./smoke.sh
 Expect `PRESIGNED ROUNDTRIP OK` (device A → R2 → device B, byte-for-byte). This confirms
 presign + PUT + GET + `head_object` verify all work against R2. If it fails, **roll back**
 (§9) before proceeding. Optionally re-run the latency harness (`docs/r2-migration.md` §5).
+
+It also prints a **`store identity`** line — the endpoint and bucket the server actually
+presigned against, read out of a real presigned URL (path-style, so origin + first path
+segment carry both; the signed query string is never printed). **Run this with `r2.env`
+sourced** (§2) and `smoke.sh` compares that identity to `R2_ENDPOINT`/`R2_BUCKET` and fails on
+a mismatch; without them it prints a NOTICE saying the identity was shown but not checked.
+That comparison is the *only* thing anywhere that cross-checks the server's `CHUNK_BUCKET`
+against the bucket `migrate-chunks.sh` filled — a byte-perfect roundtrip against the wrong
+bucket looks exactly like a byte-perfect roundtrip against the right one.
 
 ---
 
@@ -195,9 +210,28 @@ so it is unaffected by the storage backend — no DB rollback is ever involved.
   (`chunks/<user_id>/<sha256>`, bytes == hash). `rclone copy` transfers only what's missing
   at the destination, so a re-run fills gaps and a completed run is a no-op. A partial copy
   resumes cleanly.
-- **Hash-authoritative verification.** `rclone check` compares hashes; for content-addressed
-  data a hash match *is* proof the destination object is the correct bytes. It exits non-zero
-  on any mismatch.
+- **Hash-authoritative verification — but the EXIT CODE is not that claim.** For
+  content-addressed data a hash match *is* proof the destination object is the correct bytes.
+  `rclone check` alone does not establish one: verified against rclone **v1.74.3** source, it
+  exits 0 in three further cases — **zero objects on both sides** ("0 differences found"), an
+  object whose **ETag is not a usable md5** (multipart or SSE-KMS: counted as a match,
+  compared by SIZE ALONE, surfaced only as a `NOTICE: N hashes could not be checked`), and
+  **`--size-only`**, which short-circuits before the hash check and is settable from the very
+  environment this tooling is configured through. `=` lines in rclone's output look identical
+  in all four cases, so counting them proves nothing on its own. `migrate-chunks.sh check`
+  therefore counts matches against the source's **own** object count, refuses an empty source
+  keyspace **by name**, refuses any run where rclone reported unchecked hashes, and prints
+  `N/N chunks verified by hash`. **Fragile, pinned to a version:** the unchecked-hash guard
+  parses a LOG STRING because rclone exposes no exit code and no machine-readable channel for
+  it — re-verify it on an rclone upgrade.
+- **No rclone overrides from the environment.** rclone reads every one of its flags from
+  `RCLONE_<FLAG>`, and — probed against v1.74.3 — **the environment beats an explicit
+  command-line flag**: `RCLONE_SIZE_ONLY=true rclone check --size-only=false` still compares by
+  size only, and `RCLONE_DRY_RUN=true rclone copy --dry-run=false` still copies nothing and
+  exits 0. Since `r2.env` is sourced into the shell these commands run in, `migrate-chunks.sh`
+  **refuses to run** (exit 2, naming the variable) if any `RCLONE_*` variable other than
+  `RCLONE_TRANSFERS`/`RCLONE_CHECKERS` is set. If a command stops with that message, unset what
+  it names — do not reach for a negating flag, which does not work.
 - **Non-destructive / rollback-preserving.** `copy`/`check` never modify the source. The
   SeaweedFS data stays intact and serviceable throughout, so rollback is always available.
   The reverse `rollback` copy backfills R2-only chunks before you revert env.
@@ -207,6 +241,8 @@ so it is unaffected by the storage backend — no DB rollback is ever involved.
   `RCLONE_CONFIG_*` env vars (no rclone.conf, no command-line secrets, avoiding the
   connection-string colon-parsing pitfall). Creds live in `r2.env` (gitignored) and the
   Kamal `env.secret` (sourced from the shell). `cors.json` carries only a placeholder origin.
-- **Dry-run first.** `migrate-chunks.sh dry-run` shows exactly what would move before any
-  bytes are written; every command prints a loud FROM/TO banner.
+- **Dry-run first, and only when asked for.** `migrate-chunks.sh dry-run` shows exactly what
+  would move before any bytes are written; every command prints a loud FROM/TO banner. A stray
+  `RCLONE_DRY_RUN=true` cannot silently turn a real `copy` into a no-op that still prints
+  "Copy complete." — the environment guard above refuses the run outright.
 ```
