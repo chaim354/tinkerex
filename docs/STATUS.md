@@ -4461,8 +4461,12 @@ empty list and enqueues nothing.
 **A SCAN CANNOT HEAL THE BACKLOG, and that is not a gap in the fix — it is `unchanged?` working.**
 Those files now record their current hash, mtime and size, so the next pass skips them WITHOUT
 re-reading them, which is the behaviour that keeps a 2TB archive cheap. Hence
-`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`), modelled on
-`LbrnBackfill`: enqueue a thumbnail for every live file whose current `content_token` has no row.
+`Maker::Previews::MissingBackfill` (+ `rake previews:backfill_missing`): enqueue a thumbnail for
+every live file whose current `content_token` has no row. It was modelled on `LbrnBackfill`, which
+was **deleted on 2026-08-19** (audit F-14) — that template enqueued without repointing the row
+first, so the job compared the row to itself and stamped new-code bytes onto a row still claiming
+the old revision. Going through `Enqueue`, which writes both staleness axes before `perform_later`,
+is the part of the shape worth keeping.
 Backend-neutral through `stat_all` — the port's bulk read, DB-only on all three — and idempotent,
 since the rows it creates are what the next run finds. **Deliberately NOT the `unsupported`-row
 sweep still open below:** a row saying `unsupported` for the current content is present and terminal,
@@ -4763,9 +4767,14 @@ to `Mesh` since 2026-07-20 and `backfill_thumbnails` walks every renderable file
 so those rows almost certainly exist on all three deployed backends already. **Consequence: the
 feature reaches only content that arrives after the deploy; every CAD file already in a library keeps
 its static "unsupported" badge until its bytes change.** A one-off sweep clearing `unsupported` rows
-whose extension now has an available renderer is what closes it — `app/services/maker/previews/lbrn_backfill.rb`
-is the pattern, and it was written for exactly this shape of problem. **Not done here** (it is a
-migration-shaped operation, not an audit fix) and left as an open item below.
+whose extension now has an available renderer is what closes it. **The `lbrn_backfill.rb` this
+paragraph used to name as the pattern was deleted on 2026-08-19 (audit F-14), and it was the WRONG
+pattern** — it enqueued straight to `GeneratePreviewJob.perform_later` without repointing the row
+first, so the job's `commit_if_current` compared the row against itself and stamped new-code bytes
+onto a row still claiming the old revision. Whoever writes this sweep should take the shape from
+`MissingBackfill` instead, and specifically must go through `Maker::Previews::Enqueue`, which
+writes both staleness axes before enqueueing. **Not done here** (it is a migration-shaped
+operation, not an audit fix) and left as an open item below.
 
 **The image cost — SETTLED BY THE DEPLOY, after two local tools disagreed 4x.** On the Unraid box,
 which is the only measurement that decides anything: **887 MB → 1.57 GB, +683 MB (+77 %)**. Per-layer
@@ -4866,8 +4875,13 @@ project-page overhaul and is where the `ENABLE_TEST_SIGNUP` bullet referenced ab
   Detailed in item 3 above. Nothing re-enqueues an `unsupported` row, so every `.obj`/`.step`/`.iges`
   already in a deployed library keeps its badge until its bytes change, and the shipped feature will
   read as broken to anyone looking at files they already had. The fix is a one-off sweep clearing
-  `unsupported` rows whose extension now resolves to an available renderer, modelled on
-  `app/services/maker/previews/lbrn_backfill.rb`. Deliberately not done in an audit-fix branch: it is
+  `unsupported` rows whose extension now resolves to an available renderer. **This bullet used to
+  say "modelled on `app/services/maker/previews/lbrn_backfill.rb`"; that file was deleted on
+  2026-08-19 (audit F-14) because the pattern itself was defective** — it enqueued without
+  repointing the row, so the job compared the row to itself and landed new-code bytes on a row
+  still claiming the old revision. Model it on `MissingBackfill`, and enqueue through
+  `Maker::Previews::Enqueue` rather than calling `GeneratePreviewJob.perform_later` directly.
+  Deliberately not done in an audit-fix branch: it is
   a data migration over deployed rows, and it wants its own verification against a real library.
 
 - **`config/brakeman.ignore`'s line numbers went stale twice inside this arc, and are now CLOSED —

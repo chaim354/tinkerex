@@ -34,7 +34,12 @@ module Maker
     # and `#thumbnails_for` — found none. That is fixed at the source, but the fix cannot reach
     # backwards: those files are now `unchanged?` and the next scan skips them WITHOUT re-reading
     # them, which is exactly the behaviour that keeps a 2TB archive cheap. So the backlog needs
-    # its own pass. Same shape as [[LbrnBackfill]], different condition.
+    # its own pass. This was modelled on a `LbrnBackfill` that has since been DELETED, and the
+    # reason is worth carrying: it enqueued without repointing the row first, so the job's
+    # `commit_if_current` captured that row's own values and compared it to itself, landing
+    # new-code bytes on a row still claiming the old revision. `Enqueue` writes both axes before
+    # `perform_later`, which is what this sweep relies on — do not reintroduce a caller that goes
+    # straight to `GeneratePreviewJob.perform_later`.
     #
     # NOT the `unsupported`-row sweep docs/STATUS.md still leaves open. A row saying `unsupported`
     # for the current content is present and terminal; this only ever looks for content with NO

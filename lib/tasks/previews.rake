@@ -1,10 +1,10 @@
 namespace :previews do
-  desc "Re-render LightBurn thumbnails missing laser-settings metadata"
-  task backfill_lbrn: :environment do
-    n = Maker::Previews::LbrnBackfill.call
-    puts "Enqueued #{n} LightBurn preview(s) for metadata backfill."
-  end
-
+  # `previews:backfill_lbrn` WAS HERE AND IS GONE — `backfill_missing` covers its whole population
+  # and is the only instrument for it now. It re-rendered LightBurn rows with `metadata: nil`, but
+  # enqueued WITHOUT repointing the row, so the job compared the row to itself and stamped new-code
+  # bytes onto a row still claiming the old revision. Those rows sit at revision 1 against a
+  # renderer past it, so the sweep below already finds every one of them.
+  #
   # ALSO CATCHES A RENDERER BUMP since 2026-08-07 — a row built by an older build sits at the
   # current content, so it used to satisfy this sweep's check while the read path treated it as
   # absent. DRY_RUN first on any real library: after a revision bump every file of that format is
