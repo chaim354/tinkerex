@@ -22,10 +22,15 @@ module Maker
     # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
     # depicts this exact file; only the code that built it moved on.
     #
-    # This is deliberately a DIFFERENT policy from V1::Maker::PreviewsController#create, which DOES
-    # create a row for a non-renderable name so an API client can poll and observe the terminal
-    # `unsupported` state. Here the trigger is automatic/eager, so skipping non-renderable files is
-    # the right call. The two are not merged for that reason.
+    # THE NON-RENDERABLE BRANCH IS THE ONLY POLICY V1::Maker::PreviewsController#create DOES NOT
+    # SHARE, and it is now a `skip_unrenderable:` kwarg rather than a second implementation. That
+    # controller DOES create a row for a non-renderable name, so an API client can poll and observe
+    # the terminal `unsupported` state; here the trigger is automatic/eager, so skipping is right
+    # and stays the default. Everything else — all four staleness axes — is shared. It was not,
+    # until 2026-08-19: the controller inlined a two-axis copy that wrote `version_id` while leaving
+    # `renderer_revision` at the column default, and three separate fixes to the axes below landed
+    # in this file only. One branch differing is a parameter; four axes differing was a second,
+    # stale writer of the same two-coordinate invariant.
     #
     # NOT a controller concern and NOT sync-coupled: it reads a filename + content id and enqueues a
     # job. Callable from a controller, a service, or a scan loop (§10 tripwire stays intact).
@@ -59,9 +64,23 @@ module Maker
       # nothing in the system will ever resolve.
       STALLED_AFTER = 15.minutes
 
-      def call(user:, node_id:, name:, version_id:, kind: "thumbnail")
+      # `skip_unrenderable:` DEFAULTS TRUE SO EVERY EAGER CALLER IS BYTE-IDENTICAL — nine of them
+      # (three in `FilesController`, `V1::CommitsController`, `Projects::UploadsController`,
+      # `Library::Reconciler`, `Addons::LibraryOutput`, `ThumbnailMap`, `MissingBackfill`) and none
+      # passes it. It is the ONE branch the comment above calls a deliberately different policy from
+      # `V1::Maker::PreviewsController#create`, which is now the one caller that passes `false`: an
+      # API client polls, so it needs a row to poll even for a name no renderer handles. Everything
+      # BELOW this line is shared, which is the point — the four staleness axes had drifted into a
+      # second, two-axis copy in that controller.
+      #
+      # WITH A NIL RENDERER THE ROW IS STILL COHERENT: `revision_for(nil, kind)` answers
+      # BASE_REVISION (nil does not respond to `payload_revision`), which is exactly the column
+      # default, so nothing is stamped that a later reader could judge stale. The job is still
+      # enqueued and writes the terminal `unsupported` itself — the only place that can tell "no
+      # renderer for this type" from "toolchain missing on this box".
+      def call(user:, node_id:, name:, version_id:, kind: "thumbnail", skip_unrenderable: true)
         renderer = Maker::Previews::Registry.for_filename(name)
-        return nil if renderer.nil?
+        return nil if renderer.nil? && skip_unrenderable
 
         revision = revision_for(renderer, kind)
         preview  = user.maker_previews.find_or_initialize_by(node_id:, kind:)
