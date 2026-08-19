@@ -118,6 +118,11 @@ class FileChooserTest < ApplicationSystemTestCase
 
     open_form
     find(".folder-field-btn").click
+    # PIN THE TRAP LOCALLY. The paragraph above turns on the host page passing a non-default
+    # root_label; nothing in this test named it, so if projects/_form.html.erb ever reverted to the
+    # partial's "/ (library root)" default the trap would weaken with NOTHING going red. The crumbs
+    # render rootLabel verbatim, so asserting it here fails loudly instead.
+    assert_selector ".filechooser-crumbs", text: "Choose automatically"
     find(".filechooser-row", text: "hero.png").click # NO descent — depth 0 is the subject
     assert_text "Selected: /hero.png"
 
