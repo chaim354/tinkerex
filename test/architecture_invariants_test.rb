@@ -157,6 +157,22 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # SCALE-DEPENDENT and invisible at fixture size; both entries cite a MEASUREMENT taken at
   # production scale, and a third candidate should not be added without one.
   #
+  # TWO SCOPE LIMITS ON THAT MECHANISM, both of which a reader will otherwise assume away.
+  #
+  # It is SQLITE-ONLY. Postgres does not append the rowid to index keys, so neither ratio below
+  # transfers and neither exemption is justified there — on PG these two would be droppable. The
+  # entries stay because the deployment that pages a 200,000-node library is the SELF-HOST one,
+  # which is SQLite (§7); do not read the numbers as adapter-neutral.
+  #
+  # And it is a NO-STATISTICS result. Re-measured at review: with `ANALYZE` run, the without-index
+  # plan becomes `SEARCH nodes USING INTEGER PRIMARY KEY (rowid>?)` and the two reach PARITY. The
+  # exemption still stands, because no-stats IS the production configuration — nothing in this repo
+  # runs `ANALYZE` or `PRAGMA optimize`, and neither `storage/development.sqlite3` nor
+  # `storage/test.sqlite3` contains `sqlite_stat1`. Said explicitly because
+  # `app/services/maker/addon_origin.rb:64-69` already records the stance that "then just run
+  # ANALYZE" is a misleading half-answer, and a measurement that depends on which side of that
+  # line it sits on should say which side it sits on.
+  #
   #   maker_addon_states — `app/services/maker/addon_origin.rb:114-119` records the probe: at 5,000
   #     states, from 4 ids up the plan is `SEARCH maker_addon_states USING INDEX
   #     index_maker_addon_states_on_user_id (user_id=? AND rowid=?)`.
@@ -165,7 +181,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   #     `where("id > ?", after).order(:id).limit(1000)`. Dropping this index turns each page from
   #     one early-terminating seek into a full read-and-sort of the user's node set, so a whole
   #     export goes from O(N) to O(N^2/limit). Measured on 200,000 nodes, twenty pages, warm cache:
-  #     0.01 s with the index against 0.30 s without. `#find_each`/`#in_batches` page identically.
+  #     0.0163 s with the index against 2.9766 s without — 183x. (This line first said 30x, from a
+  #     smaller run; a reviewer rebuilt it at scale and the gap was WIDER, not narrower. The index
+  #     costs 249,856 bytes, 0.21% of the database.) `#find_each`/`#in_batches` page identically,
+  #     so `Maker::Previews::MissingBackfill` rides the same seek — verified, not assumed.
   PREFIX_INDEX_EXEMPTIONS = {
     "maker_addon_states" => "index_maker_addon_states_on_user_id",
     "nodes" => "index_nodes_on_user_id"
@@ -193,6 +212,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
         indexes.filter_map do |wide|
           next if wide.name == narrow.name
           next unless wide.where.nil?
+          # STRICT, so two indexes on EXACTLY the same columns slip through — equally redundant,
+          # and this guard says nothing about them. Zero such pairs exist today (checked at review),
+          # so it is a recorded limit rather than a defect; widening it means deciding WHICH of an
+          # identical pair to name, which a `>` comparison never has to.
           next unless wide.columns.length > narrow.columns.length
           next unless wide.columns.first(narrow.columns.length) == narrow.columns
           next if PREFIX_INDEX_EXEMPTIONS[table] == narrow.name

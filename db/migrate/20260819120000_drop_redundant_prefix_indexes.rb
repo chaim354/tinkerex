@@ -46,10 +46,15 @@
 # SCAN appears anywhere, but THREE plans acquire a `USE TEMP B-TREE FOR ORDER BY` and none of them
 # is a regression that matters — the reasoning is per table, not a blanket wave:
 #
-#   * `chunks` — `Sync::Gc.sweep_orphans!`'s `find_each` (`gc.rb:152`). This one gets BETTER: the
-#     surviving `(user_id, refcount)` composite now SEEKS `refcount <= 0` instead of walking the
-#     user's whole chunk range and filtering it, so the sort sees only the orphan set, which in
-#     steady state is empty. Probed on the real data: user 418 has 503 chunks and 0 orphans.
+#   * `chunks` — `Sync::Gc.sweep_orphans!`'s `find_each` (`gc.rb:152`). AN EARLIER VERSION OF THIS
+#     COMMENT SAID THIS PLAN "GETS BETTER" AND THAT IS WRONG IN DETAIL — a reviewer re-measured
+#     per batch. Batch 1 ALREADY planned `(user_id, refcount)` + temp b-tree before the drop, so
+#     nothing was acquired and nothing improved. What changes is batch 2+, which LOSES the very
+#     appended-rowid seek `nodes` is exempted for below. The outcome is still fine, and the
+#     asymmetry is the part worth writing down: here the seek is lost over a set the composite
+#     has already FILTERED to `refcount <= 0` — empty in steady state, so the sort sorts nothing
+#     (probed: user 418, 503 chunks, 0 orphans) — whereas `nodes` would lose it over the user's
+#     ENTIRE library. Same mechanism, opposite verdicts, decided by what the predicate leaves.
 #   * `pending_commits` — the `find_each` in `Sync::ChunkReaper.pending_hashes` and
 #     `Sync::PendingCommitReaper`. The table holds only IN-FLIGHT commits (30 rows across the whole
 #     dev database), so sorting one user's handful is free.
@@ -60,8 +65,11 @@
 #
 # `Sync::Gc.touch_refcounts!` is untouched in plan: all four call sites pass
 # `user.chunks.where(chunk_hash: hashes)`, which uses `index_chunks_on_user_id_and_chunk_hash`
-# before and after. `dependent: :destroy`'s `DELETE ... WHERE user_id = ?` stays index-served on
-# every one of the ten (a foreign key needs no index of its own on either adapter).
+# before and after. `dependent: :destroy`'s cascade stays index-served on
+# every one of the ten. Precisely: `:destroy` issues `SELECT ... WHERE user_id = ?` and deletes per
+# row by id — it is `:delete_all` that emits the single `DELETE ... WHERE user_id = ?` this line
+# used to name. Both forms were probed; the conclusion is identical for both, on every one of the
+# ten (a foreign key needs no index of its own on either adapter).
 #
 # NO `algorithm: :concurrently`: SQLite rejects it, and using it would split this migration by
 # adapter, which CLAUDE.md §14e forbids. On Postgres each DROP INDEX takes a brief ACCESS EXCLUSIVE
