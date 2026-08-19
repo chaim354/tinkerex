@@ -931,6 +931,49 @@ module FileLayer
                    "keep the previous value — NEVER nil, which un-indexes the object"
     end
 
+    # THE SAME GUARD, ONE VERB OVER — and it went in unmutated. Removing `if head.etag.present?`
+    # from #restored_stat ALONE left all 286 tests green, so nothing had ever shown that half to
+    # work (CLAUDE.md §15: a guard that has never failed has not been shown to work).
+    #
+    # ITS FAILURE MODE IS WORSE THAN #move'S, which is why it earns its own test rather than an
+    # argument-by-symmetry. #restored_stat's own rescue lists ServiceError/NetworkingError only, so
+    # an ArgumentError from the refresh escapes it AND escapes into #undelete's caller — after the
+    # copy has landed and BEFORE `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH
+    # keys, the node still tombstoned, and the trash copy never swept: the user's file is restored
+    # in the bucket and still in the Trash in the app, and the next undelete hits the
+    # "occupied — undelete must not clobber" refusal against a copy of itself.
+    #
+    # Make the refresh unconditional and this goes red with ArgumentError.
+    test "a HEAD that reports no ETag leaves the restore complete rather than raising" do
+      id = create_file!(name: "quietly-restored.stl", bytes: "shade")
+      before = @user.nodes.find_by!(node_id: id).content_hash
+      adapter.delete(@user, node_id: id)
+
+      # Blank the ETag on HEAD only, delegating everything else to the fake — object_exists? asks
+      # this same verb and must keep answering truthfully, or the test passes for the wrong reason.
+      @fake.client.stub_responses(:head_object, lambda { |ctx|
+        o = @fake.objects[ctx.params[:key]] or return "NotFound"
+        { content_length: o.body.bytesize, etag: "", last_modified: o.last_modified }
+      })
+
+      raised = nil
+      begin
+        adapter.undelete(@user, node_id: id)
+      rescue StandardError => e
+        raised = e
+      end
+
+      # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the raise
+      # so the test cannot pass by proving merely that something raised somewhere.
+      node = @user.nodes.find_by!(node_id: id)
+      assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+      assert_not node.deleted, "the node must be live again, not stranded mid-restore"
+      assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+
+      assert_equal before, node.content_hash,
+                   "keep the previous value — NEVER nil, which un-indexes the object"
+    end
+
     # --- the 5GB copy cap -----------------------------------------------------------------
 
     # copy_object is capped at 5GiB: it ERRORS, it does not truncate. Both delete and move are
