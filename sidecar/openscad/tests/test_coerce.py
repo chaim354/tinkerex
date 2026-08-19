@@ -288,8 +288,9 @@ def test_coercing_BEFORE_the_cache_key_keeps_pre_move_cache_entries_valid():
 @pytest.fixture
 def client(monkeypatch):
     """A test client whose schema derivation is stubbed, so the ROUTE's error mapping is exercised
-    on a box with no OpenSCAD binary. Patched on the module, which is where _coerced and
-    _safe_params look it up."""
+    on a box with no OpenSCAD binary. Patched on the module, which is where _coerced looks it
+    up. (_safe_params was named here too until F-59 deleted it — the whole point of that commit
+    was that the second derivation existed.)"""
     sidecar.app.config.update(TESTING=True)
     monkeypatch.setattr(sidecar, "_schema_for",
                         lambda scad: {"params": [p for g in GROUPS for p in g["params"]],

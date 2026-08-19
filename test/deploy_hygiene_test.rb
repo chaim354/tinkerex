@@ -172,7 +172,8 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # ── third-party catalogs bundled INSIDE a sidecar image ───────────────────────────────────────
   #
   # WHY THIS IS HERE, AND WHY IT IS NOT A SECOND COPY OF sidecar/openscad/tests/test_catalog.py.
-  # `bin/ci` has seven gates (setup, style, scan, test, test-share, test-s3, system) and NONE of
+  # `bin/ci` has EIGHT gates (setup, style, scan, test, test-share, test-s3, system, test-app) and
+  # NONE of
   # them runs pytest — nothing in config/ci.rb or .github/workflows does. So the Python guards on
   # this data are real, thorough and mutation-checked, and they DO NOT RUN in the gate that decides
   # whether a branch ships; they run by hand, inside the image. Until openscad migrated, the only

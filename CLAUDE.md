@@ -635,7 +635,9 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   records why: of four candidates, **two declared a different (more restrictive) licence in their
   own header than their repo's `LICENSE` file did**, one of them NonCommercial. *Read the file, not
   the repo.* `sidecar/openscad/tests/test_catalog.py` checks this thoroughly — and **none of
-  `bin/ci`'s seven gates runs it**, so until 2026-08-12 the only licence guard that actually
+  `bin/ci`'s gates runs it** (seven when this was written, eight since `test-app` landed
+  2026-08-19 — the count moves, the fact that none of them is pytest does not), so until
+  2026-08-12 the only licence guard that actually
   EXECUTED was `openscad_controller_test.rb`'s per-tile assertion, which died with that controller.
   Its replacement is in **`test/deploy_hygiene_test.rb`** (directory-driven over
   `sidecar/*/catalog/catalog.json`): every entry has a licence, an attribution and a pinned commit;
