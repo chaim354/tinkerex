@@ -56,8 +56,13 @@ class ProjectsController < ApplicationController
     # that id", i.e. tombstoned or hard-gone, which is exactly the set that should not render.
     # ONE index and ONE ThumbnailMap over the page's whole union (PageNodes) — the attachment tiles
     # and the build-log photos ask the same two questions of the same rows, and asking twice cost a
-    # duplicated `nodes` query, a second `stat_all` and a second `maker_previews` read — THREE fewer
-    # statements per render, measured on chunk (16 → 13 on one attachment plus one build-log photo).
+    # duplicated `nodes` query, a second `stat_all` and a second `maker_previews` read — FOUR fewer
+    # STATEMENTS per render, measured on chunk (19 → 15 on one attachment plus one build-log photo).
+    # Three THINGS, four STATEMENTS: chunk's `stat_all` is two statements, not one (`nodes` +
+    # `versions` — §14a pins the count as constant-in-N rather than a literal, and records that
+    # chunk needs 2 where share/s3 need 1). An earlier version of this comment said THREE by
+    # counting the things and calling them statements; a reviewer re-measured. The absolute numbers
+    # are fixture-dependent and the DELTA is the portable claim, so trust the delta.
     # A CONSTANT-FACTOR saving, not a complexity change, which is why page_query_budget_test.rb's
     # constancy-in-N assertion stays green either way and is NOT the guard for this: the guard is
     # page_nodes_test.rb, and the reason for the merge is the liveness hole, not the queries.
