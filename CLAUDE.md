@@ -1541,7 +1541,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   **forever** — a finished design's content never changes. That is exactly how four LightBurn files
   kept serving mangled curves after the thinning fix deployed. `Geometry::REVISIONED_BY` lists them
   and `GeometryTest` **enumerates the declaring modules from the code** and compares, so a fifth
-  format cannot be added without appearing there.
+  format cannot be added without appearing there. **Since 2026-08-19 the CORRECT EDIT is one
+  line**: each format is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`, so a
+  shared change bumps the shared term and all five names move together. The outcome above is
+  unchanged — what moved is that the arithmetic now does it, instead of three remembered edits.
 - **`available?` IS ABOUT THE THUMBNAIL, `available_for?(kind)` IS WHAT THE JOB ASKS.** The 2D
   vector renderers gate `available?` on **resvg**, because their thumbnail is a rasterized SVG; the
   measure payload is Nokogiri and arithmetic and needs nothing external. One gate marked a
