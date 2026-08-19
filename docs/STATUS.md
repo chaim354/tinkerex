@@ -3655,7 +3655,7 @@ in `secrets-common` makes `-d share` shell out for something a share container n
 
 **Why `bin/secrets-preflight` exists — kamal cannot notice an unreadable secret.** It expands
 `$(…)` through Ruby **backticks, which discard exit status**, so a locked vault yields `""` and
-`Kamal::Secrets#[]` returns that empty string **without raising**. Verified against kamal 2.11: a
+`Kamal::Secrets#[]` returns that empty string **without raising**. Verified against kamal 2.12.0: a
 deliberately-failing substitution parsed to `{"EMPTY" => ""}`, `key?` said false while `[]` said
 `""`, and kamal reads `[]`. A *missing* key raises; an *empty* one does not. That is the recorded
 failure where an empty `KAMAL_REGISTRY_PASSWORD` reached `docker login` and was reported as exit 0.

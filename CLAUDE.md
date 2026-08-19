@@ -1500,7 +1500,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   locked vault makes `bin/secret` exit 1, the substitution yields `""`, and `Kamal::Secrets#[]`
   returns that empty string **without raising**. A *missing* key raises; an *empty* one does not,
   so the failure surfaces later and elsewhere (an empty `KAMAL_REGISTRY_PASSWORD` becomes a
-  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.11.
+  confusing `docker login` error — once reported as exit 0 here). Verified against kamal 2.12.0.
 - **SECRETS ARE PER-DESTINATION, AND `.kamal/secrets` IS THE *BASE* FILE, NOT A SHARED ONE.** Kamal
   reads `[secrets-common, secrets.<dest>]`, so anything added to `.kamal/secrets` is invisible
   under `-d`. Required, not tidiness: `CHUNK_SECRET_ACCESS_KEY` is **SeaweedFS on Unraid and
