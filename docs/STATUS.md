@@ -71,10 +71,14 @@ no stage skipped. Assessors were read-only and judged *necessity* against the br
 worked in isolated worktrees and mutation-checked per §15; reviewers re-ran every mutation themselves
 rather than accepting a report. Roughly 90 agents.
 
-**Verification at the end of the Tier 1 batch:** `bin/ci` bare and green — **2375 runs, 8652
-assertions, 0 failures, identical on all three `LIBRARY_BACKEND` legs**, system 102/656, plus a new
-`test-app` node gate. After the phase-2 batch: **2409 / 8956 / 0**, again identical across the three
-legs. `bin/ci` runs no cargo, so separately: `fs-provider` **203/0** (was 192), `sync-engine` **92/0**.
+**Verification.** `bin/ci` bare and green at each batch boundary, always with the three
+`LIBRARY_BACKEND` legs reporting **identical** counts (§15): end of Tier 1 **2375 / 8652 / 0**;
+end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**. System 102/656 throughout,
+plus a new `test-app` node gate (F-64) — eight gates now, not seven, which is itself a thing three
+present-tense claims in the tree had to be corrected for. `bin/ci` runs **no cargo and no pytest**,
+so separately and by hand: `fs-provider` **203/0** (was 192), `sync-engine` **92/0**, `fs-cfapi`
+**50/0** (was 42), `sidecar/openscad` **71 passed / 13 skipped** (was 66/13), `sidecar/boxes`
+**22 passed** (was 18).
 
 ### The measured wins
 
@@ -83,7 +87,35 @@ legs. `bin/ci` runs no cargo, so separately: `fs-provider` **203/0** (was 192), 
 | F-02 `Sync::Commit#finalize` verify | 20 queries at n=5, **115 at n=100** | 16 at both |
 | F-34 `/v1/trash` | 5 / 9 / **29** at N=1/5/25 | flat **5** |
 | F-06+F-07 no-op S3 scan (500 dirs / 5000 files) | **503 queries, 286,349 objects, 0.179s** | **1 query, 79,832 objects, 0.011s** |
-| F-39 (assessed) `manifest_chunks` 250k `insert_all` | 2725 ms | **2141 ms, −21%** |
+| F-39 `manifest_chunks` 250k `insert_all` | 2725 ms (audit's PG figure, **not reproduced here**) | SQLite A/B **~11%, directional only** |
+| F-39 index bytes on the real 116 MB dev DB | — | **5,169,152 B freed, 4.44%**, 90% of it on the two hottest write paths |
+| F-39 the index that must be **KEPT** | `SEARCH nodes … (user_id=? AND rowid>?)` **0.0163 s** | without it **2.9766 s** — **183×**, for 0.21% of the DB |
+| F-61 boxes `_all_generators()` | 1.054 ms per request | **0.001 ms** |
+
+### The two findings that would have made things worse
+
+Worth recording separately, because in both cases the audit's *proposal* — not merely its evidence —
+was the defect, and only a probe could tell:
+
+- **F-66 would have replaced a weak guard with one that cannot fire.** `TemplateHygieneTest` catches
+  a real shipped bug (§14d: an ERB comment ends at its first `%>`, so one quoting a snippet prints
+  its own prose into the page, and no `assert_select` can see it — the defect is a TEXT NODE). Its
+  needles are 4/5 inert, which the audit found. Its proposed repair was to DERIVE the needles from
+  the rendered templates' own `<%#` bodies. That cannot work: ERB terminates at the first `%>`, so
+  the extracted body is exactly the text that got **consumed**, never the text that **leaks**.
+  Probed with Erubi against the canonical defect — `needle present? FALSE`. The proposal measured
+  "zero false positives at a 30-char floor", which is true and worthless: it is a property of a
+  needle set with zero true positives. What the assessment found instead is a leak neither the audit
+  nor the existing guard catches — a comment quoting TWO snippets, where the second opener swallows
+  the trailing delimiter, leaving a body with **no `<%` and no `%>` at all** — caught by a five-line
+  static `<%`/`%>` count balance (openers 3, closers 2) over all 59 templates, including the 16 no
+  request sweep will ever render.
+- **F-15's headline justification does not exist.** It rests on a claimed live divergence between the
+  port's `fi.name` and the catalog's `node.name`. All three adapters build `FileInfo#name` from
+  `node.name`, and `stat_all` reads the catalog rather than the store, so the two cannot disagree —
+  probed by renaming a file on disk under `LIBRARY_BACKEND=share` with the row left unreconciled.
+  The finding survives on narrower grounds it also states, chiefly that `kind` is spelled twice per
+  call site in `FilesController` with nothing coupling the two spellings.
 
 ### What the audit got wrong, and how we know
 
