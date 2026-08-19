@@ -56,6 +56,28 @@ module Maker
         assert_nil ThumbnailMap.for(@user, [ "node-2" ]).thumb("node-2")
       end
 
+      # A NODE WITH NO CONTENT TOKEN HAS NO CURRENT THUMBNAIL, EVEN THOUGH A `version_id: nil` ROW
+      # CAN EXIST TO MATCH IT. `maker_previews.version_id` is NULLABLE and `Enqueue.call` really
+      # does write one: `V1::Maker::PreviewsController#create` permits `version_id`, and
+      # `refuse_stale_version!` returns false on a BLANK one and falls through, so a client that
+      # sends none mints exactly this row.
+      #
+      # The port answers `content_token: nil` for a node with no content (a chunk node whose
+      # version row is gone, a share/s3 node not yet hashed), which the page renders as "No
+      # content yet." Matching that against the row's nil would present a stored artifact as the
+      # thumbnail of a file the same page says has no content — `nil == nil` is a coincidence of
+      # representation, not an answer about content. Hence the explicit token guard, which is the
+      # single most fragile line in the resolution: the surrounding comparison is a plain equality
+      # that reads as complete without it, and every other test here supplies a real token, so
+      # deleting it goes green everywhere else.
+      test "a node with no content token gets no thumbnail, even against a version_id-less row" do
+        serve info("n-nul", name: "part.stl", token: nil)
+        @user.maker_previews.create!(node_id: "n-nul", version_id: nil, kind: "thumbnail",
+                                     status: "ready", renderer_revision: revision_of("part.stl"))
+        assert_nil ThumbnailMap.for(@user, [ "n-nul" ]).thumb("n-nul"),
+                   "a nil token must not match a nil version_id — that file has no current content"
+      end
+
       test "degrades to empty (no raise) when the backend is unreachable" do
         FileLayer.current = FakeLayer.new(FileLayer::FetchError.new("nas down"))
         map = ThumbnailMap.for(@user, [ "node-3" ])
@@ -148,6 +170,41 @@ module Maker
       end
 
       # ------------------------------------------------------------------------------------
+      # THE CONTENT AXIS AT THIS DOOR, UNGUARDED HERE UNTIL 2026-08-19 — found by mutation, not by
+      # reading. Deleting the CONTENT comparison from the resolution came back 2447 runs, 0
+      # failures: every test above either supplies a matching token or supplies no row at all, so
+      # nothing ever asked what happens to a row at a SUPERSEDED one. It was enforced the whole
+      # time — first by the `version_id: live` IN-clause plus a `[node_id, version_id]` composite
+      # key, now by one line in `Enqueue.current_preview?` — but never asserted, which is this
+      # repo's dominant failure shape (§15) and the reason a redundancy is not a test.
+      #
+      # The stake is the file GRID: a file re-saved in place (the ordinary case on a mounted NAS —
+      # LightBurn, a slicer) would keep painting the OLD picture as its current thumbnail, and the
+      # backfill would count the node covered and never re-render it.
+      # ------------------------------------------------------------------------------------
+
+      test "does not serve a thumbnail rendered from superseded content" do
+        serve info("n-old", name: "part.stl", token: "tok-new")
+        @user.maker_previews.create!(node_id: "n-old", version_id: "tok-old", kind: "thumbnail",
+                                     status: "ready", renderer_revision: revision_of("part.stl"))
+        assert_nil ThumbnailMap.for(@user, [ "n-old" ]).thumb("n-old"),
+                   "an artifact of DIFFERENT content must not be shown as this file's thumbnail"
+      end
+
+      test "re-enqueues a thumbnail rendered from superseded content" do
+        serve info("n-old2", name: "part.stl", token: "tok-new")
+        row = @user.maker_previews.create!(node_id: "n-old2", version_id: "tok-old",
+                                           kind: "thumbnail", status: "ready",
+                                           renderer_revision: revision_of("part.stl"))
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) { ThumbnailMap.for(@user, [ "n-old2" ]) }
+        row.reload
+        assert_equal "tok-new", row.version_id, "the row must be repointed at the current content"
+        # UNLIKE a renderer bump (asserted below), a CONTENT move DOES blank the artifact — the
+        # stored picture is of bytes that are gone, so the spinner is the honest replacement.
+        assert_equal "pending", row.status
+      end
+
+      # ------------------------------------------------------------------------------------
       # GAP 2: the renderer-revision filter. §14h's recorded "172 of 174 LightBurn thumbnails sat
       # at revision 1 through two deploys" bug, one layer over from where it was fixed: a row from
       # an older build satisfied the has-a-row check, so nothing re-enqueued and the page served
@@ -185,7 +242,7 @@ module Maker
 
       # ONE QUERY FOR THE PREVIEWS, HOWEVER MANY NODES. The revision filter runs in Ruby precisely
       # because the current revision depends on each node's filename, so there is no single value
-      # to put in a WHERE — see FilesController#thumbnails_for, which argues this at length.
+      # to put in a WHERE — see Enqueue.current_preview?, which owns that comparison.
       # Constancy, never a literal (page_query_budget_test.rb's rule).
       test "resolves the previews in a constant number of queries" do
         counts = [ 3, 15 ].map do |n|

@@ -152,6 +152,29 @@ module Web
       assert_equal current_revision, stale.reload.renderer_revision
     end
 
+    # THE OTHER STALENESS AXIS AT THE SAME DOOR, AND IT WAS COMPLETELY UNGUARDED. `version_id`
+    # asks "was this payload made from the file's CURRENT CONTENT?" and `renderer_revision` asks
+    # "was it made by the CURRENT CODE?" — two independent questions (Enqueue says so in those
+    # words), but only the second had a test. Deleting `version_id:` from this action's `find_by`
+    # was measured at 2444 runs, 0 failures before this test existed, so the content axis was
+    # protected by nothing but the fact that nobody had edited the line.
+    #
+    # A row at a SUPERSEDED token is the case: the file was re-saved, the payload describes the
+    # bytes that used to be there, and serving it hands the Measure view coordinates for a shape
+    # the user is no longer looking at.
+    test "does not serve a payload rendered from superseded content" do
+      stale = preview_for(@node_id)
+      stale.update!(status: "ready", version_id: "some-older-content")
+
+      get geometry_file_path(@node_id)
+
+      assert_response :success
+      assert_equal "pending", response.parsed_body["status"],
+                   "a payload of DIFFERENT content must be re-rendered, not served"
+      assert_equal FileLayer.current.stat(@user, node_id: @node_id).content_token,
+                   stale.reload.version_id, "the row must be repointed at the current content"
+    end
+
     # THE PANEL LABELS A LAYER BY COLOUR, BUT ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX.
     # "C01" tells a reader nothing the swatch beside it does not already show; a name its owner
     # chose tells them everything, and substituting a colour over it would destroy information.
@@ -213,6 +236,31 @@ module Web
 
       assert_equal "pending", row.reload.status,
                    "an artifact of DIFFERENT content must not be shown as current"
+    end
+
+    # THE SAME CONTENT AXIS AT THE DETAIL PAGE'S DOOR, WHICH THE TEST ABOVE CANNOT SEE. That one
+    # calls `Enqueue.call` directly, so it proves Enqueue repoints a superseded row and proves
+    # nothing about whether `#current_thumbnail` ever declines to serve one — the door reads the
+    # row itself, and a `find_by` that stopped comparing `version_id` would simply hand the old
+    # artifact back and never reach Enqueue at all. Measured at 2444 runs, 0 failures with
+    # `version_id:` deleted from that lookup before this test existed.
+    #
+    # Driven as a real request for exactly the reason §14h records one door over: a test that
+    # calls the service proves the service works and nothing about whether anything calls it.
+    test "opening a file page does not serve a thumbnail of superseded content" do
+      stale = thumbnail_at(current_thumbnail_revision)
+      stale.update!(version_id: "some-older-content")
+
+      assert_enqueued_with(job: Maker::GeneratePreviewJob) { get file_path(@node_id) }
+
+      assert_response :success
+      stale.reload
+      assert_equal FileLayer.current.stat(@user, node_id: @node_id).content_token,
+                   stale.version_id, "the row must be repointed at the current content"
+      # AND THE OLD PICTURE COMES DOWN. Unlike a renderer bump, a CONTENT change makes the stored
+      # artifact a lie about this file, so the spinner is the honest replacement (Enqueue's rule).
+      assert_equal "pending", stale.status,
+                   "an artifact of DIFFERENT content must not stay up as this file's thumbnail"
     end
 
     test "a thumbnail at the current revision is served without re-enqueueing" do

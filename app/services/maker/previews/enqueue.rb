@@ -146,6 +146,64 @@ module Maker
         renderer = Maker::Previews::Registry.for_filename(name)
         renderer.nil? ? BASE_REVISION : revision_for(renderer, kind)
       end
+
+      # WHICH STORED ROW COUNTS AS CURRENT FOR A FILE — the read-path counterpart of `call`'s own
+      # staleness test, in the two shapes its callers need: a QUERY (`current_preview`, for a
+      # caller holding one node) and a PREDICATE (`current_preview?`, for a caller that has
+      # already loaded a page of rows in one query and must filter them in Ruby).
+      #
+      # BOTH AXES, ONE DEFINITION. `version_id` asks "was this artifact made from the file's
+      # CURRENT CONTENT?" and `renderer_revision` asks "was it made by the CURRENT CODE?" — the
+      # same two independent questions `call` compares above, and the same pair every reader has
+      # to get right. They were spelled out three times: twice in `FilesController` (330 lines
+      # apart, byte-identical but for the `kind` string) and once in `ThumbnailMap`, which is this
+      # repo's recorded failure shape — §14h's "172 of 174 LightBurn thumbnails" bug WAS one of
+      # these copies missing the revision half, and the fix landed in one door and not the others.
+      #
+      # `kind` IS NAMED ONCE. In `FilesController` it was written twice per site — once to pick the
+      # revision, once in the `find_by` — with nothing coupling them, so mis-spelling either half
+      # made the lookup silently never match (an endless re-enqueue) or match on the wrong kind's
+      # revision. A single parameter cannot be half wrong.
+      #
+      # DO NOT FOLD `status` INTO EITHER OF THESE. It is the obvious next thought — "current" sounds
+      # like it should mean servable — and it is wrong in both directions at once: `#current_thumbnail`
+      # deliberately serves a `ready` artifact straight through a renderer rebuild (the picture is
+      # still of this file), while `#geometry` deliberately never reads `status` here at all and
+      # answers `pending` on any miss (an older build's payload is DATA that is wrong, not merely
+      # old). §14h states the rule outright — "Same mechanism, opposite right answers; do not unify
+      # them." What is shared is only WHICH ROW IS CURRENT; what each door does with the answer is
+      # each door's own business and must stay there.
+      def current_preview(user:, node_id:, name:, version_id:, kind:)
+        return nil if name.blank? || version_id.blank?
+
+        user.maker_previews.find_by(node_id:, kind:, version_id:,
+                                    renderer_revision: revision_for_name(name, kind))
+      end
+
+      # The same rule against a row already in memory. `kind` comes off the row itself, which is
+      # what keeps the two members from being able to disagree about it.
+      #
+      # BOTH BLANK GUARDS ARE LOAD-BEARING AND NEITHER IS DECORATION:
+      #
+      # `version_id.blank?` — `maker_previews.version_id` is NULLABLE and `Enqueue.call` really
+      # writes a nil one (`V1::Maker::PreviewsController#create` permits the parameter, and
+      # `refuse_stale_version!` returns false on a blank one and falls through). The port answers
+      # `content_token: nil` for a node with no content, which the page renders as "No content
+      # yet." Without this line `nil == nil` is true and that row is served as the file's current
+      # thumbnail — a coincidence of representation dressed up as an answer about content.
+      #
+      # `name.blank?` — `revision_for_name(nil, kind)` walks Registry -> nil -> BASE_REVISION,
+      # which is exactly the column's own default (`renderer_revision default: 1, null: false`),
+      # so a row at revision 1 would be judged CURRENT for a file whose name is unknown. It is not
+      # reachable from either of today's callers (`ThumbnailMap` scopes its query to the nodes the
+      # port answered for; `Node` validates `name` for presence), WHICH IS PRECISELY WHY it can be
+      # deleted without a test going red. Leave it.
+      def current_preview?(preview, name:, version_id:)
+        return false if name.blank? || version_id.blank?
+
+        preview.version_id == version_id &&
+          preview.renderer_revision == revision_for_name(name, preview.kind)
+      end
     end
   end
 end

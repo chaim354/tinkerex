@@ -77,7 +77,7 @@ module Library
     # reaches the `leftovers` loop, which is where that enqueue lives. Previews are keyed by
     # [node_id, content_token], so with no enqueue here the row from the PREVIOUS content is
     # orphaned the instant the file is saved, and every surface that looks a preview up by the
-    # current token (`FilesController#show`, `#thumbnails_for`) finds nothing at all.
+    # current token (`FilesController#show`, `Maker::Previews::ThumbnailMap`) finds nothing at all.
     #
     # Observed on the deployed share library, which is what makes this a bug report rather than a
     # gap: `hex tiles.lbrn2` and `reference card.lbrn2` — re-saved from LightBurn onto the NAS —

@@ -312,18 +312,26 @@ class FilesController < ApplicationController
     token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
     return render json: { status: "pending" } if token.nil?
 
-    # SCOPED BY renderer_revision AS WELL AS version_id, and the second half is load-bearing. This
-    # lookup exists to stop a poll re-enqueueing a TERMINAL row (see the comment above), but a row
-    # made by an OLDER BUILD is not terminal — it is stale, and finding it here would serve its
-    # payload back unchanged forever, because a file's content never has to change for the code
-    # that renders it to. That is exactly what happened when the thinning fix deployed: four
-    # already-measured files kept serving mangled curves until they were destroyed by hand.
-    # Missing the row sends this through Enqueue, which repoints it and re-renders. It also means
-    # bumping a revision un-sticks a `failed` row — right, because the code that failed is not the
-    # code running now.
-    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "geometry")
-    preview = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
-                                                  kind: "geometry", renderer_revision: revision)
+    # BOTH STALENESS AXES, ASKED OF `Enqueue` RATHER THAN SPELLED OUT HERE. This lookup exists to
+    # stop a poll re-enqueueing a TERMINAL row (see the comment above), but neither an artifact of
+    # SUPERSEDED CONTENT nor one made by an OLDER BUILD is terminal — both are stale, and finding
+    # either here would serve its payload back unchanged forever. The revision half is the one
+    # with a scar: a file's content never has to change for the code that renders it to, which is
+    # exactly what happened when the thinning fix deployed — four already-measured files kept
+    # serving mangled curves until they were destroyed by hand. Missing the row sends this through
+    # Enqueue, which repoints it and re-renders. It also means bumping a revision un-sticks a
+    # `failed` row — right, because the code that failed is not the code running now.
+    #
+    # `kind` IS NAMED ONCE. It used to be written twice — once to look up the revision, once in
+    # the `find_by` — with nothing coupling them, so mis-spelling either half made this lookup
+    # silently never match (a re-enqueue on every poll, forever) or match on the wrong kind's
+    # revision. `#current_thumbnail` carried the identical three lines 330 lines below, differing
+    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more: what
+    # this action does with the answer — never reading `status` before deciding to enqueue — is
+    # deliberately the OPPOSITE of `#current_thumbnail`'s choice, and §14h forbids unifying that.
+    preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
+                                                       name: node.name, version_id: token,
+                                                       kind: "geometry")
     # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
     # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
     # rebuild, because a thumbnail is a PICTURE of this same file and the detail page does not poll
@@ -654,9 +662,9 @@ class FilesController < ApplicationController
   # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
   # rather than an older artifact labelled as current) or nil when nothing can render this name.
   def current_thumbnail(node, token)
-    revision = Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail")
-    row = current_user.maker_previews.find_by(node_id: node.node_id, version_id: token,
-                                              kind: "thumbnail", renderer_revision: revision)
+    row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
+                                                   name: node.name, version_id: token,
+                                                   kind: "thumbnail")
     return row if row
 
     Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,

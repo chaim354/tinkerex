@@ -59,7 +59,7 @@ module Maker
       # --- the renderer-revision axis -------------------------------------------
 
       # THE GAP THIS SWEEP HAD. A row built by an OLDER build sits at the current content, so a
-      # check keyed on (node_id, version_id) alone called it covered — while `thumbnails_for` and
+      # check keyed on (node_id, version_id) alone called it covered — while `ThumbnailMap` and
       # `current_thumbnail`, which DO compare revisions, treated the very same row as absent. Two
       # answers to one question, and the sweep held the wrong one: `rake previews:backfill_missing`
       # reported "Enqueued 0" over a library whose every STL thumbnail was drawn by the pre-Z-up

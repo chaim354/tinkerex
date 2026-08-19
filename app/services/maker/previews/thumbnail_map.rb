@@ -3,7 +3,9 @@ module Maker
     # Resolve the CURRENT-version, CURRENT-BUILD thumbnail for a set of file-library node_ids, and
     # enqueue the ones that are missing. Degrade-safe.
     #
-    # A thumbnail is keyed by (node_id, content_token); the token comes from the FileLayer port.
+    # A thumbnail is current for a node when it matches BOTH the node's content token (from the
+    # FileLayer port) and the deployed renderer's revision. That pair has ONE definition,
+    # `Enqueue.current_preview?`, shared with `FilesController`'s two single-node doors.
     # If the backend is unreachable (FetchError), we return an empty map so callers show a spinner
     # /icon rather than 503-ing a page of maker data that does not depend on the file backend.
     #
@@ -18,7 +20,7 @@ module Maker
     # performs gets a named service). Five call sites across two controllers need it, two of them
     # in `ProjectsController#show` alone. More decisively, the backfill's inputs are exactly what
     # this class computes and does not expose: the port's per-node `FileInfo` (name, kind, token)
-    # and the set of rows that count as *current*, which the revision filter below defines. A
+    # and the set of rows that count as *current*, which `previews_for` below resolves. A
     # controller-side backfill would have to re-derive both — a second `stat_all` per page, plus a
     # second spelling of "which rows already exist" — which is the duplication being removed. And a
     # sixth caller gets it without knowing it needed to ask.
@@ -68,8 +70,7 @@ module Maker
       # `node_ids` is walked IN ORDER, so the budget is spent on what the user is most likely
       # looking at first — the port's answer is a Hash in database order, which is not that.
       def self.from_info(user, node_ids, info, backfill:)
-        tokens = info.transform_values(&:content_token)
-        map = new(tokens:, previews: previews_for(user, info, tokens))
+        map = new(previews: previews_for(user, info))
         backfill!(user, node_ids, info, map) if backfill
         map
       end
@@ -88,24 +89,27 @@ module Maker
       # FILTERED IN RUBY, NOT SQL, because the current revision depends on the RENDERER and so on
       # each node's filename — there is no single value to put in a WHERE. Still one query, which
       # is what page_query_budget_test.rb asserts (constancy in N, never a literal); this only
-      # drops rows from its result.
-      def self.previews_for(user, info, tokens)
-        live = tokens.values.compact
-        return {} if live.empty?
-
+      # drops rows from its result. BOTH staleness axes are asked of `Enqueue`, which owns them,
+      # rather than half-restated here — this method used to compare the token in SQL and the
+      # revision in Ruby, which is how it came to be the third copy of a two-part rule.
+      #
+      # KEYED ON `node_id` ALONE, which is COMPLETE and not a shortcut: since
+      # 20260730001500_one_preview_per_node_and_kind.rb there is one row per (user, node, kind),
+      # enforced by the unique index `idx_maker_previews_unique`, and this query fixes the user
+      # and the kind. The old `(node_id, version_id)` composite key was left over from the
+      # per-version table that migration replaced — a vestige rather than a safeguard: it made the
+      # `version_id: live` IN-clause fetch rows across ALL live tokens and then silently discard
+      # every one whose token was not that node's own, which is work done twice to reach the same
+      # answer.
+      def self.previews_for(user, info)
         user.maker_previews
-            .where(kind: "thumbnail", node_id: info.keys, version_id: live)
-            .select { |p| current_revision?(p, info[p.node_id]&.name) }
-            .index_by { |p| [ p.node_id, p.version_id ] }
-      end
-
-      # Was this artifact built by the code that is deployed now? Asked of `Enqueue`, which owns
-      # the per-kind revision lookup, rather than re-derived — the answer must be the same one
-      # `Enqueue` will act on, or a row is dropped here and then not re-enqueued there.
-      def self.current_revision?(preview, name)
-        return false if name.blank?
-
-        preview.renderer_revision == Maker::Previews::Enqueue.revision_for_name(name, preview.kind)
+            .where(kind: "thumbnail", node_id: info.keys)
+            .select do |p|
+              fi = info[p.node_id]
+              Maker::Previews::Enqueue.current_preview?(p, name: fi&.name,
+                                                           version_id: fi&.content_token)
+            end
+            .index_by(&:node_id)
       end
 
       # LAZY BACKFILL. The eager seams (upload/commit/scan) only cover files that arrive AFTER a
@@ -138,16 +142,14 @@ module Maker
       end
       private_class_method :previews_for, :backfill!
 
-      def initialize(tokens:, previews:)
-        @tokens = tokens
+      def initialize(previews:)
         @previews = previews
       end
 
-      # The Maker::Preview for a node's current content, or nil (nil => spinner in _thumb).
-      def thumb(node_id)
-        token = @tokens[node_id]
-        token && @previews[[ node_id, token ]]
-      end
+      # The Maker::Preview for a node's current content and current build, or nil (nil => spinner
+      # in _thumb). Every row in `@previews` has already passed `Enqueue.current_preview?`, so
+      # there is nothing left to compare here — a node with no CURRENT row is simply absent.
+      def thumb(node_id) = @previews[node_id]
 
       # Is there already an artifact for this node's current content and current build? Distinct
       # from `thumb(...)` being non-nil only in intent — this is the backfill's question, and
