@@ -8,11 +8,35 @@ set -euo pipefail
 
 # Assert against $OPENSCAD_BIN — the exact path render.py execs — not the raw binary underneath it.
 # In the image that is the wrapper that scopes the AppImage's bundled libs to this one process (see
-# the Dockerfile); a broken wrapper would otherwise leave all six assertions green and the sidecar
-# dead. The fallback keeps this script runnable standalone against a bare extraction, which is what
-# needs the LD_LIBRARY_PATH export below — the wrapper sets it itself.
-BIN="${OPENSCAD_BIN:-/opt/openscad/usr/bin/openscad}"
-export LD_LIBRARY_PATH=/opt/openscad/usr/lib
+# the Dockerfile), so what this gate exercises is what the sidecar will actually run.
+#
+# THE TWO SUPPLIERS OF LD_LIBRARY_PATH ARE EXCLUSIVE — do NOT collapse this branch back into one
+# unconditional export. Exporting it here as well as in the wrapper hands the wrapper its ONLY
+# contribution (Dockerfile:73) before invoking it, so the gate stands in for the thing it is
+# supposed to be measuring.
+#
+# AND READ THE NEXT PART BEFORE BELIEVING THE PARAGRAPH ABOVE IS ABOUT A BROKEN BUILD, because the
+# comment that used to sit here implied it was. MEASURED 2026-08-19 against the 2026.07.26 AppImage,
+# inside the built image: the extracted binary carries RUNPATH `$ORIGIN/../lib` — `ldd` resolves
+# libQt6Core/lib3mf as `/opt/openscad/usr/bin/../lib/…` with LD_LIBRARY_PATH UNSET — so deleting the
+# wrapper's export breaks nothing, and all six assertions pass with it deleted either way. This
+# branch therefore does NOT make that a red build, and nothing here can catch it. What it buys is
+# two things that are true: the gate stops supplying its own answer, so assertion 1 is what notices
+# the day that RUNPATH stops covering something (a dlopen'd Qt plugin, a future AppImage layout);
+# and the two python3 helpers below stop running under exactly the poisoning Dockerfile:63-71 exists
+# to prevent — with that export live, `import ssl` fails in this image with
+# `libcrypto.so.3: version OPENSSL_3.3.0 not found`. They only use json/zipfile today, so it is
+# latent, not broken.
+#
+# The bare-extraction arm (standalone run, no wrapper) keeps the export: nothing else would set it,
+# and a bare extraction may not sit at the path the RUNPATH resolves from.
+if [ -n "${OPENSCAD_BIN:-}" ]; then
+  BIN="$OPENSCAD_BIN"
+  unset LD_LIBRARY_PATH
+else
+  BIN=/opt/openscad/usr/bin/openscad
+  export LD_LIBRARY_PATH=/opt/openscad/usr/lib
+fi
 
 fail() { echo "CAPABILITY ASSERTION FAILED: $*" >&2; exit 1; }
 
