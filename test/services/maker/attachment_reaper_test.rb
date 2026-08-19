@@ -131,6 +131,54 @@ module Maker
                    "a background sweep must not reorder a list the user sorts by recent activity"
     end
 
+    # THE SAME COLUMN LIVES ON `maker_models`, AND THE SWEEP HAS TO READ BOTH OR THE FALLBACK NEVER
+    # TAKES OVER. A non-blank column permanently shadows the derived pick, and `stat_all` answers a
+    # tombstone with an ABSENT KEY — so `Maker::Previews::ThumbnailMap` yields nothing for it, the
+    # card paints a spinner, and `thumbs_controller.js` skips a node it got no entry for. It spins
+    # on every page load, forever, and no other sweep clears it.
+    #
+    # ASSERT THE RAW COLUMN, WITH `[]`, AND THE LIVE ATTACHMENT IS WHAT MAKES THAT SPELLING CARRY
+    # WEIGHT. Probed: before the sweep the column and the method BOTH read "never-existed" (the
+    # column shadows the derived pick — that is the bug); after it the column is nil and the method
+    # answers "alive". So `assert_nil model.reload.cover_node_id` would fail over a CORRECT fix,
+    # and only the column spelling can pin this.
+    #
+    # AND AN ASSERTION ABOUT THE MODEL'S ATTACHMENTS WOULD PASS WITH OR WITHOUT THE FIX —
+    # `user.maker_file_attachments` is polymorphic and has always swept a model's attachments. The
+    # COVER is the half that was missing, which is why the attachment here is a LIVE one.
+    test "a model's chosen cover pointing at a dead node is cleared, restoring the derived pick" do
+      node("alive")
+      model = @user.maker_models.create!(title: "Case", cover_node_id: "never-existed")
+      model.file_attachments.create!(user: @user, node_id: "alive", role: "model")
+
+      assert_equal 1, Maker::AttachmentReaper.reap_all!
+      assert_nil model.reload[:cover_node_id]
+      assert_equal "alive", model.cover_node_id, "the derived fallback takes over once the column is cleared"
+    end
+
+    # The model path goes through the SAME window rather than clearing on sight — a tombstone is one
+    # undo away from returning with the same node_id, and the cover is keyed on that id.
+    test "a model's tombstoned cover is spared inside its undo window and cleared past it" do
+      node("tombstoned", deleted: true, updated_at: 29.days.ago)
+      model = @user.maker_models.create!(title: "Case", cover_node_id: "tombstoned")
+
+      assert_equal 0, Maker::AttachmentReaper.reap_all!(grace: 30.days)
+      assert_equal "tombstoned", model.reload[:cover_node_id]
+
+      @user.nodes.find_by!(node_id: "tombstoned").update_column(:updated_at, 31.days.ago)
+      assert_equal 1, Maker::AttachmentReaper.reap_all!(grace: 30.days)
+      assert_nil model.reload[:cover_node_id]
+    end
+
+    # The `where.not(cover_node_id: [nil, ""])` filter on the NEW term, same argument as the project
+    # one above: without it a blank column arrives as nil, `nodes[nil]` misses, `reapable?(nil, …)`
+    # answers true, and the sweep reports a pointless write as work done on every model, every run.
+    test "a model that never chose a cover is not counted as having a stale one" do
+      @user.maker_models.create!(title: "Case")
+
+      assert_equal 0, Maker::AttachmentReaper.reap_all!(grace: 0.seconds)
+    end
+
     # --- the shared window -----------------------------------------------------
 
     # ONE definition, two reapers. They ask the identical question about the identical rows, so a
