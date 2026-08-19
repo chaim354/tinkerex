@@ -104,10 +104,13 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # a twelfth the day it appears.
     #
     # NOT COVERED, DELIBERATELY, AND BOTH ARE STATED SO NOBODY READS MORE INTO A GREEN RUN:
-    #   * The `unless: :devise_controller?` half of the base-class callback. Devise controllers
-    #     are excluded from this set BY CONSTRUCTION, so nothing here can observe that arm being
-    #     too wide. It is pinned only by auth_pages_test.rb / account_enumeration_test.rb, whose
-    #     anonymous requests go red if the carve-out is dropped.
+    #   * The `unless: :devise_controller?` half of the base-class callback — and NOTHING ELSE
+    #     covers it either. Devise controllers are excluded from this set by construction, so
+    #     nothing here can observe that arm; but neither can any other test, because Devise's own
+    #     `authenticate_user!` already no-ops on `devise_controller?` internally, which makes the
+    #     condition redundant today. Deleting it leaves the entire web suite green. The reasoning
+    #     is at application_controller.rb, beside the line; do not add a test that asserts the
+    #     condition is present, which would pin a spelling rather than a behaviour.
     #   * A `before_action :authenticate_user!, only: [:show]` on a subclass, which satisfies this
     #     assertion while leaving every other action open — a child's symbol declaration REPLACES
     #     the inherited conditional entry outright (CallbackChain#append_one deletes the duplicate
