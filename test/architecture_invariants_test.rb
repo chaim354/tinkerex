@@ -81,4 +81,66 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "It is a ScriptError, so this rescue does not do what it looks like it does. " \
                  "Gate on the capability before the call instead — see LibraryCapabilities."
   end
+
+  test "every ApplicationController descendant requires a signed-in session" do
+    # CLAUDE.md §14d: the web app is session-authed, and "every server-rendered page requires a
+    # session" was stated sixteen times — once per controller — and enforced nowhere. A NEW
+    # subclass, or one extracted from an existing controller, was public by default and nothing
+    # went red. §15 records the sibling failure for `direct_uploads`; this is that shape from
+    # inside `ApplicationController` rather than outside it.
+    #
+    # UNLIKE THE TWO GREPS ABOVE, THIS ONE READS THE CONSTANT GRAPH, NOT FILES — and that is the
+    # point of it rather than a deviation from the file's style. A file scan cannot see the three
+    # `Tools::*` controllers that INHERIT the callback from `Tools::BaseController` rather than
+    # declaring it; cannot tell `app/controllers/users/*.rb` (Devise subclasses, which must NOT
+    # have it) from an app controller; and once the base class carries the callback there is no
+    # subclass line left on disk to read at all. Same derive-don't-enumerate rule the greps use
+    # for their directory set, one layer up.
+    #
+    # THE DEVISE EXCLUSION IS DERIVED, NEVER A LIST. `Devise.parent_controller` defaults to
+    # "ApplicationController", so `DeviseController` and all eleven of its subclasses ARE
+    # descendants here — and sign-in, sign-up, confirm, reset and the OmniAuth callback must
+    # stay anonymous or `/users/sign_in` redirects to itself. `<= DeviseController` answers for
+    # a twelfth the day it appears.
+    #
+    # NOT COVERED, DELIBERATELY, AND BOTH ARE STATED SO NOBODY READS MORE INTO A GREEN RUN:
+    #   * The `unless: :devise_controller?` half of the base-class callback. Devise controllers
+    #     are excluded from this set BY CONSTRUCTION, so nothing here can observe that arm being
+    #     too wide. It is pinned only by auth_pages_test.rb / account_enumeration_test.rb, whose
+    #     anonymous requests go red if the carve-out is dropped.
+    #   * A `before_action :authenticate_user!, only: [:show]` on a subclass, which satisfies this
+    #     assertion while leaving every other action open — a child's symbol declaration REPLACES
+    #     the inherited conditional entry outright (CallbackChain#append_one deletes the duplicate
+    #     before pushing), which is the same mechanism that makes the base-class callback a strict
+    #     no-op while the subclass lines stand. Re-deriving each callback's conditions here would
+    #     be a second, weaker copy of Rails' own filter logic; the answer if it ever matters is a
+    #     request test, not more reflection.
+    #   * `CspReportsController` and `DevBlobsController`, which descend from
+    #     `ActionController::Base` on purpose — as does `ActiveStorage::BaseController`, so this
+    #     guard would NOT have caught the `direct_uploads` hole §15 describes. That one is closed
+    #     by the route shadow, not by this.
+    Rails.application.eager_load!
+
+    guarded = ApplicationController.descendants.reject { |klass| klass <= DeviseController }
+
+    # Defeats a vacuous pass. Without eager loading — or if the Devise reject ever widened to
+    # swallow the app's own controllers — `guarded` would be empty and the assertion below would
+    # be green over nothing at all.
+    assert_includes guarded, FilesController,
+                    "the guarded set should contain the app's own controllers; got " \
+                    "#{guarded.size} classes. Did eager loading fail, or did the Devise " \
+                    "exclusion widen?"
+
+    unprotected = guarded.reject { |klass|
+      klass._process_action_callbacks.any? { |cb| cb.kind == :before && cb.filter == :authenticate_user! }
+    }.map(&:name).sort
+
+    assert_empty unprotected,
+                 "every ApplicationController descendant must run `authenticate_user!` " \
+                 "(CLAUDE.md §14d), but these do not:\n  #{unprotected.join("\n  ")}\n" \
+                 "It is declared on ApplicationController for all of them, so a controller " \
+                 "reaches this list only by a `skip_before_action :authenticate_user!` — or by " \
+                 "that base-class declaration having been removed. A page that is genuinely " \
+                 "public needs an argument here and in §14d, not a skip."
+  end
 end
