@@ -125,11 +125,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
-      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi, fs-fskit)
+      - name: Hermetic crate tests (fs-provider, sync-client, fs-cfapi, fs-fskit, fs-webdav)
         run: |
           cargo test --manifest-path client/fs-provider/Cargo.toml
           cargo test --manifest-path client/sync-client/Cargo.toml
           cargo test --manifest-path client/fs-cfapi/Cargo.toml
+          # fs-webdav was BUILT below and never TESTED, so its inline suite — including the
+          # two-connection concurrency guards — had never run on any runner. Near-free: this
+          # job already compiles the crate.
+          cargo test --manifest-path client/fs-webdav/Cargo.toml
           # fs-fskit: pure logic + the FFI bridge dispatch (the Swift .appex is
           # account-gated and not built here — see client/fs-fskit/BUILD.md).
           cargo test --manifest-path client/fs-fskit/Cargo.toml --features ffi
