@@ -31,32 +31,25 @@
             <% if Maker::Previews::Registry.for_filename(node.name).present? %>
               <% thumb = @thumb_by_node.thumb(node.node_id) %>
               <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
-              <%# data-download-url puts "Download" in the right-click menu (filemenu#open). The
-                  same blob URL the row's own Download link uses, ?download=1 and all, so the two
-                  cannot answer differently. Folders get neither — they have no contextmenu action
-                  at all, which is what keeps a "Download" off a directory.
-
-                  data-addon-open-url and data-addon-open-label are the same mechanism for "Edit in
-                  the addon that made this file". @addon_origins has no key for anything an addon
-                  did not produce, so both values are nil, Rails renders NO attribute, and the menu
-                  simply has no entry — the way every surface here opts out. The two always travel
-                  together (one hash, built once in AddonOrigins), so the label can never go missing
-                  from a cell that has the url. %>
+              <%# FilesHelper#file_menu_data is the whole right-click menu — data-download-url puts
+                  "Download" in it (filemenu#open), from the same blob URL the row's own Download
+                  link uses, ?download=1 and all, so the two cannot answer differently; and
+                  data-addon-open-url/-label are the same mechanism for "Edit in the addon that made
+                  this file", nil for anything an addon did not produce, which renders NO attribute
+                  and so no entry. Folders take the branch below and call NEITHER builder, which is
+                  what keeps a "Download" off a directory. #thumb_cell_data is the separate half the
+                  poll reads. See files_helper.rb for why they are two builders and not one. %>
               <%= link_to file_path(node.node_id), class: "file-cell",
-                          data: { thumbs_target: "cell", node_id: node.node_id, ext: ext_label,
-                                  action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                                  download_url: blob_file_path(node.node_id, download: 1),
-                                  addon_open_url: @addon_origins.dig(node.node_id, :url),
-                                  addon_open_label: @addon_origins.dig(node.node_id, :label) } do %>
+                          data: thumb_cell_data(node.node_id, ext_label)
+                                  .merge(file_menu_data(node.node_id, @addon_origins[node.node_id])) do %>
                 <%= render "thumb", thumb:, ext_label: %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
             <% else %>
+              <%# The plain-link branch: a menu, but no poll cell — there is no thumbnail to wait
+                  for. The branch that is easy to forget, and was forgotten first time round. %>
               <%= link_to node.name, file_path(node.node_id),
-                          data: { action: "contextmenu->filemenu#open", note_url: file_notes_path(node.node_id),
-                                  download_url: blob_file_path(node.node_id, download: 1),
-                                  addon_open_url: @addon_origins.dig(node.node_id, :url),
-                                  addon_open_label: @addon_origins.dig(node.node_id, :label) } %>
+                          data: file_menu_data(node.node_id, @addon_origins[node.node_id]) %>
             <% end %>
             <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>
