@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_19_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -57,7 +57,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.integer "user_id", null: false
     t.string "version_id"
     t.index ["user_id", "seq"], name: "index_changelog_entries_on_user_id_and_seq", unique: true
-    t.index ["user_id"], name: "index_changelog_entries_on_user_id"
   end
 
   create_table "chunks", force: :cascade do |t|
@@ -69,7 +68,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.integer "user_id", null: false
     t.index ["user_id", "chunk_hash"], name: "index_chunks_on_user_id_and_chunk_hash", unique: true
     t.index ["user_id", "refcount"], name: "index_chunks_on_user_id_and_refcount"
-    t.index ["user_id"], name: "index_chunks_on_user_id"
   end
 
   create_table "conflicts", force: :cascade do |t|
@@ -81,7 +79,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "node_id", "incoming_version_id"], name: "index_conflicts_on_user_node_incoming", unique: true
-    t.index ["user_id", "node_id"], name: "index_conflicts_on_user_id_and_node_id"
     t.index ["user_id", "resolved_at"], name: "index_conflicts_on_user_id_and_resolved_at"
   end
 
@@ -116,7 +113,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.string "role", null: false
     t.datetime "updated_at", null: false
     t.index ["addon_state_id", "node_id"], name: "index_maker_addon_files_on_addon_state_id_and_node_id", unique: true
-    t.index ["addon_state_id"], name: "index_maker_addon_files_on_addon_state_id"
     t.index ["node_id"], name: "index_maker_addon_files_on_node_id"
   end
 
@@ -126,7 +122,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.json "data", default: {}, null: false
     t.integer "revision", null: false
     t.index ["addon_state_id", "revision"], name: "index_maker_addon_state_revisions_on_state_and_revision", unique: true
-    t.index ["addon_state_id"], name: "index_maker_addon_state_revisions_on_addon_state_id"
   end
 
   create_table "maker_addon_states", force: :cascade do |t|
@@ -212,7 +207,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.integer "user_id", null: false
     t.string "version_id"
     t.index ["user_id", "attachable_type", "attachable_id", "node_id"], name: "index_maker_file_attachments_uniqueness", unique: true
-    t.index ["user_id", "attachable_type", "attachable_id"], name: "index_maker_file_attachments_on_attachable"
     t.index ["user_id", "node_id"], name: "index_maker_file_attachments_on_user_id_and_node_id"
   end
 
@@ -416,7 +410,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.integer "seq", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "manifest_id", "seq"], name: "index_manifest_chunks_on_user_id_and_manifest_id_and_seq", unique: true
-    t.index ["user_id"], name: "index_manifest_chunks_on_user_id"
   end
 
   create_table "nodes", force: :cascade do |t|
@@ -460,7 +453,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "commit_id"], name: "index_pending_commits_on_user_id_and_commit_id", unique: true
-    t.index ["user_id"], name: "index_pending_commits_on_user_id"
   end
 
   create_table "share_links", force: :cascade do |t|
@@ -475,7 +467,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.string "version_id", null: false
     t.index ["token_digest"], name: "index_share_links_on_token_digest", unique: true
     t.index ["user_id", "version_id"], name: "index_share_links_on_user_id_and_version_id"
-    t.index ["user_id"], name: "index_share_links_on_user_id"
   end
 
   create_table "user_identities", force: :cascade do |t|
@@ -527,7 +518,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_13_000200) do
     t.string "version_id", null: false
     t.index ["user_id", "node_id", "id"], name: "index_versions_on_user_id_and_node_id_and_id"
     t.index ["user_id", "version_id"], name: "index_versions_on_user_id_and_version_id", unique: true
-    t.index ["user_id"], name: "index_versions_on_user_id"
   end
 
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"

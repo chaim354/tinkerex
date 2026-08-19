@@ -146,4 +146,69 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "that base-class declaration having been removed. A page that is genuinely " \
                  "public needs an argument here and in §14d, not a skip."
   end
+
+  # THE TWO INDEXES ALLOWED TO BE A STRICT PREFIX OF ANOTHER, as "table" => "index name".
+  #
+  # Both are the SAME mechanism and neither is discoverable from a fixture, which is why they are
+  # written down here rather than left for a future reader to rediscover: SQLite APPENDS THE ROWID
+  # to every index key, so a narrow `(a)` index can seek `a = ? AND rowid <cmp> ?` and yield rows
+  # already in id order. A composite `(a, b)` cannot — within the `a` group it is ordered by `b`,
+  # so the planner adds `USE TEMP B-TREE FOR ORDER BY` and reads the whole group. The effect is
+  # SCALE-DEPENDENT and invisible at fixture size; both entries cite a MEASUREMENT taken at
+  # production scale, and a third candidate should not be added without one.
+  #
+  #   maker_addon_states — `app/services/maker/addon_origin.rb:114-119` records the probe: at 5,000
+  #     states, from 4 ids up the plan is `SEARCH maker_addon_states USING INDEX
+  #     index_maker_addon_states_on_user_id (user_id=? AND rowid=?)`.
+  #
+  #   nodes — `Sync::Tree.call` (`app/services/sync/tree.rb:12`) pages the DEVICE INITIAL SYNC with
+  #     `where("id > ?", after).order(:id).limit(1000)`. Dropping this index turns each page from
+  #     one early-terminating seek into a full read-and-sort of the user's node set, so a whole
+  #     export goes from O(N) to O(N^2/limit). Measured on 200,000 nodes, twenty pages, warm cache:
+  #     0.01 s with the index against 0.30 s without. `#find_each`/`#in_batches` page identically.
+  PREFIX_INDEX_EXEMPTIONS = {
+    "maker_addon_states" => "index_maker_addon_states_on_user_id",
+    "nodes" => "index_nodes_on_user_id"
+  }.freeze
+
+  test "no index's column list is a strict prefix of another index's on the same table" do
+    # An index on `(a)` is redundant beside one on `(a, b)`: any seek the narrow one answers, the
+    # wide one answers too. The narrow one still costs a btree write on every insert, update and
+    # delete of the row, plus its own copy of the leading column on disk. These regrow silently —
+    # `t.references :user, foreign_key: true` auto-indexes `user_id`, and a composite led by
+    # `user_id` then gets added on top — which is exactly how ten of them accumulated before
+    # `20260819120000_drop_redundant_prefix_indexes.rb`. Nothing else in the suite asserts anything
+    # about indexes at all, so without this the next `t.references` puts one straight back.
+    #
+    # A PARTIAL SUPERSET DOES NOT COUNT, AND THAT EXCLUSION IS LOAD-BEARING. `nodes` carries
+    # `(user_id, storage_path) WHERE deleted = false`; it cannot answer an unfiltered `user_id`
+    # predicate, so treating it as a superset would license removing a prefix that nothing else
+    # covers. The check therefore only reads NON-PARTIAL indexes as supersets — it can miss a
+    # redundancy, never invent one, which is the safe direction for a guard whose output is read
+    # as permission to delete.
+    conn = ActiveRecord::Base.lease_connection
+    pairs = conn.tables.sort.flat_map do |table|
+      indexes = conn.indexes(table).select { |i| i.columns.is_a?(Array) }
+      indexes.flat_map do |narrow|
+        indexes.filter_map do |wide|
+          next if wide.name == narrow.name
+          next unless wide.where.nil?
+          next unless wide.columns.length > narrow.columns.length
+          next unless wide.columns.first(narrow.columns.length) == narrow.columns
+          next if PREFIX_INDEX_EXEMPTIONS[table] == narrow.name
+
+          "#{table}: #{narrow.name} #{narrow.columns.inspect} " \
+            "is a strict prefix of #{wide.name} #{wide.columns.inspect}"
+        end
+      end
+    end.uniq
+
+    assert_empty pairs,
+                 "PREFIX_PAIRS=#{pairs.size}\n  #{pairs.join("\n  ")}\n" \
+                 "Each narrow index above is fully served by the wider one and only costs writes. " \
+                 "Drop it in a migration. If it came from `t.references :user, foreign_key: true`, " \
+                 "pass `index: false` there instead. If you believe one must STAY, it needs a " \
+                 "measured query plan showing SQLite's appended-rowid seek is load-bearing for a " \
+                 "real query — then add it to PREFIX_INDEX_EXEMPTIONS citing that measurement."
+  end
 end
