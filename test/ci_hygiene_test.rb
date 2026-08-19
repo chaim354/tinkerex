@@ -99,48 +99,56 @@ class CiHygieneTest < ActiveSupport::TestCase
                  "(`bundle install --quiet`) instead:\n  #{offenders.join("\n  ")}"
   end
 
-  # The gates bin/ci must define. This list is the CONTRACT: ci.yml invokes these by name (Task 4
-  # pins that direction), and every one of them is a gate that has to run somewhere.
+  # THE GATE CONTRACT, IN BOTH DIRECTIONS, AGAINST ONE DEFINITION.
   #
-  # `test-share` and `test-s3` are on this list because they were the drift. They were added to
-  # ci.yml on 2026-07-16 and never reached config/ci.rb, so `bin/ci` reported a green
-  # "Continuous Integration" while running two thirds of the backend matrix. `system` is here
-  # because the Rails scaffold ships it COMMENTED OUT, and this repo now has a browser tier.
+  # This used to be a THIRD hand-maintained list — `REQUIRED_GATES = %w[style scan test test-share
+  # test-s3 system]` — compared against config/ci.rb and never against ci.yml. So the contract
+  # ("config/ci.rb's gates ≡ ci.yml's jobs, modulo local-only") lived in three places with the
+  # exception written as prose, and the direction that catches a DELETED CI job was not asserted
+  # at all. Three mutations passed every assertion in this file:
   #
-  # `setup` is deliberately NOT required: it is local convenience only (`bin/setup --skip-server`),
-  # and no ci.yml job invokes it — each job does its own `bundle install`. See config/ci.rb, where
-  # the gate says so at its definition. Requiring it here would assert a gate CI does not run.
-  REQUIRED_GATES = %w[style scan test test-share test-s3 system].freeze
-
-  test "bin/ci defines every gate CI depends on" do
-    missing = REQUIRED_GATES - bin_ci_gates
-    assert_empty missing,
-                 "config/ci.rb is missing gate(s) #{missing.inspect}. `bin/ci` printing " \
-                 "\"passed\" while omitting a gate ci.yml runs is the drift this list exists to " \
-                 "stop — see the comment above REQUIRED_GATES."
-  end
-
-  test "every ci.yml gate job invokes bin/ci with a gate that exists" do
-    # The other direction of the contract. Task 2's test proves bin/ci DEFINES the gates; this
-    # proves ci.yml USES them and does not hand-roll a command that can drift from the definition.
-    # Without this, ci.yml could keep its own `bin/rails test` line and the single-source property
-    # would quietly stop being true.
-    gates = bin_ci_gates
-    jobs  = YAML.load_file(WORKFLOW_DIR.join("ci.yml"), aliases: true).fetch("jobs")
-
-    gate_jobs = jobs.except("preflight")
+  #   * delete ci.yml's `system-test:` job    → green, with the browser tier silently off CI
+  #   * add a gate to config/ci.rb, no job    → green, the exact case config/ci.rb's header forbids
+  #   * delete ci.yml's `test-app-js:` job    → green
+  #
+  # And the list had already gone stale in the ordinary way: `test-app` landed on 2026-08-19 and
+  # was never added to it, so the newest gate was unprotected in both directions within days.
+  #
+  # The exception is now DATA beside the definition (config/ci.rb's LOCAL_ONLY_GATES), `--list-ci`
+  # derives from it, and this is set EQUALITY. Consequence, deliberately: a future gate CI must
+  # not run has to be added to LOCAL_ONLY_GATES or this goes red. That is the point.
+  test "ci.yml's gate jobs are exactly the gates bin/ci says CI must run" do
+    expected  = bin_ci_gates(ci_only: true)
+    gate_jobs = ci_yml_jobs.except("preflight")
     assert gate_jobs.any?, "expected ci.yml to have gate jobs besides preflight"
 
-    gate_jobs.each do |name, job|
-      commands = Array(job["steps"]).filter_map { |s| s["run"] }
+    invoked = gate_jobs.map do |name, job|
+      # Also pins that ci.yml never hand-rolls a command that could drift from the gate's one
+      # definition — a job keeping its own `bin/rails test` line invokes bin/ci zero times.
+      commands    = Array(job["steps"]).filter_map { |s| s["run"] }
       invocations = commands.flat_map { |c| c.scan(%r{\bbin/ci\s+([a-z0-9-]+)}) }.flatten
       assert_equal 1, invocations.size,
                    "ci.yml job `#{name}` must invoke `bin/ci <gate>` exactly once, found " \
                    "#{invocations.inspect}"
-      assert_includes gates, invocations.first,
-                      "ci.yml job `#{name}` runs `bin/ci #{invocations.first}`, which config/ci.rb " \
-                      "does not define"
+      invocations.first
     end
+
+    assert_equal expected.sort, invoked.sort,
+                 "ci.yml's gate jobs and `bin/ci --list-ci` must name the same set. Missing a " \
+                 "job means CI does not run a gate `bin/ci` reports as passing; an extra one " \
+                 "means ci.yml invokes a gate config/ci.rb does not define. Add a gate to " \
+                 "config/ci.rb's LOCAL_ONLY_GATES only when CI deliberately must not run it."
+  end
+
+  test "setup is the only gate exempt from needing a ci.yml job" do
+    # The escape hatch above must not become the drift it replaced. `setup` is `bin/setup
+    # --skip-server`: local convenience, and every ci.yml job does its own `bundle install`.
+    # Anything else parked in LOCAL_ONLY_GATES is a gate that silently never runs in CI.
+    exempt = bin_ci_gates - bin_ci_gates(ci_only: true)
+    assert_equal [ "setup" ], exempt.sort,
+                 "config/ci.rb's LOCAL_ONLY_GATES is the one place a gate can opt out of CI. " \
+                 "Every entry is a gate `bin/ci` runs and CI does not — argue for it here or " \
+                 "give it a ci.yml job."
   end
 
   test "every linux or windows job is preflight-gated so it can never queue against a missing runner" do
@@ -264,12 +272,19 @@ class CiHygieneTest < ActiveSupport::TestCase
     # assert that the file LOOKS like it defines a gate, and this asserts that `bin/ci <gate>` will
     # actually resolve. The repo has already been bitten once by a hermetic check that shared the
     # code's misunderstanding (FakeS3 / CGI.escape) — assert the wire, not the round-trip.
-    def bin_ci_gates
-      out = IO.popen([ Rails.root.join("bin/ci").to_s, "--list" ], err: [ :child, :out ], &:read)
-      assert_equal 0, $?.exitstatus, "`bin/ci --list` failed:\n#{out}"
+    #
+    # `ci_only: true` asks `--list-ci`, which is `--list` minus config/ci.rb's LOCAL_ONLY_GATES.
+    # Both flags come from the SAME GATES hash, so there is no second list to keep in step.
+    def bin_ci_gates(ci_only: false)
+      flag = ci_only ? "--list-ci" : "--list"
+      out  = IO.popen([ Rails.root.join("bin/ci").to_s, flag ], err: [ :child, :out ], &:read)
+      assert_equal 0, $?.exitstatus, "`bin/ci #{flag}` failed:\n#{out}"
       out.split("\n").map(&:strip).reject(&:empty?)
     end
 
+    def ci_yml_jobs
+      YAML.load_file(WORKFLOW_DIR.join("ci.yml"), aliases: true).fetch("jobs")
+    end
     # Yields [basename, job_name, job_hash] for every job in every workflow.
     #
     # Reads only the "jobs" key. NOTE for anyone extending this: Psych resolves YAML 1.1 booleans,

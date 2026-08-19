@@ -25,10 +25,13 @@
 # Usage:
 #   bin/ci                 # every gate, in this order
 #   bin/ci test test-s3    # exactly those gates
-#   bin/ci --list          # the gate names, one per line (what ci_hygiene_test reads)
+#   bin/ci --list          # the gate names, one per line
+#   bin/ci --list-ci       # the gates ci.yml must have a job for (what ci_hygiene_test reads)
 
 GATES = {
   # Local convenience only — ci.yml does its own `bundle install` per job and never calls this.
+  # This is the ONE gate CI deliberately does not run, which is why it is named in
+  # LOCAL_ONLY_GATES below rather than being a sentence somebody has to remember.
   "setup" => ->(ci) do
     ci.step "Setup", "bin/setup --skip-server"
   end,
@@ -118,8 +121,28 @@ GATES = {
   end
 }.freeze
 
+# THE ONE EXCEPTION TO "every gate has a ci.yml job", AS DATA RATHER THAN AS PROSE. It used to be
+# a third hand-maintained list — test/ci_hygiene_test.rb carried its own REQUIRED_GATES literal
+# and compared it against this file, never against ci.yml — so the contract lived in three places
+# and only one direction was ever checked. Three mutations passed that whole test file: deleting
+# ci.yml's `system-test` job (the browser tier silently off CI), adding a gate here with no job
+# (exactly what the header above forbids), and deleting the `test-app-js` job. The hand-copied
+# list had already gone stale: `test-app` landed on 2026-08-19 and was never added to it.
+#
+# With this here, `--list` and `--list-ci` are derived from ONE definition and ci_hygiene_test
+# asserts SET EQUALITY between `--list-ci` and ci.yml's gate jobs — both directions, no literal.
+# Adding a gate CI genuinely must not run means adding it here, in the same commit, deliberately.
+LOCAL_ONLY_GATES = %w[setup].freeze
+
 if ARGV.include?("--list")
   puts GATES.keys
+  exit 0
+end
+
+# The gates ci.yml must have a job for. Answered BEFORE the unknown-gate abort below, which would
+# otherwise reject `--list-ci` as a gate name.
+if ARGV.include?("--list-ci")
+  puts GATES.keys - LOCAL_ONLY_GATES
   exit 0
 end
 
