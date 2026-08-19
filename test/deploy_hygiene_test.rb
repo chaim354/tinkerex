@@ -323,24 +323,117 @@ class DeployHygieneTest < ActiveSupport::TestCase
     ).proxy.hosts
   end
 
-  # Straight from the MERGED deploy config, so this cannot drift from what kamal will look up.
-  # env.secret is an array and kamal REPLACES arrays on merge (it unions hashes only) — reading
-  # the merged config means that replacement is reflected rather than re-implemented here.
+  # Straight from the MERGED deploy config, so the ANSWER cannot drift from what kamal will look
+  # up. env.secret is an array and kamal REPLACES arrays on merge (it unions hashes only) —
+  # reading the merged config means that replacement is reflected rather than re-implemented here.
   def required_secret_keys(destination)
     require "kamal"
     config = Kamal::Configuration.create_from(
       config_file: ROOT.join("config/deploy.yml"), destination: destination
     )
-    raw = config.raw_config
-    # STRING keys, and that is not interchangeable with symbols here: raw_config is an
-    # ActiveSupport::InheritableOptions whose `dig(:env, :secret)` returns nil while
-    # `dig("env", "secret")` returns the list. A symbol-keyed version of this method returns [] for
-    # every destination, which makes both tests below pass while asserting NOTHING — caught only
-    # because minitest reported "Test is missing assertions" on the first one.
-    keys = Array(raw.dig("env", "secret")) + Array(raw.dig("registry", "password"))
+    keys = secret_key_names(config.raw_config)
     raise "no secret keys resolved for #{destination || 'base'} — raw_config shape changed?" if keys.empty?
 
-    keys.uniq
+    keys
+  end
+
+  # STRING keys throughout, and that is not interchangeable with symbols: raw_config is an
+  # ActiveSupport::InheritableOptions whose `dig(:env, :secret)` returns nil while
+  # `dig("env", "secret")` returns the list (the nesting below it is plain string-keyed Hashes). A
+  # symbol-keyed version returns [] for every destination, which makes the tests below pass while
+  # asserting NOTHING — caught only because minitest reported "Test is missing assertions".
+  def at(node, *path)
+    path.reduce(node) { |value, key| value.is_a?(Hash) ? value[key] : nil }
+  end
+
+  # EVERY PLACE KAMAL 2.12.0 RESOLVES A SECRET. The LIST OF SITES is hand-maintained — that is the
+  # part that drifted, while both this method and bin/secrets-preflight's twin claimed it could
+  # not: they collected `env.secret + registry.password`, two of NINE. Latent on today's config,
+  # but a `builder: secrets:` block or an accessory `env.secret` walks straight past both guards.
+  # `secret_key_names covers every site kamal reads` below plants a name at each arm; widen that
+  # test and bin/secrets-preflight in the same commit as this method.
+  #
+  # Reads the config only — no secret is resolved. Verified by fencing Dotenv.parse and
+  # Kamal::Secrets#[]/#key?/#to_h to raise and building all four destinations: the fence never
+  # trips, which is what keeps every test in this file STATIC and vault-free.
+  def secret_key_names(raw)
+    roles       = at(raw, "servers").is_a?(Hash)     ? at(raw, "servers").values     : []
+    accessories = at(raw, "accessories").is_a?(Hash) ? at(raw, "accessories").values : []
+
+    # env.secret — root (env.rb:35), per env tag (configuration.rb:286), per role (role.rb:20),
+    # per accessory (accessory.rb:126). An entry may be `VAR:SECRET`; kamal looks up the part AFTER
+    # the colon (Env#extract_alias) — the first half names the container's env var, not a key.
+    envs = [ at(raw, "env"), *at(raw, "env", "tags").to_h.values,
+             *roles.map { |role| at(role, "env") }, *accessories.map { |acc| at(acc, "env") } ]
+    keys = envs.flat_map { |env| Array(at(env, "secret")) }.map { |key| key.to_s.split(":", 2).last }
+
+    # registry password AND username — root (registry.rb:35) and per accessory (accessory.rb:141).
+    # ONLY the Array form is a secret reference (Registry#lookup); a bare String is the literal
+    # value, which `username: chaim354` in deploy.yml is. Collecting that would demand a secret
+    # named "chaim354" and block every deploy.
+    registries = [ at(raw, "registry"), *accessories.map { |acc| at(acc, "registry") } ]
+    keys += registries.flat_map { |reg| [ at(reg, "password"), at(reg, "username") ] }
+                      .grep(Array).map(&:first)
+
+    # Custom proxy TLS material — root and per role (proxy.rb:41,47), per accessory
+    # (accessory.rb:135). A role's `proxy:` specialization can be `true`/`false`, not a hash.
+    proxies = [ at(raw, "proxy"), *roles.map { |role| at(role, "proxy") },
+                *accessories.map { |acc| at(acc, "proxy") } ]
+    keys += proxies.flat_map { |p| [ at(p, "ssl", "certificate_pem"), at(p, "ssl", "private_key_pem") ] }
+
+    # builder.secrets (builder.rb:73) — the raw key LIST, never `config.builder.secrets`, which
+    # eagerly resolves each one through `config.secrets[key]` and would make this file need a vault.
+    keys += Array(at(raw, "builder", "secrets"))
+
+    # ssh.key_data (ssh.rb:43-44). Kamal treats an entry the secrets do not define as an INLINE
+    # literal key, so that deprecated spelling is reported MISSING rather than skipped — loud beats
+    # an empty key reaching an ssh handshake, and kamal 3 removes the inline form outright.
+    keys += Array(at(raw, "ssh", "key_data"))
+
+    keys.compact.uniq
+  end
+
+  test "secret_key_names covers every site kamal reads a secret from" do
+    # The real config exercises three arms; the other six are empty in it, so only a synthetic
+    # config can show they are reached at all. Set EQUALITY, not inclusion — the two decoys below
+    # are half of what this pins, and an over-collecting version fails LOUD but it still fails:
+    # every name it invents is reported MISSING and blocks the deploy.
+    raw = {
+      "env" => { "secret" => [ "ROOT_ENV", "CONTAINER_VAR:ALIASED_ENV" ],
+                 "tags" => { "beta" => { "secret" => [ "TAG_ENV" ] } } },
+      "servers" => {
+        "web" => [ "10.0.0.1" ],                          # a bare host list, not a hash
+        "job" => { "env" => { "secret" => [ "ROLE_ENV" ] },
+                   "proxy" => { "ssl" => { "certificate_pem" => "ROLE_CERT",
+                                           "private_key_pem" => "ROLE_KEY" } } },
+        "cron" => { "proxy" => true }                     # a specialization that is not a hash
+      },
+      "registry" => { "username" => [ "ROOT_REGISTRY_USERNAME" ],
+                      "password" => [ "ROOT_REGISTRY_PASSWORD" ] },
+      "proxy" => { "ssl" => { "certificate_pem" => "ROOT_CERT", "private_key_pem" => "ROOT_KEY" } },
+      "builder" => { "secrets" => [ "BUILDER_SECRET" ] },
+      "ssh" => { "key_data" => [ "SSH_KEY_DATA" ] },
+      "accessories" => {
+        "sidecar" => { "env" => { "secret" => [ "ACCESSORY_ENV" ] },
+                       "registry" => { "username" => "a-literal-not-a-secret",
+                                       "password" => [ "ACCESSORY_REGISTRY_PASSWORD" ] },
+                       "proxy" => { "ssl" => { "certificate_pem" => "ACCESSORY_CERT",
+                                               "private_key_pem" => "ACCESSORY_KEY" } } },
+        "bare" => { "image" => "nginx" }                  # no env, no registry, no proxy
+      }
+    }
+
+    assert_equal %w[
+      ACCESSORY_CERT ACCESSORY_ENV ACCESSORY_KEY ACCESSORY_REGISTRY_PASSWORD ALIASED_ENV
+      BUILDER_SECRET ROLE_CERT ROLE_ENV ROLE_KEY ROOT_CERT ROOT_ENV ROOT_KEY
+      ROOT_REGISTRY_PASSWORD ROOT_REGISTRY_USERNAME SSH_KEY_DATA TAG_ENV
+    ], secret_key_names(raw).sort,
+                 "bin/secrets-preflight and this file each walk the deploy config for the names " \
+                 "kamal will resolve. A site dropped from either is a credential that deploys " \
+                 "UNCHECKED — the failure the preflight exists to make impossible. Note what is " \
+                 "deliberately absent: CONTAINER_VAR (an alias names the env var, the secret is " \
+                 "after the colon) and a-literal-not-a-secret (only the Array form of a registry " \
+                 "username/password is a secret reference)."
   end
 
   test "every secret a destination declares is defined in a file that destination actually reads" do
