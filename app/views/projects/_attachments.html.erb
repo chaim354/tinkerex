@@ -1,15 +1,18 @@
 <%#
   Attached design files, grouped by role into COLLAPSIBLE sections in ROLE_LABELS order.
 
-  `@attachments` has already had the dead ones filtered out by ProjectsController#show — a file
-  deleted from the library leaves the project immediately, and `@missing_attachment_count` is how
-  many did, so the change is never silent. There is no "(file unavailable)" tile any more: it was
-  the only thing that branch rendered, and hiding those rows makes it unreachable rather than
-  merely rare.
+  `@attachments` has already had the dead ones filtered out by ProjectsController#show, against
+  `@page_nodes` (PageNodes) — a file deleted from the library leaves the project immediately, and
+  `@missing_attachment_count` is how many did, so the change is never silent. There is no "(file
+  unavailable)" tile any more: it was the only thing that branch rendered, and hiding those rows
+  makes it unreachable rather than merely rare. That partition is also why `_attachment_group`
+  dereferences `@page_nodes[...]` with no `&.` — every row reaching it has a live node.
 
-  `@thumbs` (ThumbnailMap) is best-effort and independent of that — a backend blip degrades a tile
-  to its format badge, which is a different condition from the file being gone and must not be
-  confused with it.
+  `@page_thumbs` (ThumbnailMap) is best-effort and INDEPENDENT OF THAT, which is the distinction to
+  keep: a backend blip degrades a tile to its format badge, a different condition from the file
+  being gone. It is exactly why liveness reads `nodes.present` and not the port — ThumbnailMap
+  rescues FetchError to {}, so an unmounted NAS would otherwise empty this panel and report every
+  file deleted. Pinned by page_nodes_test.rb.
 
   ONE `thumbs` controller wraps every group rather than one per grid: Stimulus finds targets
   anywhere in the controller element's subtree, so a single instance polls all pending cells on the
@@ -46,7 +49,7 @@
         have typed. They keep their own section at the bottom instead of being dropped: a rescue copy
         is still a real file in the project's folder, and a panel that pretended otherwise would be
         lying about what is on disk. %>
-    <% backups, live = @attachments.partition { |a| Maker::FileAttachment.backup?(@att_nodes[a.node_id].name) } %>
+    <% backups, live = @attachments.partition { |a| Maker::FileAttachment.backup?(@page_nodes[a.node_id].name) } %>
     <% grouped = live.group_by { |a| Maker::FileAttachment::ROLE_LABELS.key?(a.role) ? a.role : "other" } %>
     <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% Maker::FileAttachment::ROLE_LABELS.each do |role, label| %>

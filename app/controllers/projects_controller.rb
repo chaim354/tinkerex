@@ -22,6 +22,10 @@ class ProjectsController < ApplicationController
   # else this controller does with the library.
   include AddonOrigins
 
+  # The page's ONE live-node index. `#show` renders two surfaces off the library — the attachment
+  # tiles and the build-log photos — and both ask the same question of the same table.
+  include PageNodes
+
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
   # ones. The web reads `status` as archived-or-not and never shows or sets the other four values
   # (spec decision #1) — the column, its validation and the v1 API are deliberately untouched.
@@ -50,29 +54,41 @@ class ProjectsController < ApplicationController
     #
     # `.present` is what makes the nil mean something: nil here is "this user has no LIVE node with
     # that id", i.e. tombstoned or hard-gone, which is exactly the set that should not render.
+    # ONE index and ONE ThumbnailMap over the page's whole union (PageNodes) — the attachment tiles
+    # and the build-log photos ask the same two questions of the same rows, and asking twice cost a
+    # duplicated `nodes` query, a second `stat_all` and a second `maker_previews` read — THREE fewer
+    # statements per render, measured on chunk (16 → 13 on one attachment plus one build-log photo).
+    # A CONSTANT-FACTOR saving, not a complexity change, which is why page_query_budget_test.rb's
+    # constancy-in-N assertion stays green either way and is NOT the guard for this: the guard is
+    # page_nodes_test.rb, and the reason for the merge is the liveness hole, not the queries.
+    # It also halves the enqueue budget the page can spend:
+    # ThumbnailMap::BACKFILL_LIMIT is PER CALL, so this is 100 for the page rather than 100 + 100.
+    # Self-healing across renders, and the honest trade for the union being deduped.
     all_attachments = @project.file_attachments.order(:position).to_a
-    @att_nodes = current_user.nodes.present
-                             .where(node_id: all_attachments.map(&:node_id)).index_by(&:node_id)
-    @attachments, missing = all_attachments.partition { |a| @att_nodes.key?(a.node_id) }
-    # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
-    # a file by accident and watched their project change otherwise has no thread to pull. It
-    # disappears on its own when the reaper clears the rows.
-    @missing_attachment_count = missing.size
-    @thumbs = Maker::Previews::ThumbnailMap.for(current_user, @attachments.map(&:node_id))
-    # ATTACHMENTS ONLY, NOT THE BUILD-LOG PHOTOS BELOW. `_attachment_group` is the only partial on
-    # this page whose tiles carry `contextmenu->filemenu#open`; `_log_entry`'s photos are spans
-    # driven by the `thumbs` controller alone, with no menu to add an entry to — so an origin
-    # resolved for one would be work nothing reads.
-    @addon_origins = addon_origins_for(@attachments.map(&:node_id))
     # :rich_text_body is Action Text's association for `has_rich_text :body`. Without it, each
     # entry's body is its own query — 15 entries cost 15 extra round-trips. Pinned by
-    # test/integration/web/page_query_budget_test.rb.
+    # test/integration/web/page_query_budget_test.rb. Loaded HERE, above the index, because its
+    # photos are half of the union below.
     @entries = @project.build_log_entries
                        .includes(:file_attachments, :rich_text_body)
                        .reorder(logged_at: :desc).to_a
     entry_photo_ids = @entries.flat_map { |e| e.file_attachments.map(&:node_id) }
-    @entry_nodes = current_user.nodes.present.where(node_id: entry_photo_ids).index_by(&:node_id)
-    @entry_thumbs = Maker::Previews::ThumbnailMap.for(current_user, entry_photo_ids)
+    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + entry_photo_ids)
+    @attachments, missing = all_attachments.partition { |a| @page_nodes.key?(a.node_id) }
+    # NOT SILENT. The panel says how many left and points at the Trash, because a user who deleted
+    # a file by accident and watched their project change otherwise has no thread to pull. It
+    # disappears on its own when the reaper clears the rows.
+    @missing_attachment_count = missing.size
+    # Dead ids are dropped before the port is asked: `stat_all` would answer nothing for them
+    # anyway, but they would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
+    @page_thumbs = Maker::Previews::ThumbnailMap.for(
+      current_user, @attachments.map(&:node_id) + entry_photo_ids.select { |id| @page_nodes.key?(id) }
+    )
+    # ATTACHMENTS ONLY, NOT THE BUILD-LOG PHOTOS. `_attachment_group` is the only partial on this
+    # page whose tiles carry `contextmenu->filemenu#open`; `_log_entry`'s photos are spans driven by
+    # the `thumbs` controller alone, with no menu to add an entry to — so an origin resolved for one
+    # would be work nothing reads. That is why THIS one is not merged into the union above.
+    @addon_origins = addon_origins_for(@attachments.map(&:node_id))
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's

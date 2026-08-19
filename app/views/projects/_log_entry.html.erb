@@ -7,13 +7,13 @@
   <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
   <div class="entry-body"><%= entry.body %></div>
 
-  <% photos = entry.file_attachments.select { |a| @entry_nodes.key?(a.node_id) } %>
+  <% photos = entry.file_attachments.select { |a| @page_nodes.key?(a.node_id) } %>
   <% if photos.any? %>
     <div class="entry-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% photos.each do |att| %>
         <span class="entry-photo file-cell" data-thumbs-target="cell"
               data-node-id="<%= att.node_id %>" data-ext="IMG">
-          <%= render "files/thumb", thumb: @entry_thumbs.thumb(att.node_id), ext_label: "IMG" %>
+          <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: "IMG" %>
         </span>
       <% end %>
     </div>

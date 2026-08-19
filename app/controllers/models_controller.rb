@@ -7,6 +7,10 @@ class ModelsController < ApplicationController
 
   include LibraryCapabilities
 
+  # The page's ONE live-node index — `#show` renders attachments by role, a cover hero and a 3D
+  # switcher off the same rows, and every one of them must skip a tombstone.
+  include PageNodes
+
   SORTS = { "recent" => { updated_at: :desc }, "title" => { title: :asc },
             "status" => { print_status: :asc, title: :asc } }.freeze
 
@@ -31,21 +35,35 @@ class ModelsController < ApplicationController
   end
 
   def show
-    @attachments = @model.file_attachments.order(:position).to_a
-    att_ids = @attachments.map(&:node_id)
-    @nodes = current_user.nodes.present.where(node_id: att_ids).index_by(&:node_id)
+    # A FILE DELETED FROM THE LIBRARY LEAVES THIS MODEL TOO, on exactly the terms ProjectsController
+    # #show has always used — `Library::Reconciler` tombstones rather than destroys, so the
+    # attachment row outlives the file and every surface below has to skip it. It did not: this
+    # action built the index and then handed `@by_role` and `@cover_att` the UNFILTERED list, so a
+    # tombstoned attachment painted a broken gallery <img>, an <iframe> whose src 302s to the user's
+    # whole Files listing under a heading reading "Instructions", and a hero cell polling a node
+    # /files/thumbnails omits — a spinner that resolves never. The cover id joins the union because
+    # it need not be an attachment at all.
+    all_attachments = @model.file_attachments.order(:position).to_a
+    @page_nodes = live_nodes_for(all_attachments.map(&:node_id) + [ @model.cover_node_id ])
+    @attachments, missing = all_attachments.partition { |a| @page_nodes.key?(a.node_id) }
+    # NOT SILENT, same sentence and same reason as the project panel's: a user who deleted a file by
+    # accident and watched this page change otherwise has no thread to pull.
+    @missing_attachment_count = missing.size
     @by_role = @attachments.group_by(&:role)
     @cover_att = @attachments.find { |a| a.node_id == @model.cover_node_id }
+    # COVER ONLY, DELIBERATELY NOT THE UNION. This page paints exactly ONE thumbnail — the hero;
+    # `_file_tree` is plain link_to's — so merging the way projects#show does would save no query
+    # (there is no second call here) while spending ThumbnailMap::BACKFILL_LIMIT on up to 100 rows
+    # and 100 jobs per view for images nothing renders. Pinned as a budget in page_nodes_test.rb.
     @covers = Maker::Previews::ThumbnailMap.for(current_user, [ @model.cover_node_id ].compact)
     # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
     # switcher. Filter by extension (role "model" also covers STEP/IGES, which the viewer can't
     # render). Default selection = the cover file if it's viewable, else the first one.
     @viewable_3d = @attachments.filter_map do |a|
-      node = @nodes[a.node_id]
-      next unless node
-      ext = File.extname(node.name).downcase.delete(".")
+      name = @page_nodes[a.node_id].name
+      ext = File.extname(name).downcase.delete(".")
       next unless VIEWABLE_3D_EXTS.include?(ext)
-      { node_id: a.node_id, name: node.name, format: ext }
+      { node_id: a.node_id, name:, format: ext }
     end
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail

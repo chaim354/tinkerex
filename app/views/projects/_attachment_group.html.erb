@@ -20,7 +20,7 @@
     </summary>
     <div class="attachments-grid">
       <% group.each do |att| %>
-        <% node = @att_nodes[att.node_id] %>
+        <% node = @page_nodes[att.node_id] %>
         <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
         <div class="attachment-tile">
           <%# data-download-url is what puts "Download" in the right-click menu (filemenu#open).
@@ -39,7 +39,7 @@
                               download_url: blob_file_path(att.node_id, download: 1),
                               addon_open_url: @addon_origins.dig(att.node_id, :url),
                               addon_open_label: @addon_origins.dig(att.node_id, :label) } do %>
-            <%= render "files/thumb", thumb: @thumbs.thumb(att.node_id), ext_label: ext %>
+            <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: ext %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
           <div class="tile-meta">
