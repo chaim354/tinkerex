@@ -35,8 +35,18 @@ export const CALIB_H = 22
 // A file with absurd units (an SVG read at 25.4x) would otherwise try to print hundreds of sheets.
 export const MAX_SHEETS = 40
 
+// THE CONTENT BOX CARRIES ITS ORIGIN, NOT JUST ITS SIZE. Three places need "where does geometry
+// start" — the page translation below, the clip rect in renderSheet, and the furniture's own edges
+// — and re-spelling `MARGIN + HEADER_H` at each is the N-copies-that-must-agree defect this repo
+// keeps recording (§14b's four skip-list strings, §14d's five port_writable branches). Move the
+// calibration strip to the top one day and exactly one line changes; miss one of three and
+// geometry is DRAWN at one origin and CLIPPED at another, slicing a band off a part on a page that
+// still looks entirely correct.
 export function contentBox(paper) {
-  return { w: paper.w - MARGIN * 2, h: paper.h - MARGIN * 2 - HEADER_H - CALIB_H }
+  return {
+    x: MARGIN, y: MARGIN + HEADER_H,
+    w: paper.w - MARGIN * 2, h: paper.h - MARGIN * 2 - HEADER_H - CALIB_H,
+  }
 }
 
 export function unionBox(shapes) {
@@ -59,8 +69,8 @@ export function buildSheets(shapes, paper) {
       // Content space -> page space. THE SELECTION's own bbox origin is the datum, not the file's,
       // which is what makes "true positions" mean RELATIVE positions: two holes 40 mm apart on a
       // 600 mm sheet print on one page, 40 mm apart, instead of on tile 4 of 12.
-      translateX: MARGIN - box[0],
-      translateY: MARGIN + HEADER_H - box[1],
+      translateX: content.x - box[0],
+      translateY: content.y - box[1],
       shapes,
     }],
   }

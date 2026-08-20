@@ -50,22 +50,41 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
   # ---- lib/print_sheet.js: pagination ---------------------------------------------------------
 
+  # MUTATION-CHECKED: dropping `- CALIB_H` from contentBox turns this RED ("Expected |230.4 -
+  # 252.39999999999998| (21.99999999999997) to be <= 0.001") while the translation test below stays
+  # GREEN — translateY is built from the content box's ORIGIN, which the calibration strip does not
+  # move, so this is the only assertion in the file that can see the bottom strip at all.
   test "Letter's content box is the printable area less the two reserved strips" do
     box = JSON.parse(in_print_sheet("JSON.stringify(m.contentBox(m.PAPERS.Letter))"))
 
     # 215.9 - 20 margin = 195.9 wide; 279.4 - 20 margin - 7 header - 22 calibration = 230.4 tall.
     assert_in_delta 195.9, box["w"], 0.001
     assert_in_delta 230.4, box["h"], 0.001
+    # And it carries its ORIGIN, which is what stops three call sites re-spelling MARGIN + HEADER_H.
+    assert_in_delta 10.0, box["x"], 0.001
+    assert_in_delta 17.0, box["y"], 0.001
   end
 
   # THE TRANSLATION IS THE WHOLE "TRUE POSITIONS" CLAIM, and it is relative rather than absolute:
   # the SELECTION's bbox origin is the datum, not the file's. A part sitting at x 500 in a 600 mm
   # laser sheet prints at the left edge of sheet 1, not on tile 3 of 12 with two blank ones.
+  #
+  # MUTATION-CHECKED TWICE, because two independent claims meet here and one mutation cannot see
+  # both. Making the translation absolute (`translateX: content.x`) turns this RED ("Expected
+  # |-490.0 - 10| (500.0) to be <= 0.001") — that pins the DATUM. Gutting unionBox to
+  # `return shapes[0].b` turns it RED too ("Expected |-490.0 - -510| (20.0) to be <= 0.001") — that
+  # pins the UNION, and it can only fail because the shape supplying the minima is second in the
+  # array below. Neither turns the content-box test above red.
   test "a selection that fits produces one page whose translation puts it at the content origin" do
     out = JSON.parse(in_print_sheet(<<~JS))
-      JSON.stringify(m.buildSheets(
-        [{ b: [500, 300, 560, 340], p: [[500, 300], [560, 340]], k: 1, i: 0, o: 1 }],
-        m.PAPERS.Letter))
+      JSON.stringify(m.buildSheets([
+        // TWO SHAPES, AND THE ONE SUPPLYING THE MINIMA IS DELIBERATELY NOT FIRST. With a single
+        // shape "the selection's bbox" and "this shape's bbox" are indistinguishable, so the test
+        // cannot fail for the property it exists to pin: gutting unionBox to
+        // `return shapes[0].b` stays GREEN. Verified — that mutation must turn this red.
+        { b: [520, 320, 600, 400], p: [[520, 320], [600, 400]], k: 1, i: 0, o: 2 },
+        { b: [500, 300, 560, 340], p: [[500, 300], [560, 340]], k: 1, i: 0, o: 1 },
+      ], m.PAPERS.Letter))
     JS
 
     assert_equal 1, out["pages"].length
