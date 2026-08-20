@@ -12,7 +12,8 @@
 %>
 <div class="measure-view"
      data-controller="measure"
-     data-measure-url-value="<%= geometry_file_path(@node.node_id) %>">
+     data-measure-url-value="<%= geometry_file_path(@node.node_id) %>"
+     data-measure-name-value="<%= @node.name %>">
   <div class="measure-stage" data-measure-target="stage"></div>
   <div class="measure-bar">
     <span class="measure-dims" data-measure-target="dims"></span>
@@ -20,6 +21,19 @@
       <button type="button" class="btn small" data-action="measure#load">Measure</button>
     </span>
     <span class="measure-actions">
+      <%#
+        THE PAPER OPTIONS ARE POPULATED BY THE CONTROLLER FROM print_sheet.js's PAPERS table, not
+        listed here. A second copy of the paper list in ERB is a second definition that drifts, and
+        this select only ever appears once the controller has run anyway.
+      %>
+      <button type="button" class="btn small ghost" data-action="measure#toggleSelect"
+              data-measure-target="selectToggle" aria-pressed="false">Select parts</button>
+      <select class="measure-paper" aria-label="Paper size"
+              data-measure-target="paper" data-action="measure#paperChanged"></select>
+      <button type="button" class="btn small" data-action="measure#print"
+              data-measure-target="printButton">Print all</button>
+      <button type="button" class="btn small ghost" data-action="measure#clearMarks"
+              data-measure-target="clearButton" hidden>Clear</button>
       <button type="button" class="btn small ghost" data-action="measure#reset">Reset view</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>

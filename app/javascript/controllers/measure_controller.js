@@ -1,4 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
+import { PAPERS, printSheets } from "lib/print_sheet"
 
 // Measure view: click a contour, read its size in mm.
 //
@@ -44,14 +45,27 @@ const POLL_DELAYS_MS = [250, 400, 600, 900, 1300, 1800, 2500, 3500, 5000]
 // Screen pixels of pointer travel before a drag counts as a pan rather than a click.
 const PAN_SLOP_PX = 3
 
+// Remembered across visits: the paper in your printer does not change between files.
+const PAPER_KEY = "measure.paper"
+// A guess about the operator rather than a measurement — one constant to change.
+const DEFAULT_PAPER = "Letter"
+
 export default class extends Controller {
-  static values = { url: String }
-  static targets = ["stage", "dims", "fallback"]
+  // `name` IS REQUIRED, NOT COSMETIC. Stimulus silently ignores a data-*-value attribute the
+  // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
+  // error, no warning, just an empty filename on every printed sheet.
+  static values = { url: String, name: String }
+  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "clearButton"]
 
   connect() {
     this.aborted = false
     this.selected = null
     this.hovered = null
+    // THE PRINT SET. Membership is by IDENTITY on the payload's own shape objects, reached through
+    // node.__shape — so nothing about the wire format has to change to give a contour an id.
+    this.marked = new Set()
+    this.nodeByShape = new Map()
+    this.selecting = false
   }
 
   disconnect() {
@@ -76,6 +90,15 @@ export default class extends Controller {
     this.stageTarget.replaceChildren()
     this.setStatus("")
     this.selected = this.hovered = this.svg = null
+    // AND THE PRINT SET WITH IT. Every leak here is silent, because the poster hides the whole
+    // actions bar: a set left populated goes on being promised by the print button — and printed
+    // — over shapes that are no longer marked, no longer drawn, and no longer even the objects
+    // the next payload will hand out.
+    this.marked.clear()
+    this.nodeByShape.clear()
+    this.selecting = false
+    this.applySelecting()
+    this.refreshPrintBar()
   }
 
   // Poll the endpoint until it reports ready, then fetch the payload from the blob URL it names.
@@ -133,13 +156,126 @@ export default class extends Controller {
     // shapes on top, so the browser's own topmost-wins hit dispatch selects the hole rather than
     // the plate it sits in. That is the entire selection algorithm — no point-in-polygon code.
     const ordered = [...payload.shapes].sort((a, b) => this.area(b) - this.area(a))
-    for (const s of ordered) svg.appendChild(this.contourNode(s))
+    for (const s of ordered) {
+      const top = this.contourNode(s)
+      svg.appendChild(top)
+      // The DRAWN line, not the group and not the transparent hit twin — recorded so marking can
+      // reach a contour it was not handed by an event. Mark the GROUP instead and nothing visibly
+      // changes: `stroke` is inherited, and the line's own presentation attribute outranks what it
+      // would inherit, so the contour keeps its layer colour while the class sits one level up.
+      this.nodeByShape.set(s, top.__visible || top)
+    }
+    this.allShapes = payload.shapes
 
     this.stageTarget.replaceChildren(svg)
     this.svg = svg
     this.element.classList.add("measure-view--ready")
     this.setStatus(`${payload.shapes.length} shapes · click one to measure`)
     this.bindInteractions(svg)
+    // AFTER bindInteractions, DELIBERATELY. populatePaper reads localStorage, which throws in a
+    // blocked or partitioned storage context — and draw() has already inserted the SVG and applied
+    // --ready by this point, so a throw here USED to leave a drawn, ready-looking Measure view with
+    // no hover, click, pan or zoom, from a preference-remembering nicety. Binding first means the
+    // worst case costs the paper picker, not measuring. Neither call needs the listeners.
+    this.populatePaper()
+    // AND THE PRINT BAR, WHICH IS WHY THE ERB'S LITERALS CANNOT DRIFT. Dropping this line alone is
+    // GREEN — probed, not assumed — because the partial happens to render exactly what
+    // refreshPrintBar() would write ("Print all", Clear `hidden`), and the launch button is
+    // display:none once --ready, so draw() cannot run twice without showPoster() (which refreshes
+    // the bar itself). That agreement is not a coincidence to rely on, it is what this call
+    // GUARANTEES: with the partial's label changed to "Print" the whole file stays green with this
+    // line and goes red in five places without it. It is what makes the controller, not the
+    // template, the one definition of the bar at rest.
+    this.refreshPrintBar()
+  }
+
+  // POPULATED FROM print_sheet.js's PAPERS TABLE, not listed in the ERB: a second copy of the
+  // paper list is a second definition that drifts, and this select is hidden until the controller
+  // runs anyway.
+  //
+  // THE `options.length` EARLY RETURN IS NOT TIDINESS. draw() runs again on every ✕ Image ->
+  // Measure round trip and on every re-load of the payload, so without it the select grows four
+  // more entries each time.
+  //
+  // AND `PAPERS[saved] ?` IS NOT A NIL GUARD DRESSED UP. A key this build no longer offers — a
+  // stale one, or a hand-edited one — leaves NO option marked selected, and a <select> with
+  // nothing selected answers its FIRST option. That is A4, because that is where PAPERS starts,
+  // so an unrecognised value would silently change the paper rather than being ignored.
+  //
+  // NO `hasPaperTarget` GUARD, for refreshPrintBar's reason one method down: the select sits in
+  // the same always-rendered span as the buttons, so the target exists whenever this controller
+  // does. It was here and was removed — it could not fail (dropping it left all 73 tests green),
+  // and it did not protect what it named, since `print()` reads `this.paperTarget` unguarded
+  // regardless. A guard on one of two readers is worse than none: it hides the shape of the
+  // problem without preventing it.
+  //
+  // The `options.length` return is a different claim and does carry weight — it makes a second
+  // draw() idempotent rather than appending a duplicate set of four options.
+  populatePaper() {
+    if (this.paperTarget.options.length) return
+    const saved = localStorage.getItem(PAPER_KEY)
+    const chosen = PAPERS[saved] ? saved : DEFAULT_PAPER
+    // THE LABEL COMES FROM THE TABLE'S OWN `name`, THE VALUE FROM THE KEY, AND NOTHING TODAY CAN
+    // TELL THEM APART — every PAPERS key is spelled exactly like its `name`, so `option.textContent
+    // = key` is a GREEN mutation, measured. The `name` field exists precisely so a key like `Legal`
+    // could one day read "US Legal"; keeping the two sources distinct is what makes that a data
+    // change rather than a code change. Nothing here is broken — this is a limit of the data,
+    // recorded rather than argued away.
+    for (const key of Object.keys(PAPERS)) {
+      const option = document.createElement("option")
+      option.value = key
+      option.textContent = PAPERS[key].name
+      option.selected = key === chosen
+      this.paperTarget.appendChild(option)
+    }
+  }
+
+  paperChanged() {
+    localStorage.setItem(PAPER_KEY, this.paperTarget.value)
+  }
+
+  print() {
+    // An empty set prints the whole file — which is what the button has been saying all along.
+    const shapes = this.marked.size ? [...this.marked] : this.allShapes
+    // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is undefined
+    // between connect() and the first successful draw(), and in that window the button is
+    // display:none (`.measure-actions` without --ready), so no click can get here. What the guard
+    // buys is the difference between doing nothing and putting a raw TypeError from buildSheets
+    // into the readout as the answer to a button press. Pinned by a test that calls print()
+    // directly, because nothing else can.
+    if (!shapes || !shapes.length) return
+    try {
+      // THE `||` IS THE SAME KIND OF BELT, and reachable in the same one state: an unpopulated
+      // select answers `value === ""`, which is no key here. Without it buildSheets gets
+      // `undefined` for its paper and dies in contentBox, so a deployment that ever lost
+      // populatePaper would lose Print with it rather than degrading to the default.
+      printSheets(shapes, PAPERS[this.paperTarget.value] || PAPERS[DEFAULT_PAPER], {
+        name: this.nameValue,
+        // LOCAL, NOT UTC. `toISOString()` gives the same ISO shape and stamps an evening print in
+        // the Americas with TOMORROW's date — on a sheet whose header exists so a page found on a
+        // bench next week can be trusted. "en-CA" is the ISO-shaped locale.
+        date: new Date().toLocaleDateString("en-CA"),
+        // THE CONTROLLER'S OWN sizeLabel, so the paper and the readout have one definition between
+        // them. It reads `d` and `b` — the server's full-resolution numbers — never `p`, the
+        // THINNED drawing points: re-deriving a size from those under-reports every curve, and
+        // a re-derivation loses the ⌀ outright, because THIS SIDE HAS NO CIRCULARITY TEST — `d`
+        // is decided server-side from full-resolution points (CLAUDE.md §14h). Measured: the
+        // mutation prints "10 × 10 mm" where "⌀10 mm" belongs.
+        sizeLabel: (shape) => this.sizeLabel(shape),
+      })
+    } catch (e) {
+      // THE SHEET-COUNT REFUSAL LANDS HERE, AND IT HAS TO REACH THE READOUT rather than the
+      // console: buildSheets throws before any frame exists, so a swallowed message is a Print
+      // button that does nothing whatsoever. The message names the size that caused it, which is
+      // the only part of it that tells the user what to do differently.
+      //
+      // AND IT LOGS, because the catch is unconditional and cannot tell a refusal from a bug. Probed:
+      // make `furniture()` throw a TypeError and "prints without logging a console error" stays
+      // GREEN while the user reads a developer string as the reason their print refused. `load()`
+      // twenty lines up warns for exactly this reason before setting its own status.
+      console.warn("[measure] print refused:", e)
+      this.setStatus(e.message)
+    }
   }
 
   area(s) {
@@ -178,6 +314,8 @@ export default class extends Controller {
     hit.__visible = node // so hover/selection colours the drawn line, not the invisible twin
     group.appendChild(hit)
     group.appendChild(node)
+    // So draw() can resolve a group to the line it should style, the same way styleNode() does.
+    group.__visible = node
     return group
   }
 
@@ -252,7 +390,86 @@ export default class extends Controller {
     // Alt-click widens to the whole <Shape> object — every contour the parser gave the same
     // object id, which for a Text is its entire rendered outline rather than one letter.
     const useObject = event.altKey && siblings.length > 1
+
+    if (this.selecting) {
+      this.toggleMarks(useObject ? siblings : [shape])
+      // BOTH HALVES, because picking parts and learning their sizes are one gesture: a mode that
+      // silenced the measurement would make you leave it to check a size.
+      const size = useObject ? this.dims(this.unionOf(siblings)) : this.sizeLabel(shape)
+      this.setStatus(`${size} · ${this.selectionStatus()}`)
+      return
+    }
     this.setStatus(useObject ? this.objectLabel(siblings) : this.contourLabel(shape, siblings))
+  }
+
+  toggleSelect() {
+    this.selecting = !this.selecting
+    this.applySelecting()
+    this.setStatus(this.selecting ? this.selectionStatus() : "click a contour to measure")
+  }
+
+  // ONE DEFINITION OF WHAT THE TOGGLE LOOKS LIKE IN A GIVEN STATE, because showPoster() leaves
+  // select mode too. Resetting only `this.selecting` and the cursor class there — the obvious
+  // version — leaves the button reading "Done selecting" with aria-pressed="true" over a
+  // controller that is no longer selecting. Invisible while the poster is up (.measure-actions is
+  // display:none without --ready) and plainly wrong the moment Measure is clicked again.
+  applySelecting() {
+    this.element.classList.toggle("measure-view--selecting", this.selecting)
+    this.selectToggleTarget.setAttribute("aria-pressed", String(this.selecting))
+    this.selectToggleTarget.textContent = this.selecting ? "Done selecting" : "Select parts"
+  }
+
+  // AN ALT-CLICK ON A PARTLY-MARKED OBJECT COMPLETES IT rather than inverting it: flipping each
+  // contour individually would leave the object half in the print set, which is never what was
+  // meant by clicking the object.
+  toggleMarks(shapes) {
+    const adding = shapes.some((s) => !this.marked.has(s))
+    for (const shape of shapes) {
+      const node = this.nodeByShape.get(shape)
+      if (adding) {
+        this.marked.add(shape)
+        node?.classList.add("measure-contour--marked")
+      } else {
+        this.marked.delete(shape)
+        node?.classList.remove("measure-contour--marked")
+      }
+    }
+    this.refreshPrintBar()
+  }
+
+  clearMarks() {
+    for (const shape of this.marked) {
+      this.nodeByShape.get(shape)?.classList.remove("measure-contour--marked")
+    }
+    this.marked.clear()
+    this.refreshPrintBar()
+    this.setStatus(this.selectionStatus())
+  }
+
+  selectionStatus() {
+    const n = this.marked.size
+    if (!n) return "nothing selected · Print all prints the whole file"
+    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(this.unionOf([...this.marked]))}`
+  }
+
+  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
+  // live in ONE always-rendered <span class="measure-actions">, so the target exists whenever this
+  // controller is connected. A guard that cannot fail asserts a condition that does not exist.
+  //
+  // THERE ARE FOUR CALLERS NOW, NOT THREE, AND THE FOURTH RETIRED HALF OF THIS ARGUMENT. The
+  // original three — toggleMarks, clearMarks, showPoster — are each reachable only once a button
+  // in that same span has been clicked (toggleMarks through pick, which marks nothing until
+  // toggleSelect turned the mode on), and showPoster touches selectToggleTarget one line earlier
+  // besides. `draw()` is not: it runs off the LAUNCH button, which lives in a different span, so
+  // the clause this comment used to end on — "in the one future it was written for, a partial that
+  // omits the bar, nothing reaches this method at all" — is now FALSE and is deleted rather than
+  // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
+  // `print()` with it; the answer then is that the partial declares the controls, not that four
+  // methods each grow a guard.
+  refreshPrintBar() {
+    const n = this.marked.size
+    this.printButtonTarget.textContent = n ? `Print ${n} part${n === 1 ? "" : "s"}` : "Print all"
+    this.clearButtonTarget.hidden = n === 0
   }
 
   contourLabel(shape, siblings) {

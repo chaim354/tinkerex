@@ -1,0 +1,3144 @@
+require "application_system_test_case"
+
+# Selecting parts in the Measure view and printing them at 1:1 for paper fit testing.
+#
+# TWO TIERS IN ONE FILE, deliberately. The layout maths in lib/print_sheet.js is pure and is
+# exercised directly through `in_print_sheet` with synthetic shapes, because a tiling assertion
+# wants inputs chosen to land exactly on a tile boundary and no fixture does that. The
+# end-to-end tests below drive real clicks against a real payload, because the maths being right
+# about synthetic input proves nothing about whether the payload ever reaches it.
+#
+# WHY PURE ARITHMETIC EARNS A PLACE IN THIS TIER AT ALL. test/system/README.md's rule is that a
+# behaviour qualifies only if it is observable ONLY in a browser, which layout maths does not meet
+# as written. It meets it here because this repo has NO JS test runner: a browser is the only
+# executor there is for lib/print_sheet.js, and plan_export_test.rb set that precedent for exactly
+# the same kind of module.
+#
+# ASSERT THE WIRE FORMAT, NEVER A ROUND-TRIP THROUGH OUR OWN READER. CLAUDE.md §14e: FakeS3
+# decoded copy_source with the exact inverse of the encoder, so 79/80 tests were green over
+# silent permanent data loss. Parsing our own SVG with our own parser would be that shape again.
+# These assert the literal `width="215.9mm"` and the literal point coordinates a printer will see.
+#
+# SHARE BACKEND, ASSIGNED DIRECTLY, exactly as lbrn_measure_test.rb does it and for the same
+# reason: the geometry job has to read REAL BYTES back out of the port. The FileLayer.reset! in
+# teardown is load-bearing — a direct assignment does not set @file_layer_backend_pinned, so
+# test_helper's teardown will not clean up after it and a Share adapter pointing at a deleted
+# tmpdir would leak into the next test in this forked worker.
+class MeasurePrintTest < ApplicationSystemTestCase
+  # x -30..30, y -20..20 plate with a ⌀10 hole on the same centre.
+  NESTED = "nested-plate.lbrn2".freeze
+  # A ⌀20 circle at x -10..10 and a 20 x 20 square at x 40..60. DISJOINT, and the gap between
+  # their nearest edges is exactly 30 mm while their min-x values are 50 mm apart — which is what
+  # makes it the fixture for the separation assertion.
+  APART = "bezier-circle.lbrn2".freeze
+  # A LightBurn Text (two "letters" at x 0..10 and x 20..30, y -10..0) plus a Rect at x 12..18 —
+  # AND IT IS THE ONLY FIXTURE IN THE REPO WITH A MULTI-CONTOUR OBJECT. A BackupPath reuses its
+  # parent Shape's object id, so both letters carry o=1 while the Rect carries o=2, which is what
+  # makes ⌥-click's "widen to the whole object" rule reachable through a REAL click. This plan
+  # said no such fixture existed and that adding one was the honest upgrade; it already existed,
+  # written for LbrnGeometry's own object-grouping test.
+  TEXT = "text-backup-path.lbrn2".freeze
+  # AN OPEN CONTOUR, which is drawn as a polyline UNDER a transparent fat twin — the pair the
+  # marking test below exists for, and which nested-plate and bezier-circle (all closed) cannot
+  # supply. Of the corpus's open contours this one is the easiest to aim at: o=3 is the straight
+  # horizontal segment (0,0)-(100,0), so every point on it has the same y and the whole left half
+  # of it is clear of the 30..70 rect. (real-export.lbrn2's and real-export.mage's are L-shaped,
+  # so a point on them has to be picked per segment.) Its layer 0 is RED, which is what lets a
+  # computed stroke tell the drawn line's own colour from --marked's blue.
+  OPEN = "sample.lbrn2".freeze
+
+  setup do
+    @root = Pathname.new(Dir.mktmpdir("measure-print"))
+    # The fixtures land BEFORE the first page render: FileLayer::Share reads an EMPTY root as an
+    # unmounted mount point, and sign_in_as ends on /files, which renders through the port.
+    [ NESTED, APART, TEXT, OPEN ].each do |f|
+      File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
+    end
+    FileLayer.current = FileLayer::Share.new(root: @root.to_s)
+
+    @user = sign_in_as("measure-print@example.com")
+    Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+    @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
+    @apart_id  = @user.nodes.find_by!(storage_path: APART).node_id
+    @text_id   = @user.nodes.find_by!(storage_path: TEXT).node_id
+    @open_id   = @user.nodes.find_by!(storage_path: OPEN).node_id
+    render_geometry!(@nested_id, NESTED)
+    # @apart_id AND ITS PAYLOAD ARE HELD FOR THE TASKS 9-12 TIER — the end-to-end tests that drive
+    # real clicks against a real payload. Nothing in the module tier reads it, so it looks unused
+    # until that tier lands; it is rendered here rather than in a second setup because one class
+    # gets one setup. If that tier is ever dropped, drop these lines with it.
+    render_geometry!(@apart_id, APART)
+    # Rendered here for the same reason, and cheap: 0.1-0.2 ms each, measured.
+    render_geometry!(@text_id, TEXT)
+    render_geometry!(@open_id, OPEN)
+  end
+
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
+  end
+
+  # ---- lib/print_sheet.js: pagination ---------------------------------------------------------
+
+  # MUTATION-CHECKED: dropping `- CALIB_H` from contentBox turns this RED ("Expected |230.4 -
+  # 252.39999999999998| (21.99999999999997) to be <= 0.001") while the translation test below stays
+  # GREEN — translateY is built from the content box's ORIGIN, which the calibration strip does not
+  # move, so this is the only assertion in the file that can see the bottom strip at all.
+  test "Letter's content box is the printable area less the two reserved strips" do
+    box = JSON.parse(in_print_sheet("JSON.stringify(m.contentBox(m.PAPERS.Letter))"))
+
+    # 215.9 - 20 margin = 195.9 wide; 279.4 - 20 margin - 7 header - 22 calibration = 230.4 tall.
+    assert_in_delta 195.9, box["w"], 0.001
+    assert_in_delta 230.4, box["h"], 0.001
+    # And it carries its ORIGIN, which is what stops three call sites re-spelling MARGIN + HEADER_H.
+    assert_in_delta 10.0, box["x"], 0.001
+    assert_in_delta 17.0, box["y"], 0.001
+  end
+
+  # THE TRANSLATION IS THE WHOLE "TRUE POSITIONS" CLAIM, and it is relative rather than absolute:
+  # the SELECTION's bbox origin is the datum, not the file's. A part sitting at x 500 in a 600 mm
+  # laser sheet prints at the left edge of sheet 1, not on tile 3 of 12 with two blank ones.
+  #
+  # MUTATION-CHECKED TWICE, because two independent claims meet here and one mutation cannot see
+  # both. Making the translation absolute (`translateX: content.x`) turns this RED ("Expected
+  # |-490.0 - 10| (500.0) to be <= 0.001") — that pins the DATUM. Gutting unionBox to
+  # `return shapes[0].b` turns it RED too ("Expected |-490.0 - -510| (20.0) to be <= 0.001") — that
+  # pins the UNION, and it can only fail because the shape supplying the minima is second in the
+  # array below. Neither turns the content-box test above red.
+  test "a selection that fits produces one page whose translation puts it at the content origin" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets([
+        // TWO SHAPES, AND THE ONE SUPPLYING THE MINIMA IS DELIBERATELY NOT FIRST. With a single
+        // shape "the selection's bbox" and "this shape's bbox" are indistinguishable, so the test
+        // cannot fail for the property it exists to pin: gutting unionBox to
+        // `return shapes[0].b` stays GREEN. Verified — that mutation must turn this red.
+        { b: [520, 320, 600, 400], p: [[520, 320], [600, 400]], k: 1, i: 0, o: 2 },
+        { b: [500, 300, 560, 340], p: [[500, 300], [560, 340]], k: 1, i: 0, o: 1 },
+      ], m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["pages"].length
+    assert_equal 1, out["cols"]
+    assert_equal 1, out["rows"]
+    # MARGIN (10) less the selection's own x0 (500); MARGIN + HEADER_H (17) less its y0 (300).
+    assert_in_delta(-490.0, out["pages"][0]["translateX"], 0.001)
+    assert_in_delta(-283.0, out["pages"][0]["translateY"], 0.001)
+  end
+
+  # 400 mm of content on Letter: the content box is 195.9 wide and the overlap band eats 10 of it,
+  # so each tile after the first adds 185.9 mm of NEW content -> ceil((400 - 10) / 185.9) = 3.
+  #
+  # THIS IS THE FIRST TEST IN THE FILE THAT READS `unionBox`'s MAXIMA HALF — `cols` and `rows` are
+  # its only consumers, since `translateX/Y` reads the minima alone. So it takes TWO SHAPES, WITH
+  # THE ONE SUPPLYING THE MAXIMA DELIBERATELY SECOND, for the same reason the translation test
+  # above puts its minima supplier second: over a one-element array `Math.max` and `Math.min` are
+  # indistinguishable, so the single-shape input this task was drafted with could not fail for the
+  # property it exists to pin. Verified — with one shape, flipping unionBox's max half to
+  # `Math.min` stayed GREEN.
+  #
+  # MUTATION-CHECKED THREE WAYS, because three independent claims meet in this one number.
+  # unionBox's maxima -> `Math.min`: RED ("Expected: 3, Actual: 1") — pins the UNION, and only
+  # because the maxima supplier is second in the array. `stepX = content.w` (no overlap band):
+  # RED ("Expected: 3, Actual: 2") — pins that a tile's NEW content is the step, not the width.
+  # `Math.ceil` -> `Math.floor`: RED ("Expected: 3, Actual: 2") — pins that a part-full last tile
+  # still gets a sheet. A floor leaves 2 columns, and column 1 starts at 185.9 and COVERS TO
+  # 381.8, so the last 18.2 mm of the part never prints. (371.8 is 2 x stepX — the NEW content the
+  # two tiles add, which is a different quantity from the extent they cover, and conflating the
+  # two is exactly the mistake this `ceil` exists to avoid.)
+  test "a selection wider than the sheet tiles into columns" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets([
+        { b: [0, 0, 10, 10], p: [[0, 0], [10, 10]], k: 1, i: 0, o: 2 },
+        { b: [0, 0, 400, 40], p: [[0, 0], [400, 40]], k: 1, i: 0, o: 1 },
+      ], m.PAPERS.Letter))
+    JS
+
+    assert_equal 3, out["cols"]
+    assert_equal 1, out["rows"]
+    assert_equal 3, out["pages"].length
+  end
+
+  # THE SECOND TILE MUST START ONE OVERLAP BAND BEFORE THE FIRST TILE ENDED, or there is nothing
+  # to align the two sheets against and the whole tiling is a butt joint you cannot register.
+  #
+  # MUTATION-CHECKED: `stepX = content.w` — the obvious "tile by the sheet width" spelling — turns
+  # this RED ("Expected |185.9 - 195.9| (10.0) to be <= 0.001"). That is the whole overlap band.
+  test "the second tile repeats an overlap band of the first" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 400, 40], p: [[0, 0], [400, 40]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    dx = out["pages"][1]["originX"] - out["pages"][0]["originX"]
+    assert_in_delta 185.9, dx, 0.001, "content width 195.9 mm less a 10 mm overlap band"
+
+    # AND THE GEOMETRY MUST ACTUALLY PAN BY THAT MUCH, not merely be RECORDED as starting there.
+    # `originX` is a number in the page object; `translateX` is what moves the drawing. Dropping
+    # `- originX` from the translation leaves every tile drawing tile 1's content — three identical
+    # sheets labelled 1 of 3, 2 of 3, 3 of 3 — and the originX assertion above stays GREEN through
+    # it. Verified. Asserted as the RELATIONSHIP (pan left by exactly what the origin moved right)
+    # rather than as a second literal, so the two can never drift apart.
+    dtx = out["pages"][1]["translateX"] - out["pages"][0]["translateX"]
+    assert_in_delta(-dx, dtx, 0.001, "the tile's content pans left by exactly its origin step")
+
+    # THE SPANNING SHAPE MUST REACH EVERY TILE IT CROSSES, INTERIOR ONES INCLUDED — and this is
+    # the only assertion in the file with a shape on more than one tile, which is why it carries
+    # weight far beyond its size. `touches` is an inclusive AABB OVERLAP test; swapping its two
+    # assignment lines so x1/y1 take b[0]/b[1] silently turns it into a CONTAINMENT test, and
+    # every other test here still passes because each of their shapes lands on exactly one tile.
+    # The user-visible result of that mutation is three sheets, correctly numbered "1 of 3" to
+    # "3 of 3", correctly margined, carrying the calibration bar — and COMPLETELY BLANK. Nothing
+    # errors, nothing logs. This one line is what makes it red.
+    #
+    # MUTATION-CHECKED: the swap took the WHOLE SUITE green before this line existed (10 runs, 67
+    # assertions, 0 failures — reproduced, not taken on trust); with it, RED here with actual
+    # [[], [], []]. The twelve-row table on the filter test below is untouched by this, which is
+    # why the assertion is here and not there — its fixture would have had to change, and every
+    # row of that table would have needed re-measuring.
+    assert_equal [ [ 1 ], [ 1 ], [ 1 ] ],
+                 out["pages"].map { |pg| pg["shapes"].map { |sh| sh["o"] } },
+                 "a 400 mm bar spans all three tiles, including the middle one"
+  end
+
+  # ROWS, NOT JUST COLUMNS. Every other tiling test here is one row tall, so the `row` loop,
+  # `originY` and `translateY` are exercised only at row 0 — and a copy-paste slip like
+  # `translateY: content.y - originX - box[1]` passes all of them. Letter's content box is 230.4 mm
+  # tall and the overlap band eats 10, so ceil((500 - 10) / 220.4) = 3 rows.
+  #
+  # MUTATION-CHECKED FOUR WAYS, the row-axis twin of the column test above. `translateY` reading
+  # `originX`: RED ("Expected |-220.39999999999998 - 0| (220.39999999999998) to be <= 0.001") —
+  # this test is one column wide, so originX is 0 on every page and the slip pins every row's
+  # content at row 1's. `stepY = content.h`: RED ("Expected |220.4 - 230.39999999999998|
+  # (9.999999999999972) to be <= 0.001"). `Math.ceil` -> `Math.floor`: RED ("Expected: 3,
+  # Actual: 2") — 490 / 220.4 is 2.22, so 2 rows cover to 450.8 and the last 49.2 mm of the part
+  # never prints. Dropping the `h <= content.h ? 1 :` guard is RED too,
+  # but in the FITS test below rather than here (h = 500 tiles either way) — see its comment for
+  # why that one matters.
+  test "a selection taller than the sheet tiles into rows" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 40, 500], p: [[0, 0], [40, 500]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["cols"]
+    assert_equal 3, out["rows"]
+    dy = out["pages"][1]["originY"] - out["pages"][0]["originY"]
+    assert_in_delta 220.4, dy, 0.001, "content height 230.4 mm less a 10 mm overlap band"
+    # THE RELATIONSHIP, not a second literal: translateY must pan by exactly the origin step, or
+    # every tile draws row 1's content on a sheet labelled row 2.
+    assert_in_delta(-dy, out["pages"][1]["translateY"] - out["pages"][0]["translateY"], 0.001)
+  end
+
+  # THE GRID MUST BE ASYMMETRIC OR col/row ARE UNOBSERVABLE. Every other tiling test here is 1xN
+  # or Nx1, so `col` and `row` are never both non-zero and three separate mutations stay GREEN:
+  # swapping `col:`/`row:` on the page object, swapping `cols:`/`rows:`, and transposing the loop
+  # nesting. Task 6 draws "Sheet c,r of CxR" out of exactly these fields and Task 8 emits `pages`
+  # in array order, so a maker with a 3x2 job would get sheets labelled transposed, or ordered
+  # column-major against their own labels, with nothing anywhere going red.
+  #
+  # 2x2 WOULD NOT DO — with cols == rows every one of those swaps is invisible. 400 x 300 mm on
+  # Letter gives 3 columns and 2 rows, which is the smallest grid that can see all three.
+  #
+  # MUTATION-CHECKED THREE WAYS, and each one fails a DIFFERENT assertion, which is how the two
+  # assertions below are shown to carry independent weight. `col: row, row: col` on the page
+  # object: RED on the order assertion, actual [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2]] — the
+  # emission order is still row-major, it is the LABELS that transposed. Transposing the loop
+  # nesting: RED on the same assertion but a distinguishable actual,
+  # [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]] — labels right, ORDER column-major. `cols: rows, rows:
+  # cols`: RED on the whole-grid assertion ("Expected false to be truthy"), which the order
+  # assertion cannot see at all because per-page col/row are untouched by it.
+  test "pages are emitted row-major and carry their own grid position" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 400, 300], p: [[0, 0], [400, 300]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 3, out["cols"]
+    assert_equal 2, out["rows"]
+    assert_equal [ [ 0, 0 ], [ 1, 0 ], [ 2, 0 ], [ 0, 1 ], [ 1, 1 ], [ 2, 1 ] ],
+                 out["pages"].map { |pg| [ pg["col"], pg["row"] ] }
+    # Every page reports the WHOLE grid, not its own position twice over.
+    assert out["pages"].all? { |pg| pg["cols"] == 3 && pg["rows"] == 2 }
+  end
+
+  # A selection that fits goes through the SAME path, with no small-selection branch to keep in
+  # step with the tiled one.
+  #
+  # THE SECOND SELECTION IS SMALLER THAN THE OVERLAP BAND, AND THAT IS THE ONLY ONE OF THE TWO
+  # THAT CAN SEE THE `w <= content.w ? 1 :` GUARD. Without the guard the count is
+  # `ceil((w - OVERLAP) / stepX)`, which for anything under 10 mm is ceil(<= 0) = **0** — no pages
+  # at all, no error, nothing printed. 60 x 40 cannot catch that (ceil(50 / 185.9) is still 1), so
+  # the guard was unpinned as drafted: deleting it stayed GREEN. Verified in both directions. And
+  # the input is not contrived — this file's own nested-plate fixture has a 10 mm hole, so
+  # "select one small hole and print it" is the ordinary action that would have produced nothing.
+  test "a selection that fits produces one page through the same call" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 60, 40], p: [[0, 0], [60, 40]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["pages"].length
+
+    tiny = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 8, 8], p: [[0, 0], [8, 8]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, tiny["pages"].length, "a selection under one overlap band still gets a page"
+    assert_equal 1, tiny["cols"]
+    assert_equal 1, tiny["rows"]
+  end
+
+  # ---- lib/print_sheet.js: the sheet cap, and per-tile filtering -------------------------------
+
+  # An SVG whose units were read 25.4x too large would otherwise silently spool 9,828 sheets.
+  #
+  # THE CAP IS TESTED IN BOTH DIRECTIONS IN ONE METHOD, because it is one guard and an
+  # over-the-cap assertion alone cannot see an off-by-one in the comparison it is asserting on.
+  #
+  # MUTATION-CHECKED FOUR WAYS. Between them they turn all THREE blocks below red, which is how
+  # each block is shown to carry weight of its own rather than restating its neighbour. Deleting
+  # the guard: RED on the first ("Expected /\A9828 sheets/ to match 'NO ERROR'" — the count
+  # assertion sits above the /more than 40 sheets/ one, so it is the one that reports). `>` ->
+  # `>=`: RED on the at-cap block, and as an ERROR rather than a failure — that block calls
+  # buildSheets BARE, so an unexpected throw comes back through in_print_sheet's own raise
+  # verbatim ("RuntimeError: ERROR: 40 sheets — this selection is 1400 × 1000 mm, which is more
+  # than 40 sheets of Letter."). Deleting `round` from the message: RED on the over-the-cap block
+  # (actual "1600.04 × 1000 mm"). Swapping w and h in the message: RED on the same block (actual
+  # "1000 × 1600 mm"). The guard's PLACEMENT is pinned by its own test below, not from here.
+  test "an absurd selection is refused rather than printing hundreds of sheets" do
+    err = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets([
+            // TWO SHAPES, MAXIMA SUPPLIER SECOND, for the reason the tiling tests above give: the
+            // message quotes round(w) x round(h) off the UNION, and over a one-element array
+            // unionBox's `Math.max` half and `Math.min` are indistinguishable, so the plan's
+            // single 20000 mm shape could not fail for the size half of its own assertion.
+            { b: [0, 0, 10, 10], p: [[0, 0], [10, 10]], k: 1, i: 0, o: 2 },
+            { b: [10000, 10000, 20000, 20000], p: [[10000, 10000], [20000, 20000]], k: 1, i: 0, o: 1 },
+          ], m.PAPERS.Letter)
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    # 9,828, not a round number: the message begins with the real count, and quoting a rounded
+    # one would read as computed when it is not.
+    assert_match(/\A9828 sheets/, err)
+    assert_match(/more than 40 sheets/, err)
+    assert_match(/20000 \u{00D7} 20000 mm/, err, "the message must name the size that caused it")
+
+    # EXACTLY MAX_SHEETS IS ALLOWED — the constant is a maximum, not a ceiling one below it, and a
+    # maker with a legitimately 40-sheet job must get their 40 sheets. 1400 x 1000 mm on Letter is
+    # ceil(1390 / 185.9) = 8 columns by ceil(990 / 220.4) = 5 rows = exactly 40. Nothing else in
+    # this file can see the comparison operator: every other input is orders of magnitude away.
+    at_cap = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const r = m.buildSheets(
+          [{ b: [0, 0, 1400, 1000], p: [[0, 0], [1400, 1000]], k: 1, i: 0, o: 1 }],
+          m.PAPERS.Letter)
+        return JSON.stringify([r.cols, r.rows, r.pages.length])
+      })()
+    JS
+
+    # IF A CONSTANT CHANGES, RECHOOSE THE INPUT — DO NOT EDIT THIS EXPECTATION. 1400 x 1000 mm is
+    # exactly MAX_SHEETS on Letter today; move MARGIN, HEADER_H or CALIB_H and this goes red, and
+    # the tempting fix (write down whatever the new triple is) silently stops the boundary test
+    # from sitting on the boundary. Pick a new size that lands on exactly MAX_SHEETS instead.
+    assert_equal [ 8, 5, 40 ], at_cap, "40 sheets is the maximum ALLOWED, not the first refused"
+
+    # And one column more is refused, which is what makes the assertion above a boundary rather
+    # than a claim that the guard never fires. 1600.04 mm gives 9 columns x 5 rows = 45.
+    #
+    # THE .04 IS THE ONLY THING IN THE FILE THAT READS `round`. Every other extent here is a whole
+    # number, so deleting the rounding leaves the message byte-identical and the helper unpinned —
+    # while a real selection is a bbox off a bezier and essentially never lands on one. Asserted
+    # as the whole message prefix rather than a substring, because the unrounded spelling
+    # ("1600.04 x 1000 mm") still contains "1600" and a loose match would not see it.
+    over = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets(
+            [{ b: [0, 0, 1600.04, 1000], p: [[0, 0], [1600.04, 1000]], k: 1, i: 0, o: 1 }],
+            m.PAPERS.Letter)
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    assert_match(/\A45 sheets \u{2014} this selection is 1600 \u{00D7} 1000 mm,/, over,
+                 "one sheet over the cap is refused, and the size it names is rounded")
+  end
+
+  # WHERE THE GUARD SITS, WHICH IS A DIFFERENT CLAIM FROM WHAT IT ANSWERS — hence its own test.
+  # The three blocks above pin the refusal's VALUE and fail with a wrong string; this one pins its
+  # PLACEMENT and fails by killing the browser, and four browser round-trips in one method means
+  # the first failure hides the rest. A paper whose content box is exactly one overlap band wide
+  # gives stepX = 0 and therefore cols = Infinity; checked above the loop, `Infinity * rows > 40`
+  # refuses in constant time. Checked after the loop, the `col` loop never ends.
+  #
+  # MUTATION-CHECKED by moving the block below the loop: RED in 6.6 s as
+  # "Selenium::WebDriver::Error::WebDriverError: tab crashed" — Chrome OOMs on the unbounded
+  # pages.push long before Selenium's script timeout, so this reports faster and more legibly than
+  # the hang it stands in for. Every assertion in the test above stays GREEN through it, since a
+  # finite cols builds its pages and then throws exactly as before.
+  #
+  # THE COUNT IN THAT MESSAGE IS THE WORD "Infinity", DELIBERATELY UNASSERTED. It is nonsense to
+  # print, and it is nonsense a user can never reach: a 30 mm paper is not in PAPERS. The refusal
+  # is what matters here, so the assertion reads only that. Which is also why this closes ONE
+  # degenerate paper rather than the class — see `buildSheets`' own comment.
+  test "a paper too narrow to tile is refused rather than looped over forever" do
+    sliver = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets([{ b: [0, 0, 100, 10], p: [[0, 0], [100, 10]], k: 1, i: 0, o: 1 }],
+                        { name: "Sliver", w: 30, h: 297 })
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    assert_match(/more than 40 sheets/, sliver, "a zero-width step must refuse, not loop forever")
+  end
+
+  # THE OTHER REFUSAL, which nothing else in this plan pins — verified by grepping every task, so
+  # deleting the guard would have gone unnoticed end to end. It is a module PRECONDITION rather
+  # than a user-facing message (Task 11's caller returns early on an empty set before ever calling
+  # here), but an unpinned throw is an unpinned throw: `unionBox` on an empty array returns
+  # [Infinity, Infinity, -Infinity, -Infinity], so without it `buildSheets` yields NaN geometry and
+  # a page full of nothing rather than an error anyone can act on.
+  test "an empty selection is refused rather than producing NaN geometry" do
+    err = in_print_sheet(<<~JS)
+      (() => {
+        try { m.buildSheets([], m.PAPERS.Letter); return "NO ERROR" }
+        catch (e) { return e.message }
+      })()
+    JS
+
+    assert_equal "Nothing to print.", err
+  end
+
+  # Handing every tile every shape would put a thousand-contour selection into the DOM once per
+  # sheet; the clipPath hides them, so nothing would look wrong while the print took as many times
+  # as long to spool.
+  #
+  # A 2x2 GRID WITH A SHAPE PER QUADRANT AND THE WHOLE SELECTION OFFSET FROM THE ORIGIN, NOT THE
+  # PLAN'S 1x2 ROW AT (0, 0). `touches` is FOUR comparisons and two datum shifts, and the plan's
+  # input can see only two of the six. Swapped back to the plan's literal data and re-run
+  # through this same browser harness, SEVEN mutations stayed GREEN — measured, not reasoned:
+  #
+  #   * dropping `y1 >= originY` and dropping `y0 <= originY + content.h` — one row means originY
+  #     is 0 on every tile and every shape's y sits inside content.h, so both are unconditionally
+  #     true and neither can ever exclude anything.
+  #   * `y0 <= originY + content.w` and `x0 <= originX + content.h` — the axis copy-paste slip,
+  #     the same shape as Task 2's `translateY: content.y - originX`. Nothing in a 1x2 grid lies
+  #     between the two bounds (195.9 and 230.4), so swapping them changes no answer.
+  #   * dropping `- box[0]`, dropping `- box[1]`, and swapping the two — a selection whose union
+  #     box starts at (0, 0) makes the datum shift a NO-OP, so the whole selection-space
+  #     conversion can be deleted with nothing going red.
+  #
+  # So: four quadrant shapes pin the four comparisons, two edge-band shapes pin the two bounds
+  # against each other, and the +500/+300 offset makes the datum shift observable.
+  #
+  # MUTATION-CHECKED TWELVE WAYS against the strengthened input, all RED, each with a
+  # distinguishable actual (expected is [[6, 1], [2, 5], [3], [4]] throughout):
+  #
+  #   drop `x1 >= originX`             [[6,1], [2,6,1,5], [3], [4,3]]
+  #   drop `x0 <= originX + content.w` [[2,6,1,5], [2,5], [4,3], [4]]
+  #   drop `y1 >= originY`             [[6,1], [2,5], [6,1,3], [2,4,5]]
+  #   drop `y0 <= originY + content.h` [[6,1,3], [2,4,5], [3], [4]]
+  #   `y1 >= originX` (cross-axis)     [[6,1], [], [6,1,3], [4]]
+  #   `y0 <= originY + content.w`      [[1], [2,5], [3], [4]]
+  #   `x0 <= originX + content.h`      [[6,1,5], [2,5], [3], [4]]
+  #   drop `- box[0]`                  [[], [], [], []]
+  #   drop `- box[1]`                  [[], [], [1], [2,5]]
+  #   swap `box[0]`/`box[1]`           [[], [6,3], [], []]
+  #   no filter at all                 [[2,6,4,1,5,3] x 4]
+  #   swap originX/originY at the call [[6,1], [6,3], [2], [4]]
+  #
+  # DELIBERATELY NOT PINNED, AND RUN RATHER THAN ASSUMED: tightening any of the four comparisons
+  # (`>=` -> `>`, `<=` -> `<`) comes back GREEN here — verified on `x1 >= originX`. It differs only
+  # for a bbox whose edge lands EXACTLY on a tile boundary, where the shape is a hairline on the
+  # new tile and is already whole on the previous one (the overlap band guarantees it), and
+  # catching it would mean asserting float equality against 185.9. Recorded, not silently skipped.
+  test "a tile carries only the shapes whose bbox touches it" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      // Selection x 500..810 (310 wide -> 2 columns), y 300..650 (350 tall -> 2 rows). In
+      // SELECTION space the tiles are x 0..195.9 / 185.9..381.8 and y 0..230.4 / 220.4..450.8.
+      // Deliberately scrambled, and the min-x supplier is NOT first, so `unionBox` gutted to
+      // `shapes[0].b` retiles the whole thing rather than landing on the same answer. Verified:
+      // that mutation gives one page carrying [[2]], and turns three other tests in this file red.
+      JSON.stringify(m.buildSheets([
+        { b: [800, 300, 810, 310], p: [[800, 300], [810, 310]], k: 1, i: 0, o: 2 }, // sel  300,0
+        { b: [500, 500, 510, 510], p: [[500, 500], [510, 510]], k: 1, i: 0, o: 6 }, // sel    0,200
+        { b: [800, 640, 810, 650], p: [[800, 640], [810, 650]], k: 1, i: 0, o: 4 }, // sel  300,340
+        { b: [500, 300, 510, 310], p: [[500, 300], [510, 310]], k: 1, i: 0, o: 1 }, // sel    0,0
+        { b: [700, 300, 710, 310], p: [[700, 300], [710, 310]], k: 1, i: 0, o: 5 }, // sel  200,0
+        { b: [500, 640, 510, 650], p: [[500, 640], [510, 650]], k: 1, i: 0, o: 3 }, // sel    0,340
+      ], m.PAPERS.Letter).pages.map((p) => p.shapes.map((s) => s.o)))
+    JS
+
+    # Shape 6 sits at selection y 200..210, between content.w (195.9) and content.h (230.4), so it
+    # belongs to row 0 and ONLY the `+ content.h` bound keeps it there. Shape 5 sits at selection
+    # x 200..210, in the same band on the other axis, so it belongs to column 1 and only the
+    # `+ content.w` bound keeps it OUT of column 0. Each is the other's mirror, and each is the
+    # only witness to its own bound.
+    assert_equal [ [ 6, 1 ], [ 2, 5 ], [ 3 ], [ 4 ] ], out,
+                 "row-major tiles, and the filter preserves array order within each tile"
+  end
+
+  # ---- lib/print_sheet.js: rendering -----------------------------------------------------------
+  #
+  # ONLY THE CLIP'S EFFECTIVENESS WAITS FOR TASK 5 — everything else about it is pinned here, and
+  # the earlier version of this comment deferring the whole subject is what let a Critical bug
+  # ship. `clip-path` and `transform` were on ONE group, so userSpaceOnUse resolved the window in
+  # the TRANSLATED space and it travelled with the geometry: on this file's own nested-plate
+  # fixture the sheet prints a 20 x 3 mm scrap of one corner, and for an ordinary laser file at
+  # positive coordinates it prints BLANK. Twenty-four mutations could not see it, because the clip
+  # was not asserted at all — deleting the <clipPath> element AND the clip-path attribute outright
+  # left the whole suite green. The rect equalling contentBox, the reference matching the id, and
+  # the nesting are all assertable WITHOUT layout, and now are.
+  #
+  # STILL UNEXERCISED, AND TASK 6 OWNS IT: `el`'s two new doors — the nullish attribute guard and
+  # the `text` parameter — have no caller in this task, so both were mutation-checked and both came
+  # back GREEN (measured at 19 runs / 132 assertions, before the stroke-width split below took the
+  # file to 20/135) with the guard and the door deleted in turn.
+  # That is not a weak input this tier can strengthen; it is a code path Task 4 never walks. Task 6
+  # adds the five <text> call sites the door exists for — four on any one sheet, the sheet label
+  # being conditional — and must pin both there.
+
+  # The plan's render input: a 60 x 40 closed part at the origin, kept because the two scale
+  # assertions want a part whose dimensions ARE the numbers being asserted.
+  SIXTY_BY_FORTY = <<~JS.freeze
+    [{ b: [0, 0, 60, 40], k: 1, i: 0, o: 1,
+       p: [[0, 0], [60, 0], [60, 40], [0, 40], [0, 0]] }]
+  JS
+
+  # ONE SPELLING OF THE `meta` ARGUMENT rather than one per test. Nothing in renderSheet reads it
+  # yet — the header, the calibration strip and the size labels are later tasks — but it is part of
+  # the call, and `sizeLabel` returning null is the "no label for this shape" answer.
+  META = '{ name: "plate.lbrn2", date: "2026-08-19", sizeLabel: () => null }'.freeze
+
+  # THE SCALE MECHANISM, ASSERTED AS THE TWO LITERALS THAT CONSTITUTE IT. A width in px with the
+  # same viewBox draws an identical-looking page at the wrong size, and no visual check catches it.
+  #
+  # TWO PAPERS, NOT THE PLAN'S ONE. Against Letter alone every one of these attributes can be a
+  # HARD-CODED STRING and all three assertions stay GREEN, while the A4, A3 and Tabloid the picker
+  # also offers come out DECLARED as Letter — the printer then fits a 210 mm page into a 215.9 mm
+  # declaration and every part on it is 2.8% wrong. Verified: replacing all four interpolations
+  # with Letter's own literals is GREEN through the Letter block and RED on the A4 one, and the
+  # actual it prints is the giveaway — `width="215.9mm" ... viewBox="0 0 215.9 279.4"` wrapped
+  # around a content rect of `width="190" height="248"`, which is A4's. The page knows its own
+  # size; only what it DECLARES to the printer is wrong.
+  #
+  # MUTATION-CHECKED SIX WAYS, all RED here, all with a distinguishable actual:
+  #   width `${paper.w}px`         width="215.9px"
+  #   both pairs hard-coded        RED on the A4 block, `to include "width=\"210mm\""`
+  #   width/height swapped         width="279.4mm" height="215.9mm"
+  #   viewBox extents swapped      viewBox="0 0 279.4 215.9"
+  #   viewBox spans the CONTENT    viewBox="0 0 195.9 230.39999999999998" — the float tail is the
+  #                                giveaway that it came off contentBox. An earlier draft of this
+  #                                row quoted 195.9 x 259.4, which is the PRINTABLE box (paper less
+  #                                margins, no strips) — a different mutation, and the label and
+  #                                the number disagreed.
+  #   createElement, no namespace  viewbox="0 0 215.9 279.4" — setAttribute lowercases the name on
+  #                                an HTML-namespace element, so the camel-cased literal is what
+  #                                notices the elements are not SVG at all
+  test "a sheet declares its size in millimetres and spans the same number of user units" do
+    html = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META}).outerHTML
+    JS
+
+    assert_includes html, 'width="215.9mm"'
+    assert_includes html, 'height="279.4mm"'
+    assert_includes html, 'viewBox="0 0 215.9 279.4"'
+
+    a4 = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0], #{META}).outerHTML
+    JS
+
+    assert_includes a4, 'width="210mm"'
+    assert_includes a4, 'height="297mm"'
+    assert_includes a4, 'viewBox="0 0 210 297"'
+  end
+
+  # A 60 x 40 part must span 60 x 40 USER UNITS, which the assertion above has just established
+  # are millimetres. Asserting only "a polygon exists" is answered exactly as well by a polygon of
+  # the wrong size — CLAUDE.md §14h's Z-up lesson, one feature over.
+  #
+  # MUTATION-CHECKED: transposing the point format to `${y},${x}` is RED ("Expected |60.0 - 40.0|
+  # (20.0) to be <= 0.001"). It is a SPAN test, though, so it cannot see a renderer that draws the
+  # right extent out of the wrong data — see the exact-points assertion further down for what does.
+  test "a 60 x 40 part spans exactly 60 by 40 user units on the sheet" do
+    points = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+       .querySelector("polygon").getAttribute("points")
+    JS
+
+    xs = points.split(/\s+/).map { |p| p.split(",").first.to_f }
+    ys = points.split(/\s+/).map { |p| p.split(",").last.to_f }
+    assert_in_delta 60.0, xs.max - xs.min, 0.001
+    assert_in_delta 40.0, ys.max - ys.min, 0.001
+  end
+
+  # TWO PARTS MUST KEEP THEIR REAL SEPARATION — the entire point of "true positions". A transform
+  # applied per shape instead of per page would draw both parts perfectly and stack them.
+  #
+  # MUTATION-CHECKED: emitting only the first shape is RED ("the two parts are 50 mm apart in the
+  # file. Expected |50.0 - 0| (50.0) to be <= 0.001"), as is transposing the point format. It reads
+  # the UNTRANSFORMED `points` attribute, so it is blind to the page transform itself — that is the
+  # last test in this section, and nothing above it can see one.
+  test "two parts keep their real separation on the sheet" do
+    xs = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets([
+          // Min-supplier second — see Task 1's union test.
+          { b: [50, 0, 60, 10],  k: 1, i: 0, o: 2, p: [[50, 0], [60, 0], [60, 10], [50, 0]] },
+          { b: [0, 0, 10, 10],   k: 1, i: 0, o: 1, p: [[0, 0], [10, 0], [10, 10], [0, 0]] },
+        ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon")).map((n) =>
+         Math.min(...n.getAttribute("points").split(/\\s+/).map((p) => parseFloat(p)))))
+    JS
+
+    assert_in_delta 50.0, xs.max - xs.min, 0.001, "the two parts are 50 mm apart in the file"
+  end
+
+  # THE CLIP IS PINNED AT STRING LEVEL HERE; ONLY ITS EFFECTIVENESS WAITS FOR TASK 5. Deleting
+  # the <clipPath> element AND the clip-path attribute outright left the whole suite green — which
+  # is exactly how a clip built in the wrong coordinate space survived 24 mutations. Neither claim
+  # below needs layout: the rect must equal contentBox(paper), and the group must name the id the
+  # clipPath actually carries (`clipId` is spelled twice, and a one-sided edit is silent — this
+  # repo's own N-copies-that-must-agree shape).
+  #
+  # THE NESTING IS ALSO ASSERTED, because it is load-bearing rather than stylistic: the clip must
+  # sit on an UNTRANSFORMED ancestor. Collapse the two groups and userSpaceOnUse resolves the
+  # window in the translated space, so it travels with the geometry and the sheet prints blank.
+  #
+  # MUTATION-CHECKED FIVE WAYS, each failing a DIFFERENT one of the four assertions:
+  #
+  #   the two groups collapsed      clippedHasTransform — THE SHIPPED BUG, and this line is the
+  #     back into one                 only thing in the file that sees it
+  #   the clip removed entirely     RuntimeError: ERROR: Cannot read properties of null (reading
+  #     (element and attribute)       'getAttribute') — an error rather than a failure, because
+  #                                   `clipPath rect` is then null; red either way, and the whole
+  #                                   suite was GREEN through this before the test existed
+  #   rect = the PRINTABLE box      rect — Expected: [10, 17, 195.9, 230.4] Actual:
+  #     instead of contentBox         [10, 10, 195.9, 259.4]
+  #   `url(#${clipId}-content)`     refMatchesId — the one-sided edit of a twice-spelled id
+  #   the transform deleted         transformInside (and the transform test below)
+  test "the clip is a content-box rect on an untransformed ancestor of the moved geometry" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        const rect = svg.querySelector("clipPath rect")
+        const clipped = svg.querySelector("[clip-path]")
+        return JSON.stringify({
+          // BY IDENTITY, NOT BY DOCUMENT ORDER. querySelector returns the FIRST element carrying
+          // the attribute, which is the right one only while nothing else on the sheet has a clip
+          // of its own. Counting is what stops the four assertions below silently re-targeting if
+          // a later task gives a furniture element one.
+          clipCount: svg.querySelectorAll("[clip-path]").length,
+          rect: [ "x", "y", "width", "height" ].map((a) => Number(rect.getAttribute(a))),
+          refMatchesId: clipped.getAttribute("clip-path") ===
+                        `url(#${svg.querySelector("clipPath").id})`,
+          // The clipping element must carry NO transform of its own...
+          clippedHasTransform: clipped.hasAttribute("transform"),
+          // ...and the transform must live on a descendant of it.
+          transformInside: clipped.querySelector("[transform]") !== null,
+        })
+      })()
+    JS
+
+    assert_equal 1, out["clipCount"], "exactly one clipping element, so the four below cannot drift"
+    assert_equal [ 10, 17, 195.9, 230.4 ], out["rect"].map { |v| v.round(4) }
+    assert out["refMatchesId"], "the group must name the id the clipPath actually carries"
+    refute out["clippedHasTransform"], "userSpaceOnUse resolves in the referencing element's space"
+    assert out["transformInside"], "the page transform belongs on a descendant of the clip"
+  end
+
+  # THE STRIPS ARE RESERVED, NOT OVERLAID (the deliberate divergence from the boxes sibling), so a
+  # part that runs past the content box must be CUT rather than printed across the calibration
+  # ruler. The test above pins the clip's STRUCTURE out of the DOM; this one is the only thing in
+  # the file that pins its EFFECT, and those are different claims — a clip-path naming an id that
+  # does not exist is silently inert, and `getAttribute` reports it as present either way.
+  #
+  # THE INSTRUMENT IS HIT TESTING, AND THE PLAN'S `getBoundingClientRect` WAS THE WRONG ONE.
+  # Measured before this test was written, not reasoned: against the CORRECT nested groups, the
+  # drawn group's rect reads left=10.0 top=17.0 right=410.0 bottom=517.0 mm — the FULL, UNCLIPPED
+  # extent of the part. Chrome's getBoundingClientRect ignores clip-path (so does getBBox, which
+  # returned {x: 10, y: 17, w: 400, h: 500} on the same node), on the clipping element and on its
+  # descendants alike. So the plan's `assert_in_delta 247.4 * scale, box["bottom"], 2.0` would have
+  # gone RED against correct code and could never have observed the clip at all. `elementFromPoint`
+  # DOES respect it — the instrument Task 4's own fix comment used to find the bug by hand.
+  #
+  # FOUR EDGES, NOT ONE. A `bottom`-only assertion cannot see a window displaced SIDEWAYS, and the
+  # plan's 40 mm-wide part never reached the content box's right edge, so nothing about the
+  # horizontal window was exercised at all. This part is 400 x 500 and runs past both edges, so
+  # `right` and `bottom` can only be the WINDOW's.
+  #
+  # THE PART STARTS AT (0, 0) DELIBERATELY — keep it there. At positive coordinates the page
+  # translate is negative, a mis-built window lands off-paper and NOTHING is painted; "it did not
+  # escape into the ruler" is then satisfied by a blank sheet, green for the opposite of the right
+  # reason. At the origin a displaced window paints in the WRONG PLACE instead, which is what the
+  # four numbers below see. `insidePainted` is the premise guard that keeps a blank sheet from
+  # reading as a pass through a bisection over nothing.
+  #
+  # MUTATION-CHECKED ELEVEN WAYS, every actual below copied out of the run rather than predicted.
+  # Expected is [10.0, 17.0, 205.9, 247.4] = [left, top, right, bottom] throughout:
+  #
+  #   the two <g>s collapsed back      Actual: [20.0, 34.0, 215.9, 264.4] — THE SHIPPED BUG. All
+  #     into one                         four move: userSpaceOnUse resolves the window in the
+  #                                      TRANSLATED space, so it rides 10 right and 17 down with
+  #                                      the geometry, slicing the part at the wrong place twice
+  #                                      and running past the content box at the other two.
+  #   the clip-path attribute          Actual: [9.9, 16.9, 215.9, 279.4] — the plan's own Step 3.
+  #     removed                          The part now runs to the PAPER's edges, straight across
+  #                                      both reserved strips; 9.9/16.9 is the 0.1 mm stroke halo
+  #                                      a working window cuts off.
+  #   `url(#${clipId}-content)` — a    Actual: [9.9, 16.9, 215.9, 279.4], INDISTINGUISHABLE from
+  #     one-sided edit of the id         no clip at all — which mere PRESENCE of the attribute
+  #     that is spelled twice           cannot see, since it is still there and still reads back.
+  #                                     The structural test above catches this by cross-checking
+  #                                     the id (`refMatchesId`); this one catches it by effect.
+  #                                     Both are wanted: do not read this row as making that
+  #                                     assertion dead weight.
+  #   `svg.appendChild(clip)` dropped  Actual: [9.9, 16.9, 215.9, 279.4] — same, no <clipPath>.
+  #   rect x = content.x + 30          Actual: [40.0, 17.0, 215.9, 247.4] — `bottom` is untouched,
+  #                                      which is the whole argument against the plan's
+  #                                      bottom-only assertion.
+  #   rect y = content.y + 30          Actual: [10.0, 47.0, 205.9, 277.4]
+  #   rect width = paper.w             Actual: [10.0, 17.0, 215.9, 247.4] — `right` ALONE.
+  #   rect height = paper.h            Actual: [10.0, 17.0, 205.9, 279.4] — `bottom` ALONE.
+  #   x + 30 AND width - 30            Actual: [40.0, 17.0, 205.9, 247.4] — `left` ALONE. This
+  #                                      pair and the next exist because every mutation above
+  #                                      that moves left or top also moves right or bottom, so
+  #                                      without them those two numbers were riding along rather
+  #                                      than carrying weight (CLAUDE.md §15).
+  #   y + 30 AND height - 30           Actual: [10.0, 47.0, 205.9, 247.4] — `top` ALONE.
+  #   rect x = content.x + 1000        The PREMISE fires instead, with its own sentence: "the part
+  #     (the window off paper)           must paint inside the content box at all". Nothing is
+  #                                      painted, and four edges bisected out of a blank sheet are
+  #                                      four meaningless numbers rather than a legible failure.
+  #
+  # `fitsViewport` is the one assertion here with NO mutation of its own, and deliberately: it
+  # guards an assumption about the BROWSER (screen_size, in application_system_test_case.rb), not
+  # about this module, so nothing that can be done to print_sheet.js reaches it.
+  test "a part running past the content box is clipped, not printed over the ruler" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        // 400 x 500 at the origin on Letter. Nine tiles; pages[0] is the top-left one, and the
+        // part overruns its content box on the right and at the bottom.
+        const page = m.buildSheets(
+          [{ b: [0, 0, 400, 500], k: 1, i: 0, o: 1,
+             p: [[0, 0], [400, 0], [400, 500], [0, 500], [0, 0]] }],
+          m.PAPERS.Letter).pages[0]
+        const svg = m.renderSheet(document, page,
+          { name: "tall.lbrn2", date: "2026-08-19", sizeLabel: () => null })
+
+        // INSTRUMENTATION OF THE OBSERVER, NOT OF THE THING OBSERVED. renderSheet draws
+        // fill="none" — pinned as a wire literal by the black-and-classless test below, so this
+        // override cannot hide a regression there — which leaves `pointer-events: visiblePainted`
+        // hitting only the 0.2 mm stroke, with no interior to probe. The clip window is a
+        // property of an ancestor and is identical either way.
+        for (const n of svg.querySelectorAll("polygon, polyline")) n.setAttribute("fill", "#000")
+
+        // Fixed at the viewport origin so client pixels and page millimetres differ by one
+        // factor. The sheet is 816 x 1056 CSS px in a 1400 x 1257 viewport (measured), so every
+        // probe below is on-screen — `fitsViewport` asserts that rather than assuming it, because
+        // a point past the viewport edge hit-tests as EMPTY, which reads as "not painted" and
+        // would silently walk an edge inward on a screen_size somebody shrank.
+        svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+        svg.style.zIndex = "99999"
+        document.body.appendChild(svg)
+
+        // FINALLY, NOT A TRAILING remove(). in_print_sheet re-visits only when the path CHANGES,
+        // so every test after this one shares this document — and a probe that threw would leave
+        // a fixed, z-index 99999 sheet covering the page for the rest of the file.
+        try {
+          const host = svg.getBoundingClientRect()
+          const S = host.width / 215.9
+          // THROUGH THE TRANSFORMED GROUP, never a bare querySelector("polygon"). Task 6 appends
+          // trim marks and a calibration gauge to this same sheet; the first polygon in document
+          // order stops being the part the day any of them lands as one, and the fill sweep below
+          // would blacken furniture instead. The contours are the only thing inside [transform].
+          const part = svg.querySelector("[transform] polygon")
+          // elementsFromPoint, NOT elementFromPoint — "is the part painted here", not "is the
+          // part the TOPMOST thing here". Tasks 6-8 add a header, a calibration gauge and trim
+          // marks to this same sheet, and the topmost reading would start answering about a
+          // furniture element the day one of them overlaps a probe: the edges would walk inward
+          // and this test would go red for somebody else's correct change.
+          const painted = (xmm, ymm) =>
+            document.elementsFromPoint(host.left + xmm * S, host.top + ymm * S).includes(part)
+          // Bisect between a point known painted and one known not. 30 halvings of a 280 mm span
+          // is a 2.6e-7 mm interval; roughly 25 of those 30 halvings are productive before the hit
+          // test stops discriminating, which is not the same as landing inside the final interval:
+          // the four edges come back [10.000001, 16.999999, 205.900005, 247.400007], a residual
+          // of 7e-6 mm against a tolerance of 0.05. Read that as MEASURED, not as a guarantee —
+          // an earlier draft of this comment quoted 0.002 mm and blamed Chrome's 1/64 px layout
+          // quantum, and both halves were wrong: those numbers came off a throwaway probe using
+          // elementFromPoint, and re-measuring through the code as it stands moved them by three
+          // orders of magnitude. There is four orders of headroom either way.
+          const edge = (from, to, probe) => {
+            for (let i = 0; i < 30; i++) {
+              const mid = (from + to) / 2
+              if (probe(mid)) from = mid; else to = mid
+            }
+            return (from + to) / 2
+          }
+          return JSON.stringify({
+            fitsViewport: host.right <= window.innerWidth && host.bottom <= window.innerHeight,
+            insidePainted: painted(100, 100),
+            left:   edge(100, 0,     (v) => painted(v, 100)),
+            top:    edge(100, 0,     (v) => painted(100, v)),
+            right:  edge(100, 215.9, (v) => painted(v, 100)),
+            bottom: edge(100, 279.4, (v) => painted(100, v)),
+          })
+        } finally {
+          svg.remove()
+        }
+      })()
+    JS
+
+    assert out["fitsViewport"], "the whole sheet must be on-screen or the bisection walks inward"
+    assert out["insidePainted"], "the part must paint inside the content box at all"
+    # contentBox(Letter) is x 10..205.9, y 17..247.4 — established by its own test at the top of
+    # this file. The part is drawn at 10..410 x 17..517 in page space, so `right` and `bottom` are
+    # the window's edges; `left` and `top` coincide with the part's own origin, which is what lets
+    # them see a window displaced INWARD.
+    #
+    # ONE ASSERTION FOR ALL FOUR, because minitest ends a test at its FIRST failed assertion.
+    # Written as four `assert_in_delta`s, a mutation that moves the whole window reported only
+    # whichever edge came first — and for the plan's own Step 3 that is `left`, which fails by the
+    # 0.1 mm stroke halo alone while `right` and `bottom` were failing by 10 and 32 mm out of
+    # sight. Rounding to one decimal is the tolerance (+/- 0.05 mm) and the four numbers print
+    # together, which is also the idiom the clip-rect test above already uses.
+    assert_equal [ 10.0, 17.0, 205.9, 247.4 ],
+                 out.values_at("left", "top", "right", "bottom").map { |v| v.round(1) },
+                 "the painted part must be cut to the content box on every side"
+  end
+
+  # THE CONTOURS ARE BUILT FRESH FROM shape.p, NEVER CLONED FROM THE SCREEN. A clone would drag
+  # the transparent fat hit-twin (.measure-contour--hit), the hover/selected/marked classes and
+  # the layer colour onto paper — a printed sheet with an 8-unit-wide invisible stroke on it.
+  #
+  # MUTATION-CHECKED: dropping `stroke: "#000"` is RED (`to include "stroke=\"#000\""`), and
+  # dropping `fill: "none"` is RED on the line below it. The refute is a TRIPWIRE rather than a
+  # guard with a mutation of its own — nothing in this renderer can emit that string today, which
+  # is the point: it goes red the day somebody reaches for cloneNode.
+  test "the sheet carries no screen-only classes and prints in black" do
+    html = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META}).outerHTML
+    JS
+
+    refute_includes html, "measure-contour"
+    assert_includes html, 'stroke="#000"'
+    # AND AS AN OUTLINE, NOT A SILHOUETTE. SVG's default fill is BLACK, so a contourNode that
+    # merely omitted `fill` prints every closed part as a solid black slab — hiding every internal
+    # feature the sheet exists to check, and emptying a cartridge doing it. Neither assertion above
+    # can see that: the stroke is still #000 and no screen-only class has appeared.
+    assert_includes html, 'fill="none"'
+  end
+
+  # OPEN CONTOURS EXIST, AND A <polygon> CLOSES ONE FOR THEM. `k` is 0 for a path that never
+  # closes — an engraved line, a DXF LWPOLYLINE with no closed flag — and a polygon draws a segment
+  # from its last point back to its first that the design does not contain. Every shape in the four
+  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` could be the constant "polygon"
+  # with all of them GREEN.
+  #
+  # AND THE POINTS ARE ASSERTED AS THE EXACT STRING THE PRINTER WILL PARSE, which a "spans 60 user
+  # units" assertion cannot substitute for in three separate directions. All three are
+  # MUTATION-CHECKED, and the first two are GREEN in the span test above:
+  #
+  #   drawing shape.b's corners   ["0,0 30,0 30,20 0,20", "0,0 30,0 30,20 0,20"] — every part
+  #     becomes its own BOUNDING BOX (a circle prints square) while spanning the identical extent.
+  #     Not a hypothetical reach for this payload: `b` is the key every printed NUMBER must come
+  #     from (§14h), which is exactly what makes it the easy slip here.
+  #   `Math.round` on each coord  ["0,0 30,0 30,20 0,20 0,0", "0,0 13,20 30,5"] — at one user unit
+  #     per millimetre a "tidy" rounds every vertex to the nearest MILLIMETRE, and whole-number
+  #     test data cannot see it. Hence the 12.5.
+  #   `${y},${x}` transposed      ["0,0 0,30 20,30 20,0 0,0", "0,0 20,12.5 5,30"]
+  #
+  # AND FOUR MORE, all RED here: always "polygon" ["polygon", "polygon"]; the ternary inverted
+  # ["polyline", "polygon"]; emitting only the first shape ["polygon"]; createElement instead of
+  # createElementNS ["POLYGON", "POLYLINE"] — tagName is upper-cased for an HTML-namespace element.
+  # That last one is why stroke-width now has a test of its own rather than a third assertion here:
+  # `assert_equal` stops at the first failure, so it reported `tags` and nothing after it.
+  test "an open contour prints as a polyline and a closed one as a polygon" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document, m.buildSheets([
+          { b: [0, 0, 30, 20], k: 1, i: 0, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+          // SAME BBOX as the closed part, and no vertex of it on a bbox corner.
+          { b: [0, 0, 30, 20], k: 0, i: 0, o: 2, p: [[0, 0], [12.5, 20], [30, 5]] },
+        ], m.PAPERS.Letter).pages[0], #{META})
+        // Document order, which is the order the shapes were appended in.
+        const nodes = Array.from(svg.querySelectorAll("polygon, polyline"))
+        return JSON.stringify({
+          tags: nodes.map((n) => n.tagName),
+          points: nodes.map((n) => n.getAttribute("points")),
+        })
+      })()
+    JS
+
+    assert_equal [ "polygon", "polyline" ], out["tags"]
+    assert_equal [ "0,0 30,0 30,20 0,20 0,0", "0,0 12.5,20 30,5" ], out["points"]
+  end
+
+  # SPLIT OUT OF THE TEST ABOVE RATHER THAN RIDING ALONG IN IT. `assert_equal` aborts the method at
+  # its first failure, so while this sat third behind `tags` and `points` the createElement
+  # mutation reported the tag names and the other two assertions never ran at all — a stroke-width
+  # regression arriving alongside any other one was invisible. It is a different claim besides:
+  # what a contour is drawn AS, against how thick the line is.
+  #
+  # 0.2 USER UNITS IS 0.2 mm, AND THE BARE NUMBER IS WHAT MAKES THAT TRUE. "0.2mm" is not a synonym
+  # for it: a unit suffix inside an SVG attribute resolves through CSS at 96 dpi, so it would draw
+  # 0.2 * 96 / 25.4 = 0.76 user units — a line nearly four times too fat to cut to, on a sheet that
+  # otherwise still looks entirely right. MUTATION-CHECKED: RED, Actual ["0.2mm", "0.2mm"], and
+  # nothing else in the file asserts stroke-width at all.
+  test "every contour prints as a 0.2 mm line" do
+    widths = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document, m.buildSheets([
+        { b: [0, 0, 30, 20], k: 1, i: 0, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+        { b: [0, 0, 30, 20], k: 0, i: 0, o: 2, p: [[0, 0], [12.5, 20], [30, 5]] },
+      ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon, polyline")).map((n) => n.getAttribute("stroke-width")))
+    JS
+
+    assert_equal [ "0.2", "0.2" ], widths
+  end
+
+  # THE BITMAP PLACEHOLDER DRAWS DASHED, AND ONLY IT. The base64 is deliberately absent from the
+  # payload (§14h) — what matters for fit is the RECTANGLE a photo occupies — so the dashes are the
+  # only thing on paper that says "this outline is not a cut".
+  #
+  # TWO SHAPES, THE BITMAP FIRST, because one shape cannot tell a branch from a constant. Every
+  # shape in the tests above is `i: 0`, so all three broken spellings are GREEN against them.
+  # MUTATION-CHECKED, each with a distinguishable actual: the branch deleted [nil, nil]; the
+  # dasharray set unconditionally ["4 3", "4 3"]; `if (!shape.i)` [nil, "4 3"]. (Emitting only the
+  # first shape is RED here too, ["4 3"].)
+  test "only a bitmap placeholder prints dashed" do
+    dashes = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document, m.buildSheets([
+        { b: [0, 0, 30, 20],  k: 1, i: 1, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+        { b: [40, 0, 70, 20], k: 1, i: 0, o: 2, p: [[40, 0], [70, 0], [70, 20], [40, 20], [40, 0]] },
+      ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon, polyline")).map((n) => n.getAttribute("stroke-dasharray")))
+    JS
+
+    assert_equal [ "4 3", nil ], dashes
+  end
+
+  # ONE TRANSFORM MOVES THE WHOLE PAGE, AND NOTHING ABOVE THIS LINE CAN SEE IT AT ALL. Every
+  # assertion in this section reads `points`, which is written in FILE coordinates and is
+  # byte-identical whether the page is translated, translated by the wrong amount, or not
+  # translated at all — so deleting the `transform` outright is GREEN through all six of them.
+  # The user-visible result is geometry drawn at its raw file coordinates: a bracket at x 500 in a
+  # 600 mm laser sheet lands 490 mm from where it belongs — 284.1 mm past the right edge of a
+  # 215.9 mm page — and the sheet prints blank. Nothing errors and nothing logs: this repo's
+  # dominant failure shape.
+  #
+  # A SELECTION OFFSET FROM THE ORIGIN, for the reason Task 3's filter test gives: at (0, 0) the
+  # datum shift is a no-op and `translate(10 17)` is indistinguishable from a hard-coded margin.
+  # TWO SHAPES, because "every contour shares one parent" is trivially true of one.
+  #
+  # THE EXPECTATION COMES OFF THE PAGE OBJECT, not from a literal — whether those numbers are
+  # right is Task 2's assertion and is pinned there; what is pinned HERE is that the renderer
+  # applies them, once, to an ancestor of every contour.
+  #
+  # MUTATION-CHECKED SEVEN WAYS, AND EACH FAILS A DIFFERENT ASSERTION, which is how the four below
+  # are shown to carry independent weight rather than restate each other:
+  #
+  #   transform deleted             transform:    Expected: "translate(-490 -283)" Actual: nil
+  #   moved onto each contour       transform:    Expected: "translate(-490 -283)" Actual: nil
+  #   translateX/Y swapped          transform:    Actual: "translate(-283 -490)"
+  #   on the group AND each contour movedShapes:  Expected: 0 Actual: 2  (a DOUBLE move — the only
+  #                                 one of the seven the transform assertion cannot see, since the
+  #                                 group still carries exactly the right string)
+  #   a <g> per contour             parents:      Expected: 1 Actual: 2
+  #   BOTH <g>s dropped and the     parentTag:    Expected: "g" Actual: "svg". Stated as "transform
+  #   transform put on the root                   on the root <svg>" this row was wrong: KEEPING the
+  #   <svg>                                       groups and merely also transforming the root is a
+  #                                               different mutation with rows 1-2's signature
+  #                                               (Actual: nil), so the row would have been proving
+  #                                               nothing the first two rows had not already proved.
+  #   only the first shape emitted  contours:     Expected: 2 Actual: 1
+  test "one transform moves the whole page and every contour rides on it" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const page = m.buildSheets([
+          { b: [500, 300, 560, 340], k: 1, i: 0, o: 1,
+            p: [[500, 300], [560, 300], [560, 340], [500, 340], [500, 300]] },
+          { b: [600, 300, 660, 340], k: 1, i: 0, o: 2,
+            p: [[600, 300], [660, 300], [660, 340], [600, 340], [600, 300]] },
+        ], m.PAPERS.Letter).pages[0]
+        const svg = m.renderSheet(document, page, #{META})
+        const nodes = Array.from(svg.querySelectorAll("polygon, polyline"))
+        return JSON.stringify({
+          contours: nodes.length,
+          parents: new Set(nodes.map((n) => n.parentNode)).size,
+          parentTag: nodes.length ? nodes[0].parentNode.tagName : null,
+          transform: nodes.length ? nodes[0].parentNode.getAttribute("transform") : null,
+          expected: `translate(${page.translateX} ${page.translateY})`,
+          movedShapes: nodes.filter((n) => n.hasAttribute("transform")).length,
+          translateX: page.translateX,
+        })
+      })()
+    JS
+
+    assert_equal 2, out["contours"]
+    # GUARDING THIS TEST'S OWN PREMISE, not re-testing buildSheets — hence no mutation of its own.
+    # At translate(10 17) a deleted datum shift looks exactly like a correct one, so if this ever
+    # reads 10 the six assertions built on it have quietly stopped meaning anything.
+    assert_in_delta(-490.0, out["translateX"], 0.001, "MARGIN (10) less the selection's x0 (500)")
+
+    assert_equal 1, out["parents"], "every contour hangs off ONE node, so one move carries them all"
+    assert_equal "g", out["parentTag"]
+    assert_equal out["expected"], out["transform"]
+    # PER PAGE, NEVER PER SHAPE. Moving the same translate onto each contour draws an identical
+    # sheet today and stops doing so the moment anything is nested, sorted or reparented — and it
+    # is the spelling that invites a per-shape VALUE, which is what actually stacks two parts on
+    # top of each other.
+    assert_equal 0, out["movedShapes"]
+  end
+
+  # ---- lib/print_sheet.js: sheet furniture -----------------------------------------------------
+  #
+  # THE PLAN'S 3x1 INPUT COULD NOT SEE HALF OF THIS SECTION, so every test below that needs a
+  # tiled job uses 3 x 2. With one row, `row + 1` is always 1 and `rows` is always 1, so
+  # `Sheet ${col + 1},1` and `of ${cols}x1` hard-coded are both GREEN — measured by running the
+  # plan's four tests verbatim against each mutation, and both are RED here. A gauge guarded by
+  # `if (row === 0)` is worse still: under one row that guard is unconditionally TRUE, so the
+  # emitted DOM is byte-IDENTICAL to correct code and no test over a 3 x 1 job can exist that
+  # sees it, however written. Here it is RED on two tests ("sheet 3: the bar labelled 100 mm",
+  # "sheet 3 lost its ruler label"). 3 x 2 is the smallest job in which the column index, the row
+  # index and the two counts are four different numbers.
+  #
+  #   cols = ceil((400 - 10) / 185.9) = 3, rows = ceil((300 - 10) / 220.4) = 2 -> 6 pages.
+  TILED_3X2 = <<~JS.freeze
+    [{ b: [0, 0, 400, 300], k: 1, i: 0, o: 1, p: [[0, 0], [400, 300]] }]
+  JS
+
+  # ON EVERY SHEET, not only the first. Pages get separated, and a partial print — someone
+  # reprinting sheet 3 alone — is exactly when a scale error most needs catching.
+  #
+  # THIS ASSERTS THE LABELS ONLY; the gauge's GEOMETRY is asserted, also per sheet, further down.
+  # The two are separable defects and the separation is not academic: wrapping only the ruler's
+  # <line> elements in `if (col === 0 && row === 0)` while leaving their labels alone is GREEN
+  # here — five sheets then carry the words "100 mm — check with a ruler" with no ruler under
+  # them, which is worse than carrying neither.
+  test "every sheet carries the calibration gauge labels and the do-not-scale warning" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages.map((p) =>
+        Array.from(m.renderSheet(document, p, #{META}).querySelectorAll("text"))
+          .map((t) => t.textContent)))
+    JS
+
+    assert_equal 6, texts.length
+
+    # A TRIPWIRE FOR A FUTURE TEXT, AND IT RUNS FIRST ON PURPOSE. Nothing this task prints as text
+    # is derived from the content box, whose height serializes as 230.39999999999998 — SVG does not
+    # care about that in an attribute and a reader cannot read it in a label. Placed AFTER the loop
+    # below it would never execute: minitest ends a test at its first failed assertion, and any
+    # float appended to one of these labels breaks that loop's exact string first. Verified — the
+    # mutation was run in both orders. MUTATION-CHECKED by appending ` ${content.h}` to the ruler
+    # label: RED, "a printed number needs rounding: \"100 mm — check with a ruler
+    # 230.39999999999998\"". This test uses META, whose `sizeLabel` returns null, so every string it
+    # collects is furniture and none of them may carry a raw float. (That was true of the whole file
+    # until Task 7; SIZE_LABEL and PAIR_META now return real strings, so the claim is scoped here.)
+    texts.flatten.each do |t|
+      refute_match(/\d\.\d{3,}/, t, "a printed number needs rounding: #{t.inspect}")
+    end
+
+    texts.each_with_index do |sheet, i|
+      assert_includes sheet, "100 mm — check with a ruler", "sheet #{i} lost its ruler label"
+      assert_includes sheet, "20 mm", "sheet #{i} lost its calibration square label"
+      assert_includes sheet, "Print at 100% — do NOT scale to fit", "sheet #{i} lost its warning"
+    end
+  end
+
+  # GRID COORDINATES, not "Sheet 2 of 6": when you are taping six sheets together the column and
+  # row tell you WHERE the sheet goes, which a running count does not.
+  #
+  # ASSERTED AS THE WHOLE ORDERED LIST rather than three assert_matches, so it pins row-major
+  # emission at the same time — `Sheet 1,2` arriving second would mean the pages come out of the
+  # printer in an order the labels contradict.
+  test "a tiled job labels each sheet by grid position" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages.map((p) =>
+        Array.from(m.renderSheet(document, p, #{META}).querySelectorAll("text"))
+          .map((t) => t.textContent)))
+    JS
+
+    assert_equal [ "1,1", "2,1", "3,1", "1,2", "2,2", "3,2" ].map { |g| "Sheet #{g} of 3×2" },
+                 texts.map { |sheet| sheet.find { |t| t.start_with?("Sheet") } }
+  end
+
+  # AND A SINGLE SHEET CARRIES NO LABEL AT ALL — there is nothing to register against, so it would
+  # be noise. This is the half a naive implementation gets wrong by printing "Sheet 1,1 of 1×1".
+  test "a single sheet carries no page label" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        .querySelectorAll("text")).map((t) => t.textContent))
+    JS
+
+    refute(texts.any? { |t| t.include?("Sheet") }, "a single sheet has nothing to register against")
+    # THE PREMISE, because "no label" is satisfied exactly as well by no furniture at all — and a
+    # `furniture()` call dropped from renderSheet outright would otherwise pass this test.
+    assert_includes texts, "100 mm — check with a ruler", "the rest of the furniture is still there"
+  end
+
+  test "the header names the file and the date" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        .querySelectorAll("text")).map((t) => t.textContent))
+    JS
+
+    assert_includes texts, "plate.lbrn2 · 2026-08-19"
+  end
+
+  # THE HEADER CARRIES A LIBRARY FILENAME, WHICH IS USER-CONTROLLED — and on a NAS-scanned share it
+  # can legitimately contain `<`, because the scanner indexes whatever names the filesystem holds.
+  # The sheet is rendered into a same-origin iframe (Task 8), so building the header as markup is
+  # an injection into this app's own origin. `el`'s text door is what makes `textContent` the only
+  # spelling available; this is the test that says why it exists rather than merely that it fires.
+  #
+  # A SHORT FIXTURE, DELIBERATELY, AND `refuteTruncated` IS WHY. This test used a 40-character
+  # name until truncation landed, and truncation then DISARMED one of its two arms in silence:
+  # the cut kept `<script>` as the head and `v2>.svg` as the tail, dropping the `<` before `v2`,
+  # so the fixture no longer contained a `<v2` substring and `refute_includes elements, "v2"`
+  # could not fire for any mutation whatsoever. The comment left behind claimed both arms still
+  # fired. That is the same shape as the `hasAnchor` line removed from the header-placement test
+  # — an assertion that cannot fail is not an assertion (CLAUDE.md §15) — so the fixture is now
+  # kept UNDER budget and the premise is asserted rather than assumed. 13 characters charges
+  # 38.30 mm against A4's 46.90, the tightest paper, so there is 8.6 mm of headroom; if a future
+  # budget change ever eats it, the premise fires with a sentence instead of an arm going quiet.
+  # Truncation has its own tests below and does not need to ride along in this one.
+  #
+  # MUTATION-CHECKED TWO WAYS, each actual copied out of the run. Deleting the door
+  # (`if (text != null) node.textContent = text`) is RED in SIX tests, every textContent coming
+  # back "" — this one, four above it, and the header-placement one below it. Spelling it
+  # `node.innerHTML = text` is RED HERE ALONE, on the element list, which gains `script` and `v2`
+  # — two elements minted out of a filename, inside a <text> node, in the app's own origin.
+  test "a filename that looks like markup prints as text, not as markup" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name: "<script>x<v2>", date: "2026-08-19", sizeLabel: () => null })
+        return JSON.stringify({
+          // `:scope >` IS PART OF THE ASSERTION, not a convenience. The header is a DIRECT child
+          // of the <svg>; a size label is not, but the labels are appended BEFORE the furniture,
+          // so a bare querySelector("text") starts answering about the first LABEL the moment a
+          // sheet carries one. Measured against a labelNode that ignored meta.sizeLabel and
+          // derived its own string: this line came back "60 × 40 mm" and this test failed for
+          // somebody else's defect. `sizeLabel` returns null here, so nothing changes today.
+          header: svg.querySelector(":scope > text").textContent,
+          // THE WHOLE SUBTREE, not a search for <script>: an innerHTML spelling parses `<v2>`
+          // into an element too, and a sheet quietly carrying half the filename as unknown
+          // elements is the same defect with a less alarming name.
+          elements: Array.from(svg.querySelectorAll("*")).map((n) => n.tagName).join(","),
+        })
+      })()
+    JS
+
+    # THE PREMISE FIRST: both refutes below need their opening `<` to still be in the string.
+    refute_includes out["header"], "…",
+                    "the fixture must stay under budget or the <v2 arm silently stops existing"
+    # AND THE REFUTES BEFORE THE EQUALITY, because an innerHTML spelling loses part of the
+    # filename from `header` too — with the equality first these two would never execute for the
+    # mutation they exist for.
+    elements = out["elements"].split(",")
+    refute_includes elements, "script", "no element minted from the filename"
+    refute_includes elements, "v2", "and not the innocuous-looking half of it either"
+    assert_equal "<script>x<v2> · 2026-08-19", out["header"]
+  end
+
+  # `el` HAS A SILENT MIS-CALL MODE AND THIS IS THE ONLY THING THAT CAN SEE IT. A string in the
+  # `attrs` slot — `el(doc, "text", "Sheet 1,1 of 2×1")`, one dropped `{}` away from the five
+  # sites this task adds — was expected to throw InvalidCharacterError, since an attribute name
+  # cannot begin with a digit. It does not: Object.entries walks the string's own indices and
+  # setAttribute accepts "0" as a name.
+  #
+  # MEASURED, by deleting the guard and reading what this test then returns verbatim:
+  #
+  #   NO THROW: <text 0="S" 1="h" 2="e" 3="e" 4="t" 5=" " 6="1" 7="," 8="1" 9=" " 10="o" 11="f"
+  #             12=" " 13="2" 14="×" 15="1"></text>
+  #
+  # — sixteen junk attributes, no text content, an empty <text> that renders nothing on a page
+  # that is otherwise perfectly formed. Nothing thrown, nothing logged.
+  #
+  # `el` IS EXPORTED FOR THIS TEST AND FOR NO OTHER REASON — nothing reachable through
+  # renderSheet can put a string in that slot, so without the export this would be a guard that
+  # has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  test "el refuses a string in the attribute slot rather than minting junk attributes" do
+    out = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          const n = m.el(document, "text", "Sheet 1,1 of 2×1")
+          return "NO THROW: " + n.outerHTML
+        } catch (e) { return "THREW: " + e.message }
+      })()
+    JS
+
+    assert_match(/\ATHREW: /, out, "a string in the attrs slot must not mint junk attributes")
+    assert_match(/attribute map/, out, "and must say which argument is wrong")
+  end
+
+  # WHERE THE FURNITURE IS DRAWN, WHICH NOTHING ABOVE THIS LINE CAN SEE. Every assertion in this
+  # section so far reads `textContent`, which is byte-identical whether the gauge is in the
+  # reserved strip, on top of the geometry, off the paper, or inside the clip group where it is
+  # erased entirely. Four separate defects, all invisible, all of them a sheet that prints wrong.
+  #
+  # AND PER SHEET, for the geometry as well as the labels. `:scope >` is itself an assertion, not
+  # a convenience: furniture appended to the clipped group or to the page transform still answers
+  # `querySelectorAll("line")` and still carries every label, while the gauge — which sits BELOW
+  # the content box — is clipped away to nothing.
+  #
+  # THE EXPECTATION IS BUILT FROM THE CONTENT BOX'S FOUR NUMBERS, which have their own test at the
+  # top of this file, not re-derived by calling contentBox() here. CLAUDE.md §14e: a fake that
+  # shares the code's misunderstanding confirms it.
+  #
+  # MUTATION-CHECKED TWELVE WAYS, all RED here: the trim loop deleted; both crosshair arms drawn
+  # horizontal; the crosshairs moved to the PRINTABLE box's corners; the bar drawn 90 mm; the tick
+  # step 10 -> 20; every tick drawn at content.x; the ticks flattened onto the bar (`by - 3` ->
+  # `by`); the square 15 mm wide; the square placed at `right` instead of `right - 20`; its
+  # `fill: "none"` dropped; `stroke-width` spelled "0.2mm"; and the whole gauge moved to
+  # `top + 14`. Three more are RED on this test among others: the furniture appended inside the
+  # clip group, the `furniture()` call deleted, and the gauge guarded by `row === 0`.
+  test "the furniture is drawn on the paper outside the clip, and identically on every sheet" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const num = (n, as) => as.map((a) => Number(n.getAttribute(a)))
+        const furniture = (svg) => ({
+          lines: Array.from(svg.querySelectorAll(":scope > line"))
+                      .map((n) => num(n, [ "x1", "y1", "x2", "y2" ])),
+          rects: Array.from(svg.querySelectorAll(":scope > rect"))
+                      .map((n) => num(n, [ "x", "y", "width", "height" ])),
+        })
+        const sheets = (paper) => m.buildSheets(#{TILED_3X2}, paper).pages.map((p) =>
+          m.renderSheet(document, p, #{META}))
+        const svgs = sheets(m.PAPERS.Letter)
+        return JSON.stringify({
+          // `:not([data-role='size'])` KEEPS THIS COUNT ABOUT FURNITURE. A size label lives
+          // inside both of these groups BY DESIGN — it belongs to its part, rides the page
+          // transform with it and is cut by the same window — so without the exclusion this
+          // answers about labels too and reports a LABEL defect under the sentence below.
+          // Measured against a labelNode that ignored meta.sizeLabel: "Expected: 0 Actual: 1",
+          // from this line, while the label tests said what was actually wrong.
+          nested: svgs[0].querySelectorAll(
+            "[clip-path] line, [clip-path] rect, [clip-path] text:not([data-role='size']), " +
+            "[transform] line, [transform] rect, [transform] text:not([data-role='size'])").length,
+          strokes: Array.from(svgs[0].querySelectorAll(":scope > line, :scope > rect"))
+            .map((n) => n.getAttribute("stroke") + " " + n.getAttribute("stroke-width")),
+          fills: Array.from(svgs[0].querySelectorAll(":scope > rect"))
+                      .map((n) => n.getAttribute("fill")),
+          pages: svgs.map(furniture),
+          // A SECOND PAPER, for the reason the scale test two sections up gives: against Letter
+          // alone every number below can be a hard-coded Letter literal and stay green.
+          a4: furniture(sheets(m.PAPERS.A4)[0]),
+        })
+      })()
+    JS
+
+    assert_equal 0, out["nested"],
+                 "furniture inside the clip or the page transform is erased or moved off paper"
+
+    # THE EXPECTATION IS A FUNCTION OF THE CONTENT BOX'S FOUR EDGES, and it is applied to TWO
+    # papers below. contentBox(Letter) is x 10..205.9, y 17..247.4 — pinned by its own test at the
+    # top of this file; contentBox(A4) is x 10..200, y 17..265 by the same arithmetic on §MARGIN,
+    # HEADER_H and CALIB_H (210 - 20 = 190 wide, 297 - 20 - 7 - 22 = 248 tall). Written out rather
+    # than obtained by calling contentBox() here: CLAUDE.md §14e, a fake that shares the code's
+    # misunderstanding confirms it.
+    expected = lambda do |x0, y0, x1, y1|
+      by = y1 + 14                                      # the calibration bar's baseline
+      trim = [ [ x0, y0 ], [ x1, y0 ], [ x0, y1 ], [ x1, y1 ] ].flat_map do |x, y|
+        [ [ x - 4, y, x + 4, y ], [ x, y - 4, x, y + 4 ] ]
+      end
+      ticks = (0..100).step(10).map { |i| [ x0 + i, by, x0 + i, by - 3 ] }
+      [ trim + [ [ x0, by, x0 + 100, by ] ] + ticks, [ [ x1 - 20, y1 + 1, 20.0, 20.0 ] ] ]
+    end
+    x0, y0, x1, y1 = 10.0, 17.0, 205.9, 247.4
+    expected_lines, expected_rects = expected.call(x0, y0, x1, y1)
+
+    out["pages"].each_with_index do |f, i|
+      lines = f["lines"].map { |l| l.map { |v| v.round(4) } }
+      rects = f["rects"].map { |r| r.map { |v| v.round(4) } }
+
+      # THE GAUGE MUST NOT LIE, and these two come FIRST so a bar labelled "100 mm" that is 90 mm
+      # long fails with a legible number rather than inside a twenty-row array diff. A gauge that
+      # is wrong is strictly worse than no gauge: it certifies a mis-scaled print.
+      bar = lines.select { |l| l[1] == l[3] }.max_by { |l| (l[2] - l[0]).abs }
+      assert_equal 100.0, (bar[2] - bar[0]).round(4), "sheet #{i}: the bar labelled 100 mm"
+      assert_equal 1, rects.length, "sheet #{i}: one calibration square"
+      assert_equal [ 20.0, 20.0 ], rects[0][2..3], "sheet #{i}: the square labelled 20 mm"
+
+      # AND THEN EVERY LINE, IN PLACE. Nothing above distinguishes the eleven ticks from each
+      # other, or from eleven lines drawn on top of one another at x0.
+      assert_equal expected_lines, lines, "sheet #{i}: trim crosshairs, then the bar, then 11 ticks"
+      assert_equal expected_rects, rects, "sheet #{i}: the calibration square"
+    end
+
+    # AND THE SAME FURNITURE ON A DIFFERENT PAPER. Every number above is a Letter number, so
+    # `const right = 205.9` and `const bottom = 247.4` — the shape the scale test records for the
+    # <svg> attributes — is GREEN through the whole loop. MUTATION-CHECKED: RED here alone.
+    # The bar is still 100 mm and the square still 20 mm; what moves is where they are anchored.
+    a4_lines, a4_rects = expected.call(10.0, 17.0, 200.0, 265.0)
+    assert_equal a4_lines, out["a4"]["lines"].map { |l| l.map { |v| v.round(4) } }, "A4"
+    assert_equal a4_rects, out["a4"]["rects"].map { |r| r.map { |v| v.round(4) } }, "A4"
+
+    # BLACK AND HAIRLINE, LIKE THE CONTOURS. A calibration square with SVG's DEFAULT fill is a
+    # solid black 20 mm slab; nothing else in the file can see that, because `fill="none"` is
+    # still present on the contours it asserts.
+    #
+    # LAST, NOT FIRST. These two are the only assertions here whose failure carries no coordinate,
+    # and `strokes` changes length for ANY defect that changes the element count — so ahead of the
+    # loop it pre-empted the legible numbers with a twenty-against-twenty-one diff of identical
+    # strings, defeating the ordering the loop's own comment argues for. Verified with
+    # `i <= 100` -> `i < 100`: red either way, legible only in this order.
+    assert_equal [ "none" ], out["fills"], "a filled calibration square is a 20 mm ink blot"
+    assert_equal [ "#000 0.2" ] * 21, out["strokes"], "20 lines and the square, all hairline black"
+  end
+
+  # THE HEADER'S THREE TEXTS SIT AT THE LEFT, THE CENTRE AND THE RIGHT of the content box, and the
+  # anchor is half of that claim: at the default `start`, the centred warning runs off the right
+  # edge of the paper and the sheet label runs off it entirely, while every textContent assertion
+  # above stays green.
+  #
+  # FONT-SIZE IS THE OTHER HALF. Omit it and SVG's initial value is 16px, which at one user unit
+  # per millimetre is 16 mm tall — the header alone is then more than twice the 7 mm strip
+  # reserved for it and prints across the geometry.
+  #
+  # THE HEADER HAS NO `text-anchor` AT ALL, which is the one call site `el`'s nullish attribute
+  # guard exists for. Delete that guard and it becomes `text-anchor="undefined"` — an invalid
+  # value, so SVG falls back to the initial `start` and the sheet still LOOKS exactly right
+  # (measured: the rendered bbox x is byte-identical either way). The `nil` in the anchor tuple
+  # below is what sees it, and it is a COMPLETE instrument: getAttribute answers null only when the
+  # attribute is absent, and an empty attribute reads "" rather than nil. An earlier draft carried
+  # a `refute ... hasAnchor` line as well, described in this comment as "the only thing that can
+  # see it" — both halves were wrong. It was redundant with the tuple, and being placed AFTER the
+  # tuple it never executed at all: the mutation fails the tuple, minitest ends the test there.
+  # A second assertion that cannot run is not a second guard (CLAUDE.md §15).
+  test "the header line places its three texts at the left, centre and right, at 3 mm" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages[1], #{META})
+        .querySelectorAll(":scope > text")).map((n) => ({
+          x: Number(n.getAttribute("x")), y: Number(n.getAttribute("y")),
+          anchor: n.getAttribute("text-anchor"),
+          size: n.getAttribute("font-size"), text: n.textContent,
+        })))
+    JS
+
+    # Page 1 of the 3 x 2 job — column 2, row 1 — so the sheet label is present.
+    assert_equal [ "plate.lbrn2 · 2026-08-19", "Print at 100% — do NOT scale to fit",
+                   "Sheet 2,1 of 3×2", "100 mm — check with a ruler", "20 mm" ],
+                 out.map { |t| t["text"] }
+    # content.x; the content box's own centre (which is also the paper's, margins being equal);
+    # its right edge. All three on the header baseline at MARGIN + 4. Then the two gauge labels.
+    assert_equal [ [ 10.0, 14.0, nil ], [ 107.95, 14.0, "middle" ], [ 205.9, 14.0, "end" ],
+                   [ 60.0, 265.9, "middle" ], [ 195.9, 259.4, "middle" ] ],
+                 out.map { |t| [ t["x"].round(4), t["y"].round(4), t["anchor"] ] }
+    assert_equal [ "3" ] * 5, out.map { |t| t["size"] }, "3 user units is 3 mm"
+  end
+
+  # THE HEADER'S LEFT TEXT IS THE ONLY ARBITRARY-LENGTH THING ON THE SHEET, AND UNTRUNCATED IT
+  # OVERPRINTS THE WARNING — on the one sheet whose entire purpose is to say "do NOT scale to fit".
+  # Measured on A4 before the fix, as rendered bbox right edges: `plate.lbrn2 · 2026-08-19` ended at
+  # 41.83 (fine), `Rev C bracket assembly plate final.lbrn2 · …` at 81.48 against a warning starting
+  # at 81.28 (collides), and a 70-character name at 124.15 (the warning almost wholly overprinted,
+  # running on under the sheet label). Forty characters is an ordinary length on a NAS-scanned share.
+  #
+  # A4, NOT LETTER. 190 mm is the narrowest content box PAPERS offers, so it is the paper that
+  # fails first and the only one worth pinning.
+  #
+  # THREE SCRIPTS, NOT ONE, AND THE ASCII CASE ALONE WOULD HAVE BEEN A TRAP. An all-`@` name is the
+  # widest ASCII can go (3.0432 mm, ahead of the `W` at 2.8296 that is the obvious guess), but
+  # non-ASCII goes WIDER — every emoji measures 3.7042 and CJK/fullwidth 3.0638 — so a budget that
+  # charges one rate for everything is under-reserved for two of the three. The pair of `widest`
+  # assertions below measures both repertoires in THIS browser rather than trusting either figure:
+  # the day a CI font makes some other glyph widest, these inputs stop being pathological and this
+  # says so, instead of the test quietly weakening.
+  #
+  # `loneSurrogate` IS A SEPARATE CLAIM FROM THE GEOMETRY. `s.length`/`s.slice` count UTF-16 code
+  # units, so cutting an emoji name at a character index splits a surrogate pair and paints two
+  # replacement boxes — while still clearing the warning, because a split pair is NARROWER. No
+  # geometric assertion can see it.
+  #
+  # THE GEOMETRIC ASSERTION IS NOT ENOUGH ON ITS OWN, which is why the constants are asserted too:
+  # the shipped layout clears the warning by 7.85 mm on the ASCII case, so a `W`-tuned WORST_GLYPH
+  # still clears it by 4.80 mm and passes. Slack in a layout is safety and must not be spent to
+  # sharpen a test; the constants are pinned directly instead.
+  test "a pathological filename is truncated rather than printed over the do-not-scale warning" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const cases = {
+          ascii: { name: "@".repeat(70), date: "2026-08-19" },
+          emoji: { name: "😀".repeat(40), date: "2026-08-19" },
+          cjk:   { name: "漢".repeat(40),  date: "2026-08-19" },
+          // A WIDE DATE BESIDE A WIDE NAME, and it took four attempts to find an input that can
+          // actually fail. `meta.date` is caller-supplied and Task 12 may well hand it a locale
+          // form; an earlier revision billed the whole suffix at a flat digit rate, right for
+          // `2026-08-19` and far short for anything wider. But a REALISTIC locale date does not
+          // collide under that rate, and the reason is worth knowing: the NAME is billed at a
+          // worst case it does not spend (ordinary text renders ~1.35 mm against 3.05 charged),
+          // and that surplus quietly absorbs the suffix's shortfall. Measured clearances under
+          // the flat rate, all still positive: `Wednesday, August 19, 2026` 19.56,
+          // `Mittwoch, 19. August 2026 um 14:30 Uhr` 11.63, `2026年8月19日水曜日` 24.73 — and even
+          // a 40-character name beside the CJK date only drops to 4.64. Both halves have to be at
+          // their worst before the ink lands on the warning, which is what this row is:
+          // -4.49 under the flat rate against +16.81 as shipped.
+          locale: { name: "@".repeat(70), date: "2026年8月19日 水曜日 午後2時30分" },
+        }
+        const res = { sheets: {} }
+        const sheet = ({ name, date }) => m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name, date, sizeLabel: () => null })
+
+        for (const key of Object.keys(cases)) {
+          const svg = sheet(cases[key])
+          document.body.appendChild(svg)
+          try {
+            const t = svg.querySelectorAll(":scope > text")
+            const bb = (n) => { const b = n.getBBox(); return [ b.x, b.x + b.width ] }
+            const left = bb(t[0]), warn = bb(t[1])
+            res.sheets[key] = { left, warn, clearance: warn[0] - left[1],
+                                header: t[0].textContent }
+          } finally { svg.remove() }
+        }
+
+        // Both worst cases, measured through a probe living on a real sheet so its user units
+        // are the paper's millimetres exactly as the header's are.
+        const svg = sheet({ name: "probe", date: "2026-08-19" })
+        document.body.appendChild(svg)
+        try {
+          const probe = document.createElementNS("http://www.w3.org/2000/svg", "text")
+          probe.setAttribute("font-size", 3); probe.setAttribute("font-family", "sans-serif")
+          svg.appendChild(probe)
+          const w = (ch) => {
+            probe.textContent = ch.repeat(20); return probe.getComputedTextLength() / 20
+          }
+          const widestOf = (chars) => chars.reduce(
+            (best, ch) => { const x = w(ch); return x > best[1] ? [ ch, x ] : best }, [ null, 0 ])
+          res.ascii = widestOf(
+            Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i)))
+          res.wide = widestOf(Array.from(
+            "漢字中文日本語あいうカタカナ한글ＡＢ１２、。😀🎉👍🚀🧑🌍🔥✅" +
+            "ЖШЩЮЯΩΨΘάéÆŒØÅñçßشسصمשםאבकषमहঅகதฮ—–…€™©®°±×÷≈∞▓█▒░╬╣"))
+        } finally { svg.remove() }
+
+        res.worstGlyph = m.WORST_GLYPH
+        res.worstWide = m.WORST_WIDE
+        // A split pair leaves an unpaired surrogate behind. Array.from iterates CODE POINTS, so
+        // a well-formed pair arrives as one value above 0xFFFF and only an orphan is still in
+        // the 0xD800..0xDFFF range. (Spelled this way rather than as a regex because a Ruby
+        // heredoc resolves a backslash-u escape itself, and 0xD800 is not one Ruby will build.)
+        res.loneSurrogate = Array.from(res.sheets.emoji.header).some((c) => {
+          const n = c.codePointAt(0)
+          return n >= 0xD800 && n <= 0xDFFF
+        })
+        return JSON.stringify(res)
+      })()
+    JS
+
+    # THE INPUTS ARE PROVABLY THE WORST CASES, not merely plausible-looking ones.
+    assert_equal "@", out["ascii"][0], "the ASCII input must be the browser's widest ASCII glyph"
+    # THE CONSTANTS AGAINST THE MEASUREMENT. Neither is visible to the geometry below.
+    assert_operator out["ascii"][1], :<=, out["worstGlyph"], "WORST_GLYPH is under-measured"
+    assert_operator out["wide"][1], :<=, out["worstWide"],
+                    "WORST_WIDE is under-measured against #{out['wide'][0].inspect}"
+    # NO SPLIT SURROGATE PAIR. Cutting by UTF-16 index paints two replacement boxes, and does it
+    # while comfortably clearing the warning — a split pair is narrower, not wider.
+    refute out["loneSurrogate"], "an astral character was cut in half: #{out['sheets']['emoji']['header'].inspect}"
+    # THE COLLISION ITSELF, on all three. The left text's right edge must sit left of the warning's
+    # left edge — not merely "somewhere on the paper", which an overprinted header satisfies.
+    out["sheets"].each do |script, r|
+      assert_operator r["left"][1], :<, r["warn"][0],
+                      "#{script}: the header ran into #{r['warn'].inspect}: #{r['header'].inspect}"
+    end
+    # AND THE WARNING IS STILL WHERE IT BELONGS, so the assertions above cannot be satisfied by a
+    # warning that was itself pushed off to the right.
+    warn = out["sheets"]["ascii"]["warn"]
+    assert_in_delta 105.0, (warn[0] + warn[1]) / 2, 0.5,
+                    "the warning stays centred on A4's content box"
+  end
+
+  # TRUNCATED IN THE MIDDLE, KEEPING THE EXTENSION. A maker telling `panel-v11.lbrn2` from
+  # `panel-v12.svg` needs the tail as much as the head, so a trailing "…" — the obvious spelling,
+  # and what `text-overflow: ellipsis` would do — cuts off exactly the discriminating end.
+  #
+  # THE DATE IS NEVER TRUNCATED, and the short name is left ALONE: a budget that ellipsised
+  # `plate.lbrn2` would be a regression dressed as a fix. Both spellings of the mistake are pinned
+  # here, and neither is visible to the geometric test above — an implementation that simply cut
+  # the string short would clear the warning just as well.
+  #
+  # THE LAST TWO ROWS ARE WHERE THE BUDGET IS CHARGED BY CLASS RATHER THAN BY CHARACTER COUNT.
+  # Each keeps six code points of head and five of tail against the ASCII rows' eight and seven,
+  # because a wide glyph genuinely costs more — and they are whole code points, which is the half
+  # `truncateMiddle` gets wrong the moment it indexes the string instead of iterating it.
+  test "a long filename keeps its head and its extension, and a short one is left alone" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify([ "plate.lbrn2", "harbor-number-v4.svg",
+                       "Rev C bracket assembly plate final.lbrn2",
+                       "😀".repeat(40), "漢字中文日本語".repeat(6) ].map((name) =>
+        m.renderSheet(document, m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name, date: "2026-08-19", sizeLabel: () => null })
+         .querySelector(":scope > text").textContent))
+    JS
+
+    assert_equal [ "plate.lbrn2 · 2026-08-19",
+                   "harbor-n…-v4.svg · 2026-08-19",
+                   "Rev C br…l.lbrn2 · 2026-08-19",
+                   "😀😀😀😀😀😀…😀😀😀😀😀 · 2026-08-19",
+                   "漢字中文日本…中文日本語 · 2026-08-19" ], out
+  end
+
+  # EVERY PIECE OF FURNITURE INSIDE THE STRIP RESERVED FOR IT, READ OFF THE RENDERED BBOX so the
+  # text's own ascender and descender count rather than its baseline.
+  #
+  # THIS IS WHAT KEEPS THE LAYOUT'S EIGHT OFFSETS HONEST AGAINST `HEADER_H` AND `CALIB_H`. The
+  # gauge's `bottom + 14`, `by - 3`, `by + 4.5`, `bottom + 1` and `bottom + 12` are a designed
+  # layout, not a formula, so nothing in the code makes them agree with the 22 mm the strip
+  # reserves — shrink CALIB_H and the arithmetic still runs, the sheet still renders, and the ruler
+  # simply prints off the bottom of the paper. contentBox's own comment argues at length against
+  # exactly this shape of N-values-that-must-agree; a formula was the other option and is weaker,
+  # because a formula can be wrong in the same silence. The bounds are read from the module's OWN
+  # exported constants, so they are the definition rather than a second copy of it.
+  test "the header sits in the header strip and the gauge in the calibration strip" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const paper = m.PAPERS.A4, content = m.contentBox(paper)
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{TILED_3X2}, paper).pages[1], #{META})
+        document.body.appendChild(svg)
+        try {
+          const items = Array.from(svg.querySelectorAll(":scope > line, :scope > rect, :scope > text"))
+            .map((n) => { const b = n.getBBox(); return { top: b.y, bottom: b.y + b.height } })
+          const bottom = content.y + content.h
+          // STRICTLY inside, and that is not a nicety: the trim crosshairs sit exactly ON the
+          // content edges, so a horizontal arm's zero-height bbox has bottom === content.y and a
+          // bottom arm's has top === bottom. With `<=`/`>=` they join the strips they straddle and
+          // the two counts below read 5 and 17.
+          const header = items.filter((i) => i.bottom < content.y)
+          const gauge  = items.filter((i) => i.top > bottom)
+          return JSON.stringify({
+            headerCount: header.length, gaugeCount: gauge.length,
+            headerTop: Math.min(...header.map((i) => i.top)),
+            headerBottom: Math.max(...header.map((i) => i.bottom)),
+            gaugeBottom: Math.max(...gauge.map((i) => i.bottom)),
+            limits: [ m.MARGIN, m.MARGIN + m.HEADER_H, paper.h - m.MARGIN ],
+          })
+        } finally { svg.remove() }
+      })()
+    JS
+
+    # THE COUNTS ARE THE PREMISE: a piece of furniture that escaped its strip entirely would drop
+    # out of both filters, and "everything I found is in bounds" is trivially true of nothing.
+    assert_equal 3, out["headerCount"], "filename, warning, sheet label"
+    assert_equal 15, out["gaugeCount"], "the bar, 11 ticks, two labels and the square"
+    margin, header_bottom, page_bottom = out["limits"]
+    assert_operator out["headerTop"], :>=, margin, "the header must not print into the paper margin"
+    assert_operator out["headerBottom"], :<=, header_bottom,
+                    "the header must not print into the content box"
+    assert_operator out["gaugeBottom"], :<=, page_bottom,
+                    "the gauge must not print into the bottom paper margin"
+  end
+
+  # ---- lib/print_sheet.js: size labels --------------------------------------------------------
+
+  # TWO PARTS, DIFFERENT LABELS, AND `p` DELIBERATELY UNLIKE `b` ON BOTH — which is why this is not
+  # the plan's own pair. §14h: `p` holds the THINNED drawing points (RDP at 0.01 mm), so anything
+  # read off them under-reports every curve and loses a small hole's diameter entirely. The plan's
+  # own two shapes carried a `p` whose bbox was IDENTICAL to `b`, so a label positioned from the
+  # thinned points was green against them; here the two disagree on both shapes and on both axes,
+  # and the mutation prints `[["⌀10 mm", 72, 9.6, …], ["60 × 40 mm", 15, 23.6, …]]`.
+  LABELLED_PAIR = <<~JS.freeze
+    [{ b: [70, 0, 80, 10], k: 1, i: 0, o: 2, d: 10, p: [[70, 4], [74, 6]] },
+     { b: [0, 0, 60, 40],  k: 1, i: 0, o: 1,        p: [[0, 0], [30, 20]] }]
+  JS
+
+  # THE CONTROLLER'S OWN METHOD, INJECTED, so the paper and the on-screen readout have one
+  # definition between them and cannot drift apart. It reads `d` and `b`; nothing reads `p`.
+  # `${...}` IS JAVASCRIPT AND `#{...}` IS RUBY, so this survives a double-quoted Ruby string
+  # untouched — which is what the style gate wants, and it is worth knowing that the two
+  # interpolations do not collide before editing this line.
+  SIZE_LABEL = "(s) => (s.d != null ? `⌀${s.d} mm` : `${s.b[2] - s.b[0]} × ${s.b[3] - s.b[1]} mm`)"
+  PAIR_META = %({ name: "two.lbrn2", date: "2026-08-19", sizeLabel: #{SIZE_LABEL} }).freeze
+
+  # THE WIRE NUMBERS, NOT JUST THE WORDS — a label in the wrong place reads back exactly right.
+  # Six things are pinned per label and each is its own way to print a wrong sheet:
+  #   text    the CONTROLLER's string, never one re-derived here from `p` (§14h)
+  #   x       the bbox's own centre; `b[0]` alone hangs the label off the part's left edge
+  #   y       3.6 mm BELOW the bbox's BOTTOM. Subtract it instead and the label prints inside the
+  #           part; measure it off `b[1]` and it prints inside the part from the top. Either way
+  #           it lands across the geometry the sheet exists to check, and reads back identically.
+  #   anchor  without `middle` the label STARTS at the centre and runs right, which no textContent
+  #           assertion anywhere in this file can see
+  #   size    3 user units. Built with a bare el() instead of text() it inherits SVG's initial
+  #           16px — 16 mm of type, taller than the part it labels on anything small.
+  #   fill    #000. A label is TEXT, so `fill` is its ink, not a decoration: `fill="none"` prints
+  #           an invisible label on a sheet that is otherwise perfect, and the clip test's hit
+  #           probe below is the only OTHER thing in this file that can see it.
+  # x AND y ARE DIFFERENT NUMBERS ON BOTH SHAPES, so a labelNode that swapped them is red twice.
+  test "each part is labelled with the size its own sizeLabel returned" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0], #{PAIR_META})
+        return {
+          labels: Array.from(svg.querySelectorAll("text[data-role='size']")).map((n) => [
+            n.textContent, Number(n.getAttribute("x")), Number(n.getAttribute("y")),
+            n.getAttribute("text-anchor"), n.getAttribute("font-size"), n.getAttribute("fill"),
+          ]),
+          texts: svg.querySelectorAll("text").length,
+        }
+      })())
+    JS
+
+    assert_equal [ [ "⌀10 mm", 75.0, 13.6, "middle", "3", "#000" ],
+                   [ "60 × 40 mm", 30.0, 43.6, "middle", "3", "#000" ] ],
+                 out["labels"].map { |t| [ t[0], t[1].round(4), t[2].round(4), t[3], t[4], t[5] ] }
+    # AND `data-role="size"` IS WHAT TELLS THEM FROM THE FURNITURE. A single sheet carries four
+    # furniture texts (filename, warning, ruler, square — the sheet label is conditional), so the
+    # two counts together say the labels are exactly the two extra ones: drop the attribute and
+    # the list above is empty, put it on a furniture text and the list gains an entry.
+    assert_equal 6, out["texts"], "four furniture texts on a single sheet, and the two labels"
+  end
+
+  # EVERY LABEL AFTER EVERY OUTLINE, which is what the second pass buys and what one interleaved
+  # loop loses. SVG paints in document order, so a contour appended after a label is drawn OVER
+  # it — and parts overlap routinely (this repo's own nested-plate fixture is a plate with a hole
+  # on the same centre). A textContent assertion cannot see it; only the order can.
+  test "every label is appended after every outline, not interleaved with them" do
+    order = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0], #{PAIR_META})
+        .querySelector("[clip-path] > [transform]").children).map((n) => n.tagName))
+    JS
+
+    assert_equal %w[polygon polygon text text], order
+  end
+
+  # A PART AT A NON-ORIGIN DATUM, WHICH IS THE ONLY WAY TO SEE WHERE THE LABEL ACTUALLY LANDS.
+  # The wire test above reads the attributes, and those are identical whether the label sits in
+  # the translated group with its part or one level up in the clipping group: same x, same y,
+  # 90 mm and 183 mm away on the paper. So this one renders and MEASURES, and the part is at
+  # (100, 200) precisely so that the page translate is large and negative rather than zero — at
+  # the origin the two placements coincide and nothing here could fail.
+  #
+  # THE TOLERANCE IS LOOSE ON PURPOSE. The claim is "it rides the page transform", which fails by
+  # tens of millimetres; the 3.6 mm offset and the centring are pinned exactly by the wire test
+  # above, and getBoundingClientRect on text reports a font-metric box rather than the baseline,
+  # so a tight number here would be pinning Chrome's font metrics instead of this module. The
+  # measured values are 39.999991 and 61.394, so the residuals against the 2.0 allowed are 9e-6 mm
+  # on the centre and 0.79 mm on the bottom edge — the latter being the descent of 3 mm
+  # sans-serif, which is exactly the font metric this refuses to pin.
+  OFFSET_PART = <<~JS.freeze
+    [{ b: [100, 200, 160, 240], k: 1, i: 0, o: 1,
+       p: [[100, 200], [160, 200], [160, 240], [100, 240], [100, 200]] }]
+  JS
+
+  test "a size label rides the page transform inside the clip" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{OFFSET_PART}, m.PAPERS.Letter).pages[0],
+          { name: "offset.lbrn2", date: "2026-08-19", sizeLabel: () => "60 × 40 mm" })
+        svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+        document.body.appendChild(svg)
+        // FINALLY, NOT A TRAILING remove(): in_print_sheet re-visits only when the path changes,
+        // so a probe that threw would leave this sheet lying over the page for the whole file.
+        try {
+          const host = svg.getBoundingClientRect()
+          const S = host.width / 215.9
+          const label = svg.querySelector("text[data-role='size']")
+          const box = label.getBoundingClientRect()
+          return JSON.stringify({
+            // BY IDENTITY, not by tagName: the clipping group is a <g> too, so `parentNode.tagName
+            // === "g"` is satisfied by the placement this test exists to refuse.
+            inTranslatedGroup:
+              label.parentNode === svg.querySelector("[clip-path] > [transform]"),
+            // COUNTED ACROSS THE WHOLE SHEET, not just inside the clip, so the pair below is a
+            // claim the line above does not already make: one label, and no second copy of it
+            // anywhere outside the window.
+            labels: svg.querySelectorAll("text[data-role='size']").length,
+            clippedLabels: svg.querySelectorAll("[clip-path] text[data-role='size']").length,
+            centreX: ((box.left + box.right) / 2 - host.left) / S,
+            bottomY: (box.bottom - host.top) / S,
+          })
+        } finally { svg.remove() }
+      })()
+    JS
+
+    assert out["inTranslatedGroup"], "a label belongs with the geometry it labels"
+    assert_equal [ 1, 1 ], [ out["labels"], out["clippedLabels"] ],
+                 "one label, and inside the clip, so no copy of it can escape onto the strips"
+    # contentBox(Letter).x + 30 and .y + 43.6: the part's own centre and 3.6 mm under its bottom
+    # edge, moved onto the paper by the page transform.
+    assert_in_delta 40.0, out["centreX"], 2.0, "the label must land where its part landed"
+    assert_in_delta 60.6, out["bottomY"], 2.0
+  end
+
+  # THE LABEL IS CUT WITH ITS PART, AND THIS IS THE ONLY TEST OF THE EFFECT rather than the
+  # structure. A part taller than one tile is kept WHOLE on every tile it touches and cut by the
+  # <clipPath> (buildSheets' own `touches` comment), so on the TOP tile its label — which hangs
+  # under the FULL bbox, not under the visible part of it — is aimed at y 257.7..261.4, measured:
+  # past the content box, which ends at 247.4, and with its INK BOTTOM — the descender, not the
+  # baseline, which sits at 260.6 — reaching exactly the 261.4 the calibration bar is drawn at. Unclipped it prints across the ruler, on the sheet whose
+  # one job is to certify the scale.
+  #
+  # WITH ITS PREMISES, three of them, because `hits == 0` is satisfied by every kind of nothing.
+  # The same probe runs against the row BELOW, where this same label is in bounds and must paint —
+  # which is also the demonstration that a label cut off one tile is reprinted whole on the next,
+  # the property that confines this to the last row. And the two `ink` bounds say the clipped
+  # label really was aimed at the strip rather than off the paper: getBoundingClientRect ignores
+  # clip-path (measured in the clip test above), so the box it reports is where the ink would
+  # have gone. `onScreen` is the one assertion here with no mutation of its own — it guards an
+  # assumption about the BROWSER, exactly as `fitsViewport` does in that test.
+  TALL_240 = <<~JS.freeze
+    [{ b: [0, 0, 60, 240], k: 1, i: 0, o: 1,
+       p: [[0, 0], [60, 0], [60, 240], [0, 240], [0, 0]] }]
+  JS
+
+  test "a label hanging below the content box is clipped away, not printed over the ruler" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const pages = m.buildSheets(#{TALL_240}, m.PAPERS.Letter).pages
+        const probe = (page) => {
+          const svg = m.renderSheet(document, page,
+            { name: "tall.lbrn2", date: "2026-08-19", sizeLabel: () => "60 × 240 mm" })
+          svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+          svg.style.zIndex = "99999"
+          document.body.appendChild(svg)
+          try {
+            const host = svg.getBoundingClientRect()
+            const S = host.width / 215.9
+            const label = svg.querySelector("text[data-role='size']")
+            // AT THE DEFAULT `visiblePainted`, WHICH IS THE INSTRUMENT AND NOT AN OVERSIGHT. An
+            // earlier draft set `pointer-events: all` on the label, reasoning that a probe landing
+            // between two glyphs would be ambiguous between "clipped" and "missed the ink" — and
+            // that override turned the premise below into a lie, because it hit-tests a label
+            // that PAINTS NOTHING. Measured both ways: a labelNode carrying `fill="none"` —
+            // invisible on paper, on a sheet that still looks perfectly formed — was GREEN
+            // through this entire file with the override, and is RED on the premise without it.
+            // The ambiguity it was guarding against does not arise: Chrome hit-tests text by
+            // glyph CELL, so all 41 probes land (41 hits on the row below, 0 on this one).
+            const box = label.getBoundingClientRect()
+            const y = (box.top + box.bottom) / 2
+            let hits = 0
+            for (let i = 0; i <= 40; i++) {
+              const x = box.left + (box.width * i) / 40
+              if (document.elementsFromPoint(x, y).includes(label)) hits++
+            }
+            return {
+              hits, onScreen: box.right <= window.innerWidth && box.bottom <= window.innerHeight,
+              inkTop: (box.top - host.top) / S, inkBottom: (box.bottom - host.top) / S,
+            }
+          } finally { svg.remove() }
+        }
+        return JSON.stringify({ top: probe(pages[0]), below: probe(pages[1]) })
+      })()
+    JS
+
+    assert out["top"]["onScreen"] && out["below"]["onScreen"],
+           "a probe past the viewport edge hit-tests as empty, which reads as clipped"
+    # contentBox(Letter) ends at y 247.4 and the calibration strip runs to 269.4.
+    assert_operator out["top"]["inkTop"], :>, 247.4,
+                    "premise: the label must be aimed past the content box to be worth clipping"
+    assert_operator out["top"]["inkBottom"], :<, 269.4,
+                    "premise: and at the ruler rather than off the paper entirely"
+    assert_operator out["below"]["hits"], :>, 0, "premise: an in-bounds label paints at all"
+    assert_equal 0, out["top"]["hits"], "a label below the content box must be cut with it"
+  end
+
+  # A null label is OMITTED, not printed. MIXED, because an all-null input cannot tell "asked per
+  # shape" from "asked once and applied to none", and the `y` in the tuple is what says the label
+  # that survived belongs to the plate rather than to the hole.
+  test "a part whose sizeLabel returns null gets no label" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0],
+          { name: "two.lbrn2", date: "2026-08-19",
+            sizeLabel: (s) => (s.d != null ? null : "60 × 40 mm") })
+        return {
+          labels: Array.from(svg.querySelectorAll("text[data-role='size']"))
+                       .map((n) => [ n.textContent, Number(n.getAttribute("y")) ]),
+          texts: Array.from(svg.querySelectorAll("text")).map((t) => t.textContent),
+        }
+      })())
+    JS
+
+    # THE TWO REFUTES RUN FIRST, because minitest ends a test at its first failed assertion and
+    # both of the mutations they exist for ALSO change the tuple below — so behind it neither
+    # would ever execute, which is the `hasAnchor` defect recorded in the header-placement test
+    # one section up. Each has its own mutation and each fires alone, verbatim:
+    #   String(label) instead of the guard   Expected ["null", "60 × 40 mm", "two.lbrn2 ·
+    #                                        2026-08-19", …] to not include "null".
+    #   the `if (label)` guard dropped       an EMPTY <text> carrying data-role — `el`'s text door
+    #                                        skips a null rather than writing it, so the sheet
+    #                                        gains a labelled node with nothing in it, which the
+    #                                        tuple sees as ["", 13.6] and this line as "".
+    refute_includes out["texts"], "null", "a null label must be omitted, not printed"
+    refute_includes out["texts"], "", "an empty <text> is a label that was not omitted"
+    # AND THE SURVIVOR IS THE PLATE, NOT THE HOLE — which is what the `y` in the tuple says, and
+    # the only thing here that can see a label positioned from some other shape than its own.
+    assert_equal [ [ "60 × 40 mm", 43.6 ] ], out["labels"]
+  end
+
+
+  # ---- lib/print_sheet.js: the print document ---------------------------------------------------
+  #
+  # EVERY PAGE OF ONE GRID NOW SHARES ONE DOCUMENT, which is the fact this whole section turns on.
+  # Task 4 flagged two things forward on exactly that basis, and they get DIFFERENT treatment here:
+  #
+  #   `clipId` (`mp-clip-${col}-${row}`) is unique only WITHIN a grid — ASSERTED, twice, by the
+  #     own-sheet test and the print-twice test below.
+  #   the `xmlns` on the root <svg> is inert only while pages are appended as NODES — VERIFIED AND
+  #     DELIBERATELY NOT ASSERTED. Nothing in the module serializes (no outerHTML, innerHTML,
+  #     srcdoc or XMLSerializer anywhere in it, grepped), and removing the attribute leaves this
+  #     whole file green — so an assertion on it would go red only for a change that is harmless.
+  #     There is therefore no test below that mentions xmlns, and that is the finished answer to
+  #     the flag rather than an omission.
+  #
+  # AND EVERY TEST HERE CLEARS ITS FRAMES BEFORE IT RETURNS. in_print_sheet re-visits only when the
+  # path CHANGES, so the two or three browser round-trips inside one test share a document — a frame
+  # left behind by a throw is a frame the next round-trip counts.
+
+  # 400 x 40 on Letter: 3 columns, 1 row.
+  WIDE_400_40 = <<~JS.freeze
+    [{ b: [0, 0, 400, 40], k: 1, i: 0, o: 1, p: [[0, 0], [400, 40]] }]
+  JS
+
+  # A 3 x 2 GRID COMES FROM `TILED_3X2` ABOVE, not a second copy of it. Every test below that needs
+  # two rows uses it, because a one-row grid cannot tell `mp-clip-${col}-${row}` from
+  # `mp-clip-${col}` — every `row` is 0, so the second half of the key contributes nothing and
+  # dropping it stays green.
+  CLEAR_FRAMES = 'document.querySelectorAll(".measure-print-frame").forEach((f) => f.remove())'.freeze
+
+  # THE @page SIZE MUST MATCH THE SHEET'S OWN DECLARED SIZE, or the browser prints an A4-shaped page
+  # from a Letter-shaped SVG and clips a band off every tile.
+  #
+  # TWO PAPERS, NOT THE PLAN'S ONE — the same finding Task 4's scale test already recorded one layer
+  # down. Against Letter alone the whole rule can be a HARD-CODED STRING and the assertion stays
+  # green, while the A4, A3 and Tabloid the picker also offers all print declared as Letter.
+  #
+  # AND THROUGH THE CSSOM AS WELL AS THE SOURCE, because they are different claims and the source
+  # alone is the weaker one: a <style> built and never appended to `doc.head` still answers
+  # `textContent`, and a rule the parser rejects still reads back verbatim. `doc.styleSheets[0]` is
+  # the browser's own reparse — reaching it at all proves the sheet is live in that document, and
+  # `CSSPageRule.style.size` proves `@page` parsed rather than merely being present as text. Note
+  # Chrome re-serializes `margin: 0` as `0px`, which is why the two are asserted separately rather
+  # than by comparing cssText to the source.
+  #
+  # MUTATION-CHECKED FIVE WAYS, every actual copied out of the run:
+  #   the rule hard-coded to Letter   Expected: "210mm 297mm" Actual: "215.9mm 279.4mm" — the A4
+  #                                     half is the ONLY thing here that can see this
+  #   `margin: 0` dropped             Expected: "0px" Actual: ""
+  #   w and h swapped                 Expected: "215.9mm 279.4mm" Actual: "279.4mm 215.9mm"
+  #   the <style> given a type the    Expected: "215.9mm 279.4mm" Actual: nil — the source
+  #     browser will not apply          assertions below stay GREEN through it, which is what
+  #     (text/plain)                    shows the CSSOM half carries weight of its own
+  #   `doc.head.appendChild(style)`   RuntimeError: ERROR: Cannot read properties of null
+  #     deleted                         (reading 'textContent'), and the live-stylesheet test
+  #                                     below reports 1 -> 0 alongside it
+  test "the print document declares the paper in millimetres" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const declared = (paper) => {
+          const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, paper, #{META})
+          try {
+            const doc = frame.contentDocument
+            // GUARDED RATHER THAN `doc.styleSheets[0].cssRules` DIRECTLY. A sheet that never
+            // became live gives an empty list, and indexing it raises out through in_print_sheet
+            // as a bare TypeError — red, but red without saying what is wrong.
+            const sheet = doc.styleSheets[0]
+            const rule = sheet && Array.from(sheet.cssRules)
+                                       .find((r) => r.constructor.name === "CSSPageRule")
+            return {
+              source: doc.querySelector("style").textContent,
+              size: rule ? rule.style.size : null,
+              margin: rule ? rule.style.margin : null,
+            }
+          } finally { frame.remove() }
+        }
+        return JSON.stringify({ letter: declared(m.PAPERS.Letter), a4: declared(m.PAPERS.A4) })
+      })()
+    JS
+
+    # THE CSSOM FIRST, BECAUSE IT IS THE SUBSTANTIVE CLAIM and the source literals below
+    # cannot fire independently of it. Run the other way round, every mutation that changes
+    # what the rule MEANS reports on the source string and these four never execute —
+    # measured, not predicted: hard-coding the paper, dropping `margin: 0` and swapping w/h
+    # all did exactly that.
+    assert_equal "215.9mm 279.4mm", out["letter"]["size"], "the browser must have parsed an @page"
+    assert_equal "210mm 297mm", out["a4"]["size"], "and it must name THIS paper, not a literal"
+    # WITHOUT `margin: 0` the browser applies its own default page margin and then has to shrink a
+    # paper-sized SVG to fit inside it — a silently mis-scaled 1:1 print, which is the one failure
+    # this whole feature exists to prevent. No figure is quoted for that default: it was not
+    # measured here, and a print margin is not readable from the CSSOM.
+    #
+    # ONE PAPER FOR THE MARGIN, TWO FOR THE SIZE, and the asymmetry is deliberate: `margin: 0` has
+    # no paper in it, so an A4 copy of the next line would be an assertion that cannot fail unless
+    # the Letter one already has. The size assertions are the opposite — the second paper is the
+    # only thing that can see a hard-coded rule.
+    assert_equal "0px", out["letter"]["margin"]
+    # AND THE BYTES WE HAND THE PARSER, as a TRIPWIRE rather than a guard with a mutation of
+    # its own — the status this file already gives `refute_includes html, "measure-contour"`.
+    # It cannot be folded into the four above: Chrome re-serializes `margin: 0` as `0px`, so
+    # the CSSOM and the source are necessarily different strings.
+    assert_includes out["letter"]["source"], "@page { size: 215.9mm 279.4mm; margin: 0 }"
+    assert_includes out["a4"]["source"], "@page { size: 210mm 297mm; margin: 0 }"
+  end
+
+  # THE STYLESHEET MUST BE LIVE AND ITS SELECTORS MUST MATCH, which no assertion on the CSS TEXT can
+  # see. Every claim below is read out of the browser's computed style, so it fails if the <style>
+  # never reaches `doc.head`, if the selector stops matching, or if a declaration is dropped.
+  #
+  # `svg:last-child` IS NOT DECORATION: without it the last sheet also forces a break after itself
+  # and the job spools a TRAILING BLANK PAGE — one wasted sheet per print, on the one feature whose
+  # whole point is holding paper against hardware. It is the only reason this test needs THREE
+  # pages; the first two prove the break fires and the last proves it stops.
+  #
+  # `display: block` IS LOAD-BEARING TOO. An <svg> is inline by default, and CSS fragmentation
+  # breaks apply to block-level boxes — so an inline sheet ignores `break-after` entirely and the
+  # pages run together on one sheet.
+  #
+  # MUTATION-CHECKED FOUR ASSERTIONS, FIVE MUTATIONS, each actual copied out of the run:
+  #   the <style> never appended, or  Expected: 1 Actual: 0 (two mutations, same assertion)
+  #     given type="text/plain"
+  #   `svg:last-child` rule dropped   Expected: ["page", "page", "auto"]
+  #                                   Actual:   ["page", "page", "page"]
+  #   `display:block` dropped         Actual: ["inline", "inline", "inline"]
+  #   `html,body` narrowed to `html`  Expected: ["0px", "0px"] Actual: ["8px", "0px"]
+  test "the print stylesheet is live in the iframe and breaks after every sheet but the last" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{WIDE_400_40}, m.PAPERS.Letter, #{META})
+        try {
+          const doc = frame.contentDocument
+          const view = doc.defaultView
+          const svgs = Array.from(doc.querySelectorAll("svg"))
+          return JSON.stringify({
+            sheets: doc.styleSheets.length,
+            breakAfter: svgs.map((s) => view.getComputedStyle(s).breakAfter),
+            display: svgs.map((s) => view.getComputedStyle(s).display),
+            body: [ "margin", "padding" ].map((p) => view.getComputedStyle(doc.body)[p]),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 1, out["sheets"], "the <style> must be IN the document, not built and dropped"
+    assert_equal [ "block", "block", "block" ], out["display"],
+                 "an inline <svg> ignores break-after outright"
+    assert_equal [ "page", "page", "auto" ], out["breakAfter"],
+                 "a break after the LAST sheet spools a trailing blank page"
+    # The body's default 8 px margin would offset every sheet from the paper origin, and a
+    # paper-sized SVG plus a margin no longer fits on its own page.
+    assert_equal [ "0px", "0px" ], out["body"]
+  end
+
+  # THE DECLARED SIZE AND THE @page SIZE MUST COMPOSE, AND NOTHING ELSE IN THIS FILE ASSERTS THAT.
+  # Task 4 pins the <svg>'s own `width`/`height`/`viewBox`; the paper test above pins `@page`. Both
+  # are declarations. What a printer actually receives is the sheet's LAID-OUT box, and one line in
+  # this module's stylesheet can change that while every declaration stays word for word correct.
+  #
+  # DEMONSTRATED, NOT ARGUED: adding `transform: scale(0.9)` to the `svg` rule — a silent 10%
+  # mis-scale on every sheet, on every printer, which is the one failure this entire feature exists
+  # to prevent — left the file at 45 runs, 444 assertions, 0 failures before this test existed.
+  # `max-width: 100%` did the same, and is worse: the frame is 1 px wide (asserted below), so every
+  # sheet would clamp to a 1 px column.
+  #
+  # THE NUMBERS ARE MEASURED, NOT COMPUTED, and that is not fussiness. CSS defines 1 in as 96 px, so
+  # `215.9mm` is arithmetically 816 px — but Chrome quantizes layout to 1/64 px, so A4's 210 mm
+  # lands on 793.6875 and not the 793.7008 the arithmetic gives. A test that recomputed the
+  # conversion would be asserting against its own model of the browser (CLAUDE.md §14e); these came
+  # out of the browser.
+  #
+  # ALL FOUR PAPERS, because all four are in the picker, and one assertion for the lot so that a
+  # mutation moving every sheet prints every number rather than stopping at Letter.
+  #
+  # MUTATION-CHECKED, each actual copied out of the run, and each is the ONLY failure in the whole
+  # file — which is the reviewer's finding restated as a measurement:
+  #   `transform: scale(0.9)` added   Letter boxes [[734.39990234375, 950.39990234375],
+  #     to the `svg` rule               [734.39990234375, 950.400146484375]] — TWO entries, because
+  #                                     the transform introduces per-page float noise, and
+  #                                     scrollHeight is UNCHANGED at 6336 since a transform does
+  #                                     not affect layout. The box half of this assertion is the
+  #                                     only thing anywhere that sees a 10% mis-scale.
+  #   `max-width: 100%` added         Letter boxes [[1.0, 1056.0]] — the width alone collapses to
+  #                                     the 1 px frame, height and scrollHeight untouched. An
+  #                                     earlier draft of this row predicted [[1, 1.29...]] and
+  #                                     scrollHeight 8; both were wrong, which is why the numbers
+  #                                     here are copied rather than reasoned.
+  #   `svg:last-child` break rule     GREEN — a page break is not a layout box; the stylesheet test
+  #     dropped                         above owns that, and this one must not pretend to
+  test "every sheet lays out at exactly the paper it declares" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const laid = {}
+        for (const name of [ "Letter", "A4", "A3", "Tabloid" ]) {
+          const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS[name], #{META})
+          try {
+            const doc = frame.contentDocument
+            const svgs = Array.from(doc.querySelectorAll("svg"))
+            // DISTINCT BOXES, not the first one: every sheet in a document must lay out the same,
+            // and a per-page difference has to show as a second entry rather than be averaged away.
+            const boxes = svgs.map((n) => {
+              const r = n.getBoundingClientRect()
+              return JSON.stringify([ r.width, r.height ])
+            })
+            laid[name] = {
+              n: svgs.length,
+              boxes: Array.from(new Set(boxes)).map((b) => JSON.parse(b)),
+              // THE PAGES MUST ALSO STACK WITH NOTHING BETWEEN THEM. A body margin, a gap, or a
+              // sheet the browser broke in two all leave the boxes correct and this number wrong.
+              scrollHeight: doc.body.scrollHeight,
+              frameWidth: frame.getBoundingClientRect().width,
+            }
+          } finally { frame.remove() }
+        }
+        return JSON.stringify(laid)
+      })()
+    JS
+
+    normalised = out.transform_values do |v|
+      v.merge("boxes" => v["boxes"].map { |b| b.map(&:to_f) })
+    end
+
+    assert_equal(
+      { "Letter"  => { "n" => 6, "boxes" => [ [ 816.0, 1056.0 ] ],
+                       "scrollHeight" => 6336, "frameWidth" => 1 },
+        "A4"      => { "n" => 6, "boxes" => [ [ 793.6875, 1122.515625 ] ],
+                       "scrollHeight" => 6735, "frameWidth" => 1 },
+        "A3"      => { "n" => 2, "boxes" => [ [ 1122.515625, 1587.390625 ] ],
+                       "scrollHeight" => 3175, "frameWidth" => 1 },
+        "Tabloid" => { "n" => 2, "boxes" => [ [ 1056.0, 1632.0 ] ],
+                       "scrollHeight" => 3264, "frameWidth" => 1 } },
+      normalised,
+      "a sheet that lays out at any other size prints at any other scale"
+    )
+  end
+
+  # ONE SVG PER TILE — AND THEY MUST BE DIFFERENT TILES. A count alone is answered exactly as well
+  # by rendering `pages[0]` three times: three sheets, correctly numbered 1 of 3 to 3 of 3, carrying
+  # IDENTICAL geometry. That is Task 2's recorded `- originX` defect one layer up, and the plan's
+  # `assert_equal 3, count` cannot see it.
+  #
+  # TWO WITNESSES, DELIBERATELY. The sheet label is Task 6's furniture and says which page the
+  # renderer THOUGHT it was drawing; the page transform is buildSheets' own output and says where
+  # the geometry actually landed. A loop that renders one page repeatedly moves both; a loop that
+  # labels correctly while drawing one page's content moves only the second.
+  #
+  # MUTATION-CHECKED THREE WAYS, each firing a DIFFERENT assertion:
+  #   `renderSheet(doc, pages[0], meta)`  labels — Actual ["Sheet 1,1 of 3×1", "Sheet 1,1 of 3×1",
+  #     inside the loop                     "Sheet 1,1 of 3×1"], three sheets of page one
+  #   the appendChild dropped             count — Expected: 3 Actual: 0
+  #   `translateX` drops `- originX`      transforms — Expected: 3 Actual: 1. This is the one that
+  #     (Task 2's own recorded defect)     shows the label and the transform are not one
+  #                                         assertion: every label is still correct.
+  test "the print document holds one svg per tile, and each one is a different tile" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{WIDE_400_40}, m.PAPERS.Letter, #{META})
+        try {
+          const svgs = Array.from(frame.contentDocument.querySelectorAll("svg"))
+          return JSON.stringify({
+            count: svgs.length,
+            labels: svgs.map((s) => Array.from(s.querySelectorAll(":scope > text"))
+                                         .map((t) => t.textContent)
+                                         .find((t) => t.startsWith("Sheet")) || null),
+            transforms: svgs.map((s) => s.querySelector("[transform]").getAttribute("transform")),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 3, out["count"]
+    assert_equal [ "Sheet 1,1 of 3×1", "Sheet 2,1 of 3×1", "Sheet 3,1 of 3×1" ], out["labels"],
+                 "the pages must reach the document in grid order"
+    # DISTINCTNESS RATHER THAN THREE LITERALS: the numbers are content-box arithmetic that Task 2
+    # already pins, and restating them here would go red for a constant change that is nothing to
+    # do with this document.
+    assert_equal 3, out["transforms"].uniq.length,
+                 "three sheets drawing the same content is three identical pages"
+  end
+
+  # TASK 4 FLAG 1, CHECKED RATHER THAN ASSUMED. `clipId` is `mp-clip-${col}-${row}` — unique within
+  # one grid, and this task is what first puts a whole grid into ONE document, where a `url(#id)`
+  # resolves to the FIRST element carrying that id ANYWHERE IN THE DOCUMENT. So a key that collides
+  # makes a second-row sheet clip against the first row's <clipPath> rather than its own.
+  #
+  # A 3 x 2 GRID, because `(col, row)` must vary on BOTH axes: over the plan's one-row input every
+  # `row` is 0, so `mp-clip-${col}` is indistinguishable from the shipped key.
+  #
+  # HARMLESS TODAY, AND THAT IS THE REASON TO ASSERT IT RATHER THAN NOT TO: every page's clip rect
+  # is `contentBox(paper)`, identical on every sheet, so a collision changes no pixel right now and
+  # would start printing blank sheets the day a rect ever differs per page. `getElementById` is the
+  # browser's OWN resolution rule, not a re-implementation of it (CLAUDE.md §14e).
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   `mp-clip-${col}` (the row half   Expected: 6 Actual: 3 — this is what the plan's one-row
+  #     dropped)                         input cannot see
+  #   a bare constant id               Expected: 6 Actual: 1
+  #   the REFERENCE hard-coded to      own — Actual [true, false, false, false, false, false], and
+  #     `url(#mp-clip-0-0)` while        it is the ONLY failure in the whole file. Task 4's own
+  #     the ids stay unique              `refMatchesId` cannot see it: that test renders a SINGLE
+  #                                      page, whose id IS mp-clip-0-0.
+  #   the sheets never appended        premise — Expected: 6 Actual: 0
+  test "every sheet's clip resolves inside its own sheet" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
+        try {
+          const doc = frame.contentDocument
+          const svgs = Array.from(doc.querySelectorAll("svg"))
+          return JSON.stringify({
+            ids: svgs.map((s) => s.querySelector("clipPath").id),
+            own: svgs.map((s) => {
+              const ref = s.querySelector("[clip-path]").getAttribute("clip-path")
+              const target = doc.getElementById(ref.slice("url(#".length, -1))
+              return target !== null && target.closest("svg") === s
+            }),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 6, out["ids"].length, "premise: a 3 x 2 grid, so the row half of the key varies"
+    assert_equal 6, out["ids"].uniq.length, "one document, so the ids must be unique across it"
+    assert_equal [ true ] * 6, out["own"],
+                 "a colliding id makes a sheet clip against another sheet's window"
+  end
+
+  # THE FILENAME IS USER-CONTROLLED AND CAN LEGITIMATELY CONTAIN `<` ON A NAS-SCANNED SHARE, so the
+  # iframe document is built as NODES rather than by doc.write on an interpolated markup string.
+  # This iframe is SAME-ORIGIN, so markup written into it runs with this page's cookies behind it.
+  # The boxes sibling can use doc.write because its plan carries no user text; this one does.
+  #
+  # THE PLAN'S OWN FIXTURE WOULD HAVE FAILED AGAINST CORRECT CODE — the same trap Task 7's own
+  # markup test already records one section up, where a cut fixture silently stopped asserting.
+  # Rendered and read back, `<img src=x onerror=alert(1)>.svg` comes out of Task 7's truncation as
+  # `<img src…(1)>.svg · 2026-08-19`, so the plan's
+  # `assert_equal "<img src=x onerror=alert(1)>.svg · 2026-08-19"` can never pass. The shorter
+  # payload proves the same property — doc.write parses either one into an <img> — and it was
+  # MEASURED rather than reasoned about: padding the name one character at a time, `<img src=x>`
+  # takes five more characters before the ellipsis appears, so there are five characters of
+  # headroom. The premise below is what keeps that honest if a budget change ever eats them.
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   THE PLAN'S OWN STEP 5 — the      Expected ["HTML", "HEAD", "STYLE", "BODY", "P", "IMG"] to
+  #     document built by doc.write      not include "IMG". An <img> minted out of a filename, in
+  #                                      a same-origin document, with this page's cookies behind it
+  #   `el`'s text door spelled          the same assertion, the tag list gaining "IMG" among the
+  #     `node.innerHTML = text`          sheet's own elements
+  #   the sheets never appended         premise — Expected ["HTML", "HEAD", "STYLE", "BODY"] to
+  #                                      include "svg"; an empty document has no <img> either
+  #   the header's ` · ${date}` suffix  Expected: "<img src=x> · 2026-08-19" Actual: "<img src=x>"
+  #     dropped                          — the one that fires the equality ALONE
+  test "a filename containing markup lands as text, injecting nothing" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, m.PAPERS.Letter,
+          { name: "<img src=x>", date: "2026-08-19", sizeLabel: () => null })
+        try {
+          const doc = frame.contentDocument
+          return JSON.stringify({
+            // THE WHOLE SUBTREE, not a search for <img>: a filename parsed as markup can mint any
+            // element, and a document quietly carrying half a filename as unknown elements is the
+            // same defect with a less alarming name.
+            tags: Array.from(doc.querySelectorAll("*")).map((n) => n.tagName),
+            header: Array.from(doc.querySelectorAll("text")).map((t) => t.textContent)
+                         .find((t) => t.includes("src=x")) || "",
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    # THE HEADLINE FIRST. minitest ends a test at its first failed assertion, and the doc.write
+    # mutation this exists for ALSO empties the document — so behind the premise below, the one
+    # assertion about injection would never execute.
+    refute_includes out["tags"], "IMG", "the name must never be parsed as markup"
+    assert_includes out["tags"], "svg", "premise: an empty document has no <img> either"
+    refute_includes out["header"], "…",
+                    "premise: the fixture must stay under the header budget or the line below it " \
+                    "stops asserting that the name arrived whole"
+    assert_equal "<img src=x> · 2026-08-19", out["header"]
+  end
+
+  # A SECOND PRINT MUST NOT LEAVE THE FIRST FRAME BEHIND, accumulating a hidden iframe per click.
+  #
+  # AND IT MUST BUILD A FRESH DOCUMENT RATHER THAN APPEND TO THE LAST ONE — Task 4's flag 1 again,
+  # from the other side: "a re-print reused an uncleared frame" is precisely the case that would
+  # break the clip key, because the second grid's `(col, row)` pairs repeat the first's. The frame
+  # count alone cannot see it (reusing the one frame also leaves exactly one), so the surviving
+  # document is counted too.
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   the removal line deleted        Expected: 1 Actual: 2
+  #   the removal querying a class    Expected: 1 Actual: 2 — the one-sided edit of a twice-spelled
+  #     nothing sets                    name, this repo's recorded shape
+  #   the frame given a class the     Expected: 1 Actual: 0 (and the hidden-frame test below
+  #     removal does not query          reports the class itself)
+  #   the existing frame REUSED and   Expected: 6 Actual: 12 — Task 4's flag 1 from the other side,
+  #     appended into                   and the frame count stays 1 right through it
+  test "printing twice leaves exactly one frame, holding one grid" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        try {
+          m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
+          const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
+          const doc = frame.contentDocument
+          const ids = Array.from(doc.querySelectorAll("clipPath")).map((n) => n.id)
+          return JSON.stringify({
+            frames: document.querySelectorAll(".measure-print-frame").length,
+            svgs: doc.querySelectorAll("svg").length,
+            unique: new Set(ids).size,
+          })
+        } finally { #{CLEAR_FRAMES} }
+      })()
+    JS
+
+    assert_equal 1, out["frames"]
+    assert_equal 6, out["svgs"], "a re-print must build a FRESH document, not append to the last"
+    assert_equal 6, out["unique"], "a reused document repeats every clip id of the first grid"
+  end
+
+  # THE REFUSAL RUNS BEFORE THE FRAME EXISTS, which is a claim about ORDER and nothing else asserts
+  # it. buildSheets throws for an empty selection and for a job over MAX_SHEETS; build the frame
+  # first and every refusal leaves a hidden iframe attached to the page that nothing will ever
+  # remove — one per refused click, since the removal at the top of the next call only reaches the
+  # FIRST of them.
+  #
+  # MUTATION-CHECKED TWICE, one per assertion:
+  #   buildSheets moved BELOW the      Expected: 0 Actual: 1
+  #     frame creation
+  #   the empty-selection refusal      Expected: "Nothing to print." Actual: "NO ERROR"
+  #     deleted from buildSheets
+  test "a refused selection leaves no hidden frame behind" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        // IN A `finally` LIKE EVERY OTHER TEST IN THIS SECTION. The inner try/catch is what turns
+        // the refusal into a value to assert on; the outer one is the frame cleanup, and running
+        // them as one would either swallow the cleanup or lose the message.
+        try {
+          let message = "NO ERROR"
+          try { m.buildPrintFrame([], m.PAPERS.Letter, #{META}) }
+          catch (e) { message = e.message }
+          return JSON.stringify({
+            message, frames: document.querySelectorAll(".measure-print-frame").length,
+          })
+        } finally { #{CLEAR_FRAMES} }
+      })()
+    JS
+
+    # THE FRAME COUNT FIRST, because it is the only claim this test makes that nothing else makes.
+    # The message is already pinned by the empty-selection test near the top of this file, so
+    # behind it a copy edit there would take this line out of service without going red — the same
+    # ordering argument the injection test below makes.
+    assert_equal 0, out["frames"], "buildSheets must run BEFORE the frame is created"
+    assert_equal "Nothing to print.", out["message"], "the caller surfaces what buildSheets threw"
+  end
+
+  # THE FRAME IS AN IMPLEMENTATION DETAIL OF PRINTING AND MUST LOOK LIKE ONE ON SCREEN. A bare
+  # <iframe> is 300 x 150 with a 2 px inset border, in flow — so dropping the inline style drops a
+  # visible empty box into the page every time somebody prints, and dropping `aria-hidden` puts an
+  # empty document into the accessibility tree.
+  #
+  # THE 1 x 1 RECT IS ALSO WHAT PINS `border: 0`: getBoundingClientRect is the border box, so the
+  # default border reads as 4 x 4 — MEASURED by dropping it, not predicted.
+  #
+  # MUTATION-CHECKED FIVE WAYS, one per assertion:
+  #   the class changed on the        Expected: "measure-print-frame" Actual: "mp-frame"
+  #     element
+  #   `aria-hidden` dropped           Expected: "true" Actual: nil
+  #   the whole inline style dropped  Expected: "fixed" Actual: "static"
+  #   `opacity:0` -> `opacity:1`      Expected: "0" Actual: "1" — position alone rides along
+  #                                     behind the whole-style mutation, so it needs its own
+  #   `border:0` dropped              Expected: [1, 1] Actual: [4, 4]
+  test "the print frame is hidden and out of the accessibility tree" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, m.PAPERS.Letter, #{META})
+        try {
+          const cs = getComputedStyle(frame)
+          const r = frame.getBoundingClientRect()
+          return JSON.stringify({
+            ariaHidden: frame.getAttribute("aria-hidden"),
+            className: frame.className,
+            opacity: cs.opacity, position: cs.position,
+            size: [ r.width, r.height ],
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    # The class is the contract the removal above and Task 11's stub both key on.
+    assert_equal "measure-print-frame", out["className"]
+    assert_equal "true", out["ariaHidden"]
+    assert_equal "fixed", out["position"]
+    assert_equal "0", out["opacity"]
+    assert_equal [ 1, 1 ], out["size"]
+  end
+
+
+
+  # ---- lib/print_sheet.js: printSheets ------------------------------------------------------------
+  #
+  # THE `print` SEAM IS WHAT MAKES ANY OF THIS REACHABLE, and it was added because the obvious
+  # alternative does not exist. The frame's window is a SEPARATE REALM and is created inside
+  # printSheets, which spools it in the same synchronous turn — so a stub of the PAGE's
+  # `window.print` can never be the function that runs. Probed, rather than assumed: see the
+  # realm assertion below. What is still NOT covered, stated plainly: the deferred `load` arm,
+  # which this browser never takes (`readyState` is "complete" at append), and nothing at all
+  # about a real print dialog.
+
+  # WHICH WINDOW, HOW MANY TIMES, AND WHEN — three claims that fail in three different ways.
+  # Spooling `window` instead of `frame.contentWindow` prints the MEASURE PAGE, at screen scale,
+  # with the app chrome on it. Spooling twice puts two dialogs in front of the user. And spooling
+  # late means the `readyState` branch silently stopped being the one taken.
+  #
+  # THE COUNT IS TAKEN TWICE, AND `afterLoad` PINS THAT go() IS NOT REACHED A SECOND TIME. It does
+  # NOT pin "the day `load` starts firing" — an earlier draft said that, and it is wrong: `load`
+  # already fires here, synchronously inside `appendChild`, at the same instant `readyState`
+  # becomes "complete". The listener printSheets installs afterwards is simply too late to hear an
+  # event already dispatched, which is why the "register on both arms" mutation is inert TODAY.
+  # Move that registration before the append and it stops being inert: both arms then fire and the
+  # user gets two dialogs. This assertion is what would catch that.
+  #
+  # MUTATION-CHECKED FOUR WAYS, each actual copied out of the run:
+  #   `print(window)` instead of        Expected true to be truthy — "the frame's own window, not
+  #     `print(frame.contentWindow)`      the page's"
+  #   `go()` called twice,              the spool must be reached exactly once. Expected: 1
+  #     synchronously                     Actual: 2
+  #   the `readyState === "complete"`   the same assertion, Expected: 1 Actual: 0 — nothing prints
+  #     arm deleted, leaving only the     at all, which is the dead-fallback finding above
+  #     load listener
+  #   the load listener registered on   GREEN, before AND after the wait — recorded, not skipped
+  #     BOTH arms                         (see the paragraph above for why)
+  test "printSheets spools the frame's own window, exactly once, before it returns" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const seen = []
+        let sheets
+        try {
+          sheets = m.printSheets(#{WIDE_400_40}, m.PAPERS.Letter, #{META}, (w) => {
+            const frame = document.querySelector(".measure-print-frame")
+            seen.push({
+              isFrameWindow: w === frame.contentWindow,
+              isPageWindow: w === window,
+              // THE REALM, which is the whole reason this seam exists rather than a stub of
+              // window.print: the frame's print is not the page's function at all, and it does
+              // not exist until printSheets has built the frame and spooled it in one turn.
+              separateRealm: w.print !== window.print,
+              sheetsInIt: w.document.querySelectorAll("svg").length,
+            })
+          })
+        } catch (e) { #{CLEAR_FRAMES}; throw e }
+        const immediate = seen.length
+        // 400 ms, the same window probed for the document's survival. Long enough for a load
+        // event if one were coming; measured, none is (see the comment above the test).
+        return new Promise((resolve) => setTimeout(() => {
+          try {
+            resolve(JSON.stringify({ sheets, immediate, afterLoad: seen.length, seen }))
+          } finally { #{CLEAR_FRAMES} }
+        }, 400))
+      })()
+    JS
+
+    assert_equal 1, out["afterLoad"], "the spool must be reached exactly once"
+    got = out["seen"][0]
+    assert got["isFrameWindow"], "the frame's own window, not the page's"
+    refute got["isPageWindow"], "spooling the page prints the Measure view at screen scale"
+    assert got["separateRealm"], "premise: a page-side stub of window.print could never reach this"
+    assert_equal 3, got["sheetsInIt"], "and the window it spools is the one holding the sheets"
+    # SYNCHRONOUSLY, which is what says the readyState branch is the one being taken. Today this
+    # cannot differ from `afterLoad` — nothing ever arrives late — so read it as the assertion
+    # that names the CLAIM, with the pair above as the tripwire for the day that stops being true.
+    assert_equal 1, out["immediate"], "printSheets must spool before it returns"
+    assert_equal 3, out["sheets"], "and it reports the sheet count it built"
+  end
+
+  # THE DEFAULT SPOOLER, WHICH THE SEAM ITSELF CANNOT REACH — omit the argument and it is handed a
+  # real window with a real print dialog behind it. Exported for exactly this, as `el` is.
+  #
+  # MUTATION-CHECKED TWICE: dropping `w.focus()` is RED (Expected: ["focus", "print"] Actual:
+  # ["print"]), and reversing the two is RED with Actual ["print", "focus"] — which is the point of
+  # asserting a LIST rather than two booleans, since both calls happen either way.
+  test "the default spooler focuses the window before it prints it" do
+    calls = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const calls = []
+        m.spool({ focus: () => calls.push("focus"), print: () => calls.push("print") })
+        return calls
+      })())
+    JS
+
+    assert_equal [ "focus", "print" ], calls
+  end
+
+  # ---- end to end, through real clicks --------------------------------------------------------
+  #
+  # SUBSTRING MATCHING IS WHY ALMOST EVERY READOUT ASSERTION BELOW IS `exact_text`. Capybara's
+  # `text: "1 part"` is a SUBSTRING test, so it matches "1 parts" just as happily — which makes
+  # every plural ternary in the controller (`selectionStatus`, `refreshPrintBar`) unmutatable
+  # through it. Verified, not assumed: with the plan's own literal assertions restored, dropping
+  # BOTH ternaries — and `clearMarks`' `this.marked.clear()` with them — left the file entirely
+  # GREEN, 60 runs 0 failures. Three green-over-broken in one run.
+
+  test "Select parts turns a click into a selection and back again" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    click_plate
+    assert_selector ".measure-contour--marked", count: 1
+    # BOTH HALVES OF THE READOUT, EXACTLY. The size comes first because picking parts and
+    # learning their sizes are one gesture; the selection summary follows it.
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm · 1 part · 60 × 40 mm"
+
+    click_plate
+    assert_no_selector ".measure-contour--marked"
+    assert_selector ".measure-dims",
+                    exact_text: "60 × 40 mm · nothing selected · Print all prints the whole file"
+  end
+
+  # THE TOGGLE SAYS WHICH MODE YOU ARE IN, in its label and in aria-pressed, and the root class is
+  # what the `cursor: copy` rule keys on. Nothing else asserts any of the three.
+  test "the select toggle reports the mode it is in" do
+    open_measure_view(@nested_id)
+    toggle = find("[data-measure-target='selectToggle']")
+    assert_equal "false", toggle["aria-pressed"]
+
+    click_on "Select parts"
+    assert_equal "Done selecting", toggle.text
+    assert_equal "true", toggle["aria-pressed"]
+    assert_selector ".measure-view--selecting"
+    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+
+    click_on "Done selecting"
+    assert_equal "Select parts", toggle.text
+    assert_equal "false", toggle["aria-pressed"]
+    assert_no_selector ".measure-view--selecting"
+    assert_selector ".measure-dims", exact_text: "click a contour to measure"
+  end
+
+  # THE FOUR CURSOR STATES, AND THE ONE THAT NEEDED A SPECIFICITY FIX. `.measure-view--selecting
+  # .measure-stage svg` and `.measure-stage svg.is-panning` are BOTH (0,2,1), and the selecting rule
+  # is 30 lines later — so without `:not(.is-panning)` it wins the tie and a drag in select mode
+  # shows `copy`, silently removing the grab affordance in the one mode where users pan most.
+  #
+  # `is-panning` IS APPLIED DIRECTLY rather than by simulating a drag: the class is what
+  # startPan/endPan toggle, so driving a real pointer sequence would test Selenium's input
+  # synthesis, not the cascade this exists for. Mutation-checked by removing `:not(.is-panning)`:
+  # RED on the fourth row, `Expected: "grabbing"  Actual: "copy"`.
+  test "the cursor names the gesture in every mode" do
+    open_measure_view(@nested_id)
+    cursors = ->(*_) { page.evaluate_script(<<~JS) }
+      (() => {
+        const view = document.querySelector(".measure-view")
+        const svg = document.querySelector(".measure-stage svg")
+        const read = () => getComputedStyle(svg).cursor
+        const out = {}
+        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
+        out.idle = read()
+        svg.classList.add("is-panning");    out.panning = read()
+        svg.classList.remove("is-panning"); view.classList.add("measure-view--selecting")
+        out.selecting = read()
+        svg.classList.add("is-panning");    out.selectingAndPanning = read()
+        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
+        return JSON.stringify(out)
+      })()
+    JS
+
+    assert_equal({ "idle" => "crosshair", "panning" => "grabbing",
+                   "selecting" => "copy", "selectingAndPanning" => "grabbing" },
+                 JSON.parse(cursors.call))
+  end
+
+  # THE READOUT MUST STILL WORK WHILE SELECTING — picking parts and learning their sizes are the
+  # same gesture, and a mode that silenced the measurement would make you leave it to check a size.
+  # THE HOLE, NOT THE PLATE, because it is the one shape whose two halves differ: the server gave
+  # it a diameter, so `sizeLabel` says ⌀10 while the selection summary's union says 10 × 10. On the
+  # plate the two halves are the same string and dropping either one stays green.
+  test "selecting a part still reports its size" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    contour_with_min_x(-5).click
+
+    assert_selector ".measure-dims", exact_text: "⌀10 mm · 1 part · 10 × 10 mm"
+  end
+
+  # Off by default: the view behaves exactly as it did before this feature until the toggle is on.
+  test "a click outside select mode marks nothing" do
+    open_measure_view(@nested_id)
+
+    click_plate
+
+    assert_no_selector ".measure-contour--marked"
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+  end
+
+  # BOTH HIGHLIGHTS AT ONCE. --selected answers "what am I reading" and --marked "what will
+  # print", and clicking in select mode does both — so if either rule hid the other, one of the
+  # two questions would be unanswerable exactly when both matter. The stroke is --selected's
+  # (declared later in the sheet), the fill tint is --marked's (which neither of the others sets).
+  test "a contour that is both read and selected shows both states" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    click_plate
+    plate = contour_with_min_x(-30)
+
+    assert plate[:class].include?("measure-contour--marked"), "it must be in the print set"
+    assert plate[:class].include?("measure-contour--selected"), "and it must be the one being read"
+    # COMPUTED, not declared: reading the attribute reports what we WROTE even when a rule outranks
+    # it — that is how an attribute-based version of the sibling assertion in lbrn_measure_test.rb
+    # stayed green over a stylesheet that had flattened every colour.
+    style = plate.style("stroke", "fill")
+    assert_equal "rgb(221, 68, 0)", style["stroke"], "--selected's stroke must win"
+    assert_equal "rgba(0, 102, 204, 0.16)", style["fill"], "--marked's tint must still show"
+  end
+
+  # ⌥-CLICK WIDENS TO THE WHOLE OBJECT, and on a PARTLY-marked object it COMPLETES rather than
+  # inverts — flipping each contour individually would leave the object half in the print set,
+  # which is never what clicking the object meant.
+  #
+  # DRIVEN THROUGH REAL ⌥-CLICKS, NOT BY CALLING toggleMarks. The plan said no fixture had a
+  # multi-contour object and told this test to hand `toggleMarks` an array directly; that is
+  # false — text-backup-path.lbrn2 is exactly that fixture, written for LbrnGeometry's own
+  # object-grouping test, and its own header comment says so ("both contours must share the
+  # Text's object id, so alt-click reports the whole word"). Going through the click covers
+  # three things the direct call cannot: that `event.altKey` is read at all, that `byObject`
+  # resolves the sibling set, and that the selecting arm reports the OBJECT's union rather than
+  # the clicked contour's own size.
+  test "widening to an object completes it rather than inverting it" do
+    open_measure_view(@text_id)
+    click_on "Select parts"
+
+    # The first letter alone: a plain click must NOT widen, or the count below cannot tell
+    # "completes" from "was already whole".
+    contour_with_min_x(0).click
+    assert_selector ".measure-contour--marked", count: 1
+    assert_selector ".measure-dims", exact_text: "10 × 10 mm · 1 part · 10 × 10 mm"
+
+    contour_with_min_x(0).click(:alt)
+
+    assert_selector ".measure-contour--marked", count: 2
+    # 30 × 10 IS THE OBJECT'S UNION, and it is the only number here that can see the selecting
+    # arm's own `useObject` branch: report the clicked contour instead and this reads 10 × 10.
+    assert_selector ".measure-dims", exact_text: "30 × 10 mm · 2 parts · 30 × 10 mm"
+
+    # And a whole object that is already whole inverts, which is the other half of the rule.
+    contour_with_min_x(0).click(:alt)
+    assert_no_selector ".measure-contour--marked"
+  end
+
+  # THE MARK LANDS ON THE DRAWN LINE, NOT ON THE GROUP OR THE TRANSPARENT TWIN. An open contour is
+  # a <g> holding a fat invisible hit twin and the 1px line you can actually see, so
+  # `nodeByShape` must record the line — `top.__visible || top` — exactly as styleNode() resolves
+  # one. Recording the GROUP instead is invisible to a `.measure-contour--marked` count, because
+  # the class lands on the <g> and the selector still matches it; what changes is that the <g>'s
+  # stroke is INHERITED and the line's own presentation attribute outranks it, so the drawing does
+  # not move at all. Hence a computed colour on the line itself, and a selector that names the
+  # element the class has to be on.
+  test "marking an open contour marks the line you can see" do
+    open_measure_view(@open_id)
+    click_on "Select parts"
+
+    line = all("svg polyline.measure-contour", visible: :all).first
+    assert_equal "rgb(255, 0, 0)", line.style("stroke")["stroke"], "premise: layer 0 is red here"
+
+    click_open_line
+    # Reading is moved onto another shape so --selected and --hover are off the line and --marked
+    # is the only rule left that can colour it.
+    contour_with_min_x(40).click
+
+    assert_selector "polyline.measure-contour.measure-contour--marked", count: 1, visible: :all
+    assert_equal "rgb(0, 102, 204)", line.style("stroke")["stroke"], "--marked must reach the line"
+    # AND THE TINT MUST NOT REACH IT. `--marked` sets `fill: rgba(0,102,204,.16)`, which is the
+    # channel that survives `--selected` — but an OPEN contour has no interior, so the tint paints a
+    # meaningless blob between its two ends. `.measure-contour--open.measure-contour--marked` exists
+    # for exactly that and, until this line, had never been shown to fail: deleting it left all 73
+    # tests green while the fill computed rgba(0, 102, 204, 0.16) instead of none. Reading `stroke`
+    # stopped one property short (§15).
+    assert_equal "none", line.style("fill")["fill"], "an open contour takes the stroke, not the tint"
+  end
+
+  test "Clear empties the set" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    # HIDDEN WHILE THE SET IS EMPTY, and this and the ✕ Image test's matching line are the only
+    # assertions anywhere that say so. The `hidden` attribute alone does nothing to a `.btn` —
+    # `.btn { display: inline-block }` outranks the UA rule — so `.measure-actions .btn[hidden]`
+    # exists to make it real. MUTATION-CHECKED by deleting that rule: RED here, "expected to find
+    # non-visible css \"[data-measure-target='clearButton']\" but there were no matches. Also
+    # found \"Clear\"". This one fires before any controller code has touched the button, so it
+    # is the assertion that covers the ERB attribute and the CSS rule together.
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+
+    click_plate
+    contour_with_min_x(-5).click
+    assert_selector ".measure-contour--marked", count: 2
+    assert_selector "[data-measure-target='clearButton']", visible: :visible
+
+    click_on "Clear"
+
+    assert_no_selector ".measure-contour--marked"
+    # THE SET, NOT JUST THE CLASSES. Removing the classes and leaving `this.marked` populated
+    # looks identical on screen and prints two parts anyway; the button label is the only thing
+    # in the DOM that reads the set's size.
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+  end
+
+  # THE BUTTON SAYS WHAT WILL HAPPEN. An empty set prints the whole file, and the only thing
+  # standing between a user and an accidental six-sheet job is that the label told them.
+  test "the print button names what it will print" do
+    open_measure_view(@nested_id)
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+
+    click_on "Select parts"
+    click_plate
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+
+    contour_with_min_x(-5).click
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
+  end
+
+  # ✕ IMAGE LEAVES NOTHING BEHIND, AND EVERY LEAK IT COULD LEAVE IS SILENT. The poster hides the
+  # whole actions bar (`display: none` without --ready), so a stale print set, a stale mode and a
+  # stale toggle label are all invisible until Measure is clicked again — at which point the
+  # button promises to print parts that are not marked, are not on screen, and are not even the
+  # objects the new payload drew.
+  test "✕ Image drops the print set and leaves select mode" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    click_plate
+    contour_with_min_x(-5).click
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
+
+    click_on "✕ Image"
+
+    # nodeByShape holds one SVG node per contour and nothing in the DOM can see it — but a Map
+    # never emptied is a live reference to every node of every file measured in this tab.
+    assert_equal [ 0, 0, false ],
+                 in_measure_controller("[c.marked.size, c.nodeByShape.size, c.selecting]")
+
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_no_selector ".measure-contour--marked"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+    assert_no_selector ".measure-view--selecting"
+    toggle = find("[data-measure-target='selectToggle']")
+    assert_equal "Select parts", toggle.text, "the toggle must not come back reading the other mode"
+    assert_equal "false", toggle["aria-pressed"]
+  end
+
+  # TWO CLAIMS NOTHING IN THE DOM CAN ANSWER, and neither has a reader until the print wiring
+  # lands — which is exactly why they are asserted here rather than left for it to discover.
+  # `name` MUST BE DECLARED IN `static values`: Stimulus silently ignores a data-*-value attribute
+  # the controller does not declare, so `nameValue` is `undefined` with no error and no warning,
+  # and the only symptom is an empty filename on every printed sheet. `allShapes` is what an empty
+  # selection prints — the whole file — and dropping the line that records it is invisible to
+  # every other assertion in this file (verified: that mutation is GREEN without this test).
+  test "the controller holds what the printer will need: the file's name and all its shapes" do
+    open_measure_view(@nested_id)
+
+    assert_equal [ NESTED, 2 ], in_measure_controller("[c.nameValue, c.allShapes.length]")
+  end
+
+  # The whole mode, driven the way a user drives it, with the console watched. Stimulus resolves
+  # an action's method only at DISPATCH, so a control whose method never landed logs
+  # `Error: Action "click->measure#print" references undefined method "print"` — loud, unlike the
+  # silent data-controller no-op §14d records, and invisible to every assertion above.
+  test "a full select-and-clear round trip logs no console error" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    click_plate
+    contour_with_min_x(-5).click
+    click_on "Clear"
+    click_on "Done selecting"
+
+    assert_no_console_errors
+  end
+
+  # THE END-TO-END SCALE ASSERTION, and the one with teeth: it proves the REAL payload reaches the
+  # sheet at 1:1, which every synthetic test above deliberately cannot. The fixture's plate is
+  # 60 x 40 mm, so its printed polygon must span 60 by 40 user units on a sheet whose user units
+  # are millimetres.
+  #
+  # THE POLYGON COUNT IS PART OF THE CLAIM, NOT DECORATION. nested-plate carries two contours and
+  # `doc.querySelector` takes the FIRST, so without the count a print() that ignored `this.marked`
+  # and always printed `allShapes` would still put the plate first and every number below would
+  # still be right.
+  test "a real selected part reaches the sheet at exactly its measured size" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
+    click_on "Print 1 part"
+
+    assert_equal 1, page.evaluate_script("window.__printed"), "Print must reach the spooler"
+    span = JSON.parse(page.evaluate_script(<<~JS))
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const polys = doc.querySelectorAll("g polygon")
+        const pts = polys[0].getAttribute("points")
+          .trim().split(/\\s+/).map((p) => p.split(",").map(Number))
+        const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
+        return JSON.stringify({
+          w: Math.max(...xs) - Math.min(...xs),
+          h: Math.max(...ys) - Math.min(...ys),
+          svgW: doc.querySelector("svg").getAttribute("width"),
+          polygons: polys.length,
+          // WHERE ON THE PAPER, NOT JUST HOW BIG. Every other assertion here reads the
+          // UNTRANSFORMED `points`, which is identical whatever datum the page was laid out
+          // against — so dropping `- box[0]` from translateX leaves this whole end-to-end tier
+          // green (measured; three module-tier tests catch it, none here). nested-plate spans
+          // x -30..30, y -20..20, so on Letter the content origin (10, 17) less the selection's
+          // own minimum is exactly translate(40 37): the case where a datum bug clips half the
+          // plate off the sheet.
+          transform: doc.querySelector("g[transform]").getAttribute("transform"),
+        })
+      })()
+    JS
+
+    assert_in_delta 60.0, span["w"], 0.05
+    assert_in_delta 40.0, span["h"], 0.05
+    assert_equal "215.9mm", span["svgW"]
+    assert_equal 1, span["polygons"], "the MARKED set prints, not the whole file"
+    assert_equal "translate(40 37)", span["transform"], "and it lands where the datum says"
+  end
+
+  # TWO REAL PARTS KEEP THEIR REAL SEPARATION. bezier-circle.lbrn2's circle reaches x -10..10 and
+  # its square x 40..60, so their left edges are 50 mm apart in the file and must be 50 mm apart
+  # on the sheet.
+  test "two real selected parts keep their separation on the sheet" do
+    open_measure_view(@apart_id)
+    stub_print!
+    click_on "Select parts"
+    contour_with_min_x(-10).click
+    contour_with_min_x(40).click
+    click_on "Print 2 parts"
+
+    gap = page.evaluate_script(<<~JS)
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const lefts = Array.from(doc.querySelectorAll("g polygon")).map((n) =>
+          Math.min(...n.getAttribute("points").trim().split(/\\s+/).map((p) => parseFloat(p))))
+        return Math.max(...lefts) - Math.min(...lefts)
+      })()
+    JS
+
+    assert_in_delta 50.0, gap, 0.05
+  end
+
+  # A ROUND PART PRINTS ITS DIAMETER, AND THIS IS §14h's MEASURE-AFTER-THINNING TRAP WRITTEN AS A
+  # TEST. The label is the CONTROLLER's own sizeLabel, which reads `d` and `b` — the server's
+  # FULL-RESOLUTION numbers. Re-deriving it inside print() from `shape.p`, the thinned drawing
+  # points, is the mutation this exists for. It loses the ⌀ because THE CLIENT HAS NO CIRCULARITY
+  # TEST — `d` is the server's decision, made from full-resolution points, and `p` carries no way to
+  # recover it. (Not because this hole thins below MIN_CIRCLE_POINTS: measured, it keeps 49 points
+  # against a floor of 12.)
+  # so it prints a bounding box where a ⌀ belongs. MUTATION-CHECKED, actual copied out of the run:
+  # Expected: "⌀10 mm" Actual: "10 × 10 mm". Note what that actual is NOT — the thinned span here
+  # is not visibly wrong, it is 10 to the tenth this readout rounds to. What the mutation destroys
+  # is the ⌀ itself, so the assertion has to be on the WHOLE label; one on the number alone would
+  # have stayed green over it.
+  #
+  # NOTHING ELSE IN THIS FILE CAN SEE IT: every label assertion in the module tier renders with a
+  # literal SIZE_LABEL constant of its own, so the controller could hand printSheets any function
+  # at all and stay green.
+  test "a round part prints its diameter, not a bounding box" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    contour_with_min_x(-5).click
+    click_on "Print 1 part"
+
+    label = page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("text[data-role='size']").textContent
+    JS
+
+    assert_equal "⌀10 mm", label
+  end
+
+  # THE `meta` THE CONTROLLER PASSES IS ITS OWN FILE'S, and nothing else in this file asserts it.
+  # Every header test in the module tier renders with the literal META constant, so `name:
+  # this.nameValue` and `date: new Date()…` could both be dropped and that whole tier stays green
+  # while every sheet prints with a blank filename and no date — the exact failure the `static
+  # values` declaration exists to prevent one layer up.
+  #
+  # sample.lbrn2 RATHER THAN nested-plate.lbrn2, BECAUSE THE HEADER TRUNCATES — PROBED, not
+  # predicted: pointed at nested-plate this same test reads "nested-p…te.lbrn2 · 2026-08-20".
+  # "nested-plate.lbrn2" costs 50.85 mm against a Letter name budget of 49.85, so an assertion
+  # there would be pinning truncateMiddle's arithmetic, which Task 6 already pins, instead of the
+  # wiring. "sample.lbrn2" costs 33.9 and fits whole, which is what the pass below shows.
+  test "the printed header carries this file's own name and today's date" do
+    open_measure_view(@open_id)
+    stub_print!
+    click_on "Print all"
+
+    # `svg > text` IS THE FURNITURE, DIRECT CHILDREN ONLY: every size label lives inside the
+    # clipped, translated group, and the header is the first text furniture() appends.
+    header = page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("svg > text").textContent
+    JS
+
+    # A DATE-SHAPED REGEX RATHER THAN TODAY'S LITERAL: `toISOString` is UTC and Ruby's `Date.today`
+    # is local, so an equality here would flake for whichever hours of the day the two disagree.
+    # Both mutations are still caught, and BOTH render "undefined" — measured
+    # ("undefined · 2026-08-20" and "sample.lbrn2 · undefined"). An earlier version of this comment
+    # said a dropped `name` renders "": that is the Stimulus default for a dropped ATTRIBUTE, not
+    # for dropping `name: this.nameValue` out of the `meta` object, which is the mutation named
+    # here. `String(undefined)` is "undefined".
+    assert_match(/\A#{Regexp.escape(OPEN)} · \d{4}-\d{2}-\d{2}\z/, header)
+  end
+
+  # "PRINT ALL" MUST MEAN ALL, and the empty-set branch is the only thing that makes it so. Reading
+  # `this.marked` unconditionally turns an unselected Print into buildSheets' "Nothing to print."
+  # refusal — a button that has read "Print all" since the page loaded and does nothing at all.
+  test "Print all with nothing selected prints every contour in the file" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Print all"
+
+    assert_equal 1, page.evaluate_script("window.__printed")
+    assert_equal 2, page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelectorAll("g polygon").length
+    JS
+  end
+
+  # THE REFUSAL MUST REACH THE USER, not just the console. buildSheets throws; without the
+  # controller's rescue, clicking Print on an absurd selection would do nothing whatsoever and read
+  # as a broken button.
+  #
+  # `exact_text`, AND THE WHOLE MESSAGE: the readout IS the refusal, so a substring match would
+  # equally pass a message the controller had truncated, prefixed, or dropped the causing size out
+  # of — and the size is the only part of it that tells the user what to do differently.
+  test "an absurd selection reports why it will not print" do
+    open_measure_view(@nested_id)
+    stub_print!
+    # Drive the controller's own error path with a selection no fixture can produce.
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+      c.allShapes = [{ b: [0, 0, 20000, 20000], k: 1, i: 0, o: 1, p: [[0, 0], [20000, 20000]] }]
+      c.marked.clear()
+      c.print()
+    JS
+
+    assert_equal 0, page.evaluate_script("window.__printed"), "nothing may be spooled"
+    assert_selector ".measure-dims", exact_text: "9828 sheets — this selection is 20000 × 20000 " \
+      "mm, which is more than 40 sheets of Letter. Select fewer parts, or choose larger paper."
+  end
+
+  test "the paper picker offers the four sizes and remembers the choice" do
+    open_measure_view(@nested_id)
+    assert_selector "[data-measure-target='paper'] option", count: 4
+
+    choose_paper("A4")
+    # DELIBERATELY NOT the reset path — this is the one test that must observe the value surviving
+    # a page load.
+    open_measure_view(@nested_id, reset_paper: false)
+
+    assert_equal "A4", find("[data-measure-target='paper']").value
+  end
+
+  # THE PICKER'S VALUE IS THE PAPER THAT PRINTS, and against Letter alone nothing else in this file
+  # can see it: every other end-to-end assertion here uses the default, so `PAPERS[DEFAULT_PAPER]`
+  # hard-coded in print() passes all of them — as does dropping populatePaper() from draw(), which
+  # leaves the select empty and falls through to the same default. The picker would then be a
+  # control that changes nothing, and an A4 sheet would print declared as Letter with every part on
+  # it 2.8% wrong.
+  test "the paper the picker names is the paper that prints" do
+    open_measure_view(@nested_id)
+    stub_print!
+    choose_paper("A4")
+    click_on "Print all"
+
+    out = JSON.parse(page.evaluate_script(<<~JS))
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const svg = doc.querySelector("svg")
+        // THE @page RULE AS WELL AS THE SHEET — two declarations of one paper, and a printer told
+        // a different size from the one the SVG draws clips a band off every sheet.
+        const sheet = doc.styleSheets[0]
+        const rule = sheet && Array.from(sheet.cssRules)
+                                   .find((r) => r.constructor.name === "CSSPageRule")
+        return JSON.stringify({
+          width: svg.getAttribute("width"), height: svg.getAttribute("height"),
+          page: rule ? rule.style.size : null,
+        })
+      })()
+    JS
+
+    assert_equal "210mm", out["width"]
+    assert_equal "297mm", out["height"]
+    assert_equal "210mm 297mm", out["page"]
+  end
+
+  # AN UNRECOGNISED REMEMBERED PAPER FALLS BACK TO THE DEFAULT rather than to nothing. Without the
+  # `PAPERS[saved] ?` guard no option is ever marked selected, and a <select> with nothing selected
+  # answers its FIRST option — A4, because that is where PAPERS starts — so a stale key from an
+  # older build, or a hand-edited one, silently changes the paper instead of being ignored.
+  test "a remembered paper this build no longer offers falls back to the default" do
+    visit file_path(@nested_id)
+    page.execute_script("localStorage.setItem('measure.paper', 'Foolscap')")
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_equal "Letter", find("[data-measure-target='paper']").value
+    # Every other test here resets through open_measure_view, so this is tidiness rather than
+    # isolation — but a stale key in the store is exactly what this test is about.
+    page.execute_script("localStorage.removeItem('measure.paper')")
+  end
+
+  # RETURNING TO MEASURE MUST NOT DUPLICATE THE OPTIONS. draw() runs again on every ✕ Image →
+  # Measure round trip, and populatePaper's `options.length` early return is the only thing
+  # standing between that and a select that grows four more entries on every visit.
+  test "returning to Measure does not duplicate the paper options" do
+    open_measure_view(@nested_id)
+    choose_paper("A4")
+
+    click_on "✕ Image"
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_selector "[data-measure-target='paper'] option", count: 4
+    assert_equal "A4", find("[data-measure-target='paper']").value
+  end
+
+  # PRINT BEFORE THERE IS ANYTHING TO PRINT — the one state `print()`'s `!shapes` guard is for, and
+  # it is only reachable the way this test reaches it: `allShapes` is undefined between connect()
+  # and the first successful draw(), and in that state `.measure-actions` is display:none, so
+  # Capybara cannot click the button and neither can a user. Dropping the guard is GREEN against
+  # every other test in this file — measured — and what it costs is not nothing: buildSheets is
+  # handed `undefined` and the readout fills with "Cannot read properties of undefined (reading
+  # 'length')", a raw TypeError presented to the user as the answer to a button press.
+  test "printing before the geometry has loaded says nothing and spools nothing" do
+    visit file_path(@nested_id)
+    stub_print!
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      window.Stimulus.getControllerForElementAndIdentifier(el, "measure").print()
+    JS
+
+    assert_equal 0, page.evaluate_script("window.__printed")
+    # READ WITH JS, NOT `find(…).text`: an empty span in a flex row has no box, and Selenium reports
+    # a zero-size element as not displayed, so Capybara would fail to find it at all — which is red
+    # for the wrong reason.
+    assert_equal "", page.evaluate_script("document.querySelector('.measure-dims').textContent")
+    assert_no_selector ".measure-print-frame", visible: :all
+  end
+
+  # AND WITH SHAPES BUT NO PAPER OPTIONS, the print falls back to the default rather than throwing.
+  # An unpopulated select answers `value === ""`, which is no key in PAPERS — the one state from
+  # which `|| PAPERS[DEFAULT_PAPER]` is reachable, and again only by driving the controller, since
+  # draw() populates the select and reveals the button in the same breath. Without the fallback
+  # `buildSheets` is handed `undefined` for its paper and dies in contentBox, so a deployment that
+  # ever loses populatePaper loses Print with it instead of degrading to Letter.
+  test "an empty paper picker still prints, on the default paper" do
+    visit file_path(@nested_id)
+    stub_print!
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+      c.allShapes = [{ b: [0, 0, 60, 40], k: 1, i: 0, o: 1,
+                       p: [[0, 0], [60, 0], [60, 40], [0, 40], [0, 0]] }]
+      c.print()
+    JS
+
+    # THE PREMISE FIRST — if the select ever came pre-populated this test would be asserting the
+    # ordinary path while claiming to assert the fallback.
+    assert_equal 0, page.evaluate_script("document.querySelector('.measure-paper').options.length")
+    assert_equal 1, page.evaluate_script("window.__printed")
+    assert_equal "215.9mm", page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("svg").getAttribute("width")
+    JS
+  end
+
+  test "the Measure view prints without logging a console error" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
+    click_on "Print 1 part"
+
+    assert_selector ".measure-print-frame", visible: :all
+    assert_no_console_errors
+  end
+
+  private
+
+    def open_measure_view(node_id, reset_paper: true)
+      visit file_path(node_id)
+      # LOCALSTORAGE OUTLIVES A TEST, and the paper choice is deliberately persisted (Task 11).
+      # Selenium reuses ONE Chrome for the whole file, so without the reset the paper test leaks
+      # "A4" into every test that runs after it — and Rails randomizes test order, so it leaks
+      # INTERMITTENTLY, failing a scale assertion that has nothing to do with paper. Same shape as
+      # the browser log buffer application_system_test_case.rb drains for exactly this reason.
+      page.execute_script("localStorage.removeItem('measure.paper')") if reset_paper
+      click_on "Measure"
+      # --ready is what reveals the stage and hides the poster; without waiting for it the clicks
+      # below race the fetch and land on a display:none SVG.
+      assert_selector ".measure-view--ready"
+    end
+
+    # CAPYBARA'S `select … from:` CANNOT SEE AN aria-label, so the plan's `select "A4", from:
+    # "Paper size"` raises `Unable to find select box "Paper size"` — measured, not assumed.
+    # `Capybara.enable_aria_label` defaults to false and this repo does not set it, and the picker
+    # deliberately has no id, no name and no <label>: its accessible name IS the aria-label.
+    # Turning that flag on globally to spell one line more prettily would change how every other
+    # system test in the suite resolves a locator, which is a much larger claim than this needs.
+    #
+    # `select_option` ON THE OPTION rather than a value lookup, so what is chosen is the LABEL a
+    # user reads rather than the key behind it. Those are the same string in PAPERS today; the day
+    # they stop being, this is the spelling that keeps asserting about the control a user operates.
+    def choose_paper(name)
+      find("[data-measure-target='paper']").find("option", exact_text: name).select_option
+    end
+
+    # NEUTER window.print IN THE PRINT FRAME BEFORE THE FRAME EXISTS, and count the calls.
+    #
+    # STILL REQUIRED EVEN THOUGH TASK 8 ADDED A `print` SEAM. `printSheets(shapes, paper, meta,
+    # print = spool)` is injectable, but the CONTROLLER calls it with three arguments, so a test
+    # driving a real button can never reach the seam. Nor can it stub the function that runs: the
+    # frame's window is a SEPARATE REALM — probed in the printSheets test above, `w.print !==
+    # window.print` — so patching THIS page's window.print reaches nothing, and the frame is
+    # created and spooled inside one synchronous turn, so there is no later moment to reach in at.
+    #
+    # PATCHING THE PROTOTYPE GETTER IS THE ONE INTERCEPTION LEFT. `contentWindow` is
+    # `configurable: true` on HTMLIFrameElement.prototype, so redefining it lets the stub run at
+    # the instant printSheets asks for the window. It is a page-global monkeypatch rather than a
+    # stub of anything this module names — and it does not merely prevent a dialog: it turns the
+    # one line no module-tier test can reach into a counted assertion that the BUTTON really does
+    # reach the spooler.
+    def stub_print!
+      page.execute_script(<<~JS)
+        window.__printed = 0
+        const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow")
+        Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+          configurable: true,
+          get() {
+            const w = desc.get.call(this)
+            try { w.print = () => { window.__printed += 1 } } catch (_) {}
+            return w
+          },
+        })
+      JS
+    end
+
+    # THE LIVE CONTROLLER, for the two claims nothing in the DOM can answer: that a Stimulus VALUE
+    # was declared at all (an undeclared one is silently `undefined`), and that a Map with no DOM
+    # presence was emptied. Everything else here goes through the page.
+    def in_measure_controller(expression)
+      page.evaluate_script(<<~JS)
+        (() => {
+          const el = document.querySelector(".measure-view")
+          const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+          return #{expression}
+        })()
+      JS
+    end
+
+    # THE PLATE CANNOT BE CLICKED THROUGH ITS OWN ELEMENT, which is why this exists and why the
+    # plan's `contour_with_min_x(-30).click` could never have run: the plate's bounding box is
+    # centred on the fixture's shared centre, where the HOLE is painted on top, and Selenium
+    # refuses a click a sibling would receive — "element click intercepted: Element <polygon
+    # points='-30,20 30,20 …'> is not clickable at point (699, 628). Other element would receive
+    # the click: <polygon points='5,0 4.95,-0.68 …'>". lbrn_measure_test.rb hits the same wall on
+    # the same fixture and answers it the same way.
+    #
+    # A QUARTER OF THE ELEMENT'S WIDTH RIGHT OF CENTRE, computed rather than guessed: the padded
+    # viewBox is 62.4 user units wide in a square element, so with `meet` the horizontal axis
+    # fills it. The plate reaches ±30 mm (±0.48 of the width) and the hole only ±5 mm (±0.08).
+    def click_plate
+      svg = stage_svg
+      svg.click(x: (svg.native.size.width * 0.25).to_i, y: 0)
+    end
+
+    # THE OPEN LINE'S BOUNDING RECT IS ZERO-HEIGHT, so it cannot be clicked or even found the
+    # ordinary way: sample.lbrn2's open contour is the horizontal segment (0,0)-(100,0), and
+    # Chrome folds no stroke into getBoundingClientRect for it — measured, w 813.46 h 0 — which
+    # Selenium reports as `ElementNotInteractableError: element not interactable` and Capybara
+    # counts as 0 visible matches. Hence a coordinate click, and `visible: :all` wherever the
+    # element itself is wanted (`style` reads fine on it either way).
+    #
+    # The point is user-space (20, 0): on the line, and left of the 30..70 rect, so nothing else
+    # is painted there. The padded viewBox is [-2 -42 104 44] in a square element, so with `meet`
+    # the horizontal axis fills it — 1 mm is width/104 — and the element's centre is user
+    # (50, -20). An x/y offset here is measured from that CENTRE, not the top-left: WebDriver's
+    # pointer origin for an element is its in-view centre point, which is also what makes
+    # lbrn_measure_test.rb's "quarter of the width right of centre" click land where it says.
+    # Checked against the live DOM at 846 px square: the drawn polyline sits at y 849.19 and this
+    # lands at 849.5, well inside the hit twin's 4 px half-width.
+    def click_open_line
+      svg = stage_svg
+      per_mm = svg.native.size.width / 104.0
+      svg.click(x: ((20 - 50) * per_mm).round, y: ((0 - -20) * per_mm).round)
+    end
+
+    # Scoped to the measure stage: the page carries other <svg> icons and a bare find("svg") is
+    # ambiguous.
+    def stage_svg = find(".measure-stage svg")
+
+    # The plate spans x -30..30 and the hole only -5..5, so the minimum x of the rendered `points`
+    # attribute identifies each one no matter which was painted on top. POLYGONS ONLY — an open
+    # contour draws as a polyline and is found by class instead (see the open-contour test).
+    def contour_with_min_x(expected)
+      match = all("svg polygon.measure-contour").find do |poly|
+        poly[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min == expected
+      end
+      assert match, "no contour whose points reach x=#{expected} — the fixture or the draw changed"
+      match
+    end
+
+    def in_print_sheet(body)
+      visit file_path(@nested_id) unless page.current_path == file_path(@nested_id)
+      result = page.evaluate_async_script(<<~JS)
+        const done = arguments[arguments.length - 1];
+        import("lib/print_sheet")
+          .then((m) => done(#{body}))
+          .catch((e) => done("ERROR: " + (e && e.message ? e.message : String(e))));
+      JS
+      raise result if result.is_a?(String) && result.start_with?("ERROR:")
+      result
+    end
+
+    # The geometry preview, rendered through the REAL renderer against the REAL fixture bytes, in
+    # this process rather than by the job runner. A system test cannot wait for the job:
+    # ActiveJob's test adapter never runs what it queues, and `perform_enqueued_jobs`' block form
+    # only inlines jobs enqueued DURING the block — the geometry job is enqueued by the browser's
+    # own first poll, inside the server thread. `perform_now` sidesteps the adapter and is
+    # deterministic, while still being the real pipeline.
+    def render_geometry!(node_id, filename)
+      token = FileLayer.current.stat(@user, node_id: node_id).content_token
+      preview = Maker::Previews::Enqueue.call(user: @user, node_id: node_id, name: filename,
+                                              version_id: token, kind: "geometry")
+      Maker::GeneratePreviewJob.perform_now(preview.id, filename: filename)
+      assert_equal "ready", preview.reload.status, "the geometry payload must be ready to measure"
+    end
+end

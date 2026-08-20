@@ -135,9 +135,30 @@ dl.meta dd { margin: 0; }
 .measure-contour { fill: transparent; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .measure-contour--open { fill: none; }
 .measure-contour--hit { stroke: transparent; stroke-width: 8; fill: none; pointer-events: stroke; vector-effect: non-scaling-stroke; }
+/* The print set. A SEPARATE CLASS FROM --selected, which is the measurement highlight: one answers
+   "what am I reading", the other "what will print", and one contour can be both at once. Declared
+   BEFORE --hover/--selected so their stroke wins on a contour that is both, while the fill tint —
+   which neither of them sets — goes on saying "this will print". */
+.measure-contour--marked { stroke: #06c; stroke-width: 2; fill: rgba(0, 102, 204, .16); }
+/* An open contour has no interior, so the tint would paint a meaningless blob between its ends.
+   Higher specificity than both rules above, so it wins regardless of source order. */
+.measure-contour--open.measure-contour--marked { fill: none; }
 .measure-contour--hover { stroke: #2b7; stroke-width: 2; }
 .measure-contour--selected { stroke: #d40; stroke-width: 2.5; }
 .measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy; }
+.measure-paper { font-size: 13px; }
+/* `hidden` ON A .btn IS INERT WITHOUT THIS, AND THE CLEAR BUTTON SHIPS CARRYING IT. `[hidden]`
+   is nothing but a UA-stylesheet `display: none`, so `.btn`'s own `display: inline-block` — an
+   AUTHOR rule — outranks it and the attribute paints nothing at all. Measured in the browser
+   rather than reasoned about: hidden=true, computed display `block`, width 48px, plainly there
+   in the screenshot. The real precedent in this file is `.addon-card[hidden]` — `.addon-card`
+   computes `flex` from an author rule, so that line is the same fix. `.box-toc-list li[hidden]`
+   LOOKS like a second one and is not: that li computes `list-item` with no author rule to
+   outrank, so it is redundant with the UA stylesheet rather than a fix for it. Every other
+   `hidden` in app/views is on an `<input type=file>`, which likewise has no author `display` —
+   which is why this had not bitten before a `.btn` needed it. */
+.measure-actions .btn[hidden] { display: none; }
 
 /* login */
 .auth-card { max-width: 380px; margin: 80px auto; text-align: center; }
