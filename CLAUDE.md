@@ -79,6 +79,7 @@ intake are in **§14** — that is where a "don't undo this" belongs, not in a t
 | **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
 | **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once` + the loop primitives. Pluggable `ChunkIO`. |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
+| **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time (`Dockerfile`) and exec'd off `PATH` by `Maker::Previews::Stl` at runtime — a **server-side** tool despite being Rust. Lives under `tools/`, not `client/`: nothing in `client/` has a path dependency on it. |
 | **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk\|share\|s3`. All three boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
 | **Addons (Tools)** | `app/services/maker/addons/`, `app/controllers/tools/`, `sidecar/` | The `/tools` gallery + per-addon UI; output lands via one path (`Maker::Addons::LibraryOutput`). Two GPL sidecars, HTTP-only. Invariants: **§14c**. |
@@ -208,6 +209,9 @@ only on explicit request. `docs/DEPLOY.md`.
 /client          Rust crates: fs-provider, fs-fuse (Linux), fs-cfapi + fs-winfsp
                  (Windows), fs-webdav (macOS), sync-client, sync-engine, maker-app (Tauri)
                  (+ maker-app-core, juicefs-backend from the prior path)
+/tools           stl-thumbnailer: a Rust STL→PNG renderer, but a SERVER-side tool (compiled
+                 into the Rails image, exec'd by Maker::Previews::Stl) — not a client/ crate,
+                 which is why it lives here and not under /client despite being Rust.
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. No gate covers these; invariants in §14i.
@@ -1835,7 +1839,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
     code forever, with nothing anywhere to say so. Pinned as a RELATIONSHIP in `stl_test.rb`, never
     as two literals.
   - **AND A CHANGE IN THE RUST CRATE NEEDS THE RUBY-SIDE BUMP, WHICH IS THE HALF WITH NO COMPILER
-    BEHIND IT.** `client/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
+    BEHIND IT.** `tools/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
     binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
     re-renders everything with the old binary. **Ship both or neither.**
 - **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**

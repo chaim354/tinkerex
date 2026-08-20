@@ -4,7 +4,7 @@ import { Controller } from "@hotwired/stimulus"
 // rotates what it parses — 3MFLoader's own docblock tells the caller to do it
 // (`object.rotation.set(-Math.PI/2, 0, 0) // z-up conversion`), and we were not. So a Z-up print
 // file rendered lying on its side here, exactly as it did in the server-side thumbnail
-// (client/stl-thumbnailer/src/lib.rs), and the two agreed with each other about being wrong.
+// (tools/stl-thumbnailer/src/lib.rs), and the two agreed with each other about being wrong.
 //
 // `.stl` and `.3mf` are Z-UP: the format declares nothing, but every producer and consumer in 3D
 // printing treats +Z as up, and the 3MF core spec puts the build plate in the XY plane. `.obj` is

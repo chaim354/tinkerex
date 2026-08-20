@@ -3,7 +3,7 @@ require "tempfile"
 
 module Maker
   module Previews
-    # STL → thumbnail PNG via the in-repo `stl-thumbnailer` binary (client/stl-thumbnailer):
+    # STL → thumbnail PNG via the in-repo `stl-thumbnailer` binary (tools/stl-thumbnailer):
     # a pure-CPU software rasterizer (euc, Apache/MIT) — NO GPU, NO OpenGL/Mesa, NO headless
     # browser. The same crate also runs in the Tauri desktop core, so a device that holds the
     # file can render + upload the thumbnail; this server-side path is the universal fallback
@@ -26,7 +26,7 @@ module Maker
       # picture the old code made, forever.
       #
       #   1 -> the original Y-up camera, which rendered every Z-up print file lying on its side.
-      #   2 -> Z-up (client/stl-thumbnailer's `auto_frame`). Bumped BECAUSE the picture changed;
+      #   2 -> Z-up (tools/stl-thumbnailer's `auto_frame`). Bumped BECAUSE the picture changed;
       #        that is the entire trigger, and it is why this constant exists rather than being
       #        inferred from anything.
       #
