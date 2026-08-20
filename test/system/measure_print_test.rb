@@ -279,7 +279,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #
   # MUTATION-CHECKED FOUR WAYS. Between them they turn all THREE blocks below red, which is how
   # each block is shown to carry weight of its own rather than restating its neighbour. Deleting
-  # the guard: RED on the first ("Expected /more than 40 sheets/ to match 'NO ERROR'"). `>` ->
+  # the guard: RED on the first ("Expected /\A9828 sheets/ to match 'NO ERROR'" — the count
+  # assertion sits above the /more than 40 sheets/ one, so it is the one that reports). `>` ->
   # `>=`: RED on the at-cap block, and as an ERROR rather than a failure — that block calls
   # buildSheets BARE, so an unexpected throw comes back through in_print_sheet's own raise
   # verbatim ("RuntimeError: ERROR: 40 sheets — this selection is 1400 × 1000 mm, which is more
@@ -322,6 +323,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
       })()
     JS
 
+    # IF A CONSTANT CHANGES, RECHOOSE THE INPUT — DO NOT EDIT THIS EXPECTATION. 1400 x 1000 mm is
+    # exactly MAX_SHEETS on Letter today; move MARGIN, HEADER_H or CALIB_H and this goes red, and
+    # the tempting fix (write down whatever the new triple is) silently stops the boundary test
+    # from sitting on the boundary. Pick a new size that lands on exactly MAX_SHEETS instead.
     assert_equal [ 8, 5, 40 ], at_cap, "40 sheets is the maximum ALLOWED, not the first refused"
 
     # And one column more is refused, which is what makes the assertion above a boundary rather
