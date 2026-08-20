@@ -21,7 +21,10 @@ module FileLayer
       assert_raises(NoMethodError) { info.name = "b.stl" }
     end
 
-    test "Capabilities answers the five questions" do
+    # The sixth, dir_deletable, is asserted separately below rather than here -- it is the only
+    # one with a per-adapter claim attached, so its test needs the real adapters and this one does
+    # not. It appears in the constructor call anyway because Data.define requires every member.
+    test "Capabilities answers the first five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
                                          scannable: false, port_writable: true,
                                          dir_deletable: true)
@@ -64,6 +67,13 @@ module FileLayer
 
     # Asserted as a RELATIONSHIP against the real adapters rather than three literals, so a
     # backend added later cannot quietly skip declaring it.
+    #
+    # `.allocate` SKIPS initialize, which is safe here and nowhere near as safe in general: every
+    # one of the three `capabilities` methods returns hardcoded literals and reads no instance
+    # state, while Share#initialize demands LIBRARY_PATH and S3#initialize a bucket, region and
+    # keys. If a future adapter's capabilities ever depend on how it was constructed, this test
+    # must move to real instances -- the answer would silently become whatever `allocate` left
+    # behind, which for a Data-backed field is nil, and nil reads as false.
     test "every adapter declares dir_deletable, and only chunk allows it" do
       expected = { FileLayer::Chunk => true, FileLayer::Share => false, FileLayer::S3 => false }
       expected.each do |klass, want|
