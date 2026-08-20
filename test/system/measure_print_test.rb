@@ -2579,32 +2579,53 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal "none", line.style("fill")["fill"], "an open contour takes the stroke, not the tint"
   end
 
-  test "Clear empties the set" do
+  # RESET DOES BOTH HALVES OF "START AGAIN" — the view goes home AND the print set empties. There
+  # is no separate Clear button: one button, one meaning, and a set you cannot leave behind by
+  # resetting the view and assuming you had.
+  #
+  # BOTH HALVES ARE ASSERTED SEPARATELY BECAUSE THEY FAIL SEPARATELY. `reset()` is two statements
+  # and either can be dropped alone: without `setViewBox` the zoom survives and the marks clear;
+  # without `clearMarks` the view goes home and the set silently persists into the next print.
+  # Mutation-checked in both directions — dropping the clear leaves "Print 2 parts" standing,
+  # dropping the setViewBox leaves the viewBox at the zoomed value.
+  test "Reset returns the view home and empties the print set" do
     open_measure_view(@nested_id)
     click_on "Select parts"
-    # HIDDEN WHILE THE SET IS EMPTY, and this and the ✕ Image test's matching line are the only
-    # assertions anywhere that say so. The `hidden` attribute alone does nothing to a `.btn` —
-    # `.btn { display: inline-block }` outranks the UA rule — so `.measure-actions .btn[hidden]`
-    # exists to make it real. MUTATION-CHECKED by deleting that rule: RED here, "expected to find
-    # non-visible css \"[data-measure-target='clearButton']\" but there were no matches. Also
-    # found \"Clear\"". This one fires before any controller code has touched the button, so it
-    # is the assertion that covers the ERB attribute and the CSS rule together.
-    assert_selector "[data-measure-target='clearButton']", visible: :hidden
-
     click_plate
     contour_with_min_x(-5).click
     assert_selector ".measure-contour--marked", count: 2
-    assert_selector "[data-measure-target='clearButton']", visible: :visible
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
 
-    click_on "Clear"
+    # Move the view off home so the reset has something to undo — asserting against `home` alone
+    # would pass on a reset that never ran.
+    zoomed = in_measure_controller("(c.setViewBox(c.svg, [1, 2, 3, 4]), c.svg.getAttribute('viewBox'))")
+    assert_equal "1 2 3 4", zoomed
 
+    click_on "Reset"
+
+    assert_equal in_measure_controller("c.home.join(' ')"),
+                 in_measure_controller("c.svg.getAttribute('viewBox')"),
+                 "the view must return home"
     assert_no_selector ".measure-contour--marked"
-    # THE SET, NOT JUST THE CLASSES. Removing the classes and leaving `this.marked` populated
-    # looks identical on screen and prints two parts anyway; the button label is the only thing
-    # in the DOM that reads the set's size.
+    # THE SET, NOT JUST THE CLASSES. Removing the classes and leaving `this.marked` populated looks
+    # identical on screen and prints two parts anyway; the button label is the only thing in the
+    # DOM that reads the set's size.
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
-    assert_selector "[data-measure-target='clearButton']", visible: :hidden
     assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+  end
+
+  # AND IT LEAVES A MEASUREMENT ALONE. `clearMarks` writes `selectionStatus()`, so a reset that
+  # called it unconditionally would replace the size the user just asked for with "nothing
+  # selected" — taking something from the ordinary case to serve the selecting one. Guarded by
+  # `if (this.marked.size)`; mutation-checked by removing that condition, which turns this red.
+  test "Reset outside select mode leaves the readout carrying its measurement" do
+    open_measure_view(@nested_id)
+    click_plate
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
+
+    click_on "Reset"
+
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
   end
 
   # THE BUTTON SAYS WHAT WILL HAPPEN. An empty set prints the whole file, and the only thing
@@ -2645,7 +2666,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     assert_no_selector ".measure-contour--marked"
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
-    assert_selector "[data-measure-target='clearButton']", visible: :hidden
     assert_no_selector ".measure-view--selecting"
     toggle = find("[data-measure-target='selectToggle']")
     assert_equal "Select parts", toggle.text, "the toggle must not come back reading the other mode"
@@ -2669,12 +2689,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # an action's method only at DISPATCH, so a control whose method never landed logs
   # `Error: Action "click->measure#print" references undefined method "print"` — loud, unlike the
   # silent data-controller no-op §14d records, and invisible to every assertion above.
-  test "a full select-and-clear round trip logs no console error" do
+  test "a full select-and-reset round trip logs no console error" do
     open_measure_view(@nested_id)
     click_on "Select parts"
     click_plate
     contour_with_min_x(-5).click
-    click_on "Clear"
+    click_on "Reset"
     click_on "Done selecting"
 
     assert_no_console_errors

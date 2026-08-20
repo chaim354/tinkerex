@@ -55,7 +55,7 @@ export default class extends Controller {
   // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
   // error, no warning, just an empty filename on every printed sheet.
   static values = { url: String, name: String }
-  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "clearButton"]
+  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton"]
 
   connect() {
     this.aborted = false
@@ -469,7 +469,6 @@ export default class extends Controller {
   refreshPrintBar() {
     const n = this.marked.size
     this.printButtonTarget.textContent = n ? `Print ${n} part${n === 1 ? "" : "s"}` : "Print all"
-    this.clearButtonTarget.hidden = n === 0
   }
 
   contourLabel(shape, siblings) {
@@ -505,8 +504,17 @@ export default class extends Controller {
     return (Math.round(n * 10) / 10).toLocaleString()
   }
 
+  // RESET IS BOTH HALVES OF "START AGAIN": the view goes home AND the print set empties. There is
+  // no separate Clear button — one button, one meaning, and the set is not a thing you can leave
+  // behind by resetting the view and assuming you had.
+  //
+  // THE READOUT IS ONLY TOUCHED WHEN THERE WAS ACTUALLY A SET TO CLEAR. `clearMarks` writes
+  // `selectionStatus()`, and outside select mode the readout is carrying a MEASUREMENT the user
+  // just asked for — overwriting it with "nothing selected" on a plain view reset would take
+  // something away from the ordinary case to serve the selecting one.
   reset() {
     if (this.svg && this.home) this.setViewBox(this.svg, this.home)
+    if (this.marked.size) this.clearMarks()
   }
 
   // Zoom about the cursor, so the feature under the pointer stays under it.

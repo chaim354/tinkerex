@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Measure parts print at 1:1 for paper fit testing**)
+**Updated:** 2026-08-20 (**Measure: Reset returns the view home and empties the print set**)
 
 ## What this file is
 
@@ -60,7 +60,34 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-20): Measure parts print at 1:1, so paper can be held against real hardware (branch `claude/svg-pattern-scale-fit-test-5d1311`)
+## Latest (2026-08-20): Reset does both halves of "start again" (branch `claude/measure-reset-clears-selection`)
+
+**Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9619 assertions / 3 skips, identical.
+System tier 176 → 177 runs, 1474 assertions. `bin/ci` green, all eight gates, exit 0, 1m10s.**
+
+A follow-on to the print arc below, from using it. **The separate Clear button is gone and
+`Reset view` is now `Reset`, which returns the view home AND empties the print set.** One button,
+one meaning — and no set you can leave behind by resetting the view and assuming you had.
+
+**`reset()` is two statements and they fail separately**, so both halves are asserted separately:
+without `setViewBox` the zoom survives and the marks clear; without `clearMarks` the view goes home
+and the set silently persists into the next print. The view-half assertion moves the viewBox off
+home first — asserting against `home` alone passes on a reset that never ran.
+
+**The clear is conditional on there being something to clear**, and that is the non-obvious half.
+`clearMarks` writes `selectionStatus()`, so an unconditional call replaces the measurement the user
+just asked for with "nothing selected" — taking something from the ordinary case to serve the
+selecting one. Guarded by `if (this.marked.size)` and mutation-checked by removing the condition.
+All three mutations fail exactly one test each.
+
+**`.measure-actions .btn[hidden]` was deleted with the button.** It existed because `hidden` on a
+`.btn` is inert — `.btn { display: inline-block }` outranks the UA rule — which is recorded in the
+arc below as one of the defects the process caught. Nothing in that span carries `hidden` any more,
+so the rule is dead; the finding survives here rather than as an unused selector.
+
+---
+
+## 2026-08-20: Measure parts print at 1:1, so paper can be held against real hardware (branch `claude/svg-pattern-scale-fit-test-5d1311`)
 
 **Suite: the three `LIBRARY_BACKEND` legs are UNCHANGED BY THIS ARC at 2528 runs / 9619 assertions
 / 0F / 0E / 3 skips, identical across all three — unchanged by construction, since the branch adds
