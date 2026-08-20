@@ -74,7 +74,14 @@ It is about to become the extraction's shopping list, and it is wrong in two dir
 `lib/tasks/chunks.rake` is sync-only and **no guard covers it**, because every scan globs `app/**`. Same for `lib/postgres_pooler_check.rb`.
 
 - [ ] **Step 1: Widen both scans to `lib/**/*.rb` and `lib/tasks/*.rake`**, with the engine-side entries added to `SYNC_SIDE_GLOBS`.
-- [ ] **Step 2: Expect `lib/schema_map.rb` to be flagged, and do NOT silence it by moving it.** It describes **both** sides' tables (`LAYOUT`/`EDGES`) and is tested. It belongs to neither side; list it as an exception with that reason, and see Task 8.
+- [ ] **Step 2: `lib/schema_map.rb` will be SWEPT INTO the scan but NOT flagged — that prediction was wrong.**
+  This plan originally said to expect a violation and add an exception entry. It trips nothing:
+  every table name it carries (`versions`, `chunks`, `manifest_chunks`…) sits inside `%w[]` word
+  arrays and quoted tuples, which **Ripper lexes as `:on_tstring_content`, never `:on_const`** — the
+  guard's own instrument cannot see them at any scope. **Do not add a phantom exception**; the list's
+  stale-entry self-check would immediately fail on it. Comment why the file is scanned and why it
+  needs no exception, so a reader can see the guard looked. It still belongs to neither side for
+  Task 8's purposes — that judgement is unchanged, it is just not a guard finding.
 - [ ] **Step 3: Mutation-check, `bin/ci`, commit.**
 
 ## Task 3: Namespace the eight models under `Sync`
