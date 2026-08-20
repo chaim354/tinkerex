@@ -200,10 +200,15 @@ function el(doc, tag, attrs, text) {
     // conditional attributes, so skip here rather than making every call site remember.
     if (value != null) node.setAttribute(key, value)
   }
-  // THE TEXT DOOR EXISTS SO `textContent` IS THE ONLY SPELLING AVAILABLE. The header carries a
-  // library filename — user-controlled, and legitimately able to contain `<` on a NAS-scanned
-  // share — so building it as markup is an injection into a same-origin iframe. Four call sites
-  // each remembering that rule is four chances to forget; one door is none.
+  // THE TEXT DOOR EXISTS SO THAT `textContent` CAN BE THE ONLY SPELLING — and it is not yet.
+  // Stated in the future tense deliberately: `el` is unexported and the parameter is optional, so
+  // nothing today stops a call site assigning `.textContent` by hand or interpolating markup. It
+  // becomes true when Task 6 routes all four <text> sites through here. The rule it will enforce:
+  // the header carries a library filename, user-controlled and legitimately able to contain `<` on
+  // a NAS-scanned share, so building it as markup is an injection into a same-origin iframe. Four
+  // call sites each remembering that is four chances to forget; one door is none. (§14c: do not
+  // describe a guard as closed while it is open — a guard everyone believed in and that never
+  // worked is this repo's recorded failure shape.)
   if (text != null) node.textContent = text
   return node
 }

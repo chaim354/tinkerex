@@ -998,6 +998,18 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 > door is a security rule, not a convenience — it is what makes `textContent` the only spelling
 > available for a user-controlled filename.
 >
+> **ALSO FROM TASK 4 — `el` HAS A SILENT MIS-CALL MODE, AND THIS TASK IS WHERE IT BECOMES
+> REACHABLE.** `el(doc, tag, attrs, text)` with the string in the `attrs` slot —
+> `el(doc, "text", "Sheet 1,1 of 2×1")` — was expected to throw `InvalidCharacterError`, since
+> attribute names cannot begin with a digit. **Probed in Chrome: it does not.** The result is
+>
+>     <text 0="S" 1="h" 2="e" 3="e" 4="t" 5=" " 6="1" 7="," 8="1"></text>
+>
+> — nine junk attributes, no text content, an empty `<text>` that renders nothing on a page that is
+> otherwise perfectly formed. Nothing throws, nothing logs. The `text()` wrapper covers the four
+> sites this task defines; a fifth added later is one keystroke away. Add
+> `if (typeof attrs === "string") throw new Error(...)` to `el` and pin it.
+>
 > **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
 > which SVG does not care about. Nothing in this task prints a content-box number **as text** — but
 > if you add one that does, round it.

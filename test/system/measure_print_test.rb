@@ -487,7 +487,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #
   # STILL UNEXERCISED, AND TASK 6 OWNS IT: `el`'s two new doors — the nullish attribute guard and
   # the `text` parameter — have no caller in this task, so both were mutation-checked and both came
-  # back GREEN (19 runs, 132 assertions, 0 failures) with the guard and the door deleted in turn.
+  # back GREEN (measured at 19 runs / 132 assertions, before the stroke-width split below took the
+  # file to 20/135) with the guard and the door deleted in turn.
   # That is not a weak input this tier can strengthen; it is a code path Task 4 never walks. Task 6
   # adds the four <text> call sites the door exists for, and must pin both there.
 
@@ -621,6 +622,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
         const rect = svg.querySelector("clipPath rect")
         const clipped = svg.querySelector("[clip-path]")
         return JSON.stringify({
+          // BY IDENTITY, NOT BY DOCUMENT ORDER. querySelector returns the FIRST element carrying
+          // the attribute, which is the right one only while nothing else on the sheet has a clip
+          // of its own. Counting is what stops the four assertions below silently re-targeting if
+          // a later task gives a furniture element one.
+          clipCount: svg.querySelectorAll("[clip-path]").length,
           rect: [ "x", "y", "width", "height" ].map((a) => Number(rect.getAttribute(a))),
           refMatchesId: clipped.getAttribute("clip-path") ===
                         `url(#${svg.querySelector("clipPath").id})`,
@@ -632,6 +638,7 @@ class MeasurePrintTest < ApplicationSystemTestCase
       })()
     JS
 
+    assert_equal 1, out["clipCount"], "exactly one clipping element, so the four below cannot drift"
     assert_equal [ 10, 17, 195.9, 230.4 ], out["rect"].map { |v| v.round(4) }
     assert out["refMatchesId"], "the group must name the id the clipPath actually carries"
     refute out["clippedHasTransform"], "userSpaceOnUse resolves in the referencing element's space"
