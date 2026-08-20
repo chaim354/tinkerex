@@ -2291,14 +2291,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # with the app chrome on it. Spooling twice puts two dialogs in front of the user. And spooling
   # late means the `readyState` branch silently stopped being the one taken.
   #
-  # THE COUNT IS TAKEN TWICE, AND `afterLoad` IS A TRIPWIRE RATHER THAN A GUARD — say so rather
-  # than let it read as one. It was added to catch the obvious "be safe, register the listener on
-  # both arms" edit, which would spool a SECOND time and put a second dialog in front of the user.
-  # It does not catch it, and the reason is the finding: THE FRAME'S `load` EVENT NEVER ARRIVES in
-  # this browser. Measured, not inferred — with the synchronous arm deleted, leaving only the
-  # listener, the spool count is 0 immediately and still 0 after the wait. So the both-arms
-  # mutation is inert here, and `afterLoad` is what would go red the day an engine fires that
-  # event: real weight, no weight today, and recorded as such.
+  # THE COUNT IS TAKEN TWICE, AND `afterLoad` PINS THAT go() IS NOT REACHED A SECOND TIME. It does
+  # NOT pin "the day `load` starts firing" — an earlier draft said that, and it is wrong: `load`
+  # already fires here, synchronously inside `appendChild`, at the same instant `readyState`
+  # becomes "complete". The listener printSheets installs afterwards is simply too late to hear an
+  # event already dispatched, which is why the "register on both arms" mutation is inert TODAY.
+  # Move that registration before the append and it stops being inert: both arms then fire and the
+  # user gets two dialogs. This assertion is what would catch that.
   #
   # MUTATION-CHECKED FOUR WAYS, each actual copied out of the run:
   #   `print(window)` instead of        Expected true to be truthy — "the frame's own window, not

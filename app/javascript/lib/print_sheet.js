@@ -628,17 +628,26 @@ export const spool = (w) => { w.focus(); w.print() }
 //     `go()` runs synchronously and the listener is never installed. The document also SURVIVES
 //     the frame's own load handling — re-read 400 ms later it is the same Document object carrying
 //     the same sheets — so nothing here is racing a navigation that would replace what we built.
-//   THE FRAME'S `load` EVENT NEVER ARRIVES. Deleting the first arm so only the listener remains
-//     spools ZERO times, still zero 400 ms later: a dynamically created, src-less iframe does not
-//     fire `load` on the element here. So on an engine that reported a non-complete readyState,
-//     this would print NOTHING — the failure the second arm looks like it prevents is the failure
-//     it would cause.
+//   THE `load` EVENT DOES FIRE — SYNCHRONOUSLY, INSIDE `appendChild`, at the same instant
+//     `readyState` becomes "complete". Measured: a listener attached BEFORE the append counts 1;
+//     the same listener attached after counts 0; a counter read the moment `appendChild` returns
+//     already reads 1. So the listener below is registered one statement too late to hear it —
+//     and never needs to, because the two arms are exactly complementary: it is only installed
+//     when `readyState !== "complete"`, and in that state the event has not yet fired.
+//     (An earlier draft of this comment said the event NEVER arrives. That was measured on the
+//     late listener only, which cannot hear an event already dispatched. The branch is
+//     unreachable here, not dead.)
 //
-// It stays because deleting it would be a behaviour change argued from one browser, and because
-// there is genuinely nothing to await: this document is built by synchronous node insertion, with
-// no parser and no subresources. But do not read it as protection. If an engine is ever found that
-// reports "loading" here, PROBE WHAT THAT ENGINE DOES — do not trust this line to catch it.
-// measure_print_test.rb pins `afterLoad`, which is what would go red the day `load` starts firing.
+// DO NOT "FIX" THIS BY REGISTERING THE LISTENER BEFORE THE APPEND. That is precisely what the
+// false version of this note invites, and on this engine it yields `load` -> go() AND
+// `readyState === "complete"` -> go(): TWO PRINT DIALOGS. The "register on both arms" mutation is
+// green today only because the listener is late; move it earlier and that same shape becomes a
+// live double-spool with nothing to catch it.
+//
+// The branch stays because it costs nothing and because there is genuinely nothing to await here:
+// this document is built by synchronous node insertion, with no parser and no subresources. If an
+// engine is ever found that reports "loading" at this point, PROBE WHAT IT DOES rather than
+// trusting this line.
 export function printSheets(shapes, paper, meta, print = spool) {
   const frame = buildPrintFrame(shapes, paper, meta)
   const doc = frame.contentDocument
