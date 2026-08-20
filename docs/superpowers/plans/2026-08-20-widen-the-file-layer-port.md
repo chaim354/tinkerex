@@ -265,7 +265,8 @@ Header:
 #     manifest exhaustively and the name not at all (CLAUDE.md 14c). Two live siblings sharing one
 #     (parent, name) really are reachable on chunk. The WEB path is still protected --
 #     Maker::MoveNode.collision! runs before it calls the port -- so this is not a regression
-#     Stage 2 introduces, and closing it is a separate decision (CLAUDE.md 12 item 11), not
+#     Stage 2 introduces, and closing it is a separate decision (CLAUDE.md 14c's recorded gap --
+#     NOT 12 item 11, which is a different gap one layer up), not
 #     something a refactor does silently. It stays asserted in share's and s3's OWN tests.
 #   - A MOVE OF A DIRECTORY. Share allows it; s3 refuses (`movable_file!`). Every test here moves
 #     a FILE for that reason.
@@ -673,6 +674,18 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ---
 
 ### Task 5: `Chunk#delete`, and collapse `FilesController#destroy`
+
+> **CARRIED FORWARD FROM TASK 4'S REVIEW — do this as part of Task 5.**
+> `test/services/file_layer/adapter_contract.rb` has
+> `test_contract_port_writable_agrees_with_what_delete_actually_does`. Task 4 narrowed it from
+> covering delete AND move once chunk's move stopped being gated by `port_writable?`. **Task 5
+> must DELETE it outright, not narrow it again.** Once `Chunk#delete` goes through the port,
+> `port_writable?` predicts nothing about delete either, and the assertion becomes exactly as
+> vacuous as it was for move — it encodes the "port_writable means can-mutate" misreading §14a
+> explicitly forbids. Its cross-backend content already lives in
+> `adapter_mutation_contract.rb`'s `test_mutation_contract_delete_tombstones_rather_than_destroying`.
+> `test_contract_port_writable_agrees_with_what_write_actually_does` is the sole survivor of the
+> pattern and stays — `write` is the one verb `port_writable?` is genuinely about.
 
 **Files:**
 - Modify: `app/services/file_layer/chunk.rb`

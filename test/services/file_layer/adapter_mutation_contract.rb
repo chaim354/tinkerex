@@ -43,7 +43,9 @@
 #     rather than left to each adapter's own suite -- see
 #     test_mutation_contract_move_refuses_a_taken_destination for what that closes and what it
 #     deliberately does not (the sync engine's OWN doors, e.g. a device push through the mount,
-#     are untouched -- CLAUDE.md 12 item 11 stays open).
+#     are untouched -- CLAUDE.md 14c's recorded gap stays open. NOT 12 item 11, which is about
+#     a project-scoped upload deduping per-folder rather than project-wide -- a different gap one
+#     layer up, and an easy mis-citation because both end in a duplicate name).
 #   - A MOVE OF A DIRECTORY. Share allows it; s3 refuses (`movable_file!`). Every test here moves
 #     a FILE for that reason.
 module FileLayerMutationContract
