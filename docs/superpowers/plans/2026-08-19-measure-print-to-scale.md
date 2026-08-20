@@ -31,6 +31,29 @@ Read these before Task 1. You do not need to change any of them except where a t
 | `test/fixtures/files/bezier-circle.lbrn2` | A ⌀20 circle at x −10..10 and a 20 × 20 square at x 40..60 — **disjoint, 50 mm apart**. |
 | `test/fixtures/addons/boxes/sheet.js` | The sibling implementation, for reference only. **Do not import it.** |
 
+### STANDING INSTRUCTION: assume the test inputs below are under-powered
+
+This has now cost three findings across the first two tasks, so treat it as a rule rather than a
+possibility. **The synthetic inputs written into this plan are illustrative, not sufficient.** Every
+one of these was a real green-over-broken:
+
+| Task | The input | What survived it |
+|---|---|---|
+| 1 | one shape | `unionBox` gutted to `return shapes[0].b` |
+| 2 | one shape | `unionBox`'s maxima half swapped to `Math.min` |
+| 2 | nothing under 10 mm | dropping the `w <= content.w` guard — which silently yields **0 pages** for any selection smaller than the overlap band, and this file's own ⌀10 hole fixture would hit it |
+| 2 | selections only ever one row tall | `translateY` reading `originX` |
+
+The shape is always the same: **a one-element array cannot distinguish `max` from `min`, `[0]` from
+a fold, or any branch from its neighbour.** So for every task from here on:
+
+1. Write the plan's tests.
+2. **Mutation-check every guard the task adds** — break the thing, confirm red, restore. Not only
+   the mutations the task lists; enumerate the branches your code actually has.
+3. **When a mutation comes back GREEN, the test is wrong, not the mutation.** Strengthen the input
+   until it goes red, then record the observed failure text in a comment. Deviating from the
+   plan's literal test data to do this is expected and correct — say so in your report.
+
 ### The payload shape you will be working with
 
 ```js
@@ -340,8 +363,9 @@ git commit -m "feat(measure): print_sheet.js — paper table, content box, singl
 >    consumer.** Task 1's test pins only the minima (what `translateX/Y` reads); mutating the max
 >    half to `Math.min` stayed green, correctly, because nothing read `box[2]`/`box[3]`. Here
 >    `cols`/`rows` read them — so confirm that mutation now turns the tiling test RED, and record
->    it in the mutation table at Step 5. If it does not, the tiling test is not measuring what it
->    claims.
+>    the observed failure in a test comment. (Task 2 has no mutation-table step of its own; design
+>    the set from the branches `buildSheets` actually has.) If it does not go red, the tiling test
+>    is not measuring what it claims.
 > 2. **Add the system-tier justification to the test file's header comment.**
 >    `test/system/README.md`'s rule is "a behaviour earns a system test if and only if it is
 >    observable only in a browser", which pure arithmetic does not meet as written. The real reason
@@ -379,6 +403,26 @@ Add to `test/system/measure_print_test.rb`, after the single-page test:
 
     dx = out["pages"][1]["originX"] - out["pages"][0]["originX"]
     assert_in_delta 185.9, dx, 0.001, "content width 195.9 mm less a 10 mm overlap band"
+  end
+
+  # ROWS, NOT JUST COLUMNS. Every other tiling test here is one row tall, so the `row` loop,
+  # `originY` and `translateY` are exercised only at row 0 — and a copy-paste slip like
+  # `translateY: content.y - originX - box[1]` passes all of them. Letter's content box is 230.4 mm
+  # tall and the overlap band eats 10, so ceil((500 - 10) / 220.4) = 3 rows.
+  test "a selection taller than the sheet tiles into rows" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 40, 500], p: [[0, 0], [40, 500]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["cols"]
+    assert_equal 3, out["rows"]
+    dy = out["pages"][1]["originY"] - out["pages"][0]["originY"]
+    assert_in_delta 220.4, dy, 0.001, "content height 230.4 mm less a 10 mm overlap band"
+    # THE RELATIONSHIP, not a second literal: translateY must pan by exactly the origin step, or
+    # every tile draws row 1's content on a sheet labelled row 2.
+    assert_in_delta(-dy, out["pages"][1]["translateY"] - out["pages"][0]["translateY"], 0.001)
   end
 
   # A selection that fits goes through the SAME path, with no small-selection branch to keep in
