@@ -1,8 +1,14 @@
-// Pagination and sheet rendering for the Measure view's to-scale print.
+// Pagination, sheet rendering, and the print document, for the Measure view's to-scale print.
 //
-// Takes shapes in millimetres and a paper, returns pages of shapes in millimetres, then renders a
-// page as an <svg>. Knows nothing about Stimulus, about the Measure controller, or about file
-// formats: it reads `b`, `p`, `k` and `i` off a shape and nothing else.
+// Takes shapes in millimetres and a paper, returns pages of shapes in millimetres, renders a page
+// as an <svg>, and — at the bottom of this file — assembles those pages into a hidden iframe and
+// spools it. Knows nothing about Stimulus, about the Measure controller, or about file formats:
+// it reads `b`, `p`, `k` and `i` off a shape and nothing else.
+//
+// TWO THIRDS OF IT IS PURE AND THE LAST THIRD IS NOT, WHICH IS WHERE TO LOOK FOR LIFECYCLE.
+// `buildPrintFrame` owns a NODE ON THE HOST PAGE (one `.measure-print-frame` iframe, replaced
+// rather than accumulated) and `printSheets` calls the browser's own print(). Nothing above them
+// touches the document they are called from.
 //
 // A SIBLING IMPLEMENTATION EXISTS AND IS DELIBERATELY NOT SHARED. The `boxes` addon bundle prints
 // a tray plan to scale through its own sheet.js, with the same MARGIN/OVERLAP/MAX_SHEETS values
@@ -515,17 +521,29 @@ const FRAME_CLASS = "measure-print-frame"
 // whole suite green. The controller's own counted print stub is what reaches it.
 export function buildPrintFrame(shapes, paper, meta) {
   // FIRST, BEFORE THE FRAME EXISTS. buildSheets throws for an empty selection and for a job over
-  // MAX_SHEETS, and a frame created ahead of it is a hidden iframe left attached to the page on
-  // every refused click — one per click, since the removal below only ever reaches the first.
+  // MAX_SHEETS — the two conditions a user reaches by ordinary use — and a frame created ahead of
+  // it would leave a hidden iframe attached to the page on every refused click.
+  //
+  // IT IS NOT A GENERAL "NOTHING AFTER THIS POINT THROWS" CLAIM, and the distinction is worth
+  // keeping straight. `renderSheet` runs BELOW the append and can throw too — `meta.sizeLabel` is
+  // the caller's own function, and `el` throws by design on a mis-call — which leaves one frame
+  // holding an empty document. That case is bounded and self-healing, because the sweep below
+  // removes ALL prior frames rather than the first: a strand is cleared by the next print, and
+  // cannot accumulate. What this ordering buys is that the ROUTINE refusals cost nothing.
   const { pages } = buildSheets(shapes, paper)
 
-  // AND THE PRIOR FRAME GOES BEFORE THE NEW ONE IS BUILT, which is what keeps `clipId` honest.
+  // AND THE PRIOR FRAMES GO BEFORE THE NEW ONE IS BUILT, which is what keeps `clipId` honest.
   // `mp-clip-${col}-${row}` is unique within ONE grid; a re-print that appended into the existing
   // frame would put a second grid's identical `(col, row)` pairs into the same document, where a
   // `url(#id)` resolves to the FIRST match anywhere in it — so sheet 7 would clip against sheet
   // 1's window. A fresh document per print is what makes the key sufficient. If that ever changes,
   // the id needs a per-document counter, not a bigger key.
-  document.querySelector(`.${FRAME_CLASS}`)?.remove()
+  //
+  // querySelectorAll, NOT querySelector, and it is one character that removes a whole line of
+  // reasoning. A singular removal is sufficient only while at most one frame can ever be stranded,
+  // which is an argument about the throw sites above rather than a property of this line. The
+  // sweep needs no such argument and matches what the tests clean up with.
+  for (const stale of document.querySelectorAll(`.${FRAME_CLASS}`)) stale.remove()
   const frame = document.createElement("iframe")
   frame.className = FRAME_CLASS
   frame.setAttribute("aria-hidden", "true")
@@ -555,6 +573,12 @@ export function buildPrintFrame(shapes, paper, meta) {
   // PAGE — one wasted sheet on every print. Both legacy and modern spellings are emitted; Chrome
   // re-serializes the pair as `break-after` alone, which is why measure_print_test.rb reads the
   // COMPUTED value rather than comparing this string to what the CSSOM gives back.
+  //
+  // `background:#fff` IS THE ONE DECLARATION HERE WITH NO ASSERTION OVER IT, deliberately and
+  // labelled as such. Browsers do not print backgrounds unless the user turns them on, so it has
+  // no demonstrable effect on any print this repo can drive, and no test asserts it. It stays as
+  // belt and braces for a viewer who HAS turned them on under a forced-dark UA — unverified, and
+  // recorded as unverified rather than dressed up as a measured requirement.
   style.textContent =
     `@page { size: ${paper.w}mm ${paper.h}mm; margin: 0 }` +
     "html,body { margin:0; padding:0; background:#fff }" +
@@ -566,23 +590,65 @@ export function buildPrintFrame(shapes, paper, meta) {
   return frame
 }
 
+// THE DEFAULT SPOOLER, EXPORTED FOR ONE REASON — the same reason `el` is. Everything else about
+// printing is assertable through the `print` seam below, but the seam's own DEFAULT is only
+// reachable when the argument is omitted, and then it is handed a real window with a real print
+// dialog behind it. Exporting it lets the browser tier hand it a double instead, which is the
+// difference between a two-line function that is believed to work and one that has been shown to.
+//
+// FOCUS BEFORE PRINT, AND THE ORDER IS PINNED RATHER THAN MEASURED. It is the ordering every
+// hidden-iframe print idiom uses — the frame's window must be the one the dialog attaches to —
+// but this repo cannot drive a print dialog, so no browser has been observed here where reversing
+// it does the wrong thing. Read it as unverified belt and braces whose ORDER is nonetheless
+// guarded, so it cannot be quietly swapped on the strength of a reading of this comment.
+//
+// AND IT IS NOT IN TENSION WITH THE FRAME'S `aria-hidden`, though it looks like it. That attribute
+// hides the frame from assistive technology; this focuses a WINDOW so a print job attaches to the
+// right document. The frame holds nothing focusable and nothing a reader would ever land on, so
+// there is no focus-inside-hidden-content trap here — only a print target being named.
+export const spool = (w) => { w.focus(); w.print() }
+
 // Returns the sheet count. Throws whatever buildSheets throws — the caller surfaces it.
 //
-// THE readyState BRANCH IS BELT AND BRACES AND MEASURED TO BE SO. Probed in this repo's own
-// headless Chrome: `frame.contentDocument.readyState` reads "complete" the instant the iframe is
-// appended, so `go()` runs synchronously and the listener below is never installed. The document
-// also SURVIVES the frame's own load event — re-read 400 ms later it is the same Document object
-// carrying the same sheets — so nothing here is racing a navigation that replaces what we built.
-// Kept anyway, because it costs one line and an engine that reported "loading" would otherwise
-// print an empty frame. Read the residual honestly: if some engine ever reports a non-complete
-// readyState AFTER its load event has already fired, this prints nothing at all. That would want
-// a probe, not a guess.
-export function printSheets(shapes, paper, meta) {
+// THE `print` SEAM IS THE SAME TESTABILITY MOVE AS SPLITTING buildPrintFrame OUT, and it exists
+// because the alternative was not available. The frame's window is a SEPARATE REALM — probed:
+// `frame.contentWindow.print !== window.print` — and it does not exist until this function has
+// created the frame and spooled it in the same synchronous turn, so no stub of the PAGE's
+// `window.print` can ever reach it. (A test CAN get there by redefining
+// `HTMLIFrameElement.prototype.contentWindow`, which is `configurable: true`; that is a
+// page-global monkeypatch, not a stub of anything this module names.) With the seam, which window
+// is spooled, that it happens exactly once, that it happens SYNCHRONOUSLY, and the returned count
+// are all assertable without a spooler.
+//
+// THE readyState BRANCH: THE FIRST ARM IS THE ONE THAT RUNS, AND THE SECOND IS NOT A WORKING
+// FALLBACK. Both halves are measured in this repo's own headless Chrome, and the second is worse
+// than the "belt and braces" an earlier draft of this comment called it:
+//
+//   `frame.contentDocument.readyState` reads "complete" the instant the iframe is appended, so
+//     `go()` runs synchronously and the listener is never installed. The document also SURVIVES
+//     the frame's own load handling — re-read 400 ms later it is the same Document object carrying
+//     the same sheets — so nothing here is racing a navigation that would replace what we built.
+//   THE FRAME'S `load` EVENT NEVER ARRIVES. Deleting the first arm so only the listener remains
+//     spools ZERO times, still zero 400 ms later: a dynamically created, src-less iframe does not
+//     fire `load` on the element here. So on an engine that reported a non-complete readyState,
+//     this would print NOTHING — the failure the second arm looks like it prevents is the failure
+//     it would cause.
+//
+// It stays because deleting it would be a behaviour change argued from one browser, and because
+// there is genuinely nothing to await: this document is built by synchronous node insertion, with
+// no parser and no subresources. But do not read it as protection. If an engine is ever found that
+// reports "loading" here, PROBE WHAT THAT ENGINE DOES — do not trust this line to catch it.
+// measure_print_test.rb pins `afterLoad`, which is what would go red the day `load` starts firing.
+export function printSheets(shapes, paper, meta, print = spool) {
   const frame = buildPrintFrame(shapes, paper, meta)
   const doc = frame.contentDocument
+  // COUNTED ABOVE THE BRANCH, so the return value means ONE thing. Read inside each arm it is
+  // taken after print() on the synchronous path and before it on the deferred one — a difference
+  // no caller could see coming, on a number a caller reports to a user as "3 sheets".
+  const sheets = doc.querySelectorAll("svg").length
   // The document has to settle before print(), or an empty frame goes to the spooler.
-  const go = () => { frame.contentWindow.focus(); frame.contentWindow.print() }
+  const go = () => print(frame.contentWindow)
   if (doc.readyState === "complete") go()
   else frame.addEventListener("load", go, { once: true })
-  return doc.querySelectorAll("svg").length
+  return sheets
 }

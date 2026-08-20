@@ -1782,11 +1782,18 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # ---- lib/print_sheet.js: the print document ---------------------------------------------------
   #
   # EVERY PAGE OF ONE GRID NOW SHARES ONE DOCUMENT, which is the fact this whole section turns on.
-  # Task 4 flagged two things forward on exactly that basis and both are checked here rather than
-  # assumed: `clipId` (`mp-clip-${col}-${row}`) is unique only WITHIN a grid, and the `xmlns` on the
-  # root <svg> is inert only while pages are appended as NODES.
+  # Task 4 flagged two things forward on exactly that basis, and they get DIFFERENT treatment here:
   #
-  # AND EVERY TEST HERE CLEANS UP ITS FRAME IN A `finally`. in_print_sheet re-visits only when the
+  #   `clipId` (`mp-clip-${col}-${row}`) is unique only WITHIN a grid — ASSERTED, twice, by the
+  #     own-sheet test and the print-twice test below.
+  #   the `xmlns` on the root <svg> is inert only while pages are appended as NODES — VERIFIED AND
+  #     DELIBERATELY NOT ASSERTED. Nothing in the module serializes (no outerHTML, innerHTML,
+  #     srcdoc or XMLSerializer anywhere in it, grepped), and removing the attribute leaves this
+  #     whole file green — so an assertion on it would go red only for a change that is harmless.
+  #     There is therefore no test below that mentions xmlns, and that is the finished answer to
+  #     the flag rather than an omission.
+  #
+  # AND EVERY TEST HERE CLEARS ITS FRAMES BEFORE IT RETURNS. in_print_sheet re-visits only when the
   # path CHANGES, so the two or three browser round-trips inside one test share a document — a frame
   # left behind by a throw is a frame the next round-trip counts.
 
@@ -1795,14 +1802,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
     [{ b: [0, 0, 400, 40], k: 1, i: 0, o: 1, p: [[0, 0], [400, 40]] }]
   JS
 
-  # 400 x 300 on Letter: 3 columns x 2 ROWS. The plan's tiling input is one row tall, and a one-row
-  # grid cannot tell `mp-clip-${col}-${row}` from `mp-clip-${col}` — every `row` is 0, so the second
-  # half of the key contributes nothing and dropping it stays green.
-  WIDE_400_300 = <<~JS.freeze
-    [{ b: [0, 0, 400, 300], k: 1, i: 0, o: 1,
-       p: [[0, 0], [400, 0], [400, 300], [0, 300], [0, 0]] }]
-  JS
-
+  # A 3 x 2 GRID COMES FROM `TILED_3X2` ABOVE, not a second copy of it. Every test below that needs
+  # two rows uses it, because a one-row grid cannot tell `mp-clip-${col}-${row}` from
+  # `mp-clip-${col}` — every `row` is 0, so the second half of the key contributes nothing and
+  # dropping it stays green.
   CLEAR_FRAMES = 'document.querySelectorAll(".measure-print-frame").forEach((f) => f.remove())'.freeze
 
   # THE @page SIZE MUST MATCH THE SHEET'S OWN DECLARED SIZE, or the browser prints an A4-shaped page
@@ -1928,6 +1931,88 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal [ "0px", "0px" ], out["body"]
   end
 
+  # THE DECLARED SIZE AND THE @page SIZE MUST COMPOSE, AND NOTHING ELSE IN THIS FILE ASSERTS THAT.
+  # Task 4 pins the <svg>'s own `width`/`height`/`viewBox`; the paper test above pins `@page`. Both
+  # are declarations. What a printer actually receives is the sheet's LAID-OUT box, and one line in
+  # this module's stylesheet can change that while every declaration stays word for word correct.
+  #
+  # DEMONSTRATED, NOT ARGUED: adding `transform: scale(0.9)` to the `svg` rule — a silent 10%
+  # mis-scale on every sheet, on every printer, which is the one failure this entire feature exists
+  # to prevent — left the file at 45 runs, 444 assertions, 0 failures before this test existed.
+  # `max-width: 100%` did the same, and is worse: the frame is 1 px wide (asserted below), so every
+  # sheet would clamp to a 1 px column.
+  #
+  # THE NUMBERS ARE MEASURED, NOT COMPUTED, and that is not fussiness. CSS defines 1 in as 96 px, so
+  # `215.9mm` is arithmetically 816 px — but Chrome quantizes layout to 1/64 px, so A4's 210 mm
+  # lands on 793.6875 and not the 793.7008 the arithmetic gives. A test that recomputed the
+  # conversion would be asserting against its own model of the browser (CLAUDE.md §14e); these came
+  # out of the browser.
+  #
+  # ALL FOUR PAPERS, because all four are in the picker, and one assertion for the lot so that a
+  # mutation moving every sheet prints every number rather than stopping at Letter.
+  #
+  # MUTATION-CHECKED, each actual copied out of the run, and each is the ONLY failure in the whole
+  # file — which is the reviewer's finding restated as a measurement:
+  #   `transform: scale(0.9)` added   Letter boxes [[734.39990234375, 950.39990234375],
+  #     to the `svg` rule               [734.39990234375, 950.400146484375]] — TWO entries, because
+  #                                     the transform introduces per-page float noise, and
+  #                                     scrollHeight is UNCHANGED at 6336 since a transform does
+  #                                     not affect layout. The box half of this assertion is the
+  #                                     only thing anywhere that sees a 10% mis-scale.
+  #   `max-width: 100%` added         Letter boxes [[1.0, 1056.0]] — the width alone collapses to
+  #                                     the 1 px frame, height and scrollHeight untouched. An
+  #                                     earlier draft of this row predicted [[1, 1.29...]] and
+  #                                     scrollHeight 8; both were wrong, which is why the numbers
+  #                                     here are copied rather than reasoned.
+  #   `svg:last-child` break rule     GREEN — a page break is not a layout box; the stylesheet test
+  #     dropped                         above owns that, and this one must not pretend to
+  test "every sheet lays out at exactly the paper it declares" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const laid = {}
+        for (const name of [ "Letter", "A4", "A3", "Tabloid" ]) {
+          const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS[name], #{META})
+          try {
+            const doc = frame.contentDocument
+            const svgs = Array.from(doc.querySelectorAll("svg"))
+            // DISTINCT BOXES, not the first one: every sheet in a document must lay out the same,
+            // and a per-page difference has to show as a second entry rather than be averaged away.
+            const boxes = svgs.map((n) => {
+              const r = n.getBoundingClientRect()
+              return JSON.stringify([ r.width, r.height ])
+            })
+            laid[name] = {
+              n: svgs.length,
+              boxes: Array.from(new Set(boxes)).map((b) => JSON.parse(b)),
+              // THE PAGES MUST ALSO STACK WITH NOTHING BETWEEN THEM. A body margin, a gap, or a
+              // sheet the browser broke in two all leave the boxes correct and this number wrong.
+              scrollHeight: doc.body.scrollHeight,
+              frameWidth: frame.getBoundingClientRect().width,
+            }
+          } finally { frame.remove() }
+        }
+        return JSON.stringify(laid)
+      })()
+    JS
+
+    normalised = out.transform_values do |v|
+      v.merge("boxes" => v["boxes"].map { |b| b.map(&:to_f) })
+    end
+
+    assert_equal(
+      { "Letter"  => { "n" => 6, "boxes" => [ [ 816.0, 1056.0 ] ],
+                       "scrollHeight" => 6336, "frameWidth" => 1 },
+        "A4"      => { "n" => 6, "boxes" => [ [ 793.6875, 1122.515625 ] ],
+                       "scrollHeight" => 6735, "frameWidth" => 1 },
+        "A3"      => { "n" => 2, "boxes" => [ [ 1122.515625, 1587.390625 ] ],
+                       "scrollHeight" => 3175, "frameWidth" => 1 },
+        "Tabloid" => { "n" => 2, "boxes" => [ [ 1056.0, 1632.0 ] ],
+                       "scrollHeight" => 3264, "frameWidth" => 1 } },
+      normalised,
+      "a sheet that lays out at any other size prints at any other scale"
+    )
+  end
+
   # ONE SVG PER TILE — AND THEY MUST BE DIFFERENT TILES. A count alone is answered exactly as well
   # by rendering `pages[0]` three times: three sheets, correctly numbered 1 of 3 to 3 of 3, carrying
   # IDENTICAL geometry. That is Task 2's recorded `- originX` defect one layer up, and the plan's
@@ -1997,7 +2082,7 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "every sheet's clip resolves inside its own sheet" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
-        const frame = m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
+        const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
         try {
           const doc = frame.contentDocument
           const svgs = Array.from(doc.querySelectorAll("svg"))
@@ -2094,8 +2179,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
         try {
-          m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
-          const frame = m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
+          m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
+          const frame = m.buildPrintFrame(#{TILED_3X2}, m.PAPERS.Letter, #{META})
           const doc = frame.contentDocument
           const ids = Array.from(doc.querySelectorAll("clipPath")).map((n) => n.id)
           return JSON.stringify({
@@ -2126,17 +2211,26 @@ class MeasurePrintTest < ApplicationSystemTestCase
   test "a refused selection leaves no hidden frame behind" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
-        let message = "NO ERROR"
-        try { m.buildPrintFrame([], m.PAPERS.Letter, #{META}) }
-        catch (e) { message = e.message }
-        const frames = document.querySelectorAll(".measure-print-frame").length
-        #{CLEAR_FRAMES}
-        return JSON.stringify({ message, frames })
+        // IN A `finally` LIKE EVERY OTHER TEST IN THIS SECTION. The inner try/catch is what turns
+        // the refusal into a value to assert on; the outer one is the frame cleanup, and running
+        // them as one would either swallow the cleanup or lose the message.
+        try {
+          let message = "NO ERROR"
+          try { m.buildPrintFrame([], m.PAPERS.Letter, #{META}) }
+          catch (e) { message = e.message }
+          return JSON.stringify({
+            message, frames: document.querySelectorAll(".measure-print-frame").length,
+          })
+        } finally { #{CLEAR_FRAMES} }
       })()
     JS
 
-    assert_equal "Nothing to print.", out["message"], "the caller surfaces whatever buildSheets threw"
+    # THE FRAME COUNT FIRST, because it is the only claim this test makes that nothing else makes.
+    # The message is already pinned by the empty-selection test near the top of this file, so
+    # behind it a copy edit there would take this line out of service without going red — the same
+    # ordering argument the injection test below makes.
     assert_equal 0, out["frames"], "buildSheets must run BEFORE the frame is created"
+    assert_equal "Nothing to print.", out["message"], "the caller surfaces what buildSheets threw"
   end
 
   # THE FRAME IS AN IMPLEMENTATION DETAIL OF PRINTING AND MUST LOOK LIKE ONE ON SCREEN. A bare
@@ -2147,7 +2241,7 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # THE 1 x 1 RECT IS ALSO WHAT PINS `border: 0`: getBoundingClientRect is the border box, so the
   # default border reads as 4 x 4 — MEASURED by dropping it, not predicted.
   #
-  # MUTATION-CHECKED FOUR WAYS, one per assertion:
+  # MUTATION-CHECKED FIVE WAYS, one per assertion:
   #   the class changed on the        Expected: "measure-print-frame" Actual: "mp-frame"
   #     element
   #   `aria-hidden` dropped           Expected: "true" Actual: nil
@@ -2180,6 +2274,102 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal [ 1, 1 ], out["size"]
   end
 
+
+
+  # ---- lib/print_sheet.js: printSheets ------------------------------------------------------------
+  #
+  # THE `print` SEAM IS WHAT MAKES ANY OF THIS REACHABLE, and it was added because the obvious
+  # alternative does not exist. The frame's window is a SEPARATE REALM and is created inside
+  # printSheets, which spools it in the same synchronous turn — so a stub of the PAGE's
+  # `window.print` can never be the function that runs. Probed, rather than assumed: see the
+  # realm assertion below. What is still NOT covered, stated plainly: the deferred `load` arm,
+  # which this browser never takes (`readyState` is "complete" at append), and nothing at all
+  # about a real print dialog.
+
+  # WHICH WINDOW, HOW MANY TIMES, AND WHEN — three claims that fail in three different ways.
+  # Spooling `window` instead of `frame.contentWindow` prints the MEASURE PAGE, at screen scale,
+  # with the app chrome on it. Spooling twice puts two dialogs in front of the user. And spooling
+  # late means the `readyState` branch silently stopped being the one taken.
+  #
+  # THE COUNT IS TAKEN TWICE, AND `afterLoad` IS A TRIPWIRE RATHER THAN A GUARD — say so rather
+  # than let it read as one. It was added to catch the obvious "be safe, register the listener on
+  # both arms" edit, which would spool a SECOND time and put a second dialog in front of the user.
+  # It does not catch it, and the reason is the finding: THE FRAME'S `load` EVENT NEVER ARRIVES in
+  # this browser. Measured, not inferred — with the synchronous arm deleted, leaving only the
+  # listener, the spool count is 0 immediately and still 0 after the wait. So the both-arms
+  # mutation is inert here, and `afterLoad` is what would go red the day an engine fires that
+  # event: real weight, no weight today, and recorded as such.
+  #
+  # MUTATION-CHECKED FOUR WAYS, each actual copied out of the run:
+  #   `print(window)` instead of        Expected true to be truthy — "the frame's own window, not
+  #     `print(frame.contentWindow)`      the page's"
+  #   `go()` called twice,              the spool must be reached exactly once. Expected: 1
+  #     synchronously                     Actual: 2
+  #   the `readyState === "complete"`   the same assertion, Expected: 1 Actual: 0 — nothing prints
+  #     arm deleted, leaving only the     at all, which is the dead-fallback finding above
+  #     load listener
+  #   the load listener registered on   GREEN, before AND after the wait — recorded, not skipped
+  #     BOTH arms                         (see the paragraph above for why)
+  test "printSheets spools the frame's own window, exactly once, before it returns" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const seen = []
+        let sheets
+        try {
+          sheets = m.printSheets(#{WIDE_400_40}, m.PAPERS.Letter, #{META}, (w) => {
+            const frame = document.querySelector(".measure-print-frame")
+            seen.push({
+              isFrameWindow: w === frame.contentWindow,
+              isPageWindow: w === window,
+              // THE REALM, which is the whole reason this seam exists rather than a stub of
+              // window.print: the frame's print is not the page's function at all, and it does
+              // not exist until printSheets has built the frame and spooled it in one turn.
+              separateRealm: w.print !== window.print,
+              sheetsInIt: w.document.querySelectorAll("svg").length,
+            })
+          })
+        } catch (e) { #{CLEAR_FRAMES}; throw e }
+        const immediate = seen.length
+        // 400 ms, the same window probed for the document's survival. Long enough for a load
+        // event if one were coming; measured, none is (see the comment above the test).
+        return new Promise((resolve) => setTimeout(() => {
+          try {
+            resolve(JSON.stringify({ sheets, immediate, afterLoad: seen.length, seen }))
+          } finally { #{CLEAR_FRAMES} }
+        }, 400))
+      })()
+    JS
+
+    assert_equal 1, out["afterLoad"], "the spool must be reached exactly once"
+    got = out["seen"][0]
+    assert got["isFrameWindow"], "the frame's own window, not the page's"
+    refute got["isPageWindow"], "spooling the page prints the Measure view at screen scale"
+    assert got["separateRealm"], "premise: a page-side stub of window.print could never reach this"
+    assert_equal 3, got["sheetsInIt"], "and the window it spools is the one holding the sheets"
+    # SYNCHRONOUSLY, which is what says the readyState branch is the one being taken. Today this
+    # cannot differ from `afterLoad` — nothing ever arrives late — so read it as the assertion
+    # that names the CLAIM, with the pair above as the tripwire for the day that stops being true.
+    assert_equal 1, out["immediate"], "printSheets must spool before it returns"
+    assert_equal 3, out["sheets"], "and it reports the sheet count it built"
+  end
+
+  # THE DEFAULT SPOOLER, WHICH THE SEAM ITSELF CANNOT REACH — omit the argument and it is handed a
+  # real window with a real print dialog behind it. Exported for exactly this, as `el` is.
+  #
+  # MUTATION-CHECKED TWICE: dropping `w.focus()` is RED (Expected: ["focus", "print"] Actual:
+  # ["print"]), and reversing the two is RED with Actual ["print", "focus"] — which is the point of
+  # asserting a LIST rather than two booleans, since both calls happen either way.
+  test "the default spooler focuses the window before it prints it" do
+    calls = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const calls = []
+        m.spool({ focus: () => calls.push("focus"), print: () => calls.push("print") })
+        return calls
+      })())
+    JS
+
+    assert_equal [ "focus", "print" ], calls
+  end
 
   private
 
