@@ -1129,7 +1129,34 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 8: The byte path — `begin_upload` / `finalize_upload` as port verbs
+### Task 8: The byte path
+
+> **THREE THINGS TASK 7'S REVIEW ESTABLISHED, MEASURED AGAINST THE REAL TREE.**
+>
+> 1. **`files_controller.rb` has FOUR seam hits, not two.** Besides `Sync::Commit.begin`/`.finalize`
+>    it carries `rescue Sync::Commit::InvalidManifest` and `rescue Sync::Commit::ChunksMissing`.
+>    Moving only the CALLS behind the port leaves the guard **red** on the rescues. The fix is the
+>    one `ea9bb50` already set a precedent for with `undelete`'s `ActiveRecord::RecordNotFound`
+>    leak: `Chunk#begin_upload`/`#finalize_upload` catch these internally and re-raise through the
+>    port's own closed vocabulary, so the controller only ever rescues `FileLayer::*`.
+> 2. **The two guards share `library_output.rb`, so they are not as independent as they look.**
+>    That file also holds the ONE sanctioned `Storage::ChunkStore.current.put` call, which
+>    `architecture_invariants_test.rb`'s chunk-internals test pins with `assert_equal 1, hits.size`.
+>    If Task 8 folds the put-missing-chunks step into the new port method, that count drops to
+>    **0** and must be updated in the SAME commit. If the put stays the caller's job, it does not.
+>    Decide explicitly; do not discover it from a red suite.
+> 3. **Emptying `SYNC_SEAM_EXCEPTIONS` is not enough — the guard's own `assert_not_empty` then
+>    fires**, telling you to delete the constant and its comment block too. That is deliberate.
+>
+> Beyond the guard: `begin_upload`/`finalize_upload` are `syncable`-gated and chunk-only, so unlike
+> the four metadata verbs they are **not** a verb every adapter answers — share/s3 have no
+> two-phase concept at all. Decide and document whether they get refusing stubs or the port stays
+> asymmetric. Their return shapes (`{commit_id, node_id, put_urls, missing}` and
+> `{version_id, seq}`) do not map onto `FileInfo`, so Task 8 needs its own argued answer on return
+> types, the way Task 6 needed one for `delete` vs the rest. And the bytes move browser→storage via
+> presigned PUT **between** the two calls, entirely outside any port call — a structural difference
+> from all four metadata verbs, which complete atomically in one.
+ — `begin_upload` / `finalize_upload` as port verbs
 
 The last two call sites. This does **not** give chunk a byte-taking `write`; it lifts the presigned two-phase pair onto the port so the caller never names `Sync::Commit`.
 

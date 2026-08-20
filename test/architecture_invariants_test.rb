@@ -46,13 +46,23 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # hand-rolled comment strip above rather than duplicating it with a second, weaker mechanism --
   # and it additionally closes a hole that helper never had to face, because nothing in the
   # chunk-internals grep above happens to collide with a string literal the way "Sync::" does.
+  # ANY REAL `Sync` CONSTANT COUNTS -- deliberately NOT "a `Sync` followed by `::`", which is what
+  # this method required until a review demonstrated the miss. `Sync.load_manifests` and
+  # `Sync.load_version_sizes` are real public singleton methods on the module itself
+  # (app/services/sync.rb), and `Sync.load_manifests(...)` lexes as :on_const + :on_period -- so a
+  # maker-layer file calling one sailed straight through, GREEN, while reaching into the sync
+  # engine every bit as much as `Sync::Commit` does. The adjacency rule also missed `Sync ::Commit`
+  # across a line break, for the same structural reason.
+  #
+  # Dropping the pairing costs nothing and is also the more honest question: there is no legitimate
+  # reason for maker-layer code to name the bare `Sync` constant at all outside the one allowed
+  # door, so "does this file mention Sync?" IS the invariant, and the narrower version was an
+  # implementation detail masquerading as one. Verified against the whole live tree before and
+  # after -- identical offending-file set, identical hit lines, no new noise.
   def sync_references(file)
-    tokens = Ripper.lex(File.read(file))
     rel = Pathname.new(file).relative_path_from(ROOT)
-    tokens.each_cons(2).filter_map do |(pos, type, str, _), (_, next_type, next_str, _)|
-      next unless type == :on_const && str == "Sync"
-      next unless next_type == :on_op && next_str == "::"
-      "#{rel}:#{pos.first}"
+    Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
+      "#{rel}:#{pos.first}" if type == :on_const && str == "Sync"
     end
   end
 
@@ -93,11 +103,19 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # file set in the test below is Dir.glob'd rather than enumerated: a new file under any of
   # these trees is sync-side by construction, not a maker-layer file that happens to be exempt
   # today.
+  # THE TWO REAPERS ARE SPELLED OUT, NOT MATCHED BY `app/jobs/*reaper*_job.rb`. That glob encoded a
+  # NAMING coincidence rather than the real property ("reclaims sync-engine state"), which is the
+  # `is_a?(FileLayer::Share)` mistake §14b records -- and a review demonstrated the hole: a new
+  # top-level `app/jobs/bom_link_reaper_job.rb` full of maker-layer code would have been waved
+  # through, silently, on the strength of its NAME. It excluded `app/jobs/maker/*_reaper_job.rb`
+  # only by the accident that Dir.glob does not cross `/` without `**`. Two literal paths cost one
+  # line each and cannot be widened by someone choosing a filename.
   SYNC_SIDE_GLOBS = %w[
     app/services/sync/**/*.rb
     app/services/sync.rb
     app/controllers/v1/**/*.rb
-    app/jobs/*reaper*_job.rb
+    app/jobs/chunk_reaper_job.rb
+    app/jobs/pending_commit_reaper_job.rb
     app/jobs/retention_job.rb
     app/channels/**/*.rb
     app/services/file_layer/chunk.rb
