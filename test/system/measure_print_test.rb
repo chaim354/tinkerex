@@ -685,9 +685,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #                                      both reserved strips; 9.9/16.9 is the 0.1 mm stroke halo
   #                                      a working window cuts off.
   #   `url(#${clipId}-content)` — a    Actual: [9.9, 16.9, 215.9, 279.4], INDISTINGUISHABLE from
-  #     one-sided edit of the id         no clip at all, which is exactly the case an
-  #     that is spelled twice           attribute-level assertion cannot see: the attribute is
-  #                                     still there and still reads back.
+  #     one-sided edit of the id         no clip at all — which mere PRESENCE of the attribute
+  #     that is spelled twice           cannot see, since it is still there and still reads back.
+  #                                     The structural test above catches this by cross-checking
+  #                                     the id (`refMatchesId`); this one catches it by effect.
+  #                                     Both are wanted: do not read this row as making that
+  #                                     assertion dead weight.
   #   `svg.appendChild(clip)` dropped  Actual: [9.9, 16.9, 215.9, 279.4] — same, no <clipPath>.
   #   rect x = content.x + 30          Actual: [40.0, 17.0, 215.9, 247.4] — `bottom` is untouched,
   #                                      which is the whole argument against the plan's
@@ -743,7 +746,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
         try {
           const host = svg.getBoundingClientRect()
           const S = host.width / 215.9
-          const part = svg.querySelector("polygon")
+          // THROUGH THE TRANSFORMED GROUP, never a bare querySelector("polygon"). Task 6 appends
+          // trim marks and a calibration gauge to this same sheet; the first polygon in document
+          // order stops being the part the day any of them lands as one, and the fill sweep below
+          // would blacken furniture instead. The contours are the only thing inside [transform].
+          const part = svg.querySelector("[transform] polygon")
           // elementsFromPoint, NOT elementFromPoint — "is the part painted here", not "is the
           // part the TOPMOST thing here". Tasks 6-8 add a header, a calibration gauge and trim
           // marks to this same sheet, and the topmost reading would start answering about a
@@ -752,7 +759,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
           const painted = (xmm, ymm) =>
             document.elementsFromPoint(host.left + xmm * S, host.top + ymm * S).includes(part)
           // Bisect between a point known painted and one known not. 30 halvings of a 280 mm span
-          // is a 2.6e-7 mm interval, and the hit test resolves finely enough to use most of it:
+          // is a 2.6e-7 mm interval; roughly 25 of those 30 halvings are productive before the hit
+          // test stops discriminating, which is not the same as landing inside the final interval:
           // the four edges come back [10.000001, 16.999999, 205.900005, 247.400007], a residual
           // of 7e-6 mm against a tolerance of 0.05. Read that as MEASURED, not as a guarantee —
           // an earlier draft of this comment quoted 0.002 mm and blamed Chrome's 1/64 px layout
