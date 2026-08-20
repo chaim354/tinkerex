@@ -2669,6 +2669,14 @@ class MeasurePrintTest < ApplicationSystemTestCase
           h: Math.max(...ys) - Math.min(...ys),
           svgW: doc.querySelector("svg").getAttribute("width"),
           polygons: polys.length,
+          // WHERE ON THE PAPER, NOT JUST HOW BIG. Every other assertion here reads the
+          // UNTRANSFORMED `points`, which is identical whatever datum the page was laid out
+          // against — so dropping `- box[0]` from translateX leaves this whole end-to-end tier
+          // green (measured; three module-tier tests catch it, none here). nested-plate spans
+          // x -30..30, y -20..20, so on Letter the content origin (10, 17) less the selection's
+          // own minimum is exactly translate(40 37): the case where a datum bug clips half the
+          // plate off the sheet.
+          transform: doc.querySelector("g[transform]").getAttribute("transform"),
         })
       })()
     JS
@@ -2677,6 +2685,7 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_in_delta 40.0, span["h"], 0.05
     assert_equal "215.9mm", span["svgW"]
     assert_equal 1, span["polygons"], "the MARKED set prints, not the whole file"
+    assert_equal "translate(40 37)", span["transform"], "and it lands where the datum says"
   end
 
   # TWO REAL PARTS KEEP THEIR REAL SEPARATION. bezier-circle.lbrn2's circle reaches x -10..10 and
@@ -2755,8 +2764,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     # A DATE-SHAPED REGEX RATHER THAN TODAY'S LITERAL: `toISOString` is UTC and Ruby's `Date.today`
     # is local, so an equality here would flake for whichever hours of the day the two disagree.
-    # Both mutations are still caught — a dropped `name` renders "" (a declared Stimulus String
-    # value defaults to the empty string) and a dropped `date` renders "undefined".
+    # Both mutations are still caught, and BOTH render "undefined" — measured
+    # ("undefined · 2026-08-20" and "sample.lbrn2 · undefined"). An earlier version of this comment
+    # said a dropped `name` renders "": that is the Stimulus default for a dropped ATTRIBUTE, not
+    # for dropping `name: this.nameValue` out of the `meta` object, which is the mutation named
+    # here. `String(undefined)` is "undefined".
     assert_match(/\A#{Regexp.escape(OPEN)} · \d{4}-\d{2}-\d{2}\z/, header)
   end
 

@@ -171,6 +171,12 @@ export default class extends Controller {
     this.svg = svg
     this.element.classList.add("measure-view--ready")
     this.setStatus(`${payload.shapes.length} shapes · click one to measure`)
+    this.bindInteractions(svg)
+    // AFTER bindInteractions, DELIBERATELY. populatePaper reads localStorage, which throws in a
+    // blocked or partitioned storage context — and draw() has already inserted the SVG and applied
+    // --ready by this point, so a throw here USED to leave a drawn, ready-looking Measure view with
+    // no hover, click, pan or zoom, from a preference-remembering nicety. Binding first means the
+    // worst case costs the paper picker, not measuring. Neither call needs the listeners.
     this.populatePaper()
     // AND THE PRINT BAR, WHICH IS WHY THE ERB'S LITERALS CANNOT DRIFT. Dropping this line alone is
     // GREEN — probed, not assumed — because the partial happens to render exactly what
@@ -181,7 +187,6 @@ export default class extends Controller {
     // line and goes red in five places without it. It is what makes the controller, not the
     // template, the one definition of the bar at rest.
     this.refreshPrintBar()
-    this.bindInteractions(svg)
   }
 
   // POPULATED FROM print_sheet.js's PAPERS TABLE, not listed in the ERB: a second copy of the
@@ -197,13 +202,17 @@ export default class extends Controller {
   // nothing selected answers its FIRST option. That is A4, because that is where PAPERS starts,
   // so an unrecognised value would silently change the paper rather than being ignored.
   //
-  // `!this.hasPaperTarget` IS THE ONE THING HERE THAT CANNOT FAIL, and it disagrees with the
-  // argument refreshPrintBar makes twenty lines down — the select is in the same always-rendered
-  // span as the buttons, so the target exists whenever this controller does, and `print()` reads
-  // `this.paperTarget` with no guard at all. It is kept as written rather than reconciled either
-  // way, and named here so the next reader does not have to work out that the two disagree.
+  // NO `hasPaperTarget` GUARD, for refreshPrintBar's reason one method down: the select sits in
+  // the same always-rendered span as the buttons, so the target exists whenever this controller
+  // does. It was here and was removed — it could not fail (dropping it left all 73 tests green),
+  // and it did not protect what it named, since `print()` reads `this.paperTarget` unguarded
+  // regardless. A guard on one of two readers is worse than none: it hides the shape of the
+  // problem without preventing it.
+  //
+  // The `options.length` return is a different claim and does carry weight — it makes a second
+  // draw() idempotent rather than appending a duplicate set of four options.
   populatePaper() {
-    if (!this.hasPaperTarget || this.paperTarget.options.length) return
+    if (this.paperTarget.options.length) return
     const saved = localStorage.getItem(PAPER_KEY)
     const chosen = PAPERS[saved] ? saved : DEFAULT_PAPER
     // THE LABEL COMES FROM THE TABLE'S OWN `name`, THE VALUE FROM THE KEY, AND NOTHING TODAY CAN
@@ -242,7 +251,10 @@ export default class extends Controller {
       // populatePaper would lose Print with it rather than degrading to the default.
       printSheets(shapes, PAPERS[this.paperTarget.value] || PAPERS[DEFAULT_PAPER], {
         name: this.nameValue,
-        date: new Date().toISOString().slice(0, 10),
+        // LOCAL, NOT UTC. `toISOString()` gives the same ISO shape and stamps an evening print in
+        // the Americas with TOMORROW's date — on a sheet whose header exists so a page found on a
+        // bench next week can be trusted. "en-CA" is the ISO-shaped locale.
+        date: new Date().toLocaleDateString("en-CA"),
         // THE CONTROLLER'S OWN sizeLabel, so the paper and the readout have one definition between
         // them. It reads `d` and `b` — the server's full-resolution numbers — never `p`, the
         // THINNED drawing points: re-deriving a size from those under-reports every curve, and
@@ -255,6 +267,12 @@ export default class extends Controller {
       // console: buildSheets throws before any frame exists, so a swallowed message is a Print
       // button that does nothing whatsoever. The message names the size that caused it, which is
       // the only part of it that tells the user what to do differently.
+      //
+      // AND IT LOGS, because the catch is unconditional and cannot tell a refusal from a bug. Probed:
+      // make `furniture()` throw a TypeError and "prints without logging a console error" stays
+      // GREEN while the user reads a developer string as the reason their print refused. `load()`
+      // twenty lines up warns for exactly this reason before setting its own status.
+      console.warn("[measure] print refused:", e)
       this.setStatus(e.message)
     }
   }
