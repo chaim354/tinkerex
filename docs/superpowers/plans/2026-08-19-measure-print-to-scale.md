@@ -817,7 +817,7 @@ function el(doc, tag, attrs) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 11 runs, 0 failures.
+Expected: all green, 4 more tests than before this task.
 
 - [ ] **Step 5: Mutation-check the scale assertion (CLAUDE.md §15 — this does not count until it has failed)**
 
@@ -890,7 +890,7 @@ Add to `test/system/measure_print_test.rb`:
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: PASS — Task 4 already wired the clip path. **A test that passes the moment you write it has proved nothing yet**, which is what Step 3 is for.
+Expected: PASS, with 1 more test than before this task — Task 4 already wired the clip path. **A test that passes the moment you write it has proved nothing yet**, which is what Step 3 is for.
 
 - [ ] **Step 3: Mutation-check it**
 
@@ -1063,7 +1063,7 @@ function text(doc, x, y, anchor, content) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 16 runs, 0 failures.
+Expected: all green, 4 more tests than before this task.
 
 - [ ] **Step 5: Mutation-check both halves of the sheet label**
 
@@ -1180,7 +1180,7 @@ function labelNode(doc, shape, content) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 19 runs, 0 failures.
+Expected: all green, 3 more tests than before this task.
 
 - [ ] **Step 5: Commit**
 
@@ -1345,7 +1345,7 @@ export function printSheets(shapes, paper, meta) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 23 runs, 0 failures.
+Expected: all green, 4 more tests than before this task.
 
 - [ ] **Step 5: Mutation-check the injection guard**
 
@@ -1769,7 +1769,7 @@ In `app/javascript/controllers/measure_controller.js`:
 bin/rails test test/system/measure_print_test.rb test/system/lbrn_measure_test.rb
 ```
 
-Expected: 30 runs in the new file, 0 failures; `lbrn_measure_test.rb` still green.
+Expected: all green, 7 more tests than before this task; `lbrn_measure_test.rb` still green.
 
 - [ ] **Step 5: Mutation-check that the mode gate is real**
 
@@ -1983,7 +1983,7 @@ In `draw(payload)`, immediately before `this.bindInteractions(svg)`, add:
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 35 runs, 0 failures.
+Expected: all green, 5 more tests than before this task (6 once Step 5 keeps the diameter test).
 
 - [ ] **Step 5: Mutation-check the size-label source — the sharp one**
 
