@@ -1778,6 +1778,409 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal [ [ "60 × 40 mm", 43.6 ] ], out["labels"]
   end
 
+
+  # ---- lib/print_sheet.js: the print document ---------------------------------------------------
+  #
+  # EVERY PAGE OF ONE GRID NOW SHARES ONE DOCUMENT, which is the fact this whole section turns on.
+  # Task 4 flagged two things forward on exactly that basis and both are checked here rather than
+  # assumed: `clipId` (`mp-clip-${col}-${row}`) is unique only WITHIN a grid, and the `xmlns` on the
+  # root <svg> is inert only while pages are appended as NODES.
+  #
+  # AND EVERY TEST HERE CLEANS UP ITS FRAME IN A `finally`. in_print_sheet re-visits only when the
+  # path CHANGES, so the two or three browser round-trips inside one test share a document — a frame
+  # left behind by a throw is a frame the next round-trip counts.
+
+  # 400 x 40 on Letter: 3 columns, 1 row.
+  WIDE_400_40 = <<~JS.freeze
+    [{ b: [0, 0, 400, 40], k: 1, i: 0, o: 1, p: [[0, 0], [400, 40]] }]
+  JS
+
+  # 400 x 300 on Letter: 3 columns x 2 ROWS. The plan's tiling input is one row tall, and a one-row
+  # grid cannot tell `mp-clip-${col}-${row}` from `mp-clip-${col}` — every `row` is 0, so the second
+  # half of the key contributes nothing and dropping it stays green.
+  WIDE_400_300 = <<~JS.freeze
+    [{ b: [0, 0, 400, 300], k: 1, i: 0, o: 1,
+       p: [[0, 0], [400, 0], [400, 300], [0, 300], [0, 0]] }]
+  JS
+
+  CLEAR_FRAMES = 'document.querySelectorAll(".measure-print-frame").forEach((f) => f.remove())'.freeze
+
+  # THE @page SIZE MUST MATCH THE SHEET'S OWN DECLARED SIZE, or the browser prints an A4-shaped page
+  # from a Letter-shaped SVG and clips a band off every tile.
+  #
+  # TWO PAPERS, NOT THE PLAN'S ONE — the same finding Task 4's scale test already recorded one layer
+  # down. Against Letter alone the whole rule can be a HARD-CODED STRING and the assertion stays
+  # green, while the A4, A3 and Tabloid the picker also offers all print declared as Letter.
+  #
+  # AND THROUGH THE CSSOM AS WELL AS THE SOURCE, because they are different claims and the source
+  # alone is the weaker one: a <style> built and never appended to `doc.head` still answers
+  # `textContent`, and a rule the parser rejects still reads back verbatim. `doc.styleSheets[0]` is
+  # the browser's own reparse — reaching it at all proves the sheet is live in that document, and
+  # `CSSPageRule.style.size` proves `@page` parsed rather than merely being present as text. Note
+  # Chrome re-serializes `margin: 0` as `0px`, which is why the two are asserted separately rather
+  # than by comparing cssText to the source.
+  #
+  # MUTATION-CHECKED FIVE WAYS, every actual copied out of the run:
+  #   the rule hard-coded to Letter   Expected: "210mm 297mm" Actual: "215.9mm 279.4mm" — the A4
+  #                                     half is the ONLY thing here that can see this
+  #   `margin: 0` dropped             Expected: "0px" Actual: ""
+  #   w and h swapped                 Expected: "215.9mm 279.4mm" Actual: "279.4mm 215.9mm"
+  #   the <style> given a type the    Expected: "215.9mm 279.4mm" Actual: nil — the source
+  #     browser will not apply          assertions below stay GREEN through it, which is what
+  #     (text/plain)                    shows the CSSOM half carries weight of its own
+  #   `doc.head.appendChild(style)`   RuntimeError: ERROR: Cannot read properties of null
+  #     deleted                         (reading 'textContent'), and the live-stylesheet test
+  #                                     below reports 1 -> 0 alongside it
+  test "the print document declares the paper in millimetres" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const declared = (paper) => {
+          const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, paper, #{META})
+          try {
+            const doc = frame.contentDocument
+            // GUARDED RATHER THAN `doc.styleSheets[0].cssRules` DIRECTLY. A sheet that never
+            // became live gives an empty list, and indexing it raises out through in_print_sheet
+            // as a bare TypeError — red, but red without saying what is wrong.
+            const sheet = doc.styleSheets[0]
+            const rule = sheet && Array.from(sheet.cssRules)
+                                       .find((r) => r.constructor.name === "CSSPageRule")
+            return {
+              source: doc.querySelector("style").textContent,
+              size: rule ? rule.style.size : null,
+              margin: rule ? rule.style.margin : null,
+            }
+          } finally { frame.remove() }
+        }
+        return JSON.stringify({ letter: declared(m.PAPERS.Letter), a4: declared(m.PAPERS.A4) })
+      })()
+    JS
+
+    # THE CSSOM FIRST, BECAUSE IT IS THE SUBSTANTIVE CLAIM and the source literals below
+    # cannot fire independently of it. Run the other way round, every mutation that changes
+    # what the rule MEANS reports on the source string and these four never execute —
+    # measured, not predicted: hard-coding the paper, dropping `margin: 0` and swapping w/h
+    # all did exactly that.
+    assert_equal "215.9mm 279.4mm", out["letter"]["size"], "the browser must have parsed an @page"
+    assert_equal "210mm 297mm", out["a4"]["size"], "and it must name THIS paper, not a literal"
+    # WITHOUT `margin: 0` the browser applies its own default page margin and then has to shrink a
+    # paper-sized SVG to fit inside it — a silently mis-scaled 1:1 print, which is the one failure
+    # this whole feature exists to prevent. No figure is quoted for that default: it was not
+    # measured here, and a print margin is not readable from the CSSOM.
+    #
+    # ONE PAPER FOR THE MARGIN, TWO FOR THE SIZE, and the asymmetry is deliberate: `margin: 0` has
+    # no paper in it, so an A4 copy of the next line would be an assertion that cannot fail unless
+    # the Letter one already has. The size assertions are the opposite — the second paper is the
+    # only thing that can see a hard-coded rule.
+    assert_equal "0px", out["letter"]["margin"]
+    # AND THE BYTES WE HAND THE PARSER, as a TRIPWIRE rather than a guard with a mutation of
+    # its own — the status this file already gives `refute_includes html, "measure-contour"`.
+    # It cannot be folded into the four above: Chrome re-serializes `margin: 0` as `0px`, so
+    # the CSSOM and the source are necessarily different strings.
+    assert_includes out["letter"]["source"], "@page { size: 215.9mm 279.4mm; margin: 0 }"
+    assert_includes out["a4"]["source"], "@page { size: 210mm 297mm; margin: 0 }"
+  end
+
+  # THE STYLESHEET MUST BE LIVE AND ITS SELECTORS MUST MATCH, which no assertion on the CSS TEXT can
+  # see. Every claim below is read out of the browser's computed style, so it fails if the <style>
+  # never reaches `doc.head`, if the selector stops matching, or if a declaration is dropped.
+  #
+  # `svg:last-child` IS NOT DECORATION: without it the last sheet also forces a break after itself
+  # and the job spools a TRAILING BLANK PAGE — one wasted sheet per print, on the one feature whose
+  # whole point is holding paper against hardware. It is the only reason this test needs THREE
+  # pages; the first two prove the break fires and the last proves it stops.
+  #
+  # `display: block` IS LOAD-BEARING TOO. An <svg> is inline by default, and CSS fragmentation
+  # breaks apply to block-level boxes — so an inline sheet ignores `break-after` entirely and the
+  # pages run together on one sheet.
+  #
+  # MUTATION-CHECKED FOUR ASSERTIONS, FIVE MUTATIONS, each actual copied out of the run:
+  #   the <style> never appended, or  Expected: 1 Actual: 0 (two mutations, same assertion)
+  #     given type="text/plain"
+  #   `svg:last-child` rule dropped   Expected: ["page", "page", "auto"]
+  #                                   Actual:   ["page", "page", "page"]
+  #   `display:block` dropped         Actual: ["inline", "inline", "inline"]
+  #   `html,body` narrowed to `html`  Expected: ["0px", "0px"] Actual: ["8px", "0px"]
+  test "the print stylesheet is live in the iframe and breaks after every sheet but the last" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{WIDE_400_40}, m.PAPERS.Letter, #{META})
+        try {
+          const doc = frame.contentDocument
+          const view = doc.defaultView
+          const svgs = Array.from(doc.querySelectorAll("svg"))
+          return JSON.stringify({
+            sheets: doc.styleSheets.length,
+            breakAfter: svgs.map((s) => view.getComputedStyle(s).breakAfter),
+            display: svgs.map((s) => view.getComputedStyle(s).display),
+            body: [ "margin", "padding" ].map((p) => view.getComputedStyle(doc.body)[p]),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 1, out["sheets"], "the <style> must be IN the document, not built and dropped"
+    assert_equal [ "block", "block", "block" ], out["display"],
+                 "an inline <svg> ignores break-after outright"
+    assert_equal [ "page", "page", "auto" ], out["breakAfter"],
+                 "a break after the LAST sheet spools a trailing blank page"
+    # The body's default 8 px margin would offset every sheet from the paper origin, and a
+    # paper-sized SVG plus a margin no longer fits on its own page.
+    assert_equal [ "0px", "0px" ], out["body"]
+  end
+
+  # ONE SVG PER TILE — AND THEY MUST BE DIFFERENT TILES. A count alone is answered exactly as well
+  # by rendering `pages[0]` three times: three sheets, correctly numbered 1 of 3 to 3 of 3, carrying
+  # IDENTICAL geometry. That is Task 2's recorded `- originX` defect one layer up, and the plan's
+  # `assert_equal 3, count` cannot see it.
+  #
+  # TWO WITNESSES, DELIBERATELY. The sheet label is Task 6's furniture and says which page the
+  # renderer THOUGHT it was drawing; the page transform is buildSheets' own output and says where
+  # the geometry actually landed. A loop that renders one page repeatedly moves both; a loop that
+  # labels correctly while drawing one page's content moves only the second.
+  #
+  # MUTATION-CHECKED THREE WAYS, each firing a DIFFERENT assertion:
+  #   `renderSheet(doc, pages[0], meta)`  labels — Actual ["Sheet 1,1 of 3×1", "Sheet 1,1 of 3×1",
+  #     inside the loop                     "Sheet 1,1 of 3×1"], three sheets of page one
+  #   the appendChild dropped             count — Expected: 3 Actual: 0
+  #   `translateX` drops `- originX`      transforms — Expected: 3 Actual: 1. This is the one that
+  #     (Task 2's own recorded defect)     shows the label and the transform are not one
+  #                                         assertion: every label is still correct.
+  test "the print document holds one svg per tile, and each one is a different tile" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{WIDE_400_40}, m.PAPERS.Letter, #{META})
+        try {
+          const svgs = Array.from(frame.contentDocument.querySelectorAll("svg"))
+          return JSON.stringify({
+            count: svgs.length,
+            labels: svgs.map((s) => Array.from(s.querySelectorAll(":scope > text"))
+                                         .map((t) => t.textContent)
+                                         .find((t) => t.startsWith("Sheet")) || null),
+            transforms: svgs.map((s) => s.querySelector("[transform]").getAttribute("transform")),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 3, out["count"]
+    assert_equal [ "Sheet 1,1 of 3×1", "Sheet 2,1 of 3×1", "Sheet 3,1 of 3×1" ], out["labels"],
+                 "the pages must reach the document in grid order"
+    # DISTINCTNESS RATHER THAN THREE LITERALS: the numbers are content-box arithmetic that Task 2
+    # already pins, and restating them here would go red for a constant change that is nothing to
+    # do with this document.
+    assert_equal 3, out["transforms"].uniq.length,
+                 "three sheets drawing the same content is three identical pages"
+  end
+
+  # TASK 4 FLAG 1, CHECKED RATHER THAN ASSUMED. `clipId` is `mp-clip-${col}-${row}` — unique within
+  # one grid, and this task is what first puts a whole grid into ONE document, where a `url(#id)`
+  # resolves to the FIRST element carrying that id ANYWHERE IN THE DOCUMENT. So a key that collides
+  # makes a second-row sheet clip against the first row's <clipPath> rather than its own.
+  #
+  # A 3 x 2 GRID, because `(col, row)` must vary on BOTH axes: over the plan's one-row input every
+  # `row` is 0, so `mp-clip-${col}` is indistinguishable from the shipped key.
+  #
+  # HARMLESS TODAY, AND THAT IS THE REASON TO ASSERT IT RATHER THAN NOT TO: every page's clip rect
+  # is `contentBox(paper)`, identical on every sheet, so a collision changes no pixel right now and
+  # would start printing blank sheets the day a rect ever differs per page. `getElementById` is the
+  # browser's OWN resolution rule, not a re-implementation of it (CLAUDE.md §14e).
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   `mp-clip-${col}` (the row half   Expected: 6 Actual: 3 — this is what the plan's one-row
+  #     dropped)                         input cannot see
+  #   a bare constant id               Expected: 6 Actual: 1
+  #   the REFERENCE hard-coded to      own — Actual [true, false, false, false, false, false], and
+  #     `url(#mp-clip-0-0)` while        it is the ONLY failure in the whole file. Task 4's own
+  #     the ids stay unique              `refMatchesId` cannot see it: that test renders a SINGLE
+  #                                      page, whose id IS mp-clip-0-0.
+  #   the sheets never appended        premise — Expected: 6 Actual: 0
+  test "every sheet's clip resolves inside its own sheet" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
+        try {
+          const doc = frame.contentDocument
+          const svgs = Array.from(doc.querySelectorAll("svg"))
+          return JSON.stringify({
+            ids: svgs.map((s) => s.querySelector("clipPath").id),
+            own: svgs.map((s) => {
+              const ref = s.querySelector("[clip-path]").getAttribute("clip-path")
+              const target = doc.getElementById(ref.slice("url(#".length, -1))
+              return target !== null && target.closest("svg") === s
+            }),
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    assert_equal 6, out["ids"].length, "premise: a 3 x 2 grid, so the row half of the key varies"
+    assert_equal 6, out["ids"].uniq.length, "one document, so the ids must be unique across it"
+    assert_equal [ true ] * 6, out["own"],
+                 "a colliding id makes a sheet clip against another sheet's window"
+  end
+
+  # THE FILENAME IS USER-CONTROLLED AND CAN LEGITIMATELY CONTAIN `<` ON A NAS-SCANNED SHARE, so the
+  # iframe document is built as NODES rather than by doc.write on an interpolated markup string.
+  # This iframe is SAME-ORIGIN, so markup written into it runs with this page's cookies behind it.
+  # The boxes sibling can use doc.write because its plan carries no user text; this one does.
+  #
+  # THE PLAN'S OWN FIXTURE WOULD HAVE FAILED AGAINST CORRECT CODE — the same trap Task 7's own
+  # markup test already records one section up, where a cut fixture silently stopped asserting.
+  # Rendered and read back, `<img src=x onerror=alert(1)>.svg` comes out of Task 7's truncation as
+  # `<img src…(1)>.svg · 2026-08-19`, so the plan's
+  # `assert_equal "<img src=x onerror=alert(1)>.svg · 2026-08-19"` can never pass. The shorter
+  # payload proves the same property — doc.write parses either one into an <img> — and it was
+  # MEASURED rather than reasoned about: padding the name one character at a time, `<img src=x>`
+  # takes five more characters before the ellipsis appears, so there are five characters of
+  # headroom. The premise below is what keeps that honest if a budget change ever eats them.
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   THE PLAN'S OWN STEP 5 — the      Expected ["HTML", "HEAD", "STYLE", "BODY", "P", "IMG"] to
+  #     document built by doc.write      not include "IMG". An <img> minted out of a filename, in
+  #                                      a same-origin document, with this page's cookies behind it
+  #   `el`'s text door spelled          the same assertion, the tag list gaining "IMG" among the
+  #     `node.innerHTML = text`          sheet's own elements
+  #   the sheets never appended         premise — Expected ["HTML", "HEAD", "STYLE", "BODY"] to
+  #                                      include "svg"; an empty document has no <img> either
+  #   the header's ` · ${date}` suffix  Expected: "<img src=x> · 2026-08-19" Actual: "<img src=x>"
+  #     dropped                          — the one that fires the equality ALONE
+  test "a filename containing markup lands as text, injecting nothing" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, m.PAPERS.Letter,
+          { name: "<img src=x>", date: "2026-08-19", sizeLabel: () => null })
+        try {
+          const doc = frame.contentDocument
+          return JSON.stringify({
+            // THE WHOLE SUBTREE, not a search for <img>: a filename parsed as markup can mint any
+            // element, and a document quietly carrying half a filename as unknown elements is the
+            // same defect with a less alarming name.
+            tags: Array.from(doc.querySelectorAll("*")).map((n) => n.tagName),
+            header: Array.from(doc.querySelectorAll("text")).map((t) => t.textContent)
+                         .find((t) => t.includes("src=x")) || "",
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    # THE HEADLINE FIRST. minitest ends a test at its first failed assertion, and the doc.write
+    # mutation this exists for ALSO empties the document — so behind the premise below, the one
+    # assertion about injection would never execute.
+    refute_includes out["tags"], "IMG", "the name must never be parsed as markup"
+    assert_includes out["tags"], "svg", "premise: an empty document has no <img> either"
+    refute_includes out["header"], "…",
+                    "premise: the fixture must stay under the header budget or the line below it " \
+                    "stops asserting that the name arrived whole"
+    assert_equal "<img src=x> · 2026-08-19", out["header"]
+  end
+
+  # A SECOND PRINT MUST NOT LEAVE THE FIRST FRAME BEHIND, accumulating a hidden iframe per click.
+  #
+  # AND IT MUST BUILD A FRESH DOCUMENT RATHER THAN APPEND TO THE LAST ONE — Task 4's flag 1 again,
+  # from the other side: "a re-print reused an uncleared frame" is precisely the case that would
+  # break the clip key, because the second grid's `(col, row)` pairs repeat the first's. The frame
+  # count alone cannot see it (reusing the one frame also leaves exactly one), so the surviving
+  # document is counted too.
+  #
+  # MUTATION-CHECKED FOUR WAYS:
+  #   the removal line deleted        Expected: 1 Actual: 2
+  #   the removal querying a class    Expected: 1 Actual: 2 — the one-sided edit of a twice-spelled
+  #     nothing sets                    name, this repo's recorded shape
+  #   the frame given a class the     Expected: 1 Actual: 0 (and the hidden-frame test below
+  #     removal does not query          reports the class itself)
+  #   the existing frame REUSED and   Expected: 6 Actual: 12 — Task 4's flag 1 from the other side,
+  #     appended into                   and the frame count stays 1 right through it
+  test "printing twice leaves exactly one frame, holding one grid" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        try {
+          m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
+          const frame = m.buildPrintFrame(#{WIDE_400_300}, m.PAPERS.Letter, #{META})
+          const doc = frame.contentDocument
+          const ids = Array.from(doc.querySelectorAll("clipPath")).map((n) => n.id)
+          return JSON.stringify({
+            frames: document.querySelectorAll(".measure-print-frame").length,
+            svgs: doc.querySelectorAll("svg").length,
+            unique: new Set(ids).size,
+          })
+        } finally { #{CLEAR_FRAMES} }
+      })()
+    JS
+
+    assert_equal 1, out["frames"]
+    assert_equal 6, out["svgs"], "a re-print must build a FRESH document, not append to the last"
+    assert_equal 6, out["unique"], "a reused document repeats every clip id of the first grid"
+  end
+
+  # THE REFUSAL RUNS BEFORE THE FRAME EXISTS, which is a claim about ORDER and nothing else asserts
+  # it. buildSheets throws for an empty selection and for a job over MAX_SHEETS; build the frame
+  # first and every refusal leaves a hidden iframe attached to the page that nothing will ever
+  # remove — one per refused click, since the removal at the top of the next call only reaches the
+  # FIRST of them.
+  #
+  # MUTATION-CHECKED TWICE, one per assertion:
+  #   buildSheets moved BELOW the      Expected: 0 Actual: 1
+  #     frame creation
+  #   the empty-selection refusal      Expected: "Nothing to print." Actual: "NO ERROR"
+  #     deleted from buildSheets
+  test "a refused selection leaves no hidden frame behind" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        let message = "NO ERROR"
+        try { m.buildPrintFrame([], m.PAPERS.Letter, #{META}) }
+        catch (e) { message = e.message }
+        const frames = document.querySelectorAll(".measure-print-frame").length
+        #{CLEAR_FRAMES}
+        return JSON.stringify({ message, frames })
+      })()
+    JS
+
+    assert_equal "Nothing to print.", out["message"], "the caller surfaces whatever buildSheets threw"
+    assert_equal 0, out["frames"], "buildSheets must run BEFORE the frame is created"
+  end
+
+  # THE FRAME IS AN IMPLEMENTATION DETAIL OF PRINTING AND MUST LOOK LIKE ONE ON SCREEN. A bare
+  # <iframe> is 300 x 150 with a 2 px inset border, in flow — so dropping the inline style drops a
+  # visible empty box into the page every time somebody prints, and dropping `aria-hidden` puts an
+  # empty document into the accessibility tree.
+  #
+  # THE 1 x 1 RECT IS ALSO WHAT PINS `border: 0`: getBoundingClientRect is the border box, so the
+  # default border reads as 4 x 4 — MEASURED by dropping it, not predicted.
+  #
+  # MUTATION-CHECKED FOUR WAYS, one per assertion:
+  #   the class changed on the        Expected: "measure-print-frame" Actual: "mp-frame"
+  #     element
+  #   `aria-hidden` dropped           Expected: "true" Actual: nil
+  #   the whole inline style dropped  Expected: "fixed" Actual: "static"
+  #   `opacity:0` -> `opacity:1`      Expected: "0" Actual: "1" — position alone rides along
+  #                                     behind the whole-style mutation, so it needs its own
+  #   `border:0` dropped              Expected: [1, 1] Actual: [4, 4]
+  test "the print frame is hidden and out of the accessibility tree" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, m.PAPERS.Letter, #{META})
+        try {
+          const cs = getComputedStyle(frame)
+          const r = frame.getBoundingClientRect()
+          return JSON.stringify({
+            ariaHidden: frame.getAttribute("aria-hidden"),
+            className: frame.className,
+            opacity: cs.opacity, position: cs.position,
+            size: [ r.width, r.height ],
+          })
+        } finally { frame.remove() }
+      })()
+    JS
+
+    # The class is the contract the removal above and Task 11's stub both key on.
+    assert_equal "measure-print-frame", out["className"]
+    assert_equal "true", out["ariaHidden"]
+    assert_equal "fixed", out["position"]
+    assert_equal "0", out["opacity"]
+    assert_equal [ 1, 1 ], out["size"]
+  end
+
+
   private
 
     def in_print_sheet(body)

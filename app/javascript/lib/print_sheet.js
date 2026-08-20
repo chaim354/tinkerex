@@ -496,3 +496,93 @@ function text(doc, x, y, content, anchor) {
     x, y, "font-size": FONT, "font-family": "sans-serif", "text-anchor": anchor, fill: "#000",
   }, content)
 }
+
+// THE PRINT DOCUMENT.
+//
+// The class exists for the removal below and for the tests that count frames — NOT for styling.
+// The frame is styled inline precisely so that it needs no stylesheet: nothing in
+// app/assets/stylesheets or in any view names this class, checked rather than assumed.
+const FRAME_CLASS = "measure-print-frame"
+
+// A HIDDEN IFRAME, and not either alternative: window.open gets eaten by popup blockers, and a
+// print-only container in this page would mean an `@page { margin: 0 }` that applies to every
+// other print of the page it lives in.
+//
+// SPLIT FROM printSheets SO THE DOCUMENT IS ASSERTABLE WITHOUT A SPOOLER. A headless browser has
+// no print dialog to observe, and calling printSheets in a test would call a real print(). So
+// everything about the DOCUMENT is pinned here and `printSheets` below is deliberately the one
+// export in this file with no test over it — verified, not assumed: renaming it away leaves the
+// whole suite green. The controller's own counted print stub is what reaches it.
+export function buildPrintFrame(shapes, paper, meta) {
+  // FIRST, BEFORE THE FRAME EXISTS. buildSheets throws for an empty selection and for a job over
+  // MAX_SHEETS, and a frame created ahead of it is a hidden iframe left attached to the page on
+  // every refused click — one per click, since the removal below only ever reaches the first.
+  const { pages } = buildSheets(shapes, paper)
+
+  // AND THE PRIOR FRAME GOES BEFORE THE NEW ONE IS BUILT, which is what keeps `clipId` honest.
+  // `mp-clip-${col}-${row}` is unique within ONE grid; a re-print that appended into the existing
+  // frame would put a second grid's identical `(col, row)` pairs into the same document, where a
+  // `url(#id)` resolves to the FIRST match anywhere in it — so sheet 7 would clip against sheet
+  // 1's window. A fresh document per print is what makes the key sufficient. If that ever changes,
+  // the id needs a per-document counter, not a bigger key.
+  document.querySelector(`.${FRAME_CLASS}`)?.remove()
+  const frame = document.createElement("iframe")
+  frame.className = FRAME_CLASS
+  frame.setAttribute("aria-hidden", "true")
+  // NOT DECORATION: a bare <iframe> is 300 x 150, in flow and bordered, so without this every
+  // print drops a visible empty box into the Measure page. `border:0` is part of it — dropping
+  // that alone measures 4 x 4 rather than 1 x 1, since getBoundingClientRect is the border box.
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:1px;height:1px;opacity:0;border:0"
+  document.body.appendChild(frame)
+
+  const doc = frame.contentDocument
+  // BUILT AS NODES, NEVER doc.write ON A MARKUP STRING. `meta.name` is a library filename, which
+  // is user-controlled and can legitimately contain `<` on a NAS-scanned share — interpolating it
+  // into markup written to a SAME-ORIGIN iframe is an injection with this page's cookies behind
+  // it. The Measure view already keeps exactly this rule for the drawing itself, and every <text>
+  // on a sheet reaches `textContent` through `el`'s text door for the same reason (see `el`).
+  const style = doc.createElement("style")
+  // `@page` IS THE ONLY THING THAT TELLS THE PRINTER WHAT SHAPE THE PAPER IS, and it must be built
+  // from THIS paper: a hard-coded rule prints A4, A3 and Tabloid declared as Letter, and the
+  // printer then fits a 210 mm page into a 215.9 mm declaration with every part 2.8% wrong.
+  // `margin: 0` matters as much — without it the browser applies its own default page margin and
+  // then has to shrink a paper-sized sheet to fit inside it, which is a silently mis-scaled 1:1
+  // print. (No figure is quoted for that default because none was measured here.)
+  //
+  // `display: block` IS LOAD-BEARING, NOT TIDINESS: an <svg> is inline by default, and CSS
+  // fragmentation breaks apply to block-level boxes, so an inline sheet ignores `break-after` and
+  // the pages run together. And `svg:last-child` is what stops the job spooling a TRAILING BLANK
+  // PAGE — one wasted sheet on every print. Both legacy and modern spellings are emitted; Chrome
+  // re-serializes the pair as `break-after` alone, which is why measure_print_test.rb reads the
+  // COMPUTED value rather than comparing this string to what the CSSOM gives back.
+  style.textContent =
+    `@page { size: ${paper.w}mm ${paper.h}mm; margin: 0 }` +
+    "html,body { margin:0; padding:0; background:#fff }" +
+    "svg { display:block; page-break-after:always; break-after:page }" +
+    "svg:last-child { page-break-after:auto; break-after:auto }"
+  doc.head.appendChild(style)
+  for (const page of pages) doc.body.appendChild(renderSheet(doc, page, meta))
+
+  return frame
+}
+
+// Returns the sheet count. Throws whatever buildSheets throws — the caller surfaces it.
+//
+// THE readyState BRANCH IS BELT AND BRACES AND MEASURED TO BE SO. Probed in this repo's own
+// headless Chrome: `frame.contentDocument.readyState` reads "complete" the instant the iframe is
+// appended, so `go()` runs synchronously and the listener below is never installed. The document
+// also SURVIVES the frame's own load event — re-read 400 ms later it is the same Document object
+// carrying the same sheets — so nothing here is racing a navigation that replaces what we built.
+// Kept anyway, because it costs one line and an engine that reported "loading" would otherwise
+// print an empty frame. Read the residual honestly: if some engine ever reports a non-complete
+// readyState AFTER its load event has already fired, this prints nothing at all. That would want
+// a probe, not a guess.
+export function printSheets(shapes, paper, meta) {
+  const frame = buildPrintFrame(shapes, paper, meta)
+  const doc = frame.contentDocument
+  // The document has to settle before print(), or an empty frame goes to the spooler.
+  const go = () => { frame.contentWindow.focus(); frame.contentWindow.print() }
+  if (doc.readyState === "complete") go()
+  else frame.addEventListener("load", go, { once: true })
+  return doc.querySelectorAll("svg").length
+}
