@@ -2206,6 +2206,15 @@ git commit -m "feat(measure): print the selected parts at 1:1, on remembered pap
 - Modify: `docs/STATUS.md`
 - Modify: `CLAUDE.md` (§14h)
 
+> **Carried from Task 6's review — `WORST_WIDE` bounds the eleven scripts SAMPLED, not non-ASCII.**
+> Four characters exceed 3.71 mm at 3 mm sans-serif, measured: **U+FDFD ﷽ ARABIC LIGATURE
+> BISMILLAH 19.4532** (5.2×), U+2E3B THREE-EM DASH 7.9804, U+2E3A TWO-EM DASH 5.3604, U+0BF5 ௵
+> TAMIL YEAR SIGN 4.4031. Three ﷽ in a filename overprints the warning; an all-﷽ name runs off the
+> sheet. **The fix is NOT a bigger constant** — a rate bounding ﷽ would be 19.45, which cuts A4's
+> name budget to two characters and destroys the feature. State the residual with the characters
+> named and the failure direction (a visible over-run, the same one already accepted for ZWJ
+> sequences). A sentence, not a code change.
+>
 > **Carried from Task 6's review — record, do not silently fix.** The trim crosshairs reach to
 > **6 mm from the paper edge** (`content.x - 4`, where `content.x` is `MARGIN` = 10), which is
 > inside the 6.35 mm hardware limit `MARGIN`'s own comment cites as the thing it clears. So the
