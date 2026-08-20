@@ -45,13 +45,21 @@ const POLL_DELAYS_MS = [250, 400, 600, 900, 1300, 1800, 2500, 3500, 5000]
 const PAN_SLOP_PX = 3
 
 export default class extends Controller {
-  static values = { url: String }
-  static targets = ["stage", "dims", "fallback"]
+  // `name` IS REQUIRED, NOT COSMETIC. Stimulus silently ignores a data-*-value attribute the
+  // controller does not declare, so `this.nameValue` is `undefined` until it appears here — no
+  // error, no warning, just an empty filename on every printed sheet.
+  static values = { url: String, name: String }
+  static targets = ["stage", "dims", "fallback", "selectToggle", "paper", "printButton", "clearButton"]
 
   connect() {
     this.aborted = false
     this.selected = null
     this.hovered = null
+    // THE PRINT SET. Membership is by IDENTITY on the payload's own shape objects, reached through
+    // node.__shape — so nothing about the wire format has to change to give a contour an id.
+    this.marked = new Set()
+    this.nodeByShape = new Map()
+    this.selecting = false
   }
 
   disconnect() {
@@ -76,6 +84,15 @@ export default class extends Controller {
     this.stageTarget.replaceChildren()
     this.setStatus("")
     this.selected = this.hovered = this.svg = null
+    // AND THE PRINT SET WITH IT. Every leak here is silent, because the poster hides the whole
+    // actions bar: a set left populated goes on being promised by the print button — and printed
+    // — over shapes that are no longer marked, no longer drawn, and no longer even the objects
+    // the next payload will hand out.
+    this.marked.clear()
+    this.nodeByShape.clear()
+    this.selecting = false
+    this.applySelecting()
+    this.refreshPrintBar()
   }
 
   // Poll the endpoint until it reports ready, then fetch the payload from the blob URL it names.
@@ -133,7 +150,16 @@ export default class extends Controller {
     // shapes on top, so the browser's own topmost-wins hit dispatch selects the hole rather than
     // the plate it sits in. That is the entire selection algorithm — no point-in-polygon code.
     const ordered = [...payload.shapes].sort((a, b) => this.area(b) - this.area(a))
-    for (const s of ordered) svg.appendChild(this.contourNode(s))
+    for (const s of ordered) {
+      const top = this.contourNode(s)
+      svg.appendChild(top)
+      // The DRAWN line, not the group and not the transparent hit twin — recorded so marking can
+      // reach a contour it was not handed by an event. Mark the GROUP instead and nothing visibly
+      // changes: `stroke` is inherited, and the line's own presentation attribute outranks what it
+      // would inherit, so the contour keeps its layer colour while the class sits one level up.
+      this.nodeByShape.set(s, top.__visible || top)
+    }
+    this.allShapes = payload.shapes
 
     this.stageTarget.replaceChildren(svg)
     this.svg = svg
@@ -178,6 +204,8 @@ export default class extends Controller {
     hit.__visible = node // so hover/selection colours the drawn line, not the invisible twin
     group.appendChild(hit)
     group.appendChild(node)
+    // So draw() can resolve a group to the line it should style, the same way styleNode() does.
+    group.__visible = node
     return group
   }
 
@@ -252,7 +280,80 @@ export default class extends Controller {
     // Alt-click widens to the whole <Shape> object — every contour the parser gave the same
     // object id, which for a Text is its entire rendered outline rather than one letter.
     const useObject = event.altKey && siblings.length > 1
+
+    if (this.selecting) {
+      this.toggleMarks(useObject ? siblings : [shape])
+      // BOTH HALVES, because picking parts and learning their sizes are one gesture: a mode that
+      // silenced the measurement would make you leave it to check a size.
+      const size = useObject ? this.dims(this.unionOf(siblings)) : this.sizeLabel(shape)
+      this.setStatus(`${size} · ${this.selectionStatus()}`)
+      return
+    }
     this.setStatus(useObject ? this.objectLabel(siblings) : this.contourLabel(shape, siblings))
+  }
+
+  toggleSelect() {
+    this.selecting = !this.selecting
+    this.applySelecting()
+    this.setStatus(this.selecting ? this.selectionStatus() : "click a contour to measure")
+  }
+
+  // ONE DEFINITION OF WHAT THE TOGGLE LOOKS LIKE IN A GIVEN STATE, because showPoster() leaves
+  // select mode too. Resetting only `this.selecting` and the cursor class there — the obvious
+  // version — leaves the button reading "Done selecting" with aria-pressed="true" over a
+  // controller that is no longer selecting. Invisible while the poster is up (.measure-actions is
+  // display:none without --ready) and plainly wrong the moment Measure is clicked again.
+  applySelecting() {
+    this.element.classList.toggle("measure-view--selecting", this.selecting)
+    this.selectToggleTarget.setAttribute("aria-pressed", String(this.selecting))
+    this.selectToggleTarget.textContent = this.selecting ? "Done selecting" : "Select parts"
+  }
+
+  // AN ALT-CLICK ON A PARTLY-MARKED OBJECT COMPLETES IT rather than inverting it: flipping each
+  // contour individually would leave the object half in the print set, which is never what was
+  // meant by clicking the object.
+  toggleMarks(shapes) {
+    const adding = shapes.some((s) => !this.marked.has(s))
+    for (const shape of shapes) {
+      const node = this.nodeByShape.get(shape)
+      if (adding) {
+        this.marked.add(shape)
+        node?.classList.add("measure-contour--marked")
+      } else {
+        this.marked.delete(shape)
+        node?.classList.remove("measure-contour--marked")
+      }
+    }
+    this.refreshPrintBar()
+  }
+
+  clearMarks() {
+    for (const shape of this.marked) {
+      this.nodeByShape.get(shape)?.classList.remove("measure-contour--marked")
+    }
+    this.marked.clear()
+    this.refreshPrintBar()
+    this.setStatus(this.selectionStatus())
+  }
+
+  selectionStatus() {
+    const n = this.marked.size
+    if (!n) return "nothing selected · Print all prints the whole file"
+    return `${n} part${n === 1 ? "" : "s"} · ${this.dims(this.unionOf([...this.marked]))}`
+  }
+
+  // NO `hasPrintButtonTarget` GUARD, DELIBERATELY, and the plan's draft had one. All six controls
+  // live in ONE always-rendered <span class="measure-actions">, and each of the three callers —
+  // toggleMarks, clearMarks, showPoster — is reachable only once a button in that span has been
+  // clicked (toggleMarks through pick, which marks nothing until toggleSelect turned the mode on).
+  // showPoster also touches selectToggleTarget one line earlier, so a guard here would answer a
+  // question the line above already answered. And in the one future it was written for — a partial
+  // that omits the bar — nothing reaches this method at all. A guard that cannot fail asserts a
+  // condition that does not exist.
+  refreshPrintBar() {
+    const n = this.marked.size
+    this.printButtonTarget.textContent = n ? `Print ${n} part${n === 1 ? "" : "s"}` : "Print all"
+    this.clearButtonTarget.hidden = n === 0
   }
 
   contourLabel(shape, siblings) {

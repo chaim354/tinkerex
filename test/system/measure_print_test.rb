@@ -31,12 +31,27 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # their nearest edges is exactly 30 mm while their min-x values are 50 mm apart — which is what
   # makes it the fixture for the separation assertion.
   APART = "bezier-circle.lbrn2".freeze
+  # A LightBurn Text (two "letters" at x 0..10 and x 20..30, y -10..0) plus a Rect at x 12..18 —
+  # AND IT IS THE ONLY FIXTURE IN THE REPO WITH A MULTI-CONTOUR OBJECT. A BackupPath reuses its
+  # parent Shape's object id, so both letters carry o=1 while the Rect carries o=2, which is what
+  # makes ⌥-click's "widen to the whole object" rule reachable through a REAL click. This plan
+  # said no such fixture existed and that adding one was the honest upgrade; it already existed,
+  # written for LbrnGeometry's own object-grouping test.
+  TEXT = "text-backup-path.lbrn2".freeze
+  # AN OPEN CONTOUR, which is drawn as a polyline UNDER a transparent fat twin — the pair the
+  # marking test below exists for, and which nested-plate and bezier-circle (all closed) cannot
+  # supply. Of the corpus's open contours this one is the easiest to aim at: o=3 is the straight
+  # horizontal segment (0,0)-(100,0), so every point on it has the same y and the whole left half
+  # of it is clear of the 30..70 rect. (real-export.lbrn2's and real-export.mage's are L-shaped,
+  # so a point on them has to be picked per segment.) Its layer 0 is RED, which is what lets a
+  # computed stroke tell the drawn line's own colour from --marked's blue.
+  OPEN = "sample.lbrn2".freeze
 
   setup do
     @root = Pathname.new(Dir.mktmpdir("measure-print"))
     # The fixtures land BEFORE the first page render: FileLayer::Share reads an EMPTY root as an
     # unmounted mount point, and sign_in_as ends on /files, which renders through the port.
-    [ NESTED, APART ].each do |f|
+    [ NESTED, APART, TEXT, OPEN ].each do |f|
       File.binwrite(@root.join(f), File.binread(Rails.root.join("test/fixtures/files", f)))
     end
     FileLayer.current = FileLayer::Share.new(root: @root.to_s)
@@ -45,12 +60,17 @@ class MeasurePrintTest < ApplicationSystemTestCase
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
     @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
     @apart_id  = @user.nodes.find_by!(storage_path: APART).node_id
+    @text_id   = @user.nodes.find_by!(storage_path: TEXT).node_id
+    @open_id   = @user.nodes.find_by!(storage_path: OPEN).node_id
     render_geometry!(@nested_id, NESTED)
     # @apart_id AND ITS PAYLOAD ARE HELD FOR THE TASKS 9-12 TIER — the end-to-end tests that drive
     # real clicks against a real payload. Nothing in the module tier reads it, so it looks unused
     # until that tier lands; it is rendered here rather than in a second setup because one class
     # gets one setup. If that tier is ever dropped, drop these lines with it.
     render_geometry!(@apart_id, APART)
+    # Rendered here for the same reason, and cheap: 0.1-0.2 ms each, measured.
+    render_geometry!(@text_id, TEXT)
+    render_geometry!(@open_id, OPEN)
   end
 
   teardown do
@@ -2370,7 +2390,336 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal [ "focus", "print" ], calls
   end
 
+  # ---- end to end, through real clicks --------------------------------------------------------
+  #
+  # SUBSTRING MATCHING IS WHY ALMOST EVERY READOUT ASSERTION BELOW IS `exact_text`. Capybara's
+  # `text: "1 part"` is a SUBSTRING test, so it matches "1 parts" just as happily — which makes
+  # every plural ternary in the controller (`selectionStatus`, `refreshPrintBar`) unmutatable
+  # through it. Verified, not assumed: with the plan's own literal assertions restored, dropping
+  # BOTH ternaries — and `clearMarks`' `this.marked.clear()` with them — left the file entirely
+  # GREEN, 60 runs 0 failures. Three green-over-broken in one run.
+
+  test "Select parts turns a click into a selection and back again" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    click_plate
+    assert_selector ".measure-contour--marked", count: 1
+    # BOTH HALVES OF THE READOUT, EXACTLY. The size comes first because picking parts and
+    # learning their sizes are one gesture; the selection summary follows it.
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm · 1 part · 60 × 40 mm"
+
+    click_plate
+    assert_no_selector ".measure-contour--marked"
+    assert_selector ".measure-dims",
+                    exact_text: "60 × 40 mm · nothing selected · Print all prints the whole file"
+  end
+
+  # THE TOGGLE SAYS WHICH MODE YOU ARE IN, in its label and in aria-pressed, and the root class is
+  # what the `cursor: copy` rule keys on. Nothing else asserts any of the three.
+  test "the select toggle reports the mode it is in" do
+    open_measure_view(@nested_id)
+    toggle = find("[data-measure-target='selectToggle']")
+    assert_equal "false", toggle["aria-pressed"]
+
+    click_on "Select parts"
+    assert_equal "Done selecting", toggle.text
+    assert_equal "true", toggle["aria-pressed"]
+    assert_selector ".measure-view--selecting"
+    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+
+    click_on "Done selecting"
+    assert_equal "Select parts", toggle.text
+    assert_equal "false", toggle["aria-pressed"]
+    assert_no_selector ".measure-view--selecting"
+    assert_selector ".measure-dims", exact_text: "click a contour to measure"
+  end
+
+  # THE READOUT MUST STILL WORK WHILE SELECTING — picking parts and learning their sizes are the
+  # same gesture, and a mode that silenced the measurement would make you leave it to check a size.
+  # THE HOLE, NOT THE PLATE, because it is the one shape whose two halves differ: the server gave
+  # it a diameter, so `sizeLabel` says ⌀10 while the selection summary's union says 10 × 10. On the
+  # plate the two halves are the same string and dropping either one stays green.
+  test "selecting a part still reports its size" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    contour_with_min_x(-5).click
+
+    assert_selector ".measure-dims", exact_text: "⌀10 mm · 1 part · 10 × 10 mm"
+  end
+
+  # Off by default: the view behaves exactly as it did before this feature until the toggle is on.
+  test "a click outside select mode marks nothing" do
+    open_measure_view(@nested_id)
+
+    click_plate
+
+    assert_no_selector ".measure-contour--marked"
+    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+  end
+
+  # BOTH HIGHLIGHTS AT ONCE. --selected answers "what am I reading" and --marked "what will
+  # print", and clicking in select mode does both — so if either rule hid the other, one of the
+  # two questions would be unanswerable exactly when both matter. The stroke is --selected's
+  # (declared later in the sheet), the fill tint is --marked's (which neither of the others sets).
+  test "a contour that is both read and selected shows both states" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+
+    click_plate
+    plate = contour_with_min_x(-30)
+
+    assert plate[:class].include?("measure-contour--marked"), "it must be in the print set"
+    assert plate[:class].include?("measure-contour--selected"), "and it must be the one being read"
+    # COMPUTED, not declared: reading the attribute reports what we WROTE even when a rule outranks
+    # it — that is how an attribute-based version of the sibling assertion in lbrn_measure_test.rb
+    # stayed green over a stylesheet that had flattened every colour.
+    style = plate.style("stroke", "fill")
+    assert_equal "rgb(221, 68, 0)", style["stroke"], "--selected's stroke must win"
+    assert_equal "rgba(0, 102, 204, 0.16)", style["fill"], "--marked's tint must still show"
+  end
+
+  # ⌥-CLICK WIDENS TO THE WHOLE OBJECT, and on a PARTLY-marked object it COMPLETES rather than
+  # inverts — flipping each contour individually would leave the object half in the print set,
+  # which is never what clicking the object meant.
+  #
+  # DRIVEN THROUGH REAL ⌥-CLICKS, NOT BY CALLING toggleMarks. The plan said no fixture had a
+  # multi-contour object and told this test to hand `toggleMarks` an array directly; that is
+  # false — text-backup-path.lbrn2 is exactly that fixture, written for LbrnGeometry's own
+  # object-grouping test, and its own header comment says so ("both contours must share the
+  # Text's object id, so alt-click reports the whole word"). Going through the click covers
+  # three things the direct call cannot: that `event.altKey` is read at all, that `byObject`
+  # resolves the sibling set, and that the selecting arm reports the OBJECT's union rather than
+  # the clicked contour's own size.
+  test "widening to an object completes it rather than inverting it" do
+    open_measure_view(@text_id)
+    click_on "Select parts"
+
+    # The first letter alone: a plain click must NOT widen, or the count below cannot tell
+    # "completes" from "was already whole".
+    contour_with_min_x(0).click
+    assert_selector ".measure-contour--marked", count: 1
+    assert_selector ".measure-dims", exact_text: "10 × 10 mm · 1 part · 10 × 10 mm"
+
+    contour_with_min_x(0).click(:alt)
+
+    assert_selector ".measure-contour--marked", count: 2
+    # 30 × 10 IS THE OBJECT'S UNION, and it is the only number here that can see the selecting
+    # arm's own `useObject` branch: report the clicked contour instead and this reads 10 × 10.
+    assert_selector ".measure-dims", exact_text: "30 × 10 mm · 2 parts · 30 × 10 mm"
+
+    # And a whole object that is already whole inverts, which is the other half of the rule.
+    contour_with_min_x(0).click(:alt)
+    assert_no_selector ".measure-contour--marked"
+  end
+
+  # THE MARK LANDS ON THE DRAWN LINE, NOT ON THE GROUP OR THE TRANSPARENT TWIN. An open contour is
+  # a <g> holding a fat invisible hit twin and the 1px line you can actually see, so
+  # `nodeByShape` must record the line — `top.__visible || top` — exactly as styleNode() resolves
+  # one. Recording the GROUP instead is invisible to a `.measure-contour--marked` count, because
+  # the class lands on the <g> and the selector still matches it; what changes is that the <g>'s
+  # stroke is INHERITED and the line's own presentation attribute outranks it, so the drawing does
+  # not move at all. Hence a computed colour on the line itself, and a selector that names the
+  # element the class has to be on.
+  test "marking an open contour marks the line you can see" do
+    open_measure_view(@open_id)
+    click_on "Select parts"
+
+    line = all("svg polyline.measure-contour", visible: :all).first
+    assert_equal "rgb(255, 0, 0)", line.style("stroke")["stroke"], "premise: layer 0 is red here"
+
+    click_open_line
+    # Reading is moved onto another shape so --selected and --hover are off the line and --marked
+    # is the only rule left that can colour it.
+    contour_with_min_x(40).click
+
+    assert_selector "polyline.measure-contour.measure-contour--marked", count: 1, visible: :all
+    assert_equal "rgb(0, 102, 204)", line.style("stroke")["stroke"], "--marked must reach the line"
+  end
+
+  test "Clear empties the set" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    # HIDDEN WHILE THE SET IS EMPTY, and this and the ✕ Image test's matching line are the only
+    # assertions anywhere that say so. The `hidden` attribute alone does nothing to a `.btn` —
+    # `.btn { display: inline-block }` outranks the UA rule — so `.measure-actions .btn[hidden]`
+    # exists to make it real. MUTATION-CHECKED by deleting that rule: RED here, "expected to find
+    # non-visible css \"[data-measure-target='clearButton']\" but there were no matches. Also
+    # found \"Clear\"". This one fires before any controller code has touched the button, so it
+    # is the assertion that covers the ERB attribute and the CSS rule together.
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+
+    click_plate
+    contour_with_min_x(-5).click
+    assert_selector ".measure-contour--marked", count: 2
+    assert_selector "[data-measure-target='clearButton']", visible: :visible
+
+    click_on "Clear"
+
+    assert_no_selector ".measure-contour--marked"
+    # THE SET, NOT JUST THE CLASSES. Removing the classes and leaving `this.marked` populated
+    # looks identical on screen and prints two parts anyway; the button label is the only thing
+    # in the DOM that reads the set's size.
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+    assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
+  end
+
+  # THE BUTTON SAYS WHAT WILL HAPPEN. An empty set prints the whole file, and the only thing
+  # standing between a user and an accidental six-sheet job is that the label told them.
+  test "the print button names what it will print" do
+    open_measure_view(@nested_id)
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+
+    click_on "Select parts"
+    click_plate
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+
+    contour_with_min_x(-5).click
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
+  end
+
+  # ✕ IMAGE LEAVES NOTHING BEHIND, AND EVERY LEAK IT COULD LEAVE IS SILENT. The poster hides the
+  # whole actions bar (`display: none` without --ready), so a stale print set, a stale mode and a
+  # stale toggle label are all invisible until Measure is clicked again — at which point the
+  # button promises to print parts that are not marked, are not on screen, and are not even the
+  # objects the new payload drew.
+  test "✕ Image drops the print set and leaves select mode" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    click_plate
+    contour_with_min_x(-5).click
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 2 parts"
+
+    click_on "✕ Image"
+
+    # nodeByShape holds one SVG node per contour and nothing in the DOM can see it — but a Map
+    # never emptied is a live reference to every node of every file measured in this tab.
+    assert_equal [ 0, 0, false ],
+                 in_measure_controller("[c.marked.size, c.nodeByShape.size, c.selecting]")
+
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_no_selector ".measure-contour--marked"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+    assert_no_selector ".measure-view--selecting"
+    toggle = find("[data-measure-target='selectToggle']")
+    assert_equal "Select parts", toggle.text, "the toggle must not come back reading the other mode"
+    assert_equal "false", toggle["aria-pressed"]
+  end
+
+  # TWO CLAIMS NOTHING IN THE DOM CAN ANSWER, and neither has a reader until the print wiring
+  # lands — which is exactly why they are asserted here rather than left for it to discover.
+  # `name` MUST BE DECLARED IN `static values`: Stimulus silently ignores a data-*-value attribute
+  # the controller does not declare, so `nameValue` is `undefined` with no error and no warning,
+  # and the only symptom is an empty filename on every printed sheet. `allShapes` is what an empty
+  # selection prints — the whole file — and dropping the line that records it is invisible to
+  # every other assertion in this file (verified: that mutation is GREEN without this test).
+  test "the controller holds what the printer will need: the file's name and all its shapes" do
+    open_measure_view(@nested_id)
+
+    assert_equal [ NESTED, 2 ], in_measure_controller("[c.nameValue, c.allShapes.length]")
+  end
+
+  # The whole mode, driven the way a user drives it, with the console watched. Stimulus resolves
+  # an action's method only at DISPATCH, so a control whose method never landed logs
+  # `Error: Action "click->measure#print" references undefined method "print"` — loud, unlike the
+  # silent data-controller no-op §14d records, and invisible to every assertion above.
+  test "a full select-and-clear round trip logs no console error" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    click_plate
+    contour_with_min_x(-5).click
+    click_on "Clear"
+    click_on "Done selecting"
+
+    assert_no_console_errors
+  end
+
   private
+
+    def open_measure_view(node_id, reset_paper: true)
+      visit file_path(node_id)
+      # LOCALSTORAGE OUTLIVES A TEST, and the paper choice is deliberately persisted (Task 11).
+      # Selenium reuses ONE Chrome for the whole file, so without the reset the paper test leaks
+      # "A4" into every test that runs after it — and Rails randomizes test order, so it leaks
+      # INTERMITTENTLY, failing a scale assertion that has nothing to do with paper. Same shape as
+      # the browser log buffer application_system_test_case.rb drains for exactly this reason.
+      page.execute_script("localStorage.removeItem('measure.paper')") if reset_paper
+      click_on "Measure"
+      # --ready is what reveals the stage and hides the poster; without waiting for it the clicks
+      # below race the fetch and land on a display:none SVG.
+      assert_selector ".measure-view--ready"
+    end
+
+    # THE LIVE CONTROLLER, for the two claims nothing in the DOM can answer: that a Stimulus VALUE
+    # was declared at all (an undeclared one is silently `undefined`), and that a Map with no DOM
+    # presence was emptied. Everything else here goes through the page.
+    def in_measure_controller(expression)
+      page.evaluate_script(<<~JS)
+        (() => {
+          const el = document.querySelector(".measure-view")
+          const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+          return #{expression}
+        })()
+      JS
+    end
+
+    # THE PLATE CANNOT BE CLICKED THROUGH ITS OWN ELEMENT, which is why this exists and why the
+    # plan's `contour_with_min_x(-30).click` could never have run: the plate's bounding box is
+    # centred on the fixture's shared centre, where the HOLE is painted on top, and Selenium
+    # refuses a click a sibling would receive — "element click intercepted: Element <polygon
+    # points='-30,20 30,20 …'> is not clickable at point (699, 628). Other element would receive
+    # the click: <polygon points='5,0 4.95,-0.68 …'>". lbrn_measure_test.rb hits the same wall on
+    # the same fixture and answers it the same way.
+    #
+    # A QUARTER OF THE ELEMENT'S WIDTH RIGHT OF CENTRE, computed rather than guessed: the padded
+    # viewBox is 62.4 user units wide in a square element, so with `meet` the horizontal axis
+    # fills it. The plate reaches ±30 mm (±0.48 of the width) and the hole only ±5 mm (±0.08).
+    def click_plate
+      svg = stage_svg
+      svg.click(x: (svg.native.size.width * 0.25).to_i, y: 0)
+    end
+
+    # THE OPEN LINE'S BOUNDING RECT IS ZERO-HEIGHT, so it cannot be clicked or even found the
+    # ordinary way: sample.lbrn2's open contour is the horizontal segment (0,0)-(100,0), and
+    # Chrome folds no stroke into getBoundingClientRect for it — measured, w 813.46 h 0 — which
+    # Selenium reports as `ElementNotInteractableError: element not interactable` and Capybara
+    # counts as 0 visible matches. Hence a coordinate click, and `visible: :all` wherever the
+    # element itself is wanted (`style` reads fine on it either way).
+    #
+    # The point is user-space (20, 0): on the line, and left of the 30..70 rect, so nothing else
+    # is painted there. The padded viewBox is [-2 -42 104 44] in a square element, so with `meet`
+    # the horizontal axis fills it — 1 mm is width/104 — and the element's centre is user
+    # (50, -20). An x/y offset here is measured from that CENTRE, not the top-left: WebDriver's
+    # pointer origin for an element is its in-view centre point, which is also what makes
+    # lbrn_measure_test.rb's "quarter of the width right of centre" click land where it says.
+    # Checked against the live DOM at 846 px square: the drawn polyline sits at y 849.19 and this
+    # lands at 849.5, well inside the hit twin's 4 px half-width.
+    def click_open_line
+      svg = stage_svg
+      per_mm = svg.native.size.width / 104.0
+      svg.click(x: ((20 - 50) * per_mm).round, y: ((0 - -20) * per_mm).round)
+    end
+
+    # Scoped to the measure stage: the page carries other <svg> icons and a bare find("svg") is
+    # ambiguous.
+    def stage_svg = find(".measure-stage svg")
+
+    # The plate spans x -30..30 and the hole only -5..5, so the minimum x of the rendered `points`
+    # attribute identifies each one no matter which was painted on top. POLYGONS ONLY — an open
+    # contour draws as a polyline and is found by class instead (see the open-contour test).
+    def contour_with_min_x(expected)
+      match = all("svg polygon.measure-contour").find do |poly|
+        poly[:points].split(/\s+/).reject(&:empty?).map { |p| p.split(",").first.to_f }.min == expected
+      end
+      assert match, "no contour whose points reach x=#{expected} — the fixture or the draw changed"
+      match
+    end
 
     def in_print_sheet(body)
       visit file_path(@nested_id) unless page.current_path == file_path(@nested_id)
