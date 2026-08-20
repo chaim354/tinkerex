@@ -301,8 +301,19 @@ real; it is just implemented in Ruby.
 is a genuine concurrency ceiling for a self-host box under disk pressure — sixteen concurrent device
 commits are not an absurd number — and not merely a test artifact. Raising it trades a fast 500 for
 a slow write, and lowering the test's `SEQ_LOAD_THREADS` would hide the signal rather than answer
-it. Left as a judgement about the deployment. Not changed here, deliberately: the investigation was
-the ask, and the trade-off belongs to whoever runs the box.
+it. **RAISED TO 15000 AND VERIFIED (same day).** The setting was confirmed live by *measuring the wait*
+rather than reading `PRAGMA busy_timeout`, which reports 0 whatever the config says: a second
+connection blocked on a held write lock waited **5.0 s / 15.0 s / 2.0 s** at configured values of
+5000 / 15000 / 2000, so the number is real and the probe tracks it. Then A/B'd under identical
+`dd`+`sync` load: **5 s → 2 of 8 suite runs red, 15 s → 0 of 8** (with the earlier run, 5 of 16 at
+5 s against 0 of 8 at 15 s). `bin/ci` green, three legs identical.
+
+**The trade is a slow write instead of a fast 500, and it has a ceiling of its own** — production
+runs `RAILS_MAX_THREADS: 16` on one Puma worker, so in the worst case 16 requests can each sit on
+the lock for the full wait and occupy every thread. That is the same head-of-line argument §14c
+makes for `ADDON_SERVICE_MAX_TIMEOUT`, and it is why the durable rule in §14e says 15 s covers an
+fsync stall and **not** to reach for a bigger number next time: if writes still time out, the answer
+is fewer concurrent writers or a faster disk.
 
 ### Still open from this arc
 
