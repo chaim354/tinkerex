@@ -113,11 +113,11 @@ module FileLayer
     # go through this port. Chunk-mode writes are Sync::Commit's two-phase presigned flow (a
     # device pushes; the web UI reuses it), and implementing write here would mean a server-side
     # chunk-and-commit path that duplicates Sync::Commit, has no caller, and reaches into the sync
-    # engine this port exists to stay out of (spec §10) -- unlike mkdir/move/delete, which move no
-    # bytes and so have no such argument against them.
+    # engine this port exists to stay out of (spec §10) -- unlike mkdir/move/delete/undelete,
+    # which move no bytes and so have no such argument against them.
     #
-    # mkdir (Task 3), move (Task 4) and delete (Task 5) are gone from this test -- the port is
-    # their door now, the same as share/s3, and none of the three raises any more.
+    # mkdir (Task 3), move (Task 4), delete (Task 5) and undelete (Task 6) are gone from this test
+    # -- the port is their door now, the same as share/s3, and none of the four raises any more.
     test "write is not chunk mode's — it refuses, naming its OWN real path" do
       err = assert_raises(NotImplementedError) do
         adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("b"))
@@ -805,6 +805,111 @@ module FileLayer
       id = create_file!(name: "twice.stl", bytes: "b")
       delete_file!(id)
       assert_raises(FileLayer::NotFound) { adapter.delete(@user, node_id: id) }
+    end
+
+    # --- undelete (Task 6): the port is now the door for chunk-mode undelete too, the fourth and
+    # last metadata verb. TrashController used to branch on port_writable? and call
+    # Sync::Trash.restore directly for chunk mode; it no longer can, same reason mkdir/move/
+    # delete's own comments give -- in remote mode there is no Sync::Trash in this process to
+    # branch into. --------------------------------------------------------------------------
+
+    # NODE_ID SURVIVES THE REVIVE -- every attachment, BOM link and tag is keyed on it, so a
+    # revive that minted a new identity would silently orphan all three. Sync::Trash.restore never
+    # creates a new row (it un-tombstones the existing one), so this really pins that undelete
+    # does not wrap it in anything that does.
+    #
+    # THE RETURNED FileInfo IS THE PORT'S CONTRACT HERE, NOT delete's nil -- delete changes no
+    # field FileInfo exposes, so its nil costs nothing; undelete can silently reparent a node to
+    # the root (see the orphan test below), and TrashController's flash reads info.name straight
+    # off this return value. Asserting node_id AND name means a stub returning nil would
+    # NoMethodError the moment either is touched -- the return value is pinned, not just produced.
+    test "undelete revives a tombstoned node, keeps its node_id, and returns its FileInfo" do
+      id = create_file!(name: "revive.stl", bytes: "b")
+      delete_file!(id)
+
+      info = adapter.undelete(@user, node_id: id)
+
+      assert_equal id,           info.node_id, "node_id must survive -- everything keys on it"
+      assert_equal "revive.stl", info.name
+      node = @user.nodes.present.find_by(node_id: id)
+      assert node, "the node must be present (live) again"
+      assert_not node.deleted
+    end
+
+    # AN ORPHAN COMES BACK AT THE ROOT RATHER THAN RAISING -- to_root: true, matching what
+    # TrashController has always passed on the chunk branch. Built the way a user actually reaches
+    # this now that Task 5 landed cascading delete, NOT by hand-tombstoning a parent: a directory
+    # delete tombstones its whole subtree (Sync::SubtreeDelete), so a child's PARENT ends up ALSO
+    # tombstoned as a side effect of one ordinary folder delete.
+    test "an orphan, its parent tombstoned by a cascading delete, comes back at the root" do
+      dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "adir", kind: "dir",
+                                  deleted: false, mtime: 0)
+      child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                  name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      adapter.delete(@user, node_id: dir.node_id) # cascades -- dir AND child are now tombstoned
+
+      info = adapter.undelete(@user, node_id: child.node_id)
+
+      assert_equal "kid.stl", info.name
+      assert_nil child.reload.parent_node_id, "an orphan is reparented to the root, not raised on"
+      assert_not child.deleted
+    end
+
+    # RESTORE ORDER IS NOT COMMUTATIVE, AND TASK 5'S CASCADE MADE THAT MAINLINE RATHER THAN A RARE
+    # HAND-CRAFTED EDGE CASE -- see the orphan test above and Chunk#undelete's own comment for the
+    # full argument. Restoring the CHILD first permanently nulls its parent_node_id; restoring the
+    # PARENT afterward does not reunite them, because nothing about reviving the parent touches a
+    # child it no longer points at. THIS IS THE DOCUMENTED BEHAVIOUR, NOT A BUG: top-down restore
+    # (parent, then children) preserves structure, and V1::TrashController deliberately exposes
+    # to_root as a caller choice (defaulting to a 409) for exactly this reason. Named so a future
+    # reader sees a scattered folder as the known trade-off it is, not a regression to "fix" by
+    # teaching undelete to re-parent a revived child onto a since-revived parent.
+    test "restoring a child before its tombstoned parent scatters it -- documented, not a bug" do
+      dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "bdir", kind: "dir",
+                                  deleted: false, mtime: 0)
+      child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                  name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      adapter.delete(@user, node_id: dir.node_id) # cascades
+
+      adapter.undelete(@user, node_id: child.node_id) # child first -- reparented to root
+      adapter.undelete(@user, node_id: dir.node_id)   # parent second -- back, but too late to help
+
+      assert_nil dir.reload.parent_node_id # was already root-level -- unaffected either way
+      assert_nil child.reload.parent_node_id,
+                 "restoring the parent after must not reunite them -- order is not commutative"
+    end
+
+    # ASSERTED ON THE BROADCAST ITSELF, not on head_seq -- same reasoning as mkdir/move/delete's
+    # own broadcast tests above: Sync::Mutation.apply advances head_seq under next_seq! whether or
+    # not anything broadcasts, so a head_seq-only assertion cannot fail for the reason it exists.
+    #
+    # THE EXPECTED SEQ, READ FROM Sync::Trash.restore RATHER THAN ASSUMED: for a node whose parent
+    # is not itself deleted (this one has none), `orphaned` is false, so restore calls
+    # Sync::Mutation.apply(op: "put", ...) EXACTLY ONCE -- the same single-mutation shape as mkdir
+    # and move, not delete's per-node cascade. One call means one next_seq!, so a lone undelete on
+    # a fresh @user must broadcast exactly `head_seq: before + 1`.
+    test "undelete broadcasts the new head_seq so devices converge" do
+      id = create_file!(name: "bcast.stl", bytes: "b")
+      delete_file!(id)
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.undelete(@user, node_id: id)
+      end
+    end
+
+    # THE `if seq` GUARD IN Chunk#undelete, PINNED DIRECTLY: Sync::Trash.restore returns
+    # [node, nil] for a node that is not actually deleted (an early return -- no mutation, no
+    # changelog entry), and broadcasting that nil would tell every device to pull for a change
+    # that never happened. Not purely hypothetical: nothing stops a stale or double-submitted
+    # Restore request from naming a node_id that has already come back.
+    test "undelete on an already-live node is a no-op that does not broadcast" do
+      id = create_file!(name: "already-live.stl", bytes: "b")
+      before = @user.reload.head_seq
+      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+        info = adapter.undelete(@user, node_id: id)
+        assert_equal id, info.node_id
+      end
+      assert_equal before, @user.reload.head_seq, "no mutation happened, so head_seq must not move"
     end
   end
 end
