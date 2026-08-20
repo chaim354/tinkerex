@@ -52,8 +52,18 @@ module FileLayer
       node_id
     end
 
-    # Chunk's "delete" is the tombstone the v1 API sets (Sync::Mutation op "delete"); the
-    # versions stay in the DB for restore, which is exactly why read must check the node.
+    # A DIRECT-DB FIXTURE FOR "already tombstoned", NOT A MODEL OF ANY DOOR -- and the difference
+    # matters more since Task 5. This comment used to say the v1 API sets this tombstone via
+    # `Sync::Mutation op "delete"`. It does not, and has not since 50e1193:
+    # V1::NodesController#destroy calls Sync::SubtreeDelete.call, and so does FileLayer::Chunk#delete
+    # now. Naming the wrong mechanism here was harmless while nothing nearby cared; it is actively
+    # misleading now that six tests below exist to enforce SubtreeDelete-never-Mutation as the
+    # correct one.
+    #
+    # The HELPER is still right: it stages tombstoned state cheaply for tests about OTHER verbs
+    # (download, and delete-on-an-already-deleted-node). `trash_file!` beside it is the one that
+    # goes through a real mutation, for its own stated reason. Versions stay in the DB for restore,
+    # which is why read must check the node.
     def delete_file!(node_id)
       @user.nodes.find_by!(node_id:).update!(deleted: true)
     end

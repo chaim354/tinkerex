@@ -821,6 +821,29 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 6: `Chunk#undelete`, and collapse `TrashController#restore`
 
+> **FOUR THINGS TASK 5'S REVIEW ESTABLISHED FOR THIS TASK.**
+>
+> 1. **`undelete` RETURNS A `FileInfo`, NOT nil.** `Share#undelete` ends `stat(...)` and
+>    `TrashController#restore`'s live share/s3 branch already reads `info.name` off it. This is the
+>    one metadata verb where `delete`'s `nil` is the wrong precedent — delete changes no field
+>    `FileInfo` exposes, undelete can silently reparent to the root.
+> 2. **RESTORE ORDER IS NOT COMMUTATIVE, AND TASK 5 MADE THAT MAINLINE RATHER THAN RARE.**
+>    `Sync::Trash.restore(to_root: true)` nulls `parent_node_id` when the parent is tombstoned.
+>    Restoring a CHILD first permanently rewrites that pointer — restoring the parent afterwards
+>    does **not** reunite them. Before `delete` cascaded, an orphan needed two deliberate deletes;
+>    now one click on a folder tombstones its whole subtree, so every file under it is an orphan
+>    and bottom-up restore scatters the folder's contents to the root, irreversibly. **Say this
+>    plainly in `Chunk#undelete`'s comment.** Do not try to fix it — top-down restore already
+>    preserves structure, and `V1::TrashController` deliberately exposes `to_root` as a caller
+>    choice defaulting to a 409 instead.
+> 3. **The collision hole stays open and gets documented, not closed** — see the note further down.
+>    `Sync::Trash.restore` has no `destination_vacant!`-style check anywhere in it. If the message
+>    wants Share's wording ("occupied — undelete must not clobber"), inline it rather than bending
+>    `Chunk#destination_vacant!`'s — its own comment says so.
+> 4. **FOUR ENUMERATION SITES SAY "mkdir, move and delete" AND ALL FOUR NEED "undelete" IN THIS
+>    SAME COMMIT**: `chunk.rb:27`, `chunk.rb:185`, `chunk_test.rb:106`, `chunk_test.rb:109`. They
+>    are accurate today and become wrong the moment this task lands.
+
 > **KNOWN DIVERGENCE, found while reviewing Task 3 — do NOT try to close it here.**
 > `Sync::Trash.restore` (`app/services/sync/trash.rb:30-42`) has **no collision check at all**, so
 > on chunk a restore can produce two live nodes sharing one `(parent_node_id, name)`. Share and s3
