@@ -117,7 +117,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # because the maxima supplier is second in the array. `stepX = content.w` (no overlap band):
   # RED ("Expected: 3, Actual: 2") — pins that a tile's NEW content is the step, not the width.
   # `Math.ceil` -> `Math.floor`: RED ("Expected: 3, Actual: 2") — pins that a part-full last tile
-  # still gets a sheet, which is the difference between printing 400 mm and printing 371.8 of it.
+  # still gets a sheet. A floor leaves 2 columns, and column 1 starts at 185.9 and COVERS TO
+  # 381.8, so the last 18.2 mm of the part never prints. (371.8 is 2 x stepX — the NEW content the
+  # two tiles add, which is a different quantity from the extent they cover, and conflating the
+  # two is exactly the mistake this `ceil` exists to avoid.)
   test "a selection wider than the sheet tiles into columns" do
     out = JSON.parse(in_print_sheet(<<~JS))
       JSON.stringify(m.buildSheets([
@@ -162,11 +165,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # tall and the overlap band eats 10, so ceil((500 - 10) / 220.4) = 3 rows.
   #
   # MUTATION-CHECKED FOUR WAYS, the row-axis twin of the column test above. `translateY` reading
-  # `originX`: RED ("Expected |-220.39999999999998 - 0| to be <= 0.001") — this test is one column
-  # wide, so originX is 0 on every page and the slip pins every row's content at row 1's. `stepY =
-  # content.h`: RED ("Expected |220.4 - 230.39999999999998| to be <= 0.001"). `Math.ceil` ->
-  # `Math.floor`: RED ("Expected: 3, Actual: 2") — 490 / 220.4 is 2.22, so a floor drops the last
-  # 49 mm of the part off the end of the job. Dropping the `h <= content.h ? 1 :` guard is RED too,
+  # `originX`: RED ("Expected |-220.39999999999998 - 0| (220.39999999999998) to be <= 0.001") —
+  # this test is one column wide, so originX is 0 on every page and the slip pins every row's
+  # content at row 1's. `stepY = content.h`: RED ("Expected |220.4 - 230.39999999999998|
+  # (9.999999999999972) to be <= 0.001"). `Math.ceil` -> `Math.floor`: RED ("Expected: 3,
+  # Actual: 2") — 490 / 220.4 is 2.22, so 2 rows cover to 450.8 and the last 49.2 mm of the part
+  # never prints. Dropping the `h <= content.h ? 1 :` guard is RED too,
   # but in the FITS test below rather than here (h = 500 tiles either way) — see its comment for
   # why that one matters.
   test "a selection taller than the sheet tiles into rows" do
@@ -183,6 +187,39 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # THE RELATIONSHIP, not a second literal: translateY must pan by exactly the origin step, or
     # every tile draws row 1's content on a sheet labelled row 2.
     assert_in_delta(-dy, out["pages"][1]["translateY"] - out["pages"][0]["translateY"], 0.001)
+  end
+
+  # THE GRID MUST BE ASYMMETRIC OR col/row ARE UNOBSERVABLE. Every other tiling test here is 1xN
+  # or Nx1, so `col` and `row` are never both non-zero and three separate mutations stay GREEN:
+  # swapping `col:`/`row:` on the page object, swapping `cols:`/`rows:`, and transposing the loop
+  # nesting. Task 6 draws "Sheet c,r of CxR" out of exactly these fields and Task 8 emits `pages`
+  # in array order, so a maker with a 3x2 job would get sheets labelled transposed, or ordered
+  # column-major against their own labels, with nothing anywhere going red.
+  #
+  # 2x2 WOULD NOT DO — with cols == rows every one of those swaps is invisible. 400 x 300 mm on
+  # Letter gives 3 columns and 2 rows, which is the smallest grid that can see all three.
+  #
+  # MUTATION-CHECKED THREE WAYS, and each one fails a DIFFERENT assertion, which is how the two
+  # assertions below are shown to carry independent weight. `col: row, row: col` on the page
+  # object: RED on the order assertion, actual [[0,0],[0,1],[0,2],[1,0],[1,1],[1,2]] — the
+  # emission order is still row-major, it is the LABELS that transposed. Transposing the loop
+  # nesting: RED on the same assertion but a distinguishable actual,
+  # [[0,0],[0,1],[1,0],[1,1],[2,0],[2,1]] — labels right, ORDER column-major. `cols: rows, rows:
+  # cols`: RED on the whole-grid assertion ("Expected false to be truthy"), which the order
+  # assertion cannot see at all because per-page col/row are untouched by it.
+  test "pages are emitted row-major and carry their own grid position" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 400, 300], p: [[0, 0], [400, 300]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 3, out["cols"]
+    assert_equal 2, out["rows"]
+    assert_equal [ [ 0, 0 ], [ 1, 0 ], [ 2, 0 ], [ 0, 1 ], [ 1, 1 ], [ 2, 1 ] ],
+                 out["pages"].map { |pg| [ pg["col"], pg["row"] ] }
+    # Every page reports the WHOLE grid, not its own position twice over.
+    assert out["pages"].all? { |pg| pg["cols"] == 3 && pg["rows"] == 2 }
   end
 
   # A selection that fits goes through the SAME path, with no small-selection branch to keep in

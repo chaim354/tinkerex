@@ -70,6 +70,8 @@ export function buildSheets(shapes, paper) {
   const pages = []
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
+      // SELECTION space — the tile's offset within the union box. translateX/Y below are
+      // PAGE space, and fold in the datum shift by -box[0]/-box[1].
       const originX = col * stepX, originY = row * stepY
       pages.push({
         paper, col, row, cols, rows, originX, originY,
