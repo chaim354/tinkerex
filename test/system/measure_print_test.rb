@@ -8,6 +8,12 @@ require "application_system_test_case"
 # end-to-end tests below drive real clicks against a real payload, because the maths being right
 # about synthetic input proves nothing about whether the payload ever reaches it.
 #
+# WHY PURE ARITHMETIC EARNS A PLACE IN THIS TIER AT ALL. test/system/README.md's rule is that a
+# behaviour qualifies only if it is observable ONLY in a browser, which layout maths does not meet
+# as written. It meets it here because this repo has NO JS test runner: a browser is the only
+# executor there is for lib/print_sheet.js, and plan_export_test.rb set that precedent for exactly
+# the same kind of module.
+#
 # ASSERT THE WIRE FORMAT, NEVER A ROUND-TRIP THROUGH OUR OWN READER. CLAUDE.md §14e: FakeS3
 # decoded copy_source with the exact inverse of the encoder, so 79/80 tests were green over
 # silent permanent data loss. Parsing our own SVG with our own parser would be that shape again.
@@ -93,6 +99,91 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # MARGIN (10) less the selection's own x0 (500); MARGIN + HEADER_H (17) less its y0 (300).
     assert_in_delta(-490.0, out["pages"][0]["translateX"], 0.001)
     assert_in_delta(-283.0, out["pages"][0]["translateY"], 0.001)
+  end
+
+  # 400 mm of content on Letter: the content box is 195.9 wide and the overlap band eats 10 of it,
+  # so each tile after the first adds 185.9 mm of NEW content -> ceil((400 - 10) / 185.9) = 3.
+  #
+  # THIS IS THE FIRST TEST IN THE FILE THAT READS `unionBox`'s MAXIMA HALF — `cols` and `rows` are
+  # its only consumers, since `translateX/Y` reads the minima alone. So it takes TWO SHAPES, WITH
+  # THE ONE SUPPLYING THE MAXIMA DELIBERATELY SECOND, for the same reason the translation test
+  # above puts its minima supplier second: over a one-element array `Math.max` and `Math.min` are
+  # indistinguishable, so the single-shape input this task was drafted with could not fail for the
+  # property it exists to pin. Verified — with one shape, flipping unionBox's max half to
+  # `Math.min` stayed GREEN.
+  #
+  # MUTATION-CHECKED THREE WAYS, because three independent claims meet in this one number.
+  # unionBox's maxima -> `Math.min`: RED ("Expected: 3, Actual: 1") — pins the UNION, and only
+  # because the maxima supplier is second in the array. `stepX = content.w` (no overlap band):
+  # RED ("Expected: 3, Actual: 2") — pins that a tile's NEW content is the step, not the width.
+  # `Math.ceil` -> `Math.floor`: RED ("Expected: 3, Actual: 2") — pins that a part-full last tile
+  # still gets a sheet, which is the difference between printing 400 mm and printing 371.8 of it.
+  test "a selection wider than the sheet tiles into columns" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets([
+        { b: [0, 0, 10, 10], p: [[0, 0], [10, 10]], k: 1, i: 0, o: 2 },
+        { b: [0, 0, 400, 40], p: [[0, 0], [400, 40]], k: 1, i: 0, o: 1 },
+      ], m.PAPERS.Letter))
+    JS
+
+    assert_equal 3, out["cols"]
+    assert_equal 1, out["rows"]
+    assert_equal 3, out["pages"].length
+  end
+
+  # THE SECOND TILE MUST START ONE OVERLAP BAND BEFORE THE FIRST TILE ENDED, or there is nothing
+  # to align the two sheets against and the whole tiling is a butt joint you cannot register.
+  #
+  # MUTATION-CHECKED: `stepX = content.w` — the obvious "tile by the sheet width" spelling — turns
+  # this RED ("Expected |185.9 - 195.9| (10.0) to be <= 0.001"). That is the whole overlap band.
+  test "the second tile repeats an overlap band of the first" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 400, 40], p: [[0, 0], [400, 40]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    dx = out["pages"][1]["originX"] - out["pages"][0]["originX"]
+    assert_in_delta 185.9, dx, 0.001, "content width 195.9 mm less a 10 mm overlap band"
+
+    # AND THE GEOMETRY MUST ACTUALLY PAN BY THAT MUCH, not merely be RECORDED as starting there.
+    # `originX` is a number in the page object; `translateX` is what moves the drawing. Dropping
+    # `- originX` from the translation leaves every tile drawing tile 1's content — three identical
+    # sheets labelled 1 of 3, 2 of 3, 3 of 3 — and the originX assertion above stays GREEN through
+    # it. Verified. Asserted as the RELATIONSHIP (pan left by exactly what the origin moved right)
+    # rather than as a second literal, so the two can never drift apart.
+    dtx = out["pages"][1]["translateX"] - out["pages"][0]["translateX"]
+    assert_in_delta(-dx, dtx, 0.001, "the tile's content pans left by exactly its origin step")
+  end
+
+  # A selection that fits goes through the SAME path, with no small-selection branch to keep in
+  # step with the tiled one.
+  #
+  # THE SECOND SELECTION IS SMALLER THAN THE OVERLAP BAND, AND THAT IS THE ONLY ONE OF THE TWO
+  # THAT CAN SEE THE `w <= content.w ? 1 :` GUARD. Without the guard the count is
+  # `ceil((w - OVERLAP) / stepX)`, which for anything under 10 mm is ceil(<= 0) = **0** — no pages
+  # at all, no error, nothing printed. 60 x 40 cannot catch that (ceil(50 / 185.9) is still 1), so
+  # the guard was unpinned as drafted: deleting it stayed GREEN. Verified in both directions. And
+  # the input is not contrived — this file's own nested-plate fixture has a 10 mm hole, so
+  # "select one small hole and print it" is the ordinary action that would have produced nothing.
+  test "a selection that fits produces one page through the same call" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 60, 40], p: [[0, 0], [60, 40]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["pages"].length
+
+    tiny = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 8, 8], p: [[0, 0], [8, 8]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, tiny["pages"].length, "a selection under one overlap band still gets a page"
+    assert_equal 1, tiny["cols"]
+    assert_equal 1, tiny["rows"]
   end
 
   private

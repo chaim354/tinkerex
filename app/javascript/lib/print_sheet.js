@@ -59,19 +59,28 @@ export function unionBox(shapes) {
 export function buildSheets(shapes, paper) {
   if (!shapes.length) throw new Error("Nothing to print.")
   const box = unionBox(shapes)
+  const w = box[2] - box[0], h = box[3] - box[1]
   const content = contentBox(paper)
+  // Steps come off the CONTENT box, not the printable box — the two reserved strips are not
+  // available for geometry, so pretending they are would clip a band off every tile but the last.
+  const stepX = content.w - OVERLAP, stepY = content.h - OVERLAP
+  const cols = w <= content.w ? 1 : Math.ceil((w - OVERLAP) / stepX)
+  const rows = h <= content.h ? 1 : Math.ceil((h - OVERLAP) / stepY)
 
-  return {
-    cols: 1,
-    rows: 1,
-    pages: [{
-      paper, col: 0, row: 0, cols: 1, rows: 1, originX: 0, originY: 0,
-      // Content space -> page space. THE SELECTION's own bbox origin is the datum, not the file's,
-      // which is what makes "true positions" mean RELATIVE positions: two holes 40 mm apart on a
-      // 600 mm sheet print on one page, 40 mm apart, instead of on tile 4 of 12.
-      translateX: content.x - box[0],
-      translateY: content.y - box[1],
-      shapes,
-    }],
+  const pages = []
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const originX = col * stepX, originY = row * stepY
+      pages.push({
+        paper, col, row, cols, rows, originX, originY,
+        // Content space -> page space. THE SELECTION's own bbox origin is the datum, not the
+        // file's, which is what makes "true positions" mean RELATIVE positions: two holes 40 mm
+        // apart on a 600 mm sheet print on one page, 40 mm apart, not on tile 4 of 12.
+        translateX: content.x - originX - box[0],
+        translateY: content.y - originY - box[1],
+        shapes,
+      })
+    }
   }
+  return { cols, rows, pages }
 }
