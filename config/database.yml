@@ -7,7 +7,27 @@
 default: &default
   adapter: sqlite3
   max_connections: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
-  timeout: 5000
+  # HOW LONG A WRITER WAITS FOR SQLite's SINGLE WRITE LOCK, in ms. 5000 until 2026-08-20, raised
+  # after CLAUDE.md §12.7's intermittent was diagnosed: it is an FSYNC problem, not a lock-logic
+  # one. Under sustained disk I/O the holder's fsync outlasts the wait and the WAITER raises
+  # `SQLite3::BusyException` — measured 3 of 8 suite runs with `dd`+`sync` loops running against
+  # 0 of 12 on a quiet box. `User#next_seq!` is where it lands, because every commit, mutation,
+  # restore and conflict serializes there.
+  #
+  # THIS IS A PRODUCTION SETTING, not a test knob — self-host SQLite inherits this anchor, so the
+  # number is the concurrency ceiling for a self-host box under disk pressure.
+  #
+  # THE TRADE IS A SLOW WRITE INSTEAD OF A FAST 500, AND IT HAS A CEILING OF ITS OWN. Production
+  # runs `RAILS_MAX_THREADS: 16` on one Puma worker, so in the worst case 16 requests can each sit
+  # here for the full wait and occupy every thread — the same head-of-line argument §14c makes for
+  # `ADDON_SERVICE_MAX_TIMEOUT`. 15s is chosen to cover an fsync stall, NOT to make an arbitrarily
+  # contended box succeed; if writes are still timing out, the answer is fewer concurrent writers
+  # or a faster disk, not a bigger number here.
+  #
+  # NOTE `PRAGMA busy_timeout` READS 0 AND THAT IS EXPECTED — Rails applies this through the
+  # sqlite3 gem's Ruby-level `busy_handler_timeout` (`sqlite3_adapter.rb:853-856`), not the pragma.
+  # Checking the pragma to see whether this took effect gives the wrong answer.
+  timeout: 15000
 
 # Postgres profile (managed/SaaS) — used when DATABASE_URL is set, e.g.
 #   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tinkerex_test

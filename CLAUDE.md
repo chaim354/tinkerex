@@ -250,22 +250,17 @@ Genuinely open:
    a concurrent-commit load test (the boot guard + deadlock fix are in).
 6. **Linux and Windows CI coverage is skipped, not passing** — only the macOS runner is
    registered. See §15 and `docs/STATUS.md` ("CI runs again").
-7. **The `SQLite3::BusyException` intermittent is DIAGNOSED (2026-08-20); what is open is a
-   PRODUCT DECISION, not a mystery.** It needs sustained **disk I/O** pressure — 0 of 12 suite
-   runs on a quiet box, **3 of 8** with four `dd`+`sync` loops running. CPU load alone does
-   nothing. §12's old "cross-worker" disproof still holds and now has the positive answer beside
-   it: captured mid-failure, the worker held **16 connections, every one with an open
-   transaction**, from `concurrent_seq_test`'s deliberate 16-thread load, and the raising
-   statement is **`User#next_seq!`** — the one serialization point every commit, mutation,
-   restore and conflict passes through. Sightings in *other* tests (`supplier_test` setup,
-   `s3_test` setup) are the same root one remove out: 10 workers × up to 16 connections saturate
-   the disk, so an ordinary single-row write's fsync outlasts the handler. **`PRAGMA
-   busy_timeout` reading 0 is EXPECTED and not the bug** — Rails applies `timeout:` through the
-   sqlite3 gem's Ruby-level `busy_handler_timeout`, not the pragma. **The decision that is
-   actually open:** `timeout: 5000` lives in the `default` anchor, so **self-host production
-   SQLite inherits it**, and this is therefore a real concurrency ceiling for a self-host box
-   under disk pressure — not only a test artifact. Raising it trades a fast 500 for a slow write;
-   that is a judgement about the deployment, which is why it is still here.
+7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was an FSYNC problem, and the
+   fix is `timeout: 15000`.** Kept as an item rather than deleted because code cites §12 by number.
+   It needed sustained **disk I/O**, never CPU: 0 of 12 suite runs on a quiet box against 3 of 8
+   with `dd`+`sync` loops, and ten spin loops at load average 60 did nothing. Captured mid-failure,
+   one worker held **16 connections all with open transactions** (`concurrent_seq_test`'s deliberate
+   16-thread load) and the raising frame was **`User#next_seq!`** — the point every commit,
+   mutation, restore and conflict serializes through. Sightings in unrelated tests were the same
+   root one remove out: 10 workers × up to 16 connections saturate one disk, so an ordinary write's
+   fsync outlasts the wait. Verified A/B under identical load: **5 s → 2 of 8 runs red, 15 s → 0 of
+   8**. The rule that outlives it is in **§14e**.
+
 8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three
    backends (the port's N+1 is closed; the residual is HTML). Pagination never existed.
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the
@@ -1309,6 +1304,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   adding `ruby-vips`** — that reintroduces the deadlock the subprocess design exists to avoid.
 - **Server presigning is local** (HMAC) — you can verify chunk URLs without the storage being
   reachable.
+- **`database.yml`'s `timeout:` IS A PRODUCTION SETTING AND A CONCURRENCY CEILING, NOT A TEST KNOB.**
+  It sits in the `default: &default` anchor, so **self-host SQLite inherits it**, and it is how long
+  a writer waits for SQLite's single write lock. Raised 5000 → **15000** on 2026-08-20 after §12.7
+  was diagnosed: the failure is a stalled **fsync**, not bad lock logic, so the waiter raises while
+  nothing is actually wrong. **Do not raise it further as a reflex** — production runs
+  `RAILS_MAX_THREADS: 16` on one Puma worker, so 16 requests can each sit here for the full wait and
+  occupy every thread, the same head-of-line argument §14c makes for `ADDON_SERVICE_MAX_TIMEOUT`.
+  15 s covers an fsync stall; if writes still time out the answer is fewer concurrent writers or a
+  faster disk. **`PRAGMA busy_timeout` reads 0 and that is EXPECTED** — Rails applies this through
+  the sqlite3 gem's Ruby-level `busy_handler_timeout`, so checking the pragma to see whether a
+  change took effect gives the wrong answer; measure the wait instead.
 - **A FAKE THAT SHARES THE CODE'S MISUNDERSTANDING CONFIRMS IT.** `FakeS3` decoded
   `copy_source` with `CGI.unescape` while the adapter encoded with `CGI.escape` — exact
   inverses, so **79/80 tests were green** over **silent permanent data loss on any filename
