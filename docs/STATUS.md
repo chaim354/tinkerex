@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Stage 3a: the sync engine is separable — every bidirectional dependency resolved, in place**)
+**Updated:** 2026-08-20 (**Stage 3b Phase A: the engine namespaces to `Sync::` in place, and its migrations get a generated, guarded consolidation**)
 
 ## What this file is
 
@@ -60,7 +60,145 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-20): Stage 3a — the sync engine becomes separable, without moving a file (branch `claude/stage-3a-decouple`)
+## Latest (2026-08-20): Stage 3b Phase A — the engine namespaces to `Sync::` in place (branch `claude/stage-3b-phase-a`)
+
+**Plan:** `docs/superpowers/plans/2026-08-20-stage-3b-extract-the-engine.md`. **Boundary design:**
+`docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md` §6/§8/§8b. Invariants added to
+**CLAUDE.md §14j**.
+
+Phase A of the four-stage arc: namespace the engine `Sync::` in place, in this repo, on the
+existing three-leg CI, so Phase B's extraction is packaging rather than design — the same lesson
+Stage 1 and Stage 3a's own headers give. Five tasks, five commits (four before this entry; this
+one is Task 5, the last of the phase).
+
+**Suite: 2552 → 2555 runs, 9596 → 9608 assertions, 0F/0E/3 skips, identical across all three
+`LIBRARY_BACKEND` legs throughout.** `bin/ci` green at 7 gates on every commit.
+
+### Tasks 1–4, in one paragraph each (full detail in each commit message)
+
+- **Task 1 corrected the architecture guard's own inventory** before trusting it as the
+  extraction's shopping list. `app/services/storage/**` (414 lines, `Storage::ChunkStore` + three
+  concrete stores) sat in **neither** guard bucket — worse than a missing entry, because a
+  `Maker::` reference planted there would have passed both directions of the guard at once. The
+  blanket `app/controllers/v1/**/*.rb` glob also swept in two HOST files
+  (`devices_controller.rb`, whose own comment already says its token is the only credential the
+  whole v1 API accepts; `test_users_controller.rb`, a dev-only Devise seam) alongside the
+  fourteen `v1/maker/*` controllers it was correctly excluding.
+- **Task 2 extended both scans to `lib/`**, which every glob had rooted at `app/**` and so never
+  saw at all (`lib/tasks/chunks.rake`, `lib/postgres_pooler_check.rb`). The plan predicted
+  `lib/schema_map.rb` would trip the widened guard and need an exception entry — **checked, not
+  assumed, and the prediction was wrong**: every table name it carries sits inside `%w[]` word
+  arrays and quoted tuples, which Ripper lexes as `:on_tstring_content`, never `:on_const` — the
+  guard's own instrument structurally cannot see them. Documented instead of exempted, since
+  adding the predicted exception would have failed the exception list's own stale-entry check.
+- **Task 3 moved the eight bare engine models under `Sync::`** — `Version`, `Chunk`,
+  `ManifestChunk`, `PendingCommit`, `ChangelogEntry`, `Conflict`, `FileLock`, `ShareLink` — ahead
+  of Phase B's `isolate_namespace`, so a gem shipped later squats one generic top-level name
+  instead of eight. 73 bare references requalified (25 `app/`, 48 `test/`, 0 `lib/`), matching
+  the plan's ~25/~48 prediction exactly. `Chunk` was the tokenization trap the plan warned about:
+  15 raw hits, and reading each in context found 10 were `FileLayer::Chunk` (a different class
+  entirely, CLAUDE.md §14a's sanctioned adapter) and only 4 the real model. `ENGINE_MODELS` was
+  **deleted outright**, not left empty — the bare spellings it existed to catch no longer resolve
+  to anything, so the list itself had become the thing CLAUDE.md warns against keeping around
+  after its last entry stops doing anything.
+- **Task 4 moved `Storage` and `LibraryChannel` under `Sync::`** — the last two top-level names
+  the engine squatted. Unified under the `Sync` token, this made four already-sanctioned
+  host-touches-engine call sites visible to the "maker layer reaches the sync engine" guard for
+  the *first* time, because they never shared a token with `Sync` before renaming
+  (`V1::StashRequestBaseUrl`, `DevBlobsController`, `Maker::Addons::LibraryOutput`,
+  `Maker::ProjectIntake`'s `Sync::LibraryChannel.batch` calls) — all four added to
+  `SYNC_SEAM_EXCEPTIONS` with the reasoning for each. `app/channels/**` narrowed to
+  `app/channels/sync/**`, incidentally fixing a latent misclassification of
+  `ApplicationCable::{Channel,Connection}` as engine-side that predates this task (confirmed to
+  add zero new guard hits either way — host boilerplate, CLAUDE.md §14j).
+
+### Task 5 — the migration split decision, and it went the way the plan recommended
+
+Four migration files mix host and engine DDL in one `change` method:
+`20260611010000_create_sync_engine.rb` (creates `users`/`devices`/`nodes` **and** five engine
+tables — `users.head_seq` has no separate migration; it has been in this one since day one),
+`..._add_mode_to_nodes.rb` and `..._add_mtime_to_nodes.rb` (each `nodes` **and**
+`pending_commits`), and `20260819120000_drop_redundant_prefix_indexes.rb` (7 engine + 3 maker
+tables). Verified there is no fifth: every one of the other 62 migrations was checked by
+extracting its touched-table set, including `20260820181025_add_user_foreign_key_to_conflicts_and
+_file_locks.rb`, which landed after the plan was written and looked like a candidate by date —
+it touches only `conflicts` and `file_locks`, both engine.
+
+**Decision: (a), leave `db/migrate/` alone, forever.** Splitting the four files (b) was rejected
+on a concrete failure the plan's own "tail wagging the dog" argument only gestured at: giving a
+migration's engine half a new timestamp gives it no `schema_migrations` row on any database that
+already ran the original — every environment this app has, including three live Unraid backends —
+so it reports PENDING and then fails with "table already exists" the moment someone runs it.
+Fixing that means hand-inserting `schema_migrations` rows on every live database, once per split
+file, for zero change in the eventual schema — exactly the operational risk CLAUDE.md §14i's
+backup/restore rehearsal exists to keep rare. (b) also doesn't finish the job: Phase B would still
+have to relocate the split files into the gem with `git filter-repo`, redoing today's effort.
+
+**The plan flagged (a)'s real cost — two checked-in descriptions of the same eight tables' DDL —
+without settling how it's kept from drifting. That is this task's actual deliverable:**
+
+- **`lib/engine_schema.rb`** (module `EngineSchema`) extracts each engine table's literal
+  `create_table ... end` block and trailing `add_foreign_key` lines as TEXT straight out of
+  `db/schema.rb` — never re-parsed into a structure and re-rendered, so there is no re-derivation
+  step where a bug could produce output that merely *looks like* a faithful subset. The eight
+  table names are themselves derived from `app/models/sync/*.rb` (Task 3's own directory), not
+  hand-listed a second time.
+- **`db/engine_schema.rb`** is the generated, checked-in result: a real, syntactically valid,
+  standalone `ActiveRecord::Migration` (`CreateSyncEngine`) that Phase B can copy into the gem
+  near-verbatim. It sits outside `db/migrate/` (Rails scans only that directory), so it is
+  completely inert against this app, and it lands under `db/*schema.rb` — `rubocop-rails`'s own
+  default exclude pattern, the same reason `db/schema.rb` itself carries no style debt — so it
+  needs no hand-styling.
+- **`bin/rails engine_schema:generate`** / **`engine_schema:check`** regenerate it / report
+  staleness without rewriting, mirroring `lib/schema_map.rb`'s existing pair for
+  `docs/schema-map.html`.
+- **`test/engine_schema_test.rb`** is the guard, three checks: the checked-in file matches a fresh
+  regeneration byte-for-byte; the eight-table list is exactly `app/models/sync/`'s contents; and —
+  the strong one — the generated migration is **actually run**, against a throwaway `:memory:`
+  SQLite database seeded with nothing but a stand-in `users` table (every extracted
+  `add_foreign_key` line names that host table), and the resulting columns/indexes/foreign keys
+  are compared, via `ActiveRecord::ConnectionAdapters` introspection and sorted so physical column
+  order never enters it, against what this app's own already-migrated database reports for the
+  same eight tables. **Mutation-checked two ways, deliberately different failure shapes:** staling
+  the checked-in file (caught by check 1, not 3) and corrupting the extraction to silently drop a
+  `NOT NULL` while staying internally self-consistent — so check 1 stays green because the
+  regeneration matches the (also-corrupted) checked-in file — which check 3 alone catches. Two
+  genuinely different guards, not one covering for the other's blind spot.
+
+**Left open for Phase B, by name, not by omission:** every one of the eight extracted
+`add_foreign_key` lines points at `users`, a host table the engine does not define. Task 6 already
+commits to `User`/`Node`/`Device` as host requirements the engine declares rather than defines;
+whether the gem's real migration keeps those eight FK lines (the engine's migration then requires
+a `users` table to exist first) or moves them to a host-side migration is a design choice this
+task's generator does not make for Phase B — it reproduces current reality so that choice is made
+from something accurate.
+
+### Verification
+
+`RAILS_ENV=test bin/rails db:drop db:create db:schema:load` (three **separate** invocations —
+see the caveat below), then `db:schema:dump`: the result was `diff`-identical to the committed
+`db/schema.rb` (git reported no change at all). `db:migrate:status` on the same freshly-loaded
+database: all 66 migrations `up`, none pending. `bin/ci`: 7 gates green, three legs identical
+(2555 runs / 9608 assertions / 0 failures / 0 errors / 3 skips), system 179 runs / 1504 assertions.
+
+**A caveat worth recording, unrelated to this task's changes:** chaining all three tasks in
+**one** `bin/rails` invocation (`bin/rails db:drop db:create db:schema:load`) reproducibly loaded
+**nothing** on this box — zero tables, not even `schema_migrations` — twice in a row, and
+reproduced identically on a clean tree with none of this task's changes applied (confirmed via
+`git stash`), so it predates and is unrelated to this work. Running the three as separate
+invocations works correctly and reliably every time. Root cause not chased further (out of scope
+here); a schema-cache staleness carried across chained `db:` tasks within one process, which a
+fresh process per task sidesteps, is the likely shape.
+
+### Still open, deliberately
+
+Everything Stage 3a's own "what 3b now faces" section named minus the migration story (now
+resolved above): the gem skeleton, `config/recurring.yml`'s split, `config/initializers/`'s lack
+of boundary structure, `dev_blobs_controller.rb`. All Phase B, per the plan.
+
+---
+
+## 2026-08-20: Stage 3a — the sync engine becomes separable, without moving a file (branch `claude/stage-3a-decouple`)
 
 **Plan:** `docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md`. **Boundary design:**
 `docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md`. Invariants: **CLAUDE.md §14j**.

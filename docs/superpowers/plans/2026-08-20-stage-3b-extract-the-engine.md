@@ -126,12 +126,97 @@ ruby -rripper -e 'Dir.glob("{app,test}/**/*.rb").each { |f| Ripper.lex(File.read
 
 **Do not skip this to "sort out later."** Four files block a mechanical move.
 
-- [ ] **Step 1: Decide the strategy and write it down.** Two honest options:
+- [x] **Step 1: Decide the strategy and write it down.** Two honest options:
   - **(a) Leave history alone; the engine ships ONE consolidated `create_sync_engine` migration** that creates its eight tables from scratch for a *new* host, while this app — whose tables already exist — records it as already-run. Standard `rails engine` practice (`install:migrations` + a schema check).
   - **(b) Split each mixed migration into a host half and an engine half**, rewriting timestamps. Cleaner history; touches migration files this app has already run everywhere, and CLAUDE.md §14i's backup/restore rehearsal exercises real archives against a real schema.
   - **Recommendation: (a).** Migration history is a record of what happened, and rewriting it to match a boundary invented afterwards is the tail wagging the dog. What matters is that a fresh host can install the engine's schema and this host recognises its own.
-- [ ] **Step 2: Prove a fresh install works** — `bin/rails db:drop db:create db:schema:load` (or the engine's installer, once it exists) must produce a schema byte-identical to `db/schema.rb`. Diff it.
-- [ ] **Step 3: Prove THIS app still migrates from its current state** — `bin/rails db:migrate:status` shows nothing pending, and `bin/ci` is green.
+
+  **DECIDED: (a), and the plan's recommendation holds up.** Verified all four files named in the
+  premises section (`20260611010000_create_sync_engine.rb`, `..._add_mode_to_nodes.rb`,
+  `..._add_mtime_to_nodes.rb`, `20260819120000_drop_redundant_prefix_indexes.rb`) by reading them,
+  and swept every one of the other 62 migrations for a fifth mixed file by extracting the table set
+  each touches — **none exists**. `20260820181025_add_user_foreign_key_to_conflicts_and_file_locks.rb`
+  (landed after this plan was written) looked like a candidate by date alone; it touches only
+  `conflicts` and `file_locks`, both engine, so it is not a fifth.
+
+  **(b) was rejected on a concrete failure, not just the plan's stated aesthetic argument.**
+  Splitting a mixed migration means giving its engine half a NEW timestamp distinct from the
+  original. On a database that already ran the original (every environment this app has, including
+  three live Unraid backends), that new timestamp has no `schema_migrations` row — `db:migrate:status`
+  would report it PENDING, and running it would fail with "table already exists" for the tables the
+  original half already created. Fixing that requires manually inserting rows into
+  `schema_migrations` on every live database, by hand, once per split file — the exact operational
+  risk CLAUDE.md §14i's backup/restore rehearsal exists to keep out of casual reach, for zero change
+  in the eventual schema. (b) also does not even finish the job: Phase B still has to physically
+  relocate the split files into the gem via `git filter-repo`, so today's effort would be redone.
+
+  **(a)'s real cost, which the plan flagged but left open: `db/migrate/` now contains migrations
+  that create tables the engine will ALSO claim to create in its own consolidated migration — two
+  descriptions of the same eight tables' DDL.** Prevented from drifting by making the second
+  description GENERATED, not authored, the same fix this repo already uses for
+  `docs/schema-map.html`:
+
+  - **`lib/engine_schema.rb`** (module `EngineSchema`) extracts the literal `create_table ... end`
+    block and trailing `add_foreign_key` lines for each of the eight engine tables straight out of
+    `db/schema.rb`'s own TEXT — never re-derived into a structure and re-rendered, so there is no
+    parser step where a bug could put text in the output that merely *looks like* a subset of
+    `db/schema.rb`. The eight table names are themselves derived from `app/models/sync/*.rb` (Task
+    3's namespacing), not hand-listed a second time.
+  - **`db/engine_schema.rb`** is the checked-in output — a real, syntactically valid
+    `ActiveRecord::Migration` subclass (`CreateSyncEngine`) sitting OUTSIDE `db/migrate/` (Rails
+    only scans `db/migrate/` for migrations, and no path in this app's config widens that), so it
+    is inert against this app and Phase B can copy it into the gem near-verbatim. It lands under
+    `db/*schema.rb`, which is `rubocop-rails`'s own default `AllCops: Exclude` pattern — the same
+    reason `db/schema.rb` itself carries no style debt — so it needs no hand-styling to match a
+    generated file's shape.
+  - **`bin/rails engine_schema:generate`** regenerates it; **`bin/rails engine_schema:check`**
+    reports staleness without rewriting.
+  - **`test/engine_schema_test.rb`** is the guard, three independent checks: the checked-in file is
+    a byte-for-byte fresh regeneration (the SchemaMap-style staleness check); the eight-table list
+    is exactly what `app/models/sync/` declares; and — the strong check — the generated migration,
+    run for real against a throwaway `:memory:` SQLite database seeded with nothing but a stand-in
+    `users` table, produces tables whose columns/indexes/foreign keys are IDENTICAL (compared via
+    `ActiveRecord::ConnectionAdapters` introspection, sorted so physical column order — which can
+    differ from `db/schema.rb`'s alphabetical listing on a database that accumulated its schema
+    incrementally — never enters the comparison) to what this app's own already-migrated database
+    reports for the same eight tables. Mutation-checked in two independent ways: staling the
+    checked-in file (caught by check 1, not 3) and corrupting the extraction so it stays
+    self-consistent but silently drops a `NOT NULL` (caught by check 3, not 1) — confirming the
+    three checks catch genuinely different failures rather than one covering for the others.
+
+  **So a migration that touches one of the eight engine tables without a matching
+  `bin/rails engine_schema:generate` in the same commit goes RED** (`test/engine_schema_test.rb`),
+  not silently stale — that is the drift answer the plan asked this task to settle. `db/migrate/`
+  is untouched, and stays untouched forever; nothing here rewrites, deletes, or renumbers any of
+  the 66 existing migration files.
+
+  **What `db/engine_schema.rb` deliberately does NOT settle, flagged for Phase B rather than
+  guessed at here:** all eight extracted `add_foreign_key` lines point at `users`, a HOST table the
+  engine does not define. Task 6 already says the engine must declare `User`/`Node`/`Device` as
+  host requirements rather than defining them; whether the gem's real migration keeps those eight
+  FK lines (requiring a `users` table to exist first) or moves them to a host-side migration is a
+  design choice this task's generator does not make — it reproduces current reality (all eight
+  present) so Phase B is choosing from something accurate, not inventing the list from scratch.
+
+- [x] **Step 2: Prove a fresh install works** — `bin/rails db:drop db:create db:schema:load` (or the engine's installer, once it exists) must produce a schema byte-identical to `db/schema.rb`. Diff it.
+
+  Done on the TEST database only. **One caveat worth recording for whoever runs this command next:
+  chaining all three tasks in ONE `bin/rails` invocation (`bin/rails db:drop db:create
+  db:schema:load`) reproducibly loaded NOTHING on this box** — zero tables, not even
+  `schema_migrations` — twice in a row, and reproduced on a completely clean tree with none of this
+  task's changes applied, so it predates and is unrelated to this work. Running the three as
+  SEPARATE invocations (`bin/rails db:drop`, then `bin/rails db:create`, then `bin/rails
+  db:schema:load`) works correctly and reliably. Root cause not chased further (out of scope for
+  this task); a schema-cache staleness carried across chained `db:` tasks within one process is the
+  likely shape, given a fresh process each time is what fixes it.
+
+  With the separate-invocation form: `db:schema:dump` afterward produced a file `diff`-identical to
+  the committed `db/schema.rb` (git reported no changes), and `db:migrate:status` listed all 66
+  migrations `up`, none pending.
+
+- [x] **Step 3: Prove THIS app still migrates from its current state** — `bin/rails db:migrate:status` shows nothing pending, and `bin/ci` is green.
+
+  Confirmed above. `bin/ci` result: see the Task 5 report / `docs/STATUS.md`'s Phase A entry.
 
 ---
 
