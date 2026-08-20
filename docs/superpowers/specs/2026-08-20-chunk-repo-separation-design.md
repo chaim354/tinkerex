@@ -142,35 +142,61 @@ underneath, which the Rust clients need regardless.
 
 ---
 
-## 3. Stage 1 — `client/` leaves
+## 3. Stage 1 — `client/` leaves — DONE 2026-08-20
 
-Move the twelve crates, the Tauri app and `test-conformance/` to `tinkerex-client`, with
-`rust-client.yml`, `build-app.yml`, `cross-os-e2e.yml`, `install-app-on-runners.yml` and
-the client portion of `nightly.yml`.
+Moved the twelve crates, the Tauri app and `test-conformance/` to `tinkerex-client`, with
+`build-app.yml`, `install-app-on-runners.yml` and `cross-os-e2e.yml` (moved wholesale) and
+the client-only portions of `rust-client.yml` and `nightly.yml` (split — see below). Full
+account: `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` (the plan) and
+`docs/STATUS.md`'s entry for this arc (the numbers).
 
-> **⚠️ "NEARLY FREE" IS WRONG — see `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`.**
-> Three real couplings this section misses:
+> **"NEARLY FREE" WAS WRONG, as the plan above found before any code moved. What actually
+> happened, past tense:**
 >
-> 1. **`client/stl-thumbnailer` IS a Ruby dependency at Docker build time.** `Dockerfile:61-64`
->    compiles it; `:141` ships the binary; `.dockerignore:58-62` excludes `/client/` and re-includes
->    exactly this crate. `Maker::Previews::Stl` execs it. Move `client/` naively and **every STL and
->    3MF thumbnail in production stops rendering.** It is a SERVER-side tool misfiled under
->    `client/`; the plan re-files it to `tools/` first, as a prerequisite.
-> 2. **Four CI jobs boot a real Rails server** to test the Rust crates against it
->    (`rust-client.yml`'s `engine-integration`; `nightly.yml`'s `e2e-linux`, `e2e-macos`,
->    `stress-load-and-multifiletype-linux`). Those two workflows split; they do not move.
-> 3. **Self-hosted runners register PER REPOSITORY.** Each physical box needs a second runner
->    service against the new repo — and only the macOS runner is registered today, so the moved
->    Linux/Windows workflows would be *skipped, not passing*.
+> 1. **`client/stl-thumbnailer` WAS a Ruby dependency at Docker build time**, confirmed and
+>    fixed first, as its own prerequisite commit: re-filed to `tools/stl-thumbnailer`,
+>    `Dockerfile` and `.dockerignore` repointed, verified with a real `docker build` that
+>    renders a fixture STL to a valid PNG inside the production image.
+> 2. **Not four CI jobs boot a real Rails server — seven job-instances did, across five job
+>    names.** The plan's own count (`rust-client.yml`'s `engine-integration`;
+>    `nightly.yml`'s `e2e-linux`, `e2e-macos`, `stress-load-and-multifiletype-linux`) missed
+>    two more of the SAME shape, found only by reading the conformance scripts rather than
+>    trusting the grep for `bin/rails server -p 3001 &`: `two-device-fuse-linux` (present in
+>    BOTH `rust-client.yml` and `nightly.yml`) and `nightly.yml`'s `two-device-webdav-macos`
+>    each call a script (`two-device-fuse.sh` / `two-device-webdav-macos.sh`) that itself
+>    boots its own `STORAGE_BACKEND=local` Rails server — the boot call is one `cd` and one
+>    script away from the job body, not inside it, which is why grepping the workflow YAML
+>    directly missed it. All five job names now live in `tinkerex/.github/workflows/`:
+>    `engine-integration` in a new `client-contract.yml` (the fast PR-time wire-contract
+>    gate — no `client/**` path filter is possible any more, since that path can't appear in
+>    a diff of this repo again, so it runs on every `pull_request` + `push:main` instead);
+>    the other four stayed in a heavily stripped `nightly.yml` (13 jobs → 6, including
+>    `preflight`). Every surviving job gained a second `actions/checkout` of
+>    `tinkerex-client` plus one new step that symlinks `client` to it — verified empirically
+>    that bash's logical `cd ..` resolves textually against the invoking path rather than
+>    the symlink's physical target, so the two-device scripts' own
+>    `cd "$(dirname "$0")/../.."` (looking for `bin/rails`) needed no edit at all despite
+>    their repo having moved out from under them.
+> 3. **Self-hosted runners register PER REPOSITORY**, confirmed still true: only the macOS
+>    box has a `tinkerex` registration, and as of this writing NEITHER `tinkerex` (Linux/
+>    Windows) NOR `tinkerex-client` (any OS) has the rest. Every workflow that moved to
+>    `tinkerex-client`, and the four Rails-coupled jobs' `tinkerex-client` half, are
+>    *skipped, not passing* until an operator registers the missing services
+>    (`ci/runners/README.md` now has a section on registering the second, per-repo service).
 >
-> Also: `scripts/r2-cutover/smoke.sh` shells into `client/sync-engine` and is run by hand during
-> storage cutovers, so nothing goes red when it breaks.
+> Also true as suspected: `scripts/r2-cutover/smoke.sh` shelled into `client/sync-engine`
+> with no failure path naming where it went. Fixed: it now resolves a `TINKEREX_CLIENT_DIR`
+> env var (default `../tinkerex-client`) and fails loudly, naming the new repo and the clone
+> command, if the crate isn't there.
 
-Both repos need their own copy of the `ci_hygiene_test.rb` workflow guards, and `bin/ci`'s
-`test-app` gate travels with `client/maker-app`. `bin/ci` in the maker repo drops from
-eight gates to seven.
+Both repos need their own copy of the `ci_hygiene_test.rb` workflow guards — **not done in
+this arc**, and recorded as open in the plan's own Task 5 Step 5 and in `docs/STATUS.md`.
+`bin/ci`'s `test-app` gate left with `client/maker-app`, deleted rather than duplicated
+(the desktop app's own CI is `tinkerex-client`'s to define). `bin/ci` in the maker repo
+dropped from eight gates to seven, verified (`bin/ci --list` / `--list-ci`).
 
-Delivers goal 2 on day one. Requires no code change to the Rails app.
+Delivered goal 2. Required no code change to the Rails app — the CI/doc repair was
+entirely workflow YAML, `config/ci.rb`, `test/ci_hygiene_test.rb`, and prose.
 
 ---
 
