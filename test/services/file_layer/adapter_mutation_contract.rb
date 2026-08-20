@@ -130,6 +130,21 @@ module FileLayerMutationContract
     assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id:) }
   end
 
+  # THE PORT'S ERROR TAXONOMY IS CLOSED, AND undelete IS WHERE IT LEAKED. Chunk delegates to
+  # Sync::Trash.restore, which opens with find_by! and so raised ActiveRecord::RecordNotFound --
+  # a class from OUTSIDE FileLayer's vocabulary -- where share and s3 both answered
+  # FileLayer::NotFound. It went unnoticed because TrashController happens to rescue both classes;
+  # a caller rescuing FileLayer::* alone would have missed it entirely.
+  #
+  # Pinned HERE rather than in one adapter's suite because "which class does the port raise" is a
+  # property of the PORT, not of a backend -- the same argument adapter_write_contract.rb makes for
+  # putting the clobber class in a contract rather than leaving it to each adapter's taste.
+  def test_mutation_contract_undelete_raises_the_ports_own_not_found_for_an_unknown_node
+    assert_raises(FileLayer::NotFound) do
+      adapter.undelete(@user, node_id: "no-such-node-#{SecureRandom.uuid}")
+    end
+  end
+
   def test_mutation_contract_undelete_restores_the_same_node_and_bytes
     node_id = make_file(name: "back.stl", bytes: "restored")
     adapter.delete(@user, node_id:)

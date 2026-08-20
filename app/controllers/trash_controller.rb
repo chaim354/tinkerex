@@ -21,8 +21,6 @@
 # tombstones in chunk mode and moved bytes on share/s3 — what "restore" MEANS differs, which is
 # why the port answers it and this controller does not.
 class TrashController < ApplicationController
-  include LibraryCapabilities
-
   # Deliberately the same shape as FilesController's, and the same argument: from the browser's
   # side "no such node", "not in the trash", "its bytes were purged" and "something is already at
   # that path" are one condition — the user cannot act on the difference, and none of them means

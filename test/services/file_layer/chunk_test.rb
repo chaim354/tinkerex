@@ -911,5 +911,14 @@ module FileLayer
       end
       assert_equal before, @user.reload.head_seq, "no mutation happened, so head_seq must not move"
     end
+    # DIRECT COPY, because ChunkTest does not include FileLayerMutationContract until Task 7 --
+    # the contract carries the same assertion for share and s3 today. Chunk was the ONLY backend
+    # that leaked ActiveRecord::RecordNotFound here, so a contract-only version would have pinned
+    # the two backends that were already right and missed the one that was not.
+    test "undelete raises the port's own NotFound for a node that never existed" do
+      assert_raises(FileLayer::NotFound) do
+        adapter.undelete(@user, node_id: "no-such-node-#{SecureRandom.uuid}")
+      end
+    end
   end
 end
