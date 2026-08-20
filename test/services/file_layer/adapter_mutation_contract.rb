@@ -61,6 +61,23 @@ module FileLayerMutationContract
                  "mkdir is idempotent — same dir node, not a duplicate"
   end
 
+  # UNLIKE "A MOVE ONTO A TAKEN NAME" ABOVE, THIS ONE MUST ANSWER IDENTICALLY ON EVERY BACKEND --
+  # CLAUDE.md 14a's whole point, and the reason it does not join that list of deliberate
+  # divergences. mkdir's own idempotence check above is scoped `kind: "dir"`, so it is blind to a
+  # live FILE already at this exact (parent_node_id, name); without a refusal here a backend could
+  # silently mint a dir node and a file node sharing one identity, and no real filesystem can
+  # represent that as a single directory entry -- every mount (FUSE/CfAPI/WebDAV) eventually hits
+  # it as an unrepresentable collision. Share and s3 already refuse this on their own
+  # (Share#mkdir's `dest.exist? && !dest.directory?`; S3#mkdir's `destination_vacant!`); this pins
+  # them to keep doing so, and pins Chunk to the same answer, rather than trusting any of the
+  # three not to drift.
+  def test_mutation_contract_mkdir_refuses_a_cross_kind_collision
+    make_file(name: "mover.stl", bytes: "b")
+    assert_raises(FileLayer::UnsupportedOperation) do
+      adapter.mkdir(@user, parent_node_id: nil, name: "mover.stl")
+    end
+  end
+
   # The port's whole promise. A move that mints a new node_id breaks every project
   # attachment, BOM link and tag pointing at that file — on any backend.
   def test_mutation_contract_move_keeps_the_node_id

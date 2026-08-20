@@ -557,5 +557,35 @@ module FileLayer
       second = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
       assert_equal first.node_id, second.node_id
     end
+
+    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
+    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test
+    # would prove nothing about this adapter. Same case as adapter_mutation_contract.rb's
+    # test_mutation_contract_mkdir_refuses_a_cross_kind_collision, which passes unmodified against
+    # Share and S3 (both already refuse, independently -- verified before writing this).
+    #
+    # mkdir's own idempotence check above is scoped `kind: "dir"`, so it is BLIND to a live FILE
+    # at this exact (parent_node_id, name) -- without this refusal, chunk mode would silently mint
+    # a dir node and a file node sharing one identity, and no real filesystem can represent that as
+    # a single directory entry: every mount (FUSE/CfAPI/WebDAV) eventually hits it as an
+    # unrepresentable collision. This is CLAUDE.md 14a's one-condition-two-answers shape --
+    # "the destination is taken" must mean the same thing on every backend behind one port call --
+    # and it was reachable through the exact call the New Folder chooser makes
+    # (Maker::LibraryFolder.create_child!), not just a hypothetical.
+    test "mkdir refuses a cross-kind collision -- a live FILE at the same (parent, name)" do
+      create_file!(name: "mover.stl", bytes: "b")
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.mkdir(@user, parent_node_id: nil, name: "mover.stl")
+      end
+      assert_match(/mover\.stl/, err.message, "the message should name the colliding file")
+
+      # THE FILE MUST SURVIVE THE REFUSAL, untouched -- a refused mkdir is not a partial write.
+      # Two live nodes at one (parent, name) is exactly the corruption this test exists to
+      # prevent, so it must not exist on EITHER side of the raise.
+      file_node = @user.nodes.present.find_by!(parent_node_id: nil, name: "mover.stl")
+      assert_equal "file", file_node.kind
+      assert_equal 1, @user.nodes.present.where(parent_node_id: nil, name: "mover.stl").count,
+                   "the refusal must not have created a second, colliding node"
+    end
   end
 end
