@@ -1033,8 +1033,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # float appended to one of these labels breaks that loop's exact string first. Verified — the
     # mutation was run in both orders. MUTATION-CHECKED by appending ` ${content.h}` to the ruler
     # label: RED, "a printed number needs rounding: \"100 mm — check with a ruler
-    # 230.39999999999998\"". `sizeLabel` returns null throughout this file, so every string here is
-    # furniture and none of them may carry a raw float.
+    # 230.39999999999998\"". This test uses META, whose `sizeLabel` returns null, so every string it
+    # collects is furniture and none of them may carry a raw float. (That was true of the whole file
+    # until Task 7; SIZE_LABEL and PAIR_META now return real strings, so the claim is scoped here.)
     texts.flatten.each do |t|
       refute_match(/\d\.\d{3,}/, t, "a printed number needs rounding: #{t.inspect}")
     end
@@ -1674,8 +1675,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # structure. A part taller than one tile is kept WHOLE on every tile it touches and cut by the
   # <clipPath> (buildSheets' own `touches` comment), so on the TOP tile its label — which hangs
   # under the FULL bbox, not under the visible part of it — is aimed at y 257.7..261.4, measured:
-  # past the content box, which ends at 247.4, and with its baseline landing on the calibration
-  # bar itself, which is drawn at 261.4. Unclipped it prints across the ruler, on the sheet whose
+  # past the content box, which ends at 247.4, and with its INK BOTTOM — the descender, not the
+  # baseline, which sits at 260.6 — reaching exactly the 261.4 the calibration bar is drawn at. Unclipped it prints across the ruler, on the sheet whose
   # one job is to certify the scale.
   #
   # WITH ITS PREMISES, three of them, because `hits == 0` is satisfied by every kind of nothing.

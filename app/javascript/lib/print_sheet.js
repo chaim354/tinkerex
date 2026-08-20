@@ -85,6 +85,11 @@ export function buildSheets(shapes, paper) {
       `than ${MAX_SHEETS} sheets of ${paper.name}. Select fewer parts, or choose larger paper.`)
   }
 
+  // THE UNION BOX IS GEOMETRY ONLY. A size label hangs up to ~4.4 mm BELOW its part's bbox and is
+  // not accounted for here, so on the last row a part clearing the content box by less than that
+  // has its label sliced or lost — measured on Letter: 226 mm labelled, 228 cut, 230 gone. Padding
+  // the box here would fix it and would silently move every page count Tasks 2 and 3 pinned, so it
+  // is recorded rather than fixed. The measurement and the failure direction are in `labelNode`.
   const pages = []
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -239,7 +244,11 @@ function contourNode(doc, shape) {
 //
 // NOTHING DE-CONFLICTS TWO LABELS, AND THE LEVER FOR THAT IS DELIBERATELY NOT HERE. Two contours
 // sharing a bottom edge and an x range — one outline on a cut layer and the same outline on a
-// score layer is the ordinary way to get there — print their labels on top of each other. This
+// score layer is the ordinary way to get there — print their labels on top of each other; that
+// case is mild, since the same bbox yields the same string and it reads as bold text. The
+// reachable one is a label printed across ANOTHER PART'S GEOMETRY: the ink reaches b[3] + 4.39 mm,
+// so any part whose top edge sits within ~4.4 mm below another's bottom edge takes 3 mm of type
+// across its outline — and kerf-tight nesting puts parts that close routinely. This
 // function places what it is handed; WHICH parts are labelled is `meta.sizeLabel` returning null,
 // which is the controller's decision and the only place that knows what the user selected.
 function labelNode(doc, shape, label) {
