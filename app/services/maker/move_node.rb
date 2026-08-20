@@ -2,34 +2,39 @@ module Maker
   # Move a library node to a new parent (optionally under a new name), whichever way THIS
   # deployment holds its bytes.
   #
-  # THE ONE PLACE the cross-backend move branch lives — the sibling of Maker::LibraryFolder, and
-  # written to be read next to it:
-  #   port_writable? (share/s3) → FileLayer.current.move — renames the real file/object AND
-  #                               updates the node row (see FileLayer::Share#move).
-  #   else            (chunk)   → Sync::Mutation.apply(op: "move") — the door Chunk::MOVE_MSG
-  #                               names and the one V1::NodesController#move already uses.
-  # Controllers call this and never reach into Sync:: or the port themselves; that seam is what
-  # keeps the maker/file-layer split's §10 boundary honest.
+  # ONE DOOR, on every backend: FileLayer.current.move -- the sibling of Maker::LibraryFolder, and
+  # written to be read next to it. Until Stage 2 this class branched here too (port_writable?
+  # (share/s3) called the port; chunk mode called Sync::Mutation.apply(op: "move") inline,
+  # mirroring the door V1::NodesController#move already uses) because the port refused move in
+  # chunk mode. It no longer does -- Chunk#move now delegates to the sync engine itself -- so that
+  # branch has nothing left to decide, and it stays gone. Controllers call this and never reach
+  # into Sync:: or the port themselves; that seam is what keeps the maker/file-layer split's §10
+  # boundary honest.
   #
   # THE node_id NEVER CHANGES. That is the port's stated promise and the whole reason a move is
   # safe to perform on the user's behalf: every project attachment, BOM link and tag keeps
   # pointing at the same file.
   #
-  # COLLISION IS DETECTED HERE, IN THE CATALOG, BEFORE EITHER DOOR IS OPENED, and it is a raise
-  # rather than a clobber. Both port adapters already refuse to replace (Share#move raises
-  # UnsupportedOperation, "…already exists"), but chunk mode has no such guard — Sync::Mutation
-  # would happily create two live siblings with one name. Checking `nodes` is the only check that
-  # is true on all three backends, and it is the catalog every backend actually reads.
+  # COLLISION IS DETECTED HERE, IN THE CATALOG, BEFORE THE PORT IS EVEN CALLED, and it is a raise
+  # rather than a clobber. Every adapter now refuses this too -- Chunk#move gained the same
+  # UnsupportedOperation refusal Share#move and S3#move already had -- so this is a pre-check for
+  # a BETTER ERROR, a domain-specific Collision the web UI's rename prompt depends on, not a
+  # duplicate guard against a hole. It still saves a port round trip on the ordinary
+  # rename-collision path (the same argument Maker::LibraryFolder's own existence short-circuit
+  # makes, measured there rather than assumed).
   #
-  # THE INPUT GUARDS BELOW EXIST BECAUSE ONLY ONE DOOR HAS ANY. The port resolves its own
-  # arguments — Share#move takes a node_id through `live_node!` and a parent through
-  # `parent_dir_rel!`, so a tombstoned source, a missing parent, a parent that is a FILE, and
-  # another user's node all raise FileLayer::NotFound there. The chunk door is handed the object
-  # and assigns the columns, so every one of those SUCCEEDS: it reparents under an id that may
-  # exist on no device, and then broadcasts a changelog `move` telling every device to do the
-  # same. A class whose whole job is to hide the difference between the doors cannot let them
-  # disagree about what is valid, so the checks are here, before the branch, in the same class the
-  # port already uses.
+  # THE INPUT GUARDS BELOW EXIST BECAUSE THE DOORS STILL DO NOT VALIDATE ALIKE. Share#move and
+  # S3#move resolve their own arguments — a node_id through `live_node!`, a parent through
+  # `parent_dir_rel!` — so a tombstoned source, a missing parent, a parent that is a FILE, and
+  # another user's node all raise FileLayer::NotFound there. Chunk#move (Stage 2) now checks the
+  # source the same way, but has no equivalent check for the DESTINATION: no parent-is-a-live-
+  # directory check, no leaf-name-shape check -- Sync::Mutation assigns whatever columns it is
+  # handed. A bad parent or a malformed name would reparent under an id that may exist on no
+  # device, or write a name no mount can reproduce into a node's `name` column -- and then
+  # broadcast a changelog `move` telling every device to do the same. A class whose whole job is
+  # to hide the difference between the doors cannot let them disagree about what is valid, so the
+  # checks chunk's own door still lacks are here, before the door is ever called, in the same
+  # class the port already uses.
   #
   # WHAT THIS DOES NOT CHECK, stated so it is not mistaken for covered: a CYCLE — moving a
   # directory under one of its own descendants. Every caller today moves a FILE (a file has no
@@ -121,7 +126,6 @@ module Maker
 
     def initialize(user)
       @user = user
-      @port_writable = FileLayer.current.capabilities.port_writable?
     end
 
     def call(node:, new_parent_node_id:, new_name: nil)
@@ -131,7 +135,7 @@ module Maker
       leaf!(name)
       collision!(node, new_parent_node_id, name)
 
-      @port_writable ? port_move(node, new_parent_node_id, name) : chunk_move(node, new_parent_node_id, name)
+      apply_move(node, new_parent_node_id, name)
       node
     end
 
@@ -200,34 +204,35 @@ module Maker
     # rather than a collision with itself. Tombstones are excluded by `.present` — a deleted
     # sibling holds no name. Delegates to the class-level predicate so the prompt that asks the
     # same question before offering a rename cannot answer it differently.
+    #
+    # THE PORT REFUSES THIS TOO NOW (every adapter's move answers UnsupportedOperation onto a
+    # taken name, as of Stage 2), so this is NOT a duplicate guard papering over a hole -- it is a
+    # pre-check for a BETTER ERROR. FileLayer::UnsupportedOperation is a generic port refusal;
+    # Collision is the domain-specific one the web UI's rename prompt is built around. It also
+    # still saves a port round trip on the ordinary case (a rename onto a name already in use),
+    # the same short-circuit argument Maker::LibraryFolder makes for its own existence check.
     def collision!(node, parent_node_id, name)
       return unless self.class.collision?(@user, parent_node_id:, name:, except_node_id: node.node_id)
 
       raise Collision, name
     end
 
-    # share/s3: the port owns the store, so it renames the bytes and writes the row.
+    # ONE DOOR. This used to branch on port_writable? -- another of CLAUDE.md 14d's five copies --
+    # because the port refused move in chunk mode. It no longer does, so THAT branch has nothing
+    # left to decide, and stays gone.
     #
-    # THE RELOAD IS THE RETURN VALUE, not tidiness. The port resolves the node_id into its OWN
-    # instance and updates that, so the caller's object still holds the pre-move name, parent and
-    # storage_path — while the chunk door assigns the caller's object in place. Without this the
-    # two doors return different things for the same call, and a caller who renders `node.name`
-    # after a rename (a flash, a turbo frame) prints the OLD name on share/s3 only.
-    def port_move(node, new_parent_node_id, name)
+    # THE RELOAD IS THE RETURN VALUE, not tidiness -- now the single door's contract rather than
+    # one branch's quirk. The port resolves the node_id into its OWN instance and updates that, so
+    # without this the caller's object would still hold the pre-move name, parent and
+    # storage_path. That distinction used to matter only on the port_writable? branch: the old
+    # chunk-only door assigned the caller's object in place, so the two doors returned different
+    # things for the same call, and a caller rendering `node.name` after a rename (a flash, a
+    # turbo frame) printed the OLD name on share/s3 only. One door now, so this reload is simply
+    # the only path there is.
+    def apply_move(node, new_parent_node_id, name)
       FileLayer.current.move(@user, node_id: node.node_id,
                              new_parent_node_id:, new_name: name)
       node.reload
-    end
-
-    # chunk: the sync engine owns the tree (the port refuses move). Mirrors
-    # V1::NodesController#move, broadcast included — a device following the changelog has to hear
-    # about this or its tree diverges from the server's.
-    def chunk_move(node, new_parent_node_id, name)
-      seq = Sync::Mutation.apply(user: @user, node:, op: "move") do |n|
-        n.parent_node_id = new_parent_node_id
-        n.name = name
-      end
-      LibraryChannel.broadcast_change(@user, seq)
     end
   end
 end

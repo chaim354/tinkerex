@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
+require_relative "adapter_mutation_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -19,6 +20,16 @@ module FileLayer
     # It earned its keep before this line existed: during 2b it caught that Phase 3's plan let
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
+    include FileLayerMutationContract
+
+    # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
+    # port's own write, which is exactly what the four extracted tests used inline before they
+    # became backend-agnostic.
+    def make_file(name:, bytes:)
+      adapter.write(@user, parent_node_id: nil, name:, io: StringIO.new(bytes)).node_id
+    end
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
 
     PREFIX = "library".freeze
 
@@ -392,6 +403,32 @@ module FileLayer
     ensure
       FileLayer.send(:remove_const, :MAX_BYTES)
       FileLayer.const_set(:MAX_BYTES, original)
+    end
+
+    # --- the two-phase presigned flow refuses (Task 8) -------------------------------------
+    #
+    # THE OTHER HALF OF Chunk#write's OWN REFUSAL, MIRRORED — see FileLayer::ShareTest's identical
+    # pair for the full argument. FilesController never reaches this in the real app
+    # (begin_upload/finalize_upload gate on `syncable`, which this backend answers false, so the
+    # capability gate itself is what a caller actually sees); these exist for a caller that reaches
+    # the adapter directly, so it gets a named refusal instead of a NoMethodError.
+    test "begin_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.begin_upload(@user, name: "x.stl", size: 1,
+                             manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 1 } ])
+      end
+      assert_match(/write/, err.message)
+      refute_kind_of StandardError, err,
+                     "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
+                     "silently not catch it"
+      assert_equal 0, @fake.calls[:put_object], "a refused begin must not touch the bucket"
+    end
+
+    test "finalize_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.finalize_upload(@user, commit_id: SecureRandom.uuid)
+      end
+      assert_match(/write/, err.message)
     end
 
     # ------------------------------------------------------------------------------------------

@@ -16,12 +16,11 @@
 #     page that is a delete with no undo, while `undelete` sits unused three files away.
 #
 # So `trashed` is a READ verb every adapter answers (chunk delegates to Sync::Trash, keeping one
-# definition of the trash rather than two), and restore branches on port_writable exactly as
-# #destroy does. Deletes are versioned tombstones in chunk mode and moved bytes on share/s3 —
-# what "restore" MEANS differs, which is why the port answers it and this controller does not.
+# definition of the trash rather than two), and `restore` is one call to the port's `undelete` on
+# every backend since Stage 2 (no more branch here than in #destroy). Deletes are versioned
+# tombstones in chunk mode and moved bytes on share/s3 — what "restore" MEANS differs, which is
+# why the port answers it and this controller does not.
 class TrashController < ApplicationController
-  include LibraryCapabilities
-
   # Deliberately the same shape as FilesController's, and the same argument: from the browser's
   # side "no such node", "not in the trash", "its bytes were purged" and "something is already at
   # that path" are one condition — the user cannot act on the difference, and none of them means
@@ -58,25 +57,25 @@ class TrashController < ApplicationController
 
   # POST /trash/:id/restore — bring it back to the normal listing.
   #
-  # THE BRANCH #destroy MAKES, ON THE SAME CAPABILITY. Running Sync::Trash.restore against a share
-  # library is not a recovery and is worse than doing nothing: it clears the tombstone while the
-  # bytes stay in `.trash`, leaving a live node with a NULL storage_path — invisible to the scan
-  # (which only reads nodes that have one), unreadable through the port, and its bytes purged
-  # after LIBRARY_TRASH_DAYS. A file the UI shows and nothing can open. FileLayer#undelete is the
-  # real inverse: bytes back to an observable path FIRST, then revive.
+  # ONE DOOR since Stage 2 -- the fourth of CLAUDE.md 14d's five port_writable? copies to go. This
+  # branched on port_writable? because the port refused undelete in chunk mode; Chunk#undelete now
+  # goes through the sync engine itself (Sync::Trash.restore, under Chunk#undelete), so every
+  # backend answers this ONE call to FileLayer.current.undelete, the same as mkdir/move/delete
+  # before it.
   #
-  # to_root: true is chunk mode's answer to a deleted parent. Share/s3 answer it differently
-  # (undelete recreates the folder, so the next scan revives that dir node by path) — one more
-  # reason the port owns this rather than the caller.
+  # RUNNING Sync::Trash.restore DIRECTLY AGAINST A SHARE LIBRARY IS NOT A RECOVERY -- IT IS WORSE
+  # THAN DOING NOTHING, which is exactly why this action never called it on that leg and must not
+  # start now: it would clear the tombstone while the bytes stay in `.trash`, leaving a live node
+  # with a NULL storage_path — invisible to the scan (which only reads nodes that have one),
+  # unreadable through the port, and its bytes purged after LIBRARY_TRASH_DAYS. Share/S3#undelete
+  # are the real inverse — bytes back to an observable path FIRST, then revive — which only the
+  # port can drive.
+  #
+  # THE PORT ANSWERS A FileInfo ON EVERY BACKEND, so the flash reads one field regardless of which
+  # adapter served it. `to_root: true` and its consequences — an orphan revives at the root,
+  # restore order is not commutative — live in Chunk#undelete's own comment now, not here.
   def restore
-    if capabilities.port_writable?
-      info = FileLayer.current.undelete(current_user, node_id: params[:id])
-      name = info.name
-    else
-      node, = Sync::Trash.restore(user: current_user, node_id: params[:id], to_root: true)
-      LibraryChannel.broadcast_change(current_user, current_user.reload.head_seq)
-      name = node.name
-    end
-    redirect_to files_path, notice: "Restored #{name}."
+    info = FileLayer.current.undelete(current_user, node_id: params[:id])
+    redirect_to files_path, notice: "Restored #{info.name}."
   end
 end

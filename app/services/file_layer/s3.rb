@@ -82,7 +82,7 @@ module FileLayer
       # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
       # so until it does, the UI POSTs to the port and #write puts the object.
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true)
+                       port_writable: true, dir_deletable: false)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what
@@ -346,6 +346,25 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE OTHER HALF OF Chunk#write's REFUSAL (Task 8), mirrored — see FileLayer::Share's identical
+    # pair for the full argument (this backend is port_writable, the two-phase presigned flow is
+    # meaningless for a bucket with no sync-engine chunk store behind it, and FilesController never
+    # reaches this in practice because begin_upload/finalize_upload gate on `syncable` first). ITS
+    # OWN CONSTANT, NOT Share's — a shared literal across two unrelated classes with no common
+    # ancestor would be two definitions pretending to be one, which is worse than two that just say
+    # the same thing; `name` still resolves each to its own class correctly either way.
+    TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
+                    "request), not the sync engine's two-phase presigned flow".freeze
+
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
+    def finalize_upload(_user, commit_id: nil, verify: true)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
     # Create ONE directory under `parent_node_id`. On S3 a "directory" is a zero-byte dir-MARKER
     # object `<key>/` (the shape the console mints and S3Observer reads as a dir, not a phantom
     # file) plus a dir node. The marker is what makes an EMPTY folder survive a scan: with no object
@@ -474,6 +493,26 @@ module FileLayer
       rel = join_rel(parent_dir_rel!(user, new_parent_node_id), new_name)
       observable!(rel)
       dest_key = key_for_rel(rel)
+
+      # A NO-OP MOVE (same folder, same name) resolves to a destination key IDENTICAL to the
+      # source, and it must not run the copy-then-delete-source sequence below: with
+      # dest_key == src_key, that would delete the object's ONLY copy immediately after "copying"
+      # it onto itself, an object silently reduced to zero copies. destination_vacant! below
+      # happened to make this unreachable by always refusing the destination first — a bug
+      # accidentally guarding a worse one — which is how the sequence stayed untested. Found by
+      # Task 4's mutation-contract companion test (adapter_mutation_contract.rb's
+      # test_mutation_contract_move_onto_its_own_current_name_is_not_a_collision), run against
+      # this adapter UNMODIFIED per the contract's own rule that a no-op move must stay legal on
+      # every backend. Not reachable from either production caller today (see Share#move's
+      # identical note), so this was latent rather than live -- but a port verb should not depend
+      # on its callers to avoid its own gaps, and unlike Share's mere over-refusal, this one was a
+      # data-loss trap waiting for a caller that did not know to avoid it. No bytes moved, so
+      # there is nothing to touch in the bucket — just record the (unchanged) row values, the same
+      # shape the ordinary path ends with below.
+      if dest_key == src_key
+        node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+        return stat(user, node_id: node.node_id)
+      end
 
       begin
         # Refuse rather than replace, and check BEFORE copying. Every backend here is
