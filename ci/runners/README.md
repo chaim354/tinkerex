@@ -18,7 +18,39 @@ custom label so workflows can target a specific box:
 
 Workflows then use e.g. `runs-on: [self-hosted, linux]`.
 
-## One-time setup (run ONCE per box)
+## Two repos now share these boxes (since the client/ extraction, 2026-08-20)
+
+`client/` — the Rust crates and the Tauri desktop app — moved to its own repo,
+**`chaim354/tinkerex-client`** (`docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`).
+Most of the CI that used to run here moved with it: `build-app.yml`, `install-app-on-runners.yml`,
+`cross-os-e2e.yml`, and all but a handful of `rust-client.yml`'s and `nightly.yml`'s jobs now live
+in `tinkerex-client`'s own workflows.
+
+**Self-hosted runners register PER REPOSITORY, not per org** — a runner registered against
+`chaim354/tinkerex` is invisible to `chaim354/tinkerex-client` and vice versa. So each physical box
+needs a **second runner service** registered against the new repo before any of the moved CI can
+run on it. This is not optional plumbing: until it's done, `tinkerex-client`'s workflows queue
+against a runner family that does not exist and are auto-cancelled after 24h with nothing red
+anywhere — the exact five-week-outage shape `ci/preflight.sh`'s header describes for this repo,
+now possible in the new one too.
+
+Registering the second service is the same procedure as below, run again against the other repo:
+mint a token with `gh api -X POST repos/chaim354/tinkerex-client/actions/runners/registration-token
+--jq .token`, then run the matching `setup-*` script **from a checkout of `tinkerex-client`**
+(its own copy — this repo's scripts still hardcode `chaim354/tinkerex` as their `REPO_URL`, on
+purpose: a script that took the repo as an argument would make it easy to register the wrong box
+against the wrong repo by a typo, which is worse than two small near-duplicate scripts). Give the
+second service a service/directory name that does not collide with the first (both `setup-*`
+scripts default to a fixed install path per OS) and remember to `gh variable set CI_RUNNERS` in
+**both** repos — the declared fleet is also per-repository.
+
+**As of this writing, only the macOS box has EITHER registration** (see "Verify the runners are
+online" below) — the Linux and Windows physical boxes are not registered against `tinkerex` today,
+so the equivalent statement for `tinkerex-client` is stronger: it has **no runners registered on
+any OS**, including macOS, until this is done at least once. Every workflow that moved to
+`tinkerex-client` is *skipped, not passing* until then.
+
+## One-time setup (run ONCE per box, per repo — see above)
 
 ### 1. Mint a registration token (on any box with `gh` authed to `chaim354/tinkerex`)
 

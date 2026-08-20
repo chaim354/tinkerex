@@ -23,17 +23,32 @@
 #
 # Usage:
 #   SERVER_URL=https://<your-server> ./smoke.sh
+#   SERVER_URL=https://<your-server> TINKEREX_CLIENT_DIR=/path/to/tinkerex-client ./smoke.sh
 #
 set -euo pipefail
 
 SERVER_URL="${SERVER_URL:?set SERVER_URL to the Rails server pointed at R2, e.g. https://maker.example.com}"
 
-# Locate the repo root + the sync-engine crate (script lives in scripts/r2-cutover/).
+# Locate the sync-engine crate. client/ moved to its own repo, chaim354/tinkerex-client
+# (docs/superpowers/plans/2026-08-20-stage-1-extract-client.md), so it no longer lives under this
+# script's own repo root. This is an OPERATOR script run by hand during storage cutovers, not CI —
+# nothing goes red when this assumption breaks, so the failure below must be loud and must name
+# where to get the crate, not just where it looked.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
-ENGINE_DIR="$REPO_ROOT/client/sync-engine"
+CLIENT_DIR="${TINKEREX_CLIENT_DIR:-$REPO_ROOT/../tinkerex-client}"
+ENGINE_DIR="$CLIENT_DIR/client/sync-engine"
 
-[ -d "$ENGINE_DIR" ] || { echo "sync-engine crate not found at $ENGINE_DIR" >&2; exit 1; }
+if [ ! -d "$ENGINE_DIR" ]; then
+  echo "sync-engine crate not found at $ENGINE_DIR" >&2
+  echo "" >&2
+  echo "client/ moved to chaim354/tinkerex-client (docs/superpowers/plans/" >&2
+  echo "2026-08-20-stage-1-extract-client.md) and is no longer part of this repo. Clone it:" >&2
+  echo "    gh repo clone chaim354/tinkerex-client $CLIENT_DIR" >&2
+  echo "or, if you already have a checkout elsewhere, point this script at it:" >&2
+  echo "    SERVER_URL=... TINKEREX_CLIENT_DIR=/path/to/tinkerex-client $0" >&2
+  exit 1
+fi
 
 echo "================================================================"
 echo " R2 pre-flight smoke: presigned_roundtrip against the data plane"
