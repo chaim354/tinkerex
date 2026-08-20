@@ -23,6 +23,10 @@ Read these before Task 1. You do not need to change any of them except where a t
 | `app/views/files/_measure.html.erb` | The partial. Modified in Task 9. |
 | `app/assets/stylesheets/application.css` lines 115–140 | The Measure block. Modified in Task 9. |
 | `test/system/lbrn_measure_test.rb` | The idiom every system test here follows — copy its `setup`, `teardown` and `render_geometry!` verbatim. |
+
+> **Running one system test file:** use `bin/rails test <path>`. `bin/rails test:system TEST=<path>`
+> raises `InvalidTestError`, and `bin/rails test:system <path>` **ignores the path and runs all 104
+> system tests** — verified, not assumed. Both wrong forms cost minutes per run.
 | `test/fixtures/files/nested-plate.lbrn2` | A 60 × 40 plate (x −30..30, y −20..20) with a ⌀10 hole on the same centre. |
 | `test/fixtures/files/bezier-circle.lbrn2` | A ⌀20 circle at x −10..10 and a 20 × 20 square at x 40..60 — **disjoint, 50 mm apart**. |
 | `test/fixtures/addons/boxes/sheet.js` | The sibling implementation, for reference only. **Do not import it.** |
@@ -184,7 +188,7 @@ end
 - [ ] **Step 2: Run the test and watch it fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: both tests FAIL, raising `ERROR: Failed to resolve module specifier 'lib/print_sheet'`.
@@ -256,7 +260,6 @@ export function unionBox(shapes) {
 export function buildSheets(shapes, paper) {
   if (!shapes.length) throw new Error("Nothing to print.")
   const box = unionBox(shapes)
-  const content = contentBox(paper)
 
   return {
     cols: 1,
@@ -277,7 +280,7 @@ export function buildSheets(shapes, paper) {
 - [ ] **Step 5: Run the test and watch it pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 2 runs, 0 failures.
@@ -345,7 +348,7 @@ Add to `test/system/measure_print_test.rb`, after the single-page test:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: the two tiling tests FAIL — `cols` is 1 where 3 is expected, and `pages[1]` is nil.
@@ -388,7 +391,7 @@ export function buildSheets(shapes, paper) {
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 5 runs, 0 failures.
@@ -448,7 +451,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: the refusal test returns `"NO ERROR"`; the filtering test gets `[[1, 2], [1, 2]]`.
@@ -491,7 +494,7 @@ const round = (v) => Math.round(v * 10) / 10
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 7 runs, 0 failures.
@@ -593,7 +596,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: all four FAIL with `ERROR: m.renderSheet is not a function`.
@@ -671,7 +674,7 @@ function el(doc, tag, attrs) {
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 11 runs, 0 failures.
@@ -681,7 +684,7 @@ Expected: 11 runs, 0 failures.
 Temporarily change `width: `${paper.w}mm`` to `width: `${paper.w}px``. Run:
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: RED — "a sheet declares its size in millimetres…" fails on the missing `width="215.9mm"`. **Restore the `mm`** and re-run to confirm green.
@@ -744,7 +747,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run it**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: PASS — Task 4 already wired the clip path. **A test that passes the moment you write it has proved nothing yet**, which is what Step 3 is for.
@@ -754,7 +757,7 @@ Expected: PASS — Task 4 already wired the clip path. **A test that passes the 
 In `renderSheet`, temporarily remove the `"clip-path": `url(#${clipId})`,` line from the `group` attributes. Run:
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: RED — the group's bottom now runs to roughly 517 mm of scale instead of 247.4. **Restore the line** and re-run to confirm green.
@@ -844,7 +847,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: all four FAIL — no `<text>` nodes are produced at all.
@@ -914,7 +917,7 @@ function text(doc, x, y, anchor, content) {
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 16 runs, 0 failures.
@@ -992,7 +995,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: the first two FAIL (no `[data-role='size']` node exists; the label texts are absent).
@@ -1030,7 +1033,7 @@ function labelNode(doc, shape, content) {
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 19 runs, 0 failures.
@@ -1134,7 +1137,7 @@ Add to `test/system/measure_print_test.rb`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: all four FAIL with `ERROR: m.buildPrintFrame is not a function`.
@@ -1195,7 +1198,7 @@ export function printSheets(shapes, paper, meta) {
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 23 runs, 0 failures.
@@ -1293,7 +1296,7 @@ And append after the `.measure-bitmap` line:
 - [ ] **Step 3: Confirm nothing regressed**
 
 ```bash
-bin/rails test:system TEST=test/system/lbrn_measure_test.rb
+bin/rails test test/system/lbrn_measure_test.rb
 ```
 
 Expected: green. In particular `contours are stroked in their LightBurn layer colour, and selection still overrides it` must still assert `rgb(221, 68, 0)` — the new `--marked` rule must not have displaced `--selected`.
@@ -1481,7 +1484,7 @@ And add these two helpers inside the existing `private` section:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: the five new tests FAIL — `Unable to find link or button "Select parts"` is resolved by Task 9, so these fail on the missing `--marked` class and readout text instead.
@@ -1619,7 +1622,7 @@ In `app/javascript/controllers/measure_controller.js`:
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb test/system/lbrn_measure_test.rb
+bin/rails test test/system/measure_print_test.rb test/system/lbrn_measure_test.rb
 ```
 
 Expected: 30 runs in the new file, 0 failures; `lbrn_measure_test.rb` still green.
@@ -1760,7 +1763,7 @@ Add to `test/system/measure_print_test.rb`, before `private`:
 - [ ] **Step 2: Run and watch them fail**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: FAIL — the paper select has no options, and clicking Print does nothing.
@@ -1833,7 +1836,7 @@ In `draw(payload)`, immediately before `this.bindInteractions(svg)`, add:
 - [ ] **Step 4: Run and watch them pass**
 
 ```bash
-bin/rails test:system TEST=test/system/measure_print_test.rb
+bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 35 runs, 0 failures.
