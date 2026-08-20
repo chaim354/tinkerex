@@ -73,7 +73,7 @@ rather than accepting a report. Roughly 90 agents.
 
 **Verification.** `bin/ci` bare and green at each batch boundary, always with the three
 `LIBRARY_BACKEND` legs reporting **identical** counts (§15): end of Tier 1 **2375 / 8652 / 0**;
-end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**; **final 2452 runs / 9424
+end of phase 2 **2409 / 8956 / 0**; end of Tier 3 **2444 / 9109 / 0**; **final 2457 runs / 9431
 assertions / 0 failures / 3 skips**. System 102/656 throughout, plus a new `test-app` node gate
 (F-64) — **eight** gates now, not seven, which three present-tense claims in the tree had to be
 corrected for.
@@ -193,10 +193,63 @@ right.** Two are worth carrying into future work:
   that (no digest→tag reverse lookup; `kamal accessory details` is `docker ps`). An OCI label does.
 - **N2 — `{"bom": null}` was a real unrescued 500**, found by sweeping the siblings of a finding whose
   own claim turned out to be false.
+- **N5 — the system gate exhausts MEMORY, and the finding was first recorded under the wrong cause.**
+  It went into the log as "wall time varies 3.5x", which points at timing. Investigating it inverted
+  that: `parallelize(workers: :number_of_processors)` is a CPU heuristic and a system-test worker does
+  not compute — it carries a whole headless Chrome. Measured mid-run on this 10-core/24 GB box,
+  **ten workers hold 19.7 GB and leave 0.1 GB free**; six hold 14.5 GB and leave 1.6 GB. The failures
+  are Capybara **wait timeouts, never crashes**, which is what a swapping machine looks like from
+  inside a browser test. **Two negative probes did the real work**: CPU saturation at load average 60
+  does *not* reproduce it (23.4 s, green), and neither does a concurrent 2381-run non-browser suite
+  (22.2 s, green) — only a second *browser* suite does, at 40.4 s and 54.8 s with 6 failures and
+  1 error, against a control of the same suite green in 22.3 s alone. Without those two results the
+  "fix" would have been a longer `Capybara.default_max_wait_time`, which converts a fast red into a
+  slow one and taxes every genuine failure. Workers are now budgeted at **4 GB each, capped by core
+  count** (`test/support/worker_budget.rb`) → 6 here; the extra six bought nothing, since solo wall
+  time is flat from 4 to 10 workers. Concurrent trials: **3/3 green with the fix, 2/3 red without**.
+  PR #190.
+
+### The ledger was wrong about itself three times, and nothing could have gone red
+
+The audit's own record acquired the exact defect the audit was about. All three were found by
+re-testing a claim already stated confidently; none was reachable by a gate, because **nothing in
+`bin/ci` reads a ledger row**.
+
+- **A row said LANDED and named a commit belonging to a different fix.** F-71/F-72's row carried
+  `a169217`, which is F-67's `bin/backup-status` fix — attributed by grepping for "backup", matching
+  the wrong commit, never re-checked. `scripts/r2-cutover/migrate-chunks.sh` sat on `main` with
+  **zero** references to the guard the fix adds; the work existed only on an unmerged agent branch.
+  It surfaced during branch cleanup, **one `git branch -D` before it would have been destroyed**,
+  because the premise "their content is already on main" got tested instead of assumed. It was false
+  1 time in 37. Recovered as PR #191.
+- **A row said NOT FIXED after the fix merged.** N5's section heading and prose were updated to
+  describe the applied fix and the table row was not, so the table contradicted the section it
+  indexes — and the table is the half people read first. PR #192.
+- **13 of 68 commit references pointed at commits not on `main`.** Ten named a pre-cherry-pick SHA
+  (every fix was authored on an agent branch and cherry-picked in, which mints a new commit, and the
+  rows went on naming the originals); **three no longer resolved at all**, the source branches having
+  been deleted. Those three — F-12, F-17, F-63 — were verified present by **content**
+  (`SHARED_REVISION = 0` at `geometry.rb:96`, plus `0b6509f` and `ff247c4`) and then rewritten. All
+  13 corrected: **68 references, 0 missing, 0 stale.** PR #193.
+
+`bin/verify-fix-log` now performs the check, **mutation-checked three ways** because a verifier that
+has never failed has not been shown to work: a garbage SHA reports `BAD-SHA`; a **real commit taken
+from an unmerged branch reports `MISSING`** — the F-71/F-72 class, reproduced deliberately rather
+than waited for; a `LANDED` row with its SHA removed reports `NO-SHA`. It is **deliberately not a
+`bin/ci` gate**: it reads a dated snapshot of finished work, so gating it would check frozen history
+on every PR forever, and the value is at the moment a ledger is *written* — which is when all three
+errors were made. Known limit, stated rather than discovered: the cherry-pick tier matches on commit
+**subject**, so a reworded cherry-pick reports `MISSING` — a false alarm in the safe direction.
+
+CLAUDE.md carries the rule (§15's "Keeping the docs honest"), and §14e's stale-open-list line gained
+the clause that runs the other way: a stale list does not only spend the next reader's attention on
+finished work, **it hides unfinished work behind a row that says done**. PR #194.
 
 ### Still open from this arc
 
-- Tier 2/3 items still in flight at the time of writing: F-39, F-55, F-58, F-61, F-62, F-13b, D-01.
+- ~~Tier 2/3 items in flight~~ — **all resolved**: F-39, F-58, F-61, F-62, F-13b and D-01 landed;
+  F-55 was assessed NOT NECESSARY and dropped. **Final: 44 landed, 3 dropped, 0 outstanding**, across
+  PRs #189–#194.
 - **33 of the audit's 84 findings are ranked nowhere in §9.4**, including F-45 (the web session's
   Device identified by a magic string in a client-settable column, which feeds conflict suppression).
 - `scripts/r2-cutover/` is in the identical position to `ops/` — nothing in `bin/ci` can go red for any
