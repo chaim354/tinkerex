@@ -156,6 +156,35 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_in_delta(-dx, dtx, 0.001, "the tile's content pans left by exactly its origin step")
   end
 
+  # ROWS, NOT JUST COLUMNS. Every other tiling test here is one row tall, so the `row` loop,
+  # `originY` and `translateY` are exercised only at row 0 — and a copy-paste slip like
+  # `translateY: content.y - originX - box[1]` passes all of them. Letter's content box is 230.4 mm
+  # tall and the overlap band eats 10, so ceil((500 - 10) / 220.4) = 3 rows.
+  #
+  # MUTATION-CHECKED FOUR WAYS, the row-axis twin of the column test above. `translateY` reading
+  # `originX`: RED ("Expected |-220.39999999999998 - 0| to be <= 0.001") — this test is one column
+  # wide, so originX is 0 on every page and the slip pins every row's content at row 1's. `stepY =
+  # content.h`: RED ("Expected |220.4 - 230.39999999999998| to be <= 0.001"). `Math.ceil` ->
+  # `Math.floor`: RED ("Expected: 3, Actual: 2") — 490 / 220.4 is 2.22, so a floor drops the last
+  # 49 mm of the part off the end of the job. Dropping the `h <= content.h ? 1 :` guard is RED too,
+  # but in the FITS test below rather than here (h = 500 tiles either way) — see its comment for
+  # why that one matters.
+  test "a selection taller than the sheet tiles into rows" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 40, 500], p: [[0, 0], [40, 500]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 1, out["cols"]
+    assert_equal 3, out["rows"]
+    dy = out["pages"][1]["originY"] - out["pages"][0]["originY"]
+    assert_in_delta 220.4, dy, 0.001, "content height 230.4 mm less a 10 mm overlap band"
+    # THE RELATIONSHIP, not a second literal: translateY must pan by exactly the origin step, or
+    # every tile draws row 1's content on a sheet labelled row 2.
+    assert_in_delta(-dy, out["pages"][1]["translateY"] - out["pages"][0]["translateY"], 0.001)
+  end
+
   # A selection that fits goes through the SAME path, with no small-selection branch to keep in
   # step with the tiled one.
   #
