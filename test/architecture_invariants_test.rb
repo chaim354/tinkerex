@@ -59,12 +59,58 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # door, so "does this file mention Sync?" IS the invariant, and the narrower version was an
   # implementation detail masquerading as one. Verified against the whole live tree before and
   # after -- identical offending-file set, identical hit lines, no new noise.
+  #
+  # WIDENED TO THE BARE ENGINE MODEL NAMES TOO (ENGINE_MODELS, below) -- Stage 3a Task 1. The
+  # engine's own AR models are bare top-level constants, not namespaced under `Sync::`, so
+  # everything argued above about the `Sync` token applies to each of them independently: a
+  # maker-layer file doing `Version.find(...)` reaches into the engine exactly as much as one
+  # calling `Sync::Commit`, and until this widening the guard could not see it at all -- that blind
+  # spot is how the Stage 3 boundary design's findings stayed invisible long enough to need a whole
+  # separate document (its §9: "Stage 3 must widen both [guards] to the bare model names, or its
+  # own boundary will be unenforced in exactly the way this document had to be written to
+  # discover").
   def sync_references(file)
     rel = Pathname.new(file).relative_path_from(ROOT)
     Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
-      "#{rel}:#{pos.first}" if type == :on_const && str == "Sync"
+      next unless type == :on_const
+      "#{rel}:#{pos.first}" if str == "Sync" || ENGINE_MODELS.include?(str)
     end
   end
+
+  # SEVEN MODELS MOVE TO THE ENGINE (Stage 3a plan premises; boundary design §3): Version, Chunk,
+  # ManifestChunk, PendingCommit, ChangelogEntry, Conflict, FileLock. Only SIX are listed below --
+  # `Chunk` is deliberately absent, and not for the same reason `Device` is (next paragraph). It is
+  # a TOKENIZATION problem, not a policy one. `FileLayer::Chunk` (CLAUDE.md §14a's one sanctioned
+  # adapter) is a DIFFERENT class from the `Chunk` AR model, and Ripper lexes a qualified reference
+  # to it as three separate tokens -- on_const "FileLayer", on_op "::", on_const "Chunk" -- so the
+  # bare on_const "Chunk" this detector matches is structurally indistinguishable, from tokens
+  # alone, between a real AR-model reference and the tail of a fully-qualified adapter reference.
+  # This is not hypothetical: `FileLayer.build`'s own factory (app/services/file_layer.rb:120)
+  # writes `when "chunk" then Chunk.new` *inside* `module FileLayer`, where Ruby's lexical constant
+  # lookup resolves the bare `Chunk` to `FileLayer::Chunk` -- a legitimate, load-bearing reference,
+  # in the file that IS the port, that a naive widening would flag as a violation. Scoping the
+  # check to files outside `app/services/file_layer/` does not close this either: `file_layer.rb`
+  # itself sits one level ABOVE that directory, so a directory-based scope misses the exact line
+  # that motivates it, and would still miss any future `FileLayer::Chunk` reference written
+  # elsewhere in the tree -- the ambiguous token is the same regardless of which file it appears
+  # in. Dropping `Chunk` costs nothing real: verified by lexing every file under `app/` for a bare
+  # on_const "Chunk" token, the only hits anywhere are the AR model's own definition
+  # (app/models/chunk.rb:1), the adapter's own class-opening line
+  # (app/services/file_layer/chunk.rb:8), the `FileLayer.build` factory line above, and ONE genuine
+  # AR-model cross-reference -- `Sync::Commit.upsert_chunks!`'s `Chunk.insert_all`
+  # (app/services/sync/commit.rb:259) -- which is already sync-side via SYNC_SIDE_GLOBS below. No
+  # maker-layer file references the bare `Chunk` AR model today, so omitting it from this set loses
+  # no real coverage.
+  #
+  # `Device` IS ALSO DELIBERATELY ABSENT, for an unrelated reason -- this is the entry most likely
+  # to be "fixed" by someone counting the eight moving tables (there are seven; Device stays,
+  # boundary design §3). Device STAYS WITH THE HOST: its token is the only credential the whole v1
+  # API accepts, including all fourteen v1/maker/* controllers, so an engine that owned it would
+  # leave the maker API unable to authenticate a single request without the engine mounted. Adding
+  # it here would flag app/controllers/application_controller.rb and
+  # app/services/maker/addons/library_output.rb as violations for using a model that is
+  # legitimately theirs.
+  ENGINE_MODELS = %w[Version ManifestChunk PendingCommit ChangelogEntry Conflict FileLock].freeze
 
   test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
     # CLAUDE.md §14c. The maker layer must not know files are chunks — that is the whole point of
@@ -110,6 +156,18 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # through, silently, on the strength of its NAME. It excluded `app/jobs/maker/*_reaper_job.rb`
   # only by the accident that Dir.glob does not cross `/` without `**`. Two literal paths cost one
   # line each and cannot be widened by someone choosing a filename.
+  # SIX OF THE SEVEN MOVING MODELS' OWN DEFINITION FILES ARE LISTED INDIVIDUALLY, ADDED IN STAGE 3a
+  # TASK 1 FOR THE SAME REASON `app/services/file_layer/chunk.rb` IS: each opens with `class <Name>
+  # < ApplicationRecord`, naming itself, and self-declaration is not the maker layer "reaching
+  # into" the engine -- it IS the engine, exactly as `app/services/sync/**` is above. Left off this
+  # list, ENGINE_MODELS's widened sync_references would flag six false positives that the Stage 3a
+  # plan's own premise grep never had to face, because that grep excluded `app/models` wholesale
+  # (`grep -v '^app/(...|models|...)'`) rather than naming files -- a shortcut that works for a
+  # one-shot grep and not for a glob this test re-runs every time. `version.rb` additionally
+  # references `ManifestChunk` internally (`:10`, `ManifestChunk.where(...)`), a legitimate
+  # engine-to-engine reference the same exclusion covers, since it isn't a second file. `Chunk`'s
+  # own model file (app/models/chunk.rb) needs NO entry here: `Chunk` is deliberately absent from
+  # ENGINE_MODELS (see its comment above), so nothing in this file would ever match it regardless.
   SYNC_SIDE_GLOBS = %w[
     app/services/sync/**/*.rb
     app/services/sync.rb
@@ -119,6 +177,27 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     app/jobs/retention_job.rb
     app/channels/**/*.rb
     app/services/file_layer/chunk.rb
+    app/models/version.rb
+    app/models/manifest_chunk.rb
+    app/models/pending_commit.rb
+    app/models/changelog_entry.rb
+    app/models/conflict.rb
+    app/models/file_lock.rb
+  ].freeze
+
+  # ONE FILE, NOT ZERO. app/services/sharing/links.rb:60 does `ManifestChunk.where(...)`
+  # (Sharing::Links, the share-link redemption path) -- a real, uncorrected cross-boundary
+  # reference, confirmed by running the widened detector against the whole tree (Stage 3a plan
+  # premises; boundary design §1). It is not a bug to fix here: Stage 3a Task 6 moves share_links
+  # -- model, service, and its two v1 controllers -- to the engine side, at which point this file
+  # becomes sync-side by construction (already-existing `app/controllers/v1/**/*.rb` above covers
+  # its controllers; the service needs its own entry) and this reference stops being a violation at
+  # all. Naming it here rather than leaving Task 1 red is deliberate: it lands this task clean and
+  # green today, while leaving a dated, findable trail for Task 6 to remove.
+  #
+  # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how.
+  SYNC_SEAM_EXCEPTIONS = %w[
+    app/services/sharing/links.rb
   ].freeze
 
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
@@ -127,19 +206,55 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # FileLayer::Chunk all four metadata verbs specifically so the maker layer never has to reach
     # past the port for them again; Task 8 closed the last two call sites (FilesController's
     # begin_upload/finalize_upload and Maker::Addons::LibraryOutput's own upload, both now behind
-    # FileLayer#begin_upload/#finalize_upload) -- so this is now a flat assertion of the whole
-    # rule rather than a count-and-name check against a shrinking allowlist. (It was that allowlist
-    # until Task 8: SYNC_SEAM_EXCEPTIONS named exactly those two files while the byte path was
-    # still in progress, and its own comment said to delete it, and simplify this test to the one
-    # assertion below, the moment it emptied. This is that simplification.)
+    # FileLayer#begin_upload/#finalize_upload) -- so this was a flat assertion of the whole rule
+    # rather than a count-and-name check against a shrinking allowlist, from Task 8 until Stage 3a.
+    # (It was that allowlist until Task 8: SYNC_SEAM_EXCEPTIONS named exactly those two files while
+    # the byte path was still in progress, and its own comment said to delete it, and simplify this
+    # test to the one assertion below, the moment it emptied. That simplification held for one
+    # stage.)
+    #
+    # STAGE 3a TASK 1 WIDENS THE DETECTOR, NOT THE RULE. `sync_references` now also matches the
+    # bare engine model names (ENGINE_MODELS above), because `Version.find(...)` reaches into the
+    # engine exactly as much as `Sync::Commit` does, and the guard was blind to it (Stage 3
+    # boundary design §0, §9). That widening found exactly ONE real violation --
+    # app/services/sharing/links.rb -- so SYNC_SEAM_EXCEPTIONS is back, in exactly its Task-8
+    # shape and for the same kind of reason it existed then: the fix (Task 6, moving share_links to
+    # the engine) is real, scoped work, not something to do inline inside a guard-widening task.
     sync_side = SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
     maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - sync_side
 
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
+    offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
 
-    assert_empty hits,
-                 "maker-layer file(s) reaching into Sync:: directly:\n  #{hits.join("\n  ")}\n" \
-                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d)."
+    # NAMED, NOT COUNTED, in both directions -- a mutation that swaps one offender for another
+    # while holding the count steady is caught only by asserting WHICH files, matching this file's
+    # own "assert the files, not merely a count" rule from the chunk-internals test above.
+    extra = offending_files - SYNC_SEAM_EXCEPTIONS # a NEW violation, not on the list
+    stale = SYNC_SEAM_EXCEPTIONS - offending_files # a LISTED file that no longer violates
+
+    assert_empty extra,
+                 "NEW maker-layer file(s) reaching into Sync:: or a bare engine model directly, " \
+                 "not on the exception list:\n  #{extra.join("\n  ")}\n" \
+                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this " \
+                 "really is Task 6 (share_links) work in progress, add it to " \
+                 "SYNC_SEAM_EXCEPTIONS and say so in the PR -- do not let this test go red " \
+                 "silently past that."
+    assert_empty stale,
+                 "SYNC_SEAM_EXCEPTIONS lists file(s) that no longer reach into Sync:: or a bare " \
+                 "engine model directly:\n  #{stale.join("\n  ")}\n" \
+                 "Task 6 fixed this -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
+                 "you do, remove the constant entirely and simplify this test's two assertions " \
+                 "above to a single `assert_empty offending_files`."
+    # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY. Without this, a dutiful editor
+    # could shrink SYNC_SEAM_EXCEPTIONS to `[]` one fix at a time (the two assertions above stay
+    # green the whole way) and leave it sitting there -- an allowlist for nothing, which the next
+    # reader has to re-derive is pointless before trusting it. This fails THAT state too, so
+    # whoever removes the last entry (Task 6) is told, in the same run, to delete the constant and
+    # its comment, not just leave `[].freeze` behind.
+    assert_not_empty SYNC_SEAM_EXCEPTIONS,
+                     "SYNC_SEAM_EXCEPTIONS is empty, which means Task 6 is done: delete this " \
+                     "constant and its comment, and simplify this test to `assert_empty " \
+                     "maker_layer_files.flat_map { |file| sync_references(file) }`."
   end
 
   test "NotImplementedError is never rescued" do
