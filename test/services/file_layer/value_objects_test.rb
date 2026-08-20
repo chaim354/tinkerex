@@ -23,7 +23,8 @@ module FileLayer
 
     test "Capabilities answers the five questions" do
       caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false,
-                                         scannable: false, port_writable: true)
+                                         scannable: false, port_writable: true,
+                                         dir_deletable: true)
       assert caps.versioned?
       assert caps.syncable?
       assert_not caps.presignable?
@@ -40,6 +41,35 @@ module FileLayer
         FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: false)
       end
       assert_match(/scannable/, err.message)
+    end
+
+    # dir_deletable asks ONE question: can this backend's `delete` be handed a DIRECTORY?
+    #
+    # It exists because FilesController#destroy stopped branching on port_writable?. Chunk
+    # answers true (Sync::SubtreeDelete cascades the tombstone to the whole subtree); share
+    # answers false (children would be stranded at paths that no longer exist while their bytes
+    # sit in .trash, which the scan refuses to look at); S3 answers false (there is no directory
+    # and no rename -- a dir node's key does not exist).
+    #
+    # IT IS NOT `syncable`, and the fact that it currently equals it is a coincidence of having
+    # exactly three backends -- the same trap `scannable` was introduced to escape. A backend
+    # that owns its own tree without a changelog (a database-backed store, a versioned object
+    # store with real directories) answers dir_deletable true and syncable false.
+    test "dir_deletable is part of the capability set and reads as a predicate" do
+      caps = FileLayer::Capabilities.new(versioned: true, syncable: true, presignable: true,
+                                         scannable: false, port_writable: false,
+                                         dir_deletable: true)
+      assert_predicate caps, :dir_deletable?
+    end
+
+    # Asserted as a RELATIONSHIP against the real adapters rather than three literals, so a
+    # backend added later cannot quietly skip declaring it.
+    test "every adapter declares dir_deletable, and only chunk allows it" do
+      expected = { FileLayer::Chunk => true, FileLayer::Share => false, FileLayer::S3 => false }
+      expected.each do |klass, want|
+        got = klass.allocate.capabilities.dir_deletable?
+        assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"
+      end
     end
   end
 end

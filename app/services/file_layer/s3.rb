@@ -82,7 +82,7 @@ module FileLayer
       # which door bytes come IN. A bucket could presign the upload too — spec §5.2 defers that —
       # so until it does, the UI POSTs to the port and #write puts the object.
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
-                       port_writable: true)
+                       port_writable: true, dir_deletable: false)
     end
 
     # Mirrors Share#stat exactly: answered from the NODE, never from the bucket. A stat is what

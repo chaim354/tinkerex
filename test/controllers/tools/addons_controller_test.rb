@@ -1299,7 +1299,7 @@ module Tools
 
       def capabilities
         FileLayer::Capabilities.new(versioned: false, syncable: false, presignable: false,
-                                    scannable: true, port_writable: true)
+                                    scannable: true, port_writable: true, dir_deletable: false)
       end
 
       # `replace:` MIRRORS THE REAL SIGNATURE and is deliberately ignored: this fake exists to fail

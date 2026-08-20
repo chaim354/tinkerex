@@ -25,7 +25,7 @@ module FileLayer
       # port_writable: true — there is no sync engine here, so the port IS the write path
       # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true)
+                       port_writable: true, dir_deletable: false)
     end
 
     def stat(user, node_id:)
