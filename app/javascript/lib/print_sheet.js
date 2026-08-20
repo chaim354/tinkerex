@@ -67,6 +67,19 @@ export function buildSheets(shapes, paper) {
   const cols = w <= content.w ? 1 : Math.ceil((w - OVERLAP) / stepX)
   const rows = h <= content.h ? 1 : Math.ceil((h - OVERLAP) / stepY)
 
+  // THE REFUSAL GOES ABOVE THE PAGE LOOP, NOT AFTER IT — a constraint, not a style preference.
+  // Both counts already exist here, so checking them costs nothing; filtering `pages` afterwards
+  // means a 100 m selection (an SVG misread at 25.4x, this module's own stated motivation)
+  // allocates 244,252 page objects before anything can look, and the tab hangs instead of saying
+  // "too many sheets". It also closes a degenerate-paper non-termination for free: a content box
+  // exactly one overlap band wide gives stepX = 0 and therefore cols = Infinity, and
+  // `Infinity * rows > MAX_SHEETS` refuses in constant time where the `col` loop would never end.
+  if (cols * rows > MAX_SHEETS) {
+    throw new Error(
+      `${cols * rows} sheets — this selection is ${round(w)} × ${round(h)} mm, which is more ` +
+      `than ${MAX_SHEETS} sheets of ${paper.name}. Select fewer parts, or choose larger paper.`)
+  }
+
   const pages = []
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -80,9 +93,28 @@ export function buildSheets(shapes, paper) {
         // apart on a 600 mm sheet print on one page, 40 mm apart, not on tile 4 of 12.
         translateX: content.x - originX - box[0],
         translateY: content.y - originY - box[1],
-        shapes,
+        shapes: shapes.filter((s) => touches(s, box, originX, originY, content)),
       })
     }
   }
   return { cols, rows, pages }
 }
+
+// Keep any shape whose bbox touches this tile's content box. A BBOX TEST, deliberately: a contour
+// crossing the tile edge is kept whole and cut by the <clipPath> at render time, and the overlap
+// band already guarantees that a mark near an edge appears on both tiles. Exact clipping here
+// would buy nothing and would have to reimplement what the renderer gets from the browser.
+//
+// EVERYTHING HERE IS SELECTION SPACE, which is what `- box[0]` / `- box[1]` buy: originX/originY
+// are the tile's offset within the union box (buildSheets' own comment), so a shape's file
+// coordinates have to be shifted onto that datum before they can be compared with one. Drop
+// either subtraction and every comparison silently answers about a different coordinate system —
+// invisible to any test whose selection happens to start at (0, 0).
+function touches(shape, box, originX, originY, content) {
+  const x0 = shape.b[0] - box[0], y0 = shape.b[1] - box[1]
+  const x1 = shape.b[2] - box[0], y1 = shape.b[3] - box[1]
+  return x1 >= originX && x0 <= originX + content.w &&
+         y1 >= originY && y0 <= originY + content.h
+}
+
+const round = (v) => Math.round(v * 10) / 10

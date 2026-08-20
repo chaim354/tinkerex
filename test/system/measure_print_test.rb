@@ -252,6 +252,194 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal 1, tiny["rows"]
   end
 
+  # ---- lib/print_sheet.js: the sheet cap, and per-tile filtering -------------------------------
+
+  # An SVG whose units were read 25.4x too large would otherwise silently spool 9,000 sheets.
+  #
+  # THE CAP IS TESTED IN BOTH DIRECTIONS IN ONE METHOD, because it is one guard and an
+  # over-the-cap assertion alone cannot see an off-by-one in the comparison it is asserting on.
+  #
+  # MUTATION-CHECKED FIVE WAYS. Between them they turn all FOUR blocks below red, which is how
+  # each block is shown to carry weight of its own rather than restating its neighbour. Deleting
+  # the guard: RED on the first ("Expected /more than 40 sheets/ to match 'NO ERROR'"). `>` ->
+  # `>=`: RED on the at-cap block, and as an ERROR rather
+  # than a failure — that block calls buildSheets BARE, so an unexpected throw comes back through
+  # in_print_sheet's own raise verbatim ("RuntimeError: ERROR: 40 sheets — this selection is
+  # 1400 × 1000 mm, which is more than 40 sheets of Letter."). Deleting `round` from the message:
+  # RED on the over-the-cap block (actual "1600.04 × 1000 mm"). Swapping w and h in the message:
+  # RED on the same block (actual "1000 × 1600 mm"). Moving the guard BELOW the page loop: RED on
+  # the sliver block, as "Selenium::WebDriver::Error::WebDriverError: tab crashed" — see there.
+  test "an absurd selection is refused rather than printing hundreds of sheets" do
+    err = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets([
+            // TWO SHAPES, MAXIMA SUPPLIER SECOND, for the reason the tiling tests above give: the
+            // message quotes round(w) x round(h) off the UNION, and over a one-element array
+            // unionBox's `Math.max` half and `Math.min` are indistinguishable, so the plan's
+            // single 20000 mm shape could not fail for the size half of its own assertion.
+            { b: [0, 0, 10, 10], p: [[0, 0], [10, 10]], k: 1, i: 0, o: 2 },
+            { b: [10000, 10000, 20000, 20000], p: [[10000, 10000], [20000, 20000]], k: 1, i: 0, o: 1 },
+          ], m.PAPERS.Letter)
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    assert_match(/more than 40 sheets/, err)
+    assert_match(/20000 \u{00D7} 20000 mm/, err, "the message must name the size that caused it")
+
+    # EXACTLY MAX_SHEETS IS ALLOWED — the constant is a maximum, not a ceiling one below it, and a
+    # maker with a legitimately 40-sheet job must get their 40 sheets. 1400 x 1000 mm on Letter is
+    # ceil(1390 / 185.9) = 8 columns by ceil(990 / 220.4) = 5 rows = exactly 40. Nothing else in
+    # this file can see the comparison operator: every other input is orders of magnitude away.
+    at_cap = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const r = m.buildSheets(
+          [{ b: [0, 0, 1400, 1000], p: [[0, 0], [1400, 1000]], k: 1, i: 0, o: 1 }],
+          m.PAPERS.Letter)
+        return JSON.stringify([r.cols, r.rows, r.pages.length])
+      })()
+    JS
+
+    assert_equal [ 8, 5, 40 ], at_cap, "40 sheets is the maximum ALLOWED, not the first refused"
+
+    # And one column more is refused, which is what makes the assertion above a boundary rather
+    # than a claim that the guard never fires. 1600.04 mm gives 9 columns x 5 rows = 45.
+    #
+    # THE .04 IS THE ONLY THING IN THE FILE THAT READS `round`. Every other extent here is a whole
+    # number, so deleting the rounding leaves the message byte-identical and the helper unpinned —
+    # while a real selection is a bbox off a bezier and essentially never lands on one. Asserted
+    # as the whole message prefix rather than a substring, because the unrounded spelling
+    # ("1600.04 x 1000 mm") still contains "1600" and a loose match would not see it.
+    over = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets(
+            [{ b: [0, 0, 1600.04, 1000], p: [[0, 0], [1600.04, 1000]], k: 1, i: 0, o: 1 }],
+            m.PAPERS.Letter)
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    assert_match(/\A45 sheets \u{2014} this selection is 1600 \u{00D7} 1000 mm,/, over,
+                 "one sheet over the cap is refused, and the size it names is rounded")
+
+    # AND THE REFUSAL SITS ABOVE THE PAGE LOOP, WHICH IS THE ONLY REASON A DEGENERATE PAPER
+    # TERMINATES AT ALL. A paper whose content box is exactly one overlap band wide gives
+    # stepX = 0 and therefore cols = Infinity; checked above the loop, `Infinity * rows > 40`
+    # refuses it in constant time. Checked after the loop, the `col` loop never ends.
+    #
+    # THIS IS THE ONLY ASSERTION IN THE FILE THAT CAN SEE WHERE THE GUARD SITS, and its failure is
+    # not a wrong value. MUTATION-CHECKED by moving the block below the loop: RED in 6.6 s as
+    # "Selenium::WebDriver::Error::WebDriverError: tab crashed" — Chrome OOMs on the unbounded
+    # pages.push long before Selenium's script timeout, so this reports faster and more legibly
+    # than the hang it is standing in for. Every earlier assertion in this method stays GREEN
+    # through it, since a finite cols builds its pages and then throws exactly as before.
+    #
+    # A 30 mm-wide paper is NOT reachable from PAPERS, so the argument for ordering the guard
+    # first is structural (and the 244,252-page allocation it also prevents is a real input),
+    # not a product rule about slivers.
+    sliver = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          m.buildSheets([{ b: [0, 0, 100, 10], p: [[0, 0], [100, 10]], k: 1, i: 0, o: 1 }],
+                        { name: "Sliver", w: 30, h: 297 })
+          return "NO ERROR"
+        } catch (e) { return e.message }
+      })()
+    JS
+
+    assert_match(/more than 40 sheets/, sliver, "a zero-width step must refuse, not loop forever")
+  end
+
+  # THE OTHER REFUSAL, which nothing else in this plan pins — verified by grepping every task, so
+  # deleting the guard would have gone unnoticed end to end. It is a module PRECONDITION rather
+  # than a user-facing message (Task 11's caller returns early on an empty set before ever calling
+  # here), but an unpinned throw is an unpinned throw: `unionBox` on an empty array returns
+  # [Infinity, Infinity, -Infinity, -Infinity], so without it `buildSheets` yields NaN geometry and
+  # a page full of nothing rather than an error anyone can act on.
+  test "an empty selection is refused rather than producing NaN geometry" do
+    err = in_print_sheet(<<~JS)
+      (() => {
+        try { m.buildSheets([], m.PAPERS.Letter); return "NO ERROR" }
+        catch (e) { return e.message }
+      })()
+    JS
+
+    assert_equal "Nothing to print.", err
+  end
+
+  # Handing every tile every shape would put a thousand-contour selection into the DOM once per
+  # sheet; the clipPath hides them, so nothing would look wrong while the print took as many times
+  # as long to spool.
+  #
+  # A 2x2 GRID WITH A SHAPE PER QUADRANT AND THE WHOLE SELECTION OFFSET FROM THE ORIGIN, NOT THE
+  # PLAN'S 1x2 ROW AT (0, 0). `touches` is FOUR comparisons and two datum shifts, and the plan's
+  # input can see only two of the six. Swapped back to the plan's literal data and re-run
+  # through this same browser harness, SEVEN mutations stayed GREEN — measured, not reasoned:
+  #
+  #   * dropping `y1 >= originY` and dropping `y0 <= originY + content.h` — one row means originY
+  #     is 0 on every tile and every shape's y sits inside content.h, so both are unconditionally
+  #     true and neither can ever exclude anything.
+  #   * `y0 <= originY + content.w` and `x0 <= originX + content.h` — the axis copy-paste slip,
+  #     the same shape as Task 2's `translateY: content.y - originX`. Nothing in a 1x2 grid lies
+  #     between the two bounds (195.9 and 230.4), so swapping them changes no answer.
+  #   * dropping `- box[0]`, dropping `- box[1]`, and swapping the two — a selection whose union
+  #     box starts at (0, 0) makes the datum shift a NO-OP, so the whole selection-space
+  #     conversion can be deleted with nothing going red.
+  #
+  # So: four quadrant shapes pin the four comparisons, two edge-band shapes pin the two bounds
+  # against each other, and the +500/+300 offset makes the datum shift observable.
+  #
+  # MUTATION-CHECKED TWELVE WAYS against the strengthened input, all RED, each with a
+  # distinguishable actual (expected is [[6, 1], [2, 5], [3], [4]] throughout):
+  #
+  #   drop `x1 >= originX`             [[6,1], [2,6,1,5], [3], [4,3]]
+  #   drop `x0 <= originX + content.w` [[2,6,1,5], [2,5], [4,3], [4]]
+  #   drop `y1 >= originY`             [[6,1], [2,5], [6,1,3], [2,4,5]]
+  #   drop `y0 <= originY + content.h` [[6,1,3], [2,4,5], [3], [4]]
+  #   `y1 >= originX` (cross-axis)     [[6,1], [], [6,1,3], [4]]
+  #   `y0 <= originY + content.w`      [[1], [2,5], [3], [4]]
+  #   `x0 <= originX + content.h`      [[6,1,5], [2,5], [3], [4]]
+  #   drop `- box[0]`                  [[], [], [], []]
+  #   drop `- box[1]`                  [[], [], [1], [2,5]]
+  #   swap `box[0]`/`box[1]`           [[], [6,3], [], []]
+  #   no filter at all                 [[2,6,4,1,5,3] x 4]
+  #   swap originX/originY at the call [[6,1], [6,3], [2], [4]]
+  #
+  # DELIBERATELY NOT PINNED, AND RUN RATHER THAN ASSUMED: tightening any of the four comparisons
+  # (`>=` -> `>`, `<=` -> `<`) comes back GREEN here — verified on `x1 >= originX`. It differs only
+  # for a bbox whose edge lands EXACTLY on a tile boundary, where the shape is a hairline on the
+  # new tile and is already whole on the previous one (the overlap band guarantees it), and
+  # catching it would mean asserting float equality against 185.9. Recorded, not silently skipped.
+  test "a tile carries only the shapes whose bbox touches it" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      // Selection x 500..810 (310 wide -> 2 columns), y 300..650 (350 tall -> 2 rows). In
+      // SELECTION space the tiles are x 0..195.9 / 185.9..381.8 and y 0..230.4 / 220.4..450.8.
+      // Deliberately scrambled, and the min-x supplier is NOT first, so `unionBox` gutted to
+      // `shapes[0].b` retiles the whole thing rather than landing on the same answer. Verified:
+      // that mutation gives one page carrying [[2]], and turns three other tests in this file red.
+      JSON.stringify(m.buildSheets([
+        { b: [800, 300, 810, 310], p: [[800, 300], [810, 310]], k: 1, i: 0, o: 2 }, // sel  300,0
+        { b: [500, 500, 510, 510], p: [[500, 500], [510, 510]], k: 1, i: 0, o: 6 }, // sel    0,200
+        { b: [800, 640, 810, 650], p: [[800, 640], [810, 650]], k: 1, i: 0, o: 4 }, // sel  300,340
+        { b: [500, 300, 510, 310], p: [[500, 300], [510, 310]], k: 1, i: 0, o: 1 }, // sel    0,0
+        { b: [700, 300, 710, 310], p: [[700, 300], [710, 310]], k: 1, i: 0, o: 5 }, // sel  200,0
+        { b: [500, 640, 510, 650], p: [[500, 640], [510, 650]], k: 1, i: 0, o: 3 }, // sel    0,340
+      ], m.PAPERS.Letter).pages.map((p) => p.shapes.map((s) => s.o)))
+    JS
+
+    # Shape 6 sits at selection y 200..210, between content.w (195.9) and content.h (230.4), so it
+    # belongs to row 0 and ONLY the `+ content.h` bound keeps it there. Shape 5 sits at selection
+    # x 200..210, in the same band on the other axis, so it belongs to column 1 and only the
+    # `+ content.w` bound keeps it OUT of column 0. Each is the other's mirror, and each is the
+    # only witness to its own bound.
+    assert_equal [ [ 6, 1 ], [ 2, 5 ], [ 3 ], [ 4 ] ], out,
+                 "row-major tiles, and the filter preserves array order within each tile"
+  end
+
   private
 
     def in_print_sheet(body)
