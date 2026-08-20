@@ -403,6 +403,18 @@ Add to `test/system/measure_print_test.rb`, after the single-page test:
 
     dx = out["pages"][1]["originX"] - out["pages"][0]["originX"]
     assert_in_delta 185.9, dx, 0.001, "content width 195.9 mm less a 10 mm overlap band"
+
+    # THE SPANNING SHAPE MUST REACH EVERY TILE IT CROSSES, INTERIOR ONES INCLUDED — and this is
+    # the only assertion in the file with a shape on more than one tile, which is why it carries
+    # weight far beyond its size. `touches` is an inclusive AABB OVERLAP test; swapping its two
+    # assignment lines so x1/y1 take b[0]/b[1] silently turns it into a CONTAINMENT test, and
+    # every other test here still passes because each of their shapes lands on exactly one tile.
+    # The user-visible result of that mutation is three sheets, correctly numbered "1 of 3" to
+    # "3 of 3", correctly margined, carrying the calibration bar — and COMPLETELY BLANK. Nothing
+    # errors, nothing logs. This one line is what makes it red.
+    assert_equal [ [ 1 ], [ 1 ], [ 1 ] ],
+                 out["pages"].map { |pg| pg["shapes"].map { |sh| sh["o"] } },
+                 "a 400 mm bar spans all three tiles, including the middle one"
   end
 
   # ROWS, NOT JUST COLUMNS. Every other tiling test here is one row tall, so the `row` loop,
@@ -545,6 +557,9 @@ Add to `test/system/measure_print_test.rb`:
       })()
     JS
 
+    # 9,828, not a round number: the message begins with the real count, and quoting a rounded
+    # one here would read as computed when it is not.
+    assert_match(/\A9828 sheets/, err)
     assert_match(/more than 40 sheets/, err)
     assert_match(/20000 × 20000 mm/, err, "the message must name the size that caused it")
   end
