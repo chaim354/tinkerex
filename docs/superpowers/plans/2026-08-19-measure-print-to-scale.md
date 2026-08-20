@@ -425,6 +425,30 @@ Add to `test/system/measure_print_test.rb`, after the single-page test:
     assert_in_delta(-dy, out["pages"][1]["translateY"] - out["pages"][0]["translateY"], 0.001)
   end
 
+  # THE GRID MUST BE ASYMMETRIC OR col/row ARE UNOBSERVABLE. Every other tiling test here is 1xN
+  # or Nx1, so `col` and `row` are never both non-zero and three separate mutations stay GREEN:
+  # swapping `col:`/`row:` on the page object, swapping `cols:`/`rows:`, and transposing the loop
+  # nesting. Task 6 draws "Sheet c,r of CxR" out of exactly these fields and Task 8 emits `pages`
+  # in array order, so a maker with a 3x2 job would get sheets labelled transposed, or ordered
+  # column-major against their own labels, with nothing anywhere going red.
+  #
+  # 2x2 WOULD NOT DO — with cols == rows every one of those swaps is invisible. 400 x 300 mm on
+  # Letter gives 3 columns and 2 rows, which is the smallest grid that can see all three.
+  test "pages are emitted row-major and carry their own grid position" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(
+        [{ b: [0, 0, 400, 300], p: [[0, 0], [400, 300]], k: 1, i: 0, o: 1 }],
+        m.PAPERS.Letter))
+    JS
+
+    assert_equal 3, out["cols"]
+    assert_equal 2, out["rows"]
+    assert_equal [ [ 0, 0 ], [ 1, 0 ], [ 2, 0 ], [ 0, 1 ], [ 1, 1 ], [ 2, 1 ] ],
+                 out["pages"].map { |pg| [ pg["col"], pg["row"] ] }
+    # Every page reports the WHOLE grid, not its own position twice over.
+    assert out["pages"].all? { |pg| pg["cols"] == 3 && pg["rows"] == 2 }
+  end
+
   # A selection that fits goes through the SAME path, with no small-selection branch to keep in
   # step with the tiled one.
   test "a selection that fits produces one page through the same call" do
@@ -569,7 +593,11 @@ Expected: the refusal test returns `"NO ERROR"`; the filtering test gets `[[1, 2
 
 - [ ] **Step 3: Add the refusal and the filter**
 
-In `buildSheets`, insert immediately after the `const cols = ...` / `const rows = ...` lines:
+**BEFORE THE PAGE LOOP, NOT AFTER IT — this is a constraint, not a style preference.** The counts
+both exist above the loop, so keying the refusal on them there is free; filtering `pages` afterwards
+means a 100 m selection (an SVG misread at a bad scale — this module's own stated motivation)
+allocates **244,252 page objects** before anything can check, and the tab hangs instead of saying
+"too many sheets". Insert immediately after the `const cols = ...` / `const rows = ...` lines:
 
 ```js
   if (cols * rows > MAX_SHEETS) {
