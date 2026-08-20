@@ -1785,7 +1785,14 @@ And add these two helpers inside the existing `private` section:
       assert_selector ".measure-view--ready"
     end
 
-    # NEUTER window.print IN THE IFRAME BEFORE IT EXISTS, and count the calls. Patching the
+    # NEUTER window.print IN THE IFRAME BEFORE IT EXISTS, and count the calls.
+    #
+    # STILL REQUIRED EVEN THOUGH TASK 8 ADDED A `print` SEAM. `printSheets(shapes, paper, meta,
+    # print = spool)` is injectable, but the CONTROLLER calls it with three arguments, so an
+    # end-to-end test driving a real button cannot reach the seam — and the frame's window is a
+    # SEPARATE REALM (`cw.print !== window.print`), so stubbing this page's `window.print` reaches
+    # nothing either. Patching the prototype getter is the only interception left for a test that
+    # goes through the button. Patching the
     # PROTOTYPE getter is what makes this reachable at all: printSheets calls print() synchronously
     # right after appending the frame, so there is no later moment a test could reach in. It is not
     # merely defensive — it turns the one line that would otherwise be uncovered into a counted
