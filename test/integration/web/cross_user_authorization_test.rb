@@ -22,7 +22,7 @@ module Web
 
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
 
       # The victim owns everything.
       @owner = User.create!(email: "victim@example.com", password: PASSWORD,

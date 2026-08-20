@@ -9,7 +9,7 @@ module Web
 
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = sign_in
       @node_id = upload("measure.lbrn2", file_fixture_bytes("real-export.lbrn2"))
     end

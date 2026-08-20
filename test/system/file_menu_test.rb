@@ -65,7 +65,7 @@ require "application_system_test_case"
 class FileMenuTest < ApplicationSystemTestCase
   setup do
     pin_file_layer_backend("chunk")   # chunk-shaped by construction — see uploader_test.rb
-    Storage::ChunkStore.reset!
+    Sync::Storage::ChunkStore.reset!
     @user = sign_in_as("filemenu@example.com")
   end
 
@@ -210,7 +210,7 @@ class FileMenuTest < ApplicationSystemTestCase
     def create_file!(name:, bytes:, parent_node_id: nil)
       node_id = SecureRandom.uuid
       hash = Digest::SHA256.hexdigest(bytes)
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       commit_id = SecureRandom.uuid
       Sync::Commit.begin(
         user: @user, device: device, commit_id:, node_id:, parent_node_id:,

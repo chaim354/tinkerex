@@ -133,7 +133,7 @@ module Web
     class ChunkTest < ProjectFolderIntakeTest
       setup do
         pin_file_layer_backend("chunk")
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         @user = User.create!(email: "pfic-#{SecureRandom.hex(4)}@example.com",
                              password: PASSWORD, confirmed_at: Time.current)
         post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -153,7 +153,7 @@ module Web
         # THREE ARGS: ChunkStore#put is (user_id, hash, bytes) — chunk storage is per-user, which is
         # what makes cross-user chunk access impossible (CLAUDE.md §8). A two-arg call raises
         # ArgumentError.
-        Storage::ChunkStore.current.put(@user.id, hash, content)
+        Sync::Storage::ChunkStore.current.put(@user.id, hash, content)
 
         post finalize_upload_files_path, as: :json, params: { commit_id: }
         assert_response :success
@@ -185,7 +185,7 @@ module Web
           }
           assert_response :success
           commit_id = response.parsed_body["commit_id"]
-          Storage::ChunkStore.current.put(@user.id, hash, content)
+          Sync::Storage::ChunkStore.current.put(@user.id, hash, content)
           post finalize_upload_files_path, as: :json, params: { commit_id: }
           assert_response :success
           response.parsed_body

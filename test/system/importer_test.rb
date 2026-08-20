@@ -48,7 +48,7 @@ require "zip"
 class ImporterTest < ApplicationSystemTestCase
   setup do
     pin_file_layer_backend("chunk")   # chunk-shaped by construction — see uploader_test.rb
-    Storage::ChunkStore.reset!
+    Sync::Storage::ChunkStore.reset!
     @user = sign_in_as("importer@example.com")
     @zip = build_bundle
   end

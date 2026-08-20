@@ -10,7 +10,7 @@ module V1
     # or not the deployment had one. That blindness WAS the bug the gate fixes.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def register(email: "maker@example.com", name: "laptop")

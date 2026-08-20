@@ -9,8 +9,8 @@ module Maker
       # chunk-adapter test and pins the adapter it tests rather than taking whatever
       # LIBRARY_BACKEND the process happens to carry.
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
-      @store = Storage::ChunkStore.current
+      Sync::Storage::ChunkStore.reset!
+      @store = Sync::Storage::ChunkStore.current
       @user  = User.create!(email: "job@example.com")
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
     end

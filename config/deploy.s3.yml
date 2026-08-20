@@ -13,7 +13,7 @@
 # STORAGE_BACKEND=memory neutralizes the chunk-store env this overlay INHERITS from deploy.yml
 # (Kamal deep_merge has no delete, so the base's STORAGE_BACKEND=s3 + CHUNK_* cannot be removed,
 # only overridden). It is belt-and-braces: FileLayer::S3 reports syncable=false, so
-# V1::BaseController's syncable? gate never builds Storage::ChunkStore anyway.
+# V1::BaseController's syncable? gate never builds Sync::Storage::ChunkStore anyway.
 
 # Two names — see the `proxy:` comment in deploy.yml for why `.home` exists beside `.local`
 # (short version: `.local` is mDNS-reserved, so Apple devices never resolve it via DNS).

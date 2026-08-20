@@ -7,7 +7,7 @@ module Maker
 
       setup do
         @user = User.create!(email: "lo-#{SecureRandom.hex(4)}@example.com")
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         if ENV["LIBRARY_BACKEND"] == "s3"
           require_relative "../../../support/fake_s3"
           @fake = FakeS3.new

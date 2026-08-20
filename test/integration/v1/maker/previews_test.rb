@@ -4,7 +4,7 @@ module V1
   module Maker
     class PreviewsTest < ActionDispatch::IntegrationTest
       setup do
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
       end
 
       def register(email: "p@example.com")
@@ -53,7 +53,7 @@ module V1
         pin_file_layer_backend("chunk")
         token = register
         user  = User.find_by(email: "p@example.com")
-        store = Storage::ChunkStore.current
+        store = Sync::Storage::ChunkStore.current
         svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
         store.write_blob(user.id, "svgh", svg)
         Sync::ManifestChunk.create!(user_id: user.id, manifest_id: "m", chunk_hash: "svgh",

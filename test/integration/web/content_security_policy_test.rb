@@ -13,7 +13,7 @@ module Web
 
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       email = "csp@example.com"
       User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email:, password: PASSWORD } }

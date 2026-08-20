@@ -11,7 +11,7 @@ module Web
 
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def sign_in(email = "maker@example.com")

@@ -11,7 +11,7 @@ module Web
     include ActionCable::TestHelper
     # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
     # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
-    # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
+    # need to before Phase 4 Task 3: #blob reached for Sync::Storage::ChunkStore.current directly, which
     # ignores LIBRARY_BACKEND, so it passed on the share/s3 legs by being blind to the backend
     # rather than by being right. Routing #blob through FileLayer.current is what made the
     # dependency real, and the share leg reported it immediately (ActionController::MissingFile --
@@ -22,7 +22,7 @@ module Web
     # are about.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     # Sign in via the real password auth. Creates a confirmed account if needed, then
@@ -414,7 +414,7 @@ module Web
     end
 
     # Drives the REAL request end to end -- FilesController#finalize_upload now reads `result.seq`
-    # off FileLayer::UploadFinalized and calls LibraryChannel.broadcast_change itself (Task 8: the
+    # off FileLayer::UploadFinalized and calls Sync::LibraryChannel.broadcast_change itself (Task 8: the
     # port method does NOT self-broadcast, unlike mkdir/move/delete/undelete; see
     # Chunk#finalize_upload's own comment for why). A wrong field read there (or a dropped call)
     # would still return 200 -- only listening on the real stream can catch it, which is why this
@@ -433,7 +433,7 @@ module Web
         assert_response :ok
       end
 
-      assert_broadcast_on(LibraryChannel.broadcasting_for(user), head_seq: before + 1) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(user), head_seq: before + 1) do
         post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
       end
       assert_response :success

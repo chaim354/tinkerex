@@ -10,7 +10,7 @@ module V1
   class CommitFinalizeHookTest < ActionDispatch::IntegrationTest
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def auth(token) = { "Authorization" => "Bearer #{token}" }

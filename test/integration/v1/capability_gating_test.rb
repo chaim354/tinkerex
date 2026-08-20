@@ -160,7 +160,7 @@ module V1
 
     # EVERY TEST ABOVE PASSES WITHOUT A CHUNK STORE ONLY BECAUSE THE TEST ENV HAS ONE, and that
     # made all nine of them unable to fail for the reason they exist. They set FileLayer.current
-    # and never touch STORAGE_BACKEND, which Storage::ChunkStore defaults to `memory` IN TEST and
+    # and never touch STORAGE_BACKEND, which Sync::Storage::ChunkStore defaults to `memory` IN TEST and
     # `s3` EVERYWHERE ELSE -- so a real share deployment, configured exactly as docs/STATUS.md
     # documents it (LIBRARY_* set, CHUNK_* unset), built S3ChunkStore.from_env on every v1 request
     # and answered `KeyError: CHUNK_BUCKET` -> 500. Login, /v1/maker/*, and every endpoint gated
@@ -191,12 +191,12 @@ module V1
         FileLayer.current = FileLayer::Share.new(root: @root.to_s)
         @storage_backend = ENV["STORAGE_BACKEND"]
         ENV["STORAGE_BACKEND"] = "s3" # production's default; CHUNK_* deliberately absent
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
       end
       teardown do
         ENV["STORAGE_BACKEND"] = @storage_backend
         ENV.delete("STORAGE_BACKEND") if @storage_backend.nil?
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         FileLayer.reset!
         FileUtils.remove_entry(@root) if @root&.exist?
       end

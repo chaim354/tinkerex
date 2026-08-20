@@ -27,7 +27,7 @@ module V1
       UUID = "6f2a1c3e-0b47-4d51-9a8e-2c7b5d0f1e93".freeze
 
       setup do
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         @token = bootstrap_token(email: "rev@example.com", device_name: "laptop")
         @user  = User.find_by(email: "rev@example.com")
       end

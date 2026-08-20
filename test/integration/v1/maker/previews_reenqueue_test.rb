@@ -7,7 +7,7 @@ module V1
     #   - re-POSTing a READY/processing preview does NOT reset or re-enqueue (idempotent).
     class PreviewsReenqueueTest < ActionDispatch::IntegrationTest
       setup do
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         @token = bootstrap_token(email: "reenq@example.com", device_name: "laptop")
         @user  = User.find_by(email: "reenq@example.com")
       end

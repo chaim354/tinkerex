@@ -39,7 +39,7 @@ class UploaderTest < ApplicationSystemTestCase
     # a multipart form with no Stimulus controller — so the test would look for markup that is
     # legitimately absent. ci.yml runs the whole suite under all three backends.
     pin_file_layer_backend("chunk")
-    Storage::ChunkStore.reset!
+    Sync::Storage::ChunkStore.reset!
     @user = sign_in_as("uploader@example.com")
   end
 

@@ -8,7 +8,7 @@ module Web
     # LIBRARY_BACKEND=share CI leg (no LIBRARY_PATH) doesn't fail on backend construction.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def sign_in(email = "maker@example.com")
