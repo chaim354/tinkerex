@@ -127,9 +127,14 @@ module Maker
       # implemented — the first draft did exactly that and stayed green when the method was
       # mutated to `available? && !kind.nil?`. The condition the guard exists for is a box
       # WITHOUT the binary, so the test has to create one.
+      #
+      # .lbrn2 LEFT THIS LIST DELIBERATELY and is covered by the test below instead. It is no
+      # longer a format whose THUMBNAIL depends on the toolchain, so the last assertion here is
+      # false of it — see Lbrn2#available?. Svg and Dxf have no embedded raster to fall back on,
+      # so for them every word of this still holds.
       test "the measure payload does not depend on the SVG rasterizer" do
-        without_rasterizer do
-          %w[lbrn2 dxf svg].each do |ext|
+        without_svg_rasterizer do
+          %w[dxf svg].each do |ext|
             renderer = Registry.for(ext)
             assert renderer.respond_to?(:available_for?), ".#{ext} must answer available_for?"
             assert_not renderer.available?, ".#{ext} must report its toolchain absent, or this proves nothing"
@@ -141,12 +146,33 @@ module Maker
         end
       end
 
+      # THE TWO FORMATS THAT CARRY THEIR OWN RENDER CLEAR A HIGHER BAR: not merely measurable
+      # with no rasterizer, but THUMBNAIL-ABLE, because the embedded PNG is right there and
+      # extracting it is pure Ruby. Neither declares `available_for?` at all — with `available?`
+      # unconditionally true the override could only ever repeat it — so this asserts through the
+      # JOB'S gate, which is what actually decides, rather than through a method one of them does
+      # not have.
+      test "lbrn2 and mage need no rasterizer for either kind" do
+        job = Maker::GeneratePreviewJob.new
+        without_svg_rasterizer do
+          %w[lbrn2 mage].each do |ext|
+            renderer = Registry.for(ext)
+            assert_not Maker::Previews::SvgRasterizer.available?,
+                       "precondition: the rasterizer must read absent, or this proves nothing"
+            assert job.send(:available_for?, renderer, "geometry"),
+                   ".#{ext} must be measurable with no rasterizer on the box"
+            assert job.send(:available_for?, renderer, "thumbnail"),
+                   ".#{ext} carries an embedded raster, so its thumbnail must not need the toolchain"
+          end
+        end
+      end
+
       # THE JOB IS WHAT ASKS, and it asking `available?` directly is the bug this replaced. Driven
       # through `GeneratePreviewJob`'s own gate rather than the renderer's, because a renderer
       # answering correctly to a caller that never calls it changes nothing.
       test "the job's gate asks the kind-aware question" do
         job = Maker::GeneratePreviewJob.new
-        without_rasterizer do
+        without_svg_rasterizer do
           assert job.send(:available_for?, Svg, "geometry"),
                  "the job must let a geometry render through on a box with no rasterizer"
           assert_not job.send(:available_for?, Svg, "thumbnail")
@@ -193,22 +219,6 @@ module Maker
       private
 
       def fixture(name) = File.binread(Rails.root.join("test/fixtures/files", name))
-
-      # A box with no resvg, for the length of the block.
-      #
-      # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist
-      # in this suite (requiring it is a LoadError) — same reason lbrn2_test's parse-count guard
-      # and test_helper's `with_concurrent_file_attachment` rebind methods this way. `original` is
-      # an UnboundMethod and `define_method` takes one directly, so the ensure reinstalls the
-      # exact original implementation rather than hoping something else is underneath it.
-      def without_rasterizer
-        mod = SvgRasterizer.singleton_class
-        original = mod.instance_method(:available?)
-        mod.define_method(:available?) { false }
-        yield
-      ensure
-        mod.define_method(:available?, original)
-      end
     end
   end
 end
