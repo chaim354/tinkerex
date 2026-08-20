@@ -292,7 +292,7 @@ wrong in four places, and 3a changed the code 3b moves.
 
 ---
 
-## Latest (2026-08-20): printing one part costs no mode (branch `claude/measure-print-selected`)
+## 2026-08-20: printing one part costs no mode (branch `claude/measure-print-selected`)
 
 **Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9538 assertions / 3 skips, identical.
 System tier 177 → 179 runs, 1504 assertions. `bin/ci` green, exit 0, 1m29s — measured after merging
