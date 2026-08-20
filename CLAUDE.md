@@ -250,10 +250,22 @@ Genuinely open:
    a concurrent-commit load test (the boot guard + deadlock fix are in).
 6. **Linux and Windows CI coverage is skipped, not passing** — only the macOS runner is
    registered. See §15 and `docs/STATUS.md` ("CI runs again").
-7. **The unexplained intermittent** — `SQLite3::BusyException` in a controller test
-   `setup`, captured 2026-07-27, still undiagnosed. The cross-worker explanation is
-   *disproved*: each parallel worker has its own SQLite file, so the lock holder is inside
-   the failing worker.
+7. **The `SQLite3::BusyException` intermittent is DIAGNOSED (2026-08-20); what is open is a
+   PRODUCT DECISION, not a mystery.** It needs sustained **disk I/O** pressure — 0 of 12 suite
+   runs on a quiet box, **3 of 8** with four `dd`+`sync` loops running. CPU load alone does
+   nothing. §12's old "cross-worker" disproof still holds and now has the positive answer beside
+   it: captured mid-failure, the worker held **16 connections, every one with an open
+   transaction**, from `concurrent_seq_test`'s deliberate 16-thread load, and the raising
+   statement is **`User#next_seq!`** — the one serialization point every commit, mutation,
+   restore and conflict passes through. Sightings in *other* tests (`supplier_test` setup,
+   `s3_test` setup) are the same root one remove out: 10 workers × up to 16 connections saturate
+   the disk, so an ordinary single-row write's fsync outlasts the handler. **`PRAGMA
+   busy_timeout` reading 0 is EXPECTED and not the bug** — Rails applies `timeout:` through the
+   sqlite3 gem's Ruby-level `busy_handler_timeout`, not the pragma. **The decision that is
+   actually open:** `timeout: 5000` lives in the `default` anchor, so **self-host production
+   SQLite inherits it**, and this is therefore a real concurrency ceiling for a self-host box
+   under disk pressure — not only a test artifact. Raising it trades a fast 500 for a slow write;
+   that is a judgement about the deployment, which is why it is still here.
 8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three
    backends (the port's N+1 is closed; the residual is HTML). Pagination never existed.
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the

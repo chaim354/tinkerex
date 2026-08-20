@@ -258,6 +258,52 @@ CLAUDE.md carries the rule (§15's "Keeping the docs honest"), and §14e's stale
 the clause that runs the other way: a stale list does not only spend the next reader's attention on
 finished work, **it hides unfinished work behind a row that says done**. PR #194.
 
+### The `SQLite3::BusyException` intermittent, diagnosed (2026-08-20)
+
+CLAUDE.md §12 item 7 had sat as "captured 2026-07-27, still undiagnosed". It surfaced again on a
+`bin/ci` run of `main` and, crucially, **while it was still reproducing** — so it was chased then
+rather than recorded again.
+
+**It requires sustained disk I/O, and nothing else.** Rates measured on the same machine, same
+commit, within one hour:
+
+| condition | suite runs hitting `BusyException` |
+|---|---|
+| quiet box | **0 / 12** |
+| four `dd`+`sync` loops running | **3 / 8** |
+| earlier, macOS `fileproviderd` pegged at ~100% (659 min CPU) | ~1 / 4 |
+
+**CPU load alone does not do it** — that was established separately during the N5 work, where ten
+spin loops at load average 60 left the suite green. This is an **fsync** problem, not a scheduling
+one, which is why every previous attempt to reason about it from the test code failed.
+
+**The captured state names the holder.** A probe on the raising statement dumped the pool
+mid-failure: the worker held **16 connections, every one with an open transaction**, and the
+raising frame was **`User#next_seq!`** (`user.rb:168`) from `Sync::Commit.finalize`. That is
+`concurrent_seq_test`, which deliberately runs 16 real threads each with its own connection against
+the app's single serialization point. On SQLite there is exactly one writer; sixteen contending
+threads plus a stalled fsync is the whole mechanism. §12's old "each worker has its own DB file, so
+the holder is inside the failing worker" was right and now has the positive half beside it.
+
+**The sightings in unrelated tests are the same root one remove out.** `supplier_test`'s setup
+(`User.create!`) and `s3_test`'s setup were also seen failing. Ten workers times up to sixteen
+connections saturate one disk, so an ordinary single-row write's fsync outlasts the busy handler in
+a worker doing nothing unusual. That is why the failure appears to move between unrelated tests, and
+why it reads as "unexplained".
+
+**One dead end worth recording so it is not re-walked.** `PRAGMA busy_timeout` reports **0**, which
+looks exactly like the bug and is not: Rails applies `database.yml`'s `timeout:` through the sqlite3
+gem's Ruby-level `busy_handler_timeout` (`sqlite3_adapter.rb:853-856`), not the pragma. The wait is
+real; it is just implemented in Ruby.
+
+**WHAT IS ACTUALLY OPEN IS A DECISION, AND IT IS A PRODUCTION ONE.** `timeout: 5000` sits in
+`database.yml`'s `default: &default` anchor, which **self-host production SQLite inherits**. So this
+is a genuine concurrency ceiling for a self-host box under disk pressure — sixteen concurrent device
+commits are not an absurd number — and not merely a test artifact. Raising it trades a fast 500 for
+a slow write, and lowering the test's `SEQ_LOAD_THREADS` would hide the signal rather than answer
+it. Left as a judgement about the deployment. Not changed here, deliberately: the investigation was
+the ask, and the trade-off belongs to whoever runs the box.
+
 ### Still open from this arc
 
 - ~~Tier 2/3 items in flight~~ — **all resolved**: F-39, F-58, F-61, F-62, F-13b and D-01 landed;
