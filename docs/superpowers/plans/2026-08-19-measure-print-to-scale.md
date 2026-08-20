@@ -2138,7 +2138,10 @@ Add to `test/system/measure_print_test.rb`, before `private`:
     open_measure_view(@nested_id)
     assert_selector "[data-measure-target='paper'] option", count: 4
 
-    select "A4", from: "Paper size"
+    # NOT `select "A4", from: "Paper size"` — `Capybara.enable_aria_label` defaults to false and
+    # this repo does not set it, so the aria-label is not a findable locator; the picker has no id,
+    # no name and no <label>. Pick the option by its visible text instead (`choose_paper`).
+    choose_paper "A4"
     # DELIBERATELY NOT the reset path — this is the one test that must observe the value surviving
     # a page load.
     open_measure_view(@nested_id, reset_paper: false)
