@@ -989,6 +989,15 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 
 ## Task 6: Sheet furniture — header, calibration gauge, trim marks
 
+> **INHERITED OBLIGATION FROM TASK 4 — two guards exist with no caller until this task.** `el`'s
+> **text door** and its **nullish attribute guard** were both mutation-checked in Task 4 and both
+> came back GREEN, correctly: nothing there passes text or a null attribute, so there was no input
+> to strengthen. This task adds the four `<text>` call sites and is where they become checkable.
+> **Pin both**: deleting the text door must go red (a `<text>` with no content), and deleting the
+> nullish skip must go red (an attribute that writes the literal string `"undefined"`). The text
+> door is a security rule, not a convenience — it is what makes `textContent` the only spelling
+> available for a user-controlled filename.
+>
 > **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
 > which SVG does not care about. Nothing in this task prints a content-box number **as text** — but
 > if you add one that does, round it.
