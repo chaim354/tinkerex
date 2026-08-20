@@ -2175,6 +2175,14 @@ git commit -m "feat(measure): print the selected parts at 1:1, on remembered pap
 - Modify: `docs/STATUS.md`
 - Modify: `CLAUDE.md` (§14h)
 
+> **Carried from Task 6's review — record, do not silently fix.** The trim crosshairs reach to
+> **6 mm from the paper edge** (`content.x - 4`, where `content.x` is `MARGIN` = 10), which is
+> inside the 6.35 mm hardware limit `MARGIN`'s own comment cites as the thing it clears. So the
+> outer tips may be shaved by some printers, and on a 12.7 mm-limit printer the whole outer arm
+> plus a band of the content box is unprintable. `MARGIN = 10` predates this arc. State it in
+> STATUS.md as a known limitation with the number, rather than changing a constant at the end of
+> the arc on an argument nothing has measured on a real printer.
+
 - [ ] **Step 1: Add the invariants to CLAUDE.md §14h**
 
 Append these bullets to the end of §14h, before the `### 14i.` heading:
