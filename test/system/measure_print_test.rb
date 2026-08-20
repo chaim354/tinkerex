@@ -2640,6 +2640,302 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE END-TO-END SCALE ASSERTION, and the one with teeth: it proves the REAL payload reaches the
+  # sheet at 1:1, which every synthetic test above deliberately cannot. The fixture's plate is
+  # 60 x 40 mm, so its printed polygon must span 60 by 40 user units on a sheet whose user units
+  # are millimetres.
+  #
+  # THE POLYGON COUNT IS PART OF THE CLAIM, NOT DECORATION. nested-plate carries two contours and
+  # `doc.querySelector` takes the FIRST, so without the count a print() that ignored `this.marked`
+  # and always printed `allShapes` would still put the plate first and every number below would
+  # still be right.
+  test "a real selected part reaches the sheet at exactly its measured size" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
+    click_on "Print 1 part"
+
+    assert_equal 1, page.evaluate_script("window.__printed"), "Print must reach the spooler"
+    span = JSON.parse(page.evaluate_script(<<~JS))
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const polys = doc.querySelectorAll("g polygon")
+        const pts = polys[0].getAttribute("points")
+          .trim().split(/\\s+/).map((p) => p.split(",").map(Number))
+        const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
+        return JSON.stringify({
+          w: Math.max(...xs) - Math.min(...xs),
+          h: Math.max(...ys) - Math.min(...ys),
+          svgW: doc.querySelector("svg").getAttribute("width"),
+          polygons: polys.length,
+        })
+      })()
+    JS
+
+    assert_in_delta 60.0, span["w"], 0.05
+    assert_in_delta 40.0, span["h"], 0.05
+    assert_equal "215.9mm", span["svgW"]
+    assert_equal 1, span["polygons"], "the MARKED set prints, not the whole file"
+  end
+
+  # TWO REAL PARTS KEEP THEIR REAL SEPARATION. bezier-circle.lbrn2's circle reaches x -10..10 and
+  # its square x 40..60, so their left edges are 50 mm apart in the file and must be 50 mm apart
+  # on the sheet.
+  test "two real selected parts keep their separation on the sheet" do
+    open_measure_view(@apart_id)
+    stub_print!
+    click_on "Select parts"
+    contour_with_min_x(-10).click
+    contour_with_min_x(40).click
+    click_on "Print 2 parts"
+
+    gap = page.evaluate_script(<<~JS)
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const lefts = Array.from(doc.querySelectorAll("g polygon")).map((n) =>
+          Math.min(...n.getAttribute("points").trim().split(/\\s+/).map((p) => parseFloat(p))))
+        return Math.max(...lefts) - Math.min(...lefts)
+      })()
+    JS
+
+    assert_in_delta 50.0, gap, 0.05
+  end
+
+  # A ROUND PART PRINTS ITS DIAMETER, AND THIS IS §14h's MEASURE-AFTER-THINNING TRAP WRITTEN AS A
+  # TEST. The label is the CONTROLLER's own sizeLabel, which reads `d` and `b` — the server's
+  # FULL-RESOLUTION numbers. Re-deriving it inside print() from `shape.p`, the thinned drawing
+  # points, is the mutation this exists for: nested-plate's ⌀10 hole thins below MIN_CIRCLE_POINTS,
+  # so it prints a bounding box where a ⌀ belongs. MUTATION-CHECKED, actual copied out of the run:
+  # Expected: "⌀10 mm" Actual: "10 × 10 mm". Note what that actual is NOT — the thinned span here
+  # is not visibly wrong, it is 10 to the tenth this readout rounds to. What the mutation destroys
+  # is the ⌀ itself, so the assertion has to be on the WHOLE label; one on the number alone would
+  # have stayed green over it.
+  #
+  # NOTHING ELSE IN THIS FILE CAN SEE IT: every label assertion in the module tier renders with a
+  # literal SIZE_LABEL constant of its own, so the controller could hand printSheets any function
+  # at all and stay green.
+  test "a round part prints its diameter, not a bounding box" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    contour_with_min_x(-5).click
+    click_on "Print 1 part"
+
+    label = page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("text[data-role='size']").textContent
+    JS
+
+    assert_equal "⌀10 mm", label
+  end
+
+  # THE `meta` THE CONTROLLER PASSES IS ITS OWN FILE'S, and nothing else in this file asserts it.
+  # Every header test in the module tier renders with the literal META constant, so `name:
+  # this.nameValue` and `date: new Date()…` could both be dropped and that whole tier stays green
+  # while every sheet prints with a blank filename and no date — the exact failure the `static
+  # values` declaration exists to prevent one layer up.
+  #
+  # sample.lbrn2 RATHER THAN nested-plate.lbrn2, BECAUSE THE HEADER TRUNCATES — PROBED, not
+  # predicted: pointed at nested-plate this same test reads "nested-p…te.lbrn2 · 2026-08-20".
+  # "nested-plate.lbrn2" costs 50.85 mm against a Letter name budget of 49.85, so an assertion
+  # there would be pinning truncateMiddle's arithmetic, which Task 6 already pins, instead of the
+  # wiring. "sample.lbrn2" costs 33.9 and fits whole, which is what the pass below shows.
+  test "the printed header carries this file's own name and today's date" do
+    open_measure_view(@open_id)
+    stub_print!
+    click_on "Print all"
+
+    # `svg > text` IS THE FURNITURE, DIRECT CHILDREN ONLY: every size label lives inside the
+    # clipped, translated group, and the header is the first text furniture() appends.
+    header = page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("svg > text").textContent
+    JS
+
+    # A DATE-SHAPED REGEX RATHER THAN TODAY'S LITERAL: `toISOString` is UTC and Ruby's `Date.today`
+    # is local, so an equality here would flake for whichever hours of the day the two disagree.
+    # Both mutations are still caught — a dropped `name` renders "" (a declared Stimulus String
+    # value defaults to the empty string) and a dropped `date` renders "undefined".
+    assert_match(/\A#{Regexp.escape(OPEN)} · \d{4}-\d{2}-\d{2}\z/, header)
+  end
+
+  # "PRINT ALL" MUST MEAN ALL, and the empty-set branch is the only thing that makes it so. Reading
+  # `this.marked` unconditionally turns an unselected Print into buildSheets' "Nothing to print."
+  # refusal — a button that has read "Print all" since the page loaded and does nothing at all.
+  test "Print all with nothing selected prints every contour in the file" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Print all"
+
+    assert_equal 1, page.evaluate_script("window.__printed")
+    assert_equal 2, page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelectorAll("g polygon").length
+    JS
+  end
+
+  # THE REFUSAL MUST REACH THE USER, not just the console. buildSheets throws; without the
+  # controller's rescue, clicking Print on an absurd selection would do nothing whatsoever and read
+  # as a broken button.
+  #
+  # `exact_text`, AND THE WHOLE MESSAGE: the readout IS the refusal, so a substring match would
+  # equally pass a message the controller had truncated, prefixed, or dropped the causing size out
+  # of — and the size is the only part of it that tells the user what to do differently.
+  test "an absurd selection reports why it will not print" do
+    open_measure_view(@nested_id)
+    stub_print!
+    # Drive the controller's own error path with a selection no fixture can produce.
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+      c.allShapes = [{ b: [0, 0, 20000, 20000], k: 1, i: 0, o: 1, p: [[0, 0], [20000, 20000]] }]
+      c.marked.clear()
+      c.print()
+    JS
+
+    assert_equal 0, page.evaluate_script("window.__printed"), "nothing may be spooled"
+    assert_selector ".measure-dims", exact_text: "9828 sheets — this selection is 20000 × 20000 " \
+      "mm, which is more than 40 sheets of Letter. Select fewer parts, or choose larger paper."
+  end
+
+  test "the paper picker offers the four sizes and remembers the choice" do
+    open_measure_view(@nested_id)
+    assert_selector "[data-measure-target='paper'] option", count: 4
+
+    choose_paper("A4")
+    # DELIBERATELY NOT the reset path — this is the one test that must observe the value surviving
+    # a page load.
+    open_measure_view(@nested_id, reset_paper: false)
+
+    assert_equal "A4", find("[data-measure-target='paper']").value
+  end
+
+  # THE PICKER'S VALUE IS THE PAPER THAT PRINTS, and against Letter alone nothing else in this file
+  # can see it: every other end-to-end assertion here uses the default, so `PAPERS[DEFAULT_PAPER]`
+  # hard-coded in print() passes all of them — as does dropping populatePaper() from draw(), which
+  # leaves the select empty and falls through to the same default. The picker would then be a
+  # control that changes nothing, and an A4 sheet would print declared as Letter with every part on
+  # it 2.8% wrong.
+  test "the paper the picker names is the paper that prints" do
+    open_measure_view(@nested_id)
+    stub_print!
+    choose_paper("A4")
+    click_on "Print all"
+
+    out = JSON.parse(page.evaluate_script(<<~JS))
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const svg = doc.querySelector("svg")
+        // THE @page RULE AS WELL AS THE SHEET — two declarations of one paper, and a printer told
+        // a different size from the one the SVG draws clips a band off every sheet.
+        const sheet = doc.styleSheets[0]
+        const rule = sheet && Array.from(sheet.cssRules)
+                                   .find((r) => r.constructor.name === "CSSPageRule")
+        return JSON.stringify({
+          width: svg.getAttribute("width"), height: svg.getAttribute("height"),
+          page: rule ? rule.style.size : null,
+        })
+      })()
+    JS
+
+    assert_equal "210mm", out["width"]
+    assert_equal "297mm", out["height"]
+    assert_equal "210mm 297mm", out["page"]
+  end
+
+  # AN UNRECOGNISED REMEMBERED PAPER FALLS BACK TO THE DEFAULT rather than to nothing. Without the
+  # `PAPERS[saved] ?` guard no option is ever marked selected, and a <select> with nothing selected
+  # answers its FIRST option — A4, because that is where PAPERS starts — so a stale key from an
+  # older build, or a hand-edited one, silently changes the paper instead of being ignored.
+  test "a remembered paper this build no longer offers falls back to the default" do
+    visit file_path(@nested_id)
+    page.execute_script("localStorage.setItem('measure.paper', 'Foolscap')")
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_equal "Letter", find("[data-measure-target='paper']").value
+    # Every other test here resets through open_measure_view, so this is tidiness rather than
+    # isolation — but a stale key in the store is exactly what this test is about.
+    page.execute_script("localStorage.removeItem('measure.paper')")
+  end
+
+  # RETURNING TO MEASURE MUST NOT DUPLICATE THE OPTIONS. draw() runs again on every ✕ Image →
+  # Measure round trip, and populatePaper's `options.length` early return is the only thing
+  # standing between that and a select that grows four more entries on every visit.
+  test "returning to Measure does not duplicate the paper options" do
+    open_measure_view(@nested_id)
+    choose_paper("A4")
+
+    click_on "✕ Image"
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+
+    assert_selector "[data-measure-target='paper'] option", count: 4
+    assert_equal "A4", find("[data-measure-target='paper']").value
+  end
+
+  # PRINT BEFORE THERE IS ANYTHING TO PRINT — the one state `print()`'s `!shapes` guard is for, and
+  # it is only reachable the way this test reaches it: `allShapes` is undefined between connect()
+  # and the first successful draw(), and in that state `.measure-actions` is display:none, so
+  # Capybara cannot click the button and neither can a user. Dropping the guard is GREEN against
+  # every other test in this file — measured — and what it costs is not nothing: buildSheets is
+  # handed `undefined` and the readout fills with "Cannot read properties of undefined (reading
+  # 'length')", a raw TypeError presented to the user as the answer to a button press.
+  test "printing before the geometry has loaded says nothing and spools nothing" do
+    visit file_path(@nested_id)
+    stub_print!
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      window.Stimulus.getControllerForElementAndIdentifier(el, "measure").print()
+    JS
+
+    assert_equal 0, page.evaluate_script("window.__printed")
+    # READ WITH JS, NOT `find(…).text`: an empty span in a flex row has no box, and Selenium reports
+    # a zero-size element as not displayed, so Capybara would fail to find it at all — which is red
+    # for the wrong reason.
+    assert_equal "", page.evaluate_script("document.querySelector('.measure-dims').textContent")
+    assert_no_selector ".measure-print-frame", visible: :all
+  end
+
+  # AND WITH SHAPES BUT NO PAPER OPTIONS, the print falls back to the default rather than throwing.
+  # An unpopulated select answers `value === ""`, which is no key in PAPERS — the one state from
+  # which `|| PAPERS[DEFAULT_PAPER]` is reachable, and again only by driving the controller, since
+  # draw() populates the select and reveals the button in the same breath. Without the fallback
+  # `buildSheets` is handed `undefined` for its paper and dies in contentBox, so a deployment that
+  # ever loses populatePaper loses Print with it instead of degrading to Letter.
+  test "an empty paper picker still prints, on the default paper" do
+    visit file_path(@nested_id)
+    stub_print!
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".measure-view")
+      const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+      c.allShapes = [{ b: [0, 0, 60, 40], k: 1, i: 0, o: 1,
+                       p: [[0, 0], [60, 0], [60, 40], [0, 40], [0, 0]] }]
+      c.print()
+    JS
+
+    # THE PREMISE FIRST — if the select ever came pre-populated this test would be asserting the
+    # ordinary path while claiming to assert the fallback.
+    assert_equal 0, page.evaluate_script("document.querySelector('.measure-paper').options.length")
+    assert_equal 1, page.evaluate_script("window.__printed")
+    assert_equal "215.9mm", page.evaluate_script(<<~JS)
+      document.querySelector(".measure-print-frame").contentDocument
+        .querySelector("svg").getAttribute("width")
+    JS
+  end
+
+  test "the Measure view prints without logging a console error" do
+    open_measure_view(@nested_id)
+    stub_print!
+    click_on "Select parts"
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see click_plate
+    click_on "Print 1 part"
+
+    assert_selector ".measure-print-frame", visible: :all
+    assert_no_console_errors
+  end
+
   private
 
     def open_measure_view(node_id, reset_paper: true)
@@ -2654,6 +2950,50 @@ class MeasurePrintTest < ApplicationSystemTestCase
       # --ready is what reveals the stage and hides the poster; without waiting for it the clicks
       # below race the fetch and land on a display:none SVG.
       assert_selector ".measure-view--ready"
+    end
+
+    # CAPYBARA'S `select … from:` CANNOT SEE AN aria-label, so the plan's `select "A4", from:
+    # "Paper size"` raises `Unable to find select box "Paper size"` — measured, not assumed.
+    # `Capybara.enable_aria_label` defaults to false and this repo does not set it, and the picker
+    # deliberately has no id, no name and no <label>: its accessible name IS the aria-label.
+    # Turning that flag on globally to spell one line more prettily would change how every other
+    # system test in the suite resolves a locator, which is a much larger claim than this needs.
+    #
+    # `select_option` ON THE OPTION rather than a value lookup, so what is chosen is the LABEL a
+    # user reads rather than the key behind it. Those are the same string in PAPERS today; the day
+    # they stop being, this is the spelling that keeps asserting about the control a user operates.
+    def choose_paper(name)
+      find("[data-measure-target='paper']").find("option", exact_text: name).select_option
+    end
+
+    # NEUTER window.print IN THE PRINT FRAME BEFORE THE FRAME EXISTS, and count the calls.
+    #
+    # STILL REQUIRED EVEN THOUGH TASK 8 ADDED A `print` SEAM. `printSheets(shapes, paper, meta,
+    # print = spool)` is injectable, but the CONTROLLER calls it with three arguments, so a test
+    # driving a real button can never reach the seam. Nor can it stub the function that runs: the
+    # frame's window is a SEPARATE REALM — probed in the printSheets test above, `w.print !==
+    # window.print` — so patching THIS page's window.print reaches nothing, and the frame is
+    # created and spooled inside one synchronous turn, so there is no later moment to reach in at.
+    #
+    # PATCHING THE PROTOTYPE GETTER IS THE ONE INTERCEPTION LEFT. `contentWindow` is
+    # `configurable: true` on HTMLIFrameElement.prototype, so redefining it lets the stub run at
+    # the instant printSheets asks for the window. It is a page-global monkeypatch rather than a
+    # stub of anything this module names — and it does not merely prevent a dialog: it turns the
+    # one line no module-tier test can reach into a counted assertion that the BUTTON really does
+    # reach the spooler.
+    def stub_print!
+      page.execute_script(<<~JS)
+        window.__printed = 0
+        const desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "contentWindow")
+        Object.defineProperty(HTMLIFrameElement.prototype, "contentWindow", {
+          configurable: true,
+          get() {
+            const w = desc.get.call(this)
+            try { w.print = () => { window.__printed += 1 } } catch (_) {}
+            return w
+          },
+        })
+      JS
     end
 
     # THE LIVE CONTROLLER, for the two claims nothing in the DOM can answer: that a Stimulus VALUE
