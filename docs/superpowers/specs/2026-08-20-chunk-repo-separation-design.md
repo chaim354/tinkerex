@@ -34,8 +34,26 @@ only in comments.
 |---|---|
 | Chunk-only | the eight above |
 | **Straddler** | `nodes` — all three backends populate it; 24 maker files key on `node_id` |
-| Maker | all `maker_*`, `share_links`, ActiveStorage / ActionText |
+| Maker | all `maker_*`, ~~`share_links`~~, ActiveStorage / ActionText |
 | Shared | `users`, `user_identities` |
+
+> **⚠️ THIS TABLE IS SUPERSEDED — see `2026-08-20-stage-3-boundary-design.md` §6.** It was built
+> from a `Sync::`-shaped view of the code, and the sync engine's own models are **bare top-level
+> constants** (`Version`, `Device`, `ManifestChunk`…), so a `Sync::` grep could not see them. Three
+> corrections, one of them severe:
+>
+> - **`share_links` belongs to the ENGINE, not Maker.** Share links are chunk-only by construction
+>   (`require_capability! :versioned`), and `lib/schema_map.rb:53` — a *tested* artifact already in
+>   this repo — files them under "Sync control plane". Filing them under Maker here was wrong.
+> - **`Sync::Gc.apply_retention!` READS `share_links`** (`gc.rb:106-114`) to protect the versions
+>   live share links point at. Split the two and nightly retention **silently destroys the bytes
+>   behind URLs users have already shared.** Not a build break — a quiet data-loss bug.
+> - **`users` is a straddler too**: `head_seq` is engine state on the shared tenant row, and
+>   `postgres_pooler_check` exists solely to protect its locking semantics — booting for every
+>   deployment, including share/s3, which have no changelog.
+>
+> §5's "the engine declares them as host requirements, the way Devise expects a `User`" describes
+> only one direction. The dependency runs **both ways**, in five places.
 
 **Code.** Most `Sync::` references sit *inside* what moves (the v1 sync API's twelve
 controllers, three reaper jobs). The genuine maker→sync seam is **six call sites in five
@@ -129,6 +147,24 @@ underneath, which the Rust clients need regardless.
 Move the twelve crates, the Tauri app and `test-conformance/` to `tinkerex-client`, with
 `rust-client.yml`, `build-app.yml`, `cross-os-e2e.yml`, `install-app-on-runners.yml` and
 the client portion of `nightly.yml`.
+
+> **⚠️ "NEARLY FREE" IS WRONG — see `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`.**
+> Three real couplings this section misses:
+>
+> 1. **`client/stl-thumbnailer` IS a Ruby dependency at Docker build time.** `Dockerfile:61-64`
+>    compiles it; `:141` ships the binary; `.dockerignore:58-62` excludes `/client/` and re-includes
+>    exactly this crate. `Maker::Previews::Stl` execs it. Move `client/` naively and **every STL and
+>    3MF thumbnail in production stops rendering.** It is a SERVER-side tool misfiled under
+>    `client/`; the plan re-files it to `tools/` first, as a prerequisite.
+> 2. **Four CI jobs boot a real Rails server** to test the Rust crates against it
+>    (`rust-client.yml`'s `engine-integration`; `nightly.yml`'s `e2e-linux`, `e2e-macos`,
+>    `stress-load-and-multifiletype-linux`). Those two workflows split; they do not move.
+> 3. **Self-hosted runners register PER REPOSITORY.** Each physical box needs a second runner
+>    service against the new repo — and only the macOS runner is registered today, so the moved
+>    Linux/Windows workflows would be *skipped, not passing*.
+>
+> Also: `scripts/r2-cutover/smoke.sh` shells into `client/sync-engine` and is run by hand during
+> storage cutovers, so nothing goes red when it breaks.
 
 Both repos need their own copy of the `ci_hygiene_test.rb` workflow guards, and `bin/ci`'s
 `test-app` gate travels with `client/maker-app`. `bin/ci` in the maker repo drops from
