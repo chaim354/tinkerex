@@ -1052,6 +1052,16 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 > `plate.lbrn2` and fails for the real worst case is the same under-powered input this plan has now
 > recorded sixteen times.
 >
+> **A correction worth keeping, because the reasoning generalises.** A review claimed a long locale
+> date (`Wednesday, August 19, 2026`) would overprint the warning by ~29 mm. It does not: measured
+> clearances stay positive (19.56 mm for that string, 11.63 for a long German one, 24.73 for CJK).
+> The under-charge is real, but it is measured against the *worst case* rather than against what
+> those strings render — and the NAME is billed at a worst case it does not spend (ordinary text
+> renders ~1.35 mm against 3.05 charged), so its surplus absorbs the suffix's shortfall. Reaching
+> a real overflow needs **both** halves at their worst simultaneously: an all-`@` name beside a
+> wide CJK date, which measures −4.49 mm. Charging every character class through one function
+> closes it structurally, which is better than asserting a date format.
+>
 > **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
 > which SVG does not care about. Nothing in this task prints a content-box number **as text** — but
 > if you add one that does, round it.
