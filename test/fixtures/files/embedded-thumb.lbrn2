@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A LightBurn project that CARRIES ITS OWN RENDER, which is what LightBurn 1.x actually
+     writes. It is the RendererContractTest fixture because Lbrn2#available? is now
+     unconditionally true (matching Mage): the contract test no longer skips this renderer on a
+     box with no resvg, so its fixture has to be one that renders there. sample.lbrn2 is the
+     opposite case on purpose and stays the fixture everywhere the OUTLINE path is under test. -->
+<LightBurnProject AppVersion="1.7.08" FormatVersion="1">
+  <Thumbnail Source="iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAJUlEQVR42mP4TyJgoK+GDTIyWBF2DbhUo+kZ1UBjDSRH3KBJfADGPzU/5BX+5AAAAABJRU5ErkJggg=="/>
+  <CutSetting type="Cut">
+    <index Value="0"/>
+    <name Value="C00"/>
+    <speed Value="20"/>
+    <maxPower Value="60"/>
+  </CutSetting>
+  <Shape Type="Rect" CutIndex="0" W="40" H="25">
+    <XForm>1 0 0 1 0 0</XForm>
+  </Shape>
+</LightBurnProject>
