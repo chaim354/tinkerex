@@ -188,157 +188,201 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Create the shared mutation contract
+### Task 2: Extract the shared mutation contract
 
-`adapter_write_contract.rb` currently covers *both* the byte write path and the metadata verbs, and its header says Chunk cannot satisfy it. After this plan Chunk satisfies the metadata half and still cannot satisfy the byte half — so the file has to split, or the contract permanently understates what all three adapters agree on.
+**CORRECTED after reading the real files.** The plan originally said "create" and named the modules
+`AdapterContract`/`AdapterMutationContract`. Both were wrong:
+
+- The real module names are **`FileLayerAdapterContract`** (read) and **`FileLayerWritableContract`**
+  (write), in `adapter_contract.rb` and `adapter_write_contract.rb`.
+- `FileLayerWritableContract` **already contains** the four metadata tests
+  (`mkdir_creates_a_dir_node_and_is_idempotent`, `move_keeps_the_node_id`,
+  `delete_tombstones_rather_than_destroying`, `undelete_restores_the_same_node_and_bytes`).
+
+So this is an **extraction**, not new authorship. Writing parallel tests would duplicate coverage
+and let the two copies drift — the exact failure this repo records over and over. The four tests
+move; their assertions and their comments come with them unchanged.
+
+The one thing that must change is how each test gets its fixture: all four currently call
+`adapter.write(...)`, which chunk does not have and must never grow. That becomes a **hook**.
 
 **Files:**
 - Create: `test/services/file_layer/adapter_mutation_contract.rb`
-- Modify: `test/services/file_layer/adapter_write_contract.rb` (header only, this task)
+- Modify: `test/services/file_layer/adapter_write_contract.rb` (remove the four moved tests; narrow the header)
+- Modify: `test/services/file_layer/share_test.rb` (include the new module + define the hooks)
+- Modify: `test/services/file_layer/s3_test.rb` (same)
 
-- [ ] **Step 1: Create the mutation contract**
+`chunk_test.rb` is **not** touched in this task — chunk has no `move`/`delete`/`undelete` until
+Tasks 4–6, so including the contract there now would fail. Task 7 wires it in.
+
+- [ ] **Step 1: Create `adapter_mutation_contract.rb`**
+
+Header:
 
 ```ruby
-# The contract EVERY adapter's METADATA verbs must satisfy -- delete, move, mkdir, undelete.
+# The contract EVERY adapter's METADATA verbs must satisfy -- mkdir, move, delete, undelete.
 #
-# SEPARATE FROM adapter_write_contract.rb, and the split is the point. That file is the BYTE
-# write path (`write`, which takes an IO), which chunk mode does not have and must not grow:
-# chunk uploads are Sync::Commit's two-phase presigned flow precisely so bytes never travel
-# through Rails (CLAUDE.md 15). These four verbs move NO bytes, so 15 does not bind and all
-# three adapters can and do answer them.
+# EXTRACTED FROM FileLayerWritableContract, not written beside it. Those four tests lived there
+# because, when it was written, the only adapters answering them were the two port_writable ones;
+# Stage 2 gave chunk all four, so the grouping had become "the verbs share and s3 happen to share"
+# rather than a real boundary. A second copy for chunk would have been two sets of assertions
+# about one contract, free to drift -- this repo's most-recorded failure shape.
 #
-# Include this into every adapter's test case, chunk included. The read contract's hooks
-# (`adapter`, `@user`) are assumed; include this alongside it.
+# THE REAL BOUNDARY IS BYTES. What stayed behind in FileLayerWritableContract is `write`, which
+# takes an IO. Chunk does not have it and must never grow it: chunk uploads are Sync::Commit's
+# two-phase presigned flow precisely so bytes never travel through Rails (CLAUDE.md 15). These
+# four verbs move NO bytes, so 15 does not bind and all three adapters answer them.
 #
-# Two hooks the including test case must define:
+# Include alongside FileLayerAdapterContract; its hooks (`adapter`, `@user`) are assumed.
 #
-#   make_file(name:, parent_node_id: nil) -> create one live FILE node through whatever door this
-#                                    backend really uses, and return it. It is a HOOK rather than
-#                                    a shared helper because the doors genuinely differ -- share
-#                                    and s3 write through the port, chunk commits through the sync
-#                                    engine -- and a contract that reached for one of them would
-#                                    be testing that backend twice instead of both once.
+# TWO HOOKS the including test case must define:
 #
-#   make_dir(name:, parent_node_id: nil)  -> the same, for a DIRECTORY node.
+#   make_file(name:, bytes:) -> create one live FILE node carrying those bytes, through whatever
+#                       door this backend really uses, and return its node_id. A HOOK rather than
+#                       a shared helper because the doors genuinely differ -- share and s3 write
+#                       through the port, chunk commits through the sync engine -- and a contract
+#                       that reached for one of them would test that backend twice and the other
+#                       not at all. It must produce REAL READABLE BYTES: three of these tests
+#                       assert on adapter.read, which is what proves a move or an undelete kept
+#                       the node_id resolving to the same content rather than merely to a row.
+#
+#   make_dir(name:)  -> the same, for a DIRECTORY node. Returns its node_id.
 #
 # WHAT THIS DELIBERATELY DOES NOT PIN:
 #
-#   - Directory deletion. That is `dir_deletable`, and the two answers are both correct: chunk
-#     cascades, share strands children, s3 has no directory at all. It is asserted BELOW as a
-#     capability-conditional, never as one fixed expectation.
-#   - Where the bytes go. Share's `.trash/<node_id>/<name>` layout is share's own test; s3
-#     trashes by key prefix; chunk moves no bytes at all. Encoding one backend's storage layout
-#     in a shared contract is the leak the port exists to prevent.
-#   - `undelete`'s destination for an orphan. Share restores under the (tombstoned) parent's
-#     path; chunk restores to the ROOT when the parent is gone, because a tombstoned parent has
-#     no path to restore under. Both are right for their backend.
+#   - DIRECTORY DELETION. That is `dir_deletable`, and both answers are correct: chunk cascades
+#     via Sync::SubtreeDelete, share strands children at paths that no longer exist while their
+#     bytes sit in .trash, s3 has no directory at all. Asserted below as a capability-conditional,
+#     never as one fixed expectation.
+#   - WHERE THE BYTES GO. Share's `.trash/<node_id>/<name>` layout is share's own test; s3 trashes
+#     by key prefix; chunk moves no bytes. Encoding one backend's storage layout in a shared
+#     contract is the leak the port exists to prevent.
+#   - `undelete`'s DESTINATION FOR AN ORPHAN. Share restores under the (tombstoned) parent's path,
+#     which still exists on a filesystem; chunk restores to the ROOT, because a tombstoned parent
+#     has no path to restore under. Both are right for their backend.
 #   - A MOVE ONTO A TAKEN NAME. Share and s3 refuse it (UnsupportedOperation -- a clobber); chunk
-#     does NOT, because `Sync::Mutation` performs no name check at all and `Sync::Commit` validates
-#     a manifest exhaustively and the name not at all (CLAUDE.md 14c). Two live siblings sharing one
+#     does NOT, because Sync::Mutation performs no name check at all and Sync::Commit validates a
+#     manifest exhaustively and the name not at all (CLAUDE.md 14c). Two live siblings sharing one
 #     (parent, name) really are reachable on chunk. The WEB path is still protected --
-#     `Maker::MoveNode.collision!` runs before it calls the port -- so this is not a regression Stage 2
-#     introduces, and closing it is a separate decision (CLAUDE.md 12 item 11), not something a
-#     refactor should do silently. Asserted in share's and s3's OWN tests, never here.
-#   - A MOVE OF A DIRECTORY. Share allows it; s3 refuses (`movable_file!`) because there is no
-#     directory and no rename. Every test here moves a FILE for that reason.
-module AdapterMutationContract
-  def test_delete_tombstones_the_node
-    node = make_file(name: "gone.stl")
-    adapter.delete(@user, node_id: node.node_id)
-    assert_predicate node.reload, :deleted?, "delete must tombstone the node on every backend"
-  end
-
-  def test_delete_refuses_a_directory_unless_the_backend_declares_dir_deletable
-    dir = make_dir(name: "adir")
-    if adapter.capabilities.dir_deletable?
-      adapter.delete(@user, node_id: dir.node_id)
-      assert_predicate dir.reload, :deleted?
-    else
-      assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir.node_id) }
-      refute_predicate dir.reload, :deleted?, "a refused delete must not half-apply"
-    end
-  end
-
-  def test_move_renames_in_place
-    node = make_file(name: "before.stl")
-    adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
-    assert_equal "after.stl", node.reload.name
-  end
-
-  # The port RESOLVES the node_id into its own instance, so a caller holding a stale object must
-  # be told the truth by the RETURN VALUE. Chunk's old door assigned the caller's object in place
-  # and share's did not -- two doors returning different things for the same call, which is how a
-  # flash rendered the OLD name on share/s3 only.
-  def test_move_returns_the_post_move_state
-    node = make_file(name: "before.stl")
-    info = adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
-    assert_equal "after.stl", info.name
-    assert_equal node.node_id, info.node_id, "a move must PRESERVE node_id -- attachments key on it"
-  end
-
-  def test_mkdir_creates_a_directory_node
-    info = adapter.mkdir(@user, parent_node_id: nil, name: "newdir")
-    assert_equal "dir", info.kind
-    assert_equal "newdir", info.name
-  end
-
-  # Idempotent on every backend: Maker::LibraryFolder walks a path segment by segment and calls
-  # this for each, so a second walk of an existing path must return the SAME node rather than
-  # raising or minting a duplicate.
-  def test_mkdir_is_idempotent
-    first  = adapter.mkdir(@user, parent_node_id: nil, name: "twice")
-    second = adapter.mkdir(@user, parent_node_id: nil, name: "twice")
-    assert_equal first.node_id, second.node_id
-  end
-
-  def test_undelete_revives_a_tombstoned_node_keeping_its_node_id
-    node = make_file(name: "back.stl")
-    adapter.delete(@user, node_id: node.node_id)
-    info = adapter.undelete(@user, node_id: node.node_id)
-    refute_predicate node.reload, :deleted?
-    assert_equal node.node_id, info.node_id,
-                 "undelete must keep node_id -- every attachment, BOM link and tag is keyed on it"
-  end
-end
+#     Maker::MoveNode.collision! runs before it calls the port -- so this is not a regression
+#     Stage 2 introduces, and closing it is a separate decision (CLAUDE.md 12 item 11), not
+#     something a refactor does silently. It stays asserted in share's and s3's OWN tests.
+#   - A MOVE OF A DIRECTORY. Share allows it; s3 refuses (`movable_file!`). Every test here moves
+#     a FILE for that reason.
+module FileLayerMutationContract
 ```
 
-- [ ] **Step 2: Narrow the write contract's header**
+- [ ] **Step 2: Move the four tests into it, verbatim except for the fixture line**
 
-In `test/services/file_layer/adapter_write_contract.rb`, replace the first paragraph (lines 1–5, ending `...spec §10).`) with:
+Cut these four methods out of `FileLayerWritableContract` and paste them into the new module,
+**keeping every existing comment above each one**. Rename the `test_write_contract_` prefix to
+`test_mutation_contract_`. In each, replace the `adapter.write(...)` fixture call with the hook:
+
+```ruby
+# BEFORE (in FileLayerWritableContract)
+info = adapter.write(@user, parent_node_id: nil, name: "before.stl", io: StringIO.new("same"))
+adapter.move(@user, node_id: info.node_id, ...)
+
+# AFTER (in FileLayerMutationContract)
+node_id = make_file(name: "before.stl", bytes: "same")
+adapter.move(@user, node_id:, ...)
+```
+
+`test_write_contract_mkdir_creates_a_dir_node_and_is_idempotent` needs no fixture change at all —
+it only calls `adapter.mkdir`. Update its comment, which currently says *"Chunk does NOT include
+this contract — its mkdir goes through the sync engine — so this pins only that Share and S3 do
+not diverge"*: that sentence becomes false the moment Task 7 includes chunk. Replace it with a
+note that all three now answer mkdir, chunk's through the sync engine.
+
+- [ ] **Step 3: Add the `dir_deletable` conditional test**
+
+New — this one has no ancestor in the write contract, because until Task 1 there was no capability
+to branch on:
+
+```ruby
+  # The capability from Task 1, asserted as a CONDITIONAL rather than a fixed expectation, because
+  # both answers are correct and which one is right is a property of the backend.
+  def test_mutation_contract_delete_refuses_a_directory_unless_dir_deletable
+    dir_id = make_dir(name: "adir")
+    if adapter.capabilities.dir_deletable?
+      adapter.delete(@user, node_id: dir_id)
+      assert @user.nodes.find_by!(node_id: dir_id).deleted, "a dir_deletable backend tombstones it"
+    else
+      assert_raises(FileLayer::UnsupportedOperation) { adapter.delete(@user, node_id: dir_id) }
+      assert_not @user.nodes.find_by!(node_id: dir_id).deleted, "a refused delete must not half-apply"
+    end
+  end
+```
+
+- [ ] **Step 4: Narrow the write contract's header**
+
+In `adapter_write_contract.rb`, replace the opening paragraph (through `...spec §10).`) with:
 
 ```ruby
 # The contract every adapter implementing the port's BYTE write path must satisfy -- `write`,
 # which takes an IO. Separate from adapter_contract.rb (the read contract, which runs against
-# every adapter) and from adapter_mutation_contract.rb (delete/move/mkdir/undelete, which ALSO
-# runs against every adapter, chunk included).
+# every adapter) and from adapter_mutation_contract.rb (mkdir/move/delete/undelete, which ALSO
+# runs against every adapter, chunk included, since Stage 2).
 #
 # Chunk does not implement THIS one and must never be made to: chunk-mode uploads are
 # Sync::Commit's two-phase presigned flow, and a server-side byte write here would push bytes
-# through Rails, which CLAUDE.md 15 forbids. That is a narrower claim than this header used to
-# make -- chunk answers the metadata verbs perfectly well, and did not before Stage 2.
+# through Rails, which CLAUDE.md 15 forbids. That is a NARROWER claim than this header used to
+# make -- it said chunk could not satisfy the write path at all, which stopped being true for the
+# four metadata verbs when they moved to adapter_mutation_contract.rb.
 ```
 
-- [ ] **Step 3: Verify nothing broke**
+- [ ] **Step 5: Wire it into share and s3 and prove the extraction lost nothing**
+
+In `test/services/file_layer/share_test.rb`, beside `include FileLayerWritableContract`:
+
+```ruby
+    include FileLayerMutationContract
+
+    # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
+    # port's own write, which is exactly what the four extracted tests used inline before they
+    # became backend-agnostic.
+    def make_file(name:, bytes:)
+      adapter.write(@user, parent_node_id: nil, name:, io: StringIO.new(bytes)).node_id
+    end
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
+```
+
+Add the identical pair to `test/services/file_layer/s3_test.rb`. **Repeat them rather than
+extracting a shared helper**: the whole point of a hook is that each backend answers through its
+own door, and a shared helper would let one backend's door stand in for the other's.
+
+Add `require_relative "adapter_mutation_contract"` beside the existing `require_relative` in each.
+
+- [ ] **Step 6: Run and compare counts**
 
 ```bash
 bin/rails test test/services/file_layer/
+LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test test/services/file_layer/
 ```
 
-Expected: PASS. The new contract file is not included anywhere yet, so this only proves the header edit is syntactically clean.
+Expected: PASS. **The total run count must be exactly 2 higher than before this task** — the four
+moved tests are the same four tests (no gain), plus the new `dir_deletable` conditional running on
+share and s3 (two more, one per adapter). If it moved by any other amount, a test was lost or
+duplicated: find out which before continuing.
 
-- [ ] **Step 4: Commit**
+Record the before/after counts in your report.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add test/services/file_layer/
-git commit -m "test(file-layer): split the metadata mutation contract out of the write contract
+git commit -m "test(file-layer): extract the metadata verbs into their own adapter contract
 
-The write contract conflated the BYTE path (write, which chunk must never grow
--- CLAUDE.md 15) with the metadata verbs (delete/move/mkdir/undelete, which
-chunk can answer and is about to). Splitting them lets the metadata half run
-against all three adapters.
+mkdir/move/delete/undelete lived in FileLayerWritableContract because the only
+adapters answering them were the two port_writable ones. Stage 2 gives chunk all
+four, so that grouping was about which backends happened to agree rather than
+about a real boundary. The real boundary is BYTES: what stays behind is write,
+which takes an IO and which chunk must never grow (CLAUDE.md 15).
 
-Not wired into any adapter test yet; the following tasks include it one verb
-at a time.
+Extracted, not copied -- the four tests move with their assertions and comments
+intact, with their adapter.write fixture replaced by a make_file hook. Wired into
+share and s3 now; chunk joins in Task 7 once it has the verbs.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -1072,8 +1116,13 @@ In `app/services/file_layer/chunk.rb`, using the exact argument names the two ca
     # presigned PUT URLs, the client PUTs to object storage directly, finalize records the
     # version. Bytes touch neither this process nor -- in remote mode -- the sync server's.
     # That is CLAUDE.md 15, and it is the whole reason `write` above still refuses.
-    def begin_upload(user, parent_node_id: nil, name: nil, manifest: nil)
-      Sync::Commit.begin(user:, parent_node_id:, name:, manifest:)
+    # The keyword list is Sync::Commit.begin's OWN, verbatim -- an earlier draft of this plan
+    # guessed a shorter one (user/parent_node_id/name/manifest) and was wrong. Read the two real
+    # call sites before writing this signature; they are the source of truth, not this plan.
+    def begin_upload(user, device:, commit_id:, node_id:, parent_node_id:, name:,
+                     base_version_id:, size:, mtime:, manifest:)
+      Sync::Commit.begin(user:, device:, commit_id:, node_id:, parent_node_id:, name:,
+                         base_version_id:, size:, mtime:, manifest:)
     end
 
     # `verify:` is passed through rather than defaulted here. It is a DEPLOYMENT setting
