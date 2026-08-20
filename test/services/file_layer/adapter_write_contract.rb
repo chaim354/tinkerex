@@ -1,8 +1,13 @@
-# The contract EVERY adapter implementing the port's WRITE path must satisfy. Separate from
-# adapter_contract.rb (the read contract) on purpose: that one runs against every adapter,
-# and Chunk does not implement this path — chunk-mode writes are Sync::Commit's two-phase
-# flow, and forcing a server-side write here would duplicate it, have no caller, and reach
-# into the sync engine the port exists to stay out of (spec §10).
+# The contract every adapter implementing the port's BYTE write path must satisfy -- `write`,
+# which takes an IO. Separate from adapter_contract.rb (the read contract, which runs against
+# every adapter) and from adapter_mutation_contract.rb (mkdir/move/delete/undelete, which ALSO
+# runs against every adapter, chunk included, since Stage 2).
+#
+# Chunk does not implement THIS one and must never be made to: chunk-mode uploads are
+# Sync::Commit's two-phase presigned flow, and a server-side byte write here would push bytes
+# through Rails, which CLAUDE.md 15 forbids. That is a NARROWER claim than this header used to
+# make -- it said chunk could not satisfy the write path at all, which stopped being true for the
+# four metadata verbs when they moved to adapter_mutation_contract.rb.
 #
 # Include this into a writable adapter's test case. Share includes it now; S3 in Phase 3 —
 # that is the point. The read contract's hooks (adapter, @user) are assumed; include this
@@ -43,50 +48,6 @@ module FileLayerWritableContract
   def test_write_contract_bytes_round_trip
     info = adapter.write(@user, parent_node_id: nil, name: "rt.stl", io: StringIO.new("payload"))
     assert_equal "payload", adapter.read(@user, node_id: info.node_id)
-  end
-
-  # mkdir is a WRITE-path verb, so every writable backend answers it identically: a navigable dir
-  # node, and idempotent (Maker::LibraryFolder walks a path and calls it per segment, repeatedly).
-  # Chunk does NOT include this contract — its mkdir goes through the sync engine — so this pins
-  # only that Share and S3 do not diverge on the port's mkdir.
-  def test_write_contract_mkdir_creates_a_dir_node_and_is_idempotent
-    info = adapter.mkdir(@user, parent_node_id: nil, name: "ContractDir")
-    node = @user.nodes.find_by!(node_id: info.node_id)
-    assert_equal "dir", node.kind
-    assert_equal "ContractDir", node.name
-    assert_equal info.node_id, adapter.mkdir(@user, parent_node_id: nil, name: "ContractDir").node_id,
-                 "mkdir is idempotent — same dir node, not a duplicate"
-  end
-
-  # The port's whole promise. A move that mints a new node_id breaks every project
-  # attachment, BOM link and tag pointing at that file — on any backend.
-  def test_write_contract_move_keeps_the_node_id
-    info = adapter.write(@user, parent_node_id: nil, name: "before.stl", io: StringIO.new("same"))
-    adapter.move(@user, node_id: info.node_id, new_parent_node_id: nil, new_name: "after.stl")
-
-    assert_equal "same", adapter.read(@user, node_id: info.node_id),
-                 "a move must keep node_id resolving to the same bytes"
-    assert_equal "after.stl", adapter.stat(@user, node_id: info.node_id).name
-  end
-
-  # Tombstoned = gone is already pinned by the READ contract (§9a-1). This pins the other
-  # half: delete gets you there, and it tombstones rather than destroying — the row is what
-  # makes a project say "file missing" instead of the attachment vanishing.
-  def test_write_contract_delete_tombstones_rather_than_destroying
-    info = adapter.write(@user, parent_node_id: nil, name: "bye.stl", io: StringIO.new("gone"))
-    adapter.delete(@user, node_id: info.node_id)
-
-    assert @user.nodes.find_by!(node_id: info.node_id).deleted, "the row survives"
-    assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: info.node_id) }
-  end
-
-  def test_write_contract_undelete_restores_the_same_node_and_bytes
-    info = adapter.write(@user, parent_node_id: nil, name: "back.stl", io: StringIO.new("restored"))
-    adapter.delete(@user, node_id: info.node_id)
-    adapter.undelete(@user, node_id: info.node_id)
-
-    assert_not @user.nodes.find_by!(node_id: info.node_id).deleted
-    assert_equal "restored", adapter.read(@user, node_id: info.node_id)
   end
 
   # NOT IN THE PLAN, and the omission is load-bearing rather than tidy-up: Phase 3's plan

@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
+require_relative "adapter_mutation_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -19,6 +20,16 @@ module FileLayer
     # It earned its keep before this line existed: during 2b it caught that Phase 3's plan let
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
+    include FileLayerMutationContract
+
+    # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
+    # port's own write, which is exactly what the four extracted tests used inline before they
+    # became backend-agnostic.
+    def make_file(name:, bytes:)
+      adapter.write(@user, parent_node_id: nil, name:, io: StringIO.new(bytes)).node_id
+    end
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
 
     PREFIX = "library".freeze
 

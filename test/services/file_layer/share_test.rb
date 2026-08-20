@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
+require_relative "adapter_mutation_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
@@ -11,6 +12,16 @@ module FileLayer
     # not include this — its write/delete/move raise, by design (Task 1). That split IS the
     # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
     include FileLayerWritableContract
+    include FileLayerMutationContract
+
+    # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
+    # port's own write, which is exactly what the four extracted tests used inline before they
+    # became backend-agnostic.
+    def make_file(name:, bytes:)
+      adapter.write(@user, parent_node_id: nil, name:, io: StringIO.new(bytes)).node_id
+    end
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
 
     setup do
       @root = Pathname.new(Dir.mktmpdir("share-test"))
