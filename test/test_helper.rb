@@ -59,6 +59,30 @@ module ActiveSupport
     # per-test clear does not touch.
     setup { ActionController::Base.cache_store.clear }
 
+    # Run a block on a box that has no SVG rasterizer.
+    #
+    # THE ONLY WAY A TOOLCHAIN GATE ASSERTS ANYTHING. Asked plainly on a box that HAS resvg,
+    # every `available?` is true however it is implemented — so a test about what happens
+    # WITHOUT the binary has to create that box. Stubs the predicate rather than pointing
+    # RESVG_BIN at a bogus path: same answer, no ENV to leak into the next test in this worker.
+    #
+    # Shared rather than copied. Three suites need it (lbrn2, geometry, the preview job), and a
+    # per-file copy is how one of them silently stops stubbing the thing it means to.
+    #
+    # HAND-ROLLED, NOT Object#stub: minitest 6 dropped minitest/mock, so `stub` does not exist in
+    # this suite (requiring it is a LoadError) -- the same reason lbrn2_test's parse-count guard
+    # and `with_concurrent_file_attachment` below rebind methods this way. `original` is an
+    # UnboundMethod and `define_method` takes one directly, so the ensure reinstalls the exact
+    # original implementation rather than hoping something else is underneath it.
+    def without_svg_rasterizer
+      mod = Maker::Previews::SvgRasterizer.singleton_class
+      original = mod.instance_method(:available?)
+      mod.define_method(:available?) { false }
+      yield
+    ensure
+      mod.define_method(:available?, original)
+    end
+
     # Pin the FileLayer backend for the duration of one test.
     #
     # A test whose FIXTURES are chunk-shaped (ManifestChunk rows, Storage::ChunkStore blobs) is a

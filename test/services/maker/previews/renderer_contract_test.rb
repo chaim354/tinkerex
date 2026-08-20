@@ -14,7 +14,12 @@ module Maker
       FIXTURES = {
         Maker::Previews::Svg     => "square.svg",
         Maker::Previews::Dxf     => "sample.dxf",
-        Maker::Previews::Lbrn2   => "sample.lbrn2",
+        # CARRIES AN EMBEDDED <Thumbnail>, and that is required rather than incidental. Lbrn2
+        # #available? is unconditionally true (like Mage's), so `next unless renderer.available?`
+        # below no longer skips this entry on a box with no resvg — and sample.lbrn2, which has no
+        # embedded raster, raised NoThumbnail there. Verified by running this file with
+        # RESVG_BIN pointed at nothing, which is the only way to see it.
+        Maker::Previews::Lbrn2   => "embedded-thumb.lbrn2",
         Maker::Previews::ThreeMf => "cube.3mf",
         Maker::Previews::Mage    => "sample.mage",
         Maker::Previews::Stl     => "tetra.stl",
