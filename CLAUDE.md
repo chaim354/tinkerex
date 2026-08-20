@@ -2062,7 +2062,12 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   never fails the commit** (that "best-effort" claim was previously unenforced — nothing rescued
   around it), and a host that **registers nothing still works**. Guarded in both directions now: no
   maker→engine references, and **no engine→`Maker::` references at all** (currently zero, asserted
-  with no exception list).
+  with no exception list). **BOTH SCANS DERIVE THEIR FILE SET FROM ONE METHOD** (`engine_side_files`),
+  because they did not at first and had already drifted apart within this same arc: the reverse list
+  never learned about `app/services/sharing/**` moving engine-side, and the forward scan exempted the
+  fourteen `v1/maker/*` controllers through a blanket `app/controllers/v1/**` glob — two tests in one
+  file, disagreeing about which side the same files sit on. Both holes were found by planting live
+  violations and watching the suite stay green, which is the only way either would have been found.
 - **`share_links` IS THE ENGINE'S, and `Sync::Gc` is why.** `Sync::Gc.apply_retention!` reads
   `share_links` to protect versions live links point at (`gc.rb:106-114`); **split the two and
   nightly retention silently destroys the bytes behind URLs users have already sent to other
