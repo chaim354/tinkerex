@@ -1018,13 +1018,15 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 > available for a user-controlled filename.
 >
 > **ALSO FROM TASK 4 — `el` HAS A SILENT MIS-CALL MODE, AND THIS TASK IS WHERE IT BECOMES
-> REACHABLE.** `el(doc, tag, attrs, text)` with the string in the `attrs` slot —
+> REACHABLE.** Note there are **five** `<text>` call sites, not four — four on any one sheet, since
+> the sheet label is conditional. `el(doc, tag, attrs, text)` with the string in the `attrs` slot —
 > `el(doc, "text", "Sheet 1,1 of 2×1")` — was expected to throw `InvalidCharacterError`, since
 > attribute names cannot begin with a digit. **Probed in Chrome: it does not.** The result is
 >
->     <text 0="S" 1="h" 2="e" 3="e" 4="t" 5=" " 6="1" 7="," 8="1"></text>
+>     <text 0="S" 1="h" 2="e" 3="e" 4="t" 5=" " 6="1" 7="," 8="1" … 15="1"></text>
 >
-> — nine junk attributes, no text content, an empty `<text>` that renders nothing on a page that is
+> — one junk attribute per character (sixteen for that string; the nine above is just the probe
+> truncated), no text content, an empty `<text>` that renders nothing on a page that is
 > otherwise perfectly formed. Nothing throws, nothing logs. The `text()` wrapper covers the four
 > sites this task defines; a fifth added later is one keystroke away. Add
 > `if (typeof attrs === "string") throw new Error(...)` to `el` and pin it.
@@ -1188,7 +1190,22 @@ Expected: all green, 4 more tests than before this task.
 
 First, change `if (cols * rows > 1)` to `if (true)`. Run the suite: expected RED on "a single sheet carries no page label" only. Restore.
 
-Then change the calibration block to run only on the first page — wrap the gauge lines in `if (col === 0 && row === 0)`. Run: expected RED on "every sheet carries the calibration gauge…". **Restore both** and confirm green.
+Then change the calibration block to run only on the first page. **Wrap the WHOLE block —
+lines, ticks, label, square — in `if (col === 0 && row === 0)`, not just the lines.** Wrapping
+only the lines leaves the *labels* on every sheet, so a text-only assertion stays **GREEN over
+five sheets reading "100 mm — check with a ruler" with no ruler under them** (measured). That
+mutation is caught only by a test asserting the gauge's GEOMETRY, which is why one is needed:
+
+| a furniture defect the plan's text-only tests cannot see | what it does on paper |
+|---|---|
+| the bar labelled `100 mm` drawn 90 mm | every check reads 10% off, and the sheet says it is right |
+| the square labelled `20 mm` drawn 15 mm | same, on the axis the square exists to cover |
+| all furniture appended inside the clip group | no gauge, no header, no marks — on a page that still carries the geometry |
+| the row index or row count hard-coded | `Sheet 1,1 of 3×1` on all six sheets of a 3×2 job |
+| the gauge guarded by `if (row === 0)` | **worse than untested on a one-row job** — the guard is unconditionally true there, so the DOM is byte-identical to correct code and no 3×1 fixture can ever see it. Use a 3×2 grid. |
+| every furniture coordinate hard-coded to Letter | A4/A3/Tabloid print their furniture in Letter's places |
+
+Restore everything and confirm green.
 
 - [ ] **Step 6: Commit**
 
