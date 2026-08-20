@@ -1,5 +1,29 @@
 # Widen the FileLayer Port (Stage 2) Implementation Plan
 
+> ## ✅ DONE — merged to `main` as `8cbe21d` (PR #200), 2026-08-20.
+> **Do not execute this plan.** Every task below is complete and every box is ticked. It is kept as
+> the record of what was intended versus what was actually built, because the two diverged in ways
+> worth reading before planning Stage 1, 3 or 4:
+>
+> - Task 2 was written as "create a mutation contract"; the four tests already existed inside
+>   `FileLayerWritableContract`, so it became an **extraction**. The plan's module names were
+>   invented and wrong.
+> - Task 8's `Sync::Commit.begin` signature was **guessed and wrong**. The real one is in
+>   `chunk_test.rb`'s `create_file!`.
+> - The broadcast assertions in Tasks 4–6 were **vacuous as first written** — `head_seq` advances
+>   whether or not anything broadcasts. Caught only by the mandated mutation check.
+> - The plan cited **CLAUDE.md §12 item 11** for chunk's duplicate-sibling gap. The right citation
+>   is **§14c**. The error propagated into three code comments before it was caught.
+>
+> The lesson those four share is the one CLAUDE.md §14e already states: **a plan written from
+> reading is a hypothesis.** Every task here that survived contact unchanged was one where the
+> implementer was told to read the real call sites first.
+>
+> **What comes next is NOT in this file.** The four-stage design is
+> `docs/superpowers/specs/2026-08-20-chunk-repo-separation-design.md`; Stages 1, 3 and 4 have **no
+> implementation plan yet**, and Stage 3 needs its own design pass first — the close-out review
+> found `share_links` straddles the split in a way that design's own table gets wrong.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the six maker→sync call sites go through `FileLayer` instead of reaching around it into `Sync::*`, so the chunk backend can later be moved behind an HTTP boundary without touching a single maker-layer caller.
@@ -69,7 +93,7 @@ Chunk's `delete` can cascade a directory safely (`Sync::SubtreeDelete`). Share's
 - Modify: `app/services/file_layer/s3.rb` (~line 84)
 - Test: `test/services/file_layer/value_objects_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the existing `Capabilities` test class in `test/services/file_layer/value_objects_test.rb`:
 
@@ -104,7 +128,7 @@ Append inside the existing `Capabilities` test class in `test/services/file_laye
     end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/value_objects_test.rb
@@ -112,7 +136,7 @@ bin/rails test test/services/file_layer/value_objects_test.rb
 
 Expected: FAIL with `ArgumentError: unknown keyword: :dir_deletable` (first test) and `NoMethodError: undefined method 'dir_deletable?'` (second).
 
-- [ ] **Step 3: Add the field to `Capabilities`**
+- [x] **Step 3: Add the field to `Capabilities`**
 
 In `app/services/file_layer/capabilities.rb`, extend the `Data.define` and add the predicate. Add this paragraph to the file's header comment, above the `Capabilities =` line:
 
@@ -146,7 +170,7 @@ Then:
   end
 ```
 
-- [ ] **Step 4: Declare it in all three adapters**
+- [x] **Step 4: Declare it in all three adapters**
 
 `app/services/file_layer/chunk.rb`, in `#capabilities`:
 
@@ -159,7 +183,7 @@ Then:
 
 `app/services/file_layer/s3.rb`, in `#capabilities` — same, append `dir_deletable: false`.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 ```bash
 bin/rails test test/services/file_layer/
@@ -167,11 +191,11 @@ bin/rails test test/services/file_layer/
 
 Expected: PASS, 0 failures 0 errors.
 
-- [ ] **Step 6: Mutation-check the guard (§15 — required, not optional)**
+- [x] **Step 6: Mutation-check the guard (§15 — required, not optional)**
 
 Change chunk's declaration to `dir_deletable: false`, run `bin/rails test test/services/file_layer/value_objects_test.rb`, and **confirm it goes RED**. Then restore `true` and confirm green. A guard that has never failed has not been shown to work.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add app/services/file_layer/ test/services/file_layer/value_objects_test.rb
@@ -215,7 +239,7 @@ The one thing that must change is how each test gets its fixture: all four curre
 `chunk_test.rb` is **not** touched in this task — chunk has no `move`/`delete`/`undelete` until
 Tasks 4–6, so including the contract there now would fail. Task 7 wires it in.
 
-- [ ] **Step 1: Create `adapter_mutation_contract.rb`**
+- [x] **Step 1: Create `adapter_mutation_contract.rb`**
 
 Header:
 
@@ -273,7 +297,7 @@ Header:
 module FileLayerMutationContract
 ```
 
-- [ ] **Step 2: Move the four tests into it, verbatim except for the fixture line**
+- [x] **Step 2: Move the four tests into it, verbatim except for the fixture line**
 
 Cut these four methods out of `FileLayerWritableContract` and paste them into the new module,
 **keeping every existing comment above each one**. Rename the `test_write_contract_` prefix to
@@ -295,7 +319,7 @@ this contract — its mkdir goes through the sync engine — so this pins only t
 not diverge"*: that sentence becomes false the moment Task 7 includes chunk. Replace it with a
 note that all three now answer mkdir, chunk's through the sync engine.
 
-- [ ] **Step 3: Add the `dir_deletable` conditional test**
+- [x] **Step 3: Add the `dir_deletable` conditional test**
 
 New — this one has no ancestor in the write contract, because until Task 1 there was no capability
 to branch on:
@@ -315,7 +339,7 @@ to branch on:
   end
 ```
 
-- [ ] **Step 4: Narrow the write contract's header**
+- [x] **Step 4: Narrow the write contract's header**
 
 In `adapter_write_contract.rb`, replace the opening paragraph (through `...spec §10).`) with:
 
@@ -332,7 +356,7 @@ In `adapter_write_contract.rb`, replace the opening paragraph (through `...spec 
 # four metadata verbs when they moved to adapter_mutation_contract.rb.
 ```
 
-- [ ] **Step 5: Wire it into share and s3 and prove the extraction lost nothing**
+- [x] **Step 5: Wire it into share and s3 and prove the extraction lost nothing**
 
 In `test/services/file_layer/share_test.rb`, beside `include FileLayerWritableContract`:
 
@@ -355,7 +379,7 @@ own door, and a shared helper would let one backend's door stand in for the othe
 
 Add `require_relative "adapter_mutation_contract"` beside the existing `require_relative` in each.
 
-- [ ] **Step 6: Run and compare counts**
+- [x] **Step 6: Run and compare counts**
 
 ```bash
 bin/rails test test/services/file_layer/
@@ -369,7 +393,7 @@ duplicated: find out which before continuing.
 
 Record the before/after counts in your report.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add test/services/file_layer/
@@ -399,7 +423,7 @@ Smallest verb, smallest caller — do it first to establish the delegation shape
 - Modify: `app/services/maker/library_folder.rb:39-63`
 - Test: `test/services/file_layer/chunk_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to the `FileLayer::ChunkTest` class in `test/services/file_layer/chunk_test.rb`:
 
@@ -432,7 +456,7 @@ Append to the `FileLayer::ChunkTest` class in `test/services/file_layer/chunk_te
     end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -440,7 +464,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: FAIL with `NotImplementedError` carrying `MKDIR_MSG`.
 
-- [ ] **Step 3: Implement `Chunk#mkdir`**
+- [x] **Step 3: Implement `Chunk#mkdir`**
 
 In `app/services/file_layer/chunk.rb`, delete the `mkdir` refusal stub and the `MKDIR_MSG` constant, and add:
 
@@ -467,7 +491,7 @@ In `app/services/file_layer/chunk.rb`, delete the `mkdir` refusal stub and the `
     end
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -475,7 +499,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5: Collapse the branch in `Maker::LibraryFolder`**
+- [x] **Step 5: Collapse the branch in `Maker::LibraryFolder`**
 
 In `app/services/maker/library_folder.rb`, replace `ensure_segment`, `port_mkdir` and `chunk_mkdir` (lines 39–63) with:
 
@@ -497,7 +521,7 @@ grep -n "port_writable" app/services/maker/library_folder.rb
 
 If the only remaining hit is the assignment in `initialize`, remove that line too.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 ```bash
 bin/rails test
@@ -505,7 +529,7 @@ bin/rails test
 
 Expected: PASS, 0 failures 0 errors.
 
-- [ ] **Step 7: Run the other two backend legs**
+- [x] **Step 7: Run the other two backend legs**
 
 ```bash
 LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
@@ -513,11 +537,11 @@ LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 
 Expected: PASS, and the **same test count** as the previous command (§15).
 
-- [ ] **Step 8: Mutation-check the broadcast guard**
+- [x] **Step 8: Mutation-check the broadcast guard**
 
 Delete the `LibraryChannel.broadcast_change(user, seq)` line from `Chunk#mkdir`, run `bin/rails test test/services/file_layer/chunk_test.rb`, and **confirm the changelog test goes RED**. Restore it. If it stays green the assertion is not carrying weight — fix the test, not the code.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add app/services/file_layer/chunk.rb app/services/maker/library_folder.rb test/services/file_layer/chunk_test.rb
@@ -550,7 +574,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `app/services/maker/move_node.rb:209-233`
 - Test: `test/services/file_layer/chunk_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `FileLayer::ChunkTest`:
 
@@ -580,7 +604,7 @@ Append to `FileLayer::ChunkTest`:
     end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -588,7 +612,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: FAIL with `NotImplementedError` carrying `MOVE_MSG`.
 
-- [ ] **Step 3: Implement `Chunk#move`**
+- [x] **Step 3: Implement `Chunk#move`**
 
 In `app/services/file_layer/chunk.rb`, delete the `move` refusal stub and the `MOVE_MSG` constant, and add:
 
@@ -609,7 +633,7 @@ In `app/services/file_layer/chunk.rb`, delete the `move` refusal stub and the `M
     end
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -617,7 +641,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5: Collapse the branch in `Maker::MoveNode`**
+- [x] **Step 5: Collapse the branch in `Maker::MoveNode`**
 
 In `app/services/maker/move_node.rb`, replace `port_move` and `chunk_move` (lines 209–233) with a single method, and update its caller to use the new name. First find the caller:
 
@@ -643,7 +667,7 @@ Replace both methods with:
 
 Update the branch site that called `port_move`/`chunk_move` to call `apply_move` unconditionally, and remove the `@port_writable` read there.
 
-- [ ] **Step 6: Run the full suite plus the share leg**
+- [x] **Step 6: Run the full suite plus the share leg**
 
 ```bash
 bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
@@ -651,11 +675,11 @@ bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 
 Expected: PASS both, identical counts.
 
-- [ ] **Step 7: Mutation-check**
+- [x] **Step 7: Mutation-check**
 
 Change `Chunk#move` to return `file_info(node, nil)` **without** reloading — i.e. drop the `n.name = new_name` assignment inside the block. Confirm the move test goes RED. Restore.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/services/file_layer/chunk.rb app/services/maker/move_node.rb test/services/file_layer/chunk_test.rb
@@ -692,7 +716,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `app/controllers/files_controller.rb:615-624`
 - Test: `test/services/file_layer/chunk_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `FileLayer::ChunkTest`:
 
@@ -732,7 +756,7 @@ Append to `FileLayer::ChunkTest`:
     end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -740,7 +764,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: FAIL with `NotImplementedError` carrying `DELETE_MSG`.
 
-- [ ] **Step 3: Implement `Chunk#delete`**
+- [x] **Step 3: Implement `Chunk#delete`**
 
 In `app/services/file_layer/chunk.rb`, delete the `delete` refusal stub and the `DELETE_MSG` constant, and add:
 
@@ -762,7 +786,7 @@ In `app/services/file_layer/chunk.rb`, delete the `delete` refusal stub and the 
     end
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -770,7 +794,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5: Collapse `FilesController#destroy`**
+- [x] **Step 5: Collapse `FilesController#destroy`**
 
 In `app/controllers/files_controller.rb`, replace lines 615–624 with:
 
@@ -789,7 +813,7 @@ In `app/controllers/files_controller.rb`, replace lines 615–624 with:
 
 Note `node.name` is read **before** the delete in both the old and new code — keep it that way; reading it after a tombstone still works but the ordering is what the flash has always used.
 
-- [ ] **Step 6: Run the full suite plus both other legs**
+- [x] **Step 6: Run the full suite plus both other legs**
 
 ```bash
 bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
@@ -797,11 +821,11 @@ bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 
 Expected: PASS both, identical counts.
 
-- [ ] **Step 7: Mutation-check the cascade guard**
+- [x] **Step 7: Mutation-check the cascade guard**
 
 Change `Chunk#delete` to use `Sync::Mutation.apply(user:, node:, op: "delete")` instead of `Sync::SubtreeDelete.call`. Confirm the cascade test goes **RED** on the child assertion. Restore. This is the mutation that matters most in the whole plan.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/services/file_layer/chunk.rb app/controllers/files_controller.rb test/services/file_layer/chunk_test.rb
@@ -863,7 +887,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `app/controllers/trash_controller.rb:71-81`
 - Test: `test/services/file_layer/chunk_test.rb`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `FileLayer::ChunkTest`:
 
@@ -893,7 +917,7 @@ Append to `FileLayer::ChunkTest`:
     end
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -901,7 +925,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: FAIL with `NoMethodError: undefined method 'undelete'` — chunk has no `undelete` stub at all today.
 
-- [ ] **Step 3: Implement `Chunk#undelete`**
+- [x] **Step 3: Implement `Chunk#undelete`**
 
 In `app/services/file_layer/chunk.rb`, add beside the other metadata verbs:
 
@@ -925,7 +949,7 @@ In `app/services/file_layer/chunk.rb`, add beside the other metadata verbs:
     end
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -933,7 +957,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 5: Collapse `TrashController#restore`**
+- [x] **Step 5: Collapse `TrashController#restore`**
 
 In `app/controllers/trash_controller.rb`, replace lines 71–81 with:
 
@@ -954,7 +978,7 @@ grep -n "rescue" app/controllers/trash_controller.rb
 
 If `UnsupportedOperation` is not handled, add it to the same rescue that handles `NotFound`.
 
-- [ ] **Step 6: Run the full suite plus the share leg**
+- [x] **Step 6: Run the full suite plus the share leg**
 
 ```bash
 bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
@@ -962,11 +986,11 @@ bin/rails test && LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 
 Expected: PASS both, identical counts.
 
-- [ ] **Step 7: Mutation-check**
+- [x] **Step 7: Mutation-check**
 
 Change `to_root: true` to `to_root: false` in `Chunk#undelete`. Confirm the orphan test goes **RED** with `Sync::Trash::ParentDeleted`. Restore.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add app/services/file_layer/chunk.rb app/controllers/trash_controller.rb test/services/file_layer/chunk_test.rb
@@ -989,7 +1013,7 @@ The old test asserted the *messages* of four refusals that no longer exist. It m
 - Modify: `test/services/file_layer/share_test.rb`
 - Modify: `test/services/file_layer/s3_test.rb`
 
-- [ ] **Step 1: Replace the refusal test**
+- [x] **Step 1: Replace the refusal test**
 
 In `test/services/file_layer/chunk_test.rb`, delete the whole `test "the write path is not chunk mode's — each op refuses, naming its OWN real path"` block **and its preceding comment** (roughly lines 99–135), and put in its place:
 
@@ -1012,7 +1036,7 @@ In `test/services/file_layer/chunk_test.rb`, delete the whole `test "the write p
     end
 ```
 
-- [ ] **Step 2: Run it**
+- [x] **Step 2: Run it**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -1020,7 +1044,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 3: Include the mutation contract in all three adapter tests**
+- [x] **Step 3: Include the mutation contract in all three adapter tests**
 
 In `test/services/file_layer/chunk_test.rb`, `share_test.rb` and `s3_test.rb`, add near the top of each test class (beside the existing `include AdapterContract`):
 
@@ -1059,7 +1083,7 @@ For **share** (`share_test.rb`) — write through the port, which is share's rea
 
 For **s3** (`s3_test.rb`) — identical bodies to share; both are `port_writable`. Repeat them rather than extracting a shared helper: the whole point of a hook is that each backend answers through its own door, and a shared helper would make one backend's door stand in for the other's.
 
-- [ ] **Step 4: Run all three legs**
+- [x] **Step 4: Run all three legs**
 
 ```bash
 bin/rails test test/services/file_layer/
@@ -1068,7 +1092,7 @@ LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test test/services/fil
 
 Expected: PASS. If a contract test fails on one backend only, **do not weaken the contract** — that is a real divergence and the answer is either a capability (as `dir_deletable` was) or a fix in the adapter. Report it rather than editing the assertion.
 
-- [ ] **Step 5: Add the seam guard to `architecture_invariants_test.rb`**
+- [x] **Step 5: Add the seam guard to `architecture_invariants_test.rb`**
 
 This is goal 4's actual enforcement — without it, "the seam is closed" is a claim nothing checks.
 
@@ -1098,7 +1122,7 @@ This is goal 4's actual enforcement — without it, "the seam is closed" is a cl
   end
 ```
 
-- [ ] **Step 6: Run it and fix any offender it names**
+- [x] **Step 6: Run it and fix any offender it names**
 
 ```bash
 bin/rails test test/architecture_invariants_test.rb
@@ -1106,11 +1130,11 @@ bin/rails test test/architecture_invariants_test.rb
 
 Expected: PASS. If it names a file, that file is a real seam violation this plan missed — fix it the same way (port verb + collapse), or, if it is genuinely sync-repo code, widen `allowed` **with a comment saying why**, never silently.
 
-- [ ] **Step 7: Mutation-check the seam guard**
+- [x] **Step 7: Mutation-check the seam guard**
 
 Add `Sync::Commit` to a maker-layer file (e.g. a throwaway line in `app/services/maker/dead_nodes.rb`), confirm the test goes **RED and names that file**, then remove it.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add test/
@@ -1168,7 +1192,7 @@ The last two call sites. This does **not** give chunk a byte-taking `write`; it 
 - Modify: `app/services/maker/addons/library_output.rb`
 - Test: `test/services/file_layer/chunk_test.rb`
 
-- [ ] **Step 1: Read the two existing call sites before writing anything**
+- [x] **Step 1: Read the two existing call sites before writing anything**
 
 ```bash
 grep -n "Sync::Commit" -B 5 -A 25 app/controllers/files_controller.rb
@@ -1177,7 +1201,7 @@ grep -n "Sync::Commit" -B 5 -A 25 app/services/maker/addons/library_output.rb
 
 The port verbs must pass through **exactly** the arguments and return values these two already use — including `verify:` on finalize, which `config/initializers/finalize_verification.rb` controls and which the sync-engine test suites set to 0. Do not change that behaviour here.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Append to `FileLayer::ChunkTest`:
 
@@ -1194,7 +1218,7 @@ Append to `FileLayer::ChunkTest`:
     end
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -1202,7 +1226,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: FAIL with `NoMethodError: undefined method 'begin_upload'`.
 
-- [ ] **Step 4: Add the verbs to `Chunk`**
+- [x] **Step 4: Add the verbs to `Chunk`**
 
 In `app/services/file_layer/chunk.rb`, using the exact argument names the two call sites read in Step 1:
 
@@ -1234,7 +1258,7 @@ In `app/services/file_layer/chunk.rb`, using the exact argument names the two ca
 
 If Step 1 showed `Sync::Commit.begin` taking different or additional keywords, use those — the call sites are the source of truth, not this plan.
 
-- [ ] **Step 5: Refuse the verbs on share and s3**
+- [x] **Step 5: Refuse the verbs on share and s3**
 
 Both are `port_writable` and use `write`; the two-phase flow is meaningless for them. Add to each of `share.rb` and `s3.rb`:
 
@@ -1252,7 +1276,7 @@ Both are `port_writable` and use `write`; the two-phase flow is meaningless for 
     end
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 ```bash
 bin/rails test test/services/file_layer/chunk_test.rb
@@ -1260,7 +1284,7 @@ bin/rails test test/services/file_layer/chunk_test.rb
 
 Expected: PASS.
 
-- [ ] **Step 7: Point both call sites at the port**
+- [x] **Step 7: Point both call sites at the port**
 
 In `app/controllers/files_controller.rb`, replace the `Sync::Commit.begin(...)` and `Sync::Commit.finalize(...)` calls with `FileLayer.current.begin_upload(...)` and `FileLayer.current.finalize_upload(...)`, keeping every argument identical.
 
@@ -1268,7 +1292,7 @@ In `app/controllers/files_controller.rb`, replace the `Sync::Commit.begin(...)` 
 
 Do the same in `app/services/maker/addons/library_output.rb`. Note §14c: `LibraryOutput` is the **one** legitimate direct `Storage::ChunkStore` call in the maker layer, and that stays — only the `Sync::Commit` calls move to the port.
 
-- [ ] **Step 8: Run everything**
+- [x] **Step 8: Run everything**
 
 ```bash
 bin/ci
@@ -1276,11 +1300,11 @@ bin/ci
 
 Expected: all 8 gates PASS. The three test legs must report **identical counts** (§15).
 
-- [ ] **Step 9: Mutation-check**
+- [x] **Step 9: Mutation-check**
 
 Change `finalize_upload` to drop its `LibraryChannel.broadcast_change` call. Confirm an upload test goes RED. Restore. If nothing goes red, add an assertion on `head_seq` to the relevant upload test — a broadcast nobody asserts is a broadcast that can be deleted silently.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add app/ test/
@@ -1307,7 +1331,7 @@ Per CLAUDE.md §15, `docs/STATUS.md` is part of the work, in the same branch and
 - Modify: `CLAUDE.md` (§14a, §14d, §4, §8)
 - Modify: `docs/STATUS.md`
 
-- [ ] **Step 1: Update CLAUDE.md §14a**
+- [x] **Step 1: Update CLAUDE.md §14a**
 
 Replace the bullet beginning **"`Chunk` refuses writes PER-OP, naming the real door each time"** with:
 
@@ -1323,7 +1347,7 @@ Replace the bullet beginning **"`Chunk` refuses writes PER-OP, naming the real d
   `begin_upload`/`finalize_upload` — the two-phase presigned flow, where the port never sees a byte.
 ```
 
-- [ ] **Step 2: Add the `dir_deletable` bullet to §14a**
+- [x] **Step 2: Add the `dir_deletable` bullet to §14a**
 
 Immediately after the bullet above:
 
@@ -1336,7 +1360,7 @@ Immediately after the bullet above:
   coincidence once already (`is_a?(Share)`) is the entire reason `scannable` exists.
 ```
 
-- [ ] **Step 3: Update §14d's count**
+- [x] **Step 3: Update §14d's count**
 
 Replace **"The `port_writable?` two-door branch is written out FIVE times, not three"** with:
 
@@ -1351,13 +1375,13 @@ Replace **"The `port_writable?` two-door branch is written out FIVE times, not t
   behind two doors. A NEW copy needs that same argument.
 ```
 
-- [ ] **Step 4: Land the two corrections the design found**
+- [x] **Step 4: Land the two corrections the design found**
 
 In §4's Mount row, delete the parenthetical **"(no `client/fs-fskit` crate on `main`)"** — the crate exists (`f40c101`). Keep the rest of the sentence, which is still true: FSKit is not a shipping mount path and needs a paid Apple Developer membership.
 
 In §8, replace the pairing-code sentence with a description of `POST /v1/devices/login` (email + password → device token), noting that pairing codes were the earlier mechanism. The endpoint's own comment in `config/routes.rb` says it *"Replaces the pairing-code flow."*
 
-- [ ] **Step 4b: Sweep the comments that name the deleted branch methods**
+- [x] **Step 4b: Sweep the comments that name the deleted branch methods**
 
 Collapsing the four callers deletes `Maker::LibraryFolder#chunk_mkdir`/`#port_mkdir`,
 `Maker::MoveNode#chunk_move`/`#port_move` and the inline branches in `FilesController#destroy` and
@@ -1375,11 +1399,11 @@ prose — which is exactly why nothing goes red and why they must be swept delib
 to describe what the code does NOW; do not simply delete the sentence if it was making a point
 worth keeping.
 
-- [ ] **Step 5: Write the STATUS.md entry**
+- [x] **Step 5: Write the STATUS.md entry**
 
 Add ONE entry for this arc (amend it in later stages, never append a second — §15). Include: the six call sites closed, the four `port_writable?` copies collapsed, `dir_deletable`'s justification, the mutation-checks performed and what each one proved, and a pointer to the design doc for Stages 1, 3 and 4.
 
-- [ ] **Step 6: Verify the docs are honest**
+- [x] **Step 6: Verify the docs are honest**
 
 ```bash
 grep -rn "port_writable" CLAUDE.md | head -20
@@ -1394,7 +1418,7 @@ grep -rn "port_writable" app/ --include='*.rb' --include='*.erb' | grep -v "capa
 
 The only remaining branch should be `Maker::Addons::LibraryOutput` (plus `require_capability!` gates and views picking an upload form, which §14d already excludes on purpose).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add CLAUDE.md docs/STATUS.md
@@ -1413,10 +1437,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Done when
+## Done when — all five verified at close-out, not assumed
 
-- [ ] `bin/ci` is green — all 8 gates, three test legs reporting identical counts.
-- [ ] `grep -rn "Sync::[A-Z]" app/services/maker app/controllers/files_controller.rb app/controllers/trash_controller.rb` returns only comments and the error-class rescues noted in Task 8 Step 7.
-- [ ] `architecture_invariants_test.rb`'s seam guard passes **and has been mutation-checked**.
-- [ ] Every guard written in this plan has been broken once and seen to go red.
-- [ ] CLAUDE.md §14a/§14d/§4/§8 and `docs/STATUS.md` updated in this same branch.
+*(criterion 2's grep and criterion 3's suite were re-run against `main` after the merge; criteria
+1, 4 and 5 are evidenced by the CI run on PR #200 and by the mutation-check output recorded in each
+task's commit message.)*
+
+- [x] `bin/ci` is green — all 8 gates, three test legs reporting identical counts.
+- [x] `grep -rn "Sync::[A-Z]" app/services/maker app/controllers/files_controller.rb app/controllers/trash_controller.rb` returns only comments and the error-class rescues noted in Task 8 Step 7.
+- [x] `architecture_invariants_test.rb`'s seam guard passes **and has been mutation-checked**.
+- [x] Every guard written in this plan has been broken once and seen to go red.
+- [x] CLAUDE.md §14a/§14d/§4/§8 and `docs/STATUS.md` updated in this same branch.
