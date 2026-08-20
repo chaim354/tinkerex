@@ -101,7 +101,7 @@ counts: `docs/STATUS.md`.
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
 | Client | **Tauri** (Rust core), `fs-provider` + per-OS mount + `sync-engine` |
-| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (default; WinFsp behind a feature), **macOS** WebDAV. macOS FSKit is a **design sketch, not built** (no `client/fs-fskit` crate on `main`) and would need a paid Apple Developer membership. Drivers user-installed (keeps copyleft out of our binaries). |
+| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (default; WinFsp behind a feature), **macOS** WebDAV. macOS **FSKit** is not a shipping mount path: `client/fs-fskit`'s Rust bridge is built and unit-tested, but the Swift extension that would actually mount it is stubbed pending a paid Apple Developer membership. Drivers user-installed (keeps copyleft out of our binaries). |
 | Change notification | **ActionCable** → `{head_seq}` on commit |
 | Preview | Server-side thumbnails (vipsthumbnail/pdfium/resvg subprocesses) + Three.js in the browser |
 
@@ -176,13 +176,15 @@ only on explicit request. `docs/DEPLOY.md`.
   chunks the requester owns.
 - **Bytes never flow through Rails.** Rails is the control plane + presigned-URL
   minter only. (§15; the one deliberate departure is the share backend — §14a.)
-- **Registration creates a new account only** (no `find_or_create_by` takeover); a new
-  device joins an existing library via a **single-use, expiring pairing code** issued by
-  an authenticated device (`DevicePairing`, `POST /v1/devices/pairing` → `/v1/auth/pair`;
-  Syncthing/Plex model). Web auth is Rails 8 built-in (signup/confirm/login/reset) with an
-  OmniAuth seam. Real OAuth/OIDC email verification is the later upgrade; the device-token
-  + pairing mechanism underneath stays. (If multi-user/db-per-tenant is wanted later, the
-  37signals `active_record_tenanted` pattern slots over the same models.)
+- **Registration creates a new account only** (no `find_or_create_by` takeover); a device
+  joins an existing library via **`POST /v1/devices/login`** (email + password → a 256-bit
+  device token) or, from an already-authenticated device, `POST /v1/devices` to add a
+  sibling. **Pairing codes were the earlier mechanism and are gone** (`DevicePairing` /
+  `device_pairings` dropped, `18c623a`) — the route's own comment says devices/login
+  *"Replaces the pairing-code flow."* Web auth is Rails 8 built-in (signup/confirm/login/
+  reset) with an OmniAuth seam. Real OAuth/OIDC email verification is the later upgrade;
+  the device-token mechanism underneath stays. (If multi-user/db-per-tenant is wanted
+  later, the 37signals `active_record_tenanted` pattern slots over the same models.)
 
 ---
 
@@ -240,8 +242,10 @@ phases). Per-phase detail: `docs/STATUS.md`.
 Genuinely open:
 
 1. **Real OAuth/OIDC email verification** so the bootstrap proves email ownership. The
-   account-takeover hole is already closed (register is new-account-only; devices join by
-   pairing code) — this is the remaining upgrade. Device-token + pairing stays underneath.
+   account-takeover hole is already closed (register is new-account-only; devices join via
+   `POST /v1/devices/login`, email+password → device token — pairing codes were the earlier
+   mechanism and are gone, §8) — this is the remaining upgrade. The device-token mechanism
+   stays underneath.
 2. **At-rest chunk encryption** — deliberately last (`docs/plan-encryption.md`,
    `docs/parity-roadmap.md`).
 3. **Sharing** — `docs/plan-sharing.md`.
@@ -370,25 +374,73 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 - **`LIBRARY_BACKEND=chunk|share|s3`, chosen per DEPLOYMENT, not per user.** Reads:
   `stat`/`stat_all`/`read`/`download`/`trashed` — all three adapters answer all five.
-  Writes (`write`/`delete`/`move`/`undelete`) are **Share + S3 only**.
+  Metadata writes (`mkdir`/`move`/`delete`/`undelete`) are **all three, since Stage 2**
+  (2026-08-20); only the BYTE write (`write`) stays **Share + S3 only** — chunk's own
+  upload is the two-phase `begin_upload`/`finalize_upload` pair, never `write`.
 - **A share/s3 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`.** `STORAGE_BACKEND`
   defaults to `s3` *outside test*, so resolving a chunk store on a v1 request once made a
   share deployment's **entire v1 API answer 500** (`KeyError: CHUNK_BUCKET`) — including
   login and every gated endpoint, which returned 500 instead of 501. The suite was green
   with **and without** the fix, because the gating tests set `FileLayer.current` and never
   touched `STORAGE_BACKEND` (`memory` in test, `s3` in production).
-- **`Chunk` refuses writes PER-OP, naming the real door each time** — `write` →
-  `Sync::Commit`'s two-phase flow; `delete` → **`Sync::SubtreeDelete.call`** (cascades to
-  the subtree; `Sync::Mutation.apply(op: "delete")` tombstones only the node it is handed
-  and **orphans descendants**); `move` → `Sync::Mutation.apply(op: "move")`. **One shared
-  refusal message** is how an earlier draft sent delete/move callers to `Sync::Commit`,
-  which has neither path. Keep them separate.
+- **`Chunk` ANSWERS the four metadata verbs and refuses only the BYTE write.** Until Stage 2
+  (2026-08-20) it refused `mkdir`/`move`/`delete`/`undelete` per-op, each naming its real door,
+  because the maker layer branched around the port (§14d used to count five `port_writable?`
+  copies for exactly this). It no longer can: in remote chunk mode there is no `Sync::*` in the
+  process to branch into. So `mkdir`/`move` → `Sync::Mutation.apply`, `undelete` →
+  `Sync::Trash.restore(to_root: true)`, and `delete` → **`Sync::SubtreeDelete.call`** — **never**
+  `Sync::Mutation.apply(op: "delete")`, which tombstones only the node it is handed and
+  **orphans every descendant**. That trap is the one thing this bullet always existed to protect
+  and it survives verbatim. **`write` still refuses, and must**: it takes an IO, and a
+  server-side byte write would push bytes through Rails (§15). Chunk's own upload is the port's
+  `begin_upload`/`finalize_upload` pair instead — see below.
+- **`dir_deletable` (the 6th capability) is NOT `syncable`, though the two agree on all three
+  backends today.** It answers one question for one caller, `FilesController#destroy`: may this
+  backend's `delete` be handed a DIRECTORY? Chunk true (`Sync::SubtreeDelete` cascades the whole
+  subtree); share false (children are stranded at paths that no longer exist while their bytes
+  sit in `.trash`, which the scan refuses to look at); s3 false (no directory and no rename — a
+  dir node's key does not exist). It exists because `#destroy` stopped branching on
+  `port_writable?` once chunk started answering `delete`, which made one call have two answers —
+  the shape §14a forbids. Agreement across three backends is three samples, not an identity —
+  the same coincidence `scannable` was added to stop encoding twice (`is_a?(Share)`).
+- **`begin_upload`/`finalize_upload` are port verbs, and NEITHER is the byte-taking `write`
+  above.** The port never holds a byte: `begin_upload` returns presigned PUT URLs for whichever
+  chunks the store is missing, the caller PUTs straight to object storage — except
+  `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to presign
+  for, so it calls `Storage::ChunkStore#put` directly instead (the one sanctioned
+  chunk-internals call outside this class, §14c) — and `finalize_upload` records the version.
+  That is what keeps §15 true for a chunk-mode upload.
+- **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
+  `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
+  always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
+  `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
+  callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
+  rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
+  working nudge, not a silent gap.
+- **Chunk's `undelete` restores an orphan to the ROOT, and restore order is NOT commutative** —
+  `Sync::Trash.restore(to_root: true)` NULLS `parent_node_id` when the parent is itself
+  tombstoned. Since `delete` now cascades a directory in one call (`Sync::SubtreeDelete`),
+  restoring a CHILD before its PARENT is the mainline case, not a hand-crafted edge case: one
+  folder delete tombstones every descendant, and a bottom-up restore permanently scatters that
+  folder's contents to the root — restoring the parent afterward does not reunite them, because
+  the child's `parent_node_id` is already nil. Not fixed: top-down restore already preserves
+  structure, and ordering restores is a caller's job, not this adapter's.
+- **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
+  `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
+  sharing one `(parent, name)` where share and s3 both refuse that clobber in their own
+  `#undelete` — pre-existing, not introduced by moving the call behind the port. And undeleting
+  an ALREADY-LIVE node is an idempotent success on chunk (`Sync::Trash.restore` early-returns)
+  but `FileLayer::NotFound` on share/s3 (their lookup is scoped `deleted: true`, and there are no
+  `.trash` bytes to move back for a node that never left) — structural, not arbitrary: unifying
+  it means either chunk raising about a file that IS restored, or share/s3 claiming a byte move
+  they never performed.
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
-  false → drive `Sync::Commit`'s presigned flow (chunk). Chunk mode accepts uploads all
-  day — that *is* `Sync::Commit` — so the "can this deployment take uploads" reading
-  **hides the upload button in the product's main deployment**. It is also not `!syncable?`
-  and not `scannable`; the full argument is at `app/services/file_layer/capabilities.rb`.
+  false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk).
+  Chunk mode accepts uploads all day — that flow **is** how a chunk upload happens — so
+  the "can this deployment take uploads" reading **hides the upload button in the
+  product's main deployment**. It is also not `!syncable?` and not `scannable`; the full
+  argument is at `app/services/file_layer/capabilities.rb`.
 - **The 501 is a capability gate BEFORE the call, never a `rescue NotImplementedError`.**
   `NotImplementedError` is a **`ScriptError`, not a `StandardError`**, so `rescue => e` and
   ActiveJob's `retry_on` silently do **not** catch it — a rescue-based gate doesn't have a
@@ -1156,24 +1208,31 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **Server-rendered Hotwire on `Maker::*` models, session-authed — NEVER the device-token v1
   API.** `/v1/*` is Bearer-token; the web app is cookies. Consequence: web controllers are not
   limited to what the JSON API exposes.
-- **The `port_writable?` two-door branch is written out FIVE times, not three** (both this
-  file and STATUS.md said "the third appearance" until someone counted):
-  `Maker::LibraryFolder#mkdir`, `FilesController#destroy`, `TrashController#restore`,
-  `Maker::Addons::LibraryOutput.write`, and `Maker::MoveNode`. Only two have a name of their
-  own. **So the rule is not "refuse a fourth copy" — a NEW one needs an argument for being
-  inline rather than a service**, and a verb more than one caller performs doesn't have one.
+- **The `port_writable?` two-door branch is now written out ONCE** (`Maker::Addons::LibraryOutput`)
+  — it was five, not three, until Stage 2 (2026-08-20) gave `FileLayer::Chunk` its four metadata
+  verbs and the other four callers (`Maker::LibraryFolder#mkdir`, `FilesController#destroy`,
+  `TrashController#restore`, `Maker::MoveNode`) stopped branching, because the port started
+  answering instead of refusing. **`LibraryOutput` keeps its branch, and it has the argument the
+  other four lacked**: the two-phase presigned upload genuinely IS a different flow from POSTing
+  bytes, not the same verb behind two doors. A NEW copy needs that same argument — "a fourth
+  would be one too many" no longer applies; there is no fourth left to count against.
   (Excluded on purpose: `require_capability!` gates and views that pick an upload FORM —
   those select a UI, which is `port_writable`'s stated job.)
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
-  This is **not** "controllers never touch `Sync::`": they do, in ten places, and three of those
-  are the deliberate two-door branches listed above (`FilesController#destroy` →
-  `Sync::SubtreeDelete`, `TrashController#restore` → `Sync::Trash.restore`, plus
-  `FilesController`'s `Sync::Commit` upload flow). *(An earlier draft of this line did say
-  "never reach into `Sync::`". It was wrong on its own page — the five-times list two bullets up
-  names two of the exceptions — and a reader who believed it would "fix" working code.)* The
-  tripwire is about **new** work: **if a maker-layer change needs to touch sync, the changelog,
-  conflicts, locks, or the mounts, the boundary is wrong — stop.**
+- **Controllers reach `Sync::` through exactly one door, `FileLayer::Chunk` — enforced by a
+  test, not a convention.** `test/architecture_invariants_test.rb`'s seam guard asserts ZERO
+  real (non-comment) `Sync::` constant references outside the sync engine's own code, the v1
+  API, the reaper/retention jobs, `channels/`, and `chunk.rb` itself — Ripper-token-checked,
+  because a bare `/Sync::/` regex false-positives on `app/jobs/library/trash_purge_job.rb`'s own
+  operator-facing error string, which names "Sync::Gc" in prose with zero real references. This
+  was not always true: before Stage 2, controllers reached directly into `Sync::` wherever the
+  port refused an operation (`FilesController#destroy` → `Sync::SubtreeDelete`,
+  `TrashController#restore` → `Sync::Trash.restore`, `FilesController`'s own `Sync::Commit`
+  upload flow, among others) — the arc that closed it is in `docs/STATUS.md`. The tripwire is
+  still about **new** work: **if a maker-layer change needs to touch sync, the changelog,
+  conflicts, locks, or the mounts, the boundary is wrong — stop** — the difference is that a
+  violation now fails `bin/ci` instead of waiting to be noticed.
 - **ONE file-type vocabulary.** `FilesHelper::EXT_FAMILIES` is **derived** from `ROLE_BY_EXT`,
   grouped by role and labelled by `ROLE_LABELS`. Add an extension in **`ROLE_BY_EXT` only**.
   Two consequences: every extension must satisfy `FilesController::EXT_RE`
