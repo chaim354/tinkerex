@@ -206,8 +206,21 @@ right.** Two are worth carrying into future work:
   "fix" would have been a longer `Capybara.default_max_wait_time`, which converts a fast red into a
   slow one and taxes every genuine failure. Workers are now budgeted at **4 GB each, capped by core
   count** (`test/support/worker_budget.rb`) → 6 here; the extra six bought nothing, since solo wall
-  time is flat from 4 to 10 workers. Concurrent trials: **3/3 green with the fix, 2/3 red without**.
-  PR #190.
+  time is flat from 4 to 10 workers. PR #190.
+  - **A MEASUREMENT ERROR IN THIS INVESTIGATION, RECORDED BECAUSE THE NUMBERS ARE PUBLISHED ABOVE.**
+    The CPU-saturation probe spawned ten spin loops and its cleanup silently did nothing:
+    `LOADPIDS=$(jobs -p)` runs in a **command substitution**, i.e. a subshell with an empty job
+    table, so it captured nothing and the `kill` was a no-op. Ten processes ran for **2h43m each**,
+    across most of the measurements that followed. The user spotted them in Activity Monitor.
+    **Direction of the confound: harsher than reality, never easier** — so every GREEN result stands
+    stronger than reported (the concurrent non-browser suite finished in 22.2 s green while ten CPU
+    hogs ran), and the memory figures are untouched, since spin loops consume no RAM. **The one
+    claim genuinely at risk was the decisive one** — that concurrent browser suites fail at ten
+    workers — because a loaded box makes failure *more* likely. Re-run on a quiet box (load 4.4)
+    after the processes were killed: **10 workers 1 of 2 trials red, 6 workers 0 of 2**, with wall
+    time 28–30 s rather than the 32–40 s first reported. The effect reproduces; the finding stands;
+    the inflated wall times do not. Combined across both conditions: **10 workers 3 red of 5, 6
+    workers 0 of 5.**
 
 ### The ledger was wrong about itself three times, and nothing could have gone red
 
