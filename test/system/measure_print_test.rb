@@ -991,6 +991,306 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_equal 0, out["movedShapes"]
   end
 
+  # ---- lib/print_sheet.js: sheet furniture -----------------------------------------------------
+  #
+  # THE PLAN'S 3x1 INPUT COULD NOT SEE HALF OF THIS SECTION, so every test below that needs a
+  # tiled job uses 3 x 2. With one row, `row + 1` is always 1 and `rows` is always 1, so
+  # `Sheet ${col + 1},1` and `of ${cols}x1` hard-coded are both GREEN — measured by running the
+  # plan's four tests verbatim against each mutation, and both are RED here. A gauge guarded by
+  # `if (row === 0)` is worse still: under one row that guard is unconditionally TRUE, so the
+  # emitted DOM is byte-IDENTICAL to correct code and no test over a 3 x 1 job can exist that
+  # sees it, however written. Here it is RED on two tests ("sheet 3: the bar labelled 100 mm",
+  # "sheet 3 lost its ruler label"). 3 x 2 is the smallest job in which the column index, the row
+  # index and the two counts are four different numbers.
+  #
+  #   cols = ceil((400 - 10) / 185.9) = 3, rows = ceil((300 - 10) / 220.4) = 2 -> 6 pages.
+  TILED_3X2 = <<~JS.freeze
+    [{ b: [0, 0, 400, 300], k: 1, i: 0, o: 1, p: [[0, 0], [400, 300]] }]
+  JS
+
+  # ON EVERY SHEET, not only the first. Pages get separated, and a partial print — someone
+  # reprinting sheet 3 alone — is exactly when a scale error most needs catching.
+  #
+  # THIS ASSERTS THE LABELS ONLY; the gauge's GEOMETRY is asserted, also per sheet, further down.
+  # The two are separable defects and the separation is not academic: wrapping only the ruler's
+  # <line> elements in `if (col === 0 && row === 0)` while leaving their labels alone is GREEN
+  # here — five sheets then carry the words "100 mm — check with a ruler" with no ruler under
+  # them, which is worse than carrying neither.
+  test "every sheet carries the calibration gauge labels and the do-not-scale warning" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages.map((p) =>
+        Array.from(m.renderSheet(document, p, #{META}).querySelectorAll("text"))
+          .map((t) => t.textContent)))
+    JS
+
+    assert_equal 6, texts.length
+
+    # A TRIPWIRE FOR A FUTURE TEXT, AND IT RUNS FIRST ON PURPOSE. Nothing this task prints as text
+    # is derived from the content box, whose height serializes as 230.39999999999998 — SVG does not
+    # care about that in an attribute and a reader cannot read it in a label. Placed AFTER the loop
+    # below it would never execute: minitest ends a test at its first failed assertion, and any
+    # float appended to one of these labels breaks that loop's exact string first. Verified — the
+    # mutation was run in both orders. MUTATION-CHECKED by appending ` ${content.h}` to the ruler
+    # label: RED, "a printed number needs rounding: \"100 mm — check with a ruler
+    # 230.39999999999998\"". `sizeLabel` returns null throughout this file, so every string here is
+    # furniture and none of them may carry a raw float.
+    texts.flatten.each do |t|
+      refute_match(/\d\.\d{3,}/, t, "a printed number needs rounding: #{t.inspect}")
+    end
+
+    texts.each_with_index do |sheet, i|
+      assert_includes sheet, "100 mm — check with a ruler", "sheet #{i} lost its ruler label"
+      assert_includes sheet, "20 mm", "sheet #{i} lost its calibration square label"
+      assert_includes sheet, "Print at 100% — do NOT scale to fit", "sheet #{i} lost its warning"
+    end
+  end
+
+  # GRID COORDINATES, not "Sheet 2 of 6": when you are taping six sheets together the column and
+  # row tell you WHERE the sheet goes, which a running count does not.
+  #
+  # ASSERTED AS THE WHOLE ORDERED LIST rather than three assert_matches, so it pins row-major
+  # emission at the same time — `Sheet 1,2` arriving second would mean the pages come out of the
+  # printer in an order the labels contradict.
+  test "a tiled job labels each sheet by grid position" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages.map((p) =>
+        Array.from(m.renderSheet(document, p, #{META}).querySelectorAll("text"))
+          .map((t) => t.textContent)))
+    JS
+
+    assert_equal [ "1,1", "2,1", "3,1", "1,2", "2,2", "3,2" ].map { |g| "Sheet #{g} of 3×2" },
+                 texts.map { |sheet| sheet.find { |t| t.start_with?("Sheet") } }
+  end
+
+  # AND A SINGLE SHEET CARRIES NO LABEL AT ALL — there is nothing to register against, so it would
+  # be noise. This is the half a naive implementation gets wrong by printing "Sheet 1,1 of 1×1".
+  test "a single sheet carries no page label" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        .querySelectorAll("text")).map((t) => t.textContent))
+    JS
+
+    refute(texts.any? { |t| t.include?("Sheet") }, "a single sheet has nothing to register against")
+    # THE PREMISE, because "no label" is satisfied exactly as well by no furniture at all — and a
+    # `furniture()` call dropped from renderSheet outright would otherwise pass this test.
+    assert_includes texts, "100 mm — check with a ruler", "the rest of the furniture is still there"
+  end
+
+  test "the header names the file and the date" do
+    texts = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        .querySelectorAll("text")).map((t) => t.textContent))
+    JS
+
+    assert_includes texts, "plate.lbrn2 · 2026-08-19"
+  end
+
+  # THE HEADER CARRIES A LIBRARY FILENAME, WHICH IS USER-CONTROLLED — and on a NAS-scanned share it
+  # can legitimately contain `<`, because the scanner indexes whatever names the filesystem holds.
+  # The sheet is rendered into a same-origin iframe (Task 8), so building the header as markup is
+  # an injection into this app's own origin. `el`'s text door is what makes `textContent` the only
+  # spelling available; this is the test that says why it exists rather than merely that it fires.
+  #
+  # MUTATION-CHECKED TWO WAYS, each actual copied out of the run. Deleting the door
+  # (`if (text != null) node.textContent = text`) is RED here and in four tests above, every
+  # textContent coming back "". Spelling it `node.innerHTML = text` is RED HERE ALONE, on the
+  # element list: "Expected [\"clipPath\", \"rect\", \"g\", \"g\", \"polygon\", ... \"text\",
+  # \"script\", \"v2\", \"text\", ...] to not include \"script\"" — two elements minted out of a
+  # filename, inside a <text> node, in the app's own origin. The header equality behind it would
+  # read "alert(1)bracket.svg · 2026-08-19", the tags having been eaten by the parser.
+  test "a filename that looks like markup prints as text, not as markup" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0],
+          { name: "<script>alert(1)</script>bracket<v2>.svg", date: "2026-08-19",
+            sizeLabel: () => null })
+        return JSON.stringify({
+          header: svg.querySelector("text").textContent,
+          // THE WHOLE SUBTREE, not a search for <script>: an innerHTML spelling parses `<v2>`
+          // into an element too, and a sheet quietly carrying half the filename as unknown
+          // elements is the same defect with a less alarming name.
+          elements: Array.from(svg.querySelectorAll("*")).map((n) => n.tagName).join(","),
+        })
+      })()
+    JS
+
+    # THE REFUTES RUN FIRST for the reason the tripwire above does: an innerHTML spelling loses
+    # part of the filename from `header` too, so with the equality first these two would never
+    # execute for the mutation they exist for.
+    elements = out["elements"].split(",")
+    refute_includes elements, "script", "no element minted from the filename"
+    refute_includes elements, "v2", "and not the innocuous-looking half of it either"
+    assert_equal "<script>alert(1)</script>bracket<v2>.svg · 2026-08-19", out["header"]
+  end
+
+  # `el` HAS A SILENT MIS-CALL MODE AND THIS IS THE ONLY THING THAT CAN SEE IT. A string in the
+  # `attrs` slot — `el(doc, "text", "Sheet 1,1 of 2×1")`, one dropped `{}` away from the four
+  # sites this task adds — was expected to throw InvalidCharacterError, since an attribute name
+  # cannot begin with a digit. It does not: Object.entries walks the string's own indices and
+  # setAttribute accepts "0" as a name.
+  #
+  # MEASURED, by deleting the guard and reading what this test then returns verbatim:
+  #
+  #   NO THROW: <text 0="S" 1="h" 2="e" 3="e" 4="t" 5=" " 6="1" 7="," 8="1" 9=" " 10="o" 11="f"
+  #             12=" " 13="2" 14="×" 15="1"></text>
+  #
+  # — sixteen junk attributes, no text content, an empty <text> that renders nothing on a page
+  # that is otherwise perfectly formed. Nothing thrown, nothing logged.
+  #
+  # `el` IS EXPORTED FOR THIS TEST AND FOR NO OTHER REASON — nothing reachable through
+  # renderSheet can put a string in that slot, so without the export this would be a guard that
+  # has never failed, which CLAUDE.md §15 says is a guard that has not been shown to work.
+  test "el refuses a string in the attribute slot rather than minting junk attributes" do
+    out = in_print_sheet(<<~JS)
+      (() => {
+        try {
+          const n = m.el(document, "text", "Sheet 1,1 of 2×1")
+          return "NO THROW: " + n.outerHTML
+        } catch (e) { return "THREW: " + e.message }
+      })()
+    JS
+
+    assert_match(/\ATHREW: /, out, "a string in the attrs slot must not mint junk attributes")
+    assert_match(/attribute map/, out, "and must say which argument is wrong")
+  end
+
+  # WHERE THE FURNITURE IS DRAWN, WHICH NOTHING ABOVE THIS LINE CAN SEE. Every assertion in this
+  # section so far reads `textContent`, which is byte-identical whether the gauge is in the
+  # reserved strip, on top of the geometry, off the paper, or inside the clip group where it is
+  # erased entirely. Four separate defects, all invisible, all of them a sheet that prints wrong.
+  #
+  # AND PER SHEET, for the geometry as well as the labels. `:scope >` is itself an assertion, not
+  # a convenience: furniture appended to the clipped group or to the page transform still answers
+  # `querySelectorAll("line")` and still carries every label, while the gauge — which sits BELOW
+  # the content box — is clipped away to nothing.
+  #
+  # THE EXPECTATION IS BUILT FROM THE CONTENT BOX'S FOUR NUMBERS, which have their own test at the
+  # top of this file, not re-derived by calling contentBox() here. CLAUDE.md §14e: a fake that
+  # shares the code's misunderstanding confirms it.
+  #
+  # MUTATION-CHECKED TWELVE WAYS — see the report; each actual below was copied out of a run.
+  test "the furniture is drawn on the paper outside the clip, and identically on every sheet" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const num = (n, as) => as.map((a) => Number(n.getAttribute(a)))
+        const furniture = (svg) => ({
+          lines: Array.from(svg.querySelectorAll(":scope > line"))
+                      .map((n) => num(n, [ "x1", "y1", "x2", "y2" ])),
+          rects: Array.from(svg.querySelectorAll(":scope > rect"))
+                      .map((n) => num(n, [ "x", "y", "width", "height" ])),
+        })
+        const sheets = (paper) => m.buildSheets(#{TILED_3X2}, paper).pages.map((p) =>
+          m.renderSheet(document, p, #{META}))
+        const svgs = sheets(m.PAPERS.Letter)
+        return JSON.stringify({
+          nested: svgs[0].querySelectorAll(
+            "[clip-path] line, [clip-path] rect, [clip-path] text, " +
+            "[transform] line, [transform] rect, [transform] text").length,
+          strokes: Array.from(svgs[0].querySelectorAll(":scope > line, :scope > rect"))
+            .map((n) => n.getAttribute("stroke") + " " + n.getAttribute("stroke-width")),
+          fills: Array.from(svgs[0].querySelectorAll(":scope > rect"))
+                      .map((n) => n.getAttribute("fill")),
+          pages: svgs.map(furniture),
+          // A SECOND PAPER, for the reason the scale test two sections up gives: against Letter
+          // alone every number below can be a hard-coded Letter literal and stay green.
+          a4: furniture(sheets(m.PAPERS.A4)[0]),
+        })
+      })()
+    JS
+
+    assert_equal 0, out["nested"],
+                 "furniture inside the clip or the page transform is erased or moved off paper"
+
+    # THE EXPECTATION IS A FUNCTION OF THE CONTENT BOX'S FOUR EDGES, and it is applied to TWO
+    # papers below. contentBox(Letter) is x 10..205.9, y 17..247.4 — pinned by its own test at the
+    # top of this file; contentBox(A4) is x 10..200, y 17..265 by the same arithmetic on §MARGIN,
+    # HEADER_H and CALIB_H (210 - 20 = 190 wide, 297 - 20 - 7 - 22 = 248 tall). Written out rather
+    # than obtained by calling contentBox() here: CLAUDE.md §14e, a fake that shares the code's
+    # misunderstanding confirms it.
+    expected = lambda do |x0, y0, x1, y1|
+      by = y1 + 14                                      # the calibration bar's baseline
+      trim = [ [ x0, y0 ], [ x1, y0 ], [ x0, y1 ], [ x1, y1 ] ].flat_map do |x, y|
+        [ [ x - 4, y, x + 4, y ], [ x, y - 4, x, y + 4 ] ]
+      end
+      ticks = (0..100).step(10).map { |i| [ x0 + i, by, x0 + i, by - 3 ] }
+      [ trim + [ [ x0, by, x0 + 100, by ] ] + ticks, [ [ x1 - 20, y1 + 1, 20.0, 20.0 ] ] ]
+    end
+    x0, y0, x1, y1 = 10.0, 17.0, 205.9, 247.4
+    expected_lines, expected_rects = expected.call(x0, y0, x1, y1)
+
+    # BLACK AND HAIRLINE, LIKE THE CONTOURS. A calibration square with SVG's DEFAULT fill is a
+    # solid black 20 mm slab; nothing else in the file can see that, because `fill="none"` is
+    # still present on the contours it asserts.
+    assert_equal [ "none" ], out["fills"], "a filled calibration square is a 20 mm ink blot"
+    assert_equal [ "#000 0.2" ] * 21, out["strokes"], "20 lines and the square, all hairline black"
+
+    out["pages"].each_with_index do |f, i|
+      lines = f["lines"].map { |l| l.map { |v| v.round(4) } }
+      rects = f["rects"].map { |r| r.map { |v| v.round(4) } }
+
+      # THE GAUGE MUST NOT LIE, and these two come FIRST so a bar labelled "100 mm" that is 90 mm
+      # long fails with a legible number rather than inside a twenty-row array diff. A gauge that
+      # is wrong is strictly worse than no gauge: it certifies a mis-scaled print.
+      bar = lines.select { |l| l[1] == l[3] }.max_by { |l| (l[2] - l[0]).abs }
+      assert_equal 100.0, (bar[2] - bar[0]).round(4), "sheet #{i}: the bar labelled 100 mm"
+      assert_equal 1, rects.length, "sheet #{i}: one calibration square"
+      assert_equal [ 20.0, 20.0 ], rects[0][2..3], "sheet #{i}: the square labelled 20 mm"
+
+      # AND THEN EVERY LINE, IN PLACE. Nothing above distinguishes the eleven ticks from each
+      # other, or from eleven lines drawn on top of one another at x0.
+      assert_equal expected_lines, lines, "sheet #{i}: trim crosshairs, then the bar, then 11 ticks"
+      assert_equal expected_rects, rects, "sheet #{i}: the calibration square"
+    end
+
+    # AND THE SAME FURNITURE ON A DIFFERENT PAPER. Every number above is a Letter number, so
+    # `const right = 205.9` and `const bottom = 247.4` — the shape the scale test records for the
+    # <svg> attributes — is GREEN through the whole loop. MUTATION-CHECKED: RED here alone.
+    # The bar is still 100 mm and the square still 20 mm; what moves is where they are anchored.
+    a4_lines, a4_rects = expected.call(10.0, 17.0, 200.0, 265.0)
+    assert_equal a4_lines, out["a4"]["lines"].map { |l| l.map { |v| v.round(4) } }, "A4"
+    assert_equal a4_rects, out["a4"]["rects"].map { |r| r.map { |v| v.round(4) } }, "A4"
+  end
+
+  # THE HEADER'S THREE TEXTS SIT AT THE LEFT, THE CENTRE AND THE RIGHT of the content box, and the
+  # anchor is half of that claim: at the default `start`, the centred warning runs off the right
+  # edge of the paper and the sheet label runs off it entirely, while every textContent assertion
+  # above stays green.
+  #
+  # FONT-SIZE IS THE OTHER HALF. Omit it and SVG's initial value is 16px, which at one user unit
+  # per millimetre is 16 mm tall — the header alone is then more than twice the 7 mm strip
+  # reserved for it and prints across the geometry.
+  #
+  # THE HEADER HAS NO `text-anchor` AT ALL, which is the one call site `el`'s nullish attribute
+  # guard exists for. Delete that guard and it becomes `text-anchor="undefined"` — an invalid
+  # value, so SVG falls back to the initial `start` and the sheet still LOOKS exactly right.
+  # `hasAnchor` is the only thing in this repo that can see it.
+  test "the header line places its three texts at the left, centre and right, at 3 mm" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages[1], #{META})
+        .querySelectorAll(":scope > text")).map((n) => ({
+          x: Number(n.getAttribute("x")), y: Number(n.getAttribute("y")),
+          anchor: n.getAttribute("text-anchor"), hasAnchor: n.hasAttribute("text-anchor"),
+          size: n.getAttribute("font-size"), text: n.textContent,
+        })))
+    JS
+
+    # Page 1 of the 3 x 2 job — column 2, row 1 — so the sheet label is present.
+    assert_equal [ "plate.lbrn2 · 2026-08-19", "Print at 100% — do NOT scale to fit",
+                   "Sheet 2,1 of 3×2", "100 mm — check with a ruler", "20 mm" ],
+                 out.map { |t| t["text"] }
+    # content.x; the content box's own centre (which is also the paper's, margins being equal);
+    # its right edge. All three on the header baseline at MARGIN + 4. Then the two gauge labels.
+    assert_equal [ [ 10.0, 14.0, nil ], [ 107.95, 14.0, "middle" ], [ 205.9, 14.0, "end" ],
+                   [ 60.0, 265.9, "middle" ], [ 195.9, 259.4, "middle" ] ],
+                 out.map { |t| [ t["x"].round(4), t["y"].round(4), t["anchor"] ] }
+    assert_equal [ "3" ] * 5, out.map { |t| t["size"] }, "3 user units is 3 mm"
+    refute out[0]["hasAnchor"], "the header omits text-anchor rather than writing \"undefined\""
+  end
+
   private
 
     def in_print_sheet(body)

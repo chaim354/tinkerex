@@ -173,6 +173,7 @@ export function renderSheet(doc, page, meta) {
   clipped.appendChild(group)
   svg.appendChild(clipped)
 
+  furniture(doc, svg, page, meta)
   return svg
 }
 
@@ -193,22 +194,126 @@ function contourNode(doc, shape) {
   return el(doc, shape.k ? "polygon" : "polyline", attrs)
 }
 
-function el(doc, tag, attrs, text) {
+// THE ONE DOOR EVERY ELEMENT IN THIS MODULE IS BUILT THROUGH.
+//
+// EXPORTED FOR ONE REASON: to let the browser tier pin the mis-call guard below. This repo has no
+// JS test runner, and nothing reachable through `renderSheet` can put a string in the `attrs`
+// slot — so without the export that guard would be a guard that has never failed, which
+// CLAUDE.md §15 says is a guard that has not been shown to work. The export is not a second door:
+// every element on a sheet is still constructed here.
+export function el(doc, tag, attrs, text) {
+  // A STRING IN THE `attrs` SLOT DOES NOT THROW, WHICH IS THE WHOLE REASON THIS EXISTS.
+  // `el(doc, "text", "Sheet 1,1 of 2×1")` — one dropped `{}` away from the five <text> sites in
+  // `furniture` — was expected to raise InvalidCharacterError, since an attribute name cannot
+  // begin with a digit. Probed in Chrome: it does not. `Object.entries` walks the string's own
+  // indices and `setAttribute` accepts "0" as a name, so the result is
+  // `<text 0="S" 1="h" 2="e" ...>` — sixteen junk attributes, no text content, an empty <text>
+  // that renders nothing on a page that is otherwise perfectly formed, with nothing thrown and
+  // nothing logged. Measured verbatim in measure_print_test.rb, which pins this.
+  if (typeof attrs === "string") {
+    throw new Error("el(doc, tag, attrs, text): the third argument is the attribute map, not " +
+                    "the text — pass el(doc, tag, {}, text).")
+  }
   const node = doc.createElementNS(SVG_NS, tag)
   for (const [ key, value ] of Object.entries(attrs)) {
-    // A null or undefined value writes the literal string "undefined". Sheet furniture is full of
-    // conditional attributes, so skip here rather than making every call site remember.
+    // An undefined value writes the literal string "undefined" (a null writes "null"). Sheet
+    // furniture is full of conditional attributes, so skip here rather than making every call
+    // site remember. `text()` below is the live caller: it omits `text-anchor` entirely for the
+    // default `start` rather than restating it. MEASURED, not reasoned: an unguarded
+    // `text-anchor="undefined"` is an INVALID value, so getComputedStyle reports `start` and the
+    // bbox x comes back 99.99999237060547 — byte-identical to the attribute being absent, against
+    // 89.72052001953125 for a real `middle`. The sheet looks EXACTLY right; only an
+    // attribute-level assertion can see it, which is why measure_print_test.rb asserts
+    // `hasAttribute` rather than a position.
     if (value != null) node.setAttribute(key, value)
   }
-  // THE TEXT DOOR EXISTS SO THAT `textContent` CAN BE THE ONLY SPELLING — and it is not yet.
-  // Stated in the future tense deliberately: `el` is unexported and the parameter is optional, so
-  // nothing today stops a call site assigning `.textContent` by hand or interpolating markup. It
-  // becomes true when Task 6 routes all four <text> sites through here. The rule it will enforce:
-  // the header carries a library filename, user-controlled and legitimately able to contain `<` on
-  // a NAS-scanned share, so building it as markup is an injection into a same-origin iframe. Four
-  // call sites each remembering that is four chances to forget; one door is none. (§14c: do not
-  // describe a guard as closed while it is open — a guard everyone believed in and that never
-  // worked is this repo's recorded failure shape.)
+  // THE TEXT DOOR EXISTS SO THAT `textContent` IS THE ONLY SPELLING — and since Task 6 it is:
+  // all five <text> sites go through `text()` below, which comes through here. The rule it
+  // enforces: the header carries a library filename, user-controlled and legitimately able to
+  // contain `<` on a NAS-scanned share, so building it as markup is an injection into a
+  // same-origin iframe. Five call sites each remembering that is five chances to forget; one
+  // door is none.
   if (text != null) node.textContent = text
   return node
+}
+
+// THE SHEET FURNITURE — header, per-sheet calibration gauge, trim crosshairs.
+//
+// DRAWN STRAIGHT ONTO THE <svg>, NEVER INSIDE THE CLIPPED OR TRANSLATED GROUPS above, and both
+// would fail SILENTLY. The clip window is the content box, and the gauge sits BELOW it, so a
+// clipped gauge is erased outright; the page transform is the selection's own datum shift, so
+// transformed furniture rides off the paper for any selection not at the origin. In both cases
+// every label is still in the DOM and still reads back — only the paper is blank.
+function furniture(doc, svg, page, meta) {
+  const { paper, cols, rows, col, row } = page
+  const content = contentBox(paper)
+  const right = content.x + content.w
+  const top = content.y
+  const bottom = top + content.h
+
+  // Trim crosshairs at the content corners — what you align two tiles by before taping. They are
+  // the one piece of furniture that deliberately reaches INTO the content box (4 mm each way),
+  // because a mark you have to align to is useless drawn only outside the paper's live area.
+  for (const [ x, y ] of [ [ content.x, top ], [ right, top ],
+                           [ content.x, bottom ], [ right, bottom ] ]) {
+    svg.appendChild(line(doc, x - 4, y, x + 4, y))
+    svg.appendChild(line(doc, x, y - 4, x, y + 4))
+  }
+
+  svg.appendChild(text(doc, content.x, MARGIN + 4, `${meta.name} · ${meta.date}`))
+  svg.appendChild(text(doc, content.x + content.w / 2, MARGIN + 4,
+                       "Print at 100% — do NOT scale to fit", "middle"))
+  // GRID COORDINATES, and OMITTED ENTIRELY on a single sheet: there is nothing to register
+  // against, so "Sheet 1,1 of 1×1" would be noise on the common case.
+  if (cols * rows > 1) {
+    svg.appendChild(text(doc, right, MARGIN + 4,
+                         `Sheet ${col + 1},${row + 1} of ${cols}×${rows}`, "end"))
+  }
+
+  // THE CALIBRATION GAUGE — the only defence against the print dialog's "Fit to printable area",
+  // which rescales silently and which no page can detect or prevent. ON EVERY SHEET, because pages
+  // get separated and a partial reprint is exactly when a scale error most needs catching.
+  //
+  // AND IT MUST MEASURE WHAT IT SAYS. A bar labelled "100 mm" that is drawn 90 long certifies a
+  // mis-scaled print — strictly worse than printing no gauge at all — and neither the label nor
+  // the picture can tell you, because there is nothing on the sheet to compare it against. That is
+  // why the tick spacing and the two extents are asserted as numbers rather than as "a bar exists".
+  const by = bottom + 14
+  svg.appendChild(line(doc, content.x, by, content.x + 100, by))
+  for (let i = 0; i <= 100; i += 10) {
+    svg.appendChild(line(doc, content.x + i, by, content.x + i, by - 3))
+  }
+  svg.appendChild(text(doc, content.x + 50, by + 4.5, "100 mm — check with a ruler", "middle"))
+
+  // A SQUARE AS WELL AS A BAR: a bar checks one axis, and calipers go across a square in both.
+  // Its label sits INSIDE it, because the 22 mm strip has no room below a 20 mm square.
+  svg.appendChild(el(doc, "rect", {
+    x: right - 20, y: bottom + 1, width: 20, height: 20,
+    fill: "none", stroke: "#000", "stroke-width": 0.2,
+  }))
+  svg.appendChild(text(doc, right - 10, bottom + 12, "20 mm", "middle"))
+}
+
+function line(doc, x1, y1, x2, y2) {
+  return el(doc, "line", { x1, y1, x2, y2, stroke: "#000", "stroke-width": 0.2 })
+}
+
+// ANCHOR LAST AND OPTIONAL, WHICH IS DELIBERATE AND IS `el`'s NULLISH GUARD'S ONE LIVE CALLER.
+// `text-anchor`'s initial value IS `start`, so the header omits the attribute rather than
+// restating the default — spelled as a missing argument here instead of as a branch inside `el`.
+//
+// The fourth argument goes through `el`'s text door, which sets `textContent` — NEVER an
+// interpolated markup string. `meta.name` is a library filename, user-controlled and legitimately
+// able to contain `<` on a NAS-scanned share. See printSheets.
+//
+// FONT-SIZE IS NOT DECORATION: SVG's initial value is 16px, which at one user unit per millimetre
+// is a 16 mm line of type — more than twice the 7 mm reserved for the header, printed across the
+// geometry. 3 is a BARE NUMBER for the same reason `stroke-width` is (see contourNode): a unit
+// suffix inside an SVG attribute resolves through CSS at 96 dpi, so `"3mm"` computes to
+// 11.3386px — measured, and its bbox is byte-identical to `font-size="11.3386"` — a header
+// nearly four times too tall, on a sheet that still looks like a sheet.
+function text(doc, x, y, content, anchor) {
+  return el(doc, "text", {
+    x, y, "font-size": 3, "font-family": "sans-serif", "text-anchor": anchor, fill: "#000",
+  }, content)
 }
