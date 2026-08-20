@@ -645,6 +645,159 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert out["transformInside"], "the page transform belongs on a descendant of the clip"
   end
 
+  # THE STRIPS ARE RESERVED, NOT OVERLAID (the deliberate divergence from the boxes sibling), so a
+  # part that runs past the content box must be CUT rather than printed across the calibration
+  # ruler. The test above pins the clip's STRUCTURE out of the DOM; this one is the only thing in
+  # the file that pins its EFFECT, and those are different claims — a clip-path naming an id that
+  # does not exist is silently inert, and `getAttribute` reports it as present either way.
+  #
+  # THE INSTRUMENT IS HIT TESTING, AND THE PLAN'S `getBoundingClientRect` WAS THE WRONG ONE.
+  # Measured before this test was written, not reasoned: against the CORRECT nested groups, the
+  # drawn group's rect reads left=10.0 top=17.0 right=410.0 bottom=517.0 mm — the FULL, UNCLIPPED
+  # extent of the part. Chrome's getBoundingClientRect ignores clip-path (so does getBBox, which
+  # returned {x: 10, y: 17, w: 400, h: 500} on the same node), on the clipping element and on its
+  # descendants alike. So the plan's `assert_in_delta 247.4 * scale, box["bottom"], 2.0` would have
+  # gone RED against correct code and could never have observed the clip at all. `elementFromPoint`
+  # DOES respect it — the instrument Task 4's own fix comment used to find the bug by hand.
+  #
+  # FOUR EDGES, NOT ONE. A `bottom`-only assertion cannot see a window displaced SIDEWAYS, and the
+  # plan's 40 mm-wide part never reached the content box's right edge, so nothing about the
+  # horizontal window was exercised at all. This part is 400 x 500 and runs past both edges, so
+  # `right` and `bottom` can only be the WINDOW's.
+  #
+  # THE PART STARTS AT (0, 0) DELIBERATELY — keep it there. At positive coordinates the page
+  # translate is negative, a mis-built window lands off-paper and NOTHING is painted; "it did not
+  # escape into the ruler" is then satisfied by a blank sheet, green for the opposite of the right
+  # reason. At the origin a displaced window paints in the WRONG PLACE instead, which is what the
+  # four numbers below see. `insidePainted` is the premise guard that keeps a blank sheet from
+  # reading as a pass through a bisection over nothing.
+  #
+  # MUTATION-CHECKED ELEVEN WAYS, every actual below copied out of the run rather than predicted.
+  # Expected is [10.0, 17.0, 205.9, 247.4] = [left, top, right, bottom] throughout:
+  #
+  #   the two <g>s collapsed back      Actual: [20.0, 34.0, 215.9, 264.4] — THE SHIPPED BUG. All
+  #     into one                         four move: userSpaceOnUse resolves the window in the
+  #                                      TRANSLATED space, so it rides 10 right and 17 down with
+  #                                      the geometry, slicing the part at the wrong place twice
+  #                                      and running past the content box at the other two.
+  #   the clip-path attribute          Actual: [9.9, 16.9, 215.9, 279.4] — the plan's own Step 3.
+  #     removed                          The part now runs to the PAPER's edges, straight across
+  #                                      both reserved strips; 9.9/16.9 is the 0.1 mm stroke halo
+  #                                      a working window cuts off.
+  #   `url(#${clipId}-content)` — a    Actual: [9.9, 16.9, 215.9, 279.4], INDISTINGUISHABLE from
+  #     one-sided edit of the id         no clip at all, which is exactly the case an
+  #     that is spelled twice           attribute-level assertion cannot see: the attribute is
+  #                                     still there and still reads back.
+  #   `svg.appendChild(clip)` dropped  Actual: [9.9, 16.9, 215.9, 279.4] — same, no <clipPath>.
+  #   rect x = content.x + 30          Actual: [40.0, 17.0, 215.9, 247.4] — `bottom` is untouched,
+  #                                      which is the whole argument against the plan's
+  #                                      bottom-only assertion.
+  #   rect y = content.y + 30          Actual: [10.0, 47.0, 205.9, 277.4]
+  #   rect width = paper.w             Actual: [10.0, 17.0, 215.9, 247.4] — `right` ALONE.
+  #   rect height = paper.h            Actual: [10.0, 17.0, 205.9, 279.4] — `bottom` ALONE.
+  #   x + 30 AND width - 30            Actual: [40.0, 17.0, 205.9, 247.4] — `left` ALONE. This
+  #                                      pair and the next exist because every mutation above
+  #                                      that moves left or top also moves right or bottom, so
+  #                                      without them those two numbers were riding along rather
+  #                                      than carrying weight (CLAUDE.md §15).
+  #   y + 30 AND height - 30           Actual: [10.0, 47.0, 205.9, 247.4] — `top` ALONE.
+  #   rect x = content.x + 1000        The PREMISE fires instead, with its own sentence: "the part
+  #     (the window off paper)           must paint inside the content box at all". Nothing is
+  #                                      painted, and four edges bisected out of a blank sheet are
+  #                                      four meaningless numbers rather than a legible failure.
+  #
+  # `fitsViewport` is the one assertion here with NO mutation of its own, and deliberately: it
+  # guards an assumption about the BROWSER (screen_size, in application_system_test_case.rb), not
+  # about this module, so nothing that can be done to print_sheet.js reaches it.
+  test "a part running past the content box is clipped, not printed over the ruler" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        // 400 x 500 at the origin on Letter. Nine tiles; pages[0] is the top-left one, and the
+        // part overruns its content box on the right and at the bottom.
+        const page = m.buildSheets(
+          [{ b: [0, 0, 400, 500], k: 1, i: 0, o: 1,
+             p: [[0, 0], [400, 0], [400, 500], [0, 500], [0, 0]] }],
+          m.PAPERS.Letter).pages[0]
+        const svg = m.renderSheet(document, page,
+          { name: "tall.lbrn2", date: "2026-08-19", sizeLabel: () => null })
+
+        // INSTRUMENTATION OF THE OBSERVER, NOT OF THE THING OBSERVED. renderSheet draws
+        // fill="none" — pinned as a wire literal by the black-and-classless test below, so this
+        // override cannot hide a regression there — which leaves `pointer-events: visiblePainted`
+        // hitting only the 0.2 mm stroke, with no interior to probe. The clip window is a
+        // property of an ancestor and is identical either way.
+        for (const n of svg.querySelectorAll("polygon, polyline")) n.setAttribute("fill", "#000")
+
+        // Fixed at the viewport origin so client pixels and page millimetres differ by one
+        // factor. The sheet is 816 x 1056 CSS px in a 1400 x 1257 viewport (measured), so every
+        // probe below is on-screen — `fitsViewport` asserts that rather than assuming it, because
+        // a point past the viewport edge hit-tests as EMPTY, which reads as "not painted" and
+        // would silently walk an edge inward on a screen_size somebody shrank.
+        svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+        svg.style.zIndex = "99999"
+        document.body.appendChild(svg)
+
+        // FINALLY, NOT A TRAILING remove(). in_print_sheet re-visits only when the path CHANGES,
+        // so every test after this one shares this document — and a probe that threw would leave
+        // a fixed, z-index 99999 sheet covering the page for the rest of the file.
+        try {
+          const host = svg.getBoundingClientRect()
+          const S = host.width / 215.9
+          const part = svg.querySelector("polygon")
+          // elementsFromPoint, NOT elementFromPoint — "is the part painted here", not "is the
+          // part the TOPMOST thing here". Tasks 6-8 add a header, a calibration gauge and trim
+          // marks to this same sheet, and the topmost reading would start answering about a
+          // furniture element the day one of them overlaps a probe: the edges would walk inward
+          // and this test would go red for somebody else's correct change.
+          const painted = (xmm, ymm) =>
+            document.elementsFromPoint(host.left + xmm * S, host.top + ymm * S).includes(part)
+          // Bisect between a point known painted and one known not. 30 halvings of a 280 mm span
+          // is a 2.6e-7 mm interval, and the hit test resolves finely enough to use most of it:
+          // the four edges come back [10.000001, 16.999999, 205.900005, 247.400007], a residual
+          // of 7e-6 mm against a tolerance of 0.05. Read that as MEASURED, not as a guarantee —
+          // an earlier draft of this comment quoted 0.002 mm and blamed Chrome's 1/64 px layout
+          // quantum, and both halves were wrong: those numbers came off a throwaway probe using
+          // elementFromPoint, and re-measuring through the code as it stands moved them by three
+          // orders of magnitude. There is four orders of headroom either way.
+          const edge = (from, to, probe) => {
+            for (let i = 0; i < 30; i++) {
+              const mid = (from + to) / 2
+              if (probe(mid)) from = mid; else to = mid
+            }
+            return (from + to) / 2
+          }
+          return JSON.stringify({
+            fitsViewport: host.right <= window.innerWidth && host.bottom <= window.innerHeight,
+            insidePainted: painted(100, 100),
+            left:   edge(100, 0,     (v) => painted(v, 100)),
+            top:    edge(100, 0,     (v) => painted(100, v)),
+            right:  edge(100, 215.9, (v) => painted(v, 100)),
+            bottom: edge(100, 279.4, (v) => painted(100, v)),
+          })
+        } finally {
+          svg.remove()
+        }
+      })()
+    JS
+
+    assert out["fitsViewport"], "the whole sheet must be on-screen or the bisection walks inward"
+    assert out["insidePainted"], "the part must paint inside the content box at all"
+    # contentBox(Letter) is x 10..205.9, y 17..247.4 — established by its own test at the top of
+    # this file. The part is drawn at 10..410 x 17..517 in page space, so `right` and `bottom` are
+    # the window's edges; `left` and `top` coincide with the part's own origin, which is what lets
+    # them see a window displaced INWARD.
+    #
+    # ONE ASSERTION FOR ALL FOUR, because minitest ends a test at its FIRST failed assertion.
+    # Written as four `assert_in_delta`s, a mutation that moves the whole window reported only
+    # whichever edge came first — and for the plan's own Step 3 that is `left`, which fails by the
+    # 0.1 mm stroke halo alone while `right` and `bottom` were failing by 10 and 32 mm out of
+    # sight. Rounding to one decimal is the tolerance (+/- 0.05 mm) and the four numbers print
+    # together, which is also the idiom the clip-rect test above already uses.
+    assert_equal [ 10.0, 17.0, 205.9, 247.4 ],
+                 out.values_at("left", "top", "right", "bottom").map { |v| v.round(1) },
+                 "the painted part must be cut to the content box on every side"
+  end
+
   # THE CONTOURS ARE BUILT FRESH FROM shape.p, NEVER CLONED FROM THE SCREEN. A clone would drag
   # the transparent fat hit-twin (.measure-contour--hit), the hover/selected/marked classes and
   # the layer colour onto paper — a printed sheet with an 8-unit-wide invisible stroke on it.
