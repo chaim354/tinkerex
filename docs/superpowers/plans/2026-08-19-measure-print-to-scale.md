@@ -487,7 +487,7 @@ export function buildSheets(shapes, paper) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 5 runs, 0 failures.
+Expected: 6 runs, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -523,6 +523,23 @@ Add to `test/system/measure_print_test.rb`:
 
     assert_match(/more than 40 sheets/, err)
     assert_match(/20000 × 20000 mm/, err, "the message must name the size that caused it")
+  end
+
+  # THE OTHER REFUSAL, which nothing else in this plan pins — verified by grepping every task, so
+  # deleting the guard would have gone unnoticed end to end. It is a module PRECONDITION rather
+  # than a user-facing message (Task 11's caller returns early on an empty set before ever calling
+  # here), but an unpinned throw is an unpinned throw: `unionBox` on an empty array returns
+  # [Infinity, Infinity, -Infinity, -Infinity], so without it `buildSheets` yields NaN geometry and
+  # a page full of nothing rather than an error anyone can act on.
+  test "an empty selection is refused rather than producing NaN geometry" do
+    err = in_print_sheet(<<~JS)
+      (() => {
+        try { m.buildSheets([], m.PAPERS.Letter); return "NO ERROR" }
+        catch (e) { return e.message }
+      })()
+    JS
+
+    assert_equal "Nothing to print.", err
   end
 
   # A 400 mm selection puts 3 tiles on the page. Handing every tile every shape would put a
@@ -591,7 +608,7 @@ const round = (v) => Math.round(v * 10) / 10
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 7 runs, 0 failures.
+Expected: 9 runs, 0 failures.
 
 - [ ] **Step 5: Commit**
 
