@@ -221,10 +221,11 @@ export function el(doc, tag, attrs, text) {
     // site remember. `text()` below is the live caller: it omits `text-anchor` entirely for the
     // default `start` rather than restating it. MEASURED, not reasoned: an unguarded
     // `text-anchor="undefined"` is an INVALID value, so getComputedStyle reports `start` and the
-    // bbox x comes back 99.99999237060547 — byte-identical to the attribute being absent, against
-    // 89.72052001953125 for a real `middle`. The sheet looks EXACTLY right; only an
-    // attribute-level assertion can see it, which is why measure_print_test.rb asserts
-    // `hasAttribute` rather than a position.
+    // rendered bbox x comes back 99.99999237060547 — byte-identical to the attribute being
+    // absent. (An earlier draft quoted a contrasting `middle` figure here; it was measured on a
+    // probe string this module never prints, so it reproduced for nothing. Removed rather than
+    // re-measured — the byte-identity is the whole claim.) The sheet looks EXACTLY right, which
+    // is why measure_print_test.rb asserts the ATTRIBUTE rather than a position.
     if (value != null) node.setAttribute(key, value)
   }
   // THE TEXT DOOR EXISTS SO THAT `textContent` IS THE ONLY SPELLING — and since Task 6 it is:
@@ -260,13 +261,19 @@ function furniture(doc, svg, page, meta) {
     svg.appendChild(line(doc, x, y - 4, x, y + 4))
   }
 
-  svg.appendChild(text(doc, content.x, MARGIN + 4, `${meta.name} · ${meta.date}`))
-  svg.appendChild(text(doc, content.x + content.w / 2, MARGIN + 4,
+  // ONE FONT-SIZE ABOVE THE CONTENT BOX'S OWN TOP EDGE, rather than a bare `MARGIN + 4` that has
+  // to be remembered to agree with HEADER_H. Identical today (17 - 3 = 14); the difference is that
+  // shrinking HEADER_H now moves the header with the strip instead of leaving it behind in the
+  // geometry. The gauge's own offsets below are a designed layout rather than a formula — what
+  // keeps THEM honest against CALIB_H is the strip-containment test, not arithmetic here.
+  const headerY = top - FONT
+  svg.appendChild(text(doc, content.x, headerY, headerLabel(meta.name, meta.date, content)))
+  svg.appendChild(text(doc, content.x + content.w / 2, headerY,
                        "Print at 100% — do NOT scale to fit", "middle"))
   // GRID COORDINATES, and OMITTED ENTIRELY on a single sheet: there is nothing to register
   // against, so "Sheet 1,1 of 1×1" would be noise on the common case.
   if (cols * rows > 1) {
-    svg.appendChild(text(doc, right, MARGIN + 4,
+    svg.appendChild(text(doc, right, headerY,
                          `Sheet ${col + 1},${row + 1} of ${cols}×${rows}`, "end"))
   }
 
@@ -278,6 +285,13 @@ function furniture(doc, svg, page, meta) {
   // mis-scaled print — strictly worse than printing no gauge at all — and neither the label nor
   // the picture can tell you, because there is nothing on the sheet to compare it against. That is
   // why the tick spacing and the two extents are asserted as numbers rather than as "a bar exists".
+  //
+  // IT ASSUMES content.w >= ~130 AND DOES NOT CHECK, in the spirit of buildSheets' own small-paper
+  // note: the bar is a fixed 100 mm from content.x and the square a fixed 20 mm inset from `right`,
+  // so a content box narrower than about 130 mm runs the bar under the square and then off the
+  // paper. Every entry in PAPERS clears it (A4, the narrowest, is 190), and `renderSheet` takes an
+  // arbitrary `paper` — so read this as a statement of the range this layout covers, not as a
+  // guard that exists.
   const by = bottom + 14
   svg.appendChild(line(doc, content.x, by, content.x + 100, by))
   for (let i = 0; i <= 100; i += 10) {
@@ -292,6 +306,58 @@ function furniture(doc, svg, page, meta) {
     fill: "none", stroke: "#000", "stroke-width": 0.2,
   }))
   svg.appendChild(text(doc, right - 10, bottom + 12, "20 mm", "middle"))
+}
+
+// THE HEADER LINE'S THREE TEXTS SHARE ONE ROW, AND THE LEFT ONE IS THE ONLY ARBITRARY-LENGTH
+// THING ON THE SHEET. Nothing truncated it until this was measured: on A4 — the narrowest content
+// box PAPERS offers, 190 mm — the centred warning occupies x 81.28..128.72, and a 40-character
+// filename ("Rev C bracket assembly plate final.lbrn2", an ordinary length on a NAS-scanned share)
+// reaches x 81.48 and OVERPRINTS IT. A 70-character name buries the warning outright and runs on
+// under the sheet label. The sheet whose entire purpose is "do NOT scale to fit" is then the one
+// sheet that cannot say so.
+//
+// TRUNCATED IN THE MIDDLE, keeping head AND tail: a maker telling `panel-v11.lbrn2` from
+// `panel-v12.svg` needs the extension every bit as much as the start, so a trailing "…" is the
+// wrong end to cut.
+//
+// THE BUDGET IS A WORST CASE, NOT AN AVERAGE, because a filename is arbitrary user input. Both
+// numbers below were MEASURED in the browser at 3 mm sans-serif and are RE-MEASURED AND ASSERTED
+// by measure_print_test.rb, so a font change on the CI box goes red here rather than silently
+// overprinting the warning.
+//
+//   WORST_GLYPH — the widest printable ASCII advance. It is "@" at 3.0432 mm, NOT the "W"
+//     (2.8296) that is the obvious guess; "…" is 2.9979, so charging the ellipsis at this rate is
+//     safe too. Rounded UP to 3.05.
+//   DATE_GLYPH  — the widest advance in ` · YYYY-MM-DD`, which is a digit at 1.6673. The date is
+//     charged at its OWN repertoire rather than at WORST_GLYPH because it is a fixed-format string
+//     THIS APP supplies, not user input; charging all 13 of its characters at "@" rate would eat
+//     22 mm of a 47 mm budget and truncate `plate.lbrn2` for no reason. Residual, stated plainly:
+//     a caller that puts something long and wide in `meta.date` is not covered.
+//   WARNING_HALF — half the centred warning's own measured width (47.4356 mm), which is what the
+//     left text has to clear.
+//
+// ACCEPTED COST: a worst-case budget is pessimistic for ordinary text — roughly 1.35 mm/character
+// actually renders — so a name that would have fitted still gets an ellipsis. That is the trade
+// this is meant to make: the failure it replaces is silent and lands on the warning.
+// EXPORTED so the test can assert it against a fresh browser measurement. The geometric
+// assertion alone cannot: it clears the warning by ~5.7 mm, so a `W`-tuned 2.83 still passes it.
+export const WORST_GLYPH = 3.05
+const DATE_GLYPH = 1.7
+const WARNING_HALF = 24
+const HEADER_GAP = 2
+const FONT = 3
+
+function headerLabel(name, date, content) {
+  const suffix = ` · ${date}`
+  const budget = content.w / 2 - WARNING_HALF - HEADER_GAP - suffix.length * DATE_GLYPH
+  return truncateMiddle(String(name), Math.floor(budget / WORST_GLYPH)) + suffix
+}
+
+function truncateMiddle(s, max) {
+  if (max < 3) return "…"
+  if (s.length <= max) return s
+  const head = Math.ceil((max - 1) / 2)
+  return s.slice(0, head) + "…" + s.slice(s.length - (max - 1 - head))
 }
 
 function line(doc, x1, y1, x2, y2) {
@@ -314,6 +380,6 @@ function line(doc, x1, y1, x2, y2) {
 // nearly four times too tall, on a sheet that still looks like a sheet.
 function text(doc, x, y, content, anchor) {
   return el(doc, "text", {
-    x, y, "font-size": 3, "font-family": "sans-serif", "text-anchor": anchor, fill: "#000",
+    x, y, "font-size": FONT, "font-family": "sans-serif", "text-anchor": anchor, fill: "#000",
   }, content)
 }

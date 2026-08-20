@@ -490,7 +490,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # back GREEN (measured at 19 runs / 132 assertions, before the stroke-width split below took the
   # file to 20/135) with the guard and the door deleted in turn.
   # That is not a weak input this tier can strengthen; it is a code path Task 4 never walks. Task 6
-  # adds the four <text> call sites the door exists for, and must pin both there.
+  # adds the five <text> call sites the door exists for — four on any one sheet, the sheet label
+  # being conditional — and must pin both there.
 
   # The plan's render input: a 60 x 40 closed part at the origin, kept because the two scale
   # assertions want a part whose dimensions ARE the numbers being asserted.
@@ -1094,8 +1095,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # spelling available; this is the test that says why it exists rather than merely that it fires.
   #
   # MUTATION-CHECKED TWO WAYS, each actual copied out of the run. Deleting the door
-  # (`if (text != null) node.textContent = text`) is RED here and in four tests above, every
-  # textContent coming back "". Spelling it `node.innerHTML = text` is RED HERE ALONE, on the
+  # (`if (text != null) node.textContent = text`) is RED in SIX tests, every textContent coming
+  # back "" — this one, four above it, and the header-placement one below it. Spelling it `node.innerHTML = text` is RED HERE ALONE, on the
   # element list: "Expected [\"clipPath\", \"rect\", \"g\", \"g\", \"polygon\", ... \"text\",
   # \"script\", \"v2\", \"text\", ...] to not include \"script\"" — two elements minted out of a
   # filename, inside a <text> node, in the app's own origin. The header equality behind it would
@@ -1123,11 +1124,15 @@ class MeasurePrintTest < ApplicationSystemTestCase
     elements = out["elements"].split(",")
     refute_includes elements, "script", "no element minted from the filename"
     refute_includes elements, "v2", "and not the innocuous-looking half of it either"
-    assert_equal "<script>alert(1)</script>bracket<v2>.svg · 2026-08-19", out["header"]
+    # TRUNCATED, because this name is 40 characters and A4's budget is 15 — and the head and tail
+    # it keeps still carry `<` and `>`, which is what the assertion needs. An innerHTML spelling
+    # eats them exactly the same way (verified: the refutes above still fire), so the truncation
+    # neither weakens this test nor is weakened by it.
+    assert_equal "<script>…v2>.svg · 2026-08-19", out["header"]
   end
 
   # `el` HAS A SILENT MIS-CALL MODE AND THIS IS THE ONLY THING THAT CAN SEE IT. A string in the
-  # `attrs` slot — `el(doc, "text", "Sheet 1,1 of 2×1")`, one dropped `{}` away from the four
+  # `attrs` slot — `el(doc, "text", "Sheet 1,1 of 2×1")`, one dropped `{}` away from the five
   # sites this task adds — was expected to throw InvalidCharacterError, since an attribute name
   # cannot begin with a digit. It does not: Object.entries walks the string's own indices and
   # setAttribute accepts "0" as a name.
@@ -1171,7 +1176,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # top of this file, not re-derived by calling contentBox() here. CLAUDE.md §14e: a fake that
   # shares the code's misunderstanding confirms it.
   #
-  # MUTATION-CHECKED TWELVE WAYS — see the report; each actual below was copied out of a run.
+  # MUTATION-CHECKED TWELVE WAYS, all RED here: the trim loop deleted; both crosshair arms drawn
+  # horizontal; the crosshairs moved to the PRINTABLE box's corners; the bar drawn 90 mm; the tick
+  # step 10 -> 20; every tick drawn at content.x; the ticks flattened onto the bar (`by - 3` ->
+  # `by`); the square 15 mm wide; the square placed at `right` instead of `right - 20`; its
+  # `fill: "none"` dropped; `stroke-width` spelled "0.2mm"; and the whole gauge moved to
+  # `top + 14`. Three more are RED on this test among others: the furniture appended inside the
+  # clip group, the `furniture()` call deleted, and the gauge guarded by `row === 0`.
   test "the furniture is drawn on the paper outside the clip, and identically on every sheet" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
@@ -1221,12 +1232,6 @@ class MeasurePrintTest < ApplicationSystemTestCase
     x0, y0, x1, y1 = 10.0, 17.0, 205.9, 247.4
     expected_lines, expected_rects = expected.call(x0, y0, x1, y1)
 
-    # BLACK AND HAIRLINE, LIKE THE CONTOURS. A calibration square with SVG's DEFAULT fill is a
-    # solid black 20 mm slab; nothing else in the file can see that, because `fill="none"` is
-    # still present on the contours it asserts.
-    assert_equal [ "none" ], out["fills"], "a filled calibration square is a 20 mm ink blot"
-    assert_equal [ "#000 0.2" ] * 21, out["strokes"], "20 lines and the square, all hairline black"
-
     out["pages"].each_with_index do |f, i|
       lines = f["lines"].map { |l| l.map { |v| v.round(4) } }
       rects = f["rects"].map { |r| r.map { |v| v.round(4) } }
@@ -1252,6 +1257,18 @@ class MeasurePrintTest < ApplicationSystemTestCase
     a4_lines, a4_rects = expected.call(10.0, 17.0, 200.0, 265.0)
     assert_equal a4_lines, out["a4"]["lines"].map { |l| l.map { |v| v.round(4) } }, "A4"
     assert_equal a4_rects, out["a4"]["rects"].map { |r| r.map { |v| v.round(4) } }, "A4"
+
+    # BLACK AND HAIRLINE, LIKE THE CONTOURS. A calibration square with SVG's DEFAULT fill is a
+    # solid black 20 mm slab; nothing else in the file can see that, because `fill="none"` is
+    # still present on the contours it asserts.
+    #
+    # LAST, NOT FIRST. These two are the only assertions here whose failure carries no coordinate,
+    # and `strokes` changes length for ANY defect that changes the element count — so ahead of the
+    # loop it pre-empted the legible numbers with a twenty-against-twenty-one diff of identical
+    # strings, defeating the ordering the loop's own comment argues for. Verified with
+    # `i <= 100` -> `i < 100`: red either way, legible only in this order.
+    assert_equal [ "none" ], out["fills"], "a filled calibration square is a 20 mm ink blot"
+    assert_equal [ "#000 0.2" ] * 21, out["strokes"], "20 lines and the square, all hairline black"
   end
 
   # THE HEADER'S THREE TEXTS SIT AT THE LEFT, THE CENTRE AND THE RIGHT of the content box, and the
@@ -1265,15 +1282,21 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #
   # THE HEADER HAS NO `text-anchor` AT ALL, which is the one call site `el`'s nullish attribute
   # guard exists for. Delete that guard and it becomes `text-anchor="undefined"` — an invalid
-  # value, so SVG falls back to the initial `start` and the sheet still LOOKS exactly right.
-  # `hasAnchor` is the only thing in this repo that can see it.
+  # value, so SVG falls back to the initial `start` and the sheet still LOOKS exactly right
+  # (measured: the rendered bbox x is byte-identical either way). The `nil` in the anchor tuple
+  # below is what sees it, and it is a COMPLETE instrument: getAttribute answers null only when the
+  # attribute is absent, and an empty attribute reads "" rather than nil. An earlier draft carried
+  # a `refute ... hasAnchor` line as well, described in this comment as "the only thing that can
+  # see it" — both halves were wrong. It was redundant with the tuple, and being placed AFTER the
+  # tuple it never executed at all: the mutation fails the tuple, minitest ends the test there.
+  # A second assertion that cannot run is not a second guard (CLAUDE.md §15).
   test "the header line places its three texts at the left, centre and right, at 3 mm" do
     out = JSON.parse(in_print_sheet(<<~JS))
       JSON.stringify(Array.from(m.renderSheet(document,
         m.buildSheets(#{TILED_3X2}, m.PAPERS.Letter).pages[1], #{META})
         .querySelectorAll(":scope > text")).map((n) => ({
           x: Number(n.getAttribute("x")), y: Number(n.getAttribute("y")),
-          anchor: n.getAttribute("text-anchor"), hasAnchor: n.hasAttribute("text-anchor"),
+          anchor: n.getAttribute("text-anchor"),
           size: n.getAttribute("font-size"), text: n.textContent,
         })))
     JS
@@ -1288,7 +1311,145 @@ class MeasurePrintTest < ApplicationSystemTestCase
                    [ 60.0, 265.9, "middle" ], [ 195.9, 259.4, "middle" ] ],
                  out.map { |t| [ t["x"].round(4), t["y"].round(4), t["anchor"] ] }
     assert_equal [ "3" ] * 5, out.map { |t| t["size"] }, "3 user units is 3 mm"
-    refute out[0]["hasAnchor"], "the header omits text-anchor rather than writing \"undefined\""
+  end
+
+  # THE HEADER'S LEFT TEXT IS THE ONLY ARBITRARY-LENGTH THING ON THE SHEET, AND UNTRUNCATED IT
+  # OVERPRINTS THE WARNING — on the one sheet whose entire purpose is to say "do NOT scale to fit".
+  # Measured on A4 before the fix, as rendered bbox right edges: `plate.lbrn2 · 2026-08-19` ended at
+  # 41.83 (fine), `Rev C bracket assembly plate final.lbrn2 · …` at 81.48 against a warning starting
+  # at 81.28 (collides), and a 70-character name at 124.15 (the warning almost wholly overprinted,
+  # running on under the sheet label). Forty characters is an ordinary length on a NAS-scanned share.
+  #
+  # A4, NOT LETTER. 190 mm is the narrowest content box PAPERS offers, so it is the paper that
+  # fails first and the only one worth pinning.
+  #
+  # AN ALL-`@` NAME, NOT THE ALL-`W` THE OBVIOUS GUESS SUGGESTS. Measured in this same browser at
+  # 3 mm sans-serif, `@` advances 3.0432 mm and `W` only 2.8296 — a budget tuned on `W` is 7% short
+  # of the true worst case, which for a filename (arbitrary user input) is the case that matters.
+  # `widest` asserts that rather than assuming it: the day a CI font makes some other glyph widest,
+  # this input stops being pathological and this line says so instead of the test quietly weakening.
+  #
+  # THE ASSERTION IS GEOMETRIC, and it validates all three of the module's measured constants at
+  # once (WORST_GLYPH, DATE_GLYPH, WARNING_HALF) without exporting any of them — what matters is
+  # not what they are but that the ink lands clear of the warning.
+  test "a pathological filename is truncated rather than printed over the do-not-scale warning" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name: "@".repeat(70), date: "2026-08-19", sizeLabel: () => null })
+        document.body.appendChild(svg)
+        try {
+          const t = svg.querySelectorAll(":scope > text")
+          const box = (n) => { const b = n.getBBox(); return [ b.x, b.x + b.width ] }
+          // The widest printable-ASCII advance in THIS browser, so the input above is provably
+          // the worst case rather than a plausible-looking one.
+          const probe = document.createElementNS("http://www.w3.org/2000/svg", "text")
+          probe.setAttribute("font-size", 3); probe.setAttribute("font-family", "sans-serif")
+          svg.appendChild(probe)
+          let widest = null, widestW = 0
+          for (let c = 33; c < 127; c++) {
+            probe.textContent = String.fromCharCode(c).repeat(20)
+            const w = probe.getComputedTextLength() / 20
+            if (w > widestW) { widestW = w; widest = String.fromCharCode(c) }
+          }
+          return JSON.stringify({
+            widest, widestW, worstGlyph: m.WORST_GLYPH,
+            left: box(t[0]), warning: box(t[1]), header: t[0].textContent,
+          })
+        } finally { svg.remove() }
+      })()
+    JS
+
+    assert_equal "@", out["widest"], "the pathological input must be the browser's widest glyph"
+    # THE BUDGET'S OWN CONSTANT AGAINST THE MEASUREMENT, because the geometric assertion below
+    # cannot see it: the truncated header clears the warning by ~5.7 mm, so a budget tuned on `W`
+    # (2.83) passes that test while being 7% short of the worst case a filename can actually
+    # contain. Slack in the layout is safety and should not be spent to sharpen a test; this pins
+    # the constant directly instead.
+    assert_operator out["widestW"], :<=, out["worstGlyph"],
+                    "WORST_GLYPH must not be under-measured"
+    # THE COLLISION ITSELF. The left text's right edge must sit left of the warning's left edge —
+    # not merely "somewhere on the paper", which an overprinted header satisfies perfectly.
+    assert_operator out["left"][1], :<, out["warning"][0],
+                    "the header ran into #{out['warning'].inspect}: #{out['header'].inspect}"
+    # AND THE WARNING IS STILL WHERE IT BELONGS, so the assertion above cannot be satisfied by a
+    # warning that was itself pushed off to the right.
+    assert_in_delta 105.0, (out["warning"][0] + out["warning"][1]) / 2, 0.5,
+                    "the warning stays centred on A4's content box"
+  end
+
+  # TRUNCATED IN THE MIDDLE, KEEPING THE EXTENSION. A maker telling `panel-v11.lbrn2` from
+  # `panel-v12.svg` needs the tail as much as the head, so a trailing "…" — the obvious spelling,
+  # and what `text-overflow: ellipsis` would do — cuts off exactly the discriminating end.
+  #
+  # THE DATE IS NEVER TRUNCATED, and the short name is left ALONE: a budget that ellipsised
+  # `plate.lbrn2` would be a regression dressed as a fix. Both spellings of the mistake are pinned
+  # here, and neither is visible to the geometric test above — an implementation that simply cut
+  # the string short would clear the warning just as well.
+  test "a long filename keeps its head and its extension, and a short one is left alone" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify([ "plate.lbrn2", "harbor-number-v4.svg",
+                       "Rev C bracket assembly plate final.lbrn2" ].map((name) =>
+        m.renderSheet(document, m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name, date: "2026-08-19", sizeLabel: () => null })
+         .querySelector(":scope > text").textContent))
+    JS
+
+    assert_equal [ "plate.lbrn2 · 2026-08-19",
+                   "harbor-…-v4.svg · 2026-08-19",
+                   "Rev C b…l.lbrn2 · 2026-08-19" ], out
+  end
+
+  # EVERY PIECE OF FURNITURE INSIDE THE STRIP RESERVED FOR IT, READ OFF THE RENDERED BBOX so the
+  # text's own ascender and descender count rather than its baseline.
+  #
+  # THIS IS WHAT KEEPS THE LAYOUT'S EIGHT OFFSETS HONEST AGAINST `HEADER_H` AND `CALIB_H`. The
+  # gauge's `bottom + 14`, `by - 3`, `by + 4.5`, `bottom + 1` and `bottom + 12` are a designed
+  # layout, not a formula, so nothing in the code makes them agree with the 22 mm the strip
+  # reserves — shrink CALIB_H and the arithmetic still runs, the sheet still renders, and the ruler
+  # simply prints off the bottom of the paper. contentBox's own comment argues at length against
+  # exactly this shape of N-values-that-must-agree; a formula was the other option and is weaker,
+  # because a formula can be wrong in the same silence. The bounds are read from the module's OWN
+  # exported constants, so they are the definition rather than a second copy of it.
+  test "the header sits in the header strip and the gauge in the calibration strip" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const paper = m.PAPERS.A4, content = m.contentBox(paper)
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{TILED_3X2}, paper).pages[1], #{META})
+        document.body.appendChild(svg)
+        try {
+          const items = Array.from(svg.querySelectorAll(":scope > line, :scope > rect, :scope > text"))
+            .map((n) => { const b = n.getBBox(); return { top: b.y, bottom: b.y + b.height } })
+          const bottom = content.y + content.h
+          // STRICTLY inside, and that is not a nicety: the trim crosshairs sit exactly ON the
+          // content edges, so a horizontal arm's zero-height bbox has bottom === content.y and a
+          // bottom arm's has top === bottom. With `<=`/`>=` they join the strips they straddle and
+          // the two counts below read 5 and 17.
+          const header = items.filter((i) => i.bottom < content.y)
+          const gauge  = items.filter((i) => i.top > bottom)
+          return JSON.stringify({
+            headerCount: header.length, gaugeCount: gauge.length,
+            headerTop: Math.min(...header.map((i) => i.top)),
+            headerBottom: Math.max(...header.map((i) => i.bottom)),
+            gaugeBottom: Math.max(...gauge.map((i) => i.bottom)),
+            limits: [ m.MARGIN, m.MARGIN + m.HEADER_H, paper.h - m.MARGIN ],
+          })
+        } finally { svg.remove() }
+      })()
+    JS
+
+    # THE COUNTS ARE THE PREMISE: a piece of furniture that escaped its strip entirely would drop
+    # out of both filters, and "everything I found is in bounds" is trivially true of nothing.
+    assert_equal 3, out["headerCount"], "filename, warning, sheet label"
+    assert_equal 15, out["gaugeCount"], "the bar, 11 ticks, two labels and the square"
+    margin, header_bottom, page_bottom = out["limits"]
+    assert_operator out["headerTop"], :>=, margin, "the header must not print into the paper margin"
+    assert_operator out["headerBottom"], :<=, header_bottom,
+                    "the header must not print into the content box"
+    assert_operator out["gaugeBottom"], :<=, page_bottom,
+                    "the gauge must not print into the bottom paper margin"
   end
 
   private
