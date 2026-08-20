@@ -170,7 +170,7 @@ export default class extends Controller {
     this.stageTarget.replaceChildren(svg)
     this.svg = svg
     this.element.classList.add("measure-view--ready")
-    this.setStatus(`${payload.shapes.length} shapes · click one to measure`)
+    this.setStatus(this.restingStatus())
     this.bindInteractions(svg)
     // AFTER bindInteractions, DELIBERATELY. populatePaper reads localStorage, which throws in a
     // blocked or partitioned storage context — and draw() has already inserted the SVG and applied
@@ -235,8 +235,12 @@ export default class extends Controller {
   }
 
   print() {
-    // An empty set prints the whole file — which is what the button has been saying all along.
-    const shapes = this.marked.size ? [...this.marked] : this.allShapes
+    // THE SAME THREE ARMS refreshPrintBar LABELS, in the same order. A measuring click points this
+    // at ONE contour — the one whose size the readout is showing — so printing the part you are
+    // looking at costs no mode. Whatever it resolves to, the button already said so.
+    const shapes = this.marked.size ? [...this.marked]
+      : this.selected ? [this.selected.__shape]
+      : this.allShapes
     // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is undefined
     // between connect() and the first successful draw(), and in that window the button is
     // display:none (`.measure-actions` without --ready), so no click can get here. What the guard
@@ -379,7 +383,11 @@ export default class extends Controller {
   pick(event) {
     if (this.didPan) { this.didPan = false; return }
     const node = this.shapeAt(event)
-    if (!node) return
+    // EMPTY SPACE DESELECTS, and that is not a flourish — it is the only cheap way back to
+    // "Print all" once a click has pointed the button at one contour. It deliberately does NOT
+    // touch the print set: in select mode a stray click on the background must not throw away
+    // the parts you gathered.
+    if (!node) { this.clearSelection(); return }
 
     if (this.selected) this.styleNode(this.selected).classList.remove("measure-contour--selected")
     this.selected = node
@@ -400,6 +408,25 @@ export default class extends Controller {
       return
     }
     this.setStatus(useObject ? this.objectLabel(siblings) : this.contourLabel(shape, siblings))
+    // THE BUTTON FOLLOWS THE MEASUREMENT. Without this the label still reads "Print all" while
+    // print() has already started targeting the contour under it — the button lying about what it
+    // does, which is the one thing it exists not to do.
+    this.refreshPrintBar()
+  }
+
+  // The message the view rests at, and the one definition of it: `draw` opens with it and
+  // `clearSelection` returns to it, so a deselect cannot leave a size on screen with nothing
+  // highlighted to own it.
+  restingStatus() {
+    return `${this.allShapes.length} shapes · click one to measure`
+  }
+
+  clearSelection() {
+    if (!this.selected) return
+    this.styleNode(this.selected).classList.remove("measure-contour--selected")
+    this.selected = null
+    this.refreshPrintBar()
+    if (!this.selecting) this.setStatus(this.restingStatus())
   }
 
   toggleSelect() {
@@ -466,9 +493,18 @@ export default class extends Controller {
   // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
   // `print()` with it; the answer then is that the partial declares the controls, not that four
   // methods each grow a guard.
+  // THREE TARGETS, IN PRECEDENCE ORDER, AND THE LABEL ALWAYS NAMES THE ONE IN FORCE. The middle
+  // arm is why Select parts is no longer a toll gate on printing a single part: click a contour to
+  // measure it and the button already points at it. `print()` reads the same three arms in the
+  // same order; they are two halves of one claim and must not drift.
+  //
+  //   marked set        -> "Print 3 parts"   the set
+  //   else selected     -> "Print selected"  the contour under the measurement
+  //   else              -> "Print all"       the whole file
   refreshPrintBar() {
     const n = this.marked.size
-    this.printButtonTarget.textContent = n ? `Print ${n} part${n === 1 ? "" : "s"}` : "Print all"
+    this.printButtonTarget.textContent =
+      n ? `Print ${n} part${n === 1 ? "" : "s"}` : this.selected ? "Print selected" : "Print all"
   }
 
   contourLabel(shape, siblings) {
@@ -515,6 +551,9 @@ export default class extends Controller {
   reset() {
     if (this.svg && this.home) this.setViewBox(this.svg, this.home)
     if (this.marked.size) this.clearMarks()
+    // AND THE MEASUREMENT HIGHLIGHT, since it now points the Print button at one contour. Leaving
+    // it behind would make Reset the one action that returns everything except what you print.
+    this.clearSelection()
   }
 
   // Zoom about the cursor, so the feature under the pointer stays under it.
