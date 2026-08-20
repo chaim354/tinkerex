@@ -1377,7 +1377,12 @@ git commit -m "feat(measure): label each printed part with its server-computed s
 >    safe. Verify both. If either changes, the id needs a per-document counter, not a bigger key.
 > 2. **`xmlns` on the root `<svg>` is emitted but so far unasserted.** Inert while pages are
 >    appended as NODES; load-bearing the moment anything serializes through `outerHTML` or
->    `srcdoc`. If you reach for either, assert it.
+>    `srcdoc`. If you reach for either, assert it — otherwise leave it unasserted, since a test
+>    that reddens for a harmless change is worse than none.
+> 3. **Task 4's `refMatchesId` cannot see a clip reference hard-coded to `url(#mp-clip-0-0)`**,
+>    because it renders a SINGLE page whose id genuinely is `mp-clip-0-0`. A 3×2 grid is needed to
+>    see it — and over a one-ROW input, `mp-clip-${col}` is likewise indistinguishable from the
+>    shipped key. Assert each page's clip reference resolves within its own sheet.
 
 `window.print()` is reached by a counted stub in Task 11 (`stub_print!` patches the
 `HTMLIFrameElement.prototype.contentWindow` getter, which is the only moment a test can reach in
@@ -1427,7 +1432,11 @@ Add to `test/system/measure_print_test.rb`:
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
         const frame = m.buildPrintFrame(#{SIXTY_BY_FORTY}, m.PAPERS.Letter,
-          { name: "<img src=x onerror=alert(1)>.svg", date: "2026-08-19", sizeLabel: () => null })
+          // SHORT ENOUGH TO SURVIVE TASK 6'S TRUNCATION. The original fixture here was
+          // "<img src=x onerror=alert(1)>.svg", which truncates to "<img src…(1)>.svg" — so this
+          // assert_equal would have failed against CORRECT code. Measure the headroom by padding
+          // one character at a time, and add a premise assertion so the arm cannot go quiet.
+          { name: "<img src=x>", date: "2026-08-19", sizeLabel: () => null })
         const doc = frame.contentDocument
         const out = {
           imgs: doc.querySelectorAll("img").length,
@@ -1440,7 +1449,7 @@ Add to `test/system/measure_print_test.rb`:
     JS
 
     assert_equal 0, out["imgs"], "the name must never be parsed as markup"
-    assert_equal "<img src=x onerror=alert(1)>.svg · 2026-08-19", out["header"]
+    assert_equal "<img src=x> · 2026-08-19", out["header"]
   end
 
   # A second print must not leave the first frame behind, accumulating a hidden iframe per click.
