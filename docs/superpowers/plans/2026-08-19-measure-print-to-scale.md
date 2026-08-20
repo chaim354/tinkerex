@@ -135,6 +135,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # 215.9 - 20 margin = 195.9 wide; 279.4 - 20 margin - 7 header - 22 calibration = 230.4 tall.
     assert_in_delta 195.9, box["w"], 0.001
     assert_in_delta 230.4, box["h"], 0.001
+    # And it carries its ORIGIN, which is what stops three call sites re-spelling MARGIN + HEADER_H.
+    assert_in_delta 10.0, box["x"], 0.001
+    assert_in_delta 17.0, box["y"], 0.001
   end
 
   # THE TRANSLATION IS THE WHOLE "TRUE POSITIONS" CLAIM, and it is relative rather than absolute:
@@ -142,9 +145,14 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # laser sheet prints at the left edge of sheet 1, not on tile 3 of 12 with two blank ones.
   test "a selection that fits produces one page whose translation puts it at the content origin" do
     out = JSON.parse(in_print_sheet(<<~JS))
-      JSON.stringify(m.buildSheets(
-        [{ b: [500, 300, 560, 340], p: [[500, 300], [560, 340]], k: 1, i: 0, o: 1 }],
-        m.PAPERS.Letter))
+      JSON.stringify(m.buildSheets([
+        // TWO SHAPES, AND THE ONE SUPPLYING THE MINIMA IS DELIBERATELY NOT FIRST. With a single
+        // shape "the selection's bbox" and "this shape's bbox" are indistinguishable, so the test
+        // cannot fail for the property it exists to pin: gutting unionBox to
+        // `return shapes[0].b` stays GREEN. Verified — that mutation must turn this red.
+        { b: [520, 320, 600, 400], p: [[520, 320], [600, 400]], k: 1, i: 0, o: 2 },
+        { b: [500, 300, 560, 340], p: [[500, 300], [560, 340]], k: 1, i: 0, o: 1 },
+      ], m.PAPERS.Letter))
     JS
 
     assert_equal 1, out["pages"].length
@@ -246,8 +254,18 @@ export const CALIB_H = 22
 // A file with absurd units (an SVG read at 25.4x) would otherwise try to print hundreds of sheets.
 export const MAX_SHEETS = 40
 
+// THE CONTENT BOX CARRIES ITS ORIGIN, NOT JUST ITS SIZE. Three places need "where does geometry
+// start" — the page translation below, the clip rect in renderSheet, and the furniture's own edges
+// — and re-spelling `MARGIN + HEADER_H` at each is the N-copies-that-must-agree defect this repo
+// keeps recording (§14b's four skip-list strings, §14d's five port_writable branches). Move the
+// calibration strip to the top one day and exactly one line changes; miss one of three and
+// geometry is DRAWN at one origin and CLIPPED at another, slicing a band off a part on a page that
+// still looks entirely correct.
 export function contentBox(paper) {
-  return { w: paper.w - MARGIN * 2, h: paper.h - MARGIN * 2 - HEADER_H - CALIB_H }
+  return {
+    x: MARGIN, y: MARGIN + HEADER_H,
+    w: paper.w - MARGIN * 2, h: paper.h - MARGIN * 2 - HEADER_H - CALIB_H,
+  }
 }
 
 export function unionBox(shapes) {
@@ -260,6 +278,7 @@ export function unionBox(shapes) {
 export function buildSheets(shapes, paper) {
   if (!shapes.length) throw new Error("Nothing to print.")
   const box = unionBox(shapes)
+  const content = contentBox(paper)
 
   return {
     cols: 1,
@@ -269,8 +288,8 @@ export function buildSheets(shapes, paper) {
       // Content space -> page space. THE SELECTION's own bbox origin is the datum, not the file's,
       // which is what makes "true positions" mean RELATIVE positions: two holes 40 mm apart on a
       // 600 mm sheet print on one page, 40 mm apart, instead of on tile 4 of 12.
-      translateX: MARGIN - box[0],
-      translateY: MARGIN + HEADER_H - box[1],
+      translateX: content.x - box[0],
+      translateY: content.y - box[1],
       shapes,
     }],
   }
@@ -284,6 +303,20 @@ bin/rails test test/system/measure_print_test.rb
 ```
 
 Expected: 2 runs, 0 failures.
+
+- [ ] **Step 5b: Mutation-check, and record it in the tests**
+
+`test/system/README.md`'s rule for this tier: revert the behaviour a test pins, confirm it goes
+red, **and say so in a comment naming what you reverted**. Run all three; each must be red for its
+own test, then restore:
+
+| break this | must go red |
+|---|---|
+| `unionBox` body → `return shapes[0].b` | the translation test (`-490.0` vs `-510`) |
+| `contentBox` drops `- CALIB_H` | the content-box test (`230.4` vs `252.4`) |
+| `translateX: content.x - box[0]` → `content.x` | the translation test (`-490.0` vs `10`) |
+
+Add the observed failure message to each test's comment, the way `lbrn_measure_test.rb` does.
 
 - [ ] **Step 6: Commit**
 
@@ -378,8 +411,8 @@ export function buildSheets(shapes, paper) {
         // Content space -> page space. THE SELECTION's own bbox origin is the datum, not the
         // file's, which is what makes "true positions" mean RELATIVE positions: two holes 40 mm
         // apart on a 600 mm sheet print on one page, 40 mm apart, not on tile 4 of 12.
-        translateX: MARGIN - originX - box[0],
-        translateY: MARGIN + HEADER_H - originY - box[1],
+        translateX: content.x - originX - box[0],
+        translateY: content.y - originY - box[1],
         shapes,
       })
     }
@@ -437,14 +470,15 @@ Add to `test/system/measure_print_test.rb`:
   # would look wrong while the print took three times as long to spool.
   test "a tile carries only the shapes whose bbox touches it" do
     out = JSON.parse(in_print_sheet(<<~JS))
+      // The min-supplying shape is second on purpose — see the union test's note in Task 1.
       JSON.stringify(m.buildSheets([
-        { b: [0, 0, 10, 10],     p: [[0, 0], [10, 10]],     k: 1, i: 0, o: 1 },
         { b: [300, 0, 310, 10],  p: [[300, 0], [310, 10]],  k: 1, i: 0, o: 2 },
+        { b: [0, 0, 10, 10],     p: [[0, 0], [10, 10]],     k: 1, i: 0, o: 1 },
       ], m.PAPERS.Letter).pages.map((p) => p.shapes.map((s) => s.o)))
     JS
 
     # cols = ceil((310 - 10) / 185.9) = 2. Tile 0 covers content x 0..195.9, tile 1 x 185.9..381.8.
-    assert_equal [ [ 1 ], [ 2 ] ], out
+    assert_equal [ [ 1 ], [ 2 ] ], out, "filter preserves array order within each tile"
   end
 ```
 
@@ -567,8 +601,9 @@ Add to `test/system/measure_print_test.rb`:
     xs = JSON.parse(in_print_sheet(<<~JS))
       JSON.stringify(Array.from(m.renderSheet(document,
         m.buildSheets([
-          { b: [0, 0, 10, 10],   k: 1, i: 0, o: 1, p: [[0, 0], [10, 0], [10, 10], [0, 0]] },
+          // Min-supplier second — see Task 1's union test.
           { b: [50, 0, 60, 10],  k: 1, i: 0, o: 2, p: [[50, 0], [60, 0], [60, 10], [50, 0]] },
+          { b: [0, 0, 10, 10],   k: 1, i: 0, o: 1, p: [[0, 0], [10, 0], [10, 10], [0, 0]] },
         ], m.PAPERS.Letter).pages[0],
         { name: "two.lbrn2", date: "2026-08-19", sizeLabel: () => null })
        .querySelectorAll("polygon")).map((n) =>
@@ -631,7 +666,7 @@ export function renderSheet(doc, page, meta) {
   const clipId = `mp-clip-${page.col}-${page.row}`
   const clip = el(doc, "clipPath", { id: clipId })
   clip.appendChild(el(doc, "rect", {
-    x: MARGIN, y: MARGIN + HEADER_H, width: content.w, height: content.h,
+    x: content.x, y: content.y, width: content.w, height: content.h,
   }))
   svg.appendChild(clip)
 
@@ -862,18 +897,19 @@ Append to `app/javascript/lib/print_sheet.js`:
 function furniture(doc, svg, page, meta) {
   const { paper, cols, rows, col, row } = page
   const content = contentBox(paper)
-  const right = MARGIN + content.w
-  const top = MARGIN + HEADER_H
+  const right = content.x + content.w
+  const top = content.y
   const bottom = top + content.h
 
   // Trim crosshairs at the content corners — what you align two tiles by before taping.
-  for (const [ x, y ] of [ [ MARGIN, top ], [ right, top ], [ MARGIN, bottom ], [ right, bottom ] ]) {
+  for (const [ x, y ] of [ [ content.x, top ], [ right, top ],
+                           [ content.x, bottom ], [ right, bottom ] ]) {
     svg.appendChild(line(doc, x - 4, y, x + 4, y))
     svg.appendChild(line(doc, x, y - 4, x, y + 4))
   }
 
-  svg.appendChild(text(doc, MARGIN, MARGIN + 4, "start", `${meta.name} · ${meta.date}`))
-  svg.appendChild(text(doc, MARGIN + content.w / 2, MARGIN + 4, "middle",
+  svg.appendChild(text(doc, content.x, MARGIN + 4, "start", `${meta.name} · ${meta.date}`))
+  svg.appendChild(text(doc, content.x + content.w / 2, MARGIN + 4, "middle",
                        "Print at 100% — do NOT scale to fit"))
   // GRID COORDINATES, and OMITTED ENTIRELY on a single sheet: there is nothing to register
   // against, so "Sheet 1,1 of 1×1" would be noise on the common case.
@@ -886,9 +922,11 @@ function furniture(doc, svg, page, meta) {
   // which rescales silently and which no page can detect or prevent. ON EVERY SHEET, because pages
   // get separated and a partial reprint is exactly when a scale error most needs catching.
   const by = bottom + 14
-  svg.appendChild(line(doc, MARGIN, by, MARGIN + 100, by))
-  for (let i = 0; i <= 100; i += 10) svg.appendChild(line(doc, MARGIN + i, by, MARGIN + i, by - 3))
-  svg.appendChild(text(doc, MARGIN + 50, by + 4.5, "middle", "100 mm — check with a ruler"))
+  svg.appendChild(line(doc, content.x, by, content.x + 100, by))
+  for (let i = 0; i <= 100; i += 10) {
+    svg.appendChild(line(doc, content.x + i, by, content.x + i, by - 3))
+  }
+  svg.appendChild(text(doc, content.x + 50, by + 4.5, "middle", "100 mm — check with a ruler"))
 
   // A SQUARE AS WELL AS A BAR: a bar checks one axis, and calipers go across a square in both.
   // Its label sits INSIDE it, because the 22 mm strip has no room below a 20 mm square.
@@ -954,8 +992,9 @@ Add to `test/system/measure_print_test.rb`:
     texts = JSON.parse(in_print_sheet(<<~JS))
       JSON.stringify(Array.from(m.renderSheet(document,
         m.buildSheets([
-          { b: [0, 0, 60, 40],  k: 1, i: 0, o: 1, p: [[0, 0], [60, 40]] },
+          // Min-supplier second — see Task 1's union test.
           { b: [70, 0, 80, 10], k: 1, i: 0, o: 2, d: 10, p: [[70, 0], [80, 10]] },
+          { b: [0, 0, 60, 40],  k: 1, i: 0, o: 1, p: [[0, 0], [60, 40]] },
         ], m.PAPERS.Letter).pages[0],
         { name: "two.lbrn2", date: "2026-08-19",
           sizeLabel: (s) => (s.d != null ? `⌀${s.d} mm` : `${s.b[2] - s.b[0]} × ${s.b[3] - s.b[1]} mm`) })
