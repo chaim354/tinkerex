@@ -726,7 +726,7 @@ module Maker
     # An unmounted NAS fails EVERY move identically, so the honest answer is one abort and one log
     # line — not N skips pretending each was independent.
     test "a FetchError aborts this project's sweep after one attempt, counting the rest skipped" do
-      seed_folder("design") # so ensure_path! never reaches the fake's absent mkdir
+      seed_folder("design") # the fake's mkdir only finds; it never creates
       file("a.svg")
       file("b.svg")
       file("c.svg")

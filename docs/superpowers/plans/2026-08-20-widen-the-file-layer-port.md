@@ -808,6 +808,20 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 6: `Chunk#undelete`, and collapse `TrashController#restore`
 
+> **KNOWN DIVERGENCE, found while reviewing Task 3 — do NOT try to close it here.**
+> `Sync::Trash.restore` (`app/services/sync/trash.rb:30-42`) has **no collision check at all**, so
+> on chunk a restore can produce two live nodes sharing one `(parent_node_id, name)`. Share and s3
+> cannot: `db/schema.rb:435` carries `index_nodes_on_user_id_and_storage_path unique, where
+> "deleted = false"`, and their port-level `undelete` refuses a clobber with `UnsupportedOperation`.
+> Reproduced: mkdir "cad" → tombstone it → mkdir "cad" again (mints a NEW node_id, since the
+> idempotence lookup is `.present`) → restore the tombstone → two live "cad" dirs.
+> It is **pre-existing and not a regression** — the same hole existed when `TrashController` called
+> `Sync::Trash.restore` directly — and it is the same family as CLAUDE.md §14c's "two live siblings
+> sharing one (parent, name) are reachable on chunk". `FileLayerMutationContract` deliberately does
+> **not** pin undelete-clobber for exactly this reason. Adding a check inside a refactor task would
+> be a silent behaviour change to the sync engine; it needs its own decision. **Document it in the
+> `Chunk#undelete` comment, do not fix it.**
+
 **Files:**
 - Modify: `app/services/file_layer/chunk.rb`
 - Modify: `app/controllers/trash_controller.rb:71-81`
