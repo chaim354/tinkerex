@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Measure: Reset returns the view home and empties the print set**)
+**Updated:** 2026-08-20 (**Measure: a measuring click is enough to print that one part**)
 
 ## What this file is
 
@@ -60,7 +60,48 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-20): Reset does both halves of "start again" (branch `claude/measure-reset-clears-selection`)
+## Latest (2026-08-20): printing one part costs no mode (branch `claude/measure-print-selected`)
+
+**Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9619 assertions / 3 skips, identical.
+System tier 177 → 179 runs, 1504 assertions. `bin/ci` green, all eight gates, exit 0, 1m12s.**
+
+Second follow-on from using the print arc. **Select parts was a toll gate on the commonest case:
+to print the one hole you were already measuring, you had to leave measuring, enter a mode, and
+re-click it.** Now a measuring click is enough — the Print button targets whatever you actually
+have, and its label always names it:
+
+| state | label | prints |
+|---|---|---|
+| a marked set | `Print 3 parts` | the set |
+| else a contour selected | `Print selected` | the contour under the measurement |
+| else | `Print all` | the whole file |
+
+`refreshPrintBar` and `print()` read the same three arms in the same order — two halves of one
+claim, and `pick()` now refreshes the bar on a measuring click or the label would still read
+"Print all" while `print()` had already narrowed. Mutation-checked: dropping that refresh fails
+four tests.
+
+**Two things had to follow, and both are about being able to get back.** A click on empty space now
+deselects — without it the first click of a session permanently narrows the button and Reset is the
+only way out, which also throws away the zoom a user with no reason to lose it. It deliberately does
+**not** touch the print set: a stray background click in select mode discarding everything gathered
+is worse than an extra click. And Reset now drops the measurement highlight too, since leaving it
+would make Reset the one action that returns everything except what you are about to print.
+
+**A deliberate reversal, recorded because the test that pinned it now asserts the opposite.** The
+entry below made Reset *keep* the readout's measurement, on the argument that stomping it served the
+selecting mode at the ordinary case's expense. That was right when `--selected` pointed at nothing
+but itself. It now aims the Print button, so a size left in the readout with nothing highlighted to
+own it is stale rather than useful; `clearSelection` returns to `restingStatus()`, which is also now
+the one definition of the message `draw` opens with.
+
+Six mutations, each red: the fall-through to `allShapes`, the missing label arm, the missing
+`pick()` refresh, empty space not deselecting, Reset not clearing, and a stale readout after
+deselect.
+
+---
+
+## 2026-08-20: Reset does both halves of "start again" (branch `claude/measure-reset-clears-selection`)
 
 **Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9619 assertions / 3 skips, identical.
 System tier 176 → 177 runs, 1474 assertions. `bin/ci` green, all eight gates, exit 0, 1m10s.**

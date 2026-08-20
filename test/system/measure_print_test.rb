@@ -2490,7 +2490,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     assert_no_selector ".measure-contour--marked"
     assert_selector ".measure-dims", exact_text: "60 × 40 mm"
-    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    # AND THE BUTTON NOW NAMES THAT CONTOUR. It read "Print all" until printing one part stopped
+    # requiring select mode; a measuring click points `print()` at the contour under the readout,
+    # so the label has to follow or it is lying about what it does.
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
   end
 
   # BOTH HIGHLIGHTS AT ONCE. --selected answers "what am I reading" and --marked "what will
@@ -2614,18 +2617,84 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_selector ".measure-dims", exact_text: "nothing selected · Print all prints the whole file"
   end
 
-  # AND IT LEAVES A MEASUREMENT ALONE. `clearMarks` writes `selectionStatus()`, so a reset that
-  # called it unconditionally would replace the size the user just asked for with "nothing
-  # selected" — taking something from the ordinary case to serve the selecting one. Guarded by
-  # `if (this.marked.size)`; mutation-checked by removing that condition, which turns this red.
-  test "Reset outside select mode leaves the readout carrying its measurement" do
+  # AND IT DROPS THE MEASUREMENT HIGHLIGHT, WHICH IS A DELIBERATE REVERSAL. This test used to
+  # assert the opposite — that Reset left the size in the readout — because back then the highlight
+  # pointed at nothing but itself, and stomping a measurement to serve the selecting mode was a
+  # cost with no benefit. It buys something now: `--selected` aims the Print button at one contour,
+  # so a Reset that left it behind would be the one action returning everything EXCEPT what you are
+  # about to print, and the readout would carry a size with nothing highlighted to own it.
+  test "Reset drops the measurement highlight and returns the readout to rest" do
     open_measure_view(@nested_id)
     click_plate
     assert_selector ".measure-dims", exact_text: "60 × 40 mm"
+    assert_selector ".measure-contour--selected", count: 1
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
 
     click_on "Reset"
 
-    assert_selector ".measure-dims", exact_text: "60 × 40 mm"
+    assert_no_selector ".measure-contour--selected"
+    assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+  end
+
+  # PRINTING ONE PART COSTS NO MODE — the whole point of the middle arm. No "Select parts", no
+  # marking: click the contour you want, and the button that already names it prints exactly it.
+  #
+  # THE POLYGON COUNT IS THE CLAIM. nested-plate carries two contours, so a `print()` that ignored
+  # `this.selected` and fell through to `allShapes` would put BOTH on the sheet — and the plate is
+  # first in paint order, so a test reading only the first polygon's size would pass either way.
+  test "a measuring click alone is enough to print that one part" do
+    open_measure_view(@nested_id)
+    stub_print!
+    contour_with_min_x(-5).click # the ⌀10 hole, which is NOT the first polygon
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+
+    click_on "Print selected"
+
+    assert_equal 1, page.evaluate_script("window.__printed")
+    out = JSON.parse(page.evaluate_script(<<~JS))
+      (() => {
+        const doc = document.querySelector(".measure-print-frame").contentDocument
+        const polys = doc.querySelectorAll("g polygon")
+        const xs = polys[0].getAttribute("points").trim().split(/\\s+/).map((p) => parseFloat(p))
+        return JSON.stringify({ count: polys.length,
+                                w: Math.max(...xs) - Math.min(...xs),
+                                label: doc.querySelector("text[data-role='size']").textContent })
+      })()
+    JS
+
+    assert_equal 1, out["count"], "the SELECTED contour prints, not the whole file"
+    assert_in_delta 10.0, out["w"], 0.05, "and it is the hole, not the plate"
+    assert_equal "⌀10 mm", out["label"]
+  end
+
+  # AND CLICKING EMPTY SPACE GIVES "Print all" BACK. Without it the first click of a session
+  # permanently narrows what the button does, with Reset the only way out — and Reset also throws
+  # away the zoom, which a user who just wants the whole file has no reason to lose.
+  #
+  # IT MUST NOT TOUCH THE PRINT SET. In select mode a stray click on the background would otherwise
+  # discard everything gathered so far, which is the one thing worse than an extra click.
+  test "clicking empty space deselects without disturbing the print set" do
+    open_measure_view(@nested_id)
+    click_on "Select parts"
+    click_plate
+    assert_selector ".measure-contour--marked", count: 1
+
+    click_empty_space
+
+    assert_no_selector ".measure-contour--selected"
+    assert_selector ".measure-contour--marked", count: 1, visible: :all
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+
+    click_on "Done selecting"
+    click_on "Reset"
+    contour_with_min_x(-5).click
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print selected"
+
+    click_empty_space
+
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
+    assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
   end
 
   # THE BUTTON SAYS WHAT WILL HAPPEN. An empty set prints the whole file, and the only thing
@@ -3095,6 +3164,15 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # A QUARTER OF THE ELEMENT'S WIDTH RIGHT OF CENTRE, computed rather than guessed: the padded
     # viewBox is 62.4 user units wide in a square element, so with `meet` the horizontal axis
     # fills it. The plate reaches ±30 mm (±0.48 of the width) and the hole only ±5 mm (±0.08).
+    # A POINT WITH NOTHING PAINTED ON IT. nested-plate spans x -30..30, y -20..20 inside a padded
+    # viewBox of [-31.2 -21.2 62.4 42.4] in a SQUARE element — so with `meet` the horizontal axis
+    # fills it and the vertical is letterboxed, leaving the top and bottom of the element empty.
+    # 6% down from the middle of the top edge is comfortably outside the plate's own top edge.
+    def click_empty_space
+      svg = stage_svg
+      svg.click(x: 0, y: -(svg.native.size.height * 0.44).to_i)
+    end
+
     def click_plate
       svg = stage_svg
       svg.click(x: (svg.native.size.width * 0.25).to_i, y: 0)
