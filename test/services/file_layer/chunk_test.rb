@@ -99,38 +99,20 @@ module FileLayer
       assert_equal "AAABB", adapter.read(@user, node_id:)
     end
 
-    # Chunk mutations that still refuse do NOT go through this port; they are the sync engine's,
-    # and each uses its OWN door, verified against the callers:
-    #   write  -> Sync::Commit's two-phase flow (a device pushes; the web UI reuses it)
-    #   delete -> Sync::SubtreeDelete.call             (v1/nodes_controller.rb:46)
-    # mkdir (Task 3) and move (Task 4) are gone from this hash -- the port is their door now, the
-    # same as share/s3, and adapter.move no longer raises. A server-side chunk-and-commit path
-    # does not exist and has no caller, so the port says so out loud rather than answering
-    # NoMethodError.
+    # THE ONE CHUNK MUTATION THAT STILL REFUSES OUTRIGHT, AND WHY IT ALWAYS WILL: write does NOT
+    # go through this port. Chunk-mode writes are Sync::Commit's two-phase presigned flow (a
+    # device pushes; the web UI reuses it), and implementing write here would mean a server-side
+    # chunk-and-commit path that duplicates Sync::Commit, has no caller, and reaches into the sync
+    # engine this port exists to stay out of (spec §10) -- unlike mkdir/move/delete, which move no
+    # bytes and so have no such argument against them.
     #
-    # Asserted PER OP, never with one blanket regex. The whole deliverable is "refuse HONESTLY,
-    # naming the real path", so a test that accepted /Sync::Commit/ for delete would pin, by name,
-    # the wrong door as right — a green test guarding misinformation. `not_names` pins that exact
-    # defect: delete must never cite Sync::Commit, which has no delete path, and it also catches a
-    # regression to one shared message listing every class (which would satisfy the positive
-    # regex while leaving the caller to guess which door is theirs).
-    test "the write path is not chunk mode's — each op refuses, naming its OWN real path" do
-      {
-        write: {
-          call: -> { adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("b")) },
-          names: /Sync::Commit/
-        },
-        delete: {
-          call: -> { adapter.delete(@user, node_id: "n1") },
-          names: /Sync::SubtreeDelete/, not_names: /Sync::Commit/
-        }
-      }.each do |op, spec|
-        err = assert_raises(NotImplementedError, "#{op} must refuse, not answer") { spec[:call].call }
-        assert_match(spec[:names], err.message, "#{op} must name the path a caller should use")
-        next unless spec[:not_names]
-        assert_no_match(spec[:not_names], err.message,
-                        "#{op} must not send the caller to Sync::Commit, which has no #{op} path")
+    # mkdir (Task 3), move (Task 4) and delete (Task 5) are gone from this test -- the port is
+    # their door now, the same as share/s3, and none of the three raises any more.
+    test "write is not chunk mode's — it refuses, naming its OWN real path" do
+      err = assert_raises(NotImplementedError) do
+        adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("b"))
       end
+      assert_match(/Sync::Commit/, err.message, "write must name the path a caller should use")
     end
 
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---
@@ -705,6 +687,114 @@ module FileLayer
 
       assert_equal "a.stl", info.name
       assert_equal "aaa", adapter.read(@user, node_id: id)
+    end
+
+    # --- delete (Task 5): the port is now the door for chunk-mode delete too -------------------
+    # FilesController#destroy used to branch around the port straight into Sync::SubtreeDelete.call
+    # for chunk mode; it no longer can, same reason mkdir's and move's own comments give -- in
+    # remote mode there is no Sync::SubtreeDelete in this process to branch into.
+    #
+    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
+    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test would
+    # prove nothing about this adapter. Same precedent as the mkdir/move tests above.
+    #
+    # THIS ALSO SUBSUMES adapter_mutation_contract.rb's
+    # test_mutation_contract_delete_tombstones_rather_than_destroying, whose two assertions --
+    # the row survives tombstoned, and read raises NotFound afterward -- are exactly the two lines
+    # below. No separate chunk-specific copy of that fact is added for it; when Task 7 wires the
+    # shared module in, it will simply re-confirm the same thing through the shared helpers.
+    test "delete tombstones the node through the sync engine" do
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "gone.stl", kind: "file",
+                                 deleted: false, mtime: 0)
+      adapter.delete(@user, node_id: node.node_id)
+      assert_predicate node.reload, :deleted?
+      assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: node.node_id) }
+    end
+
+    # SubtreeDelete, NEVER Sync::Mutation.apply(op: "delete"). The latter tombstones only the node
+    # it is handed, so on a directory it orphans every descendant: /v1/tree serves children
+    # pointing at a deleted parent while changelog-following devices drop the whole subtree. This
+    # is the sharpest trap in CLAUDE.md 14a and the reason chunk answers dir_deletable true.
+    #
+    # ALSO SUBSUMES the dir_deletable-true half of
+    # test_mutation_contract_delete_refuses_a_directory_unless_dir_deletable, which only checks
+    # that the directory ITSELF tombstones -- it seeds no child, so it cannot see a cascade bug
+    # (or its absence). This is the stronger claim, and the one this task is actually about, so no
+    # separate weaker copy is added beside it.
+    test "delete CASCADES to the subtree -- the reason chunk is dir_deletable" do
+      dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "adir", kind: "dir",
+                                  deleted: false, mtime: 0)
+      child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                  name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      adapter.delete(@user, node_id: dir.node_id)
+      assert_predicate dir.reload,   :deleted?
+      assert_predicate child.reload, :deleted?, "a dir delete must cascade, never orphan children"
+    end
+
+    # A ONE-LEVEL CASCADE CAN BE SATISFIED BY AN IMPLEMENTATION THAT ONLY WALKS ONE LEVEL DEEP --
+    # the test above alone cannot tell "recurses fully" from "tombstones its immediate children
+    # only". Same shape as Task 4's dir-move test, which used a grandchild for the identical
+    # reason. Nesting a DIRECTORY (not just a file) one level down also proves SubtreeDelete
+    # cascades through an intermediate directory, not only into leaf files.
+    test "delete cascades through a NESTED directory, not just one level" do
+      dir          = @user.nodes.create!(node_id: SecureRandom.uuid, name: "top", kind: "dir",
+                                         deleted: false, mtime: 0)
+      child        = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                         name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      grandkid_dir = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                         name: "nested", kind: "dir", deleted: false, mtime: 0)
+      grandkid     = @user.nodes.create!(node_id: SecureRandom.uuid,
+                                         parent_node_id: grandkid_dir.node_id,
+                                         name: "deep.stl", kind: "file", deleted: false, mtime: 0)
+
+      adapter.delete(@user, node_id: dir.node_id)
+
+      [ dir, child, grandkid_dir, grandkid ].each do |n|
+        assert_predicate n.reload, :deleted?, "#{n.name} must not survive its ancestor's delete"
+      end
+    end
+
+    # ASSERTED ON THE BROADCAST ITSELF, not on head_seq -- same reasoning as mkdir's and move's
+    # broadcast tests above: Sync::SubtreeDelete advances head_seq under next_seq! regardless of
+    # whether anything broadcasts, so a head_seq-only assertion cannot fail for the reason it
+    # exists (mutation-checked -- see the task report).
+    test "delete broadcasts the new head_seq for a childless file" do
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "solo.stl", kind: "file",
+                                 deleted: false, mtime: 0)
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.delete(@user, node_id: node.node_id)
+      end
+    end
+
+    # THE CASCADE'S SEQ COST IS ONE PER NODE, NOT ONE FOR THE WHOLE SUBTREE -- read from
+    # Sync::SubtreeDelete.call rather than assumed. It takes `first_seq = user.next_seq!` once,
+    # then calls `next_seq!` again for every subsequent target, writing one changelog `delete`
+    # entry per node, and returns the LAST seq it minted. A dir plus one child therefore consumes
+    # TWO seqs, and the broadcast must carry the SECOND (last) one -- a nudge with the wrong seq
+    # would under- or over-state head_seq to a device pulling since its own cursor.
+    test "delete of a directory with one child broadcasts the LAST of the two seqs it mints" do
+      dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "bdir", kind: "dir",
+                                  deleted: false, mtime: 0)
+      child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                  name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      before = @user.reload.head_seq
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: before + 2) do
+        adapter.delete(@user, node_id: dir.node_id)
+      end
+      assert_equal before + 2, @user.reload.head_seq, "one seq per node -- dir plus one child"
+    end
+
+    # THE LIVENESS GUARD delete MUST APPLY, MATCHING read/download/stat (see "download raises
+    # NotFound for a deleted node, exactly as read does" above). Without it, a caller could hand
+    # delete a node_id that is ALREADY tombstoned and it would silently re-tombstone -- a second
+    # changelog `delete` entry and a second broadcast, for a node already gone -- rather than
+    # reporting the honest "it's already gone". Mutation-checked: this is the one assertion in the
+    # file that catches live_node! being skipped in favor of a bare find (see the task report).
+    test "delete on an already-deleted node raises NotFound, matching read and download" do
+      id = create_file!(name: "twice.stl", bytes: "b")
+      delete_file!(id)
+      assert_raises(FileLayer::NotFound) { adapter.delete(@user, node_id: id) }
     end
   end
 end

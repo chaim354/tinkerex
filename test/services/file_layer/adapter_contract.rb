@@ -222,41 +222,6 @@ module FileLayerAdapterContract
     end
   end
 
-  # The same pin for delete, so an adapter cannot answer port_writable? false and then refuse
-  # the path anyway — which Phase 4's UI would meet as a 500 rather than a gate.
-  #
-  # MOVE USED TO LIVE IN THIS TEST TOO, asserted right beside delete, and does not any more:
-  # Task 4 gave Chunk#move a real implementation, so port_writable? no longer predicts anything
-  # about it — move now attempts the op on EVERY backend, chunk included, exactly as share/s3
-  # always did (pinned across all three by adapter_mutation_contract.rb's
-  # test_mutation_contract_move_keeps_the_node_id, and directly in chunk_test.rb, which does not
-  # include that shared module yet). mkdir made the identical exit at Task 3 and was never added
-  # here either — once a verb stops being gated by port_writable?, the shared MUTATION contract is
-  # where it gets pinned, not this port_writable-conditional one.
-  #
-  # Naming Sync:: classes in a shared contract is a chunk-specific fact, and it is here for the
-  # reason test_contract_scannable_... gives above: a FALSE half can only be pinned by an adapter
-  # that answers false, and Chunk is the only one running this contract that does.
-  def test_contract_port_writable_agrees_with_what_delete_actually_does
-    op = -> { adapter.delete(@user, node_id: "n1") }
-
-    if adapter.capabilities.port_writable?
-      # The TRUE half needs pinning as much as the false one, and an early `return` here is a test
-      # that cannot fail on two of the three adapters. "n1" exists nowhere, so a port that owns
-      # this path reaches its ordinary liveness check and answers NotFound. The assertion is exact
-      # rather than incidental: NotImplementedError is a ScriptError, NOT a StandardError, so an
-      # adapter that refuses cannot be mistaken for one that merely didn't find the node — it
-      # blows straight through assert_raises and errors the test.
-      assert_raises(FileLayer::NotFound, "port_writable? is true, so delete must not refuse " \
-                                         "the path — it must look for the node") { op.call }
-      return
-    end
-
-    err = assert_raises(NotImplementedError) { op.call }
-    assert_match(/#{Regexp.escape(Sync::SubtreeDelete.name)}/, err.message,
-                 "a refusal must name the door delete actually uses")
-  end
-
   # `presignable` PINNED AGAINST WHETHER A URL IS ACTUALLY REACHABLE — Landmine 1, and the exact
   # capability §9a-3 predicted would drift ("answered statically, but a property of the store").
   #

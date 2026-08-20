@@ -580,47 +580,27 @@ class FilesController < ApplicationController
 
   # DELETE /files/:id — remove the file from the library, however THIS deployment holds it.
   #
-  # THE SAME BRANCH THE UPLOAD MAKES, ON THE SAME CAPABILITY, AND FOR THE SAME REASON: a delete
-  # is a write, so `port_writable` — "which door do bytes go in?" — already answers it. The read
-  # contract pins that answer to what the adapter really does (Task 1's
-  # test_contract_port_writable_agrees_with_what_delete_actually_does -- renamed at Task 4, when
-  # move stopped being part of the same pin), so this is not an inference: false here means
-  # Chunk#delete raises, true means the port implements it.
+  # ONE DOOR since Stage 2. This branched on port_writable? -- a third of CLAUDE.md 14d's five
+  # copies -- because the port refused delete in chunk mode: Chunk#delete now goes through the
+  # sync engine itself (Sync::SubtreeDelete.call, under Chunk#delete), so every backend answers
+  # this ONE call to FileLayer.current.delete, the same as mkdir/move before it.
   #
-  # THE TOMBSTONE IS ONLY HALF A DELETE, AND ON SHARE/S3 THE WRONG HALF ALONE UNDOES ITSELF. This
-  # action used to call Sync::Mutation unconditionally. In chunk mode that IS the delete — the
-  # bytes are the sync engine's and the tombstone is the whole truth. On share/s3 the bytes are a
-  # file on the user's NAS or an object in their bucket, and a tombstone does not move them: the
-  # file stays exactly where it was, THE NEXT SCAN OBSERVES IT, and Reconciler#create_or_revive!
-  # revives the tombstone by storage_path. The user deletes a file, watches it disappear, and it
-  # comes back within the scan interval. Verified before this fix.
+  # THE TOMBSTONE ALONE IS ONLY HALF A DELETE ON SHARE/S3, AND THE PORT IS WHAT HOLDS BOTH HALVES
+  # TOGETHER. On share/s3 the bytes are a file on the user's NAS or an object in their bucket, and
+  # a bare tombstone does not move them: the file stays exactly where it was, the next scan
+  # observes it, and Reconciler#create_or_revive! revives the tombstone by storage_path. Share#delete
+  # and S3#delete move the bytes to `.trash` FIRST and tombstone after, which is what makes that
+  # revive unable to fire. On chunk, Sync::SubtreeDelete IS the whole delete: the bytes belong to
+  # the sync engine and the (cascaded) tombstone is the whole truth.
   #
-  # FileLayer#delete is the whole delete: it moves the bytes to `.trash/<node_id>/<name>` FIRST
-  # and tombstones after (2b's order — reversed, a failed move leaves a tombstone the scan
-  # resurrects), and NULLs storage_path, which is what makes that revive unable to fire and what
-  # makes `undelete` the only way back. See TrashController, which is the other end of it.
-  #
-  # THE CHUNK BRANCH IS Sync::SubtreeDelete, NOT Sync::Mutation.apply(op: "delete"), AND THE
-  # DIFFERENCE IS A DIRECTORY'S CHILDREN. Mutation tombstones only the node it is handed, so on a
-  # directory it orphans the descendants: /v1/tree serves children pointing at a deleted parent
-  # (reproduced), while a changelog-following device drops the whole subtree client-side -- the two
-  # views diverge. The Delete button IS rendered for directories, so this is the ordinary path, not
-  # an edge. SubtreeDelete cascades under one lock and, on a childless file, collects exactly one
-  # node and does the identical single tombstone. V1::NodesController#destroy has always used it;
-  # this action had the copy that did not, which is exactly what Chunk::DELETE_MSG names as the
-  # right door -- three lines above a branch that used the wrong one.
-  #
-  # No broadcast on the port branch: there is no changelog to advance and no devices to nudge
-  # (syncable: false). Both sync-engine doors return a seq -- SubtreeDelete returns the LAST one
-  # it minted, which is the one that leaves head_seq where the nudge must point.
+  # A DIRECTORY is refused on share/s3 and cascades on chunk. That is `dir_deletable`, and the
+  # refusal arrives as UnsupportedOperation, which this controller already maps to 422. The Delete
+  # button IS rendered for directories, so this is the ordinary path, not an edge -- on chunk it is
+  # Sync::SubtreeDelete cascading under one lock, never Sync::Mutation.apply(op: "delete"), which
+  # tombstones only the node it is handed and would orphan a directory's children.
   def destroy
     node = current_user.nodes.find_by!(node_id: params[:id])
-    if capabilities.port_writable?
-      FileLayer.current.delete(current_user, node_id: node.node_id)
-    else
-      seq = Sync::SubtreeDelete.call(user: current_user, node:)
-      LibraryChannel.broadcast_change(current_user, seq)
-    end
+    FileLayer.current.delete(current_user, node_id: node.node_id)
     redirect_to files_path, notice: "Deleted #{node.name}."
   end
 
