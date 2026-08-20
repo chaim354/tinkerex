@@ -111,6 +111,32 @@ module ActiveSupport
       end
     end
 
+    # Run a block with Sync::Hooks' subscriber list swapped out (Stage 3a Task 4).
+    #
+    # Sync::Hooks.subscribers is a class-level ivar that config/initializers/sync_hooks.rb
+    # populates ONCE at boot, so it OUTLIVES any single test in this worker process — a test that
+    # wants to fault-inject a raising subscriber, or assert "no subscribers registered" behaviour,
+    # cannot get there with a bare `Sync::Hooks.reset!`: that would silently break every LATER
+    # test in this worker that depends on the real subscriber (e.g. sync_flow_test.rb's
+    # "eagerly enqueues a thumbnail"), for a reason nothing in that later test's own file could
+    # explain. Same class of leak `pin_file_layer_backend` above exists to prevent, one line up.
+    #
+    # BLOCK-SCOPED rather than setup/teardown: unlike the backend pin, which every test in a
+    # chunk-shaped file needs identically, these tests want precise control of exactly when a
+    # fault-injecting subscriber is present, often for only part of one test method. `ensure`
+    # restores the prior list — captured by VALUE (`.dup`) into a local, not an ivar, so nothing
+    # here depends on (or interferes with) whether the caller also touches `@file_layer_backend_*`
+    # — whether or not the block raises, so a failing assertion inside the block still leaves the
+    # next test in this worker with the real subscriber(s) registered.
+    def pin_sync_hooks_subscribers
+      prior = Sync::Hooks.subscribers.dup
+      Sync::Hooks.reset!
+      yield
+    ensure
+      Sync::Hooks.reset!
+      prior.each { |subscriber| Sync::Hooks.on_commit_finalized(&subscriber) }
+    end
+
     # Simulates a genuinely CONCURRENT writer landing the identical (user, attachable_type,
     # attachable_id, node_id) row an instant before this block's own create_or_find_by! attempts
     # to insert it — the race Task 9a's follow-up (RecordNotUnique -> "treat it as already

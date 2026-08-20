@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Measure: a measuring click is enough to print that one part**)
+**Updated:** 2026-08-20 (**Stage 3a: the sync engine is separable — every bidirectional dependency resolved, in place**)
 
 ## What this file is
 
@@ -57,6 +57,100 @@ reading the last entry.
   it writes nothing, on purpose — so its "would file" answer is optimistic whenever the
   destination folder already holds a same-named file. Not a gap to close; it is what
   "writes nothing" costs.
+
+---
+
+## Latest (2026-08-20): Stage 3a — the sync engine becomes separable, without moving a file (branch `claude/stage-3a-decouple`)
+
+**Plan:** `docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md`. **Boundary design:**
+`docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md`. Invariants: **CLAUDE.md §14j**.
+
+Stage 3 as the four-stage design framed it — *"`Sync::*` becomes a mountable Rails engine"* — bundles
+two different jobs: **resolving dependencies** and **relocating files**. This arc does only the first,
+in this repo, green on every commit. 3b relocates. The reason to split them is Stage 2's own lesson:
+it widened the port in place first, and Stage 1's extraction then took under an hour because the
+thinking was already done.
+
+**Suite: 2528 → 2552 runs, 9596 assertions, 0F/0E/3 skips, identical across all three
+`LIBRARY_BACKEND` legs.** Nine commits, `bin/ci` green at 7 gates throughout.
+
+### The finding that reframed the work
+
+**The `Sync::` namespace was never the boundary.** The engine's own models are bare top-level
+constants, so every audit built from a `Sync::` grep — including Stage 2's seam guard and the design's
+own "six call sites in five files" — measured one visible slice of a larger graph.
+
+Widening the guard to those names was Task 1. But a review then proved the widening was **wider, not
+stronger**: it matched `:on_const` only, and `user.versions.find_by(...)` emits no const token at all.
+Demonstrated two ways — it would **not** have caught `Node#current_version`, the exact violation
+Task 2 fixed, in a file it was actively scanning; and `sharing/links.rb:41` was a live hit it could
+not see, one line above the `ManifestChunk` const at `:60` that was the only reason that file was
+listed. Tasks 5 and 6 were both going to lean on this guard as their proof of a clean boundary.
+
+It now matches association spellings too. The widening immediately flagged `app/models/user.rb` —
+seven `has_many` declarations to models that move — which is the point: **the single largest
+concentration of host→engine coupling in the app had been sitting unflagged inside the guard's own
+scan set.**
+
+### The four behavioural couplings, which were the real work
+
+- **The engine called host business logic.** `V1::CommitsController#finalize` called
+  `Maker::Previews::Enqueue` and `Maker::ProjectIntakeJob` directly, defended by a comment arguing it
+  was the least-bad layer. `Sync::Hooks` dissolves the dilemma rather than picking a side: the engine
+  publishes, the host subscribes in an initializer. Its "best-effort, never fails the commit" claim
+  turned out to be **unenforced** — nothing rescued around the preview call, so a raise there would
+  have 500'd a commit already durably written. It is literally true now. The engine→maker direction
+  is now **guarded at zero, with no exception list** — a guard that could not have been written
+  before the count reached zero, and is far cheaper to add at that moment than after the next one.
+- **The host could not boot its own v1 API without the engine.** `V1::BaseController` named
+  `Sync::Commit::*` and `Storage::*` at class-definition time, and all fourteen `v1/maker/*`
+  controllers inherit it. Split: auth stays (host), the rescues moved onto `V1::CommitsController`
+  (the only controller that can raise them), and `stash_request_base_url` became a concern two sync
+  controllers include. **The `syncable` gate survived intact** — §14a records that resolving a chunk
+  store on a v1 request once made a share deployment's entire v1 API answer 500. Breaking that gate
+  was mutation-checked and the **pre-existing suite did not catch it**; two tests driving
+  `POST /v1/commit` and `POST /v1/chunks/download` now do, reproducing the original
+  `KeyError: CHUNK_BUCKET`.
+- **`head_seq` is engine state on the host's own row**, and `postgres_pooler_check` — which exists
+  solely to protect its lock — was refusing to boot for share and s3, which have no changelog and
+  never call `next_seq!`. Now gated on `Sync.engine_present?`, the seam 3b replaces. Both halves were
+  tested and **the default parameter wiring them together was not**: severing it left the entire
+  2535-test suite green. Tested now.
+- **`share_links` belongs to the engine**, and `Sync::Gc` is why: `apply_retention!` reads it to
+  protect versions live links point at, so splitting them makes nightly retention **silently destroy
+  the bytes behind URLs users have already shared**. Honest correction to the plan: **that guard
+  already existed** (`gc_test.rb`, 2026-07-15, written for a plain product bug). Verified by mutation
+  rather than duplicated, and now documented as the boundary guard it doubles as.
+
+### Two schema corrections
+
+`lib/schema_map.rb` drew `maker_previews.version_id` and `maker_file_attachments.version_id` as
+references into `versions`. They are not: that column is a backend-polymorphic `content_token`, and
+**`versions` holds zero rows for those nodes on share and s3** — only `Sync::Commit`/`Restore`/
+`Conflicts` ever create one. Deleted rather than relabelled, because a conditional label would
+overstate what survives. Drawing them back would make 3b move two maker tables it must not.
+
+`conflicts` and `file_locks` had **no foreign key to `users`** where every sibling has one, with no
+comment explaining it. Added. Verified the constraint actually bites — SQLite has FK enforcement ON
+here via Rails' default pragmas, confirmed rather than assumed — with a permanent guard on each.
+Postgres is reasoned, not run; this box has no local Postgres.
+
+### Still open, deliberately
+
+`app/models/user.rb` stays on the guard's exception list: its seven `has_many` declarations to moving
+models are the **declaration site**, and relocating them is 3b's job — doing it now means a change
+this repo immediately redoes. `V1::ShareController` keeps its own presign-stash copy, gated on
+`versioned` rather than `syncable`; the two agree on every backend today, which is exactly the "three
+samples, not an identity" shape §14a warns about, so they were left separate on purpose.
+
+### What 3b now faces
+
+Everything in the boundary design §8 — the gem skeleton, `config/recurring.yml`'s split (Solid Queue
+reads one host-owned file and there is no engine-contributed-schedule mechanism),
+`config/initializers/`'s lack of any boundary structure, `dev_blobs_controller.rb`, and the migration
+story for the seven moving tables plus `head_seq`. **3b's step-level plan is still deliberately
+unwritten**, for the reason 3a's own header gives: Stage 2's plan was written from reading and was
+wrong in four places, and 3a changed the code 3b moves.
 
 ---
 

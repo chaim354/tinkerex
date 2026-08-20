@@ -146,6 +146,12 @@ class User < ApplicationRecord
     claim == true || claim.to_s == "true"
   end
 
+  # ENGINE STATE ON THE HOST'S OWN ROW. head_seq and next_seq! belong to the sync engine — they
+  # serialize changelog sequence assignment and mean nothing on share/s3. They stay here through
+  # Stage 3a and move with the engine's migration in 3b; relocating the column now would be a
+  # migration this repo would immediately have to undo. (The boot guard that protects this lock,
+  # lib/postgres_pooler_check.rb, is already engine-conditional as of 3a — see Sync.engine_present?.)
+  #
   # Assign the next per-user changelog sequence. MUST be called inside a transaction, and
   # MUST be the FIRST write in it (before any node/version/changelog insert): locks the user
   # row so concurrent commits from multiple devices get distinct, ordered seqs. Portable —

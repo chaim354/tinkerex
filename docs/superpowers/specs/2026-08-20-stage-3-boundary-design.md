@@ -245,6 +245,44 @@ reproduce is worse than a list.
 
 ---
 
+## 8b. What Stage 3a actually resolved (2026-08-20)
+
+**Every item in §1–§5 above is now done, in the monorepo, without moving a file.** See
+`docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md` and CLAUDE.md §14j. Three of the
+diagnoses above were sharpened by contact with the code, and 3b should read these rather than the
+original wording:
+
+- **§1's `share_links` recommendation was right, and its guard already existed.** `gc_test.rb` has
+  carried "tiered retention keeps a version referenced by a live share link" since 2026-07-15,
+  written for a plain product bug. 3a verified it by mutation rather than duplicating it.
+- **§4's `head_seq` item had a second half nobody had named**: both `Sync.engine_present?` and
+  `probe?` were tested, and the **default parameter wiring them together was not** — severing it left
+  the whole suite green. Test the wire, not only the ends.
+- **§3's `V1::BaseController` split has a trap §14a already records**: breaking the `syncable` gate on
+  `stash_request_base_url` was **not** caught by the pre-existing suite. Two tests driving
+  `POST /v1/commit` and `POST /v1/chunks/download` now reproduce the original `KeyError: CHUNK_BUCKET`.
+
+**§6's corrected table stands**, with one addition 3a proved: `maker_previews.version_id` and
+`maker_file_attachments.version_id` are not merely *conditional* edges into `versions` — **`versions`
+holds zero rows for those nodes on share and s3**, since only `Sync::Commit`/`Restore`/`Conflicts`
+ever create one. They were deleted from `lib/schema_map.rb`, not relabelled.
+
+**Still open for 3b:** `app/models/user.rb`'s seven `has_many` declarations to moving models (the
+declaration site — relocating them now is a change this repo immediately redoes), and everything in
+§8 — **plus two files §8 does not name**, both found by 3a's close-out review:
+
+- **`lib/tasks/chunks.rake`** references `Sync::ChunkReaper` and `Sync::PendingCommitReaper`. It is
+  sync-only and moves with the engine, and **no guard covers it**: every architecture scan in this
+  repo is scoped to `app/**`, so `lib/` is unwatched territory. `lib/tasks/previews.rake`,
+  `projects.rake` and `lbrn.rake` are the maker counterparts and stay.
+- **`lib/postgres_pooler_check.rb`'s own home is undecided.** 3a gated its *caller* on
+  `Sync.engine_present?`, which implies the host-side boot guard survives — but the file protects
+  engine-owned state (`next_seq!`'s row lock). Decide explicitly whether it moves into the gem or
+  stays host-side consulting the engine's public answer; the seam works either way, and discovering
+  the question mid-extraction is worse than answering it now.
+
+---
+
 ## 9. Recommendation
 
 **Do not write a Stage 3 implementation plan from the parent design as it stands.** Amend §1's

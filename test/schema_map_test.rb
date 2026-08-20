@@ -72,6 +72,20 @@ class SchemaMapTest < ActiveSupport::TestCase
     assert_empty SchemaMap::EDGES.select { |_f, to, _k, _l| to == "users.id" }
   end
 
+  # Correction, 2026-08-20: this map used to draw both columns as edges into `versions.version_id`
+  # ("pinned" / "rendered from"), which was factually wrong on two of three deployments -- the
+  # column is a backend-polymorphic content_token (a real version UUID on chunk, a content hash on
+  # share/s3; see the comment beside their entries in SchemaMap::EDGES and FileLayer::FileInfo).
+  # `problems` cannot catch a reintroduction of this: `versions.version_id` is a real column, so a
+  # revived edge would parse cleanly and pass every check that method runs. This is the only guard
+  # against it coming back.
+  test "the two maker version_id columns are not drawn as edges into versions" do
+    refute SchemaMap::EDGES.any? { |from, to, _k, _l|
+      %w[maker_file_attachments.version_id maker_previews.version_id].include?(from) &&
+        to == "versions.version_id"
+    }
+  end
+
   private
 
   def column(table, name)
