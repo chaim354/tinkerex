@@ -54,6 +54,13 @@ a fold, or any branch from its neighbour.** So for every task from here on:
    until it goes red, then record the observed failure text in a comment. Deviating from the
    plan's literal test data to do this is expected and correct — say so in your report.
 
+**`assert_selector … text:` IS A SUBSTRING MATCH.** Measured in Task 10: with the plan's literal
+readout assertions, dropping *both* plural ternaries **and** `clearMarks`' `this.marked.clear()`
+left the whole file green, because `"1 part"` is a substring of `"11 parts"` and of the stale
+count. Use **`exact_text:`** for anything whose whole value is the claim. (`text: /regex/` is a
+different code path and does match — but see §14e: `assert_select "[attr=?]", /regex/` on an
+ATTRIBUTE builds an equality selector and can never pass.)
+
 ### The payload shape you will be working with
 
 ```js
@@ -1682,8 +1689,11 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
     open_measure_view(@nested_id)
     click_on "Select parts"
 
-    plate = contour_with_min_x(-30)
-    plate.click
+    # NOT `contour_with_min_x(-30).click` — Selenium refuses it. The plate's bbox centre IS the
+    # fixture's shared centre, where the hole is painted on top, so the click is intercepted
+    # ("Other element would receive the click"). Use the offset-click idiom lbrn_measure_test.rb
+    # already uses on this fixture: click a quarter of the element's width right of centre.
+    plate = click_plate
     assert_selector ".measure-contour--marked", count: 1
     assert_selector ".measure-dims", text: "1 part"
 
@@ -1722,8 +1732,11 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
     open_measure_view(@nested_id)
     click_on "Select parts"
 
-    plate = contour_with_min_x(-30)
-    plate.click
+    # NOT `contour_with_min_x(-30).click` — Selenium refuses it. The plate's bbox centre IS the
+    # fixture's shared centre, where the hole is painted on top, so the click is intercepted
+    # ("Other element would receive the click"). Use the offset-click idiom lbrn_measure_test.rb
+    # already uses on this fixture: click a quarter of the element's width right of centre.
+    plate = click_plate
 
     assert plate[:class].include?("measure-contour--marked"), "it must be in the print set"
     assert plate[:class].include?("measure-contour--selected"), "and it must be the one being read"
@@ -1739,10 +1752,11 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
   # inverts — flipping each contour individually would leave the object half in the print set,
   # which is never what clicking the object meant.
   #
-  # DRIVEN DIRECTLY, because neither fixture has a multi-contour object: nested-plate.lbrn2 is one
-  # Rect plus one Path and bezier-circle.lbrn2's two shapes are separate objects. A LightBurn Text
-  # would give one (its BackupPath reuses its parent's object id), and adding that fixture is the
-  # honest upgrade if this rule ever grows more cases. What is asserted here is the rule itself.
+  # DRIVE THIS WITH REAL CLICKS, NOT BY CALLING toggleMarks. An earlier draft of this plan said no
+  # fixture has a multi-contour object — that is FALSE: `text-backup-path.lbrn2` is exactly that
+  # fixture and its own header says so (a Text's BackupPath reuses its parent's object id). Use it.
+  # Real clicks additionally kill two mutations a direct call cannot see: `altKey` dropped from
+  # `useObject`, and the selecting arm reporting the contour instead of the object union.
   test "widening to an object completes it rather than inverting it" do
     open_measure_view(@nested_id)
     click_on "Select parts"
