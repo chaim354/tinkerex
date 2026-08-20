@@ -1654,6 +1654,19 @@ git commit -m "feat(measure): select/print controls and the print-set highlight"
 
 ## Task 10: Selection mode in the controller
 
+> **From Task 9's review — clicking a not-yet-wired control logs a SEVERE console error.** Stimulus
+> resolves an action's method only at dispatch, so the four controls added in Task 9 emit
+> `Error: Action "click->measure#toggleSelect" references undefined method "toggleSelect"` until
+> the method lands. That is **loud**, unlike the silent `data-controller` no-op §14d records. It
+> means a test here that clicks a control this task has not yet wired **and** calls
+> `assert_no_console_errors` fails for that reason rather than its own. Wire before you click.
+>
+> **Also from Task 9:** a marked BITMAP shows almost nothing — `.measure-bitmap` follows `--marked`
+> at equal specificity, so only `stroke-width` moves (1px → 2px) and the grey stroke and fill stay.
+> Bitmaps are clickable (`contourNode` sets `__shape` on them), so `nodeByShape` will include them
+> and they are legitimate print-set members. Pre-existing pattern (`--selected` on a bitmap is the
+> same), and no fixture has a bitmap — so decide whether to care, don't discover it later.
+
 **Files:**
 - Modify: `app/javascript/controllers/measure_controller.js`
 - Test: `test/system/measure_print_test.rb`
@@ -1753,9 +1766,16 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
   test "Clear empties the set" do
     open_measure_view(@nested_id)
     click_on "Select parts"
+    # HIDDEN WHILE THE SET IS EMPTY, and this is the only assertion anywhere that says so. The
+    # `hidden` attribute alone does nothing to a `.btn` — `.btn { display: inline-block }` outranks
+    # the UA rule — so `.measure-actions .btn[hidden]` exists to make it real. Without this line
+    # that CSS rule can be deleted and every test in the plan stays green forever.
+    assert_selector "[data-measure-target='clearButton']", visible: :hidden
+
     contour_with_min_x(-30).click
     contour_with_min_x(-5).click
     assert_selector ".measure-contour--marked", count: 2
+    assert_selector "[data-measure-target='clearButton']", visible: :visible
 
     click_on "Clear"
 
