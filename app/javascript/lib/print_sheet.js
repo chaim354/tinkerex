@@ -153,14 +153,25 @@ export function renderSheet(doc, page, meta) {
   }))
   svg.appendChild(clip)
 
+  // TWO NESTED GROUPS, AND THE NESTING IS THE WHOLE POINT — DO NOT COLLAPSE THEM INTO ONE.
+  //
+  // `clipPathUnits` defaults to `userSpaceOnUse`, and that means the user space of the element
+  // that REFERENCES the clip — not the page. So putting `clip-path` and `transform` on one group
+  // makes the clip window move WITH the geometry instead of staying on the paper. Verified in
+  // Chrome by hit testing, not reasoned: with both on one group, a point inside the content box
+  // is not painted at all. On this repo's own nested-plate fixture the sheet prints a 20 x 3 mm
+  // scrap of one corner; for an ordinary laser file whose parts sit at POSITIVE coordinates the
+  // translate is negative, the window lands off-paper entirely, and THE WHOLE SHEET PRINTS BLANK.
+  // No error, nothing logged, on a page that is otherwise perfectly formed.
+  const clipped = el(doc, "g", { "clip-path": `url(#${clipId})` })
   // ONE TRANSFORM FOR THE WHOLE PAGE, not one per shape: parts keep their relative positions
   // because they are all moved by the same amount.
   const group = el(doc, "g", {
-    "clip-path": `url(#${clipId})`,
     transform: `translate(${page.translateX} ${page.translateY})`,
   })
   for (const shape of page.shapes) group.appendChild(contourNode(doc, shape))
-  svg.appendChild(group)
+  clipped.appendChild(group)
+  svg.appendChild(clipped)
 
   return svg
 }
@@ -182,8 +193,17 @@ function contourNode(doc, shape) {
   return el(doc, shape.k ? "polygon" : "polyline", attrs)
 }
 
-function el(doc, tag, attrs) {
+function el(doc, tag, attrs, text) {
   const node = doc.createElementNS(SVG_NS, tag)
-  for (const [ key, value ] of Object.entries(attrs)) node.setAttribute(key, value)
+  for (const [ key, value ] of Object.entries(attrs)) {
+    // A null or undefined value writes the literal string "undefined". Sheet furniture is full of
+    // conditional attributes, so skip here rather than making every call site remember.
+    if (value != null) node.setAttribute(key, value)
+  }
+  // THE TEXT DOOR EXISTS SO `textContent` IS THE ONLY SPELLING AVAILABLE. The header carries a
+  // library filename — user-controlled, and legitimately able to contain `<` on a NAS-scanned
+  // share — so building it as markup is an injection into a same-origin iframe. Four call sites
+  // each remembering that rule is four chances to forget; one door is none.
+  if (text != null) node.textContent = text
   return node
 }

@@ -46,6 +46,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
     @nested_id = @user.nodes.find_by!(storage_path: NESTED).node_id
     @apart_id  = @user.nodes.find_by!(storage_path: APART).node_id
     render_geometry!(@nested_id, NESTED)
+    # @apart_id AND ITS PAYLOAD ARE HELD FOR THE TASKS 9-12 TIER — the end-to-end tests that drive
+    # real clicks against a real payload. Nothing in the module tier reads it, so it looks unused
+    # until that tier lands; it is rendered here rather than in a second setup because one class
+    # gets one setup. If that tier is ever dropped, drop these lines with it.
     render_geometry!(@apart_id, APART)
   end
 
@@ -471,11 +475,21 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
   # ---- lib/print_sheet.js: rendering -----------------------------------------------------------
   #
-  # NOT ASSERTED HERE, DELIBERATELY: whether the <clipPath> this renderer builds actually CLIPS.
-  # It is built and referenced below and its rect shows up in every outerHTML these tests print,
-  # but a clip only does anything once the page is laid out, which is Task 5's assertion and needs
-  # the sheet attached to a document. What IS pinned here is everything that decides the sheet's
-  # size and what is drawn on it.
+  # ONLY THE CLIP'S EFFECTIVENESS WAITS FOR TASK 5 — everything else about it is pinned here, and
+  # the earlier version of this comment deferring the whole subject is what let a Critical bug
+  # ship. `clip-path` and `transform` were on ONE group, so userSpaceOnUse resolved the window in
+  # the TRANSLATED space and it travelled with the geometry: on this file's own nested-plate
+  # fixture the sheet prints a 20 x 3 mm scrap of one corner, and for an ordinary laser file at
+  # positive coordinates it prints BLANK. Twenty-four mutations could not see it, because the clip
+  # was not asserted at all — deleting the <clipPath> element AND the clip-path attribute outright
+  # left the whole suite green. The rect equalling contentBox, the reference matching the id, and
+  # the nesting are all assertable WITHOUT layout, and now are.
+  #
+  # STILL UNEXERCISED, AND TASK 6 OWNS IT: `el`'s two new doors — the nullish attribute guard and
+  # the `text` parameter — have no caller in this task, so both were mutation-checked and both came
+  # back GREEN (19 runs, 132 assertions, 0 failures) with the guard and the door deleted in turn.
+  # That is not a weak input this tier can strengthen; it is a code path Task 4 never walks. Task 6
+  # adds the four <text> call sites the door exists for, and must pin both there.
 
   # The plan's render input: a 60 x 40 closed part at the origin, kept because the two scale
   # assertions want a part whose dimensions ARE the numbers being asserted.
@@ -506,7 +520,11 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #   both pairs hard-coded        RED on the A4 block, `to include "width=\"210mm\""`
   #   width/height swapped         width="279.4mm" height="215.9mm"
   #   viewBox extents swapped      viewBox="0 0 279.4 215.9"
-  #   viewBox spans the CONTENT    viewBox="0 0 195.9 259.4"
+  #   viewBox spans the CONTENT    viewBox="0 0 195.9 230.39999999999998" — the float tail is the
+  #                                giveaway that it came off contentBox. An earlier draft of this
+  #                                row quoted 195.9 x 259.4, which is the PRINTABLE box (paper less
+  #                                margins, no strips) — a different mutation, and the label and
+  #                                the number disagreed.
   #   createElement, no namespace  viewbox="0 0 215.9 279.4" — setAttribute lowercases the name on
   #                                an HTML-namespace element, so the camel-cased literal is what
   #                                notices the elements are not SVG at all
@@ -572,6 +590,54 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_in_delta 50.0, xs.max - xs.min, 0.001, "the two parts are 50 mm apart in the file"
   end
 
+  # THE CLIP IS PINNED AT STRING LEVEL HERE; ONLY ITS EFFECTIVENESS WAITS FOR TASK 5. Deleting
+  # the <clipPath> element AND the clip-path attribute outright left the whole suite green — which
+  # is exactly how a clip built in the wrong coordinate space survived 24 mutations. Neither claim
+  # below needs layout: the rect must equal contentBox(paper), and the group must name the id the
+  # clipPath actually carries (`clipId` is spelled twice, and a one-sided edit is silent — this
+  # repo's own N-copies-that-must-agree shape).
+  #
+  # THE NESTING IS ALSO ASSERTED, because it is load-bearing rather than stylistic: the clip must
+  # sit on an UNTRANSFORMED ancestor. Collapse the two groups and userSpaceOnUse resolves the
+  # window in the translated space, so it travels with the geometry and the sheet prints blank.
+  #
+  # MUTATION-CHECKED FIVE WAYS, each failing a DIFFERENT one of the four assertions:
+  #
+  #   the two groups collapsed      clippedHasTransform — THE SHIPPED BUG, and this line is the
+  #     back into one                 only thing in the file that sees it
+  #   the clip removed entirely     RuntimeError: ERROR: Cannot read properties of null (reading
+  #     (element and attribute)       'getAttribute') — an error rather than a failure, because
+  #                                   `clipPath rect` is then null; red either way, and the whole
+  #                                   suite was GREEN through this before the test existed
+  #   rect = the PRINTABLE box      rect — Expected: [10, 17, 195.9, 230.4] Actual:
+  #     instead of contentBox         [10, 10, 195.9, 259.4]
+  #   `url(#${clipId}-content)`     refMatchesId — the one-sided edit of a twice-spelled id
+  #   the transform deleted         transformInside (and the transform test below)
+  test "the clip is a content-box rect on an untransformed ancestor of the moved geometry" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        const rect = svg.querySelector("clipPath rect")
+        const clipped = svg.querySelector("[clip-path]")
+        return JSON.stringify({
+          rect: [ "x", "y", "width", "height" ].map((a) => Number(rect.getAttribute(a))),
+          refMatchesId: clipped.getAttribute("clip-path") ===
+                        `url(#${svg.querySelector("clipPath").id})`,
+          // The clipping element must carry NO transform of its own...
+          clippedHasTransform: clipped.hasAttribute("transform"),
+          // ...and the transform must live on a descendant of it.
+          transformInside: clipped.querySelector("[transform]") !== null,
+        })
+      })()
+    JS
+
+    assert_equal [ 10, 17, 195.9, 230.4 ], out["rect"].map { |v| v.round(4) }
+    assert out["refMatchesId"], "the group must name the id the clipPath actually carries"
+    refute out["clippedHasTransform"], "userSpaceOnUse resolves in the referencing element's space"
+    assert out["transformInside"], "the page transform belongs on a descendant of the clip"
+  end
+
   # THE CONTOURS ARE BUILT FRESH FROM shape.p, NEVER CLONED FROM THE SCREEN. A clone would drag
   # the transparent fat hit-twin (.measure-contour--hit), the hover/selected/marked classes and
   # the layer colour onto paper — a printed sheet with an 8-unit-wide invisible stroke on it.
@@ -617,6 +683,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # AND FOUR MORE, all RED here: always "polygon" ["polygon", "polygon"]; the ternary inverted
   # ["polyline", "polygon"]; emitting only the first shape ["polygon"]; createElement instead of
   # createElementNS ["POLYGON", "POLYLINE"] — tagName is upper-cased for an HTML-namespace element.
+  # That last one is why stroke-width now has a test of its own rather than a third assertion here:
+  # `assert_equal` stops at the first failure, so it reported `tags` and nothing after it.
   test "an open contour prints as a polyline and a closed one as a polygon" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
@@ -630,19 +698,35 @@ class MeasurePrintTest < ApplicationSystemTestCase
         return JSON.stringify({
           tags: nodes.map((n) => n.tagName),
           points: nodes.map((n) => n.getAttribute("points")),
-          strokeWidth: nodes.map((n) => n.getAttribute("stroke-width")),
         })
       })()
     JS
 
     assert_equal [ "polygon", "polyline" ], out["tags"]
     assert_equal [ "0,0 30,0 30,20 0,20 0,0", "0,0 12.5,20 30,5" ], out["points"]
-    # 0.2 USER UNITS IS 0.2 mm, AND THE BARE NUMBER IS WHAT MAKES THAT TRUE. "0.2mm" is not a
-    # synonym for it: a unit suffix inside an SVG attribute resolves through CSS at 96 dpi, so it
-    # would draw 0.2 * 96 / 25.4 = 0.76 user units — a line nearly four times too fat to cut to,
-    # on a sheet that otherwise still looks entirely right. MUTATION-CHECKED: RED, ["0.2mm",
-    # "0.2mm"], and nothing else in the file asserts stroke-width at all.
-    assert_equal [ "0.2", "0.2" ], out["strokeWidth"]
+  end
+
+  # SPLIT OUT OF THE TEST ABOVE RATHER THAN RIDING ALONG IN IT. `assert_equal` aborts the method at
+  # its first failure, so while this sat third behind `tags` and `points` the createElement
+  # mutation reported the tag names and the other two assertions never ran at all — a stroke-width
+  # regression arriving alongside any other one was invisible. It is a different claim besides:
+  # what a contour is drawn AS, against how thick the line is.
+  #
+  # 0.2 USER UNITS IS 0.2 mm, AND THE BARE NUMBER IS WHAT MAKES THAT TRUE. "0.2mm" is not a synonym
+  # for it: a unit suffix inside an SVG attribute resolves through CSS at 96 dpi, so it would draw
+  # 0.2 * 96 / 25.4 = 0.76 user units — a line nearly four times too fat to cut to, on a sheet that
+  # otherwise still looks entirely right. MUTATION-CHECKED: RED, Actual ["0.2mm", "0.2mm"], and
+  # nothing else in the file asserts stroke-width at all.
+  test "every contour prints as a 0.2 mm line" do
+    widths = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document, m.buildSheets([
+        { b: [0, 0, 30, 20], k: 1, i: 0, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+        { b: [0, 0, 30, 20], k: 0, i: 0, o: 2, p: [[0, 0], [12.5, 20], [30, 5]] },
+      ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon, polyline")).map((n) => n.getAttribute("stroke-width")))
+    JS
+
+    assert_equal [ "0.2", "0.2" ], widths
   end
 
   # THE BITMAP PLACEHOLDER DRAWS DASHED, AND ONLY IT. The base64 is deliberately absent from the
@@ -671,8 +755,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # byte-identical whether the page is translated, translated by the wrong amount, or not
   # translated at all — so deleting the `transform` outright is GREEN through all six of them.
   # The user-visible result is geometry drawn at its raw file coordinates: a bracket at x 500 in a
-  # 600 mm laser sheet lands 490 mm off the right edge of a 215.9 mm page, and the sheet prints
-  # blank. Nothing errors and nothing logs — this repo's dominant failure shape.
+  # 600 mm laser sheet lands 490 mm from where it belongs — 284.1 mm past the right edge of a
+  # 215.9 mm page — and the sheet prints blank. Nothing errors and nothing logs: this repo's
+  # dominant failure shape.
   #
   # A SELECTION OFFSET FROM THE ORIGIN, for the reason Task 3's filter test gives: at (0, 0) the
   # datum shift is a no-op and `translate(10 17)` is indistinguishable from a hard-coded margin.
@@ -692,8 +777,12 @@ class MeasurePrintTest < ApplicationSystemTestCase
   #                                 one of the seven the transform assertion cannot see, since the
   #                                 group still carries exactly the right string)
   #   a <g> per contour             parents:      Expected: 1 Actual: 2
-  #   transform on the root <svg>   parentTag:    Expected: "g" Actual: "svg"  (it draws the same
-  #                                 sheet today and moves Task 6's furniture with the geometry)
+  #   BOTH <g>s dropped and the     parentTag:    Expected: "g" Actual: "svg". Stated as "transform
+  #   transform put on the root                   on the root <svg>" this row was wrong: KEEPING the
+  #   <svg>                                       groups and merely also transforming the root is a
+  #                                               different mutation with rows 1-2's signature
+  #                                               (Actual: nil), so the row would have been proving
+  #                                               nothing the first two rows had not already proved.
   #   only the first shape emitted  contours:     Expected: 2 Actual: 1
   test "one transform moves the whole page and every contour rides on it" do
     out = JSON.parse(in_print_sheet(<<~JS))
