@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-19 (**`Lbrn2#available?` gated on a binary it did not need**)
+**Updated:** 2026-08-20 (**Stage 2: the FileLayer port widens, the maker→sync seam closes**)
 
 ## What this file is
 
@@ -60,7 +60,232 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-19): `Lbrn2#available?` gated on a binary it did not need (branch `claude/background-jobs-containers-diagram-540ed3`)
+## Latest (2026-08-20): Stage 2 — the FileLayer port widens, the maker→sync seam closes (branch `claude/chunk-version-repo-separation-8c3d4c`)
+
+**Design:** `docs/superpowers/specs/2026-08-20-chunk-repo-separation-design.md`. **Plan:**
+`docs/superpowers/plans/2026-08-20-widen-the-file-layer-port.md`. Nine tasks — eight
+implementation, one documentation (this entry).
+
+This is **Stage 2 of a four-stage plan** to move the chunk-based sync engine (`Sync::*`,
+`Storage::*`, the v1 sync API, the twelve Rust crates under `client/`) into its own repo, while
+the maker app keeps chunk storage as one of four pluggable `LIBRARY_BACKEND`s (`chunk` embedded,
+`chunk_remote` against a standalone sync server, `share`, `s3`). Stage 2 went first because it
+needs no new repository, depends on nothing else in the plan, and delivers the design's "clean
+boundary" goal — goal 4 of 4 — entirely on its own. **What's next** at the bottom of this entry
+points at Stages 1, 3 and 4.
+
+### The problem this arc closes
+
+Six maker-layer call sites reached around the `FileLayer` port straight into `Sync::*`, because
+the port *refused* the operation on chunk and each caller branched to the real sync-engine call
+instead of the port answering it:
+
+| File | Called | Because the port refused |
+|---|---|---|
+| `app/controllers/files_controller.rb` | `Sync::Commit.begin`/`.finalize`, `Sync::SubtreeDelete.call` | the two-phase upload, `delete` |
+| `app/controllers/trash_controller.rb` | `Sync::Trash.restore` | `undelete` |
+| `app/services/maker/addons/library_output.rb` | `Sync::Commit.begin`/`.finalize` | the two-phase upload |
+| `app/services/maker/move_node.rb` | `Sync::Mutation.apply(op: "move")` | `move` |
+| `app/services/maker/library_folder.rb` | `Sync::Mutation.apply(op: "mkdir")` | `mkdir` |
+
+In a remote `chunk_remote` deployment (Stage 4) there is no `Sync::*` in the maker app's own
+process to reach — so every one of these was a hole the split could not survive as written.
+**There are now zero**, enforced by a test rather than left as a convention (see "The seam guard"
+below).
+
+### What shipped
+
+| # | | |
+|---|---|---|
+| 1 | `dir_deletable`, the 6th `FileLayer::Capabilities` field | chunk true; share/s3 false — see below |
+| 2 | `Chunk#mkdir`/`#move`/`#delete`/`#undelete` implemented | all four metadata verbs now answer on every backend; only the byte `write` still refuses |
+| 3 | `Chunk#begin_upload`/`#finalize_upload` | the two-phase presigned flow lifted onto the port as its own verbs |
+| 4 | Four of five `port_writable?` branch copies collapsed | `Maker::LibraryFolder#mkdir`, `FilesController#destroy`, `TrashController#restore`, `Maker::MoveNode` all call the port unconditionally now |
+| 5 | `FileLayerMutationContract` (`test/services/file_layer/adapter_mutation_contract.rb`) | mkdir/move/delete/undelete extracted from the write contract, run against all three adapters (chunk included, since Task 7) |
+| 6 | The seam guard, `test/architecture_invariants_test.rb` | asserts the maker layer reaches `Sync::` through `FileLayer::Chunk` alone |
+
+CLAUDE.md §14a and §14d carry the resulting invariants; this entry carries the story.
+
+### `dir_deletable`, and why it is not `syncable`
+
+`FilesController#destroy` used to hide the directory-delete question inside its `port_writable?`
+branch. Once that branch is gone (item 4), it is one call with two right answers depending on the
+backend — the shape CLAUDE.md §14a forbids for any capability. `dir_deletable` is the honest
+expression: **chunk true** (`Sync::SubtreeDelete` cascades the whole present subtree under one
+lock); **share false** (a dir delete would strand children at paths that no longer exist while
+their bytes sit in `.trash`, which the scan refuses to look at); **s3 false** (there is no
+directory and no rename at all — a dir node's key does not exist). It agrees with `syncable` on
+all three backends we have today, which is three samples, not an identity — the same coincidence
+`scannable` was added to stop encoding twice (`is_a?(Share)`, CLAUDE.md §14b).
+
+### The seam guard: Ripper tokens, not a regex
+
+`test/architecture_invariants_test.rb` gained a test that walks every file under `app/**/*.rb`
+outside a glob-derived allowlist (the sync engine's own code, the v1 API, the two reaper jobs and
+`retention_job.rb`, `app/channels/`, and `chunk.rb` itself) and asserts none of them contain a real
+`Sync::` constant reference. "Real" is load-bearing: a first draft used a `/Sync::/` text pattern
+and it **false-positives on `app/jobs/library/trash_purge_job.rb`**, whose `ArgumentError` message
+names `"Sync::Gc"` and `"Sync::ChunkReaper"` in prose, for an operator reading a failed-job log —
+two hits, zero of them real code. The fix reads `Ripper.lex` and matches `:on_const` tokens
+spelling `"Sync"`, because string contents lex as `:on_tstring_content` and comments as
+`:on_comment` — structurally different token types a regex cannot tell apart, however the string
+is quoted or how many lines a comment spans.
+
+Two holes in the detector itself were found by experiment, not by reading, and both failed
+silently (commit `078e853`): it originally required `Sync` to be immediately followed by `::`, so
+`Sync.load_manifests(...)` — a real public method on the `Sync` module itself
+(`app/services/sync.rb`) — lexed as `:on_const` + `:on_period` and sailed through green; and the
+sync-side allowlist matched job files by the filename pattern `*reaper*_job.rb` rather than by the
+real property ("reclaims sync-engine state"), which would have waved a hypothetical
+`app/jobs/bom_link_reaper_job.rb` through on its name alone. Both are fixed and mutation-checked:
+a bare `Sync::Commit` reference planted in `app/services/maker/project_intake.rb` makes the guard
+fail and **name that file**.
+
+The guard carried a temporary `SYNC_SEAM_EXCEPTIONS` allowlist (naming exactly
+`files_controller.rb` and `library_output.rb`) while Task 8's byte path was still in progress, with
+its own comment instructing whoever emptied it to delete the constant rather than leave `[].freeze`
+behind. Task 8 did: the guard is now one flat `assert_empty` over the whole maker layer, no
+allowlist left to maintain.
+
+### Two genuine bugs found and fixed in passing
+
+Task 4's contract work (`FileLayerMutationContract`) came with a test asserting that a **no-op
+move** — same parent, same name — must stay legal on every backend, because chunk's own move
+excludes the node being moved from its own clobber check (mirroring
+`Maker::MoveNode.collision?`'s `except_node_id:`). Run unmodified against Share and S3, it failed
+on both (commit `6e40916`):
+
+- **Share#move** raised `UnsupportedOperation` on a genuine no-op, because `File.exist?(dest)`
+  cannot distinguish "someone else already lives here" from "I am already here" — `dest == src`
+  reads as a clobber. Fixed by comparing the resolved paths, which are unique to one node.
+- **S3#move** had the same gap, and it was worse than an over-refusal: with the check bypassed, a
+  no-op move's destination key is **identical to its source key**, so the existing
+  copy-then-delete-source sequence would have deleted the object's **only copy** immediately after
+  "copying" it onto itself — silent, permanent data loss for a rename that changed nothing.
+  `destination_vacant!` had always run first and refused the destination before the copy-delete
+  sequence could reach it, so the trap was never exercised — a bug accidentally guarding a worse
+  one, which is exactly how it stayed untested. Fixed by short-circuiting on `dest_key == src_key`
+  before any bucket call.
+
+Neither gap was reachable from a production caller today (`Maker::AttachToProject#move` already
+short-circuits on `:already_there`; `Maker::ProjectIntake#place` only ever targets a project's
+root, never its own destination folder) — latent, not live. Recorded because a port verb should
+not depend on its callers to avoid its own gaps, and because the S3 half is the sharper lesson: an
+over-refusal and a data-loss bug can sit on the same line, one hiding the other, until a shared
+contract forces the exact input that separates them.
+
+### Mutation-checks performed
+
+Per §15, every guard this arc touched was broken once and confirmed red before being restored.
+The commit messages carry the specifics; representative ones:
+
+- **`Chunk#delete`** (`9fec91b`): swapping in `Sync::Mutation.apply(op: "delete")` for
+  `Sync::SubtreeDelete.call` turns the cascade test red on the child/grandchild assertions —
+  "the mutation that matters most in the whole plan," per the plan's own Task 5. Dropping the
+  broadcast call turns both broadcast tests red. Skipping the `live_node!` guard is caught only by
+  the purpose-built already-deleted-node test.
+- **`Chunk#undelete`** (`d570ced`): `to_root: false` turns both the orphan test and the
+  non-commutativity test red with `Sync::Trash::ParentDeleted`; dropping the broadcast turns
+  exactly the broadcast test red; returning `nil` instead of a `FileInfo` turns three
+  `chunk_test.rb` assertions red **plus** `TrashController#restore` itself red
+  (`NoMethodError` on `info.name`) — the return value is pinned at both the adapter and the
+  controller layer independently.
+- **The seam guard** (`cef39db`, `73b6dda`): a bare `Sync::Commit` reference added to a maker-layer
+  file makes the guard fail and name that file, in both directions (added to a file already
+  outside the allowlist, and removed from `SYNC_SEAM_EXCEPTIONS` while still in use).
+- **`finalize_upload`'s default-on broadcast** (`f9a5221`): pinned in both directions — a test of
+  only the opt-out (`LibraryOutput`) passes just as well against the worse design (delegate to
+  every caller), so a second test pins the default itself, caught at both the adapter and the
+  controller/integration layer.
+
+### Verification
+
+`bin/rails test` (chunk) and `LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`:
+**2528 runs / 9619 assertions / 0 failures / 0 errors / 3 pre-existing skips — identical on both
+legs**, measured after merging `origin/main` into the branch at close-out. Growth across the arc's
+own commits, each count as measured at the time (starting from Task 5, the first commit whose
+message recorded one): **2482/9486** after `delete` (Task 5) → **2487/9501** after `undelete`
+(Task 6) → **2495/9515** after the seam guard (Task 7) → **2515/9585** after the byte path
+(Task 8) → **2517/9589** after the three review-driven fixes in `f9a5221` → **2518/9594** after
+the close-out review's New Folder 500 fix (`9ba935b`).
+
+**THE ARC'S OWN DELTA IS 2459 → 2518**, +59 runs. The 2528 above is that plus the ten tests
+`origin/main` gained while this branch was open (PRs #198/#199 — a schema map, a background-jobs
+diagram, and a LightBurn `available?` fix), merged in to resolve a docs-only conflict in this file
+and CLAUDE.md. Both numbers are stated because only the first is attributable to this work, and a
+single figure here would silently claim credit for the other ten. `bin/ci`'s own gate list
+and count are unchanged by this arc (eight gates; the s3 leg needs its five `LIBRARY_S3_*` stub
+knobs, see CLAUDE.md §13).
+
+`git diff --stat` from the pre-arc merge point (`6529113`) over `app/` and `test/`: **24 files
+changed, 2035 insertions(+), 359 deletions(-)**. `chunk_test.rb` alone grew to 47 `test` blocks;
+`adapter_mutation_contract.rb` is new, with 9 shared test methods run against all three adapters.
+
+### Left open, deliberately — none of these were fixed here
+
+1. **`Sync::Trash.restore` has no collision check.** On chunk, a revive can land two live nodes
+   sharing one `(parent_node_id, name)` — share and s3 both refuse that clobber inside their own
+   `#undelete`. Pre-existing (the same hole existed when `TrashController` called
+   `Sync::Trash.restore` directly), not introduced by moving the call behind the port. Closing it
+   changes sync-engine semantics the device API (`V1::TrashController`) also depends on, which is
+   its own decision — not a rider on a refactor whose job was only to change *where* the call is
+   made. Recorded in `Chunk#undelete`'s own comment (CLAUDE.md §14a).
+2. **Undeleting an already-live node diverges by backend.** Idempotent success on chunk
+   (`Sync::Trash.restore` early-returns `[node, nil]`); `FileLayer::NotFound` on share/s3 (their
+   lookup is scoped `deleted: true`, and there are no `.trash` bytes to move back for a node that
+   never left). A double-click on Restore reads "Restored X." on one backend and "Couldn't restore
+   that item." on the others two. Structural, not arbitrary — unifying it means either chunk
+   raising about a file that IS restored, or share/s3 claiming a byte move they never performed.
+3. **Addon saves still never nudge live devices.** `Maker::Addons::LibraryOutput` passes
+   `finalize_upload(..., broadcast: false)`, preserving what addon saves have always done. That
+   asymmetry is pre-existing and stays — turning it on would start notifying every device of every
+   addon save, a real user-visible behaviour change out of scope for a refactor. It is now at
+   least stated out loud in the port itself, where before it was implicit in which caller happened
+   to skip the nudge.
+4. **A latent test-hygiene hazard, found while fixing its own instance.** Task 8 discovered (and
+   fixed, in `chunk_test.rb` only) that `MemoryChunkStore`'s root, `tmp/dev-chunks[-N]`, **survives
+   across separate `bin/rails test`/`bin/ci` invocations** (`Storage::ChunkStore.reset!` in setup
+   clears only the memoized store instance, never the files already written), while the test DB's
+   `user_id` sequence **restarts low** on every `db:test:prepare`. Two runs apart, an earlier run's
+   user can reuse the same integer id a later run's fresh `@user` gets, and `store.exists?(user_id,
+   hash)` keys on exactly that pair — so a fixed, low-entropy literal hash (`"a" * 64` and
+   friends) can silently start reading as "already present" once some earlier run wrote
+   `chunks/<reused-id>/<that-literal>` to disk. `chunk_test.rb`'s own new tests were fixed to use
+   `SecureRandom.hex(32)` throughout. **The same pattern is still live in two pre-existing files
+   this arc did not touch** — `test/services/sync/commit_test.rb` (literal hashes at, among other
+   lines, 20–21, 39, 55, 168, 180, 197; `manifest_of`'s `format("%064x", salt + i)` helper is
+   equally deterministic) and `test/integration/v1/sync_flow_test.rb` (lines 51, 59, 63, 113, 138,
+   153). Neither file is part of the `FileLayer` port this arc widened, so fixing them was left
+   alone rather than folded into an unrelated task; `rm -rf tmp/dev-chunks*` before a suspicious
+   local run is the standing workaround (`test/system/README.md` already carries the same warning
+   for the system suite).
+
+### CLAUDE.md corrections landed alongside
+
+Two stale claims the design's own measurement pass found, unrelated to the port work but recorded
+in the same branch per §15: **§4** claimed no `client/fs-fskit` crate existed on `main` — it does
+(`f40c101`), though its Swift mount extension is still stubbed pending a paid Apple Developer
+account, so "not a shipping mount path" is the corrected claim, not "does not exist." **§8**
+described a single-use pairing code as how a device joins a library; that mechanism was dropped
+(`device_pairings`, migration `18c623a`, June 2026 — well before this arc) in favor of
+`POST /v1/devices/login` (email + password → device token), which the route's own comment says
+*"Replaces the pairing-code flow."* §12 item 1 repeated the same stale pairing-code claim and is
+corrected with it.
+
+### What's next: Stages 1, 3, 4
+
+The design doc's remaining stages, none started here: **Stage 1** moves `client/`'s twelve Rust
+crates and their four CI workflows to a new `tinkerex-client` repo (needs no code change, cuts
+~36k lines from this repo). **Stage 3** moves `Sync::*`, `Storage::*`, `LibraryChannel`, the v1
+sync API and the three reaper jobs into a mountable Rails engine, `tinkerex-sync`, with the maker
+app mounting it — chunk mode keeps working in-process throughout, unchanged. **Stage 4** adds a
+thin standalone host app for that engine and `FileLayer::ChunkRemote` in the maker app, making the
+maker app a sync client of its own changelog. Both Stage 1 and Stage 3/4 require creating or
+pushing to new repositories — outward-facing actions needing explicit go-ahead — which is why
+Stage 2 went first from a standing start.
+
+---
+## 2026-08-19: `Lbrn2#available?` gated on a binary it did not need (branch `claude/background-jobs-containers-diagram-540ed3`)
 
 **Suite: 2457 -> 2462 runs, 9441 assertions, 0F/0E/3S, identical across all three `LIBRARY_BACKEND`
 legs. `bin/ci` green (10 gates, ~61 s).**
@@ -131,6 +356,8 @@ alike. Arguably all three want `GeneratePreviewJob::Unsupported` (terminal, and 
 raises when f3d is absent), since `failed` re-enqueues on every `Enqueue` call. Left as-is because it
 is pre-existing, identical across the three, reachable only without resvg, and changing it means
 changing Mage and ThreeMf too — a different arc from making the pair agree.
+
+---
 
 ## 2026-08-19: the 2026-08-19 simplification audit, worked (branch `claude/audit-2026-08-19-fixes`)
 

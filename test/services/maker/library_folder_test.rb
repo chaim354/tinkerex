@@ -2,6 +2,73 @@ require "test_helper"
 
 module Maker
   class LibraryFolderTest < ActiveSupport::TestCase
+    # Same idiom as test/integration/web/page_query_budget_test.rb's count_queries, duplicated
+    # rather than shared: that file's copy is INTEGRATION-test shaped (asserts on a rendered
+    # page), this one's caller measures a plain service call, and the two have no natural common
+    # home that isn't a bigger refactor than this guard is worth.
+    def count_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+          n += 1
+        end
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
+    # THE REGRESSION THIS GUARDS: ensure_segment briefly called FileLayer.current.mkdir
+    # unconditionally, for every segment, including one already in the catalog — correct (every
+    # adapter's mkdir is independently idempotent), but not free: the caller then re-fetched with
+    # find_by!(node_id:) on top of whatever the adapter looked up internally. Measured on a
+    # 2-segment already-exists walk: 2 queries -> 4 on chunk, 2 -> 7 on share/s3 (whose own mkdir
+    # does more internal work — leaf!/parent_dir_rel!/observable! — before its idempotence check
+    # even runs). This lands on synchronous, browser-facing paths that call ensure_path!/
+    # create_child! repeatedly in one request: ModelsController#ensure_folders (once per unique
+    # subfolder in a bulk import) and Maker::ProjectIntake#place (inside the eager nudge, whose
+    # own EAGER_MAX_MOVES cap already treats latency here as tight enough to bound separately).
+    #
+    # ASSERTED AGAINST A MEASURED BASELINE, NOT A LITERAL — CLAUDE.md 15 / page_query_budget_
+    # test.rb's own rule — and the reason is sharper here than "a literal is fragile": the
+    # regression above is UNIFORMLY 2x on chunk (2, 4, 6 for 1/2/3 segments), so a self-consistency
+    # check (does cost scale linearly with segment count?) would stay GREEN under it — chunk's
+    # regressed cost is perfectly proportional, just proportional to the wrong constant. What
+    # actually pins the constant is comparing against an INDEPENDENT oracle: the raw query
+    # ensure_segment's short-circuit itself performs, measured directly rather than assumed. That
+    # oracle costs exactly one query by construction and does not change when ensure_segment's
+    # own implementation regresses, which is what lets it catch a regression a same-code
+    # self-consistency check cannot.
+    #
+    # THE LIMIT OF "INDEPENDENT", STATED HONESTLY: the oracle and the code under test both resolve
+    # through `@user.nodes.present.find_by(...)`, so a change to that SHARED machinery -- an extra
+    # round trip inside the `present` scope, say -- moves both together and this stays green while
+    # absolute cost doubles. Probed, not assumed: baseline/one/three went 1/1/3 -> 2/2/6 with the
+    # assertions still passing. That is tolerable because it is not the regression this guard
+    # exists to catch (the short-circuit going missing, which it does catch), and because such a
+    # change would move every query-count assertion in the suite, page_query_budget_test.rb
+    # included. It is recorded so nobody reads "independent oracle" as stronger than it is.
+    def assert_already_existing_path_costs_one_query_per_segment
+      Maker::LibraryFolder.ensure_path!(@user, %w[q1 q2 q3]) # seed all three, for real, once
+
+      baseline = count_queries do
+        @user.nodes.present.find_by(parent_node_id: nil, name: "q1", kind: "dir")
+      end
+
+      one   = count_queries { Maker::LibraryFolder.ensure_path!(@user, %w[q1]) }
+      three = count_queries { Maker::LibraryFolder.ensure_path!(@user, %w[q1 q2 q3]) }
+
+      assert_equal baseline, one,
+                   "walking one already-existing segment cost #{one} queries; the short-circuit's " \
+                   "own lookup alone costs #{baseline} — anything more means the port was reached " \
+                   "for a segment that already existed"
+      assert_equal baseline * 3, three,
+                   "walking three already-existing segments cost #{three} queries, not " \
+                   "#{baseline * 3} (#{baseline} per segment) — cost must stay exactly " \
+                   "proportional, never grow, as more of the path already exists"
+    end
+
     # Chunk branch: real chunk backend; folders created via Sync::Mutation (changelog entries).
     class ChunkBranch < LibraryFolderTest
       setup do
@@ -23,6 +90,10 @@ module Maker
         again = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
         assert_equal leaf.node_id, again.node_id, "idempotent — same leaf, no duplicate"
         assert_equal 1, @user.nodes.where(name: "Projects", parent_node_id: nil, kind: "dir").count
+      end
+
+      test "walking an already-existing path costs one query per segment, never the port" do
+        assert_already_existing_path_costs_one_query_per_segment
       end
     end
 
@@ -46,6 +117,10 @@ module Maker
 
         again = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
         assert_equal leaf.node_id, again.node_id
+      end
+
+      test "walking an already-existing path costs one query per segment, never the port" do
+        assert_already_existing_path_costs_one_query_per_segment
       end
     end
   end

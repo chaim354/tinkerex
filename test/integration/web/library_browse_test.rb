@@ -114,6 +114,31 @@ module Web
       assert_match(/already exists/i, json["error"])
     end
 
+    # A FILE ALREADY AT THAT NAME, WHICH THE ACTION'S OWN DUPLICATE CHECK CANNOT SEE -- it is
+    # scoped `kind: "dir"`. The port refuses this on all three backends (Stage 2 gave chunk the
+    # cross-kind refusal share and s3 always had), so what reaches the action is
+    # FileLayer::UnsupportedOperation. Until this test existed nothing here rescued it, and the
+    # modal that promises an inline 422 got a 500.
+    #
+    # DRIVEN THROUGH THE REAL REQUEST, not by calling the port: the gap was in the CONTROLLER, so
+    # no adapter suite could ever have found it. §14a records that exact shape for TrashController,
+    # which shipped an uncaught 500 while its own rescue comment already named the case.
+    #
+    # PINNED ON CHUNK ONLY, like every other test in this file, and that is enough HERE because the
+    # rescue is backend-agnostic -- it catches a class the port raises whichever adapter is loaded,
+    # and each adapter's own refusal is pinned across all three in
+    # FileLayerMutationContract#test_mutation_contract_mkdir_refuses_a_cross_kind_collision. Pinning
+    # the other two would need this suite to carry LIBRARY_PATH and the five LIBRARY_S3_* knobs,
+    # which is what the three-leg CI exists to supply.
+    test "create_folder answers 422, not 500, when a FILE already holds the name" do
+      pin_file_layer_backend("chunk")
+      assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
+        post library_folders_path, params: { parent_node_id: @projects, name: "readme.txt" }
+      end
+      assert_response :unprocessable_entity
+      assert_match(/already named/i, json["error"])
+    end
+
     test "create_folder rejects a blank name" do
       pin_file_layer_backend("chunk")
       post library_folders_path, params: { parent_node_id: @projects, name: "  " }

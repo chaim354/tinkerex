@@ -1,4 +1,5 @@
 require "test_helper"
+require "ripper"
 
 # Executes the two "standing tripwire greps" that CLAUDE.md cites as PROOFS of the maker/file-layer
 # boundary (§14a, §14c) and of the capability-gate design (§14a).
@@ -32,6 +33,39 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     end
   end
 
+  # Real `Sync::Something` CODE references in `file` -- constant-path token pairs read off
+  # Ripper's own lexer, not a text match. A text pattern like /Sync::/ cannot tell a real
+  # reference from the same nine characters sitting inside a STRING:
+  # app/jobs/library/trash_purge_job.rb's own ArgumentError message names "Sync::Gc" and
+  # "Sync::ChunkReaper" in PROSE, for an operator reading a failed-job log -- a bare regex
+  # against that file finds two hits, both inside the string, zero of them real (verified before
+  # writing this method). Ripper's lexer emits string content as :on_tstring_content and comment
+  # bodies as :on_comment, never as :on_const, so a real reference and the same text sitting
+  # inside a string or a comment are STRUCTURALLY different token types and cannot be confused,
+  # however the string is quoted or how many lines it spans. This SUBSUMES `offending`'s
+  # hand-rolled comment strip above rather than duplicating it with a second, weaker mechanism --
+  # and it additionally closes a hole that helper never had to face, because nothing in the
+  # chunk-internals grep above happens to collide with a string literal the way "Sync::" does.
+  # ANY REAL `Sync` CONSTANT COUNTS -- deliberately NOT "a `Sync` followed by `::`", which is what
+  # this method required until a review demonstrated the miss. `Sync.load_manifests` and
+  # `Sync.load_version_sizes` are real public singleton methods on the module itself
+  # (app/services/sync.rb), and `Sync.load_manifests(...)` lexes as :on_const + :on_period -- so a
+  # maker-layer file calling one sailed straight through, GREEN, while reaching into the sync
+  # engine every bit as much as `Sync::Commit` does. The adjacency rule also missed `Sync ::Commit`
+  # across a line break, for the same structural reason.
+  #
+  # Dropping the pairing costs nothing and is also the more honest question: there is no legitimate
+  # reason for maker-layer code to name the bare `Sync` constant at all outside the one allowed
+  # door, so "does this file mention Sync?" IS the invariant, and the narrower version was an
+  # implementation detail masquerading as one. Verified against the whole live tree before and
+  # after -- identical offending-file set, identical hit lines, no new noise.
+  def sync_references(file)
+    rel = Pathname.new(file).relative_path_from(ROOT)
+    Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
+      "#{rel}:#{pos.first}" if type == :on_const && str == "Sync"
+    end
+  end
+
   test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
     # CLAUDE.md §14c. The maker layer must not know files are chunks — that is the whole point of
     # the FileLayer port. The ONE legitimate exception is addon-generated output, which has no
@@ -58,6 +92,54 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_match %r{\Aapp/services/maker/addons/library_output\.rb:\d+\z}, hits.sole,
                  "the one permitted chunk-internals reference must live in " \
                  "Maker::Addons::LibraryOutput (the single addon output path), but it is at #{hits.sole}"
+  end
+
+  # Paths that are NOT "the maker layer" for THIS guard, and so are never scanned by it: the sync
+  # engine's own service objects (moving to a separate repo in Stage 3, CLAUDE.md §10), the
+  # device-facing v1 API (sync-shaped, not maker-shaped -- a device talks to it directly, never
+  # through a maker controller), the two jobs that reclaim sync-engine state (chunk refcounts,
+  # abandoned commits), the ActionCable channel that IS the sync nudge, and FileLayer::Chunk
+  # itself, §14a's one legitimate door. GLOBS, not a file list, for the same reason the scanned
+  # file set in the test below is Dir.glob'd rather than enumerated: a new file under any of
+  # these trees is sync-side by construction, not a maker-layer file that happens to be exempt
+  # today.
+  # THE TWO REAPERS ARE SPELLED OUT, NOT MATCHED BY `app/jobs/*reaper*_job.rb`. That glob encoded a
+  # NAMING coincidence rather than the real property ("reclaims sync-engine state"), which is the
+  # `is_a?(FileLayer::Share)` mistake §14b records -- and a review demonstrated the hole: a new
+  # top-level `app/jobs/bom_link_reaper_job.rb` full of maker-layer code would have been waved
+  # through, silently, on the strength of its NAME. It excluded `app/jobs/maker/*_reaper_job.rb`
+  # only by the accident that Dir.glob does not cross `/` without `**`. Two literal paths cost one
+  # line each and cannot be widened by someone choosing a filename.
+  SYNC_SIDE_GLOBS = %w[
+    app/services/sync/**/*.rb
+    app/services/sync.rb
+    app/controllers/v1/**/*.rb
+    app/jobs/chunk_reaper_job.rb
+    app/jobs/pending_commit_reaper_job.rb
+    app/jobs/retention_job.rb
+    app/channels/**/*.rb
+    app/services/file_layer/chunk.rb
+  ].freeze
+
+  test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
+    # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
+    # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
+    # FileLayer::Chunk all four metadata verbs specifically so the maker layer never has to reach
+    # past the port for them again; Task 8 closed the last two call sites (FilesController's
+    # begin_upload/finalize_upload and Maker::Addons::LibraryOutput's own upload, both now behind
+    # FileLayer#begin_upload/#finalize_upload) -- so this is now a flat assertion of the whole
+    # rule rather than a count-and-name check against a shrinking allowlist. (It was that allowlist
+    # until Task 8: SYNC_SEAM_EXCEPTIONS named exactly those two files while the byte path was
+    # still in progress, and its own comment said to delete it, and simplify this test to the one
+    # assertion below, the moment it emptied. This is that simplification.)
+    sync_side = SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
+    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - sync_side
+
+    hits = maker_layer_files.flat_map { |file| sync_references(file) }
+
+    assert_empty hits,
+                 "maker-layer file(s) reaching into Sync:: directly:\n  #{hits.join("\n  ")}\n" \
+                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d)."
   end
 
   test "NotImplementedError is never rescued" do

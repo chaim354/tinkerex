@@ -49,11 +49,27 @@ module FileLayer
   # rejected "accepts uploads" reading, and used that to argue port_writable and scannable are
   # opposites. Both halves were wrong: chunk answers false, and the two capabilities agree
   # everywhere. The argument above is the one that survives contact with the real values.)
-  Capabilities = Data.define(:versioned, :syncable, :presignable, :scannable, :port_writable) do
+  #
+  # DIR_DELETABLE answers ONE question, for ONE caller -- FilesController#destroy:
+  #
+  #     may this backend's `delete` be handed a DIRECTORY?
+  #
+  # true  -> chunk. Sync::SubtreeDelete cascades the tombstone to the whole subtree.
+  # false -> share, S3. On share a dir delete strands children at paths that no longer exist
+  #          while their bytes sit in .trash, where the scan refuses to look. On S3 there is
+  #          no directory and no rename at all: a dir node's key does not exist.
+  #
+  # It was added when #destroy stopped branching on port_writable? and became ONE call with TWO
+  # answers -- which §14a forbids. IT IS NOT `syncable`, though the two agree on all three
+  # backends today; that is three samples, not an identity, and encoding such a coincidence once
+  # already (`is_a?(Share)`) is the whole reason `scannable` exists.
+  Capabilities = Data.define(:versioned, :syncable, :presignable, :scannable, :port_writable,
+                             :dir_deletable) do
     def versioned? = versioned
     def syncable? = syncable
     def presignable? = presignable
     def scannable? = scannable
     def port_writable? = port_writable
+    def dir_deletable? = dir_deletable
   end
 end

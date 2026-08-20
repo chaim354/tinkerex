@@ -44,7 +44,17 @@ class LibraryBrowseController < ApplicationController
     if current_user.nodes.present.exists?(parent_node_id: parent&.node_id, name:, kind: "dir")
       return folder_error("A folder named “#{name}” already exists here.")
     end
-
+    # THAT CHECK IS SCOPED `kind: "dir"`, SO IT IS BLIND TO A FILE AT THE SAME NAME -- which the
+    # port now refuses on ALL THREE backends. Share and s3 always did (share.rb's
+    # `dest.exist? && !dest.directory?`; s3's destination_vacant!); chunk was the one that used to
+    # mint a dir node alongside the file node instead, two live nodes on one (parent_node_id, name),
+    # unrepresentable on every mount. Stage 2 closed that -- which is exactly why this rescue has to
+    # exist now: with the refusal uniform, a user who has a file named `exports` and types `exports`
+    # into New Folder reaches an UnsupportedOperation that nothing here caught, and the modal that
+    # promises an inline 422 got a 500 instead.
+    #
+    # TrashController carries this same class in its rescue_from for the same reason, and its
+    # comment says so; this door never got the equivalent update.
     node = Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent&.node_id, name:)
     render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created
   rescue FileLayer::NotFound
@@ -56,6 +66,13 @@ class LibraryBrowseController < ApplicationController
     # there". It stays rather than being narrowed to a 404, because a mkdir that cannot place its
     # parent is a refusal, not a missing endpoint.
     folder_error("That folder name isn't allowed.")
+  rescue FileLayer::UnsupportedOperation
+    # A NON-DIRECTORY ALREADY OCCUPIES THAT NAME. Deliberately its own arm rather than folded into
+    # the NotFound above: "something else is already called that" is a different fact from "that
+    # name isn't allowed", and the modal shows this string to someone who can fix it by picking
+    # another name. §14a's recorded lesson is the same one -- a clobber answered as NotFound told a
+    # user "File not found." about a file sitting in the list behind the alert.
+    folder_error("Something else here is already named “#{params[:name].to_s.strip}”.")
   end
 
   private

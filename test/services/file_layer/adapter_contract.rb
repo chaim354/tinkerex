@@ -222,50 +222,6 @@ module FileLayerAdapterContract
     end
   end
 
-  # The same pin for delete and move, so an adapter cannot answer port_writable? false and then
-  # refuse only part of the path — which Phase 4's UI would meet as a 500 rather than a gate.
-  #
-  # EACH OP NAMES ITS OWN DOOR, and that is the point rather than pedantry. An earlier draft of
-  # Chunk used ONE shared refusal string, which sent delete and move callers to Sync::Commit — a
-  # class with neither path (CLAUDE.md §3, the FileLayer row). A single /Sync::Commit/ asserted
-  # across all three ops passes for that draft, so it would be a test named for a lesson while
-  # licensing the mistake. The doors are asserted per-op, and asserted DISTINCT: a re-merged
-  # message fails here before it can send anyone to the wrong file.
-  #
-  # Naming Sync:: classes in a shared contract is a chunk-specific fact, and it is here for the
-  # reason test_contract_scannable_... gives above: a FALSE half can only be pinned by an adapter
-  # that answers false, and Chunk is the only one running this contract that does.
-  def test_contract_port_writable_agrees_with_what_delete_and_move_actually_do
-    doors = {
-      Sync::SubtreeDelete => -> { adapter.delete(@user, node_id: "n1") },
-      Sync::Mutation => -> { adapter.move(@user, node_id: "n1", new_parent_node_id: nil,
-                                          new_name: "y.stl") }
-    }
-
-    if adapter.capabilities.port_writable?
-      # The TRUE half needs pinning as much as the false one, and an early `return` here is a test
-      # that cannot fail on two of the three adapters. "n1" exists nowhere, so a port that owns
-      # this path reaches its ordinary liveness check and answers NotFound. The assertion is exact
-      # rather than incidental: NotImplementedError is a ScriptError, NOT a StandardError, so an
-      # adapter that refuses cannot be mistaken for one that merely didn't find the node — it
-      # blows straight through assert_raises and errors the test.
-      doors.each_value do |op|
-        assert_raises(FileLayer::NotFound, "port_writable? is true, so this op must not refuse " \
-                                           "the path — it must look for the node") { op.call }
-      end
-      return
-    end
-
-    messages = doors.map do |door, op|
-      err = assert_raises(NotImplementedError) { op.call }
-      assert_match(/#{Regexp.escape(door.name)}/, err.message,
-                   "a refusal must name the door THIS op uses, not a neighbour's")
-      err.message
-    end
-    assert_equal messages.uniq.size, messages.size,
-                 "delete and move have different doors, so they cannot share a refusal message"
-  end
-
   # `presignable` PINNED AGAINST WHETHER A URL IS ACTUALLY REACHABLE — Landmine 1, and the exact
   # capability §9a-3 predicted would drift ("answered statically, but a property of the store").
   #

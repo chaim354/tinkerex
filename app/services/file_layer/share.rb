@@ -25,7 +25,7 @@ module FileLayer
       # port_writable: true — there is no sync engine here, so the port IS the write path
       # (#write/#delete/#move/#undelete) and the UI POSTs bytes to it.
       Capabilities.new(versioned: false, syncable: false, presignable: false, scannable: true,
-                       port_writable: true)
+                       port_writable: true, dir_deletable: false)
     end
 
     def stat(user, node_id:)
@@ -249,6 +249,32 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE OTHER HALF OF Chunk#write's REFUSAL (Task 8), mirrored — this backend is port_writable,
+    # so its uploads go through #write above, all in one request; the sync engine's presigned
+    # two-phase flow (begin a commit, PUT missing chunks, finalize) is meaningless for a plain
+    # mounted directory, which has no chunk store to presign INTO. FilesController never reaches
+    # this: begin_upload/finalize_upload are gated on `syncable`, which this backend answers false,
+    # so the 501 a caller actually sees comes from that capability gate, before the call — never
+    # from this raise. This exists anyway for the same reason Chunk#write does: a caller that
+    # somehow reaches this class directly (a test, a future non-HTTP caller) gets a named, loud
+    # refusal that says which door DOES work, rather than a NoMethodError that reads as an
+    # oversight. ONE message, reused by both methods below, because they are one fact ("this
+    # backend takes bytes through #write") tripped over from two different calls — the same
+    # sharing #destination_vacant! already argues for, and Chunk::WRITE_MSG's own header explains
+    # why sharing is fine for a fact but not for per-verb remediation advice; there is no per-verb
+    # advice to diverge on here; both name the identical other door.
+    TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
+                    "request), not the sync engine's two-phase presigned flow".freeze
+
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
+    def finalize_upload(_user, commit_id: nil, verify: true)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
     # Create ONE directory `name` under `parent_node_id` (nil = library root). Reuses write's exact
     # guards — leaf!/observable!/resolve_inside! — because a mkdir that skips them re-opens the
     # scan-wedge bug class this file documents (a live node at a path no scan can pair). Idempotent:
@@ -375,7 +401,20 @@ module FileLayer
       # no undo for it: the displaced file's node would still point at a path now holding someone
       # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
       # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
-      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest)
+      #
+      # dest == src IS NOT A CLOBBER — it is this node's OWN current file, found because a no-op
+      # move (same folder, same name) resolves to the identical destination. File.exist?(dest)
+      # cannot tell "someone else already lives here" from "I am already here"; comparing the
+      # resolved paths can, since both come through the same resolve_inside! and a live path is
+      # unique to one node. Found by Task 4's mutation-contract companion test in
+      # adapter_mutation_contract.rb (the "onto its own current name is not a collision" one), run
+      # against this adapter UNMODIFIED per the contract's own rule that a no-op move must stay
+      # legal on every backend — this adapter had never made that exclusion. Not reachable from
+      # either production caller today (Maker::AttachToProject#move short-circuits on
+      # `:already_there` before calling in; Maker::ProjectIntake#place only ever targets a
+      # project's ROOT, never its own destination folder) — latent, not live, but a port verb
+      # should not depend on its callers to avoid its own gaps.
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if dest != src && File.exist?(dest)
 
       begin
         # mkdir_p INSIDE the begin, exactly as in delete: it is I/O against the same share and

@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
+require_relative "adapter_mutation_contract"
 
 module FileLayer
   # The Share adapter over a plain mounted directory: no chunks, no versions, no history —
@@ -11,6 +12,16 @@ module FileLayer
     # not include this — its write/delete/move raise, by design (Task 1). That split IS the
     # module: Phase 3's S3 adapter includes it, and so cannot answer these differently.
     include FileLayerWritableContract
+    include FileLayerMutationContract
+
+    # The hooks FileLayerMutationContract requires. Share's real door for creating a file is the
+    # port's own write, which is exactly what the four extracted tests used inline before they
+    # became backend-agnostic.
+    def make_file(name:, bytes:)
+      adapter.write(@user, parent_node_id: nil, name:, io: StringIO.new(bytes)).node_id
+    end
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
 
     setup do
       @root = Pathname.new(Dir.mktmpdir("share-test"))
@@ -550,6 +561,35 @@ module FileLayer
     ensure
       FileLayer.send(:remove_const, :MAX_BYTES)
       FileLayer.const_set(:MAX_BYTES, original)
+    end
+
+    # --- the two-phase presigned flow refuses (Task 8) -------------------------------------
+    #
+    # THE OTHER HALF OF Chunk#write's OWN REFUSAL, MIRRORED. This backend is port_writable, so
+    # its uploads go through #write above, in one request; the sync engine's two-phase presigned
+    # commit is meaningless here (there is no chunk store to presign INTO). In the real app
+    # FilesController never reaches this -- begin_upload/finalize_upload are gated on `syncable`,
+    # which this backend answers false, so the 501 a caller actually sees comes from that
+    # capability gate, before the action runs (see share_delivery_test.rb's own coverage of that
+    # gate). These exist so a caller that reaches the adapter directly -- bypassing the controller
+    # entirely -- gets a named, loud refusal naming the door that DOES work, rather than a
+    # NoMethodError that reads as an oversight, matching Chunk#write's own reasoning exactly.
+    test "begin_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.begin_upload(@user, name: "x.stl", size: 1,
+                             manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 1 } ])
+      end
+      assert_match(/write/, err.message)
+      refute_kind_of StandardError, err,
+                     "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
+                     "silently not catch it"
+    end
+
+    test "finalize_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.finalize_upload(@user, commit_id: SecureRandom.uuid)
+      end
+      assert_match(/write/, err.message)
     end
 
     # --- delete -> trash (phase 2b) --------------------------------------------------------

@@ -34,10 +34,21 @@ module FileLayer
   # say. FetchError would have been worse, not better: it is the RETRYABLE answer, and retrying a
   # clobber fails identically forever.
   #
-  # If a caller ever needs to tell a clobber FROM a directory delete — say, to offer "rename and
-  # retry" for one and not the other — the answer is a SUBCLASS of this, not a sibling: every
-  # existing rescue keeps working and the 422 mapping is unchanged. Nothing branches on it today,
-  # and the message already distinguishes them for the human who reads it.
+  # THE THIRD INSTANCE (Task 8) IS A MALFORMED UPLOAD MANIFEST — `Chunk#begin_upload` re-raises
+  # `Sync::Commit::InvalidManifest` (a chunk hash that isn't 64-hex, or a manifest over
+  # MAX_MANIFEST_CHUNKS) as this class rather than minting a fourth one. It fits the same axis as
+  # the first two: the CLIENT sent something wrong, knowable only by reading THIS request, no
+  # `Capabilities` flag could have gated it in advance, and a different request (a valid manifest)
+  # would succeed. It costs nothing new, either — FilesController's existing
+  # `rescue_from FileLayer::UnsupportedOperation` already renders `{ error: e.message }` at 422,
+  # byte-identical to what a per-action `rescue Sync::Commit::InvalidManifest` used to render, so
+  # closing that seam needed no new rescue at all, only deleting the redundant old one.
+  #
+  # If a caller ever needs to tell a clobber FROM a directory delete FROM a bad manifest — say, to
+  # offer "rename and retry" for one and not the others — the answer is a SUBCLASS of this, not a
+  # sibling: every existing rescue keeps working and the 422 mapping is unchanged. Nothing branches
+  # on which instance it is today, and the message already distinguishes them for the human who
+  # reads it.
   #
   # Distinct from NotImplementedError, and the axis is not "how unsupported": it is WHO IS
   # WRONG and WHEN YOU CAN KNOW.
@@ -61,6 +72,30 @@ module FileLayer
   # classes named `Unsupported` meaning opposite things is how that mapping gets written wrong.
   # The suffix says which of the two is unsupported: the OPERATION, not the file.
   UnsupportedOperation = Class.new(StandardError)
+
+  # A `#finalize_upload` was asked to seal a commit whose manifest names chunks storage never
+  # received — the browser's presigned PUTs didn't all land (or, for a server-side caller, a bug
+  # skipped one) before finalize was called. Task 8: `Chunk#finalize_upload` re-raises
+  # `Sync::Commit::ChunksMissing` as this, carrying the same `hashes`, rather than reusing
+  # UnsupportedOperation above — unlike a bad manifest (Chunk#begin_upload; see UnsupportedOperation's
+  # own comment), this needs to carry STRUCTURED DATA back to the caller (both existing callers of
+  # the old Sync::Commit::ChunksMissing read `.hashes` to tell the browser exactly which chunks to
+  # retry), and no existing member of this vocabulary carries anything beyond a message. Minting a
+  # new class here is the same call TrashEntry made against FileInfo: reuse would mean silently
+  # dropping data a real caller needs, not a saving of vocabulary.
+  #
+  # RETRYABLE, but deliberately not FetchError: FetchError means "the file's bytes may exist, we
+  # just could not reach them right now" — this means the bytes were never confirmed to exist at
+  # all, which is a different fact the caller (and the human reading the error) should be told
+  # plainly rather than as a generic fetch hiccup.
+  ChunksMissing = Class.new(StandardError) do
+    attr_reader :hashes
+
+    def initialize(hashes)
+      super("chunks missing")
+      @hashes = hashes
+    end
+  end
 
   # Cap to protect the job host when reading a whole file into memory. Port-wide: it applies
   # to any backend, not just the chunk store.
