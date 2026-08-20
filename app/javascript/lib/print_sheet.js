@@ -320,44 +320,92 @@ function furniture(doc, svg, page, meta) {
 // `panel-v12.svg` needs the extension every bit as much as the start, so a trailing "…" is the
 // wrong end to cut.
 //
-// THE BUDGET IS A WORST CASE, NOT AN AVERAGE, because a filename is arbitrary user input. Both
-// numbers below were MEASURED in the browser at 3 mm sans-serif and are RE-MEASURED AND ASSERTED
-// by measure_print_test.rb, so a font change on the CI box goes red here rather than silently
+// THE BUDGET IS A WORST CASE, NOT AN AVERAGE, because a filename is arbitrary user input. Every
+// number below was MEASURED in the browser at 3 mm sans-serif and is RE-MEASURED AND ASSERTED by
+// measure_print_test.rb, so a font change on the CI box goes red here rather than silently
 // overprinting the warning.
 //
 //   WORST_GLYPH — the widest printable ASCII advance. It is "@" at 3.0432 mm, NOT the "W"
-//     (2.8296) that is the obvious guess; "…" is 2.9979, so charging the ellipsis at this rate is
-//     safe too. Rounded UP to 3.05.
-//   DATE_GLYPH  — the widest advance in ` · YYYY-MM-DD`, which is a digit at 1.6673. The date is
-//     charged at its OWN repertoire rather than at WORST_GLYPH because it is a fixed-format string
-//     THIS APP supplies, not user input; charging all 13 of its characters at "@" rate would eat
-//     22 mm of a 47 mm budget and truncate `plate.lbrn2` for no reason. Residual, stated plainly:
-//     a caller that puts something long and wide in `meta.date` is not covered.
-//   WARNING_HALF — half the centred warning's own measured width (47.4356 mm), which is what the
-//     left text has to clear.
+//     (2.8296) that is the obvious guess. Rounded UP to 3.05.
+//   WORST_WIDE  — the widest NON-ASCII advance, measured across CJK, kana, Hangul, fullwidth,
+//     Cyrillic, Greek, Arabic, Hebrew, Devanagari, symbols and emoji: every emoji tested comes
+//     out at 3.7042 mm, ahead of fullwidth/CJK at 3.0638. Rounded UP to 3.71. "…" (U+2026) is
+//     non-ASCII and so is charged at this rate; it actually advances 2.9979, so the ellipsis is
+//     over-charged, which is the safe direction.
+//   NARROW      — characters that genuinely advance far less than "@": digits (1.6673, the widest
+//     of the set), space, the middle dot, and `- . _ : / ,`. Charged at DATE_GLYPH.
+//
+// CHARGING BY CLASS IS WHAT MAKES THIS CORRECT FOR BOTH SCRIPTS RATHER THAN FOR ONE BY LUCK.
+// An earlier revision counted CHARACTERS at a single ASCII rate, and it was wrong twice over in
+// the same place: `s.length`/`s.slice` count UTF-16 CODE UNITS, so an astral character was cut in
+// half and painted as two replacement boxes; and non-ASCII advances EXCEED the ASCII worst case
+// (emoji 3.7042 against 3.05 charged), so the width was under-reserved as well. THOSE TWO ERRORS
+// PARTLY CANCELLED, which is why the sheet looked fine: an emoji costs TWO code units, so the
+// length over-count ran ahead of the width under-charge and the name came out shorter than
+// budgeted rather than longer. Fixing only the first — iterating code points and leaving one
+// rate — removes the compensation and lands the ink on the warning. Both halves or neither, and
+// both halves have their own mutation in measure_print_test.rb: code-unit indexing is caught by
+// the lone-surrogate assertion, single-rate charging by the emoji sheet's geometry (measured,
+// "the header ran into [81.28, 128.72]"). Shipped clearances on A4, the tightest paper:
+// 7.85 mm for an all-"@" name, 9.70 for all-emoji, 16.75 for all-CJK.
+//
+// STILL SPLIT, DELIBERATELY UNADDRESSED: a ZWJ emoji sequence or a combining mark can be cut, so
+// a family emoji may come apart into its members. That is cosmetic and it is over-charged (seven
+// code points billed for one glyph), never an overflow. Grapheme segmentation (Intl.Segmenter) is
+// the upgrade if it ever matters; it is not taken here because it would add a second code path,
+// only one of which any test would walk.
 //
 // ACCEPTED COST: a worst-case budget is pessimistic for ordinary text — roughly 1.35 mm/character
 // actually renders — so a name that would have fitted still gets an ellipsis. That is the trade
 // this is meant to make: the failure it replaces is silent and lands on the warning.
-// EXPORTED so the test can assert it against a fresh browser measurement. The geometric
-// assertion alone cannot: it clears the warning by ~5.7 mm, so a `W`-tuned 2.83 still passes it.
+//
+// EXPORTED so the test can assert them against a fresh browser measurement. The geometric
+// assertion alone cannot: the shipped layout clears the warning by 7.85 mm, and a `W`-tuned 2.83
+// still clears it by 4.80 mm, so only a direct assertion on the constant sees that mistake.
 export const WORST_GLYPH = 3.05
+export const WORST_WIDE = 3.71
 const DATE_GLYPH = 1.7
+const NARROW = "0123456789 ·:/,._-"
 const WARNING_HALF = 24
 const HEADER_GAP = 2
 const FONT = 3
 
+const glyphWidth = (c) =>
+  NARROW.includes(c) ? DATE_GLYPH : (c.codePointAt(0) < 128 ? WORST_GLYPH : WORST_WIDE)
+
+const textWidth = (s) => Array.from(s).reduce((total, c) => total + glyphWidth(c), 0)
+
+// THE DATE IS CHARGED THROUGH THE SAME FUNCTION, WHICH IS WHAT CLOSES A RESIDUAL RATHER THAN
+// DOCUMENTING IT. An earlier revision billed the suffix at a flat digit rate on the grounds that
+// `meta.date` is a fixed ISO string this app supplies — true today, and it would have become false
+// the moment a caller passed a locale form: `Wednesday, August 19, 2026` is 26 characters carrying
+// a "W", ~29 mm under-charged, and the warning is overprinted again with nothing to say so. Billing
+// it per class costs an ISO date exactly what the flat rate did (all 13 of its characters are in
+// NARROW) and reserves honestly for anything else. A long date now eats the NAME's budget instead
+// of the warning — visibly wrong on the sheet, which is the failure direction that can be found.
 function headerLabel(name, date, content) {
   const suffix = ` · ${date}`
-  const budget = content.w / 2 - WARNING_HALF - HEADER_GAP - suffix.length * DATE_GLYPH
-  return truncateMiddle(String(name), Math.floor(budget / WORST_GLYPH)) + suffix
+  return truncateMiddle(String(name),
+                        content.w / 2 - WARNING_HALF - HEADER_GAP - textWidth(suffix)) + suffix
 }
 
-function truncateMiddle(s, max) {
-  if (max < 3) return "…"
-  if (s.length <= max) return s
-  const head = Math.ceil((max - 1) / 2)
-  return s.slice(0, head) + "…" + s.slice(s.length - (max - 1 - head))
+// Take code points from the head and the tail alternately, head first, until the width budget is
+// spent. ITERATING Array.from IS THE POINT: indexing `s` would split a surrogate pair.
+function truncateMiddle(s, budget) {
+  const cps = Array.from(s)
+  if (textWidth(s) <= budget) return s
+  let left = budget - glyphWidth("…")
+  if (left < 0) return "…"
+  let head = 0, tail = 0, takeHead = true
+  while (head + tail < cps.length) {
+    const c = takeHead ? cps[head] : cps[cps.length - 1 - tail]
+    if (glyphWidth(c) > left) break
+    left -= glyphWidth(c)
+    if (takeHead) head++; else tail++
+    takeHead = !takeHead
+  }
+  return cps.slice(0, head).join("") + "…" +
+         (tail ? cps.slice(cps.length - tail).join("") : "")
 }
 
 function line(doc, x1, y1, x2, y2) {

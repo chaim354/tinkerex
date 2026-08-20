@@ -1094,20 +1094,29 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # an injection into this app's own origin. `el`'s text door is what makes `textContent` the only
   # spelling available; this is the test that says why it exists rather than merely that it fires.
   #
+  # A SHORT FIXTURE, DELIBERATELY, AND `refuteTruncated` IS WHY. This test used a 40-character
+  # name until truncation landed, and truncation then DISARMED one of its two arms in silence:
+  # the cut kept `<script>` as the head and `v2>.svg` as the tail, dropping the `<` before `v2`,
+  # so the fixture no longer contained a `<v2` substring and `refute_includes elements, "v2"`
+  # could not fire for any mutation whatsoever. The comment left behind claimed both arms still
+  # fired. That is the same shape as the `hasAnchor` line removed from the header-placement test
+  # — an assertion that cannot fail is not an assertion (CLAUDE.md §15) — so the fixture is now
+  # kept UNDER budget and the premise is asserted rather than assumed. 13 characters charges
+  # 38.30 mm against A4's 46.90, the tightest paper, so there is 8.6 mm of headroom; if a future
+  # budget change ever eats it, the premise fires with a sentence instead of an arm going quiet.
+  # Truncation has its own tests below and does not need to ride along in this one.
+  #
   # MUTATION-CHECKED TWO WAYS, each actual copied out of the run. Deleting the door
   # (`if (text != null) node.textContent = text`) is RED in SIX tests, every textContent coming
-  # back "" — this one, four above it, and the header-placement one below it. Spelling it `node.innerHTML = text` is RED HERE ALONE, on the
-  # element list: "Expected [\"clipPath\", \"rect\", \"g\", \"g\", \"polygon\", ... \"text\",
-  # \"script\", \"v2\", \"text\", ...] to not include \"script\"" — two elements minted out of a
-  # filename, inside a <text> node, in the app's own origin. The header equality behind it would
-  # read "alert(1)bracket.svg · 2026-08-19", the tags having been eaten by the parser.
+  # back "" — this one, four above it, and the header-placement one below it. Spelling it
+  # `node.innerHTML = text` is RED HERE ALONE, on the element list, which gains `script` and `v2`
+  # — two elements minted out of a filename, inside a <text> node, in the app's own origin.
   test "a filename that looks like markup prints as text, not as markup" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
         const svg = m.renderSheet(document,
-          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0],
-          { name: "<script>alert(1)</script>bracket<v2>.svg", date: "2026-08-19",
-            sizeLabel: () => null })
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
+          { name: "<script>x<v2>", date: "2026-08-19", sizeLabel: () => null })
         return JSON.stringify({
           header: svg.querySelector("text").textContent,
           // THE WHOLE SUBTREE, not a search for <script>: an innerHTML spelling parses `<v2>`
@@ -1118,17 +1127,16 @@ class MeasurePrintTest < ApplicationSystemTestCase
       })()
     JS
 
-    # THE REFUTES RUN FIRST for the reason the tripwire above does: an innerHTML spelling loses
-    # part of the filename from `header` too, so with the equality first these two would never
-    # execute for the mutation they exist for.
+    # THE PREMISE FIRST: both refutes below need their opening `<` to still be in the string.
+    refute_includes out["header"], "…",
+                    "the fixture must stay under budget or the <v2 arm silently stops existing"
+    # AND THE REFUTES BEFORE THE EQUALITY, because an innerHTML spelling loses part of the
+    # filename from `header` too — with the equality first these two would never execute for the
+    # mutation they exist for.
     elements = out["elements"].split(",")
     refute_includes elements, "script", "no element minted from the filename"
     refute_includes elements, "v2", "and not the innocuous-looking half of it either"
-    # TRUNCATED, because this name is 40 characters and A4's budget is 15 — and the head and tail
-    # it keeps still carry `<` and `>`, which is what the assertion needs. An innerHTML spelling
-    # eats them exactly the same way (verified: the refutes above still fire), so the truncation
-    # neither weakens this test nor is weakened by it.
-    assert_equal "<script>…v2>.svg · 2026-08-19", out["header"]
+    assert_equal "<script>x<v2> · 2026-08-19", out["header"]
   end
 
   # `el` HAS A SILENT MIS-CALL MODE AND THIS IS THE ONLY THING THAT CAN SEE IT. A string in the
@@ -1323,59 +1331,114 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # A4, NOT LETTER. 190 mm is the narrowest content box PAPERS offers, so it is the paper that
   # fails first and the only one worth pinning.
   #
-  # AN ALL-`@` NAME, NOT THE ALL-`W` THE OBVIOUS GUESS SUGGESTS. Measured in this same browser at
-  # 3 mm sans-serif, `@` advances 3.0432 mm and `W` only 2.8296 — a budget tuned on `W` is 7% short
-  # of the true worst case, which for a filename (arbitrary user input) is the case that matters.
-  # `widest` asserts that rather than assuming it: the day a CI font makes some other glyph widest,
-  # this input stops being pathological and this line says so instead of the test quietly weakening.
+  # THREE SCRIPTS, NOT ONE, AND THE ASCII CASE ALONE WOULD HAVE BEEN A TRAP. An all-`@` name is the
+  # widest ASCII can go (3.0432 mm, ahead of the `W` at 2.8296 that is the obvious guess), but
+  # non-ASCII goes WIDER — every emoji measures 3.7042 and CJK/fullwidth 3.0638 — so a budget that
+  # charges one rate for everything is under-reserved for two of the three. The pair of `widest`
+  # assertions below measures both repertoires in THIS browser rather than trusting either figure:
+  # the day a CI font makes some other glyph widest, these inputs stop being pathological and this
+  # says so, instead of the test quietly weakening.
   #
-  # THE ASSERTION IS GEOMETRIC, and it validates all three of the module's measured constants at
-  # once (WORST_GLYPH, DATE_GLYPH, WARNING_HALF) without exporting any of them — what matters is
-  # not what they are but that the ink lands clear of the warning.
+  # `loneSurrogate` IS A SEPARATE CLAIM FROM THE GEOMETRY. `s.length`/`s.slice` count UTF-16 code
+  # units, so cutting an emoji name at a character index splits a surrogate pair and paints two
+  # replacement boxes — while still clearing the warning, because a split pair is NARROWER. No
+  # geometric assertion can see it.
+  #
+  # THE GEOMETRIC ASSERTION IS NOT ENOUGH ON ITS OWN, which is why the constants are asserted too:
+  # the shipped layout clears the warning by 7.85 mm on the ASCII case, so a `W`-tuned WORST_GLYPH
+  # still clears it by 4.80 mm and passes. Slack in a layout is safety and must not be spent to
+  # sharpen a test; the constants are pinned directly instead.
   test "a pathological filename is truncated rather than printed over the do-not-scale warning" do
     out = JSON.parse(in_print_sheet(<<~JS))
       (() => {
-        const svg = m.renderSheet(document,
+        const cases = {
+          ascii: { name: "@".repeat(70), date: "2026-08-19" },
+          emoji: { name: "😀".repeat(40), date: "2026-08-19" },
+          cjk:   { name: "漢".repeat(40),  date: "2026-08-19" },
+          // A WIDE DATE BESIDE A WIDE NAME, and it took four attempts to find an input that can
+          // actually fail. `meta.date` is caller-supplied and Task 12 may well hand it a locale
+          // form; an earlier revision billed the whole suffix at a flat digit rate, right for
+          // `2026-08-19` and far short for anything wider. But a REALISTIC locale date does not
+          // collide under that rate, and the reason is worth knowing: the NAME is billed at a
+          // worst case it does not spend (ordinary text renders ~1.35 mm against 3.05 charged),
+          // and that surplus quietly absorbs the suffix's shortfall. Measured clearances under
+          // the flat rate, all still positive: `Wednesday, August 19, 2026` 19.56,
+          // `Mittwoch, 19. August 2026 um 14:30 Uhr` 11.63, `2026年8月19日水曜日` 24.73 — and even
+          // a 40-character name beside the CJK date only drops to 4.64. Both halves have to be at
+          // their worst before the ink lands on the warning, which is what this row is:
+          // -4.49 under the flat rate against +16.81 as shipped.
+          locale: { name: "@".repeat(70), date: "2026年8月19日 水曜日 午後2時30分" },
+        }
+        const res = { sheets: {} }
+        const sheet = ({ name, date }) => m.renderSheet(document,
           m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
-          { name: "@".repeat(70), date: "2026-08-19", sizeLabel: () => null })
+          { name, date, sizeLabel: () => null })
+
+        for (const key of Object.keys(cases)) {
+          const svg = sheet(cases[key])
+          document.body.appendChild(svg)
+          try {
+            const t = svg.querySelectorAll(":scope > text")
+            const bb = (n) => { const b = n.getBBox(); return [ b.x, b.x + b.width ] }
+            const left = bb(t[0]), warn = bb(t[1])
+            res.sheets[key] = { left, warn, clearance: warn[0] - left[1],
+                                header: t[0].textContent }
+          } finally { svg.remove() }
+        }
+
+        // Both worst cases, measured through a probe living on a real sheet so its user units
+        // are the paper's millimetres exactly as the header's are.
+        const svg = sheet({ name: "probe", date: "2026-08-19" })
         document.body.appendChild(svg)
         try {
-          const t = svg.querySelectorAll(":scope > text")
-          const box = (n) => { const b = n.getBBox(); return [ b.x, b.x + b.width ] }
-          // The widest printable-ASCII advance in THIS browser, so the input above is provably
-          // the worst case rather than a plausible-looking one.
           const probe = document.createElementNS("http://www.w3.org/2000/svg", "text")
           probe.setAttribute("font-size", 3); probe.setAttribute("font-family", "sans-serif")
           svg.appendChild(probe)
-          let widest = null, widestW = 0
-          for (let c = 33; c < 127; c++) {
-            probe.textContent = String.fromCharCode(c).repeat(20)
-            const w = probe.getComputedTextLength() / 20
-            if (w > widestW) { widestW = w; widest = String.fromCharCode(c) }
+          const w = (ch) => {
+            probe.textContent = ch.repeat(20); return probe.getComputedTextLength() / 20
           }
-          return JSON.stringify({
-            widest, widestW, worstGlyph: m.WORST_GLYPH,
-            left: box(t[0]), warning: box(t[1]), header: t[0].textContent,
-          })
+          const widestOf = (chars) => chars.reduce(
+            (best, ch) => { const x = w(ch); return x > best[1] ? [ ch, x ] : best }, [ null, 0 ])
+          res.ascii = widestOf(
+            Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i)))
+          res.wide = widestOf(Array.from(
+            "漢字中文日本語あいうカタカナ한글ＡＢ１２、。😀🎉👍🚀🧑🌍🔥✅" +
+            "ЖШЩЮЯΩΨΘάéÆŒØÅñçßشسصمשםאבकषमहঅகதฮ—–…€™©®°±×÷≈∞▓█▒░╬╣"))
         } finally { svg.remove() }
+
+        res.worstGlyph = m.WORST_GLYPH
+        res.worstWide = m.WORST_WIDE
+        // A split pair leaves an unpaired surrogate behind. Array.from iterates CODE POINTS, so
+        // a well-formed pair arrives as one value above 0xFFFF and only an orphan is still in
+        // the 0xD800..0xDFFF range. (Spelled this way rather than as a regex because a Ruby
+        // heredoc resolves a backslash-u escape itself, and 0xD800 is not one Ruby will build.)
+        res.loneSurrogate = Array.from(res.sheets.emoji.header).some((c) => {
+          const n = c.codePointAt(0)
+          return n >= 0xD800 && n <= 0xDFFF
+        })
+        return JSON.stringify(res)
       })()
     JS
 
-    assert_equal "@", out["widest"], "the pathological input must be the browser's widest glyph"
-    # THE BUDGET'S OWN CONSTANT AGAINST THE MEASUREMENT, because the geometric assertion below
-    # cannot see it: the truncated header clears the warning by ~5.7 mm, so a budget tuned on `W`
-    # (2.83) passes that test while being 7% short of the worst case a filename can actually
-    # contain. Slack in the layout is safety and should not be spent to sharpen a test; this pins
-    # the constant directly instead.
-    assert_operator out["widestW"], :<=, out["worstGlyph"],
-                    "WORST_GLYPH must not be under-measured"
-    # THE COLLISION ITSELF. The left text's right edge must sit left of the warning's left edge —
-    # not merely "somewhere on the paper", which an overprinted header satisfies perfectly.
-    assert_operator out["left"][1], :<, out["warning"][0],
-                    "the header ran into #{out['warning'].inspect}: #{out['header'].inspect}"
-    # AND THE WARNING IS STILL WHERE IT BELONGS, so the assertion above cannot be satisfied by a
+    # THE INPUTS ARE PROVABLY THE WORST CASES, not merely plausible-looking ones.
+    assert_equal "@", out["ascii"][0], "the ASCII input must be the browser's widest ASCII glyph"
+    # THE CONSTANTS AGAINST THE MEASUREMENT. Neither is visible to the geometry below.
+    assert_operator out["ascii"][1], :<=, out["worstGlyph"], "WORST_GLYPH is under-measured"
+    assert_operator out["wide"][1], :<=, out["worstWide"],
+                    "WORST_WIDE is under-measured against #{out['wide'][0].inspect}"
+    # NO SPLIT SURROGATE PAIR. Cutting by UTF-16 index paints two replacement boxes, and does it
+    # while comfortably clearing the warning — a split pair is narrower, not wider.
+    refute out["loneSurrogate"], "an astral character was cut in half: #{out['sheets']['emoji']['header'].inspect}"
+    # THE COLLISION ITSELF, on all three. The left text's right edge must sit left of the warning's
+    # left edge — not merely "somewhere on the paper", which an overprinted header satisfies.
+    out["sheets"].each do |script, r|
+      assert_operator r["left"][1], :<, r["warn"][0],
+                      "#{script}: the header ran into #{r['warn'].inspect}: #{r['header'].inspect}"
+    end
+    # AND THE WARNING IS STILL WHERE IT BELONGS, so the assertions above cannot be satisfied by a
     # warning that was itself pushed off to the right.
-    assert_in_delta 105.0, (out["warning"][0] + out["warning"][1]) / 2, 0.5,
+    warn = out["sheets"]["ascii"]["warn"]
+    assert_in_delta 105.0, (warn[0] + warn[1]) / 2, 0.5,
                     "the warning stays centred on A4's content box"
   end
 
@@ -1387,18 +1450,26 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # `plate.lbrn2` would be a regression dressed as a fix. Both spellings of the mistake are pinned
   # here, and neither is visible to the geometric test above — an implementation that simply cut
   # the string short would clear the warning just as well.
+  #
+  # THE LAST TWO ROWS ARE WHERE THE BUDGET IS CHARGED BY CLASS RATHER THAN BY CHARACTER COUNT.
+  # Each keeps six code points of head and five of tail against the ASCII rows' eight and seven,
+  # because a wide glyph genuinely costs more — and they are whole code points, which is the half
+  # `truncateMiddle` gets wrong the moment it indexes the string instead of iterating it.
   test "a long filename keeps its head and its extension, and a short one is left alone" do
     out = JSON.parse(in_print_sheet(<<~JS))
       JSON.stringify([ "plate.lbrn2", "harbor-number-v4.svg",
-                       "Rev C bracket assembly plate final.lbrn2" ].map((name) =>
+                       "Rev C bracket assembly plate final.lbrn2",
+                       "😀".repeat(40), "漢字中文日本語".repeat(6) ].map((name) =>
         m.renderSheet(document, m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
           { name, date: "2026-08-19", sizeLabel: () => null })
          .querySelector(":scope > text").textContent))
     JS
 
     assert_equal [ "plate.lbrn2 · 2026-08-19",
-                   "harbor-…-v4.svg · 2026-08-19",
-                   "Rev C b…l.lbrn2 · 2026-08-19" ], out
+                   "harbor-n…-v4.svg · 2026-08-19",
+                   "Rev C br…l.lbrn2 · 2026-08-19",
+                   "😀😀😀😀😀😀…😀😀😀😀😀 · 2026-08-19",
+                   "漢字中文日本…中文日本語 · 2026-08-19" ], out
   end
 
   # EVERY PIECE OF FURNITURE INSIDE THE STRIP RESERVED FOR IT, READ OFF THE RENDERED BBOX so the
