@@ -62,6 +62,26 @@ reading the last entry.
 
 ## Latest (2026-08-20): Stage 1 of the repo split — `client/` leaves for `tinkerex-client` (branch `claude/stage-1-extract-client`)
 
+> **⚠️ CI FOR THE EXTRACTED CODE IS DARK UNTIL TWO OPERATOR ACTIONS HAPPEN — verified against the
+> live API at close-out, not assumed:**
+>
+> - `chaim354/tinkerex-client` has **0 registered runners**, so every workflow that moved there
+>   (`rust-client.yml`, `build-app.yml`, `install-app-on-runners.yml`, `cross-os-e2e.yml`) **cannot
+>   run at all.** Runners register per-repository; each physical box needs a SECOND service.
+> - `tinkerex` has **only the macOS runner** (`charless-MacBook-Pro-maker-mac`, online). So
+>   `client-contract.yml`'s `engine-integration`, which is `[self-hosted, linux]` and correctly
+>   preflight-gated, **SKIPS** — confirmed on this arc's own PR. It is not passing; it is not
+>   running.
+> - `TINKEREX_CLIENT_TOKEN` **does not exist**, so even with a Linux runner the cross-repo checkout
+>   would fail. `secrets.GITHUB_TOKEN` cannot cross repositories.
+>
+> This is CLAUDE.md §15's recorded trap ("Linux and Windows coverage is skipped, not passing")
+> widened to the whole client suite. **The extraction itself was verified locally instead**: the
+> filtered tree's `client/` hash is byte-identical to what left this repo, `fs-provider`,
+> `sync-client` and `sync-engine` all build standalone in the new repo, and `fs-provider`'s
+> hermetic suite passes 23/23 there. That is evidence the code is intact — it is NOT evidence that
+> CI covers it.
+
 **Suite: `bin/ci` green at 7 gates (down from 8 — `test-app` left with `client/maker-app`), all
 three `LIBRARY_BACKEND` legs IDENTICAL at 2528 runs / 9538 assertions / 0F / 0E / 3 skips, system
 176 runs / 1467 assertions / 0F / 0E / 0 skips. `bin/rubocop` clean on the two touched Ruby files.
@@ -108,7 +128,7 @@ needing both trees in one job.
 | `rust-client.yml` | Deleted — 7 of 8 jobs were pure cargo and moved with `client/`; `engine-integration` survives as the new `client-contract.yml` |
 | `nightly.yml` | Kept, stripped from 13 jobs to 6 (`preflight` + the 5 Rails-coupled jobs above) |
 | `ci.yml` | Kept — removed the `test-app-js` job and the `client/maker-app/**` re-include from `paths:`; left `!client/**` (harmlessly excludes a directory that no longer exists — task's own call, avoids growing the diff for zero behavior change) |
-| `client-contract.yml` (new) | The PR-time wire-contract gate (`engine-integration`, renamed workflow). No `client/**` path filter is possible any more — nothing can put that path in a diff of this repo again — so it triggers on every `pull_request` + `push:main` instead, trading a little wall-clock (self-hosted runners are free) for never going silently stale |
+| `client-contract.yml` (new) | The wire-contract gate (`engine-integration`, renamed workflow). No `client/**` path filter is possible any more — nothing can put that path in a diff of this repo again — so it triggers on every `pull_request` + `push:main` instead, trading a little wall-clock (self-hosted runners are free) for never going silently stale. **It is SKIPPED, not passing, as of this arc** — see the operator actions below |
 
 **The dual-checkout mechanism, one seam for all five surviving jobs.** Per the plan's recommended
 option (a) — these jobs answer "does the client still work against THIS server," a question about
