@@ -212,6 +212,34 @@ same move that added `scannable` when a coincidence between two questions became
 
 ## 5. Stage 3 — `Sync::*` becomes a mounted engine
 
+> **THREE HAZARDS THE STAGE 2 CLOSE-OUT REVIEW FOUND, NONE OF WHICH §1's TABLE ACCOUNTS FOR.**
+> Recorded here because they falsify part of that table, and a Stage 3 inventory built the obvious
+> way will miss all three.
+>
+> 1. **`share_links` IS A SECOND STRADDLER, AND §1 BUCKETS IT WRONG.** The table above files it
+>    under "Maker" (stays in `tinkerex`), but its own columns `version_id` and `manifest_id`
+>    (`db/migrate/20260617000006_create_share_links.rb`) are foreign keys into two of the eight
+>    chunk-only tables, and `Sharing::Links.redeem` queries `ManifestChunk` and calls
+>    `Storage::ChunkStore.current` **directly, outside the port**. Whether
+>    `v1/share_controller.rb` and `v1/share_links_controller.rb` are among the "twelve controllers"
+>    that move is genuinely ambiguous — 14 v1 controllers minus `base` and `test_users` is 12,
+>    which *would* include them. **Either resolution leaves a cross-repo dependency**: engine code
+>    reaching into a maker-owned table, or host code reaching into two now-engine-owned models.
+>    Decide it explicitly in Stage 3's own design, not at implementation time.
+>
+> 2. **`Node#current_version` QUERIES `Version`, WHICH MOVES.** Every adapter's `file_info` calls
+>    it. §5 frames the `User`/`Node` relationship as one-directional — "the engine declares them as
+>    host requirements" — and this is the reverse: **host code depending on an engine model.** Not
+>    discussed anywhere in this document before now.
+>
+> 3. **AN INVENTORY BUILT BY GREPPING `Sync::` WILL UNDERCOUNT, for the same structural reason.**
+>    The sync engine's own AR models are **not `Sync::`-namespaced** — `Version`, `ManifestChunk`,
+>    `Chunk`, `PendingCommit`, `ChangelogEntry` are all bare top-level constants. Stage 2's seam
+>    guard cannot see them either (wrong namespace), and the chunk-internals guard is scoped to
+>    `app/**/maker` rather than the whole app, which is exactly how hazard 1 stayed invisible.
+>    **Stage 3's audit must grep the bare model names and `Storage::` across all of `app/`**, not
+>    just `Sync::`, and not just under `maker/`.
+
 `Sync::*`, `Storage::*`, `LibraryChannel`, the v1 sync API's twelve controllers, the three
 reaper jobs and the eight tables' migrations move to `tinkerex-sync`, shipped as a
 mountable Rails engine. The maker app adds the gem and mounts it.
