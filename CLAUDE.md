@@ -1308,7 +1308,9 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **Checking beats reasoning.** A final whole-branch review found five real bugs of which
   **four were already recorded as unreachable, deferred, or verified** — the contribution was
   *probing*, not thinking. Corollary: **a stale open-list is worse than none**, because it
-  spends the next reader's attention on finished work.
+  spends the next reader's attention on finished work — **and in the other direction it hides
+  unfinished work behind a row that says done**, which is how the 2026-08-19 audit's own ledger
+  came within one `git branch -D` of destroying a fix it had recorded as landed (§15).
 - **The suite being green is not evidence a guard works** if the guard's precondition is
   never established in test (see the `STORAGE_BACKEND` 500 in §14a, and the form `scope:` bug
   in §14d). Drive the real request.
@@ -1965,3 +1967,14 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - Update this file **and** `docs/STATUS.md` when the architecture moves — **in the branch that
   moves it**, per the close-out rule in §15. A STATUS entry written later is written from
   memory, and the measured numbers that make one worth reading are the first thing lost.
+- **A DOC ROW THAT NAMES A COMMIT IS A CLAIM, AND NO GATE CAN CHECK IT — `bin/verify-fix-log`.**
+  Nothing in `bin/ci` reads a ledger row, so a row is only as true as the moment someone wrote it.
+  The 2026-08-19 log was wrong about its own contents three times while being right about the code:
+  a row recorded **LANDED** naming a SHA that belonged to a **different fix** (the work existed only
+  on an unmerged branch, and a `-D` sweep would have destroyed it with nothing going red); a row
+  still reading **NOT FIXED** after the fix merged, because the prose was updated and the table was
+  not; and **13 of 68 references** pointing at pre-cherry-pick SHAs that are not on `main`, three of
+  them unresolvable once the source branches were deleted. **Run it while writing or amending a
+  ledger** — that is when all three were made. It is deliberately not a gate: it reads a dated
+  snapshot of finished work, so gating it would check frozen history on every PR forever.
+  **Verify a commit reference the way you verify a guard, or it is decoration.**
