@@ -170,6 +170,21 @@ export function renderSheet(doc, page, meta) {
     transform: `translate(${page.translateX} ${page.translateY})`,
   })
   for (const shape of page.shapes) group.appendChild(contourNode(doc, shape))
+  // A SECOND PASS, so every label sits above every outline rather than under whichever contour
+  // was appended after it — parts overlap routinely (this repo's own nested-plate fixture is a
+  // plate with a hole on the same centre) and SVG paints in document order.
+  //
+  // INSIDE THE SAME CLIPPED, TRANSLATED GROUP, and both halves are deliberate. The label's
+  // position is in the same millimetres as its part, so it must ride the page transform or it
+  // prints at the file's own coordinates — for a part sitting at x = 100 in its file, the page
+  // translate is MARGIN - 100 and the label lands 90 mm from where its outline is. And it
+  // must be CUT by the same window: a part taller than one tile is kept whole on every tile it
+  // touches, so its label hangs below THIS tile's content box and would otherwise print straight
+  // across the calibration ruler, on the sheet whose one job is to certify the scale.
+  for (const shape of page.shapes) {
+    const label = meta.sizeLabel(shape)
+    if (label) group.appendChild(labelNode(doc, shape, label))
+  }
   clipped.appendChild(group)
   svg.appendChild(clipped)
 
@@ -192,6 +207,47 @@ function contourNode(doc, shape) {
   // occupies that matters for fit, and it draws dashed here exactly as it does on screen.
   if (shape.i) attrs["stroke-dasharray"] = "4 3"
   return el(doc, shape.k ? "polygon" : "polyline", attrs)
+}
+
+// A PART'S SIZE, PRINTED UNDER IT — and NOTHING HERE MEASURES ANYTHING. The words are whatever
+// `meta.sizeLabel` returned (measure_controller.js, so the paper and the on-screen readout cannot
+// drift apart) and the POSITION comes from `b`, the FULL-RESOLUTION bbox. Both halves are the same
+// rule: `p` holds the THINNED drawing points, RDP at 0.01 mm, so anything read off them
+// under-reports every curve — and a hole small enough to thin below MIN_CIRCLE_POINTS loses its
+// diameter outright, printing a bounding box where a ⌀ belongs (CLAUDE.md §14h). A label is the
+// one thing on this sheet a maker might read INSTEAD of measuring, so it is the last place a
+// thinned number may reach.
+//
+// CENTRED, WITH ITS BASELINE 3.6 MM UNDER THE BBOX'S BOTTOM EDGE. `text` supplies the 3 mm type
+// (a nominal browser size is absurd at 1:1 on paper). MEASURED at that size rather than reasoned,
+// through getBBox — a font-metric box, so wider than the ink: the label occupies b[3] + 0.69 mm to
+// b[3] + 4.39 mm. It therefore clears the outline it belongs to, and its whole reach is less than
+// the 10 mm OVERLAP, which is what makes the cost below a LAST-ROW problem rather than a general
+// one: a part whose bottom edge falls in a tile's overlap band appears on the tile after it too,
+// with room to spare for the label. measure_print_test.rb drives exactly that — the same label is
+// clipped away on the top tile and prints whole on the one below.
+//
+// THE LABEL IS INSIDE THE CLIP AND THAT COSTS SOMETHING — recorded because it is invisible on the
+// sheet. Pagination is computed from the geometry's own union box and knows nothing about a label
+// hanging under it, so on the LAST row a part whose bbox bottom clears the content box by less
+// than 4.4 mm prints correctly at 1:1 with its label sliced through, and by less than 0.69 mm with
+// no label at all. Measured on Letter, whose content box is 230.4 mm tall: a 226 mm part is
+// labelled, a 228 mm part's label is cut across the middle, a 230 mm part has none. That is the
+// price of the clip — the alternative is a label belonging to a part that runs onto the next tile
+// printed across THIS tile's calibration ruler — and it fails toward a missing annotation, never
+// toward a wrong number.
+//
+// NOTHING DE-CONFLICTS TWO LABELS, AND THE LEVER FOR THAT IS DELIBERATELY NOT HERE. Two contours
+// sharing a bottom edge and an x range — one outline on a cut layer and the same outline on a
+// score layer is the ordinary way to get there — print their labels on top of each other. This
+// function places what it is handed; WHICH parts are labelled is `meta.sizeLabel` returning null,
+// which is the controller's decision and the only place that knows what the user selected.
+function labelNode(doc, shape, label) {
+  const node = text(doc, (shape.b[0] + shape.b[2]) / 2, shape.b[3] + 3.6, label, "middle")
+  // NOT DECORATION: this is what tells a size label from the five furniture texts, for
+  // measure_print_test.rb and for anything that ever has to find them again.
+  node.setAttribute("data-role", "size")
+  return node
 }
 
 // THE ONE DOOR EVERY ELEMENT IN THIS MODULE IS BUILT THROUGH.

@@ -1118,7 +1118,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
           m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0],
           { name: "<script>x<v2>", date: "2026-08-19", sizeLabel: () => null })
         return JSON.stringify({
-          header: svg.querySelector("text").textContent,
+          // `:scope >` IS PART OF THE ASSERTION, not a convenience. The header is a DIRECT child
+          // of the <svg>; a size label is not, but the labels are appended BEFORE the furniture,
+          // so a bare querySelector("text") starts answering about the first LABEL the moment a
+          // sheet carries one. Measured against a labelNode that ignored meta.sizeLabel and
+          // derived its own string: this line came back "60 × 40 mm" and this test failed for
+          // somebody else's defect. `sizeLabel` returns null here, so nothing changes today.
+          header: svg.querySelector(":scope > text").textContent,
           // THE WHOLE SUBTREE, not a search for <script>: an innerHTML spelling parses `<v2>`
           // into an element too, and a sheet quietly carrying half the filename as unknown
           // elements is the same defect with a less alarming name.
@@ -1205,9 +1211,15 @@ class MeasurePrintTest < ApplicationSystemTestCase
           m.renderSheet(document, p, #{META}))
         const svgs = sheets(m.PAPERS.Letter)
         return JSON.stringify({
+          // `:not([data-role='size'])` KEEPS THIS COUNT ABOUT FURNITURE. A size label lives
+          // inside both of these groups BY DESIGN — it belongs to its part, rides the page
+          // transform with it and is cut by the same window — so without the exclusion this
+          // answers about labels too and reports a LABEL defect under the sentence below.
+          // Measured against a labelNode that ignored meta.sizeLabel: "Expected: 0 Actual: 1",
+          // from this line, while the label tests said what was actually wrong.
           nested: svgs[0].querySelectorAll(
-            "[clip-path] line, [clip-path] rect, [clip-path] text, " +
-            "[transform] line, [transform] rect, [transform] text").length,
+            "[clip-path] line, [clip-path] rect, [clip-path] text:not([data-role='size']), " +
+            "[transform] line, [transform] rect, [transform] text:not([data-role='size'])").length,
           strokes: Array.from(svgs[0].querySelectorAll(":scope > line, :scope > rect"))
             .map((n) => n.getAttribute("stroke") + " " + n.getAttribute("stroke-width")),
           fills: Array.from(svgs[0].querySelectorAll(":scope > rect"))
@@ -1521,6 +1533,248 @@ class MeasurePrintTest < ApplicationSystemTestCase
                     "the header must not print into the content box"
     assert_operator out["gaugeBottom"], :<=, page_bottom,
                     "the gauge must not print into the bottom paper margin"
+  end
+
+  # ---- lib/print_sheet.js: size labels --------------------------------------------------------
+
+  # TWO PARTS, DIFFERENT LABELS, AND `p` DELIBERATELY UNLIKE `b` ON BOTH — which is why this is not
+  # the plan's own pair. §14h: `p` holds the THINNED drawing points (RDP at 0.01 mm), so anything
+  # read off them under-reports every curve and loses a small hole's diameter entirely. The plan's
+  # own two shapes carried a `p` whose bbox was IDENTICAL to `b`, so a label positioned from the
+  # thinned points was green against them; here the two disagree on both shapes and on both axes,
+  # and the mutation prints `[["⌀10 mm", 72, 9.6, …], ["60 × 40 mm", 15, 23.6, …]]`.
+  LABELLED_PAIR = <<~JS.freeze
+    [{ b: [70, 0, 80, 10], k: 1, i: 0, o: 2, d: 10, p: [[70, 4], [74, 6]] },
+     { b: [0, 0, 60, 40],  k: 1, i: 0, o: 1,        p: [[0, 0], [30, 20]] }]
+  JS
+
+  # THE CONTROLLER'S OWN METHOD, INJECTED, so the paper and the on-screen readout have one
+  # definition between them and cannot drift apart. It reads `d` and `b`; nothing reads `p`.
+  # `${...}` IS JAVASCRIPT AND `#{...}` IS RUBY, so this survives a double-quoted Ruby string
+  # untouched — which is what the style gate wants, and it is worth knowing that the two
+  # interpolations do not collide before editing this line.
+  SIZE_LABEL = "(s) => (s.d != null ? `⌀${s.d} mm` : `${s.b[2] - s.b[0]} × ${s.b[3] - s.b[1]} mm`)"
+  PAIR_META = %({ name: "two.lbrn2", date: "2026-08-19", sizeLabel: #{SIZE_LABEL} }).freeze
+
+  # THE WIRE NUMBERS, NOT JUST THE WORDS — a label in the wrong place reads back exactly right.
+  # Six things are pinned per label and each is its own way to print a wrong sheet:
+  #   text    the CONTROLLER's string, never one re-derived here from `p` (§14h)
+  #   x       the bbox's own centre; `b[0]` alone hangs the label off the part's left edge
+  #   y       3.6 mm BELOW the bbox's BOTTOM. Subtract it instead and the label prints inside the
+  #           part; measure it off `b[1]` and it prints inside the part from the top. Either way
+  #           it lands across the geometry the sheet exists to check, and reads back identically.
+  #   anchor  without `middle` the label STARTS at the centre and runs right, which no textContent
+  #           assertion anywhere in this file can see
+  #   size    3 user units. Built with a bare el() instead of text() it inherits SVG's initial
+  #           16px — 16 mm of type, taller than the part it labels on anything small.
+  #   fill    #000. A label is TEXT, so `fill` is its ink, not a decoration: `fill="none"` prints
+  #           an invisible label on a sheet that is otherwise perfect, and the clip test's hit
+  #           probe below is the only OTHER thing in this file that can see it.
+  # x AND y ARE DIFFERENT NUMBERS ON BOTH SHAPES, so a labelNode that swapped them is red twice.
+  test "each part is labelled with the size its own sizeLabel returned" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0], #{PAIR_META})
+        return {
+          labels: Array.from(svg.querySelectorAll("text[data-role='size']")).map((n) => [
+            n.textContent, Number(n.getAttribute("x")), Number(n.getAttribute("y")),
+            n.getAttribute("text-anchor"), n.getAttribute("font-size"), n.getAttribute("fill"),
+          ]),
+          texts: svg.querySelectorAll("text").length,
+        }
+      })())
+    JS
+
+    assert_equal [ [ "⌀10 mm", 75.0, 13.6, "middle", "3", "#000" ],
+                   [ "60 × 40 mm", 30.0, 43.6, "middle", "3", "#000" ] ],
+                 out["labels"].map { |t| [ t[0], t[1].round(4), t[2].round(4), t[3], t[4], t[5] ] }
+    # AND `data-role="size"` IS WHAT TELLS THEM FROM THE FURNITURE. A single sheet carries four
+    # furniture texts (filename, warning, ruler, square — the sheet label is conditional), so the
+    # two counts together say the labels are exactly the two extra ones: drop the attribute and
+    # the list above is empty, put it on a furniture text and the list gains an entry.
+    assert_equal 6, out["texts"], "four furniture texts on a single sheet, and the two labels"
+  end
+
+  # EVERY LABEL AFTER EVERY OUTLINE, which is what the second pass buys and what one interleaved
+  # loop loses. SVG paints in document order, so a contour appended after a label is drawn OVER
+  # it — and parts overlap routinely (this repo's own nested-plate fixture is a plate with a hole
+  # on the same centre). A textContent assertion cannot see it; only the order can.
+  test "every label is appended after every outline, not interleaved with them" do
+    order = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0], #{PAIR_META})
+        .querySelector("[clip-path] > [transform]").children).map((n) => n.tagName))
+    JS
+
+    assert_equal %w[polygon polygon text text], order
+  end
+
+  # A PART AT A NON-ORIGIN DATUM, WHICH IS THE ONLY WAY TO SEE WHERE THE LABEL ACTUALLY LANDS.
+  # The wire test above reads the attributes, and those are identical whether the label sits in
+  # the translated group with its part or one level up in the clipping group: same x, same y,
+  # 90 mm and 183 mm away on the paper. So this one renders and MEASURES, and the part is at
+  # (100, 200) precisely so that the page translate is large and negative rather than zero — at
+  # the origin the two placements coincide and nothing here could fail.
+  #
+  # THE TOLERANCE IS LOOSE ON PURPOSE. The claim is "it rides the page transform", which fails by
+  # tens of millimetres; the 3.6 mm offset and the centring are pinned exactly by the wire test
+  # above, and getBoundingClientRect on text reports a font-metric box rather than the baseline,
+  # so a tight number here would be pinning Chrome's font metrics instead of this module. The
+  # measured values are 39.999991 and 61.394, so the residuals against the 2.0 allowed are 9e-6 mm
+  # on the centre and 0.79 mm on the bottom edge — the latter being the descent of 3 mm
+  # sans-serif, which is exactly the font metric this refuses to pin.
+  OFFSET_PART = <<~JS.freeze
+    [{ b: [100, 200, 160, 240], k: 1, i: 0, o: 1,
+       p: [[100, 200], [160, 200], [160, 240], [100, 240], [100, 200]] }]
+  JS
+
+  test "a size label rides the page transform inside the clip" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{OFFSET_PART}, m.PAPERS.Letter).pages[0],
+          { name: "offset.lbrn2", date: "2026-08-19", sizeLabel: () => "60 × 40 mm" })
+        svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+        document.body.appendChild(svg)
+        // FINALLY, NOT A TRAILING remove(): in_print_sheet re-visits only when the path changes,
+        // so a probe that threw would leave this sheet lying over the page for the whole file.
+        try {
+          const host = svg.getBoundingClientRect()
+          const S = host.width / 215.9
+          const label = svg.querySelector("text[data-role='size']")
+          const box = label.getBoundingClientRect()
+          return JSON.stringify({
+            // BY IDENTITY, not by tagName: the clipping group is a <g> too, so `parentNode.tagName
+            // === "g"` is satisfied by the placement this test exists to refuse.
+            inTranslatedGroup:
+              label.parentNode === svg.querySelector("[clip-path] > [transform]"),
+            // COUNTED ACROSS THE WHOLE SHEET, not just inside the clip, so the pair below is a
+            // claim the line above does not already make: one label, and no second copy of it
+            // anywhere outside the window.
+            labels: svg.querySelectorAll("text[data-role='size']").length,
+            clippedLabels: svg.querySelectorAll("[clip-path] text[data-role='size']").length,
+            centreX: ((box.left + box.right) / 2 - host.left) / S,
+            bottomY: (box.bottom - host.top) / S,
+          })
+        } finally { svg.remove() }
+      })()
+    JS
+
+    assert out["inTranslatedGroup"], "a label belongs with the geometry it labels"
+    assert_equal [ 1, 1 ], [ out["labels"], out["clippedLabels"] ],
+                 "one label, and inside the clip, so no copy of it can escape onto the strips"
+    # contentBox(Letter).x + 30 and .y + 43.6: the part's own centre and 3.6 mm under its bottom
+    # edge, moved onto the paper by the page transform.
+    assert_in_delta 40.0, out["centreX"], 2.0, "the label must land where its part landed"
+    assert_in_delta 60.6, out["bottomY"], 2.0
+  end
+
+  # THE LABEL IS CUT WITH ITS PART, AND THIS IS THE ONLY TEST OF THE EFFECT rather than the
+  # structure. A part taller than one tile is kept WHOLE on every tile it touches and cut by the
+  # <clipPath> (buildSheets' own `touches` comment), so on the TOP tile its label — which hangs
+  # under the FULL bbox, not under the visible part of it — is aimed at y 257.7..261.4, measured:
+  # past the content box, which ends at 247.4, and with its baseline landing on the calibration
+  # bar itself, which is drawn at 261.4. Unclipped it prints across the ruler, on the sheet whose
+  # one job is to certify the scale.
+  #
+  # WITH ITS PREMISES, three of them, because `hits == 0` is satisfied by every kind of nothing.
+  # The same probe runs against the row BELOW, where this same label is in bounds and must paint —
+  # which is also the demonstration that a label cut off one tile is reprinted whole on the next,
+  # the property that confines this to the last row. And the two `ink` bounds say the clipped
+  # label really was aimed at the strip rather than off the paper: getBoundingClientRect ignores
+  # clip-path (measured in the clip test above), so the box it reports is where the ink would
+  # have gone. `onScreen` is the one assertion here with no mutation of its own — it guards an
+  # assumption about the BROWSER, exactly as `fitsViewport` does in that test.
+  TALL_240 = <<~JS.freeze
+    [{ b: [0, 0, 60, 240], k: 1, i: 0, o: 1,
+       p: [[0, 0], [60, 0], [60, 240], [0, 240], [0, 0]] }]
+  JS
+
+  test "a label hanging below the content box is clipped away, not printed over the ruler" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const pages = m.buildSheets(#{TALL_240}, m.PAPERS.Letter).pages
+        const probe = (page) => {
+          const svg = m.renderSheet(document, page,
+            { name: "tall.lbrn2", date: "2026-08-19", sizeLabel: () => "60 × 240 mm" })
+          svg.style.position = "fixed"; svg.style.left = "0px"; svg.style.top = "0px"
+          svg.style.zIndex = "99999"
+          document.body.appendChild(svg)
+          try {
+            const host = svg.getBoundingClientRect()
+            const S = host.width / 215.9
+            const label = svg.querySelector("text[data-role='size']")
+            // AT THE DEFAULT `visiblePainted`, WHICH IS THE INSTRUMENT AND NOT AN OVERSIGHT. An
+            // earlier draft set `pointer-events: all` on the label, reasoning that a probe landing
+            // between two glyphs would be ambiguous between "clipped" and "missed the ink" — and
+            // that override turned the premise below into a lie, because it hit-tests a label
+            // that PAINTS NOTHING. Measured both ways: a labelNode carrying `fill="none"` —
+            // invisible on paper, on a sheet that still looks perfectly formed — was GREEN
+            // through this entire file with the override, and is RED on the premise without it.
+            // The ambiguity it was guarding against does not arise: Chrome hit-tests text by
+            // glyph CELL, so all 41 probes land (41 hits on the row below, 0 on this one).
+            const box = label.getBoundingClientRect()
+            const y = (box.top + box.bottom) / 2
+            let hits = 0
+            for (let i = 0; i <= 40; i++) {
+              const x = box.left + (box.width * i) / 40
+              if (document.elementsFromPoint(x, y).includes(label)) hits++
+            }
+            return {
+              hits, onScreen: box.right <= window.innerWidth && box.bottom <= window.innerHeight,
+              inkTop: (box.top - host.top) / S, inkBottom: (box.bottom - host.top) / S,
+            }
+          } finally { svg.remove() }
+        }
+        return JSON.stringify({ top: probe(pages[0]), below: probe(pages[1]) })
+      })()
+    JS
+
+    assert out["top"]["onScreen"] && out["below"]["onScreen"],
+           "a probe past the viewport edge hit-tests as empty, which reads as clipped"
+    # contentBox(Letter) ends at y 247.4 and the calibration strip runs to 269.4.
+    assert_operator out["top"]["inkTop"], :>, 247.4,
+                    "premise: the label must be aimed past the content box to be worth clipping"
+    assert_operator out["top"]["inkBottom"], :<, 269.4,
+                    "premise: and at the ruler rather than off the paper entirely"
+    assert_operator out["below"]["hits"], :>, 0, "premise: an in-bounds label paints at all"
+    assert_equal 0, out["top"]["hits"], "a label below the content box must be cut with it"
+  end
+
+  # A null label is OMITTED, not printed. MIXED, because an all-null input cannot tell "asked per
+  # shape" from "asked once and applied to none", and the `y` in the tuple is what says the label
+  # that survived belongs to the plate rather than to the hole.
+  test "a part whose sizeLabel returns null gets no label" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify((() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{LABELLED_PAIR}, m.PAPERS.Letter).pages[0],
+          { name: "two.lbrn2", date: "2026-08-19",
+            sizeLabel: (s) => (s.d != null ? null : "60 × 40 mm") })
+        return {
+          labels: Array.from(svg.querySelectorAll("text[data-role='size']"))
+                       .map((n) => [ n.textContent, Number(n.getAttribute("y")) ]),
+          texts: Array.from(svg.querySelectorAll("text")).map((t) => t.textContent),
+        }
+      })())
+    JS
+
+    # THE TWO REFUTES RUN FIRST, because minitest ends a test at its first failed assertion and
+    # both of the mutations they exist for ALSO change the tuple below — so behind it neither
+    # would ever execute, which is the `hasAnchor` defect recorded in the header-placement test
+    # one section up. Each has its own mutation and each fires alone, verbatim:
+    #   String(label) instead of the guard   Expected ["null", "60 × 40 mm", "two.lbrn2 ·
+    #                                        2026-08-19", …] to not include "null".
+    #   the `if (label)` guard dropped       an EMPTY <text> carrying data-role — `el`'s text door
+    #                                        skips a null rather than writing it, so the sheet
+    #                                        gains a labelled node with nothing in it, which the
+    #                                        tuple sees as ["", 13.6] and this line as "".
+    refute_includes out["texts"], "null", "a null label must be omitted, not printed"
+    refute_includes out["texts"], "", "an empty <text> is a label that was not omitted"
+    # AND THE SURVIVOR IS THE PLATE, NOT THE HOLE — which is what the `y` in the tuple says, and
+    # the only thing here that can see a label positioned from some other shape than its own.
+    assert_equal [ [ "60 × 40 mm", 43.6 ] ], out["labels"]
   end
 
   private
