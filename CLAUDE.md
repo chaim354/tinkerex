@@ -1830,6 +1830,54 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   the attribute reports what we wrote even when a rule outranks it.
 - **The pan/click slop is in SCREEN PIXELS, not user units.** Zoomed in, one mm is many pixels, so a
   user-space threshold calls an ordinary click a drag and silently swallows the selection.
+- **THE PRINT SHEET'S SCALE IS `width="215.9mm"` PLUS A `viewBox` SPANNING 215.9 USER UNITS, AND
+  THAT PAIR IS THE WHOLE MECHANISM.** There is no transform and no dpi constant. A px width over
+  the same viewBox draws an identical-looking page at the wrong size, **on paper**, where the error
+  is discoverable only with a ruler — so `measure_print_test.rb` asserts both literals AND
+  separately asserts that a 60 mm part spans 60 units. "A polygon exists" is answered exactly as
+  well by a polygon of the wrong size — and nothing pinned the printed size against the PAGE until
+  late in the arc: `transform: scale(0.9)` on the print stylesheet's `svg` rule left the file green
+  at 45 runs / 444 assertions.
+  Same trap one attribute over: a unit suffix inside an SVG attribute resolves through CSS at
+  96 dpi, so `font-size="3mm"` computes to 11.3386px — a header nearly four times too tall on a
+  sheet that still looks like a sheet.
+- **THE HEADER AND CALIBRATION STRIPS ARE RESERVED, NOT OVERLAID — the deliberate divergence from
+  the `boxes` sibling**, which draws its bar over its own content because it knows that content is
+  a tray plan of known extent. Measure prints arbitrary user geometry that can be anywhere, so an
+  overlaid ruler lands across a part outline. The consequence is a real `<clipPath>` where the
+  sibling gets away with a bbox filter — and a `clip-path` naming a missing id is **silently
+  inert**, so the guard asserts the browser's own geometry (a point inside the window is painted,
+  one outside is not) rather than reading the attribute back.
+- **THAT CLIP AND THE PAGE TRANSFORM MUST STAY ON TWO NESTED `<g>`s — COLLAPSING THEM PRINTS A
+  BLANK SHEET.** `clipPathUnits` defaults to `userSpaceOnUse`, which is the user space of the
+  element **referencing** the clip, not the page — so one group carrying both makes the window
+  travel with the geometry. Verified in Chrome by hit testing, not reasoned: on `nested-plate` the
+  sheet prints a 20 × 3 mm scrap of one corner, and for an ordinary file whose parts sit at
+  POSITIVE coordinates the translate is negative, the window lands off-paper, and the whole sheet
+  prints **blank** — no error, nothing logged, on a document that is otherwise perfectly formed.
+  It survived all **24** of that task's mutations because the clip was never asserted at all:
+  deleting the `<clipPath>` element AND the `clip-path` attribute outright left the suite green.
+- **THE PRINTED SIZE LABEL COMES FROM `sizeLabel()`, INJECTED FROM THE CONTROLLER, NEVER RE-DERIVED
+  FROM `shape.p`.** Those are the THINNED drawing points: measuring from them under-reports every
+  curve, and the ⌀10 hole in `nested-plate.lbrn2` thins below `MIN_CIRCLE_POINTS` and loses its
+  diameter entirely — printing a bounding box where a ⌀ belongs. The same trap as measuring before
+  thinning, one surface further out, and on the one surface a maker may read INSTEAD of measuring.
+  Mutation-checked.
+- **THE PRINT IFRAME IS BUILT AS NODES, NOT `doc.write` ON A MARKUP STRING**, because the header
+  carries a library FILENAME — user-controlled, and legitimately able to contain `<` on a
+  NAS-scanned share. The `boxes` sibling can use `doc.write` because its plan carries no user text;
+  copying that pattern across is an injection into a same-origin iframe with this page's cookies
+  behind it.
+- **`lib/print_sheet.js` DUPLICATES THE `boxes` BUNDLE'S `sheet.js` CONVENTIONS ON PURPOSE** —
+  same `MARGIN`/`OVERLAP` = 10, same `MAX_SHEETS` = 40, same `Sheet c,r of C×R`. That bundle lives
+  in `chaim354/tinkerex-addons`, where **publishing IS the deploy and Rails is never rebuilt**
+  (§14c), so importing it through the addon asset proxy would let an addon republish break a core
+  file page — and would remove Measure's print button outright on OVH, which blanks
+  `ADDON_SOURCE_URL`. Conventions copied, code not. If they ever must agree mechanically, move the
+  pagination to ONE place; do not add a third copy.
+- **A SINGLE SHEET CARRIES NO `Sheet 1,1 of 1×1` LABEL**, because there is nothing to register
+  against — and both halves of that rule are mutation-checked, since an implementation that always
+  labels and one that never does each pass half the tests.
 
 ### 14i. Backup and restore
 

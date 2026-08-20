@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-19 (**the 2026-08-19 simplification audit, worked**)
+**Updated:** 2026-08-20 (**Measure parts print at 1:1 for paper fit testing**)
 
 ## What this file is
 
@@ -60,7 +60,180 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-19): the 2026-08-19 simplification audit, worked (branch `claude/audit-2026-08-19-fixes`)
+## Latest (2026-08-20): Measure parts print at 1:1, so paper can be held against real hardware (branch `claude/svg-pattern-scale-fit-test-5d1311`)
+
+**Suite: the three `LIBRARY_BACKEND` legs are UNCHANGED at 2457 runs / 9431 assertions / 0F / 0E /
+3 skips, identical across all three — unchanged by construction, since the branch adds no test
+outside `test/system/`, and that is the second reading of the paragraph below. The system tier
+carries the whole arc: 102 → 175 runs, 1459 assertions, all 73 of them in one new file.
+`bin/ci` green — all eight gates (`setup style scan test test-share test-s3 system
+test-app`), exit 0, 1m8s.**
+
+**Shipped:** a **Select parts** toggle on the Measure view and a **Print** that lays the selected
+contours out at exactly 1:1, tiling across sheets when they do not fit, with a calibration gauge, a
+header and a size label under every part. The use case is fit testing: print the hole pattern for a
+panel-mount switch, hold the paper against the switch, and find out **before** cutting material.
+It serves all four measurable formats — `.lbrn`/`.lbrn2`, `.mage`, `.dxf`, `.svg` — because the
+controller branches on no file type, exactly as the 2026-08-07 entry left it.
+
+**NO SERVER CHANGE, AND THAT IS THE HEADLINE.** Everything a sheet needs was already in the
+geometry payload: millimetre coordinates, the full-resolution bbox `b`, the server-decided diameter
+`d`. So `Geometry::SCHEMA_VERSION` did not move, no renderer's `PAYLOAD_REVISION` moved, and **no
+deployed library was re-measured**. Verified: the branch touches five files under `app/` and
+`config/` and **nothing** under `app/services/`, `app/controllers/` or `app/models/` —
+`app/javascript/lib/print_sheet.js` (new, 663 lines), `measure_controller.js` (+219/−3,
+363 → 579), `_measure.html.erb` (+15/−1), `application.css` (+21), `config/importmap.rb` (+6).
+Neither `SCHEMA_VERSION` nor any `*_REVISION` appears anywhere in the branch's code diff.
+
+**Driven on all four formats, not argued from the partial.** A `.svg`, a `.dxf` and a `.mage` page
+were opened for real: each shows the Measure view with **Select parts**, the paper `<select>`
+carrying A4/Letter/A3/Tabloid and defaulting to Letter, and **Print all**, and select mode engages.
+One measured caveat worth knowing: `sample.mage` builds a payload with **zero shapes**, so its view
+never reaches `--ready` and the controls never appear — the design's own §7 behaviour for an empty
+payload, not a print defect. `real-export.mage` (2 shapes), `plate.svg` (2), `square.svg` (1),
+`sample.dxf` (4) and `plate.dxf` (2) all behave.
+
+**The scale mechanism is two attributes.** `width="215.9mm"` plus `viewBox="0 0 215.9 279.4"` makes
+one user unit one millimetre; there is no transform and no dpi constant. The two strips cost 29 mm
+of every sheet's height (7 header + 22 calibration), giving a Letter content box of
+**195.9 × 230.4 mm** and A4 **190 × 248 mm**. They are **reserved rather than overlaid** — the
+deliberate divergence from the `boxes` bundle's `sheet.js`, which draws its bar over content of
+known extent, where this prints arbitrary user geometry that would otherwise land under the ruler.
+Tiling steps come off the content box with a 10 mm overlap band, `MAX_SHEETS` 40, `Sheet c,r of
+C×R` grid labels — the sibling's constants and conventions verbatim.
+
+**The duplication is deliberate and argued in full** at
+`docs/superpowers/specs/2026-08-19-measure-print-to-scale-design.md` §10: `sheet.js` lives in
+`chaim354/tinkerex-addons`, where publishing IS the deploy and Rails is never rebuilt (§14c), so
+importing it through the addon asset proxy would let an addon republish break a core file page —
+and would remove Measure's print button outright on OVH, which blanks `ADDON_SOURCE_URL`.
+Conventions copied, code not. If they ever must agree mechanically, the honest move is to put the
+pagination in one place, not to add a third copy.
+
+### What the process caught — every one of these was green when it was found
+
+- **CRITICAL, and the whole point of the arc's review discipline: `clipPathUnits` defaults to
+  `userSpaceOnUse`, which is the user space of the element that REFERENCES the clip.** `clip-path`
+  and `transform` on one `<g>` therefore made the clip window travel WITH the geometry instead of
+  staying on the paper. On `nested-plate.lbrn2` the sheet printed a 20 × 3 mm scrap of one corner;
+  for an ordinary laser file whose parts sit at positive coordinates the translate is negative, the
+  window lands off-paper, and **the whole sheet prints blank** — no error, nothing logged, on an
+  otherwise perfectly formed document. It survived **all 24** of that task's mutations because the
+  clip was never asserted at all: deleting the `<clipPath>` element AND the attribute outright left
+  the suite green. Fixed by nesting — clip on an untransformed ancestor — and pinned by hit-testing
+  the four painted edges, because **Chrome ignores `clip-path` in both `getBoundingClientRect` and
+  `getBBox`**: the plan's own instrument read the full unclipped extent and would have gone RED
+  against correct code.
+- **`touches` as a containment test instead of an overlap test.** Swapping its two assignment lines
+  left the whole suite green at 10 runs / 67 assertions, because every fixture had each shape
+  landing on exactly one tile — so neither claim the module's own comment makes had a witness. The
+  user-visible failure is a 500 mm bracket edge printing as three correctly numbered, correctly
+  margined, **completely blank** sheets.
+- **Zero pages for any selection 10 mm or smaller.** Without the `w <= content.w` guard,
+  `ceil((w − OVERLAP) / stepX)` is 0 for anything at or under the overlap band — and this repo's
+  own ⌀10 hole fixture would have hit it.
+- **A 40-character filename overprinted the do-not-scale warning**, on the sheet whose entire
+  purpose is the scale check. Measured on A4, the narrowest content box: the warning occupies
+  x 81.28..128.72 and `Rev C bracket assembly plate final.lbrn2` — an ordinary length on a
+  NAS-scanned share — reaches x 81.48. The header is now truncated in the MIDDLE, keeping the
+  extension, on a worst-case width budget charged **per character class**: `WORST_GLYPH` is `@` at
+  3.0432 mm, **not** the `W` (2.8296) everyone guesses, and `WORST_WIDE` is 3.71 because every
+  emoji measures 3.7042, ahead of fullwidth/CJK at 3.0638. An earlier revision counted UTF-16 code
+  units at a single ASCII rate: **two errors that partly cancelled**, which is why the sheet looked
+  fine — an astral character costs two units, so the length over-count ran ahead of the width
+  under-charge. Fixing only the first lands the ink on the warning. Both halves or neither.
+- **A `fill="none"` size label — invisible ink on a page that still looks perfect.** It was green
+  through the entire file, because the hit-test had `pointer-events: all` set on the label "so a
+  probe between two glyphs would not be ambiguous". That override hit-tests a label that paints
+  nothing. Removed: at the default `visiblePainted` all 41 probes land on real ink (41 hits against
+  0), and the mutation is red.
+- **`hidden` on a `.btn` did nothing**, because `.btn { display: inline-block }` is an author rule
+  and `[hidden]` is only the UA stylesheet's. Measured before the fix: `hidden="true"`, computed
+  display `block`, 48 px wide, plainly visible between **Print** and **Reset**. `application.css`
+  already carried the same one-liner for `.addon-card` for the same reason.
+- **Nothing pinned the printed size against the PAGE.** `transform: scale(0.9)` on the print
+  stylesheet's `svg` rule mis-scales every sheet on every printer and left the file green at
+  45 runs / 444 assertions. Each sheet's laid-out box is now measured against the paper it declares,
+  on all four papers.
+- **The end-to-end tier was placement-blind.** Every assertion read untransformed points, so
+  dropping `- box[0]` from `translateX` left all four of that task's tests green. It now asserts
+  `translate(40 37)`.
+- **`toISOString` on the header date** stamps an evening print in the Americas with **tomorrow's**
+  date, on a header that exists so a sheet found on a bench next week can be trusted. Local
+  (`toLocaleDateString("en-CA")`) instead.
+- **`populatePaper` ran before `bindInteractions`.** It reads `localStorage`, which throws in a
+  blocked or partitioned context — and by then `draw()` has inserted the SVG and applied `--ready`,
+  so a throw left a drawn, ready-looking view with **no hover, click, pan or zoom**.
+- **A pan in select mode showed `copy`, not `grabbing`.** Two selectors at (0,2,1) and the new one
+  later, so it won the tie and removed the grab affordance in the mode where users pan most.
+
+### The recurring shape: a test input that cannot distinguish correct from broken
+
+This was the arc's dominant finding, restated so often that it became a standing instruction in the
+plan itself. The failures are all one shape — **the input, not the assertion**:
+
+- **one shape** cannot tell a fold from `shapes[0]`, or `Math.max` from `Math.min` — `unionBox`
+  survived being gutted twice;
+- **a selection that is one row tall** cannot tell `translateY` reading `originY` from `originX`;
+  and every tiling test being **1×N or N×1** left three swaps green at once (`col:`/`row:`,
+  `cols:`/`rows:`, and the loop nesting) — **nor would 2×2 have caught them**, since `cols == rows`
+  makes every swap invisible. 3×2 (400 × 300 mm on Letter) is the smallest grid that sees all three;
+- **a selection at (0, 0)** makes the datum shift `- box[0]` / `- box[1]` a deletable no-op, in
+  `touches` and in the page transform alike;
+- **a single page** whose clip id genuinely is `mp-clip-0-0` cannot see a reference hard-coded to
+  that string — and over one row, `mp-clip-${col}` is indistinguishable from the shipped key;
+- **`assert_selector … text:` is a SUBSTRING match** — dropping both plural ternaries *and*
+  `clearMarks`' `this.marked.clear()` left the file green, because `"1 part"` is a substring of
+  `"11 parts"` and of the stale count. `exact_text:` where the whole value is the claim.
+
+**Each of those was reproduced RED before its fix, and the plan's own required set was run,
+observed RED and restored** — the evidence is in the file rather than in this entry:
+`measure_print_test.rb` carries **37** `MUTATION-CHECKED` blocks, most quoting the observed failure
+text verbatim (the clip fix alone records eleven mutations with all eleven actuals). The required
+set: `mm` → a px width (the scale assertion), the `<clipPath>` deleted (a content point
+escapes onto the ruler), calibration furniture on page 1 only, `cols * rows > 1` → `true` (the
+single sheet gains a `Sheet 1,1 of 1×1` label), `doc.write` with an interpolated name (an `<img>`
+injected into the same-origin iframe), and `sizeLabel` re-derived from the thinned `p` — which
+prints a bounding box where the ⌀10 hole's diameter belongs, §14h's measure-after-thinning bug
+reintroduced one surface further out.
+
+### Four residuals, recorded rather than fixed
+
+1. **The trim crosshairs reach 6 mm from the paper edge** (`content.x − 4`, `MARGIN` = 10) — inside
+   the 6.35 mm (0.25 in) hardware limit `MARGIN`'s own comment cites as the thing it clears. The
+   outer tips may be shaved by some printers, and on a 12.7 mm-limit printer the whole outer arm
+   plus a band of the content box is unprintable. `MARGIN = 10` predates this arc; changing a
+   constant at the end of it, on an argument nothing has measured against a real printer, is the
+   worse move.
+2. **`WORST_WIDE` = 3.71 bounds the ELEVEN SCRIPTS SAMPLED, not all non-ASCII.** Re-measured today
+   in the same headless Chrome at 3 mm sans-serif: **U+FDFD ﷽ 19.4532 mm (5.2×)**, U+2E3B 7.9804,
+   U+2E3A 5.3604, U+0BF5 ௵ 4.4031. Measured through a real sheet on A4: one ﷽ clears the warning by
+   34.00 mm, two by 14.54, **three overprint it by 4.91**, and a 40-﷽ name truncates to eleven plus
+   an ellipsis and runs to x 244.82 on a 210 mm sheet. **The fix is NOT a bigger constant**: A4's
+   name budget is 46.9 mm (`content.w / 2 − 24 − 2 −` the date's 22.1), so a rate bounding ﷽ would
+   leave room for two glyphs and destroy the feature. It fails as a visible over-run on the sheet —
+   findable by looking at it, unlike a silent mis-scale — which is why it is stated, not patched.
+3. **A last-row size label can be clipped away silently.** Pagination is computed from the
+   geometry's union box and knows nothing about the label hanging under it, so on the last row a
+   part whose bbox bottom clears the content box by less than 4.4 mm has its label sliced, and by
+   less than 0.69 mm loses it entirely (the ink occupies `b[3] + 0.69` to `b[3] + 4.39`). Measured
+   on Letter, content box 230.4 mm tall: **226 mm labelled, 228 cut, 230 gone.** Padding
+   `buildSheets` would fix it and would silently move every page count the tiling tests pin, so it
+   is recorded at both ends — in `labelNode`, and in `buildSheets`, which is the code that would
+   have to change.
+4. **A ZWJ emoji sequence or a combining mark can be split** by `truncateMiddle`, so a family emoji
+   may come apart into its members. Cosmetic, and always **over**-charged — seven code points billed
+   for one glyph — so it fails toward a shorter header, never an overflow. `Intl.Segmenter` is the
+   upgrade if it ever matters; it would add a second code path only one of which any test walks.
+
+**Also stated rather than papered over:** `printSheets`' one line of `window.print()` is the single
+export with no test over it — verified, not assumed (renaming it away leaves the suite green); the
+controller's counted print stub is what reaches it. A browser cannot force a print dialog to 100%,
+which is why the gauge is on **every** sheet rather than the first.
+
+---
+
+## 2026-08-19: the 2026-08-19 simplification audit, worked (branch `claude/audit-2026-08-19-fixes`)
 
 `docs/AUDIT-2026-08-19.md` was produced read-only against `main` @ `dc739c3` — 84 findings over 57
 subsystem rows. This arc implements them. `docs/FIX-LOG-2026-08-19.md` is the per-finding record;
