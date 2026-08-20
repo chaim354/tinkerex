@@ -1691,9 +1691,15 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
 
     # NOT `contour_with_min_x(-30).click` — Selenium refuses it. The plate's bbox centre IS the
     # fixture's shared centre, where the hole is painted on top, so the click is intercepted
-    # ("Other element would receive the click"). Use the offset-click idiom lbrn_measure_test.rb
-    # already uses on this fixture: click a quarter of the element's width right of centre.
-    plate = click_plate
+    # ("Other element would receive the click"). `click_plate` is the offset-click idiom
+    # lbrn_measure_test.rb already uses here: a quarter of the element's width right of centre.
+    #
+    # IT RETURNS THE STAGE <svg>, NOT THE CONTOUR — Capybara's `perform_click_action` returns self
+    # — so never call `.click` on what it hands back: that clicks the element's CENTRE, which is
+    # where the hole is painted, and selects the hole. Fetch the contour separately when you need
+    # the element itself.
+    click_plate
+    plate = contour_with_min_x(-30)
     assert_selector ".measure-contour--marked", count: 1
     assert_selector ".measure-dims", text: "1 part"
 
@@ -1718,7 +1724,7 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
   test "a click outside select mode marks nothing" do
     open_measure_view(@nested_id)
 
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
 
     assert_no_selector ".measure-contour--marked"
     assert_selector ".measure-dims", text: "60 × 40 mm"
@@ -1734,9 +1740,15 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
 
     # NOT `contour_with_min_x(-30).click` — Selenium refuses it. The plate's bbox centre IS the
     # fixture's shared centre, where the hole is painted on top, so the click is intercepted
-    # ("Other element would receive the click"). Use the offset-click idiom lbrn_measure_test.rb
-    # already uses on this fixture: click a quarter of the element's width right of centre.
-    plate = click_plate
+    # ("Other element would receive the click"). `click_plate` is the offset-click idiom
+    # lbrn_measure_test.rb already uses here: a quarter of the element's width right of centre.
+    #
+    # IT RETURNS THE STAGE <svg>, NOT THE CONTOUR — Capybara's `perform_click_action` returns self
+    # — so never call `.click` on what it hands back: that clicks the element's CENTRE, which is
+    # where the hole is painted, and selects the hole. Fetch the contour separately when you need
+    # the element itself.
+    click_plate
+    plate = contour_with_min_x(-30)
 
     assert plate[:class].include?("measure-contour--marked"), "it must be in the print set"
     assert plate[:class].include?("measure-contour--selected"), "and it must be the one being read"
@@ -1760,7 +1772,7 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
   test "widening to an object completes it rather than inverting it" do
     open_measure_view(@nested_id)
     click_on "Select parts"
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
     assert_selector ".measure-contour--marked", count: 1
 
     marked = page.evaluate_script(<<~JS)
@@ -1786,7 +1798,7 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
     # that CSS rule can be deleted and every test in the plan stays green forever.
     assert_selector "[data-measure-target='clearButton']", visible: :hidden
 
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
     contour_with_min_x(-5).click
     assert_selector ".measure-contour--marked", count: 2
     assert_selector "[data-measure-target='clearButton']", visible: :visible
@@ -1803,7 +1815,7 @@ Add to `test/system/measure_print_test.rb`, before the `private` keyword:
     assert_selector "[data-measure-target='printButton']", text: "Print all"
 
     click_on "Select parts"
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
 
     assert_selector "[data-measure-target='printButton']", text: "Print 1 part"
   end
@@ -2057,7 +2069,7 @@ Add to `test/system/measure_print_test.rb`, before `private`:
     open_measure_view(@nested_id)
     stub_print!
     click_on "Select parts"
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
     click_on "Print 1 part"
 
     assert_equal 1, page.evaluate_script("window.__printed"), "Print must reach the spooler"
@@ -2138,7 +2150,7 @@ Add to `test/system/measure_print_test.rb`, before `private`:
     open_measure_view(@nested_id)
     stub_print!
     click_on "Select parts"
-    contour_with_min_x(-30).click
+    click_plate # NOT contour_with_min_x(-30).click — the hole intercepts it; see above
     click_on "Print 1 part"
 
     assert_selector ".measure-print-frame", visible: :all
