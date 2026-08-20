@@ -928,6 +928,10 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 
 ## Task 6: Sheet furniture — header, calibration gauge, trim marks
 
+> **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
+> which SVG does not care about. Nothing in this task prints a content-box number **as text** — but
+> if you add one that does, round it.
+
 **Files:**
 - Modify: `app/javascript/lib/print_sheet.js`
 - Test: `test/system/measure_print_test.rb`
@@ -1211,6 +1215,17 @@ git commit -m "feat(measure): label each printed part with its server-computed s
 **Files:**
 - Modify: `app/javascript/lib/print_sheet.js`
 - Test: `test/system/measure_print_test.rb`
+
+> **Two things Task 4 flagged forward — check them here rather than assuming:**
+>
+> 1. **`clipId` is `mp-clip-${col}-${row}`, unique within one grid but not across documents.** This
+>    task puts every page of one grid into a single iframe document, where `(col, row)` pairs are
+>    distinct — so it holds. It would stop holding if two grids shared a document, or if a re-print
+>    reused an uncleared frame; `buildPrintFrame` removing the prior frame first is what keeps that
+>    safe. Verify both. If either changes, the id needs a per-document counter, not a bigger key.
+> 2. **`xmlns` on the root `<svg>` is emitted but so far unasserted.** Inert while pages are
+>    appended as NODES; load-bearing the moment anything serializes through `outerHTML` or
+>    `srcdoc`. If you reach for either, assert it.
 
 `window.print()` is reached by a counted stub in Task 11 (`stub_print!` patches the
 `HTMLIFrameElement.prototype.contentWindow` getter, which is the only moment a test can reach in
