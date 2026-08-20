@@ -1,4 +1,5 @@
 require "test_helper"
+require "ripper"
 
 # Executes the two "standing tripwire greps" that CLAUDE.md cites as PROOFS of the maker/file-layer
 # boundary (§14a, §14c) and of the capability-gate design (§14a).
@@ -32,6 +33,29 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     end
   end
 
+  # Real `Sync::Something` CODE references in `file` -- constant-path token pairs read off
+  # Ripper's own lexer, not a text match. A text pattern like /Sync::/ cannot tell a real
+  # reference from the same nine characters sitting inside a STRING:
+  # app/jobs/library/trash_purge_job.rb's own ArgumentError message names "Sync::Gc" and
+  # "Sync::ChunkReaper" in PROSE, for an operator reading a failed-job log -- a bare regex
+  # against that file finds two hits, both inside the string, zero of them real (verified before
+  # writing this method). Ripper's lexer emits string content as :on_tstring_content and comment
+  # bodies as :on_comment, never as :on_const, so a real reference and the same text sitting
+  # inside a string or a comment are STRUCTURALLY different token types and cannot be confused,
+  # however the string is quoted or how many lines it spans. This SUBSUMES `offending`'s
+  # hand-rolled comment strip above rather than duplicating it with a second, weaker mechanism --
+  # and it additionally closes a hole that helper never had to face, because nothing in the
+  # chunk-internals grep above happens to collide with a string literal the way "Sync::" does.
+  def sync_references(file)
+    tokens = Ripper.lex(File.read(file))
+    rel = Pathname.new(file).relative_path_from(ROOT)
+    tokens.each_cons(2).filter_map do |(pos, type, str, _), (_, next_type, next_str, _)|
+      next unless type == :on_const && str == "Sync"
+      next unless next_type == :on_op && next_str == "::"
+      "#{rel}:#{pos.first}"
+    end
+  end
+
   test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
     # CLAUDE.md §14c. The maker layer must not know files are chunks — that is the whole point of
     # the FileLayer port. The ONE legitimate exception is addon-generated output, which has no
@@ -58,6 +82,81 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_match %r{\Aapp/services/maker/addons/library_output\.rb:\d+\z}, hits.sole,
                  "the one permitted chunk-internals reference must live in " \
                  "Maker::Addons::LibraryOutput (the single addon output path), but it is at #{hits.sole}"
+  end
+
+  # Paths that are NOT "the maker layer" for THIS guard, and so are never scanned by it: the sync
+  # engine's own service objects (moving to a separate repo in Stage 3, CLAUDE.md §10), the
+  # device-facing v1 API (sync-shaped, not maker-shaped -- a device talks to it directly, never
+  # through a maker controller), the two jobs that reclaim sync-engine state (chunk refcounts,
+  # abandoned commits), the ActionCable channel that IS the sync nudge, and FileLayer::Chunk
+  # itself, §14a's one legitimate door. GLOBS, not a file list, for the same reason the scanned
+  # file set in the test below is Dir.glob'd rather than enumerated: a new file under any of
+  # these trees is sync-side by construction, not a maker-layer file that happens to be exempt
+  # today.
+  SYNC_SIDE_GLOBS = %w[
+    app/services/sync/**/*.rb
+    app/services/sync.rb
+    app/controllers/v1/**/*.rb
+    app/jobs/*reaper*_job.rb
+    app/jobs/retention_job.rb
+    app/channels/**/*.rb
+    app/services/file_layer/chunk.rb
+  ].freeze
+
+  # TWO FILES ARE NAMED HERE, NOT ZERO, BECAUSE THE BYTE PATH ISN'T DONE YET. FilesController's
+  # begin_upload/finalize_upload and Maker::Addons::LibraryOutput both still call Sync::Commit
+  # directly for chunk-mode uploads -- CLAUDE.md's own Stage 2 note says so ("Task 8 (the byte
+  # path) is still to come"). Asserting zero hits here would be asserting something false today,
+  # the same argument the chunk-internals test above makes for "one hit" over "no hits" -- and it
+  # would tell whoever runs this suite before Task 8 lands that the branch is broken when it is
+  # exactly on plan.
+  #
+  # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how.
+  SYNC_SEAM_EXCEPTIONS = %w[
+    app/controllers/files_controller.rb
+    app/services/maker/addons/library_output.rb
+  ].freeze
+
+  test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
+    # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
+    # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
+    # FileLayer::Chunk all four metadata verbs specifically so the maker layer never has to reach
+    # past the port for them again; this is what keeps that true going forward, on every file the
+    # tree grows rather than only the ones remembered at the time this was written.
+    sync_side = SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
+    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - sync_side
+
+    hits = maker_layer_files.flat_map { |file| sync_references(file) }
+    offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
+
+    # NAMED, NOT COUNTED, in both directions -- a mutation that swaps one offender for another
+    # while holding the count steady is caught only by asserting WHICH files, matching this
+    # file's own "assert the files, not merely a count" rule from the chunk-internals test above.
+    extra = offending_files - SYNC_SEAM_EXCEPTIONS # a NEW violation, not on the list
+    stale = SYNC_SEAM_EXCEPTIONS - offending_files # a LISTED file that no longer violates
+
+    assert_empty extra,
+                 "NEW maker-layer file(s) reaching into Sync:: directly, not on the Task 8 " \
+                 "exception list:\n  #{extra.join("\n  ")}\n" \
+                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this " \
+                 "really is byte-path work waiting on Task 8, add it to SYNC_SEAM_EXCEPTIONS " \
+                 "and say so in the PR -- do not let this test go red silently past that."
+    assert_empty stale,
+                 "SYNC_SEAM_EXCEPTIONS lists file(s) that no longer reach into Sync:: directly:\n" \
+                 "  #{stale.join("\n  ")}\n" \
+                 "Task 8 fixed this -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
+                 "you do, remove the constant entirely and simplify this test's two assertions " \
+                 "above to a single `assert_empty offending_files`."
+    # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY. Without this, a dutiful editor
+    # could shrink SYNC_SEAM_EXCEPTIONS to `[]` one Task-8 fix at a time (the two assertions
+    # above stay green the whole way) and leave it sitting there -- an allowlist for nothing,
+    # which the next reader has to re-derive is pointless before trusting it. This fails THAT
+    # state too, so whoever removes the last entry is told, in the same run, to delete the
+    # constant and both comments above it, not just leave `[] .freeze` behind.
+    assert_not_empty SYNC_SEAM_EXCEPTIONS,
+                     "SYNC_SEAM_EXCEPTIONS is empty, which means Task 8 is done: delete this " \
+                     "constant and its two comments, and simplify this test to `assert_empty " \
+                     "maker_layer_files.flat_map { |file| sync_references(file) }`."
   end
 
   test "NotImplementedError is never rescued" do

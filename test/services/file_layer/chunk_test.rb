@@ -1,12 +1,18 @@
 require "test_helper"
 require "open-uri"
 require_relative "adapter_contract"
+require_relative "adapter_mutation_contract"
 
 module FileLayer
   # The Chunk adapter over the sync engine's content-addressed store: this is today's
   # node -> version -> manifest_chunks -> Storage::ChunkStore read path, moved behind the port.
   class ChunkTest < ActiveSupport::TestCase
     include FileLayerAdapterContract
+    # Task 7: chunk joins share and s3 on the mkdir/move/delete/undelete contract -- all three
+    # metadata verbs now answer through the port (Tasks 3-6), so the boundary the contract
+    # pins (bytes vs. no bytes) is real for chunk too. NOT FileLayerWritableContract: that one
+    # is `write`, which takes an IO, and chunk must never grow it (see the refusal test below).
+    include FileLayerMutationContract
     # For the mkdir broadcast test below -- same include LibraryChannelTest and
     # ProjectIntakeTest use for assert_broadcast_on/assert_broadcasts.
     include ActionCable::TestHelper
@@ -51,6 +57,14 @@ module FileLayer
       Sync::Commit.finalize(user: @user, commit_id: cid)
       node_id
     end
+
+    # The two hooks FileLayerMutationContract requires. create_file! above already IS make_file
+    # -- a real node through a real Sync::Commit, real readable bytes -- so this is a thin alias
+    # rather than a second implementation the two could drift apart under; every other test in
+    # this file keeps calling it create_file!, which is why the alias exists instead of a rename.
+    def make_file(name:, bytes:) = create_file!(name:, bytes:)
+
+    def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
 
     # A DIRECT-DB FIXTURE FOR "already tombstoned", NOT A MODEL OF ANY DOOR -- and the difference
     # matters more since Task 5. This comment used to say the v1 API sets this tombstone via
@@ -109,20 +123,21 @@ module FileLayer
       assert_equal "AAABB", adapter.read(@user, node_id:)
     end
 
-    # THE ONE CHUNK MUTATION THAT STILL REFUSES OUTRIGHT, AND WHY IT ALWAYS WILL: write does NOT
-    # go through this port. Chunk-mode writes are Sync::Commit's two-phase presigned flow (a
-    # device pushes; the web UI reuses it), and implementing write here would mean a server-side
-    # chunk-and-commit path that duplicates Sync::Commit, has no caller, and reaches into the sync
-    # engine this port exists to stay out of (spec §10) -- unlike mkdir/move/delete/undelete,
-    # which move no bytes and so have no such argument against them.
+    # THE BYTE WRITE PATH IS STILL NOT CHUNK MODE'S, and this is the one refusal Stage 2 kept.
+    # The four metadata verbs now go through the port; `write` must never join them, because it
+    # takes an IO and would push bytes through Rails, which CLAUDE.md 15 forbids. Chunk uploads are
+    # Sync::Commit's two-phase presigned flow -- begin_upload/finalize_upload, arriving in Task 8.
     #
-    # mkdir (Task 3), move (Task 4), delete (Task 5) and undelete (Task 6) are gone from this test
-    # -- the port is their door now, the same as share/s3, and none of the four raises any more.
-    test "write is not chunk mode's — it refuses, naming its OWN real path" do
+    # NotImplementedError is a ScriptError, NOT a StandardError, so `rescue => e` and ActiveJob's
+    # retry_on do not catch it. That is deliberate and load-bearing: the answer must stay loud.
+    test "the BYTE write path refuses, naming the two-phase flow" do
       err = assert_raises(NotImplementedError) do
         adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("b"))
       end
-      assert_match(/Sync::Commit/, err.message, "write must name the path a caller should use")
+      assert_match(/Sync::Commit/, err.message)
+      refute_kind_of StandardError, err,
+                     "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
+                     "silently not catch it"
     end
 
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---
@@ -504,16 +519,13 @@ module FileLayer
       assert_equal "mine", adapter.read(@user, node_id:)
     end
 
-    # The port is now the door for chunk-mode mkdir, not a refusal that names another door.
-    # Maker::LibraryFolder used to branch around it into Sync::Mutation; it no longer can,
-    # because in remote mode there is no Sync::Mutation in the process to branch into.
-    test "mkdir creates a dir node through the sync engine and returns its FileInfo" do
-      info = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
-      assert_equal "dir",  info.kind
-      assert_equal "cad",  info.name
-      node = @user.nodes.present.find_by(node_id: info.node_id)
-      assert_equal "dir", node.kind
-    end
+    # "mkdir creates a dir node through the sync engine and returns its FileInfo" lived here --
+    # deleted, Task 7: test_mutation_contract_mkdir_creates_a_dir_node_and_is_idempotent asserts
+    # the identical two facts (a live dir node with the right kind/name, and idempotence on a
+    # second call) now that the contract is wired in below. The port is the door for chunk-mode
+    # mkdir, not a refusal that names another door -- Maker::LibraryFolder used to branch around
+    # it into Sync::Mutation directly; it no longer can, because in remote mode there is no
+    # Sync::Mutation in this process to branch into.
 
     # A mutation that does not broadcast leaves every device's tree diverged from the server's,
     # silently -- pull is incremental, so nothing anywhere reports it. Asserted on the CHANGELOG
@@ -541,27 +553,29 @@ module FileLayer
       assert_operator @user.reload.head_seq, :>, before, "mkdir must advance head_seq"
     end
 
-    test "mkdir is idempotent -- LibraryFolder walks each path segment on every call" do
-      first  = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
-      second = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
-      assert_equal first.node_id, second.node_id
-    end
+    # "mkdir is idempotent -- LibraryFolder walks each path segment on every call" lived here --
+    # deleted with its neighbour above, same reason: the contract's idempotence assertion (a
+    # second mkdir on an existing path returns the SAME node_id) is this test verbatim.
 
-    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
-    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test
-    # would prove nothing about this adapter. Same case as adapter_mutation_contract.rb's
-    # test_mutation_contract_mkdir_refuses_a_cross_kind_collision, which passes unmodified against
-    # Share and S3 (both already refuse, independently -- verified before writing this).
+    # KEPT LOCALLY, DELIBERATELY, EVEN THOUGH test_mutation_contract_mkdir_refuses_a_cross_kind_
+    # collision NOW COVERS THE SAME CALL (Task 7 wired the contract in above) -- the contract only
+    # proves the raise; it does not check WHAT the message says or that the refusal left the
+    # occupant untouched, and neither is free: a caller misreading a name-BLIND UnsupportedOperation
+    # as some unrelated failure, or a refusal that half-completed and left two live nodes at one
+    # (parent, name), are both real regressions the contract's bare assert_raises cannot catch.
+    # Same split share_test.rb and s3_test.rb already draw for their own move-collision tests,
+    # which keep a local copy to check disk/bucket state the contract has no way to see -- here
+    # there is no separate storage layer, so the local depth is the message and the node count.
     #
-    # mkdir's own idempotence check above is scoped `kind: "dir"`, so it is BLIND to a live FILE
-    # at this exact (parent_node_id, name) -- without this refusal, chunk mode would silently mint
-    # a dir node and a file node sharing one identity, and no real filesystem can represent that as
-    # a single directory entry: every mount (FUSE/CfAPI/WebDAV) eventually hits it as an
-    # unrepresentable collision. This is CLAUDE.md 14a's one-condition-two-answers shape --
+    # mkdir's own idempotence check (now in the contract) is scoped `kind: "dir"`, so it is BLIND
+    # to a live FILE at this exact (parent_node_id, name) -- without this refusal, chunk mode would
+    # silently mint a dir node and a file node sharing one identity, and no real filesystem can
+    # represent that as a single directory entry: every mount (FUSE/CfAPI/WebDAV) eventually hits
+    # it as an unrepresentable collision. This is CLAUDE.md 14a's one-condition-two-answers shape --
     # "the destination is taken" must mean the same thing on every backend behind one port call --
     # and it was reachable through the exact call the New Folder chooser makes
     # (Maker::LibraryFolder.create_child!), not just a hypothetical.
-    test "mkdir refuses a cross-kind collision -- a live FILE at the same (parent, name)" do
+    test "a refused mkdir names the colliding file and leaves it as the only node there" do
       create_file!(name: "mover.stl", bytes: "b")
       err = assert_raises(FileLayer::UnsupportedOperation) do
         adapter.mkdir(@user, parent_node_id: nil, name: "mover.stl")
@@ -666,13 +680,15 @@ module FileLayer
       end
     end
 
-    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
-    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test
-    # would prove nothing about this adapter. Same precedent as the mkdir cross-kind tests above,
-    # and the same reason: Sync::Mutation performs no name check at all, so without this refusal
-    # chunk would silently produce two live nodes sharing one (parent_node_id, name) -- the same
-    # collision mkdir already refuses, one verb over.
-    test "move refuses a taken destination -- a live node already at (parent, name)" do
+    # KEPT LOCALLY, DELIBERATELY, EVEN THOUGH test_mutation_contract_move_refuses_a_taken_
+    # destination NOW COVERS THE SAME CALL (Task 7 wired the contract in above) -- same split as
+    # the mkdir collision test above: the contract proves the raise, not the message or that a
+    # refused move left the source byte-for-byte intact (move is copy-then-delete in spirit even
+    # here, where "copy" is a row update -- see §14a's copy -> delete -> orphan landmine, the
+    # reason s3_test.rb keeps an analogous local check). Sync::Mutation performs no name check at
+    # all, so without the port's own refusal chunk would silently produce two live nodes sharing
+    # one (parent_node_id, name) -- the same collision mkdir already refuses, one verb over.
+    test "a refused move names the taken destination and leaves the source unmoved" do
       a = create_file!(name: "a.stl", bytes: "aaa")
       create_file!(name: "b.stl", bytes: "bbb")
 
@@ -685,41 +701,25 @@ module FileLayer
       assert_equal "aaa", adapter.read(@user, node_id: a)
     end
 
-    # PINS THE SCOPE OF THAT REFUSAL, WHICH THE TEST ABOVE DOES NOT: the clobber lookup must
-    # EXCLUDE the node being moved itself, or a no-op move (same folder, same name -- the common
-    # case of re-submitting an unchanged rename form) collides with its own destination. Mirrors
-    # Maker::MoveNode.collision?'s except_node_id: parameter and the "moving a node onto its own
-    # current name in its own folder is not a collision" case in move_node_test.rb.
-    test "moving a node onto its own current name is not a collision" do
-      id = create_file!(name: "a.stl", bytes: "aaa")
-
-      info = adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "a.stl")
-
-      assert_equal "a.stl", info.name
-      assert_equal "aaa", adapter.read(@user, node_id: id)
-    end
+    # "moving a node onto its own current name is not a collision" lived here -- deleted, Task 7:
+    # test_mutation_contract_move_onto_its_own_current_name_is_not_a_collision asserts the same
+    # no-op-is-legal fact (a move onto the node's own (parent, name) must not trip the clobber
+    # refusal, via the except_node_id: exclusion mirroring Maker::MoveNode.collision?'s parameter
+    # of the same name) and, unlike the two collision tests just above, this one had no extra
+    # depth beyond what the contract already checks -- info.name vs. the contract's
+    # adapter.stat(...).name is the same fact read two ways, not a second fact.
 
     # --- delete (Task 5): the port is now the door for chunk-mode delete too -------------------
     # FilesController#destroy used to branch around the port straight into Sync::SubtreeDelete.call
     # for chunk mode; it no longer can, same reason mkdir's and move's own comments give -- in
     # remote mode there is no Sync::SubtreeDelete in this process to branch into.
     #
-    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
-    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test would
-    # prove nothing about this adapter. Same precedent as the mkdir/move tests above.
-    #
-    # THIS ALSO SUBSUMES adapter_mutation_contract.rb's
-    # test_mutation_contract_delete_tombstones_rather_than_destroying, whose two assertions --
-    # the row survives tombstoned, and read raises NotFound afterward -- are exactly the two lines
-    # below. No separate chunk-specific copy of that fact is added for it; when Task 7 wires the
-    # shared module in, it will simply re-confirm the same thing through the shared helpers.
-    test "delete tombstones the node through the sync engine" do
-      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "gone.stl", kind: "file",
-                                 deleted: false, mtime: 0)
-      adapter.delete(@user, node_id: node.node_id)
-      assert_predicate node.reload, :deleted?
-      assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: node.node_id) }
-    end
+    # "delete tombstones the node through the sync engine" lived here -- deleted, Task 7: the
+    # contract is wired in above now, and test_mutation_contract_delete_tombstones_rather_than_
+    # destroying asserts the identical two facts (the row survives tombstoned; read raises NotFound
+    # afterward) that were this test's whole body. No separate chunk-specific copy is kept for it,
+    # unlike the mkdir/move collision tests above -- there is no extra depth here the contract
+    # does not already check.
 
     # SubtreeDelete, NEVER Sync::Mutation.apply(op: "delete"). The latter tombstones only the node
     # it is handed, so on a directory it orphans every descendant: /v1/tree serves children
@@ -823,6 +823,13 @@ module FileLayer
     # the root (see the orphan test below), and TrashController's flash reads info.name straight
     # off this return value. Asserting node_id AND name means a stub returning nil would
     # NoMethodError the moment either is touched -- the return value is pinned, not just produced.
+    #
+    # NOT A DUPLICATE OF test_mutation_contract_undelete_restores_the_same_node_and_bytes (Task 7:
+    # the contract is wired in above) -- that one proves the BYTES survive, via adapter.read; this
+    # one proves the RETURN VALUE does, via info.node_id/info.name, which the contract never reads.
+    # Neither subsumes the other, so both stay. Easy to misjudge as redundant on a skim, because
+    # both start from "delete, then undelete" -- the giveaway is that they assert on two different
+    # objects (a re-fetched node vs. this method's own return value).
     test "undelete revives a tombstoned node, keeps its node_id, and returns its FileInfo" do
       id = create_file!(name: "revive.stl", bytes: "b")
       delete_file!(id)
@@ -911,14 +918,14 @@ module FileLayer
       end
       assert_equal before, @user.reload.head_seq, "no mutation happened, so head_seq must not move"
     end
-    # DIRECT COPY, because ChunkTest does not include FileLayerMutationContract until Task 7 --
-    # the contract carries the same assertion for share and s3 today. Chunk was the ONLY backend
-    # that leaked ActiveRecord::RecordNotFound here, so a contract-only version would have pinned
-    # the two backends that were already right and missed the one that was not.
-    test "undelete raises the port's own NotFound for a node that never existed" do
-      assert_raises(FileLayer::NotFound) do
-        adapter.undelete(@user, node_id: "no-such-node-#{SecureRandom.uuid}")
-      end
-    end
+
+    # "undelete raises the port's own NotFound for a node that never existed" lived here --
+    # deleted, Task 7: the contract is wired in above now, and
+    # test_mutation_contract_undelete_raises_the_ports_own_not_found_for_an_unknown_node is the
+    # same assert_raises verbatim. It used to be a direct copy because chunk was the ONLY backend
+    # that leaked ActiveRecord::RecordNotFound here (fixed in ea9bb50) and a contract-only version
+    # would have pinned the two backends that were already right while missing the one that was
+    # not -- now that the fix has landed and the contract runs against chunk too, keeping a second
+    # copy of the same three-line assertion is exactly the drift risk CLAUDE.md 15 warns about.
   end
 end
