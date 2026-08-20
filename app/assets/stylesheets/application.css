@@ -146,7 +146,7 @@ dl.meta dd { margin: 0; }
 .measure-contour--hover { stroke: #2b7; stroke-width: 2; }
 .measure-contour--selected { stroke: #d40; stroke-width: 2.5; }
 .measure-bitmap { fill: rgba(128, 128, 128, .18); stroke: #888; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
-.measure-view--selecting .measure-stage svg { cursor: copy; }
+.measure-view--selecting .measure-stage svg:not(.is-panning) { cursor: copy; }
 .measure-paper { font-size: 13px; }
 /* `hidden` ON A .btn IS INERT WITHOUT THIS, AND THE CLEAR BUTTON SHIPS CARRYING IT. `[hidden]`
    is nothing but a UA-stylesheet `display: none`, so `.btn`'s own `display: inline-block` — an

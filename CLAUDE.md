@@ -1872,8 +1872,11 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   deleting the `<clipPath>` element AND the `clip-path` attribute outright left the suite green.
 - **THE PRINTED SIZE LABEL COMES FROM `sizeLabel()`, INJECTED FROM THE CONTROLLER, NEVER RE-DERIVED
   FROM `shape.p`.** Those are the THINNED drawing points: measuring from them under-reports every
-  curve, and the ⌀10 hole in `nested-plate.lbrn2` thins below `MIN_CIRCLE_POINTS` and loses its
-  diameter entirely — printing a bounding box where a ⌀ belongs. The same trap as measuring before
+  curve, and a re-derivation loses the ⌀ ENTIRELY, printing a bounding box where a diameter
+  belongs — because the CLIENT HAS NO CIRCULARITY TEST AT ALL; `d` is decided server-side from
+  full-resolution points. (An earlier wording blamed `nested-plate.lbrn2`'s ⌀10 hole thinning below
+  `MIN_CIRCLE_POINTS`. Measured: it keeps **49** points against a floor of 12 — the mechanism is
+  the missing test, not the point count. The 0.2 mm hole two bullets up is the real floor case.) The same trap as measuring before
   thinning, one surface further out, and on the one surface a maker may read INSTEAD of measuring.
   Mutation-checked.
 - **THE PRINT IFRAME IS BUILT AS NODES, NOT `doc.write` ON A MARKUP STRING**, because the header

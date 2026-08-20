@@ -258,8 +258,9 @@ export default class extends Controller {
         // THE CONTROLLER'S OWN sizeLabel, so the paper and the readout have one definition between
         // them. It reads `d` and `b` — the server's full-resolution numbers — never `p`, the
         // THINNED drawing points: re-deriving a size from those under-reports every curve, and
-        // this file's own ⌀10 hole thins below MIN_CIRCLE_POINTS and would print a bounding box
-        // where a ⌀ belongs (CLAUDE.md §14h).
+        // a re-derivation loses the ⌀ outright, because THIS SIDE HAS NO CIRCULARITY TEST — `d`
+        // is decided server-side from full-resolution points (CLAUDE.md §14h). Measured: the
+        // mutation prints "10 × 10 mm" where "⌀10 mm" belongs.
         sizeLabel: (shape) => this.sizeLabel(shape),
       })
     } catch (e) {

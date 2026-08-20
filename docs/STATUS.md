@@ -65,10 +65,11 @@ reading the last entry.
 **Suite: the three `LIBRARY_BACKEND` legs are UNCHANGED BY THIS ARC at 2467 runs / 9456 assertions
 / 0F / 0E / 3 skips, identical across all three — unchanged by construction, since the branch adds
 no test outside `test/system/`, and that is the second reading of the paragraph below. (Measured
-after merging `main` @ `8ae9a50`; the arc's own pre-merge figure was 2457 / 9431, and the
-difference is entirely the `Lbrn2#available?` arc below.) The system tier carries the whole arc:
-102 → 175 runs, 1459 assertions, all 73 of them in one new file. `bin/ci` green — all eight gates
-(`setup style scan test test-share test-s3 system test-app`), exit 0, 1m8s.**
+after merging `main` @ `8ae9a50`; the arc's own pre-merge figure was 2457 / 9431. The +10 / +25 is
+TWO arcs, not one: `Lbrn2#available?` below (+5 / +10) and `test/schema_map_test.rb` from PR #198,
+which carries no STATUS entry of its own (+5 / +15, measured).) The system tier carries the whole arc:
+102 → 176 runs, 1467 assertions, all 74 of them in one new file. `bin/ci` green — all eight gates
+(`setup style scan test test-share test-s3 system test-app`), exit 0, 1m5s.**
 
 **Shipped:** a **Select parts** toggle on the Measure view and a **Print** that lays the selected
 contours out at exactly 1:1, tiling across sheets when they do not fit, with a calibration gauge, a
@@ -226,6 +227,14 @@ reintroduced one surface further out.
    may come apart into its members. Cosmetic, and always **over**-charged — seven code points billed
    for one glyph — so it fails toward a shorter header, never an overflow. `Intl.Segmenter` is the
    upgrade if it ever matters; it would add a second code path only one of which any test walks.
+5. **Every contour on a printed sheet gets a size label, including on "Print all".** The design's
+   §11 says label collisions are mitigated because "only selected parts get one" — that is not what
+   ships: the controller's `sizeLabel` never returns null, so the button's own resting label prints
+   a size under every contour in the file. `labelNode` is honest about the consequence (its ink
+   reaches `b[3] + 4.39 mm`, and kerf-tight nesting puts parts that close routinely) and names the
+   lever — `meta.sizeLabel` returning null, which is the controller's decision because it is the
+   only place that knows what the user picked. Nothing pulls it yet. The spec sentence is the thing
+   that is wrong, not the code.
 
 **Also stated rather than papered over:** `printSheets`' one line of `window.print()` is the single
 export with no test over it — verified, not assumed (renaming it away leaves the suite green); the

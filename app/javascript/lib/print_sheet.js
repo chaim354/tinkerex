@@ -300,10 +300,11 @@ export function el(doc, tag, attrs, text) {
     if (value != null) node.setAttribute(key, value)
   }
   // THE TEXT DOOR EXISTS SO THAT `textContent` IS THE ONLY SPELLING — and since Task 6 it is:
-  // all five <text> sites go through `text()` below, which comes through here. The rule it
+  // all SIX <text> sites go through `text()` below, which comes through here — the five furniture
+  // texts plus `labelNode`'s size label, which Task 7 added after this count was written. The rule it
   // enforces: the header carries a library filename, user-controlled and legitimately able to
   // contain `<` on a NAS-scanned share, so building it as markup is an injection into a
-  // same-origin iframe. Five call sites each remembering that is five chances to forget; one
+  // same-origin iframe. Six call sites each remembering that is six chances to forget; one
   // door is none.
   if (text != null) node.textContent = text
   return node

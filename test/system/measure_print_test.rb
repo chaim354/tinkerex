@@ -2435,6 +2435,39 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_selector ".measure-dims", exact_text: "click a contour to measure"
   end
 
+  # THE FOUR CURSOR STATES, AND THE ONE THAT NEEDED A SPECIFICITY FIX. `.measure-view--selecting
+  # .measure-stage svg` and `.measure-stage svg.is-panning` are BOTH (0,2,1), and the selecting rule
+  # is 30 lines later — so without `:not(.is-panning)` it wins the tie and a drag in select mode
+  # shows `copy`, silently removing the grab affordance in the one mode where users pan most.
+  #
+  # `is-panning` IS APPLIED DIRECTLY rather than by simulating a drag: the class is what
+  # startPan/endPan toggle, so driving a real pointer sequence would test Selenium's input
+  # synthesis, not the cascade this exists for. Mutation-checked by removing `:not(.is-panning)`:
+  # RED on the fourth row, `Expected: "grabbing"  Actual: "copy"`.
+  test "the cursor names the gesture in every mode" do
+    open_measure_view(@nested_id)
+    cursors = ->(*_) { page.evaluate_script(<<~JS) }
+      (() => {
+        const view = document.querySelector(".measure-view")
+        const svg = document.querySelector(".measure-stage svg")
+        const read = () => getComputedStyle(svg).cursor
+        const out = {}
+        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
+        out.idle = read()
+        svg.classList.add("is-panning");    out.panning = read()
+        svg.classList.remove("is-panning"); view.classList.add("measure-view--selecting")
+        out.selecting = read()
+        svg.classList.add("is-panning");    out.selectingAndPanning = read()
+        svg.classList.remove("is-panning"); view.classList.remove("measure-view--selecting")
+        return JSON.stringify(out)
+      })()
+    JS
+
+    assert_equal({ "idle" => "crosshair", "panning" => "grabbing",
+                   "selecting" => "copy", "selectingAndPanning" => "grabbing" },
+                 JSON.parse(cursors.call))
+  end
+
   # THE READOUT MUST STILL WORK WHILE SELECTING — picking parts and learning their sizes are the
   # same gesture, and a mode that silenced the measurement would make you leave it to check a size.
   # THE HOLE, NOT THE PLATE, because it is the one shape whose two halves differ: the server gave
@@ -2537,6 +2570,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     assert_selector "polyline.measure-contour.measure-contour--marked", count: 1, visible: :all
     assert_equal "rgb(0, 102, 204)", line.style("stroke")["stroke"], "--marked must reach the line"
+    # AND THE TINT MUST NOT REACH IT. `--marked` sets `fill: rgba(0,102,204,.16)`, which is the
+    # channel that survives `--selected` — but an OPEN contour has no interior, so the tint paints a
+    # meaningless blob between its two ends. `.measure-contour--open.measure-contour--marked` exists
+    # for exactly that and, until this line, had never been shown to fail: deleting it left all 73
+    # tests green while the fill computed rgba(0, 102, 204, 0.16) instead of none. Reading `stroke`
+    # stopped one property short (§15).
+    assert_equal "none", line.style("fill")["fill"], "an open contour takes the stroke, not the tint"
   end
 
   test "Clear empties the set" do
@@ -2714,7 +2754,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # A ROUND PART PRINTS ITS DIAMETER, AND THIS IS §14h's MEASURE-AFTER-THINNING TRAP WRITTEN AS A
   # TEST. The label is the CONTROLLER's own sizeLabel, which reads `d` and `b` — the server's
   # FULL-RESOLUTION numbers. Re-deriving it inside print() from `shape.p`, the thinned drawing
-  # points, is the mutation this exists for: nested-plate's ⌀10 hole thins below MIN_CIRCLE_POINTS,
+  # points, is the mutation this exists for. It loses the ⌀ because THE CLIENT HAS NO CIRCULARITY
+  # TEST — `d` is the server's decision, made from full-resolution points, and `p` carries no way to
+  # recover it. (Not because this hole thins below MIN_CIRCLE_POINTS: measured, it keeps 49 points
+  # against a floor of 12.)
   # so it prints a bounding box where a ⌀ belongs. MUTATION-CHECKED, actual copied out of the run:
   # Expected: "⌀10 mm" Actual: "10 × 10 mm". Note what that actual is NOT — the thinned span here
   # is not visibly wrong, it is 10 to the tenth this readout rounds to. What the mutation destroys
