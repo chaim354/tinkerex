@@ -133,6 +133,18 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # it here would flag app/controllers/application_controller.rb and
   # app/services/maker/addons/library_output.rb as violations for using a model that is
   # legitimately theirs.
+  #
+  # `ShareLink` IS DELIBERATELY ABSENT TOO, as of Stage 3a Task 6, and for a THIRD reason distinct
+  # from both of the above. ShareLink is a real engine model as of this task (see SYNC_SIDE_GLOBS
+  # below) and nothing here disputes that -- but ENGINE_MODELS exists to catch a MAKER-layer file
+  # reaching for an engine model by bare constant, and no maker-layer file reaches for ShareLink
+  # today (checked: its only callers are the four files this task moved, all now sync-side, plus
+  # their own tests). Adding it would cost nothing today and buy speculative coverage against a
+  # violation that has never existed; the task that moved share_links scoped itself to making the
+  # existing violation (app/services/sharing/links.rb's `ManifestChunk` reference, below) stop
+  # being one, not to widening this set further. If a maker-layer `ShareLink.find(...)` ever
+  # appears, that is the moment to add it here -- the same bar SYNC_SEAM_EXCEPTIONS's own entries
+  # were held to.
   ENGINE_MODELS = %w[Version ManifestChunk PendingCommit ChangelogEntry Conflict FileLock].freeze
 
   test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
@@ -191,9 +203,52 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # engine-to-engine reference the same exclusion covers, since it isn't a second file. `Chunk`'s
   # own model file (app/models/chunk.rb) needs NO entry here: `Chunk` is deliberately absent from
   # ENGINE_MODELS (see its comment above), so nothing in this file would ever match it regardless.
+  #
+  # STAGE 3a TASK 6 ADDS `app/services/sharing/**` AND `app/models/share_link.rb`, and a reader
+  # skimming this list needs the argument stated, not assumed -- "sharing a file with someone"
+  # reads exactly like a maker-layer feature (the way collections or tags are), and both files sit
+  # in directories that look maker-shaped rather than under `app/services/sync/`. It is not a
+  # maker feature. Three independent facts say so (Stage 3 boundary design §1, re-confirmed live
+  # against this tree before anything moved):
+  #
+  #   - Share links CANNOT EXIST on share or s3 at all. V1::ShareLinksController gates #create on
+  #     `require_capability! :versioned`, and Sharing::Links.create_for_version! resolves its
+  #     target via `user.versions.find_by!(...)` -- a real `versions` ROW is structurally required
+  #     to mint one, and `versioned` is true on chunk, false on the other two (CLAUDE.md §14a). The
+  #     feature is chunk-only by construction, not by convention that could drift.
+  #   - `share_links.version_id`/`.manifest_id` reference two tables that are ALREADY sync-side
+  #     here (`versions`, `manifest_chunks`), and `Sharing::Links.redeem` queries `ManifestChunk`
+  #     directly and presigns through `Storage::ChunkStore` -- the engine's own chunk data plane.
+  #   - `lib/schema_map.rb` already filed `share_links` under "Sync control plane" (grouped with
+  #     `changelog_entries`/`pending_commits`/`conflicts`/`file_locks`), and that map is TESTED
+  #     (`bin/rails schema:map:check`) -- someone reached this conclusion independently, in an
+  #     artifact this repo already enforces, before this task existed.
+  #
+  # Why it matters beyond taxonomy: `Sync::Gc.apply_retention!` reads `share_links`
+  # (`referenced_version_ids`, app/services/sync/gc.rb) to protect the version a live share link
+  # points at from nightly pruning. Split the feature from the engine and a future refactor can
+  # sever that read with no build break and no red test -- retention would silently destroy the
+  # bytes behind a URL a user already sent someone. Filing the feature as sync-side here makes
+  # that coupling engine-INTERNAL, closing the hazard by construction; see
+  # test/services/sync/gc_test.rb's "tiered retention keeps a version referenced by a live share
+  # link" for the guard that pins it (mutation-checked: deleting gc.rb's `user.share_links` line
+  # turns that test red).
+  #
+  # A DIRECTORY GLOB for `sharing/`, not an individual file -- unlike the six models above,
+  # `app/services/sharing/` holds nothing else and is never going to hold a maker-layer file (it
+  # is the share-link feature's own service namespace), so a glob here exempts nothing it
+  # shouldn't the way a bare `app/models/**` would. `docs/plan-sharing.md`'s future Spaces work
+  # (full read/write sharing) lands in this same namespace, sync-side, with no second entry
+  # needed. `share_link.rb` gets an INDIVIDUAL entry instead, matching the six AR models above and
+  # for the identical reason: `app/models/` is shared with every maker model, so only specific
+  # files get named there, never the directory itself.
+  #
+  # The two v1 controllers (ShareController, ShareLinksController) need NO new entry:
+  # `app/controllers/v1/**/*.rb`, below, already covers them.
   SYNC_SIDE_GLOBS = %w[
     app/services/sync/**/*.rb
     app/services/sync.rb
+    app/services/sharing/**/*.rb
     app/controllers/v1/**/*.rb
     app/jobs/chunk_reaper_job.rb
     app/jobs/pending_commit_reaper_job.rb
@@ -206,33 +261,39 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     app/models/changelog_entry.rb
     app/models/conflict.rb
     app/models/file_lock.rb
+    app/models/share_link.rb
   ].freeze
 
-  # ONE FILE, NOT ZERO. app/services/sharing/links.rb:60 does `ManifestChunk.where(...)`
-  # (Sharing::Links, the share-link redemption path) -- a real, uncorrected cross-boundary
-  # reference, confirmed by running the widened detector against the whole tree (Stage 3a plan
-  # premises; boundary design §1). It is not a bug to fix here: Stage 3a Task 6 moves share_links
-  # -- model, service, and its two v1 controllers -- to the engine side, at which point this file
-  # becomes sync-side by construction (already-existing `app/controllers/v1/**/*.rb` above covers
-  # its controllers; the service needs its own entry) and this reference stops being a violation at
-  # all. Naming it here rather than leaving Task 1 red is deliberate: it lands this task clean and
-  # green today, while leaving a dated, findable trail for Task 6 to remove.
+  # ONE FILE LEFT, NOT TWO -- app/services/sharing/links.rb is GONE from this list, not merely
+  # forgiven. It used to be here because app/services/sharing/links.rb:60's
+  # `ManifestChunk.where(...)` (Sharing::Links, the share-link redemption path) was a real,
+  # uncorrected cross-boundary reference (Stage 3a plan premises; boundary design §1). Stage 3a
+  # Task 6 moved share_links -- model, service, and its two v1 controllers -- into SYNC_SIDE_GLOBS
+  # above, so links.rb and share_link.rb are sync-side BY CONSTRUCTION now: `maker_layer_files`
+  # excludes them before `sync_references` ever runs, and there is nothing left here to except.
   #
-  # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how.
-  # user.rb IS HERE FOR A DIFFERENT REASON FROM links.rb, and conflating them would lose the point.
-  # links.rb is maker-layer code REACHING INTO the engine, and it goes when Task 6 moves that file.
-  # user.rb is the DECLARATION SITE: User carries `has_many :versions`, `:chunks`, `:manifest_chunks`,
-  # `:pending_commits`, `:changelog_entries`, `:conflicts`, `:file_locks` -- seven associations to
-  # models that move, on a host model that does not. That is the straddle the boundary design names
-  # (`users` carries engine state, `head_seq` being the other half), and it is 3b's job, not 3a's:
-  # relocating the declarations now means a change this repo would immediately have to redo when the
-  # engine owns them.
+  # user.rb IS HERE FOR A DIFFERENT REASON THAN links.rb WAS, and conflating them would lose the
+  # point. links.rb was maker-layer code REACHING INTO the engine -- fixed by moving the file.
+  # user.rb is the DECLARATION SITE: User carries `has_many :versions`, `:chunks`,
+  # `:manifest_chunks`, `:pending_commits`, `:changelog_entries`, `:conflicts`, `:file_locks` --
+  # seven associations to models that move, on a host model that does not. (`has_many
+  # :share_links` sits right beside those seven, uncommented -- it is NOT why user.rb is listed
+  # here: `share_links` was deliberately left out of ENGINE_ASSOCIATIONS above, so that line emits
+  # no hit on its own, and the seven original associations are sufficient by themselves to keep
+  # user.rb on this list.) The seven-association straddle is the one the boundary design names
+  # (`users` carries engine state, `head_seq` being the other half), and it is 3b's job, not 3a's,
+  # to relocate those declarations: doing it now means a change this repo would immediately have
+  # to redo once the engine owns them.
   #
-  # It appears here only because the guard learned to see association access. Before that widening it
-  # was invisible -- which is precisely the argument for the widening: the single largest concentration
-  # of host->engine coupling in the app was sitting unflagged in the guard's own scan set.
+  # It appears here only because the guard learned to see association access. Before that widening
+  # it was invisible -- which is precisely the argument for the widening: the single largest
+  # concentration of host->engine coupling in the app was sitting unflagged in the guard's own
+  # scan set.
+  #
+  # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how. It does
+  # NOT die with Task 6: user.rb survives into 3b, which is why this constant is amended rather
+  # than deleted here.
   SYNC_SEAM_EXCEPTIONS = %w[
-    app/services/sharing/links.rb
     app/models/user.rb
   ].freeze
 
@@ -311,26 +372,28 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     assert_empty extra,
                  "NEW maker-layer file(s) reaching into Sync:: or a bare engine model directly, " \
                  "not on the exception list:\n  #{extra.join("\n  ")}\n" \
-                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this " \
-                 "really is Task 6 (share_links) work in progress, add it to " \
-                 "SYNC_SEAM_EXCEPTIONS and say so in the PR -- do not let this test go red " \
+                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this is " \
+                 "real, scoped relocation work in progress (the shape Task 6 was), add the file " \
+                 "to SYNC_SEAM_EXCEPTIONS and say so in the PR -- do not let this test go red " \
                  "silently past that."
     assert_empty stale,
                  "SYNC_SEAM_EXCEPTIONS lists file(s) that no longer reach into Sync:: or a bare " \
                  "engine model directly:\n  #{stale.join("\n  ")}\n" \
-                 "Task 6 fixed this -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
+                 "Whatever fixed it -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
                  "you do, remove the constant entirely and simplify this test's two assertions " \
                  "above to a single `assert_empty offending_files`."
     # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY. Without this, a dutiful editor
     # could shrink SYNC_SEAM_EXCEPTIONS to `[]` one fix at a time (the two assertions above stay
     # green the whole way) and leave it sitting there -- an allowlist for nothing, which the next
     # reader has to re-derive is pointless before trusting it. This fails THAT state too, so
-    # whoever removes the last entry (Task 6) is told, in the same run, to delete the constant and
-    # its comment, not just leave `[].freeze` behind.
+    # whoever removes the last entry (3b, per the comment above SYNC_SEAM_EXCEPTIONS -- Task 6
+    # left exactly one, user.rb) is told, in the same run, to delete the constant and its comment,
+    # not just leave `[].freeze` behind.
     assert_not_empty SYNC_SEAM_EXCEPTIONS,
-                     "SYNC_SEAM_EXCEPTIONS is empty, which means Task 6 is done: delete this " \
-                     "constant and its comment, and simplify this test to `assert_empty " \
-                     "maker_layer_files.flat_map { |file| sync_references(file) }`."
+                     "SYNC_SEAM_EXCEPTIONS is empty, which means 3b relocated User's engine " \
+                     "associations (app/models/user.rb, the one entry Task 6 left behind): " \
+                     "delete this constant and its comment, and simplify this test to " \
+                     "`assert_empty maker_layer_files.flat_map { |file| sync_references(file) }`."
   end
 
   # STAGE 3a TASK 5 (boundary design §3; docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md).
