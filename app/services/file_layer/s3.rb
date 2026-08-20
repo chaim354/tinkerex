@@ -475,6 +475,26 @@ module FileLayer
       observable!(rel)
       dest_key = key_for_rel(rel)
 
+      # A NO-OP MOVE (same folder, same name) resolves to a destination key IDENTICAL to the
+      # source, and it must not run the copy-then-delete-source sequence below: with
+      # dest_key == src_key, that would delete the object's ONLY copy immediately after "copying"
+      # it onto itself, an object silently reduced to zero copies. destination_vacant! below
+      # happened to make this unreachable by always refusing the destination first — a bug
+      # accidentally guarding a worse one — which is how the sequence stayed untested. Found by
+      # Task 4's mutation-contract companion test (adapter_mutation_contract.rb's
+      # test_mutation_contract_move_onto_its_own_current_name_is_not_a_collision), run against
+      # this adapter UNMODIFIED per the contract's own rule that a no-op move must stay legal on
+      # every backend. Not reachable from either production caller today (see Share#move's
+      # identical note), so this was latent rather than live -- but a port verb should not depend
+      # on its callers to avoid its own gaps, and unlike Share's mere over-refusal, this one was a
+      # data-loss trap waiting for a caller that did not know to avoid it. No bytes moved, so
+      # there is nothing to touch in the bucket — just record the (unchanged) row values, the same
+      # shape the ordinary path ends with below.
+      if dest_key == src_key
+        node.update!(storage_path: rel, name: new_name, parent_node_id: new_parent_node_id)
+        return stat(user, node_id: node.node_id)
+      end
+
       begin
         # Refuse rather than replace, and check BEFORE copying. Every backend here is
         # current-state-only, so a clobber is the user's file permanently gone — there is no

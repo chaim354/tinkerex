@@ -99,20 +99,21 @@ module FileLayer
       assert_equal "AAABB", adapter.read(@user, node_id:)
     end
 
-    # Chunk mutations do NOT go through this port; they are the sync engine's, and the three ops
-    # use THREE DIFFERENT doors, verified against the callers:
+    # Chunk mutations that still refuse do NOT go through this port; they are the sync engine's,
+    # and each uses its OWN door, verified against the callers:
     #   write  -> Sync::Commit's two-phase flow (a device pushes; the web UI reuses it)
     #   delete -> Sync::SubtreeDelete.call             (v1/nodes_controller.rb:46)
-    #   move   -> Sync::Mutation.apply, op: "move"     (v1/nodes_controller.rb:55)
-    # A server-side chunk-and-commit path does not exist and has no caller, so the port says so
-    # out loud rather than answering NoMethodError.
+    # mkdir (Task 3) and move (Task 4) are gone from this hash -- the port is their door now, the
+    # same as share/s3, and adapter.move no longer raises. A server-side chunk-and-commit path
+    # does not exist and has no caller, so the port says so out loud rather than answering
+    # NoMethodError.
     #
     # Asserted PER OP, never with one blanket regex. The whole deliverable is "refuse HONESTLY,
-    # naming the real path", so a test that accepts /Sync::Commit/ for delete would pin, by name,
+    # naming the real path", so a test that accepted /Sync::Commit/ for delete would pin, by name,
     # the wrong door as right — a green test guarding misinformation. `not_names` pins that exact
-    # defect: delete/move must never cite Sync::Commit, which has no delete or move path, and it
-    # also catches a regression to one shared message listing every class (which would satisfy
-    # the positive regexes while leaving the caller to guess which door is theirs).
+    # defect: delete must never cite Sync::Commit, which has no delete path, and it also catches a
+    # regression to one shared message listing every class (which would satisfy the positive
+    # regex while leaving the caller to guess which door is theirs).
     test "the write path is not chunk mode's — each op refuses, naming its OWN real path" do
       {
         write: {
@@ -122,10 +123,6 @@ module FileLayer
         delete: {
           call: -> { adapter.delete(@user, node_id: "n1") },
           names: /Sync::SubtreeDelete/, not_names: /Sync::Commit/
-        },
-        move: {
-          call: -> { adapter.move(@user, node_id: "n1", new_parent_node_id: nil, new_name: "y.stl") },
-          names: /Sync::Mutation\.apply/, not_names: /Sync::Commit/
         }
       }.each do |op, spec|
         err = assert_raises(NotImplementedError, "#{op} must refuse, not answer") { spec[:call].call }
@@ -613,6 +610,66 @@ module FileLayer
       assert_match(/symlink/, err.message,
                    "the message must name the colliding KIND, so a caller is not told 'file'")
       assert_equal 1, @user.nodes.present.where(parent_node_id: nil, name: "link").count
+    end
+
+    # The port is now the door for chunk-mode move too (Task 4). Maker::MoveNode used to branch
+    # around it into Sync::Mutation directly; it no longer can, for the same reason mkdir's own
+    # comment gives -- in remote mode there is no Sync::Mutation in this process to branch into.
+    test "move renames a node through the sync engine and returns its post-move FileInfo" do
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "before.stl", kind: "file",
+                                 deleted: false, mtime: 0)
+      info = adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil,
+                          new_name: "after.stl")
+      assert_equal "after.stl",  info.name
+      assert_equal node.node_id, info.node_id, "a move must preserve node_id"
+      assert_equal "after.stl",  node.reload.name
+    end
+
+    # ASSERTED ON THE BROADCAST ITSELF, not on head_seq -- Task 3 proved the head_seq spelling
+    # cannot fail for the reason it exists: Sync::Mutation advances head_seq whether or not
+    # anything broadcasts, so the head_seq spelling alone stays GREEN when the broadcast is
+    # deleted. The EXACT payload also catches a broadcast carrying a stale seq, which a bare
+    # count would not.
+    test "move broadcasts the new head_seq so devices converge" do
+      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "before.stl", kind: "file",
+                                 deleted: false, mtime: 0)
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
+      end
+    end
+
+    # A DIRECT TEST HERE, NOT ONLY THE CONTRACT VERSION, because ChunkTest does not include
+    # FileLayerMutationContract yet -- Task 7 wires it in, and until then a contract-only test
+    # would prove nothing about this adapter. Same precedent as the mkdir cross-kind tests above,
+    # and the same reason: Sync::Mutation performs no name check at all, so without this refusal
+    # chunk would silently produce two live nodes sharing one (parent_node_id, name) -- the same
+    # collision mkdir already refuses, one verb over.
+    test "move refuses a taken destination -- a live node already at (parent, name)" do
+      a = create_file!(name: "a.stl", bytes: "aaa")
+      create_file!(name: "b.stl", bytes: "bbb")
+
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.move(@user, node_id: a, new_parent_node_id: nil, new_name: "b.stl")
+      end
+      assert_match(/b\.stl/, err.message, "the message should name the colliding file")
+
+      # Neither file may have moved -- a refused move must not be a partial write.
+      assert_equal "aaa", adapter.read(@user, node_id: a)
+    end
+
+    # PINS THE SCOPE OF THAT REFUSAL, WHICH THE TEST ABOVE DOES NOT: the clobber lookup must
+    # EXCLUDE the node being moved itself, or a no-op move (same folder, same name -- the common
+    # case of re-submitting an unchanged rename form) collides with its own destination. Mirrors
+    # Maker::MoveNode.collision?'s except_node_id: parameter and the "moving a node onto its own
+    # current name in its own folder is not a collision" case in move_node_test.rb.
+    test "moving a node onto its own current name is not a collision" do
+      id = create_file!(name: "a.stl", bytes: "aaa")
+
+      info = adapter.move(@user, node_id: id, new_parent_node_id: nil, new_name: "a.stl")
+
+      assert_equal "a.stl", info.name
+      assert_equal "aaa", adapter.read(@user, node_id: id)
     end
   end
 end

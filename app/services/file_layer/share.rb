@@ -375,7 +375,20 @@ module FileLayer
       # no undo for it: the displaced file's node would still point at a path now holding someone
       # else's bytes. (fs-provider's rename DOES replace — it is implementing POSIX for a kernel
       # mount. This is a UI operation, and refusing is the honest answer to a user's typo.)
-      raise UnsupportedOperation, "#{rel.inspect} already exists" if File.exist?(dest)
+      #
+      # dest == src IS NOT A CLOBBER — it is this node's OWN current file, found because a no-op
+      # move (same folder, same name) resolves to the identical destination. File.exist?(dest)
+      # cannot tell "someone else already lives here" from "I am already here"; comparing the
+      # resolved paths can, since both come through the same resolve_inside! and a live path is
+      # unique to one node. Found by Task 4's mutation-contract companion test in
+      # adapter_mutation_contract.rb (the "onto its own current name is not a collision" one), run
+      # against this adapter UNMODIFIED per the contract's own rule that a no-op move must stay
+      # legal on every backend — this adapter had never made that exclusion. Not reachable from
+      # either production caller today (Maker::AttachToProject#move short-circuits on
+      # `:already_there` before calling in; Maker::ProjectIntake#place only ever targets a
+      # project's ROOT, never its own destination folder) — latent, not live, but a port verb
+      # should not depend on its callers to avoid its own gaps.
+      raise UnsupportedOperation, "#{rel.inspect} already exists" if dest != src && File.exist?(dest)
 
       begin
         # mkdir_p INSIDE the begin, exactly as in delete: it is I/O against the same share and

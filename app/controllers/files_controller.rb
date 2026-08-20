@@ -582,9 +582,10 @@ class FilesController < ApplicationController
   #
   # THE SAME BRANCH THE UPLOAD MAKES, ON THE SAME CAPABILITY, AND FOR THE SAME REASON: a delete
   # is a write, so `port_writable` — "which door do bytes go in?" — already answers it. The read
-  # contract pins that answer to what the adapters really do (Task 1's
-  # test_contract_port_writable_agrees_with_what_delete_and_move_actually_do), so this is not an
-  # inference: false here means Chunk#delete raises, true means the port implements it.
+  # contract pins that answer to what the adapter really does (Task 1's
+  # test_contract_port_writable_agrees_with_what_delete_actually_does -- renamed at Task 4, when
+  # move stopped being part of the same pin), so this is not an inference: false here means
+  # Chunk#delete raises, true means the port implements it.
   #
   # THE TOMBSTONE IS ONLY HALF A DELETE, AND ON SHARE/S3 THE WRONG HALF ALONE UNDOES ITSELF. This
   # action used to call Sync::Mutation unconditionally. In chunk mode that IS the delete — the

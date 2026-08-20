@@ -222,25 +222,23 @@ module FileLayerAdapterContract
     end
   end
 
-  # The same pin for delete and move, so an adapter cannot answer port_writable? false and then
-  # refuse only part of the path — which Phase 4's UI would meet as a 500 rather than a gate.
+  # The same pin for delete, so an adapter cannot answer port_writable? false and then refuse
+  # the path anyway — which Phase 4's UI would meet as a 500 rather than a gate.
   #
-  # EACH OP NAMES ITS OWN DOOR, and that is the point rather than pedantry. An earlier draft of
-  # Chunk used ONE shared refusal string, which sent delete and move callers to Sync::Commit — a
-  # class with neither path (CLAUDE.md §3, the FileLayer row). A single /Sync::Commit/ asserted
-  # across all three ops passes for that draft, so it would be a test named for a lesson while
-  # licensing the mistake. The doors are asserted per-op, and asserted DISTINCT: a re-merged
-  # message fails here before it can send anyone to the wrong file.
+  # MOVE USED TO LIVE IN THIS TEST TOO, asserted right beside delete, and does not any more:
+  # Task 4 gave Chunk#move a real implementation, so port_writable? no longer predicts anything
+  # about it — move now attempts the op on EVERY backend, chunk included, exactly as share/s3
+  # always did (pinned across all three by adapter_mutation_contract.rb's
+  # test_mutation_contract_move_keeps_the_node_id, and directly in chunk_test.rb, which does not
+  # include that shared module yet). mkdir made the identical exit at Task 3 and was never added
+  # here either — once a verb stops being gated by port_writable?, the shared MUTATION contract is
+  # where it gets pinned, not this port_writable-conditional one.
   #
   # Naming Sync:: classes in a shared contract is a chunk-specific fact, and it is here for the
   # reason test_contract_scannable_... gives above: a FALSE half can only be pinned by an adapter
   # that answers false, and Chunk is the only one running this contract that does.
-  def test_contract_port_writable_agrees_with_what_delete_and_move_actually_do
-    doors = {
-      Sync::SubtreeDelete => -> { adapter.delete(@user, node_id: "n1") },
-      Sync::Mutation => -> { adapter.move(@user, node_id: "n1", new_parent_node_id: nil,
-                                          new_name: "y.stl") }
-    }
+  def test_contract_port_writable_agrees_with_what_delete_actually_does
+    op = -> { adapter.delete(@user, node_id: "n1") }
 
     if adapter.capabilities.port_writable?
       # The TRUE half needs pinning as much as the false one, and an early `return` here is a test
@@ -249,21 +247,14 @@ module FileLayerAdapterContract
       # rather than incidental: NotImplementedError is a ScriptError, NOT a StandardError, so an
       # adapter that refuses cannot be mistaken for one that merely didn't find the node — it
       # blows straight through assert_raises and errors the test.
-      doors.each_value do |op|
-        assert_raises(FileLayer::NotFound, "port_writable? is true, so this op must not refuse " \
-                                           "the path — it must look for the node") { op.call }
-      end
+      assert_raises(FileLayer::NotFound, "port_writable? is true, so delete must not refuse " \
+                                         "the path — it must look for the node") { op.call }
       return
     end
 
-    messages = doors.map do |door, op|
-      err = assert_raises(NotImplementedError) { op.call }
-      assert_match(/#{Regexp.escape(door.name)}/, err.message,
-                   "a refusal must name the door THIS op uses, not a neighbour's")
-      err.message
-    end
-    assert_equal messages.uniq.size, messages.size,
-                 "delete and move have different doors, so they cannot share a refusal message"
+    err = assert_raises(NotImplementedError) { op.call }
+    assert_match(/#{Regexp.escape(Sync::SubtreeDelete.name)}/, err.message,
+                 "a refusal must name the door delete actually uses")
   end
 
   # `presignable` PINNED AGAINST WHETHER A URL IS ACTUALLY REACHABLE — Landmine 1, and the exact

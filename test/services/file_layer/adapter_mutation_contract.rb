@@ -38,13 +38,12 @@
 #   - `undelete`'s DESTINATION FOR AN ORPHAN. Share restores under the (tombstoned) parent's path,
 #     which still exists on a filesystem; chunk restores to the ROOT, because a tombstoned parent
 #     has no path to restore under. Both are right for their backend.
-#   - A MOVE ONTO A TAKEN NAME. Share and s3 refuse it (UnsupportedOperation -- a clobber); chunk
-#     does NOT, because Sync::Mutation performs no name check at all and Sync::Commit validates a
-#     manifest exhaustively and the name not at all (CLAUDE.md 14c). Two live siblings sharing one
-#     (parent, name) really are reachable on chunk. The WEB path is still protected --
-#     Maker::MoveNode.collision! runs before it calls the port -- so this is not a regression
-#     Stage 2 introduces, and closing it is a separate decision (CLAUDE.md 12 item 11), not
-#     something a refactor does silently. It stays asserted in share's and s3's OWN tests.
+#   - A MOVE ONTO A TAKEN NAME is NOT on this list any more -- Task 4 closed it. All three
+#     backends now refuse it identically through the port (UnsupportedOperation), pinned below
+#     rather than left to each adapter's own suite -- see
+#     test_mutation_contract_move_refuses_a_taken_destination for what that closes and what it
+#     deliberately does not (the sync engine's OWN doors, e.g. a device push through the mount,
+#     are untouched -- CLAUDE.md 12 item 11 stays open).
 #   - A MOVE OF A DIRECTORY. Share allows it; s3 refuses (`movable_file!`). Every test here moves
 #     a FILE for that reason.
 module FileLayerMutationContract
@@ -87,6 +86,34 @@ module FileLayerMutationContract
     assert_equal "same", adapter.read(@user, node_id:),
                  "a move must keep node_id resolving to the same bytes"
     assert_equal "after.stl", adapter.stat(@user, node_id:).name
+  end
+
+  # THE PORT'S ANSWER TO "THE DESTINATION IS TAKEN" ON MOVE, PINNED ACROSS ALL THREE BACKENDS AS
+  # OF TASK 4 -- see the header note above for what this closes (every PORT caller now gets one
+  # answer) and what it deliberately does not (the sync engine's own doors -- CLAUDE.md 12 item
+  # 11 stays open: a device push through the mount can still land a duplicate sibling on chunk,
+  # because Sync::Commit validates a manifest exhaustively and the name not at all).
+  def test_mutation_contract_move_refuses_a_taken_destination
+    a = make_file(name: "a.stl", bytes: "aaa")
+    make_file(name: "b.stl", bytes: "bbb")
+
+    assert_raises(FileLayer::UnsupportedOperation) do
+      adapter.move(@user, node_id: a, new_parent_node_id: nil, new_name: "b.stl")
+    end
+  end
+
+  # THE CASE AN OVER-EAGER VERSION OF THAT REFUSAL BREAKS: a no-op move -- same parent, same name
+  # -- must stay legal, because the clobber check has to exclude the node being moved from its
+  # own destination lookup. Without that exclusion a node collides with ITSELF the moment it is
+  # asked to "move" to where it already is -- exactly what Maker::MoveNode.collision?'s
+  # except_node_id: parameter exists to prevent on the web side, and what CLAUDE.md 15's mutation-
+  # check step (Task 4's report) pins by dropping the exclusion and watching this go red.
+  def test_mutation_contract_move_onto_its_own_current_name_is_not_a_collision
+    node_id = make_file(name: "a.stl", bytes: "aaa")
+
+    adapter.move(@user, node_id:, new_parent_node_id: nil, new_name: "a.stl")
+
+    assert_equal "a.stl", adapter.stat(@user, node_id:).name
   end
 
   # Tombstoned = gone is already pinned by the READ contract (§9a-1). This pins the other
