@@ -333,6 +333,52 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                      "maker_layer_files.flat_map { |file| sync_references(file) }`."
   end
 
+  # STAGE 3a TASK 5 (boundary design §3; docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md).
+  # V1::BaseController is inherited by all FOURTEEN v1/maker/* controllers, so a Sync:: or
+  # Storage:: reference here -- even one sitting inside a method body, never mind one that
+  # resolves at class-definition time the way `rescue_from` does -- makes the maker API's own
+  # base class name the sync engine. That used to be literally true: `rescue_from
+  # Sync::Commit::InvalidManifest` and `rescue_from Sync::Commit::KindConflict` resolved their
+  # argument to a real exception class the moment this file's class body ran, and a
+  # `before_action :stash_request_base_url` whose body touched Storage::ChunkStore /
+  # Storage::LocalChunkStore ran on every v1 request regardless of controller. Task 5 moved both
+  # down to the two controllers that can actually raise/need them (V1::CommitsController,
+  # V1::ChunksController, plus the app/controllers/concerns/v1/stash_request_base_url.rb concern).
+  #
+  # THIS IS INVISIBLE TO THE TWO TESTS ABOVE, AND DELIBERATELY SO. base_controller.rb sits under
+  # `app/controllers/v1/**/*.rb`, which SYNC_SIDE_GLOBS already treats as sync-side -- correctly,
+  # since V1::CommitsController and V1::ChunksController live in the very same directory and DO
+  # need to name Sync::/Storage::. So "the maker layer reaches into the engine" never scans this
+  # file at all; it is not maker-layer code by that test's own (correct) definition. What makes
+  # base_controller.rb different from its siblings in that same directory is that EVERY v1/maker/*
+  # controller inherits from it specifically -- a fact no glob-based scan can express, since it is
+  # about the constant graph (who subclasses whom), not about which directory a file sits in. A
+  # dedicated, narrow guard on this one file is cheaper than teaching the shared scan to carve an
+  # exception out of a glob it already, correctly, includes.
+  #
+  # Reuses sync_references (Sync + ENGINE_MODELS + ENGINE_ASSOCIATIONS) and separately checks for
+  # a bare `Storage` const -- NOT folded into sync_references itself, because that method also
+  # backs the maker-layer scan above, where Maker::Addons::LibraryOutput's OWN legitimate
+  # `Storage::ChunkStore` reference (CLAUDE.md §14a/§14c; pinned by the chunk-internals test at
+  # the top of this file) would become a second, unrelated thing to exempt there for no reason --
+  # library_output.rb has nothing to do with base_controller.rb and the two checks share no scope.
+  test "V1::BaseController names no Sync:: or Storage:: constant" do
+    file = ROOT.join("app/controllers/v1/base_controller.rb").to_s
+    storage_hits = Ripper.lex(File.read(file)).filter_map { |(pos, type, str, _)|
+      "#{Pathname.new(file).relative_path_from(ROOT)}:#{pos.first}" if type == :on_const && str == "Storage"
+    }
+    hits = sync_references(file) + storage_hits
+
+    assert_empty hits,
+                 "V1::BaseController must not reference Sync:: or Storage:: (Stage 3a Task 5), " \
+                 "found:\n  #{hits.join("\n  ")}\n" \
+                 "All fourteen v1/maker/* controllers inherit this class, so a reference here " \
+                 "forces the whole sync engine to load just to parse the maker API. Move it down " \
+                 "into the sync controller that actually raises/needs it -- see " \
+                 "V1::CommitsController, V1::ChunksController, and " \
+                 "app/controllers/concerns/v1/stash_request_base_url.rb for the existing shape."
+  end
+
   test "NotImplementedError is never rescued" do
     # CLAUDE.md §14a. The 501 for an unsupported backend op is a capability gate BEFORE the call,
     # never a rescue. Three reasons, all recorded at app/controllers/concerns/library_capabilities.rb:

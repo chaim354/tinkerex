@@ -172,8 +172,19 @@ module V1
     # a stranger, a client, and the API itself must get. Without the before_actions' capability
     # gate all four are 500.
     #
-    # It asserts the WHOLE surface rather than just login: `stash_request_base_url` runs before
-    # every action in two controllers, so one endpoint proves one endpoint.
+    # It asserts the WHOLE surface rather than just login: `stash_request_base_url` ran before
+    # every action, in two DEFINING copies (V1::BaseController + V1::ShareController's own), so
+    # one endpoint per copy proved that copy.
+    #
+    # STAGE 3a TASK 5 moved the V1::BaseController copy into V1::StashRequestBaseUrl, included
+    # only by V1::CommitsController and V1::ChunksController -- so "one endpoint proves one
+    # endpoint" stopped being true for THIS gate the moment that copy left every other v1
+    # controller's before_action chain. /v1/tree below now proves nothing about the mechanism
+    # this concern guards: TreeController never included it, so there is no KeyError for it to
+    # raise regardless of whether the internal `syncable?` check is even present. The two tests
+    # immediately below close that gap by driving a request through each of the two controllers
+    # that DO include it -- the exact shape CLAUDE.md §14a says was missing the first time this
+    # bug shipped ("the suite was green with and without the fix").
     class NoChunkStoreTest < ActionDispatch::IntegrationTest
       setup do
         @root = Pathname.new(Dir.mktmpdir("gate"))
@@ -213,6 +224,34 @@ module V1
       test "the anonymous redeem side 404s without a chunk store -- a stranger gets no 500 page" do
         get "/v1/share/nonexistent-token"
         assert_response :not_found
+      end
+
+      # STAGE 3a TASK 5. V1::CommitsController and V1::ChunksController are the two controllers
+      # that now carry V1::StashRequestBaseUrl's own before_action, instead of getting it from
+      # V1::BaseController like every other v1 controller used to. Drive a real request into each
+      # so the internal `return unless capabilities.syncable?` gate stays proven where it now
+      # actually lives -- not on a controller (TreeController, above) that no longer runs it at
+      # all post-refactor. Both are require_capability! :syncable, same as /v1/tree, so the
+      # correct answer is identically 501; the KeyError this pins against is what a REMOVED gate
+      # would raise from INSIDE the before_action, before require_capability! ever gets to render.
+      test "POST /v1/commit still answers 501, not 500, with no chunk store configured" do
+        account = bootstrap_account(email: "nochunk-commit-#{SecureRandom.hex(4)}@example.com")
+        post "/v1/commit",
+             params: { commit_id: SecureRandom.uuid, node_id: SecureRandom.uuid, name: "x.bin",
+                       base_version_id: nil, size: 1, manifest: [] },
+             as: :json, headers: { "Authorization" => "Bearer #{account['device_token']}" }
+        assert_response :not_implemented
+        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
+                     "the 501 must be the capability gate, not the KeyError a rebuilt store raises")
+      end
+
+      test "POST /v1/chunks/download still answers 501, not 500, with no chunk store configured" do
+        account = bootstrap_account(email: "nochunk-dl-#{SecureRandom.hex(4)}@example.com")
+        post "/v1/chunks/download", params: { hashes: [] }, as: :json,
+             headers: { "Authorization" => "Bearer #{account['device_token']}" }
+        assert_response :not_implemented
+        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
+                     "the 501 must be the capability gate, not the KeyError a rebuilt store raises")
       end
     end
   end
