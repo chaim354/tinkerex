@@ -208,7 +208,8 @@ In `config/importmap.rb`, immediately after the `lib/file_chooser` pin block, ad
 ```ruby
 # The Measure view's to-scale print — pagination and sheet rendering, imported by
 # measure_controller.js. A HOST pin like the two above, so it is drawn into every addon's merged
-# importmap too; no bundle should import it, and none has any reason to.
+# importmap too. A bundle must NOT import it — the `boxes` bundle ships its own sheet.js
+# precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 ```
 
@@ -332,6 +333,21 @@ git commit -m "feat(measure): print_sheet.js — paper table, content box, singl
 **Files:**
 - Modify: `app/javascript/lib/print_sheet.js`
 - Test: `test/system/measure_print_test.rb`
+
+> **Carried over from Task 1's review — do these while the file is open:**
+>
+> 1. **`unionBox`'s MAXIMA half is not pinned yet, and this task is where it gets its first
+>    consumer.** Task 1's test pins only the minima (what `translateX/Y` reads); mutating the max
+>    half to `Math.min` stayed green, correctly, because nothing read `box[2]`/`box[3]`. Here
+>    `cols`/`rows` read them — so confirm that mutation now turns the tiling test RED, and record
+>    it in the mutation table at Step 5. If it does not, the tiling test is not measuring what it
+>    claims.
+> 2. **Add the system-tier justification to the test file's header comment.**
+>    `test/system/README.md`'s rule is "a behaviour earns a system test if and only if it is
+>    observable only in a browser", which pure arithmetic does not meet as written. The real reason
+>    is that **this repo has no JS test runner, so a browser is the only executor available**, and
+>    `plan_export_test.rb` set that precedent for exactly the same kind of module. Every
+>    neighbouring file in this tier justifies its place; this one should too. One or two lines.
 
 - [ ] **Step 1: Write the failing tests**
 

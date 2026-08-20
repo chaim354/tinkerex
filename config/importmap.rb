@@ -41,7 +41,8 @@ pin "lib/file_chooser", to: "lib/file_chooser.js"
 
 # The Measure view's to-scale print — pagination and sheet rendering, imported by
 # measure_controller.js. A HOST pin like the two above, so it is drawn into every addon's merged
-# importmap too; no bundle should import it, and none has any reason to.
+# importmap too. A bundle must NOT import it — the `boxes` bundle ships its own sheet.js
+# precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
