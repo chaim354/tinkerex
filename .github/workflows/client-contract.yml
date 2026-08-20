@@ -1,0 +1,141 @@
+name: Client contract
+
+# The fast, per-PR proof that the Rust client can still talk to THIS server: boot a real Rails
+# server and run the sync-engine integration suite against it. Formerly rust-client.yml's
+# `engine-integration` job, gated on `paths: client/**`. client/ moved to its own repo
+# (chaim354/tinkerex-client — docs/superpowers/plans/2026-08-20-stage-1-extract-client.md), so that
+# path can never appear in a diff here again, and the job needed a new home and a new trigger.
+#
+# WHY THIS STAYS IN tinkerex RATHER THAN MOVING TO tinkerex-client (Task 5 Step 1 of the extraction
+# plan, option (a), the one it recommends): the question this job answers is "does the client still
+# work against THIS server's wire contract" — a question about the SERVER's behavior. This repo
+# already has the runner registration, the Ruby toolchain and the server-boot recipe
+# (STORAGE_BACKEND=local, SYNC_VERIFY_FINALIZE=0, db:prepare); duplicating those in tinkerex-client
+# to run the job there would invert the coupling for no benefit. The rejected alternative — moving
+# this to a nightly-only cross-repo workflow — was cheaper but loses PR-time signal on the wire
+# contract, precisely what Stages 3 and 4 of the sync/maker repo split lean on most.
+#
+# NO PATH FILTER on pull_request, unlike the job's old home: there is no `client/**` left in this
+# repo to diff against, and a Rails-side substitute (e.g. gating on app/services/sync/**) would have
+# to be kept in step with every future change to the wire contract by hand — the same silent-drift
+# shape CLAUDE.md §15 documents for ci.yml's own paths filter, and the reason ci.yml closed that
+# class rather than enumerating it. Self-hosted runners are free (CLAUDE.md's "CI" section), so the
+# cost of running this on every PR is wall-clock, not billing.
+#
+# THE SECOND CHECKOUT + SYMLINK PATTERN below is what makes this a small diff from the pre-split
+# job rather than a rewrite: every `client/...` path in the steps is UNCHANGED from before the
+# split. See the "Check out tinkerex-client" step for the mechanism and why it needs a repo secret.
+on:
+  pull_request: {}
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same preflight pattern as ci.yml/nightly.yml — see ci/preflight.sh for why this is a
+  # DECLARATION (the repo variable CI_RUNNERS) and not an API call.
+  preflight:
+    runs-on: [self-hosted, macos]
+    outputs:
+      macos:   ${{ steps.p.outputs.macos }}
+      linux:   ${{ steps.p.outputs.linux }}
+      windows: ${{ steps.p.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v7
+        with: { clean: false }
+      - id: p
+        name: Resolve the declared runner fleet
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh | tee -a "$GITHUB_OUTPUT"
+      - name: Report what is available, and what was therefore skipped
+        env:
+          CI_RUNNERS: ${{ vars.CI_RUNNERS }}
+        run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
+
+  engine-integration:
+    # The HTTP wire contract: boot the real Rails server (SQLite + memory chunk store) and run the
+    # sync-engine integration suite against it. Boot + test in ONE step so the server stays alive.
+    needs: preflight
+    if: ${{ needs.preflight.outputs.linux == 'true' }}
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v7
+        with: { clean: false }
+
+      # SECOND checkout: the Rust crates now live in a separate private repo, so this needs a PAT
+      # with read access to it — secrets.GITHUB_TOKEN is scoped to THIS repo only and cannot check
+      # out a different one, even a same-owner private repo. Operator action: create the
+      # TINKEREX_CLIENT_TOKEN repo secret (a PAT, or fine-grained token scoped to
+      # chaim354/tinkerex-client, contents:read).
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+
+      # Every `client/...` path in the steps below is UNCHANGED from before the split. tinkerex-client
+      # keeps the `client/` prefix in ITS OWN layout (Task 3 of the extraction plan — 82 self-
+      # referential `client/...` path strings inside the tree made flattening a strictly worse
+      # option), so `tinkerex-client/client/...` is the real path here; symlinking it to `client`
+      # means `--manifest-path client/...` and every conformance script's own
+      # `cd "$(dirname "$0")/../.."` keep resolving correctly with zero edits on either side — bash's
+      # logical `cd` strips `..` components TEXTUALLY against the invoking path, so it lands back at
+      # this checkout's root (where bin/rails lives) rather than at the symlink's physical target
+      # (verified empirically before writing this job). `rm -rf` first because this runner is
+      # self-hosted and PERSISTENT (`clean: false`, CLAUDE.md §15): a workspace checked out before
+      # this migration landed can have a REAL client/ directory still sitting on disk, which `ln -s`
+      # would refuse to overwrite.
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
+        run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
+      - name: Prepare the dev database (SQLite)
+        run: bin/rails db:prepare
+      # STORAGE_BACKEND=local (not memory): two_device_e2e moves bytes via PresignedIO, the
+      # production transport, and the memory store presigns RELATIVE /dev/blobs/... paths that a
+      # Rust HTTP client can't follow — the filesystem-backed local store (see
+      # app/services/storage/local_chunk_store.rb) mints real absolute HMAC-signed URLs instead.
+      # CHUNK_PUBLIC_URL points those URLs back at this test server.
+      # SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check is ON by default
+      # (config/initializers/finalize_verification.rb), but integration.rs deliberately moves
+      # chunk bytes through SharedDirIO — a shared-dir stand-in for the cloud — rather than the
+      # server's store, so the server legitimately can't see them. That transport is also the
+      # seam the offline/corrupting/counting fault tests wrap. two_device_e2e's own genuine,
+      # verify-ON proof runs in nightly.yml's e2e-linux/e2e-macos jobs.
+      - name: Boot the sync server + run the integration suite (one step keeps the server alive)
+        env:
+          SYNC_IT_SERVER_URL: http://localhost:3001
+        run: |
+          (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
+          sleep 1
+          STORAGE_BACKEND=local CHUNK_PUBLIC_URL=http://localhost:3001 ENABLE_TEST_SIGNUP=true SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &
+          SRV=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
+          code=$?
+          # The two-device end-to-end suite (the headline A→B→edit→A roundtrip + delete/move/
+          # rename/dedup/restore/conflict), driven through the same engine loop + ServerClient API
+          # the Tauri app's Daemon runs. Provider/engine-level (headless) — see the test's module
+          # docs; the kernel-mount leg is the per-OS conformance suites' job, in tinkerex-client's
+          # own CI plus this repo's nightly.yml (the legs that also need a local Rails server).
+          cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e
+          code2=$?
+          set -e
+          kill $SRV 2>/dev/null || true
+          [ $code -eq 0 ] && [ $code2 -eq 0 ]

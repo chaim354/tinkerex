@@ -30,12 +30,16 @@ require "test_helper"
 class CiHygieneTest < ActiveSupport::TestCase
   WORKFLOW_DIR = Rails.root.join(".github/workflows")
 
-  # build-app.yml and install-app-on-runners.yml are exempt from the runner-family rules below.
-  # Both are workflow_dispatch-ONLY and both take their runner from a dynamic matrix
-  # (`[self-hosted, "${{ matrix.runner }}"]`), which no static check can resolve. The failure this
-  # file exists to prevent — a job queueing 24h against a runner that does not exist, with nobody
-  # watching — needs an AUTOMATIC trigger. A human who pressed "Run workflow" is watching.
-  DYNAMIC_MATRIX_WORKFLOWS = %w[build-app.yml install-app-on-runners.yml].freeze
+  # build-app.yml and install-app-on-runners.yml used to be exempt from the runner-family rules
+  # below (DYNAMIC_MATRIX_WORKFLOWS): both were workflow_dispatch-ONLY and took their runner from a
+  # dynamic matrix (`[self-hosted, "${{ matrix.runner }}"]`), which no static check can resolve —
+  # the failure this file exists to prevent needs an AUTOMATIC trigger, and a human who pressed
+  # "Run workflow" is watching. Both files left in the client/ extraction
+  # (docs/superpowers/plans/2026-08-20-stage-1-extract-client.md) — they moved wholesale to
+  # chaim354/tinkerex-client, since they build/stage only client/maker-app — so no workflow left in
+  # THIS repo uses a dynamic matrix for `runs-on`, and the exemption (and each_static_job, which
+  # existed only to apply it) went with them. If a future workflow here reintroduces one, restore
+  # the exemption rather than papering over a real "queues forever" gap.
 
   # Every self-hosted family we may target. Anything else is either GitHub-hosted (billed) or a typo.
   FAMILIES = %w[macos linux windows].freeze
@@ -58,10 +62,11 @@ class CiHygieneTest < ActiveSupport::TestCase
     #
     # Consequence for future workflows: every self-hosted job's `runs-on` MUST include the literal
     # `self-hosted` label — already this repo's documented convention, now enforced rather than
-    # assumed. A dynamic matrix (`[self-hosted, "${{ matrix.runner }}"]`, build-app.yml /
-    # install-app-on-runners.yml) satisfies this with no special-casing: the literal element is
-    # still there, unresolved template or not — DYNAMIC_MATRIX_WORKFLOWS/each_static_job below are
-    # for a different, still-unused check, not this one.
+    # assumed. A dynamic matrix (`[self-hosted, "${{ matrix.runner }}"]`) would satisfy this with no
+    # special-casing: the literal element is still there, unresolved template or not. (No workflow
+    # here uses one today — build-app.yml and install-app-on-runners.yml, the two that did, moved to
+    # chaim354/tinkerex-client with the rest of client/maker-app; see the WORKFLOW_DIR comment above
+    # for why the exemption that once covered them is gone rather than kept unused.)
     #
     # KNOWN LIMIT, deliberately not closed: `runs-on` also has a MAP form,
     # `{ group: ..., labels: [...] }`, and `Array(hash)` yields `[key, value]` PAIRS rather than a
@@ -70,7 +75,8 @@ class CiHygieneTest < ActiveSupport::TestCase
     # never silently passing a billed runner, which is the whole point of the file), and a correct
     # reading is genuinely ambiguous: an org-level HOSTED larger-runner group and a self-hosted
     # runner group use the identical YAML shape, so static inspection cannot tell them apart. No
-    # workflow here uses the map form today (verified: all 38 `runs-on` values are Array-shaped).
+    # workflow here uses the map form today (verified: all 15 `runs-on` values are Array-shaped —
+    # down from 38 before the client/ extraction moved four workflow files to tinkerex-client).
     # If this repo ever adopts runner groups, that ambiguity is the problem to solve first.
     offenders = []
     each_job do |file, name, job|
@@ -173,16 +179,18 @@ class CiHygieneTest < ActiveSupport::TestCase
     ".kamal/secrets.share",                 # deploy_hygiene_test: per-destination secrets
     ".github/workflows/nightly.yml",        # ci_hygiene_test globs EVERY workflow, not just ci.yml
     "sidecar/openscad/catalog/catalog.json", # deploy_hygiene_test: the bundled-.scad licence sweep
-    "client/maker-app/package.json",        # `"type": "module"` — remove it and `bin/ci test-app` dies
-    "client/maker-app/test/session.test.js", # the test-app gate's suite
     "app/models/user.rb"                    # the ordinary case, and the old allowlist's first entry
   ].freeze
 
+  # client/maker-app/package.json, client/maker-app/test/session.test.js (RUN), and
+  # client/sync-engine/src/lib.rs, client/maker-app/README.md (SKIP) lived here until the client/
+  # extraction (docs/superpowers/plans/2026-08-20-stage-1-extract-client.md) — client/ no longer
+  # exists in this repo at all, so none of the four can stand as an example either way. The
+  # `!client/**` line in ci.yml's filter (kept deliberately — see that file) has no representative
+  # path left to assert on.
   PATHS_THAT_MUST_SKIP_CI = [
     "docs/STATUS.md",
-    "CLAUDE.md",                    # root-level markdown: `**.md`, not `**/*.md`
-    "client/sync-engine/src/lib.rs", # the Rust crates gate via rust-client.yml
-    "client/maker-app/README.md"     # inside the re-include, but still prose
+    "CLAUDE.md"                    # root-level markdown: `**.md`, not `**/*.md`
   ].freeze
 
   test "ci.yml's paths filter runs CI for every file a bin/ci gate reads" do
@@ -198,8 +206,8 @@ class CiHygieneTest < ActiveSupport::TestCase
     PATHS_THAT_MUST_SKIP_CI.each do |path|
       assert Rails.root.join(path).exist?, "#{path} no longer exists — fix the list, not the filter"
       assert_not ci_paths_filter_runs?(path),
-                 "ci.yml's paths filter now runs the full job set for `#{path}`. Prose and the " \
-                 "Rust crates are the whole reason the filter exists; keep them excluded."
+                 "ci.yml's paths filter now runs the full job set for `#{path}`. Prose is the " \
+                 "whole reason the filter exists; keep it excluded."
     end
   end
 
@@ -211,7 +219,7 @@ class CiHygieneTest < ActiveSupport::TestCase
     # macos jobs are exempt: the preflight job itself runs on macos, so if that family were absent
     # the gate could not start either and gating a macos job on it would be circular.
     ungated = []
-    each_static_job do |file, name, job|
+    each_job do |file, name, job|
       families = Array(job["runs-on"]).map { |l| l.to_s.downcase } & FAMILIES
       gated_families = families - [ "macos" ]
       next if gated_families.empty?
@@ -388,14 +396,6 @@ class CiHygieneTest < ActiveSupport::TestCase
       WORKFLOW_DIR.glob("*.{yml,yaml}").sort.each do |path|
         jobs = YAML.load_file(path, aliases: true).fetch("jobs")
         jobs.each { |name, job| yield path.basename.to_s, name, job }
-      end
-    end
-
-    # The workflows subject to the runner-family rules: everything except the dynamic-matrix pair.
-    def each_static_job
-      each_job do |file, name, job|
-        next if DYNAMIC_MATRIX_WORKFLOWS.include?(file)
-        yield file, name, job
       end
     end
 end
