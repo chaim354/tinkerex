@@ -587,5 +587,32 @@ module FileLayer
       assert_equal 1, @user.nodes.present.where(parent_node_id: nil, name: "mover.stl").count,
                    "the refusal must not have created a second, colliding node"
     end
+
+    # PINS THE SCOPE OF THAT REFUSAL, WHICH THE TEST ABOVE DOES NOT. The lookup is deliberately
+    # written WITHOUT a `kind:` -- it refuses ANY live node at that (parent_node_id, name) -- but
+    # every test of it seeded a FILE, so narrowing it to `kind: "file"` was a mutation the whole
+    # suite waved through: 1056 runs, 0 failures. The code was more correct than its coverage
+    # proved, which is the §15 shape ("a guard that has never failed has not been shown to work")
+    # and exactly how a scope silently shrinks back during a later tidy-up.
+    #
+    # SYMLINK is the third of Node::KINDS and is not hypothetical: `client/fs-provider` syncs
+    # symlink targets so git-on-mount works (docs/git-on-mount.md), and V1::NodesController#symlink
+    # mints these through the real device API. A dir node sharing one identity with a symlink node
+    # is the same unrepresentable collision as with a file, one kind over.
+    #
+    # Built with nodes.create! rather than through a door, because there is no PORT verb that
+    # makes a symlink -- the sync engine's own #symlink is the only maker, and this test is about
+    # what mkdir REFUSES, not about how the occupant arrived.
+    test "mkdir refuses a cross-kind collision -- a live SYMLINK too, not just a file" do
+      @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: nil, name: "link",
+                          kind: "symlink", deleted: false, mtime: 0,
+                          symlink_target: "target.stl")
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.mkdir(@user, parent_node_id: nil, name: "link")
+      end
+      assert_match(/symlink/, err.message,
+                   "the message must name the colliding KIND, so a caller is not told 'file'")
+      assert_equal 1, @user.nodes.present.where(parent_node_id: nil, name: "link").count
+    end
   end
 end

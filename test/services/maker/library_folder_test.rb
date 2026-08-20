@@ -40,6 +40,15 @@ module Maker
     # oracle costs exactly one query by construction and does not change when ensure_segment's
     # own implementation regresses, which is what lets it catch a regression a same-code
     # self-consistency check cannot.
+    #
+    # THE LIMIT OF "INDEPENDENT", STATED HONESTLY: the oracle and the code under test both resolve
+    # through `@user.nodes.present.find_by(...)`, so a change to that SHARED machinery -- an extra
+    # round trip inside the `present` scope, say -- moves both together and this stays green while
+    # absolute cost doubles. Probed, not assumed: baseline/one/three went 1/1/3 -> 2/2/6 with the
+    # assertions still passing. That is tolerable because it is not the regression this guard
+    # exists to catch (the short-circuit going missing, which it does catch), and because such a
+    # change would move every query-count assertion in the suite, page_query_budget_test.rb
+    # included. It is recorded so nobody reads "independent oracle" as stronger than it is.
     def assert_already_existing_path_costs_one_query_per_segment
       Maker::LibraryFolder.ensure_path!(@user, %w[q1 q2 q3]) # seed all three, for real, once
 
