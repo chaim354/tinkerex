@@ -62,8 +62,11 @@ reading the last entry.
 
 ## Latest (2026-08-20): printing one part costs no mode (branch `claude/measure-print-selected`)
 
-**Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9619 assertions / 3 skips, identical.
-System tier 177 → 179 runs, 1504 assertions. `bin/ci` green, all eight gates, exit 0, 1m12s.**
+**Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9538 assertions / 3 skips, identical.
+System tier 177 → 179 runs, 1504 assertions. `bin/ci` green, exit 0, 1m29s — measured after merging
+`main` @ `d79b468`, which is why it is SEVEN gates and not eight: Stage 1 of the repo split took
+`test-app` with the desktop app, and the assertion count fell 9619 → 9538 with it. Neither is this
+arc's doing; it adds no test outside `test/system/`.**
 
 Second follow-on from using the print arc. **Select parts was a toll gate on the commonest case:
 to print the one hole you were already measuring, you had to leave measuring, enter a mode, and
@@ -101,6 +104,137 @@ deselect.
 
 ---
 
+## 2026-08-20: Stage 1 of the repo split — `client/` leaves for `tinkerex-client` (branch `claude/stage-1-extract-client`)
+
+> **⚠️ CI FOR THE EXTRACTED CODE IS DARK UNTIL TWO OPERATOR ACTIONS HAPPEN — verified against the
+> live API at close-out, not assumed:**
+>
+> - `chaim354/tinkerex-client` has **0 registered runners**, so every workflow that moved there
+>   (`rust-client.yml`, `build-app.yml`, `install-app-on-runners.yml`, `cross-os-e2e.yml`) **cannot
+>   run at all.** Runners register per-repository; each physical box needs a SECOND service.
+> - `tinkerex` has **only the macOS runner** (`charless-MacBook-Pro-maker-mac`, online). So
+>   `client-contract.yml`'s `engine-integration`, which is `[self-hosted, linux]` and correctly
+>   preflight-gated, **SKIPS** — confirmed on this arc's own PR. It is not passing; it is not
+>   running.
+> - `TINKEREX_CLIENT_TOKEN` **does not exist**, so even with a Linux runner the cross-repo checkout
+>   would fail. `secrets.GITHUB_TOKEN` cannot cross repositories.
+>
+> This is CLAUDE.md §15's recorded trap ("Linux and Windows coverage is skipped, not passing")
+> widened to the whole client suite. **The extraction itself was verified locally instead**: the
+> filtered tree's `client/` hash is byte-identical to what left this repo, `fs-provider`,
+> `sync-client` and `sync-engine` all build standalone in the new repo, and `fs-provider`'s
+> hermetic suite passes 23/23 there. That is evidence the code is intact — it is NOT evidence that
+> CI covers it.
+
+**Suite: `bin/ci` green at 7 gates (down from 8 — `test-app` left with `client/maker-app`), all
+three `LIBRARY_BACKEND` legs IDENTICAL at 2528 runs / 9538 assertions / 0F / 0E / 3 skips, system
+176 runs / 1467 assertions / 0F / 0E / 0 skips. `bin/rubocop` clean on the two touched Ruby files.
+Total run 1m11s.** (Do not chain this 9538 against the prior arc's 9619 as if the delta is this
+arc's doing — per this file's own header, per-entry counts don't form a chain. This branch's
+history already carries the Stage 2 FileLayer-port merge and other main-branch arcs between when
+9619 was measured and now, and `test/ci_hygiene_test.rb`'s own edit here only removes ~8
+assertions, four path-list entries at two assertions each — nowhere near the full delta. Take a
+baseline by running the merge-base, not by reading this line.)
+
+**What moved, and what didn't.** `client/` — twelve Rust crates, the Tauri desktop app,
+`test-conformance/` — is gone from this repo. It now lives in `chaim354/tinkerex-client`, created
+private, with history extracted by `git filter-repo --path client/` (166 commits, verified: tree
+hash byte-identical to this repo's pre-extraction `client/`, no commit touching `client/` lost,
+the extracted tree builds standalone — `fs-provider`, `sync-client`, `sync-engine` all resolve,
+`fs-provider`'s hermetic suite passes 23/23). `client/stl-thumbnailer` left FIRST, as its own
+prerequisite commit (`b89b422`), re-filed to `tools/stl-thumbnailer` — it is a **server-side**
+tool the Dockerfile compiles and `Maker::Previews::Stl` execs off `PATH`, misfiled under `client/`
+by accident, and moving `client/` before fixing that would have taken every STL/3MF thumbnail in
+production down. Verified with a real `docker build --target stl-thumbnailer` rendering a fixture
+STL to a valid PNG inside the production image (done in the prerequisite commit, this arc only
+confirmed it via `git log`, did not re-run the Docker build).
+
+**`client/` was removed from this repo in its own commit** (`a25f105`, 182 files / 61,600
+deletions), unsquashed from the CI/doc repair that follows it, so a reviewer can see the deletion
+alone.
+
+**The plan's own "nearly free" correction undercounted the CI coupling — 4 named, 7 found.**
+`docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` named four jobs that boot a local
+Rails server (`rust-client.yml`'s `engine-integration`; `nightly.yml`'s `e2e-linux`, `e2e-macos`,
+`stress-load-and-multifiletype-linux`). Reading the two-device conformance scripts (not just
+grepping the workflow YAML for `bin/rails server`) found two more of the identical shape:
+`two-device-fuse-linux` (present in BOTH `rust-client.yml` and `nightly.yml`) and
+`nightly.yml`'s `two-device-webdav-macos` each call a script
+(`two-device-fuse.sh` / `two-device-webdav-macos.sh`) that itself boots its own
+`STORAGE_BACKEND=local` Rails server one `cd` and one script-invocation away from the job body —
+invisible to a grep of the workflow file itself. Five job names, seven job-instances total, all
+needing both trees in one job.
+
+**Disposition of the six workflow files:**
+| File | What happened |
+|---|---|
+| `build-app.yml`, `install-app-on-runners.yml`, `cross-os-e2e.yml` | Deleted — moved wholesale to `tinkerex-client` (no Rails coupling: build/stage the Tauri app, or hit the *deployed* server via `SERVER_URL`) |
+| `rust-client.yml` | Deleted — 7 of 8 jobs were pure cargo and moved with `client/`; `engine-integration` survives as the new `client-contract.yml` |
+| `nightly.yml` | Kept, stripped from 13 jobs to 6 (`preflight` + the 5 Rails-coupled jobs above) |
+| `ci.yml` | Kept — removed the `test-app-js` job and the `client/maker-app/**` re-include from `paths:`; left `!client/**` (harmlessly excludes a directory that no longer exists — task's own call, avoids growing the diff for zero behavior change) |
+| `client-contract.yml` (new) | The wire-contract gate (`engine-integration`, renamed workflow). No `client/**` path filter is possible any more — nothing can put that path in a diff of this repo again — so it triggers on every `pull_request` + `push:main` instead, trading a little wall-clock (self-hosted runners are free) for never going silently stale. **It is SKIPPED, not passing, as of this arc** — see the operator actions below |
+
+**The dual-checkout mechanism, one seam for all five surviving jobs.** Per the plan's recommended
+option (a) — these jobs answer "does the client still work against THIS server," a question about
+the server, and this repo already has the runner registration and the server-boot recipe — each
+surviving job adds a second `actions/checkout@v7` of `tinkerex-client` to a `tinkerex-client/`
+subdirectory, then `rm -rf client && ln -s tinkerex-client/client client`. Every pre-existing
+`client/...` path reference in these jobs — `--manifest-path client/sync-engine/Cargo.toml`,
+`client/test-conformance/two-device-fuse.sh` — needed **zero edits**, including the two scripts'
+own `cd "$(dirname "$0")/../.."` (looking for `bin/rails`): verified empirically before writing
+the workflow that bash's logical `cd` strips `..` components textually against the invoking path
+rather than resolving the symlink's physical target first, so it lands back at the checkout root
+regardless of `client` being a real directory or a symlink. `rm -rf client` first is load-bearing.
+not decoration: these runners are self-hosted and persistent (`clean: false`), so a workspace
+checked out before this migration merged can have the OLD real `client/` directory still on disk,
+which `ln -s` would refuse to overwrite.
+
+**`TINKEREX_CLIENT_TOKEN` is a required operator action — not created here.** All five surviving
+jobs need it (a PAT or fine-grained token with `contents:read` on `chaim354/tinkerex-client`;
+`secrets.GITHUB_TOKEN` is scoped to this repo only and cannot check out a different one, even a
+same-owner private repo). Until it exists as a repo secret, every job that needs it fails at the
+second checkout step.
+
+**`config/ci.rb` / `test/ci_hygiene_test.rb`:** the `test-app` gate is deleted, not disabled —
+leaving it in place would have `abort`ed the entire `bin/ci` run the moment `client/maker-app`
+stopped existing (`Dir.glob` with a missing `base:` returns `[]`, not a raise, and the gate
+`abort`s on an empty glob on purpose). Four `client/`-shaped literals came out of
+`PATHS_THAT_MUST_RUN_CI`/`PATHS_THAT_MUST_SKIP_CI` (the paths no longer exist to assert on).
+`DYNAMIC_MATRIX_WORKFLOWS` and the `each_static_job` helper that existed only to apply it are
+**deleted, not emptied** — both files that needed the exemption (`build-app.yml`,
+`install-app-on-runners.yml`, each keying `runs-on` off an unresolvable `${{ matrix.runner }}`)
+left with the rest of `client/`, and no workflow remaining in this repo uses a dynamic matrix, so
+an empty constant would have been dead weight with no test able to prove it dead.
+
+**Runner registration — unchanged and still the binding constraint.** Only the macOS box has a
+`tinkerex` registration; Linux and Windows do not, and (new, since the repo didn't exist before
+this arc) `tinkerex-client` has **no runner registered on any OS yet**. Every workflow that moved
+there, and the `tinkerex-client` half of every dual-checkout job here, are *skipped or failing,
+not passing* until an operator registers a second runner service per physical box — the same
+per-repository registration limit CLAUDE.md §15 already documents for this repo, now doubled.
+`ci/runners/README.md` gained a section spelling out the two-registrations-per-box reality and
+why the setup scripts deliberately still hardcode this repo's URL rather than taking one as an
+argument (a typo-proofing choice: a parameterized script makes it easy to register the wrong box
+against the wrong repo).
+
+**The two stragglers the design doc flagged separately, both fixed:**
+- `scripts/r2-cutover/smoke.sh` (an operator script, not CI — nothing goes red when it breaks) now
+  resolves `TINKEREX_CLIENT_DIR` (default `../tinkerex-client`) and fails loudly, naming the new
+  repo and the `gh repo clone` command, instead of a bare "not found" if the crate isn't there.
+- `ci/runners/setup-{macos,linux,windows}.{sh,ps1}` were NOT copied into `tinkerex-client` in this
+  arc (needs the physical machines; recorded as an operator action, not done here).
+
+**Left open, recorded rather than silently dropped:**
+- **`tinkerex-client` has no `ci_hygiene_test.rb`-equivalent guard.** The plan's own Task 5 Step 5
+  calls for one (the three generic workflow-hygiene assertions — no hosted runners, no
+  `ruby/setup-ruby` on macOS, every linux/windows job preflight-gated — ported to whatever CI
+  shape the new Rust-only repo uses). Not done in this session: it requires operating on a second
+  repository's own toolchain choice, which the task assigning this arc scoped out explicitly. This
+  is the design doc's own Risk #4, still open.
+- `CLAUDE.md` §14e's `client/juicefs-backend` mention (unrelated §14 invariant text, out of this
+  arc's assigned edit scope) still names a path that now lives at
+  `tinkerex-client/client/juicefs-backend` — left alone rather than freelance-edited, since §14 is
+  dense, cross-referenced prose this arc had no mandate to touch beyond §3/§4/§10/§13/§15.
 ## 2026-08-20: Reset does both halves of "start again" (branch `claude/measure-reset-clears-selection`)
 
 **Suite: three `LIBRARY_BACKEND` legs unchanged at 2528 runs / 9619 assertions / 3 skips, identical.

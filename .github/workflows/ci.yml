@@ -20,11 +20,13 @@ on:
     # the same argument ci_hygiene_test.rb:44-52 makes for the self-hosted-label check and
     # deploy_hygiene_test.rb makes for the licence sweep.
     #
-    # ORDER IS LOAD-BEARING — GitHub evaluates these top to bottom and the LAST match wins, so
-    # every positive re-include must sit AFTER the negation it re-opens. `client/maker-app/**`
-    # after `!client/**` is what keeps the `test-app` gate's own sources in CI; swap those two
-    # lines and a JS-only PR silently runs nothing again. `paths` and `paths-ignore` cannot both
-    # appear on one event, which is why the negations live inside `paths`.
+    # ORDER IS LOAD-BEARING WHENEVER A POSITIVE PATTERN FOLLOWS A NEGATION — GitHub evaluates these
+    # top to bottom and the LAST match wins, so any future re-include (the way `client/maker-app/**`
+    # once re-opened `!client/**` for the desktop app's own JS sources, before that app moved to
+    # chaim354/tinkerex-client and the re-include went with it — see
+    # docs/superpowers/plans/2026-08-20-stage-1-extract-client.md) MUST sit after the negation it
+    # reopens, or the files it exists for silently stop triggering CI again. `paths` and
+    # `paths-ignore` cannot both appear on one event, which is why the negations live inside `paths`.
     #
     # THE TWO DOT LINES ARE INSURANCE, NOT DECORATION. GitHub documents `**` as "matches all
     # characters, including /", which implies it also matches a leading dot — but that is an
@@ -33,9 +35,10 @@ on:
     # `.github/**`, `.kamal/**`), so they are named as a CLASS: `.*` for root dotfiles and `.*/**`
     # for root dot-directories. They cost nothing if `**` already covered them.
     #
-    # Excluded, and why each is safe: `docs/**` and `**.md` are prose no gate executes;
-    # `client/**` is the Rust crates, gated by rust-client.yml. Cost of the re-include: a JS-only
-    # PR also runs the Rails jobs — a minute of work on a free self-hosted runner.
+    # Excluded, and why each is safe: `docs/**` and `**.md` are prose no gate executes.
+    # `!client/**` is kept even though `client/` no longer exists in this repo at all (it moved to
+    # chaim354/tinkerex-client) — removing the line changes nothing this filter matches and only
+    # grows the diff; deleting it is a future cleanup, not a correctness fix.
     #
     # COST, MEASURED over 835 non-merge commits since 2026-05-01: 327 skipped CI under the old
     # allowlist, 275 still skip, so 52 newly run. On the free self-hosted mac, serialized by the
@@ -47,7 +50,6 @@ on:
       - '.*/**'
       - '!docs/**'
       - '!client/**'
-      - 'client/maker-app/**'
       - '!**.md'
   push:
     branches: [ main ]
@@ -80,10 +82,10 @@ jobs:
   # (the repo variable CI_RUNNERS) and not an API call.
   #
   # The jobs in THIS workflow are not gated on it: they all run on macos, and if the mac runner were
-  # absent this job could not start either, so gating them on it would be circular. The outputs are
-  # consumed by the linux/windows jobs in rust-client.yml, nightly.yml and cross-os-e2e.yml. What
-  # this job buys ci.yml is the SUMMARY — a run that states, on its own page, which coverage it did
-  # not run.
+  # absent this job could not start either, so gating them on it would be circular. nightly.yml and
+  # client-contract.yml each carry their OWN copy of this same job (a workflow file's job outputs
+  # don't cross files) and gate their linux/macos jobs on it. What this job buys ci.yml is the
+  # SUMMARY — a run that states, on its own page, which coverage it did not run.
   preflight:
     runs-on: [self-hosted, macos]
     outputs:
@@ -206,19 +208,6 @@ jobs:
         env:
           RAILS_ENV: test
         run: bin/ci test-s3
-
-  # The desktop app's JS suite (client/maker-app/test/). The gate itself is `node --test` and
-  # nothing else — node is already on the runner's service PATH, so there is no install step for
-  # it — but `bin/ci` boots bundler to read config/ci.rb, hence the gems. See the `test-app` gate
-  # in config/ci.rb for why the command is a glob rather than a directory.
-  test-app-js:
-    runs-on: [self-hosted, macos]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
-        run: bundle install --quiet
-      - name: Run the desktop app's JS tests
-        run: bin/ci test-app
 
   # The browser tier. Its own job so its cost stays visible as it grows, rather than inflating the
   # unit-test job. See test/system/README.md for what earns a place in it.

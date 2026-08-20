@@ -55,12 +55,16 @@ RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 
 
 # ---- stl-thumbnailer: a tiny pure-CPU (NO GPU / OpenGL / Mesa / browser) STL→PNG thumbnailer
-# (client/stl-thumbnailer, euc Apache/MIT). Built here and copied into the runtime image so the
+# (tools/stl-thumbnailer, euc Apache/MIT). Built here and copied into the runtime image so the
 # preview pipeline renders STL thumbnails server-side with zero graphics-stack dependencies.
-# Independent of `base`, so it builds in parallel. (.dockerignore re-includes just this crate.)
+# Independent of `base`, so it builds in parallel. It lives under tools/, not client/, because
+# it is a SERVER-side binary the Rails process execs (Maker::Previews::Stl) — despite the Rust
+# source, it is not part of the client/ desktop app and has no path dependency from anything
+# there. That is also why .dockerignore needs no re-include exception for it: tools/ is never
+# excluded in the first place.
 FROM docker.io/library/rust:1-slim AS stl-thumbnailer
 WORKDIR /build
-COPY client/stl-thumbnailer ./
+COPY tools/stl-thumbnailer ./
 RUN cargo build --release && strip target/release/stl-thumbnailer
 
 

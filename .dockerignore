@@ -54,12 +54,14 @@
 # artifacts (client/*/target) + source that the server never builds or ships (it
 # references files only by node_id). Excluding it cuts the build context from ~8 GB
 # down to tens of MB.
+#
+# tools/stl-thumbnailer is deliberately NOT excluded by this: the image DOES compile it
+# (see the Dockerfile's stl-thumbnailer stage), because Maker::Previews::Stl execs the
+# resulting binary server-side. It used to live under client/stl-thumbnailer, which is why
+# this file once carried a re-include exception (`!/client/stl-thumbnailer`) — that crate
+# is a server-side tool that was misfiled under client/, not a client dependency, so it
+# moved to tools/ instead of needing a permanent carve-out here.
 /client/
-# …EXCEPT the tiny stl-thumbnailer crate — the image DOES compile it (a Rust build stage)
-# so the preview pipeline can render STL thumbnails server-side with no GL/Mesa. Re-include
-# the source but keep its build artifacts out (BuildKit honors this re-inclusion).
-!/client/stl-thumbnailer
-/client/stl-thumbnailer/target
 
 # Docs, tests, CI runners, and dev scripts aren't needed in the production image.
 /docs/

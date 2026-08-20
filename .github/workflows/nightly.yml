@@ -1,10 +1,24 @@
 name: Nightly (heavy / cross-platform)
 
-# The slow, cross-platform, and live jobs kept OFF the per-PR loop: full Windows builds, the live
-# CfAPI smoke (needs the Windows desktop awake + the deployed server reachable), and the
-# fsx/pjdfstest mount conformance. Runs overnight and on-demand — trigger it manually
-# (Actions tab → "Run workflow", or `gh workflow run nightly.yml --ref <branch>`) right before a
-# CfAPI change needs live proof or before flipping the Windows default (Task B5).
+# The engine/mount-level two-device E2E suites that need a LOCAL RAILS SERVER, kept off the per-PR
+# loop because they are slow. Runs overnight and on-demand — trigger it manually (Actions tab →
+# "Run workflow", or `gh workflow run nightly.yml --ref <branch>`).
+#
+# THIS FILE USED TO BE TWELVE JOBS; FIVE REMAIN. The other seven — windows-build,
+# fuser-mount-smoke-linux, e2e-windows, two-device-cfapi-windows, windows-smoke, cfapi-conformance,
+# mount-conformance — were pure cargo builds/tests or hit the DEPLOYED server via SERVER_URL, with
+# no dependency on this repo at all, and moved wholesale to tinkerex-client's own CI along with
+# client/ (docs/superpowers/plans/2026-08-20-stage-1-extract-client.md). The five here could not
+# move with them: each either runs `bin/rails server -p 3001 &` inline, or calls a
+# test-conformance script that does — e2e-linux, e2e-macos and stress-load-and-multifiletype-linux
+# do the former; two-device-fuse-linux and two-device-webdav-macos do the latter (their scripts
+# boot their own STORAGE_BACKEND=local Rails server, per each script's own header comment). The
+# extraction plan's own summary named only the first three as "Rails-coupled" — the other two
+# were found by reading the scripts, not by trusting that count, and are exactly the same shape.
+#
+# See client-contract.yml for the PR-time sibling of this file (engine-integration, the fast wire-
+# contract gate) and for the full argument on why these jobs stay in tinkerex rather than moving —
+# it applies unchanged to every job below.
 on:
   schedule:
     - cron: '0 8 * * *'   # 08:00 UTC daily
@@ -44,46 +58,38 @@ jobs:
           CI_RUNNERS: ${{ vars.CI_RUNNERS }}
         run: ci/preflight.sh --summary >> "$GITHUB_STEP_SUMMARY"
 
-  windows-build:
-    # Build the real Windows mount adapters (fs-cfapi + fs-winfsp) + their sync-engine wiring —
-    # the only place winfsp-sys (msvc-only) and the cfg(windows) daemon code actually link.
-    # LLVM + WinFsp are preinstalled by ci/runners/setup-windows.ps1.
-    needs: preflight
-    if: ${{ needs.preflight.outputs.windows == 'true' }}
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build fs-cfapi (lib + maker-cfapi)
-        run: cargo build --manifest-path client/fs-cfapi/Cargo.toml --bins
-      - name: Build fs-winfsp (WinFsp adapter)
-        env:
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo build --manifest-path client/fs-winfsp/Cargo.toml --bins
-      - name: Build sync-engine on Windows (CfApiMount + WinfspMount + maker-cfsyncd)
-        env:
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo build --manifest-path client/sync-engine/Cargo.toml --bins
-
-  # --- Two-device END-TO-END on each OS (the headline multi-device workflow) ---------------
+  # --- Two-device END-TO-END on Linux + macOS (the headline multi-device workflow) -----------
   # The same client stack the Tauri app runs (fs-provider tree + sync-engine loop + ServerClient
   # API), exercised as TWO independent devices paired into one library: A writes → B pulls +
   # hydrates → B edits → A pulls, byte-for-byte, plus delete/move/rename/dedup/restore/conflict.
-  # This is the PROVIDER/ENGINE-LEVEL leg (headless on every OS); the kernel-mount leg is the
-  # per-OS conformance suites' job (cfapi-conformance here; webdav-rclone/fsx-fuse in the
-  # mount-conformance job below). Linux/mac are self-contained (each boots its own
-  # STORAGE_BACKEND=local Rails server, needed for real presigned URLs — see below); Windows runs
-  # against the deployed server and skips cleanly if it's unreachable.
+  # This is the PROVIDER/ENGINE-LEVEL leg (headless); the kernel-mount leg is the per-OS conformance
+  # suites' job, now in tinkerex-client's own CI (cfapi-conformance/mount-conformance) plus
+  # two-device-fuse-linux/two-device-webdav-macos below (kept here because THEY also need Rails).
+  # Both are self-contained: each boots its own STORAGE_BACKEND=local Rails server, needed for real
+  # presigned URLs — see below.
 
   e2e-linux:
-    # Self-contained: boot STORAGE_BACKEND=local Rails (SQLite) here, like engine-integration.
+    # Self-contained: boot STORAGE_BACKEND=local Rails (SQLite) here, like engine-integration in
+    # client-contract.yml.
     needs: preflight
     if: ${{ needs.preflight.outputs.linux == 'true' }}
     runs-on: [self-hosted, linux]
     steps:
       - uses: actions/checkout@v7
         with: { clean: false }
+      # SECOND checkout + symlink: see client-contract.yml's engine-integration job for the full
+      # argument. Every `client/...` path below is unchanged from before the client/ split.
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
         with:
@@ -114,35 +120,6 @@ jobs:
           kill $SRV 2>/dev/null || true
           exit $code
 
-  # --- STEP-1 ISOLATION: does a STOCK fuser-0.17 mount even HOLD on this runner? -------------
-  # A dependency-free hello-world FUSE mount (client/fs-fuse/examples/mount_smoke.rs) with the
-  # SAME fuser::Config the daemon uses (FSName + DefaultPermissions, spawn_mount2). It mounts,
-  # waits ~1s, then asserts the mount HELD (worker alive + findmnt sees it + the file reads) and
-  # prints `SMOKE: MOUNT HELD` (exit 0) or `SMOKE: MOUNT DROPPED` (exit 1). HELD here pins our
-  # daemon's instant-drop on our FuseAdapter/daemon; DROPPED pins it on the fuser crate vs kernel.
-  # continue-on-error so a runner without /dev/fuse never reds the nightly.
-  fuser-mount-smoke-linux:
-    needs: preflight
-    if: ${{ needs.preflight.outputs.linux == 'true' }}
-    continue-on-error: true
-    runs-on: [self-hosted, linux]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: System deps (FUSE + allow_other)
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev fuse pkg-config util-linux
-          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
-      - name: Stock fuser-0.17 hello mount smoke (does the mount HOLD?)
-        run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example mount_smoke
-      - name: Real FuseAdapter over a fresh SqliteProvider, no sync threads (does IT hold?)
-        run: cargo run --manifest-path client/fs-fuse/Cargo.toml --example adapter_mount_smoke
-      - name: Full Daemon::start FUSE wiring vs a DEAD server (does the daemon mount hold?)
-        run: cargo run --manifest-path client/sync-engine/Cargo.toml --example daemon_fuse_smoke
-      - name: run_until_unmounted must WAIT, not self-unmount (the instant-drop regression)
-        run: cargo run --manifest-path client/sync-engine/Cargo.toml --example run_until_unmounted_smoke
-
   # --- Stress / load + multi-filetype conformance (heavier; additive, never reds the nightly) ---
   # Two suites that push the data plane well past the 2-device tests:
   #   * concurrency_load        — N (10–50) real client threads vs ONE server: concurrent commits
@@ -163,6 +140,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { clean: false }
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
         with:
@@ -199,6 +187,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { clean: false }
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
       - uses: dtolnay/rust-toolchain@stable
       # Use the runner's preinstalled Ruby/bundler (the maker-mac dev box) — ruby/setup-ruby
       # assumes the GitHub-hosted /Users/runner layout this self-hosted runner doesn't have.
@@ -224,30 +223,14 @@ jobs:
           kill $SRV 2>/dev/null || true
           exit $code
 
-  e2e-windows:
-    # Windows client stack against the deployed server. Builds the cfg(windows) daemon path.
-    # Same deployed-server target as the CfAPI conformance jobs; skips cleanly if unreachable.
-    needs: preflight
-    if: ${{ needs.preflight.outputs.windows == 'true' }}
-    runs-on: [self-hosted, windows]
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Two-device e2e (Windows client stack vs the deployed server)
-        env:
-          SYNC_IT_SERVER_URL: http://192.168.1.95
-          LIBCLANG_PATH: C:\Program Files\LLVM\bin
-        run: cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e -- --nocapture
-
-  # --- Two-device REAL-MOUNT END-TO-END (the layer ABOVE the engine-level e2e) --------------
-  # These mount TWO real kernel mounts at once (the same Daemon/CfApiMount/WebdavMount the Tauri
+  # --- Two-device REAL-MOUNT END-TO-END that ALSO needs a local Rails server ------------------
+  # These mount TWO real kernel mounts at once (the same Daemon/FuseAdapter/WebdavMount the Tauri
   # app's sync_start launches), pair them into one library via the REAL pairing flow, and pass a
   # file THROUGH one mount to be read byte-for-byte THROUGH the other — plus new/nested/delete/
   # rename/multi-chunk. This is the syscall→adapter→Provider leg the engine-level e2e can't reach.
-  # macOS's leg is interactive-only (mount_webdav) → a manual script the user runs locally
-  # (client/test-conformance/two-device-webdav-macos.sh), NOT CI-automated.
+  # Unlike the CfAPI equivalent (moved to tinkerex-client: it targets the DEPLOYED server), both of
+  # these scripts boot their OWN STORAGE_BACKEND=local Rails server — see each script's header —
+  # which is why they stay here rather than moving with the rest of test-conformance/.
 
   two-device-fuse-linux:
     # Linux FUSE CAN mount in CI when /dev/fuse is available, so this real-mount leg is automated.
@@ -261,6 +244,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { clean: false }
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+      # The script itself (client/test-conformance/two-device-fuse.sh) does
+      # `cd "$(dirname "$0")/../.."` to find the repo root it expects bin/rails in. Through this
+      # symlink that lands back at THIS checkout's root — bash's logical `cd` strips `..`
+      # components textually against the invoking path rather than resolving the symlink first
+      # (verified empirically) — so the script needs no edit even though its own repo moved.
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
       - uses: dtolnay/rust-toolchain@stable
       - uses: ruby/setup-ruby@v1
         with:
@@ -286,6 +285,19 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: { clean: false }
+      - name: Check out tinkerex-client
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-client
+          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          path: tinkerex-client
+          clean: false
+      # Same symlink seam as two-device-fuse-linux above — the script's own
+      # `cd "$(dirname "$0")/../.."` lands back at this checkout's root, where bin/rails is.
+      - name: Symlink client/ to the second checkout
+        run: |
+          rm -rf client
+          ln -s tinkerex-client/client client
       - uses: dtolnay/rust-toolchain@stable
       # Preinstalled Ruby/bundler on the maker-mac box (ruby/setup-ruby assumes the hosted layout).
       # The script self-boots a STORAGE_BACKEND=local server and runs db:prepare itself.
@@ -293,86 +305,3 @@ jobs:
         run: |
           bundle install --quiet
           client/test-conformance/two-device-webdav-macos.sh
-
-  two-device-cfapi-windows:
-    # Windows CfAPI: mount TWO real Cloud Filter sync roots at once and pass files between them
-    # through the mounts. Needs an INTERACTIVE login session (Session-0 service enumerates empty),
-    # same caveat as the smoke/conformance — continue-on-error; passes only on the interactive
-    # self-hosted Windows runner with the deployed server reachable.
-    needs: [preflight, windows-build]
-    if: ${{ needs.preflight.outputs.windows == 'true' }}
-    continue-on-error: true
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Two real CfAPI sync roots, A<->B byte-for-byte through the mounts
-        shell: powershell
-        env:
-          SERVER_URL: http://192.168.1.95
-        run: ./client/test-conformance/two-device-cfapi.ps1
-
-  windows-smoke:
-    # The LIVE CfAPI regression net (Phase 2b Task A4): register a sync root, enumerate, hydrate,
-    # then create/edit/delete/rename and assert each round-trips to the deployed server.
-    # continue-on-error: CfAPI needs an INTERACTIVE session; the runner-as-service (Session 0)
-    # enumerates empty. It passes only when the Windows runner runs in an interactive login
-    # session. Informational until then; it gates Task B5 once it can pass.
-    needs: [preflight, windows-build]
-    if: ${{ needs.preflight.outputs.windows == 'true' }}
-    continue-on-error: true
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Live CfAPI smoke (register -> enumerate -> hydrate -> new/edit/delete/rename)
-        shell: powershell
-        env:
-          SERVER_URL: http://192.168.1.95
-        run: ./client/test-conformance/cfapi-smoke.ps1
-
-  cfapi-conformance:
-    # The CfAPI analogue of `mount-conformance`: a rigorous live round-trip through the real
-    # Cloud Filter mount — many files of varied sizes (incl. > chunk size → multi-chunk + dedup),
-    # nested dirs, and create/edit/delete/rename churn — asserted BYTE-FOR-BYTE by hydrating every
-    # file on a fresh device and comparing SHA-256s. Same interactive-session caveat as the smoke
-    # (continue-on-error until the Windows runner runs in an interactive login session).
-    needs: [preflight, windows-build]
-    if: ${{ needs.preflight.outputs.windows == 'true' }}
-    continue-on-error: true
-    runs-on: [self-hosted, windows]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Live CfAPI conformance (varied sizes / nested dirs / churn, byte-for-byte)
-        shell: powershell
-        env:
-          SERVER_URL: http://192.168.1.95
-        run: ./client/test-conformance/cfapi-conformance.ps1
-
-  mount-conformance:
-    # External, battle-tested suites against the real FUSE/WebDAV mounts (what JuiceFS/CephFS
-    # gate on). Slow (fsx 100k ops, pjdfstest) → nightly, not per-PR.
-    needs: preflight
-    if: ${{ needs.preflight.outputs.linux == 'true' }}
-    runs-on: [self-hosted, linux]
-    steps:
-      - uses: actions/checkout@v7
-        with: { clean: false }
-      - uses: dtolnay/rust-toolchain@stable
-      - name: System deps (FUSE, rclone, build tools, autotools)
-        run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold \
-            libfuse-dev fuse pkg-config build-essential \
-            rclone curl git autoconf automake libtool
-          grep -q '^user_allow_other' /etc/fuse.conf || echo 'user_allow_other' | sudo tee -a /etc/fuse.conf
-      - name: rclone <-> WebDAV round-trip (gating)
-        run: client/test-conformance/webdav-rclone.sh
-      - name: fsx <-> FUSE data-integrity exerciser (gating)
-        run: client/test-conformance/fsx-fuse.sh 100000
-      - name: pjdfstest <-> FUSE POSIX conformance map (informational)
-        continue-on-error: true
-        run: client/test-conformance/pjdfstest-fuse.sh
