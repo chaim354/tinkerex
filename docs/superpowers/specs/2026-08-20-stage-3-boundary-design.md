@@ -269,7 +269,17 @@ ever create one. They were deleted from `lib/schema_map.rb`, not relabelled.
 
 **Still open for 3b:** `app/models/user.rb`'s seven `has_many` declarations to moving models (the
 declaration site — relocating them now is a change this repo immediately redoes), and everything in
-§8.
+§8 — **plus two files §8 does not name**, both found by 3a's close-out review:
+
+- **`lib/tasks/chunks.rake`** references `Sync::ChunkReaper` and `Sync::PendingCommitReaper`. It is
+  sync-only and moves with the engine, and **no guard covers it**: every architecture scan in this
+  repo is scoped to `app/**`, so `lib/` is unwatched territory. `lib/tasks/previews.rake`,
+  `projects.rake` and `lbrn.rake` are the maker counterparts and stay.
+- **`lib/postgres_pooler_check.rb`'s own home is undecided.** 3a gated its *caller* on
+  `Sync.engine_present?`, which implies the host-side boot guard survives — but the file protects
+  engine-owned state (`next_seq!`'s row lock). Decide explicitly whether it moves into the gem or
+  stays host-side consulting the engine's public answer; the seam works either way, and discovering
+  the question mid-extraction is worse than answering it now.
 
 ---
 

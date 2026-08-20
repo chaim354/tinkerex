@@ -314,11 +314,30 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # v1/maker/** IS EXCLUDED and that is not a loophole: those fourteen controllers ARE the maker
   # API. They live under app/controllers/v1/ for routing reasons only, which is the same thing that
   # makes the "twelve controllers move" figure meaningless (boundary design §7).
-  test "the sync engine never reaches into the maker layer's features" do
-    engine_files = %w[app/services/sync/**/*.rb app/services/sync.rb app/channels/**/*.rb
-                      app/controllers/v1/**/*.rb]
-                   .flat_map { |g| Dir.glob(ROOT.join(g)) }
+  # ONE DEFINITION OF "ENGINE-SIDE", CONSULTED BY BOTH DIRECTIONS -- and it is a fix, not a tidy-up.
+  # The two guards used to compute this separately: the forward one from SYNC_SIDE_GLOBS, the reverse
+  # one from a hand-written list inlined in its own body. A final review proved both halves of what
+  # that costs, by planting live violations and watching the suite stay green:
+  #
+  #   - the reverse list was STALE. Task 6 moved app/services/sharing/** to the engine side by adding
+  #     it to SYNC_SIDE_GLOBS, and the reverse list -- three commits later, in the same file -- never
+  #     learned about it. A `Maker::Previews::Enqueue` call planted in sharing/links.rb passed.
+  #   - the forward scan EXEMPTED THE 14 v1/maker/* CONTROLLERS, because SYNC_SIDE_GLOBS carries a
+  #     blanket `app/controllers/v1/**/*.rb`. `Version.count` planted in a maker controller passed.
+  #     Those fourteen files ARE the maker API -- they live under v1/ for routing reasons only -- and
+  #     the reverse guard already said exactly that, in a comment, while the forward one disagreed.
+  #     Two tests in one file, disagreeing about which side of the boundary the same files sit on.
+  #
+  # So: one method, and the v1/maker/** carve-out stated ONCE. Everything Stage 3a claims -- that the
+  # dependency count is zero and 3b's extraction is therefore mechanical -- rests on these two scans
+  # covering what they say they cover.
+  def engine_side_files
+    SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
                    .reject { |f| f.include?("/v1/maker/") }
+  end
+
+  test "the sync engine never reaches into the maker layer's features" do
+    engine_files = engine_side_files
 
     offenders = engine_files.select { |file| maker_references(file).any? }
                             .map { |f| Pathname.new(f).relative_path_from(ROOT).to_s }.sort
@@ -357,8 +376,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # app/services/sharing/links.rb -- so SYNC_SEAM_EXCEPTIONS is back, in exactly its Task-8
     # shape and for the same kind of reason it existed then: the fix (Task 6, moving share_links to
     # the engine) is real, scoped work, not something to do inline inside a guard-widening task.
-    sync_side = SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
-    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - sync_side
+    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - engine_side_files
 
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
     offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
