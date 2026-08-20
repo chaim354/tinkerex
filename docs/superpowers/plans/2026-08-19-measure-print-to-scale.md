@@ -1626,6 +1626,13 @@ And append after the `.measure-bitmap` line:
 ```css
 .measure-view--selecting .measure-stage svg { cursor: copy; }
 .measure-paper { font-size: 13px; }
+/* `hidden` ALONE DOES NOTHING TO A .btn, and the Clear button above relies on it. The attribute is
+   only a UA-stylesheet `display: none`, which `.btn { display: inline-block }` — an AUTHOR rule —
+   outranks. Measured before this line existed: hidden="true", computed display "block", 48px wide,
+   sitting in the bar between Print and Reset. This file already carries the same one-liner twice
+   (`.box-toc-list li[hidden]`, `.addon-card[hidden]`); every other `hidden` in app/views is on an
+   <input type=file>, which has no author display to outrank, which is why it had never bitten. */
+.measure-actions .btn[hidden] { display: none; }
 ```
 
 - [ ] **Step 3: Confirm nothing regressed**
@@ -1835,7 +1842,10 @@ Expected: the five new tests FAIL — `Unable to find link or button "Select par
 
 In `app/javascript/controllers/measure_controller.js`:
 
-**(a)** add the name value — change the `static values` line to:
+**(a)** add the name value. **This is required, not cosmetic:** Stimulus silently ignores a
+`data-*-value` attribute the controller does not declare, so `this.nameValue` is `undefined` until
+`name` appears here — no error, no warning, just an empty filename on every printed sheet. Change
+the `static values` line to:
 
 ```js
   static values = { url: String, name: String }
