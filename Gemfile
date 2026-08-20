@@ -1,6 +1,18 @@
 source "https://rubygems.org"
 
 # Bundle edge Rails instead: gem "rails", github: "rails/rails", branch: "main"
+
+# THE SYNC ENGINE, mounted from a path rather than a git source ON PURPOSE (Stage 3b Phase B).
+# A private git: source would make `bundle install` need cross-repo credentials on every fresh
+# clone and in CI -- the same operator burden that has left tinkerex-client's four workflows
+# unable to run since Stage 1. A path: source gets the whole point of the engine (isolation, its
+# own suite, a real mount) with none of that, and leaves the move to its own repo as a
+# filter-repo of ONE self-contained directory, which is exactly the shape that made client/
+# extract cleanly.
+# `require:` is spelled out because Bundler derives the require path from the HYPHENATED gem name
+# ("tinkerex-sync"), while the entry point is lib/tinkerex_sync.rb -- the usual Ruby convention that
+# a hyphen in a gem name means a `/` in the path, which is not the shape here.
+gem "tinkerex-sync", path: "engines/tinkerex-sync", require: "tinkerex_sync"
 gem "rails", "~> 8.1.1"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"
