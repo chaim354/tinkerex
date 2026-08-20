@@ -13,7 +13,7 @@
 #   Authored — the structural relationships (EDGES) and the layout (LAYOUT). These CANNOT be
 #              derived: this schema joins the file layer by BARE STRING — `node_id`,
 #              `version_id`, `manifest_id`, `chunk_hash` — with no constraint anywhere, which is
-#              precisely the fact the map exists to show. 52 of the 105 links are like that.
+#              precisely the fact the map exists to show. 50 of the 103 links are like that.
 #
 # WHAT `problems` CATCHES, and the suite runs it on every leg:
 #   * an edge naming a table or column that no longer exists (a rename, a drop);
@@ -107,9 +107,25 @@ module SchemaMap
     [ "share_links.manifest_id",         "manifest_chunks.manifest_id", "app", "bytes" ],
     # --- the maker layer's grip on the file layer: every one a bare string, §14a ---
     [ "maker_file_attachments.node_id",    "nodes.node_id",       "app", "attaches" ],
-    [ "maker_file_attachments.version_id", "versions.version_id", "app", "pinned" ],
     [ "maker_previews.node_id",            "nodes.node_id",       "app", "depicts" ],
-    [ "maker_previews.version_id",         "versions.version_id", "app", "rendered from" ],
+    # `maker_file_attachments.version_id` and `maker_previews.version_id` are DELIBERATELY NOT
+    # drawn as edges into `versions.version_id`. This map used to claim both — "pinned" and
+    # "rendered from" — and that was wrong, not merely unenforced: the column is
+    # `FileLayer::FileInfo#content_token` under a backend-neutral name it kept from before that
+    # port existed (see the comment on `FileInfo`, app/services/file_layer/file_info.rb). It is a
+    # real version UUID in chunk mode, but on share/s3 it is a CONTENT HASH — a different value
+    # space, not merely a different row in the same table. And on share/s3 there is no row to
+    # point at regardless: `Version` records are created only by `Sync::Commit`, `Sync::Restore`
+    # and `Sync::Conflicts` (grep app/services for `.versions.create!` — three hits, all engine
+    # chunk-mode flows), so the `versions` table is empty for a share/s3 deployment's nodes. A
+    # foreign key that names a different table depending on which of three deployments is reading
+    # it is not a foreign key. The reason this is more than pedantry: Stage 3b reads this map to
+    # decide which tables move with the engine and which stay with the maker layer. Drawing the
+    # edge would tell it `maker_previews`/`maker_file_attachments` depend on the engine's
+    # `versions` table and pull two maker tables across the split they must not cross — the
+    # dependency that is real (a file's current content) already crosses the FileLayer port via
+    # `content_token`, which is precisely the seam that exists to carry it. See Stage 3 boundary
+    # design §5 (docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md).
     [ "maker_notes.node_id",               "nodes.node_id",       "app", "note on" ],
     [ "maker_items.primary_node_id",       "nodes.node_id",       "app", "primary file" ],
     [ "maker_models.cover_node_id",        "nodes.node_id",       "app", "cover" ],
