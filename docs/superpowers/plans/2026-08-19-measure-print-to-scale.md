@@ -651,7 +651,7 @@ const round = (v) => Math.round(v * 10) / 10
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 10 runs, 0 failures.
+Expected: 11 runs, 0 failures.
 
 - [ ] **Step 5: Commit**
 

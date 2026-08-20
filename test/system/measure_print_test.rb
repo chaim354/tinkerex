@@ -157,6 +157,24 @@ class MeasurePrintTest < ApplicationSystemTestCase
     # rather than as a second literal, so the two can never drift apart.
     dtx = out["pages"][1]["translateX"] - out["pages"][0]["translateX"]
     assert_in_delta(-dx, dtx, 0.001, "the tile's content pans left by exactly its origin step")
+
+    # THE SPANNING SHAPE MUST REACH EVERY TILE IT CROSSES, INTERIOR ONES INCLUDED — and this is
+    # the only assertion in the file with a shape on more than one tile, which is why it carries
+    # weight far beyond its size. `touches` is an inclusive AABB OVERLAP test; swapping its two
+    # assignment lines so x1/y1 take b[0]/b[1] silently turns it into a CONTAINMENT test, and
+    # every other test here still passes because each of their shapes lands on exactly one tile.
+    # The user-visible result of that mutation is three sheets, correctly numbered "1 of 3" to
+    # "3 of 3", correctly margined, carrying the calibration bar — and COMPLETELY BLANK. Nothing
+    # errors, nothing logs. This one line is what makes it red.
+    #
+    # MUTATION-CHECKED: the swap took the WHOLE SUITE green before this line existed (10 runs, 67
+    # assertions, 0 failures — reproduced, not taken on trust); with it, RED here with actual
+    # [[], [], []]. The twelve-row table on the filter test below is untouched by this, which is
+    # why the assertion is here and not there — its fixture would have had to change, and every
+    # row of that table would have needed re-measuring.
+    assert_equal [ [ 1 ], [ 1 ], [ 1 ] ],
+                 out["pages"].map { |pg| pg["shapes"].map { |sh| sh["o"] } },
+                 "a 400 mm bar spans all three tiles, including the middle one"
   end
 
   # ROWS, NOT JUST COLUMNS. Every other tiling test here is one row tall, so the `row` loop,
@@ -254,21 +272,20 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
   # ---- lib/print_sheet.js: the sheet cap, and per-tile filtering -------------------------------
 
-  # An SVG whose units were read 25.4x too large would otherwise silently spool 9,000 sheets.
+  # An SVG whose units were read 25.4x too large would otherwise silently spool 9,828 sheets.
   #
   # THE CAP IS TESTED IN BOTH DIRECTIONS IN ONE METHOD, because it is one guard and an
   # over-the-cap assertion alone cannot see an off-by-one in the comparison it is asserting on.
   #
-  # MUTATION-CHECKED FIVE WAYS. Between them they turn all FOUR blocks below red, which is how
+  # MUTATION-CHECKED FOUR WAYS. Between them they turn all THREE blocks below red, which is how
   # each block is shown to carry weight of its own rather than restating its neighbour. Deleting
   # the guard: RED on the first ("Expected /more than 40 sheets/ to match 'NO ERROR'"). `>` ->
-  # `>=`: RED on the at-cap block, and as an ERROR rather
-  # than a failure — that block calls buildSheets BARE, so an unexpected throw comes back through
-  # in_print_sheet's own raise verbatim ("RuntimeError: ERROR: 40 sheets — this selection is
-  # 1400 × 1000 mm, which is more than 40 sheets of Letter."). Deleting `round` from the message:
-  # RED on the over-the-cap block (actual "1600.04 × 1000 mm"). Swapping w and h in the message:
-  # RED on the same block (actual "1000 × 1600 mm"). Moving the guard BELOW the page loop: RED on
-  # the sliver block, as "Selenium::WebDriver::Error::WebDriverError: tab crashed" — see there.
+  # `>=`: RED on the at-cap block, and as an ERROR rather than a failure — that block calls
+  # buildSheets BARE, so an unexpected throw comes back through in_print_sheet's own raise
+  # verbatim ("RuntimeError: ERROR: 40 sheets — this selection is 1400 × 1000 mm, which is more
+  # than 40 sheets of Letter."). Deleting `round` from the message: RED on the over-the-cap block
+  # (actual "1600.04 × 1000 mm"). Swapping w and h in the message: RED on the same block (actual
+  # "1000 × 1600 mm"). The guard's PLACEMENT is pinned by its own test below, not from here.
   test "an absurd selection is refused rather than printing hundreds of sheets" do
     err = in_print_sheet(<<~JS)
       (() => {
@@ -286,6 +303,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
       })()
     JS
 
+    # 9,828, not a round number: the message begins with the real count, and quoting a rounded
+    # one would read as computed when it is not.
+    assert_match(/\A9828 sheets/, err)
     assert_match(/more than 40 sheets/, err)
     assert_match(/20000 \u{00D7} 20000 mm/, err, "the message must name the size that caused it")
 
@@ -325,22 +345,26 @@ class MeasurePrintTest < ApplicationSystemTestCase
 
     assert_match(/\A45 sheets \u{2014} this selection is 1600 \u{00D7} 1000 mm,/, over,
                  "one sheet over the cap is refused, and the size it names is rounded")
+  end
 
-    # AND THE REFUSAL SITS ABOVE THE PAGE LOOP, WHICH IS THE ONLY REASON A DEGENERATE PAPER
-    # TERMINATES AT ALL. A paper whose content box is exactly one overlap band wide gives
-    # stepX = 0 and therefore cols = Infinity; checked above the loop, `Infinity * rows > 40`
-    # refuses it in constant time. Checked after the loop, the `col` loop never ends.
-    #
-    # THIS IS THE ONLY ASSERTION IN THE FILE THAT CAN SEE WHERE THE GUARD SITS, and its failure is
-    # not a wrong value. MUTATION-CHECKED by moving the block below the loop: RED in 6.6 s as
-    # "Selenium::WebDriver::Error::WebDriverError: tab crashed" — Chrome OOMs on the unbounded
-    # pages.push long before Selenium's script timeout, so this reports faster and more legibly
-    # than the hang it is standing in for. Every earlier assertion in this method stays GREEN
-    # through it, since a finite cols builds its pages and then throws exactly as before.
-    #
-    # A 30 mm-wide paper is NOT reachable from PAPERS, so the argument for ordering the guard
-    # first is structural (and the 244,252-page allocation it also prevents is a real input),
-    # not a product rule about slivers.
+  # WHERE THE GUARD SITS, WHICH IS A DIFFERENT CLAIM FROM WHAT IT ANSWERS — hence its own test.
+  # The three blocks above pin the refusal's VALUE and fail with a wrong string; this one pins its
+  # PLACEMENT and fails by killing the browser, and four browser round-trips in one method means
+  # the first failure hides the rest. A paper whose content box is exactly one overlap band wide
+  # gives stepX = 0 and therefore cols = Infinity; checked above the loop, `Infinity * rows > 40`
+  # refuses in constant time. Checked after the loop, the `col` loop never ends.
+  #
+  # MUTATION-CHECKED by moving the block below the loop: RED in 6.6 s as
+  # "Selenium::WebDriver::Error::WebDriverError: tab crashed" — Chrome OOMs on the unbounded
+  # pages.push long before Selenium's script timeout, so this reports faster and more legibly than
+  # the hang it stands in for. Every assertion in the test above stays GREEN through it, since a
+  # finite cols builds its pages and then throws exactly as before.
+  #
+  # THE COUNT IN THAT MESSAGE IS THE WORD "Infinity", DELIBERATELY UNASSERTED. It is nonsense to
+  # print, and it is nonsense a user can never reach: a 30 mm paper is not in PAPERS. The refusal
+  # is what matters here, so the assertion reads only that. Which is also why this closes ONE
+  # degenerate paper rather than the class — see `buildSheets`' own comment.
+  test "a paper too narrow to tile is refused rather than looped over forever" do
     sliver = in_print_sheet(<<~JS)
       (() => {
         try {

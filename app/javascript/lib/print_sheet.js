@@ -71,9 +71,14 @@ export function buildSheets(shapes, paper) {
   // Both counts already exist here, so checking them costs nothing; filtering `pages` afterwards
   // means a 100 m selection (an SVG misread at 25.4x, this module's own stated motivation)
   // allocates 244,252 page objects before anything can look, and the tab hangs instead of saying
-  // "too many sheets". It also closes a degenerate-paper non-termination for free: a content box
-  // exactly one overlap band wide gives stepX = 0 and therefore cols = Infinity, and
+  // "too many sheets". It also closes ONE degenerate paper for free — read that narrowly: a
+  // content box EXACTLY one overlap band wide gives stepX = 0 and therefore cols = Infinity, and
   // `Infinity * rows > MAX_SHEETS` refuses in constant time where the `col` loop would never end.
+  // A content box NARROWER than the band is not covered and is not meant to be: stepX goes
+  // negative, cols comes out negative (paper.w 25 -> stepX -5 -> cols -18), nothing exceeds
+  // MAX_SHEETS, the loop body never runs, and the caller gets an empty `pages` and a silent blank
+  // print. Neither shape is reachable from PAPERS, so this is a note about what the guard does
+  // and does not do, not a defect — do not read the Infinity case as a general small-paper guard.
   if (cols * rows > MAX_SHEETS) {
     throw new Error(
       `${cols * rows} sheets — this selection is ${round(w)} × ${round(h)} mm, which is more ` +
