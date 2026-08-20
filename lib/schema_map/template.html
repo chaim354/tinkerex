@@ -1,0 +1,730 @@
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maker Server Schema</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@600&display=swap">
+<style>
+  :root {
+    --ground:      #e8ecf1;
+    --grid:        #cfd8e1;
+    --surface:     #ffffff;
+    --surface-2:   #f3f6f9;
+    --line:        #ccd5de;
+    --line-soft:   #e2e8ee;
+    --ink:         #14202b;
+    --ink-dim:     #5c6b7a;
+    --ink-faint:   #8c99a6;
+    --sync:        #2c6d9e;
+    --maker:       #93651b;
+    --rails:       #6a5899;
+    --ops:         #55707f;
+    --accent:      #c8452a;
+    --wire:        #7d8b99;
+    --wire-tenant: #9aa6b3;
+    --shadow:      0 1px 2px rgba(20,32,43,.07), 0 6px 18px rgba(20,32,43,.06);
+    --radius: 5px;
+    --card-w: 258px;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --serif: "IBM Plex Serif", Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0e1319;
+      --grid:        #1e2831;
+      --surface:     #161d25;
+      --surface-2:   #1c242e;
+      --line:        #2a3540;
+      --line-soft:   #222b35;
+      --ink:         #d8e2ec;
+      --ink-dim:     #8b9aa9;
+      --ink-faint:   #66757f;
+      --sync:        #6fb0e2;
+      --maker:       #d7a445;
+      --rails:       #a695dd;
+      --ops:         #8fa6b6;
+      --accent:      #ff8259;
+      --wire:        #63737f;
+      --wire-tenant: #4c5a66;
+      --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0e1319;
+    --grid:        #1e2831;
+    --surface:     #161d25;
+    --surface-2:   #1c242e;
+    --line:        #2a3540;
+    --line-soft:   #222b35;
+    --ink:         #d8e2ec;
+    --ink-dim:     #8b9aa9;
+    --ink-faint:   #66757f;
+    --sync:        #6fb0e2;
+    --maker:       #d7a445;
+    --rails:       #a695dd;
+    --ops:         #8fa6b6;
+    --accent:      #ff8259;
+    --wire:        #63737f;
+    --wire-tenant: #4c5a66;
+    --shadow:      0 1px 2px rgba(0,0,0,.4), 0 8px 22px rgba(0,0,0,.3);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- top bar ---------- */
+  header {
+    position: fixed; inset: 0 0 auto 0; z-index: 30;
+    display: flex; align-items: baseline; gap: 22px; flex-wrap: wrap;
+    padding: 13px 18px 12px;
+    background: color-mix(in srgb, var(--ground) 88%, transparent);
+    backdrop-filter: blur(9px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 11px; }
+  h1 {
+    font-family: var(--serif); font-weight: 600; font-size: 19px;
+    margin: 0; letter-spacing: -.01em; white-space: nowrap;
+  }
+  .eyebrow {
+    font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 500; white-space: nowrap;
+  }
+  .tally {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-dim);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .tally b { color: var(--ink); font-weight: 500; }
+  .controls { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  input[type="search"] {
+    font-family: var(--mono); font-size: 12px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 6px 9px; width: 190px;
+  }
+  input[type="search"]:focus-visible, button:focus-visible, .tbl:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px;
+  }
+  button {
+    font-family: var(--sans); font-size: 12px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 6px 10px; cursor: pointer;
+    line-height: 1;
+  }
+  button:hover { background: var(--surface-2); }
+  button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+  .zoom { display: flex; align-items: center; gap: 0; }
+  .zoom button { border-radius: 0; margin-left: -1px; }
+  .zoom button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+  .zoom button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .zoom .pct {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-dim);
+    min-width: 44px; text-align: center; font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- stage ---------- */
+  #stage {
+    position: fixed; inset: 54px 0 0 0; overflow: hidden;
+    cursor: grab; touch-action: none;
+    background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+  #stage.dragging { cursor: grabbing; }
+  #world { position: absolute; top: 0; left: 0; transform-origin: 0 0; }
+  #wires { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+
+  /* ---------- column headers ---------- */
+  .colhead { position: absolute; width: var(--card-w); }
+  .colhead .l {
+    font-size: 11px; font-weight: 600; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--gc, var(--ink-dim));
+  }
+  .colhead .s {
+    font-family: var(--mono); font-size: 10px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .divider { position: absolute; border-left: 1px dashed var(--line); }
+  .divider span {
+    position: absolute; top: 0; left: 10px;
+    font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-faint); white-space: nowrap;
+  }
+
+  /* ---------- table cards ---------- */
+  .tbl {
+    position: absolute; width: var(--card-w);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    overflow: hidden; cursor: default;
+  }
+  .tbl .th {
+    display: flex; align-items: baseline; gap: 6px;
+    padding: 6px 8px 6px 9px;
+    border-bottom: 1px solid var(--line-soft);
+    border-left: 3px solid var(--gc);
+    background: var(--surface-2);
+  }
+  .tbl .th .n {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    color: var(--ink); letter-spacing: -.01em;
+  }
+  .tbl .th .c {
+    margin-left: auto; font-family: var(--mono); font-size: 10px;
+    color: var(--ink-faint); font-variant-numeric: tabular-nums;
+  }
+  .rows { padding: 3px 0; }
+  .row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 0 8px 0 4px; height: 17px;
+    font-family: var(--mono); font-size: 10.5px; line-height: 17px;
+  }
+  .row .g {
+    width: 11px; flex: none; text-align: center;
+    font-size: 9px; color: var(--ink-faint);
+  }
+  .row .g.pk  { color: var(--accent); }
+  .row .g.ref { color: var(--gc); }
+  .row .n { color: var(--ink); white-space: nowrap; }
+  .row .n.opt { color: var(--ink-dim); }
+  .row .t {
+    margin-left: auto; color: var(--ink-faint); font-size: 9.5px;
+    white-space: nowrap; padding-left: 8px;
+  }
+  .row.hot { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .row.hot .n { color: var(--accent); }
+  .count { display: none; }
+
+  /* overview: cards collapse to labelled blocks */
+  body.overview .rows { display: none; }
+  body.overview .count {
+    display: block; padding: 5px 9px; font-family: var(--mono);
+    font-size: 10px; color: var(--ink-faint);
+  }
+  body.overview .tbl .th .n { font-size: 13px; }
+
+  /* focus / dim states */
+  #world.focusing .tbl { opacity: .28; }
+  #world.focusing .tbl.on { opacity: 1; }
+  #world.focusing .tbl.near { opacity: 1; }
+  #world.focusing .tbl.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+  .tbl.nomatch { opacity: .18; }
+  .tbl.match { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+  .tbl, .wire, .wlabel { transition: opacity .14s ease; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  /* ---------- wires ---------- */
+  .wire { fill: none; stroke: var(--wire); stroke-width: 1.3; opacity: .5; }
+  .wire.app    { stroke-dasharray: 5 3; }
+  .wire.poly   { stroke-dasharray: 1.5 3; }
+  .wire.tenant { stroke: var(--wire-tenant); stroke-width: .8; opacity: .28; }
+  #world.focusing .wire { opacity: .07; }
+  #world.focusing .wire.hot { opacity: 1; stroke: var(--accent); stroke-width: 1.9; }
+  .wlabel {
+    font-family: var(--mono); font-size: 8.5px; fill: var(--accent);
+    text-anchor: middle; opacity: 0; paint-order: stroke;
+    stroke: var(--ground); stroke-width: 3px; stroke-linejoin: round;
+  }
+  #world.focusing .wlabel.hot { opacity: 1; }
+  body.overview .wlabel { display: none; }
+  body.hide-tenant .wire.tenant { display: none; }
+
+  /* ---------- legend + detail ---------- */
+  .panel {
+    position: fixed; z-index: 20;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 11px 13px;
+  }
+  #legend { left: 14px; bottom: 14px; max-width: 280px; }
+  #legend h2, #detail h2 {
+    font-size: 10px; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 0 0 8px; font-weight: 500;
+  }
+  .lg { display: grid; grid-template-columns: 34px 1fr; gap: 4px 8px; align-items: center; }
+  .lg svg { display: block; }
+  .lg span { font-size: 11px; color: var(--ink-dim); }
+  .lg .k { font-family: var(--mono); color: var(--ink); }
+  .hint {
+    margin-top: 9px; padding-top: 8px; border-top: 1px solid var(--line-soft);
+    font-size: 10.5px; color: var(--ink-faint); line-height: 1.5;
+  }
+  #detail { right: 14px; bottom: 14px; width: 292px; max-height: 46vh; overflow-y: auto; display: none; }
+  @media (max-width: 720px) {
+    #legend, #detail { max-width: calc(100vw - 28px); }
+    #legend { max-height: 42vh; overflow-y: auto; }
+    #detail { left: 14px; width: auto; max-height: 38vh; }
+    #legend .hint { display: none; }
+    input[type="search"] { width: 130px; }
+    header { gap: 10px 14px; padding: 10px 12px; }
+    .tally { white-space: normal; font-size: 10.5px; }
+    .controls { margin-left: 0; }
+  }
+  @media (max-width: 560px) {
+    .eyebrow, .tally { display: none; }
+    h1 { font-size: 17px; }
+  }
+  #detail.show { display: block; }
+  #detail .dt {
+    font-family: var(--mono); font-size: 13px; font-weight: 600;
+    color: var(--gc); margin-bottom: 2px; word-break: break-all;
+  }
+  #detail .dm { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); margin-bottom: 9px; }
+  #detail h3 {
+    font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 10px 0 5px; font-weight: 500;
+  }
+  #detail ul { list-style: none; margin: 0; padding: 0; }
+  #detail li {
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+    color: var(--ink-dim); overflow-wrap: anywhere; margin-bottom: 3px;
+  }
+  #detail li b { color: var(--ink); font-weight: 500; }
+  #detail li i { color: var(--ink-faint); font-style: normal; }
+  #detail .none { font-size: 10.5px; color: var(--ink-faint); font-family: var(--mono); }
+</style>
+
+<header>
+  <div class="brand">
+    <span class="eyebrow">Maker Server</span>
+    <h1>Database schema</h1>
+  </div>
+  <div class="tally" id="tally"></div>
+  <div class="controls">
+    <input type="search" id="q" placeholder="find table or column" aria-label="Find a table or column" autocomplete="off">
+    <button id="tenant" aria-pressed="true" title="Show or hide the user_id ownership links">user_id links</button>
+    <div class="zoom">
+      <button id="zout" aria-label="Zoom out">&#8722;</button>
+      <span class="pct" id="pct">100%</span>
+      <button id="zin" aria-label="Zoom in">+</button>
+      <button id="fit">Fit</button>
+    </div>
+  </div>
+</header>
+
+<div id="stage">
+  <div id="world">
+    <svg id="wires" aria-hidden="true">
+      <defs>
+        <marker id="ah" viewBox="0 0 8 6" refX="7.4" refY="3" markerWidth="7" markerHeight="5.5" orient="auto">
+          <path d="M0,0 L8,3 L0,6 z" fill="var(--wire)"></path>
+        </marker>
+        <marker id="ah-t" viewBox="0 0 8 6" refX="7.4" refY="3" markerWidth="6" markerHeight="4.5" orient="auto">
+          <path d="M0,0 L8,3 L0,6 z" fill="var(--wire-tenant)"></path>
+        </marker>
+        <marker id="ah-hot" viewBox="0 0 8 6" refX="7.4" refY="3" markerWidth="7" markerHeight="5.5" orient="auto">
+          <path d="M0,0 L8,3 L0,6 z" fill="var(--accent)"></path>
+        </marker>
+      </defs>
+      <g id="wire-layer"></g>
+      <g id="label-layer"></g>
+    </svg>
+    <div id="cards"></div>
+  </div>
+</div>
+
+<aside class="panel" id="legend">
+  <h2>How to read this</h2>
+  <div class="lg">
+    <svg width="34" height="10" viewBox="0 0 34 10"><line x1="0" y1="5" x2="27" y2="5" class="wire" marker-end="url(#ah)"></line></svg>
+    <span>Foreign key, enforced by the database <span class="k" id="n-fk"></span></span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><line x1="0" y1="5" x2="27" y2="5" class="wire app" marker-end="url(#ah)"></line></svg>
+    <span>Reference the app keeps, no constraint <span class="k" id="n-app"></span></span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><line x1="0" y1="5" x2="27" y2="5" class="wire poly" marker-end="url(#ah)"></line></svg>
+    <span>Polymorphic target <span class="k" id="n-poly"></span></span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><line x1="0" y1="5" x2="27" y2="5" class="wire tenant" marker-end="url(#ah-t)"></line></svg>
+    <span>Owned by a user <span class="k" id="n-tenant"></span></span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><text x="17" y="8" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle" fill="var(--accent)">&#9670;</text></svg>
+    <span>Primary key</span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><text x="17" y="8" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle" fill="var(--ink-dim)">&#9656; &#9671; &#183;</text></svg>
+    <span><span class="k">&#9656;</span> points out &#183; <span class="k">&#9671;</span> pointed at &#183; <span class="k">&#183;</span> indexed</span>
+    <svg width="34" height="10" viewBox="0 0 34 10"><text x="17" y="8" font-family="IBM Plex Mono, monospace" font-size="9" text-anchor="middle" fill="var(--ink-faint)">type?</text></svg>
+    <span><span class="k">?</span> after a type means nullable</span>
+  </div>
+  <p class="hint">Drag to pan, scroll to zoom &#8212; every column appears past 45%. Hover a table to isolate its relationships, click to pin it; hover a column for its defaults and indexes.</p>
+</aside>
+
+<aside class="panel" id="detail" aria-live="polite"></aside>
+
+<script id="schema-data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("schema-data").textContent);
+  const CARD_W = 258, GAP_X = 104, GAP_Y = 26, COL_HEAD = 46, TOP = 40;
+  const GROUP_VAR = { sync: "var(--sync)", maker: "var(--maker)", rails: "var(--rails)", ops: "var(--ops)" };
+  const DB_LABEL = { primary: "primary", queue: "queue", cache: "cache", cable: "cable" };
+
+  const stage = document.getElementById("stage");
+  const bar = document.querySelector("header");
+  const world = document.getElementById("world");
+  const svg = document.getElementById("wires");
+  const wireLayer = document.getElementById("wire-layer");
+  const labelLayer = document.getElementById("label-layer");
+  const cards = document.getElementById("cards");
+  const detail = document.getElementById("detail");
+
+  const byName = new Map(DATA.tables.map(t => [t.name, t]));
+  const el = new Map();       // table name -> card element
+  const pos = new Map();      // table name -> {x, y, w, h}
+  const outEdges = new Map(); // table -> [edge]
+  const inEdges = new Map();  // table -> [edge]
+
+  DATA.edges.forEach((e, i) => {
+    e.i = i;
+    e.st = e.f.split(".")[0]; e.sc = e.f.slice(e.st.length + 1);
+    e.tt = e.t.split(".")[0]; e.tc = e.t.slice(e.tt.length + 1);
+    (outEdges.get(e.st) || outEdges.set(e.st, []).get(e.st)).push(e);
+    (inEdges.get(e.tt) || inEdges.set(e.tt, []).get(e.tt)).push(e);
+  });
+
+  /* ---------- build cards ---------- */
+  DATA.columns.forEach((col, ci) => {
+    const h = document.createElement("div");
+    h.className = "colhead";
+    h.style.setProperty("--gc", GROUP_VAR[col.group]);
+    h.style.left = (ci * (CARD_W + GAP_X)) + "px";
+    h.style.top = TOP - 30 + "px";
+    h.innerHTML = '<div class="l"></div>' + (col.sub ? '<div class="s"></div>' : "");
+    h.querySelector(".l").textContent = col.label;
+    if (col.sub) h.querySelector(".s").textContent = col.sub;
+    cards.appendChild(h);
+  });
+
+  for (const t of DATA.tables) {
+    const c = document.createElement("div");
+    c.className = "tbl";
+    c.dataset.t = t.name;
+    c.tabIndex = 0;
+    c.style.setProperty("--gc", GROUP_VAR[t.group]);
+    const head = document.createElement("div");
+    head.className = "th";
+    const n = document.createElement("span");
+    n.className = "n"; n.textContent = t.name;
+    const cnt = document.createElement("span");
+    cnt.className = "c"; cnt.textContent = t.columns.length;
+    head.append(n, cnt);
+    const cline = document.createElement("div");
+    cline.className = "count";
+    cline.textContent = t.columns.length + " columns \u00b7 " + DB_LABEL[t.db];
+    const rows = document.createElement("div");
+    rows.className = "rows";
+    for (const col of t.columns) {
+      const r = document.createElement("div");
+      r.className = "row";
+      r.dataset.c = col.n;
+      const g = document.createElement("span");
+      g.className = "g" + (col.pk ? " pk" : (col.ref ? " ref" : ""));
+      g.textContent = col.pk ? "\u25c6" : col.ref ? "\u25b8" : col.key ? "\u25c7" : (col.ix || col.u) ? "\u00b7" : "";
+      const nm = document.createElement("span");
+      nm.className = "n" + (col.req || col.pk ? "" : " opt");
+      nm.textContent = col.n;
+      const ty = document.createElement("span");
+      ty.className = "t";
+      ty.textContent = col.t + (col.req || col.pk ? "" : "?");
+      const bits = [];
+      if (col.pk) bits.push("primary key");
+      if (col.fkc) bits.push("foreign key constraint");
+      if (col.d !== undefined) bits.push("default: " + col.d);
+      if (col.u) bits.push("unique index");
+      if (col.cu) bits.push("unique across (" + col.cu + ")");
+      if (col.ix && !col.u) bits.push("indexed");
+      r.title = t.name + "." + col.n + " \u2014 " + col.t + (col.req || col.pk ? " not null" : " nullable") +
+                (bits.length ? " \u00b7 " + bits.join(" \u00b7 ") : "");
+      r.append(g, nm, ty);
+      rows.appendChild(r);
+    }
+    c.append(head, cline, rows);
+    cards.appendChild(c);
+    el.set(t.name, c);
+  }
+
+  /* ---------- layout ---------- */
+  let worldW = 0, worldH = 0;
+  function layout() {
+    stage.style.top = bar.offsetHeight + "px";
+    const colY = DATA.columns.map(() => TOP + COL_HEAD - 30);
+    for (const t of DATA.tables) {
+      const c = el.get(t.name);
+      const x = t.col * (CARD_W + GAP_X);
+      const y = colY[t.col];
+      c.style.left = x + "px";
+      c.style.top = y + "px";
+      const h = c.offsetHeight;
+      pos.set(t.name, { x, y, w: CARD_W, h });
+      colY[t.col] = y + h + GAP_Y;
+    }
+    worldW = (DATA.columns.length - 1) * (CARD_W + GAP_X) + CARD_W + 40;
+    worldH = Math.max.apply(null, colY) + 30;
+    svg.setAttribute("width", worldW);
+    svg.setAttribute("height", worldH);
+    svg.setAttribute("viewBox", "0 0 " + worldW + " " + worldH);
+    world.style.width = worldW + "px";
+    world.style.height = worldH + "px";
+  }
+
+  /* ---------- wires ---------- */
+  const NS = "http://www.w3.org/2000/svg";
+  const wireEls = [], labelEls = [];
+  function anchor(table, colName, side) {
+    const p = pos.get(table), card = el.get(table);
+    let y = p.y + Math.min(28, p.h / 2);
+    const row = card.querySelector('[data-c="' + CSS.escape(colName) + '"]');
+    if (row && row.offsetParent) y = p.y + row.offsetTop + row.offsetHeight / 2;
+    return { x: side === "r" ? p.x + p.w + 5 : p.x - 5, y: y };
+  }
+  function drawWires() {
+    wireLayer.textContent = ""; labelLayer.textContent = "";
+    wireEls.length = 0; labelEls.length = 0;
+    for (const e of DATA.edges) {
+      const sp = pos.get(e.st), tp = pos.get(e.tt);
+      let ss, ts;
+      if (tp.x >= sp.x + sp.w + 20) { ss = "r"; ts = "l"; }
+      else if (tp.x + tp.w + 20 <= sp.x) { ss = "l"; ts = "r"; }
+      else { ss = "r"; ts = "r"; }
+      const a = anchor(e.st, e.sc, ss), b = anchor(e.tt, e.tc, ts);
+      const d1 = ss === "r" ? 1 : -1, d2 = ts === "r" ? 1 : -1;
+      let k = Math.max(38, Math.min(200, Math.abs(b.x - a.x) * 0.45));
+      if (ss === ts) k = 66 + Math.min(150, Math.abs(b.y - a.y) * 0.28);
+      const c1 = { x: a.x + d1 * k, y: a.y }, c2 = { x: b.x + d2 * k, y: b.y };
+      const p = document.createElementNS(NS, "path");
+      p.setAttribute("d", "M" + a.x + "," + a.y + " C" + c1.x + "," + c1.y + " " + c2.x + "," + c2.y + " " + b.x + "," + b.y);
+      p.setAttribute("class", "wire " + e.k);
+      p.setAttribute("marker-end", e.k === "tenant" ? "url(#ah-t)" : "url(#ah)");
+      wireLayer.appendChild(p);
+      wireEls.push(p);
+      const tx = (a.x + 3 * c1.x + 3 * c2.x + b.x) / 8, ty = (a.y + 3 * c1.y + 3 * c2.y + b.y) / 8;
+      const lb = document.createElementNS(NS, "text");
+      lb.setAttribute("class", "wlabel");
+      lb.setAttribute("x", tx); lb.setAttribute("y", ty - 3);
+      lb.textContent = e.l;
+      labelLayer.appendChild(lb);
+      labelEls.push(lb);
+    }
+  }
+
+  /* ---------- focus ---------- */
+  let pinned = null, hovered = null;
+  function clearFocus() {
+    world.classList.remove("focusing");
+    for (const c of el.values()) c.classList.remove("on", "near");
+    document.querySelectorAll(".row.hot").forEach(r => r.classList.remove("hot"));
+    wireEls.forEach((p, i) => { p.classList.remove("hot"); p.setAttribute("marker-end", DATA.edges[i].k === "tenant" ? "url(#ah-t)" : "url(#ah)"); });
+    labelEls.forEach(l => l.classList.remove("hot"));
+    detail.classList.remove("show");
+  }
+  function focus(name) {
+    clearFocus();
+    if (!name) return;
+    world.classList.add("focusing");
+    el.get(name).classList.add("on");
+    const touch = (e) => {
+      wireEls[e.i].classList.add("hot");
+      wireEls[e.i].setAttribute("marker-end", "url(#ah-hot)");
+      labelEls[e.i].classList.add("hot");
+      el.get(e.st).classList.add("near");
+      el.get(e.tt).classList.add("near");
+      const sr = el.get(e.st).querySelector('[data-c="' + CSS.escape(e.sc) + '"]');
+      const tr = el.get(e.tt).querySelector('[data-c="' + CSS.escape(e.tc) + '"]');
+      if (sr) sr.classList.add("hot");
+      if (tr) tr.classList.add("hot");
+    };
+    (outEdges.get(name) || []).forEach(touch);
+    (inEdges.get(name) || []).forEach(touch);
+    showDetail(name);
+  }
+  const KIND = { fk: "db foreign key", app: "app-level", poly: "polymorphic", tenant: "ownership" };
+  function showDetail(name) {
+    const t = byName.get(name);
+    const out = (outEdges.get(name) || []), inc = (inEdges.get(name) || []);
+    const li = (rows) => rows.length
+      ? "<ul>" + rows.join("") + "</ul>"
+      : '<div class="none">none</div>';
+    const esc = (s) => s.replace(/[&<>]/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[ch]));
+    detail.style.setProperty("--gc", GROUP_VAR[t.group]);
+    detail.innerHTML =
+      '<div class="dt">' + esc(name) + "</div>" +
+      '<div class="dm">' + t.columns.length + " columns &#183; " + DB_LABEL[t.db] + " database</div>" +
+      "<h3>References " + out.length + "</h3>" +
+      li(out.map(e => "<li><b>" + esc(e.sc) + "</b> &#8594; " + esc(e.t) + " <i>" + esc(e.l) + "</i></li>")) +
+      "<h3>Referenced by " + inc.length + "</h3>" +
+      li(inc.map(e => "<li><b>" + esc(e.f) + "</b> &#8594; " + esc(e.tc) + " <i>" + esc(e.l) + "</i></li>"));
+    detail.classList.add("show");
+  }
+
+  cards.addEventListener("mouseover", (ev) => {
+    const c = ev.target.closest(".tbl");
+    if (!c || pinned) return;
+    if (hovered === c.dataset.t) return;
+    hovered = c.dataset.t;
+    focus(hovered);
+  });
+  cards.addEventListener("mouseout", (ev) => {
+    const c = ev.target.closest(".tbl");
+    if (!c || pinned) return;
+    if (ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest(".tbl") === c) return;
+    hovered = null;
+    clearFocus();
+  });
+  cards.addEventListener("focusin", (ev) => {
+    // Keyboard focus pins; a mouse click must not, or the click handler below
+    // would immediately toggle straight back off again.
+    const c = ev.target.closest(".tbl");
+    if (c && c.matches(":focus-visible")) { pinned = c.dataset.t; focus(pinned); }
+  });
+  cards.addEventListener("click", (ev) => {
+    if (moved) return;
+    const c = ev.target.closest(".tbl");
+    if (!c) return;
+    pinned = pinned === c.dataset.t ? null : c.dataset.t;
+    focus(pinned);
+  });
+  stage.addEventListener("click", (ev) => {
+    if (!ev.target.closest(".tbl") && !moved) { pinned = null; clearFocus(); }
+  });
+
+  /* ---------- pan + zoom ---------- */
+  let scale = 1, tx = 0, ty = 0, moved = false;
+  function apply() {
+    world.style.transform = "translate(" + tx + "px," + ty + "px) scale(" + scale + ")";
+    document.getElementById("pct").textContent = Math.round(scale * 100) + "%";
+    const ov = scale < 0.45;
+    if (ov !== document.body.classList.contains("overview")) {
+      document.body.classList.toggle("overview", ov);
+      layout(); drawWires();
+      if (pinned) focus(pinned);
+    }
+  }
+  function zoomAt(cx, cy, next) {
+    next = Math.max(0.16, Math.min(2, next));
+    const r = stage.getBoundingClientRect();
+    const px = cx - r.left, py = cy - r.top;
+    tx = px - (px - tx) * (next / scale);
+    ty = py - (py - ty) * (next / scale);
+    scale = next;
+    apply();
+  }
+  stage.addEventListener("wheel", (ev) => {
+    ev.preventDefault();
+    if (ev.ctrlKey || ev.metaKey || !ev.shiftKey) {
+      zoomAt(ev.clientX, ev.clientY, scale * Math.pow(0.9988, ev.deltaY * (ev.ctrlKey ? 3 : 1)));
+    } else { tx -= ev.deltaX; ty -= ev.deltaY; apply(); }
+  }, { passive: false });
+
+  let dragging = false, sx = 0, sy = 0;
+  stage.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0) return;
+    dragging = true; moved = false; sx = ev.clientX - tx; sy = ev.clientY - ty;
+    stage.setPointerCapture(ev.pointerId);
+    stage.classList.add("dragging");
+  });
+  stage.addEventListener("pointermove", (ev) => {
+    if (!dragging) return;
+    const nx = ev.clientX - sx, ny = ev.clientY - sy;
+    if (Math.abs(nx - tx) + Math.abs(ny - ty) > 3) moved = true;
+    tx = nx; ty = ny; apply();
+  });
+  stage.addEventListener("pointerup", (ev) => {
+    dragging = false; stage.classList.remove("dragging");
+    setTimeout(() => { moved = false; }, 0);
+  });
+
+  function fit() {
+    const r = stage.getBoundingClientRect();
+    if (r.width < 120 || r.height < 120) return false;
+    const was = document.body.classList.contains("overview");
+    scale = Math.max(0.16, Math.min((r.width - 36) / worldW, (r.height - 36) / worldH, 1.4));
+    tx = (r.width - worldW * scale) / 2;
+    ty = Math.max(12, (r.height - worldH * scale) / 2 - 18);
+    apply();
+    // apply() may have crossed the overview threshold, which changes every card
+    // height and so the height fit was measured against: measure once more.
+    if (document.body.classList.contains("overview") !== was) {
+      scale = Math.max(0.16, Math.min((r.width - 36) / worldW, (r.height - 36) / worldH, 1.4));
+      tx = (r.width - worldW * scale) / 2;
+      ty = Math.max(12, (r.height - worldH * scale) / 2 - 18);
+      apply();
+    }
+    return true;
+  }
+  function centerOn(name, s) {
+    // Set the zoom first: crossing the overview threshold re-lays out every card,
+    // so positions read before this call would be measured against the other mode.
+    scale = s; apply();
+    const p = pos.get(name), r = stage.getBoundingClientRect();
+    tx = r.width / 2 - (p.x + p.w / 2) * scale;
+    ty = r.height / 2 - (p.y + Math.min(p.h, 260) / 2) * scale;
+    apply();
+  }
+  let touched = false;
+  const mark = () => { touched = true; };
+  stage.addEventListener("wheel", mark, { passive: true });
+  stage.addEventListener("pointerdown", mark);
+
+  document.getElementById("zin").onclick = () => { const r = stage.getBoundingClientRect(); touched = true; zoomAt(r.left + r.width / 2, r.top + r.height / 2, scale * 1.25); };
+  document.getElementById("zout").onclick = () => { const r = stage.getBoundingClientRect(); touched = true; zoomAt(r.left + r.width / 2, r.top + r.height / 2, scale / 1.25); };
+  document.getElementById("fit").onclick = () => { touched = true; fit(); };
+  const tbtn = document.getElementById("tenant");
+  tbtn.onclick = () => {
+    const on = tbtn.getAttribute("aria-pressed") === "true";
+    tbtn.setAttribute("aria-pressed", String(!on));
+    document.body.classList.toggle("hide-tenant", on);
+  };
+
+  /* ---------- search ---------- */
+  const q = document.getElementById("q");
+  let firstHit = null;
+  q.addEventListener("input", () => {
+    const v = q.value.trim().toLowerCase();
+    firstHit = null;
+    for (const t of DATA.tables) {
+      const c = el.get(t.name);
+      if (!v) { c.classList.remove("nomatch", "match"); continue; }
+      const hit = t.name.includes(v) || t.columns.some(col => col.n.includes(v));
+      c.classList.toggle("nomatch", !hit);
+      c.classList.toggle("match", hit);
+      if (hit && !firstHit) firstHit = t.name;
+    }
+  });
+  q.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && firstHit) { touched = true; centerOn(firstHit, Math.max(scale, 0.9)); pinned = firstHit; focus(firstHit); }
+    if (ev.key === "Escape") { q.value = ""; q.dispatchEvent(new Event("input")); }
+  });
+
+  /* ---------- counts, straight from the data ---------- */
+  (function tally() {
+    const n = k => DATA.edges.filter(e => e.k === k).length;
+    const enforced = DATA.edges.filter(e => e.k === "tenant" && e.fk).length;
+    document.getElementById("n-fk").textContent = "(" + n("fk") + ")";
+    document.getElementById("n-app").textContent = "(" + n("app") + ")";
+    document.getElementById("n-poly").textContent = "(" + n("poly") + ")";
+    document.getElementById("n-tenant").textContent = "(" + n("tenant") + ", " + enforced + " enforced)";
+    const cols = DATA.tables.reduce((a, t) => a + t.columns.length, 0);
+    const dbs = new Set(DATA.tables.map(t => t.db)).size;
+    document.getElementById("tally").innerHTML =
+      "<b>" + DATA.tables.length + "</b> tables &#183; <b>" + cols +
+      "</b> columns &#183; <b>" + DATA.edges.length + "</b> relationships &#183; <b>" +
+      dbs + "</b> databases";
+  })();
+
+  /* ---------- go ---------- */
+  function boot() { layout(); drawWires(); if (!fit()) requestAnimationFrame(boot); }
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(boot); else boot();
+  // The stage can be measured before the frame has its real size (or while hidden);
+  // keep re-fitting until the reader takes control of the viewport themselves.
+  if (window.ResizeObserver) {
+    let first = true;
+    new ResizeObserver(() => {
+      if (first) { first = false; return; }
+      layout(); drawWires();
+      if (touched) apply(); else fit();
+    }).observe(stage);
+  }
+})();
+</script>
