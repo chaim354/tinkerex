@@ -679,11 +679,21 @@ module Maker
     # minitest 6 DROPPED minitest/mock, so `stub` does not exist in this suite (requiring it is a
     # LoadError). Modelled on with_broken_move in attach_auto_move_test.rb.
     #
-    # `port_writable? = true` sends Maker::MoveNode through the port door, straight into `move`. The
-    # fake defines NO mkdir — which is why every test below seeds the destination folder first: with
-    # it already in the catalog, Maker::LibraryFolder#ensure_segment returns the existing node and
-    # never reaches the port. Without that seeding the failure would be a NoMethodError on mkdir,
-    # i.e. the test would pass for the wrong reason.
+    # `port_writable? = true` sends Maker::MoveNode through the port door, straight into `move`.
+    #
+    # THE fake DEFINES mkdir, and that is new as of Stage 2 (Task 3): Maker::LibraryFolder#ensure_segment
+    # used to short-circuit on an already-catalogued dir BEFORE ever reaching the port, so a fake with
+    # no mkdir at all got away with it as long as every test below pre-seeded the destination folder.
+    # ensure_segment no longer has a short-circuit of its own — it calls FileLayer.current.mkdir
+    # UNCONDITIONALLY and leans on the adapter's OWN idempotence (CLAUDE.md 14a) — so this fake must
+    # answer mkdir too, or every test here dies on NoMethodError before `move` is ever reached.
+    #
+    # The seeding requirement does NOT go away, it just changes shape: this mkdir does not create
+    # anything (a fake standing in for "the backend is unreachable" has no store to create a
+    # directory in) — it only FINDS a dir already in the catalog by (parent_node_id, name), i.e. the
+    # SAME identity Chunk#mkdir's idempotence check uses. `find_by!` (bang), not `find_by`, on
+    # purpose: a test that forgot to call seed_folder must still fail loudly, on RecordNotFound
+    # instead of the old NoMethodError, rather than silently answer something #place accepts.
     #
     # `fail_after:` lets a caller ask for N clean successes before the raising starts. The
     # succeed-then-abort test below needs the FIRST file to move for real — #place's return value
@@ -694,6 +704,11 @@ module Maker
       attempts = 0
       broken = Object.new
       def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
+      broken.define_singleton_method(:mkdir) do |user, parent_node_id: nil, name: nil|
+        node = user.nodes.present.find_by!(parent_node_id:, name:, kind: "dir")
+        FileLayer::FileInfo.new(node_id: node.node_id, name: node.name, kind: node.kind,
+                                size: 0, mtime: node.mtime, content_token: nil)
+      end
       broken.define_singleton_method(:move) do |*|
         attempts += 1
         raise(error_class, "the backend is having a bad day") if attempts > fail_after

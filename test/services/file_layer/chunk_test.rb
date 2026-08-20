@@ -7,6 +7,9 @@ module FileLayer
   # node -> version -> manifest_chunks -> Storage::ChunkStore read path, moved behind the port.
   class ChunkTest < ActiveSupport::TestCase
     include FileLayerAdapterContract
+    # For the mkdir broadcast test below -- same include LibraryChannelTest and
+    # ProjectIntakeTest use for assert_broadcast_on/assert_broadcasts.
+    include ActionCable::TestHelper
 
     setup do
       Storage::ChunkStore.reset!
@@ -510,6 +513,49 @@ module FileLayer
       # And @user's OWN bytes at that node are still readable — the guard rejects the foreign
       # token, not the node.
       assert_equal "mine", adapter.read(@user, node_id:)
+    end
+
+    # The port is now the door for chunk-mode mkdir, not a refusal that names another door.
+    # Maker::LibraryFolder used to branch around it into Sync::Mutation; it no longer can,
+    # because in remote mode there is no Sync::Mutation in the process to branch into.
+    test "mkdir creates a dir node through the sync engine and returns its FileInfo" do
+      info = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+      assert_equal "dir",  info.kind
+      assert_equal "cad",  info.name
+      node = @user.nodes.present.find_by(node_id: info.node_id)
+      assert_equal "dir", node.kind
+    end
+
+    # A mutation that does not broadcast leaves every device's tree diverged from the server's,
+    # silently -- pull is incremental, so nothing anywhere reports it. Asserted on the CHANGELOG
+    # rather than by stubbing the broadcast: the changelog entry is what a device actually reads,
+    # and a test that stubs LibraryChannel proves only that we called our own method.
+    #
+    # THE head_seq ASSERTION ALONE CANNOT CATCH A MISSING BROADCAST, AND IT DID NOT: mutation-
+    # checked by deleting Chunk#mkdir's `LibraryChannel.broadcast_change(user, seq)` line, this
+    # test (with only the assert_operator below) stayed GREEN -- head_seq is advanced by
+    # Sync::Mutation.apply, not by the broadcast, so the two facts are independent and asserting
+    # one says nothing about the other. That is a guard that cannot fail for the reason it
+    # exists, which CLAUDE.md 15 says is no guard at all. assert_broadcast_on is what closes it:
+    # it listens on the real stream a device subscribes to (LibraryChannel.broadcasting_for),
+    # the same helper LibraryChannelTest and ProjectIntakeTest already use, so this is the
+    # established idiom here rather than a one-off. The exact payload is asserted, not just a
+    # count -- User#next_seq! is `head_seq + 1` under a row lock (app/models/user.rb), so a
+    # single mkdir on a fresh @user with no concurrent activity must broadcast EXACTLY
+    # `head_seq: before + 1`; a broadcast carrying a stale or fabricated seq would pass a bare
+    # count check and still diverge a device.
+    test "mkdir appends a changelog entry so devices converge" do
+      before = @user.reload.head_seq
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: before + 1) do
+        adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+      end
+      assert_operator @user.reload.head_seq, :>, before, "mkdir must advance head_seq"
+    end
+
+    test "mkdir is idempotent -- LibraryFolder walks each path segment on every call" do
+      first  = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+      second = adapter.mkdir(@user, parent_node_id: nil, name: "cad")
+      assert_equal first.node_id, second.node_id
     end
   end
 end
