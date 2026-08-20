@@ -71,24 +71,18 @@ intake are in **§14** — that is where a "don't undo this" belongs, not in a t
 
 | Component | Path | Role |
 |---|---|---|
-| **fs-provider** | `client/fs-provider` | Local SQLite tree + content-addressed FastCDC chunk store. `export_tree`/`apply_remote` for sync. Node kinds: File/Dir/**Symlink** (target synced; git-on-mount works — `docs/git-on-mount.md`). |
-| **fs-fuse** | `client/fs-fuse` | FUSE adapter — the **Linux** mount path. `fuser` is `cfg(target_os = "linux")`, so macOS builds link **zero FUSE**. |
-| **fs-cfapi** | `client/fs-cfapi` | **CfAPI** (Cloud Filter) — the **driverless, DEFAULT Windows** backend, no GPL driver (§9). Sync-root + on-demand hydration, local-edit capture, offline-persistent hydrated files. |
-| **fs-winfsp** | `client/fs-winfsp` | WinFsp adapter (drive letter), now behind the `winfsp-backend` cargo feature. Runtime needs `winfsp-x64.dll` on PATH. |
-| **fs-webdav** | `client/fs-webdav` | WebDAV adapter (`dav-server`) — the **macOS** mount path via native `mount_webdav`; no FUSE/kext/FSKit. |
-| **sync-client** | `client/sync-client` | Typed server API client + chunk transfer (presigned PUT/GET) + pull-apply (`LocalTree`). |
-| **sync-engine** | `client/sync-engine` | The daemon: `push`/`pull`/`hydrate`/`sync_once` + the loop primitives. Pluggable `ChunkIO`. |
+| **Rust crates + Tauri app** | `chaim354/tinkerex-client` (separate repo) | fs-provider (local SQLite tree + FastCDC chunk store), the per-OS mount adapters (fs-fuse/fs-cfapi/fs-winfsp/fs-webdav/fs-fskit), sync-client, sync-engine (the daemon: `push`/`pull`/`hydrate`/`sync_once`), the Tauri desktop app, and `maker-app-core`/`juicefs-backend` (leftovers from the abandoned mount path, kept as reference — CLAUDE.md §14e). Extracted from this repo 2026-08-20; own history (166 commits via `git filter-repo`), own CI, own runner registration. `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` has the full inventory and the argument for keeping the `client/` prefix inside that repo's own layout. |
 | **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
+| **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time (`Dockerfile`) and exec'd off `PATH` by `Maker::Previews::Stl` at runtime — a **server-side** tool despite being Rust. Lives under `tools/`, not in the Rust-crates repo: nothing there has a path dependency on it. |
 | **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk\|share\|s3`. All three boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
 | **Addons (Tools)** | `app/services/maker/addons/`, `app/controllers/tools/`, `sidecar/` | The `/tools` gallery + per-addon UI; output lands via one path (`Maker::Addons::LibraryOutput`). Two GPL sidecars, HTTP-only. Invariants: **§14c**. |
 | **Project intake** | `app/services/maker/project_intake.rb` | A project's library folder files itself: everything under `Projects/<slug>/` attaches to the project, whatever is loose at the root gets filed into a category subfolder. Invariants: **§14f**. |
-| maker-app-core, juicefs-backend | `client/…` | Leftovers from the abandoned mount path; reference only. |
 
 **Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
 store) → device B pulls + hydrates + reads, **byte-for-byte identical**; metadata via
 the live server changelog. Multi-device convergence demonstrated. Current per-suite test
-counts: `docs/STATUS.md`.
+counts: `docs/STATUS.md` for this repo, `tinkerex-client`'s own docs for the Rust crates.
 
 ---
 
@@ -100,8 +94,8 @@ counts: `docs/STATUS.md`.
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
 | Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
-| Client | **Tauri** (Rust core), `fs-provider` + per-OS mount + `sync-engine` |
-| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (default; WinFsp behind a feature), **macOS** WebDAV. macOS **FSKit** is not a shipping mount path: `client/fs-fskit`'s Rust bridge is built and unit-tested, but the Swift extension that would actually mount it is stubbed pending a paid Apple Developer membership. Drivers user-installed (keeps copyleft out of our binaries). |
+| Client | **Tauri** (Rust core), `fs-provider` + per-OS mount + `sync-engine` — all in `chaim354/tinkerex-client` (§3) |
+| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (default; WinFsp behind a feature), **macOS** WebDAV. macOS **FSKit** is not a shipping mount path: `fs-fskit`'s Rust bridge (in `tinkerex-client`) is built and unit-tested, but the Swift extension that would actually mount it is stubbed pending a paid Apple Developer membership. Drivers user-installed (keeps copyleft out of our binaries). |
 | Change notification | **ActionCable** → `{head_seq}` on commit |
 | Preview | Server-side thumbnails (vipsthumbnail/pdfium/resvg subprocesses) + Three.js in the browser |
 
@@ -205,15 +199,23 @@ only on explicit request. `docs/DEPLOY.md`.
 
 ```
 /                Rails 8 sync server (app/, config/, db/) + docs/ (incl. DEPLOY.md)
-/client          Rust crates: fs-provider, fs-fuse (Linux), fs-cfapi + fs-winfsp
-                 (Windows), fs-webdav (macOS), sync-client, sync-engine, maker-app (Tauri)
-                 (+ maker-app-core, juicefs-backend from the prior path)
+/tools           stl-thumbnailer: a Rust STL→PNG renderer, but a SERVER-side tool (compiled
+                 into the Rails image, exec'd by Maker::Previews::Stl) — not a client crate,
+                 which is why it lives here rather than with the rest of the Rust code.
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. No gate covers these; invariants in §14i.
 /docs            architecture-sync-engine.md, sync-protocol.md, SYNC_SERVER.md,
                  STATUS.md, DEPLOY.md, roads-not-taken.md, adr/
 ```
+
+**There is no `/client` here any more.** The Rust crates (fs-provider, fs-fuse, fs-cfapi,
+fs-winfsp, fs-webdav, fs-fskit, sync-client, sync-engine, maker-app the Tauri app, plus
+maker-app-core/juicefs-backend) live in their own repo, `chaim354/tinkerex-client`, which
+keeps the same `client/fs-provider/…` internal layout this repo used to have (a deliberate
+choice — `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`, Task 3). Clone it
+as a sibling checkout (`../tinkerex-client`) to run anything in §13's cheatsheet that
+touches it.
 
 ---
 
@@ -307,50 +309,66 @@ LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 # Boot the server for the live demos (memory chunk store = control-plane only)
 STORAGE_BACKEND=memory bin/rails server -p 3001
 
+# --- Everything below needs a checkout of chaim354/tinkerex-client (the Rust crates + the Tauri
+# app moved there 2026-08-20 — docs/superpowers/plans/2026-08-20-stage-1-extract-client.md). Every
+# command below assumes it's checked out as a SIBLING of this repo (`../tinkerex-client`), the
+# convention this repo's own CI uses (see .github/workflows/client-contract.yml and nightly.yml,
+# whose jobs check tinkerex-client out to a `tinkerex-client/` subdirectory and symlink `client`
+# to it — so from a job's-eye view the paths below are unchanged; from a human's shell, cd up one
+# level first, or adjust the `../tinkerex-client` prefix to wherever you cloned it):
+#   gh repo clone chaim354/tinkerex-client ../tinkerex-client
+
 # Live cross-stack demos (server must be running):
-(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example e2e)
-(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
-(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)      # real bytes
-(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example daemon_loop)    # outbox→push→pull→hydrate
-(cd client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example nudge)          # ActionCable {head_seq} (~39ms)
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example e2e)
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)      # real bytes
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example daemon_loop)    # outbox→push→pull→hydrate
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example nudge)          # ActionCable {head_seq} (~39ms)
 
 # Server with real S3/SeaweedFS chunk storage (presigned PUT/GET):
 STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
 CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
   bin/rails server -p 3001
-(cd client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example presigned_roundtrip)
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example presigned_roundtrip)
 
-# Rust crate tests (per-suite counts in docs/STATUS.md)
-(cd client/fs-provider && cargo test)   # chunking/posix/convergence/concurrency/caching (hermetic)
-(cd client/sync-client && cargo test)
+# Rust crate tests (per-suite counts now live in tinkerex-client's own docs, not here)
+(cd ../tinkerex-client/client/fs-provider && cargo test)   # chunking/posix/convergence/concurrency/caching (hermetic)
+(cd ../tinkerex-client/client/sync-client && cargo test)
 # sync-engine integration needs a running server (skips cleanly without one).
 # SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check defaults ON, but the engine
 # suites move chunk bytes through SharedDirIO, not the server's store — so the server can't see
 # them. See config/initializers/finalize_verification.rb.
 STORAGE_BACKEND=memory SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &   # then:
-(cd client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
+(cd ../tinkerex-client/client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
 
-# External conformance (battle-tested tools vs our real mounts — client/test-conformance/):
-client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (macOS+Linux)
-client/test-conformance/fsx-fuse.sh           # fsx data-integrity exerciser ⇄ FUSE (Linux)
-client/test-conformance/pjdfstest-fuse.sh     # pjdfstest POSIX map ⇄ FUSE (Linux, informational)
+# External conformance (battle-tested tools vs our real mounts — tinkerex-client's own test-conformance/):
+../tinkerex-client/client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (macOS+Linux)
+../tinkerex-client/client/test-conformance/fsx-fuse.sh           # fsx data-integrity exerciser ⇄ FUSE (Linux)
+../tinkerex-client/client/test-conformance/pjdfstest-fuse.sh     # pjdfstest POSIX map ⇄ FUSE (Linux, informational)
 
 # Two-device REAL-MOUNT E2E (a file through ONE real kernel mount, read byte-for-byte
-# through ANOTHER device's real mount). Uses STORAGE_BACKEND=local (memory:// can't move bytes):
-client/test-conformance/two-device-fuse.sh           # Linux, two real FUSE mounts (CI-automatable)
-client/test-conformance/two-device-webdav-macos.sh   # macOS, two real WebDAV mounts (interactive)
-client/test-conformance/two-device-cfapi.ps1         # Windows, two real CfAPI sync roots (interactive)
-# CI: `gh workflow run rust-client.yml -f target=two-device`
+# through ANOTHER device's real mount). Uses STORAGE_BACKEND=local (memory:// can't move bytes).
+# two-device-fuse.sh and two-device-webdav-macos.sh boot their OWN local Rails server (they `cd`
+# to find bin/rails), so run them FROM THIS REPO'S ROOT even though the script itself lives in
+# tinkerex-client — that's also why CI keeps these two in THIS repo's nightly.yml rather than
+# moving them, via the checkout+symlink trick that file documents:
+../tinkerex-client/client/test-conformance/two-device-fuse.sh           # Linux, two real FUSE mounts (CI-automatable)
+../tinkerex-client/client/test-conformance/two-device-webdav-macos.sh   # macOS, two real WebDAV mounts (interactive)
+# two-device-cfapi.ps1 targets the DEPLOYED server (no local Rails needed) and lives entirely in
+# tinkerex-client's own CI now.
+# CI: `gh workflow run nightly.yml` here runs the Rails-coupled two-device legs (along with
+# e2e-linux/e2e-macos/stress-load); the pure-cargo/on-demand slicing rust-client.yml used to offer
+# (`-f target=...`) is now tinkerex-client's own workflow to dispatch.
 
-# fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see client/fs-fuse/BUILD.md.
-# Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
+# fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see tinkerex-client's
+# client/fs-fuse/BUILD.md. Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
 ```
 
 **Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev
 & test run on SQLite); FUSE-T is installed but `fuser` needs an `osxfuse`→`fuse-t`
-pkg-config alias (`client/fs-fuse/BUILD.md`); macOS keeps creating `" 2"`-suffixed
-duplicate files in the repo (some sync client?) — they broke a build once; `find . -name
-'* 2.*' -delete` to sweep.
+pkg-config alias (`tinkerex-client`'s `client/fs-fuse/BUILD.md`); macOS keeps creating
+`" 2"`-suffixed duplicate files in the repo (some sync client?) — they broke a build
+once; `find . -name '* 2.*' -delete` to sweep.
 
 **Mount build/runtime notes.** Deps are strictly target-gated so each OS compiles only its
 own. macOS → WebDAV (FUSE-T's **FSKit** build can't mount on macOS 26 — silent fail, the
@@ -1835,7 +1853,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
     code forever, with nothing anywhere to say so. Pinned as a RELATIONSHIP in `stl_test.rb`, never
     as two literals.
   - **AND A CHANGE IN THE RUST CRATE NEEDS THE RUBY-SIDE BUMP, WHICH IS THE HALF WITH NO COMPILER
-    BEHIND IT.** `client/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
+    BEHIND IT.** `tools/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
     binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
     re-renders everything with the old binary. **Ship both or neither.**
 - **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
