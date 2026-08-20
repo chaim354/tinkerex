@@ -68,7 +68,11 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # spot is how the Stage 3 boundary design's findings stayed invisible long enough to need a whole
   # separate document (its §9: "Stage 3 must widen both [guards] to the bare model names, or its
   # own boundary will be unenforced in exactly the way this document had to be written to
-  # discover").
+  # discover"). ENGINE_MODELS ITSELF IS GONE AS OF STAGE 3b PHASE A TASK 3 -- see the note where it
+  # used to be defined, below the method. The LESSON of this paragraph (a bare model reference is a
+  # real boundary crossing) outlives the LIST that implemented it: Task 3 moved every one of these
+  # models under `Sync::`, so the bare spelling this paragraph worried about no longer resolves to
+  # anything at all, and the qualified spelling was already caught by the `Sync` check one line up.
   # AND WIDENED AGAIN, TO ASSOCIATION ACCESS -- because the constant check alone was WIDER, NOT
   # STRONGER, and a review proved it rather than suspecting it. `user.versions.find_by(...)` is the
   # more idiomatic Rails way to reach a related table and it emits NO :on_const token at all, so:
@@ -84,8 +88,9 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # by building on a tool nobody had tried to evade.
   #
   # ENGINE_ASSOCIATIONS are the `has_many` names User declares for the seven moving models. Matched
-  # as :on_ident (a method call) rather than :on_const. `devices` is absent for the same reason
-  # `Device` is absent from ENGINE_MODELS -- it stays with the host.
+  # as :on_ident (a method call) rather than :on_const. `devices` is absent because `Device` itself
+  # never moves under `Sync::` -- it stays with the host (CLAUDE.md §14j), so `user.devices` is
+  # ordinary host code reaching a host table, not an engine seam this file has any business timing.
   ENGINE_ASSOCIATIONS = %w[versions chunks manifest_chunks pending_commits changelog_entries
                            conflicts file_locks].freeze
 
@@ -93,59 +98,55 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     rel = Pathname.new(file).relative_path_from(ROOT)
     Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
       hit = case type
-      when :on_const then str == "Sync" || ENGINE_MODELS.include?(str)
+      when :on_const then str == "Sync"
       when :on_ident then ENGINE_ASSOCIATIONS.include?(str)
       end
       "#{rel}:#{pos.first}" if hit
     end
   end
 
-  # SEVEN MODELS MOVE TO THE ENGINE (Stage 3a plan premises; boundary design §3): Version, Chunk,
-  # ManifestChunk, PendingCommit, ChangelogEntry, Conflict, FileLock. Only SIX are listed below --
-  # `Chunk` is deliberately absent, and not for the same reason `Device` is (next paragraph). It is
-  # a TOKENIZATION problem, not a policy one. `FileLayer::Chunk` (CLAUDE.md §14a's one sanctioned
-  # adapter) is a DIFFERENT class from the `Chunk` AR model, and Ripper lexes a qualified reference
-  # to it as three separate tokens -- on_const "FileLayer", on_op "::", on_const "Chunk" -- so the
-  # bare on_const "Chunk" this detector matches is structurally indistinguishable, from tokens
-  # alone, between a real AR-model reference and the tail of a fully-qualified adapter reference.
-  # This is not hypothetical: `FileLayer.build`'s own factory (app/services/file_layer.rb:120)
-  # writes `when "chunk" then Chunk.new` *inside* `module FileLayer`, where Ruby's lexical constant
-  # lookup resolves the bare `Chunk` to `FileLayer::Chunk` -- a legitimate, load-bearing reference,
-  # in the file that IS the port, that a naive widening would flag as a violation. Scoping the
-  # check to files outside `app/services/file_layer/` does not close this either: `file_layer.rb`
-  # itself sits one level ABOVE that directory, so a directory-based scope misses the exact line
-  # that motivates it, and would still miss any future `FileLayer::Chunk` reference written
-  # elsewhere in the tree -- the ambiguous token is the same regardless of which file it appears
-  # in. Dropping `Chunk` costs nothing real: verified by lexing every file under `app/` for a bare
-  # on_const "Chunk" token, the only hits anywhere are the AR model's own definition
-  # (app/models/chunk.rb:1), the adapter's own class-opening line
-  # (app/services/file_layer/chunk.rb:8), the `FileLayer.build` factory line above, and ONE genuine
-  # AR-model cross-reference -- `Sync::Commit.upsert_chunks!`'s `Chunk.insert_all`
-  # (app/services/sync/commit.rb:259) -- which is already sync-side via SYNC_SIDE_GLOBS below. No
-  # maker-layer file references the bare `Chunk` AR model today, so omitting it from this set loses
-  # no real coverage.
+  # ENGINE_MODELS IS GONE, DELETED RATHER THAN LEFT EMPTY -- the same "the list must die with its
+  # last entry, not linger" rule SYNC_SEAM_EXCEPTIONS's own comment states further down (and its
+  # accompanying test enforces mechanically; this one has no test to catch a forgotten `[]`, only
+  # this comment, which is why the deletion happened in the same commit as the reason for it).
   #
-  # `Device` IS ALSO DELIBERATELY ABSENT, for an unrelated reason -- this is the entry most likely
-  # to be "fixed" by someone counting the eight moving tables (there are seven; Device stays,
-  # boundary design §3). Device STAYS WITH THE HOST: its token is the only credential the whole v1
-  # API accepts, including all fourteen v1/maker/* controllers, so an engine that owned it would
-  # leave the maker API unable to authenticate a single request without the engine mounted. Adding
-  # it here would flag app/controllers/application_controller.rb and
-  # app/services/maker/addons/library_output.rb as violations for using a model that is
-  # legitimately theirs.
+  # IT USED TO NAME SIX OF THE SEVEN MOVING MODELS (Version, ManifestChunk, PendingCommit,
+  # ChangelogEntry, Conflict, FileLock -- `Chunk` was always excluded; see below) so `sync_references`
+  # could catch a maker-layer file reaching one of them by BARE constant, the way `Node.find(...)`
+  # legitimately reaches a host table. STAGE 3b PHASE A TASK 3 moved all eight engine models under
+  # `Sync::`, which means the bare spelling this list existed to catch NO LONGER RESOLVES TO
+  # ANYTHING: a maker-layer `Version.find(...)` today raises `NameError` before this test would ever
+  # run, because there is no top-level `Version` constant left for it to find. The only spelling that
+  # still reaches these models -- `Sync::Version`, `Sync::ManifestChunk`, and so on -- already lexes
+  # as the bare "Sync" token `sync_references`'s `:on_const` arm catches on its own, with nothing
+  # extra needed after it. Keeping a name-by-name list around to catch a mistake Ruby itself now
+  # refuses to let compile would be exactly the "list that no longer does anything" this task's own
+  # instructions warned against leaving behind.
   #
-  # `ShareLink` IS DELIBERATELY ABSENT TOO, as of Stage 3a Task 6, and for a THIRD reason distinct
-  # from both of the above. ShareLink is a real engine model as of this task (see SYNC_SIDE_GLOBS
-  # below) and nothing here disputes that -- but ENGINE_MODELS exists to catch a MAKER-layer file
-  # reaching for an engine model by bare constant, and no maker-layer file reaches for ShareLink
-  # today (checked: its only callers are the four files this task moved, all now sync-side, plus
-  # their own tests). Adding it would cost nothing today and buy speculative coverage against a
-  # violation that has never existed; the task that moved share_links scoped itself to making the
-  # existing violation (app/services/sharing/links.rb's `ManifestChunk` reference, below) stop
-  # being one, not to widening this set further. If a maker-layer `ShareLink.find(...)` ever
-  # appears, that is the moment to add it here -- the same bar SYNC_SEAM_EXCEPTIONS's own entries
-  # were held to.
-  ENGINE_MODELS = %w[Version ManifestChunk PendingCommit ChangelogEntry Conflict FileLock].freeze
+  # THE THREE EXCLUSIONS THIS LIST USED TO CARRY EACH DESERVE A DIRECT ANSWER, NOT A SILENT DROP --
+  # every one of them was an argument for leaving ONE NAME OFF THIS LIST specifically, and the list
+  # itself is what is gone; the underlying facts are not, and are worth restating so a future reader
+  # does not have to re-derive them from a stale reference to a constant that no longer exists:
+  #
+  #   - `Chunk` was excluded for a TOKENIZATION reason, not a policy one: `FileLayer::Chunk`
+  #     (CLAUDE.md §14a's one sanctioned chunk-internals adapter) is a DIFFERENT class from the AR
+  #     model, and a bare on_const "Chunk" could not be told apart from the tail of a fully-qualified
+  #     `FileLayer::Chunk` reference by token shape alone (`FileLayer.build`'s own factory,
+  #     app/services/file_layer.rb:120, writes `Chunk.new` *inside* `module FileLayer` on purpose,
+  #     resolving to the adapter). That ambiguity is now STRUCTURALLY GONE, not merely still avoided:
+  #     the real AR model is `Sync::Chunk` (app/models/sync/chunk.rb) as of Task 3, so a genuine
+  #     reference now carries the same unambiguous "Sync" token every other engine model does, and
+  #     `FileLayer::Chunk` never has and still does not carry one -- there is nothing left to confuse
+  #     it with, so there is nothing left to exclude.
+  #   - `Device` was excluded because it STAYS WITH THE HOST (CLAUDE.md §14j) and was never a model
+  #     this list needed to name -- adding it would have flagged legitimate host code
+  #     (application_controller.rb, library_output.rb) for using a model that is properly theirs.
+  #     Still true, and needs no exclusion now for the identical reason `Chunk` doesn't: `Device` was
+  #     never asked to become `Sync::Device` and carries no "Sync" token to catch, list or no list.
+  #   - `ShareLink` was excluded because no maker-layer file reached for it by bare constant at the
+  #     time (Stage 3a Task 6) -- it was a real engine model even then, just not yet a violation
+  #     anywhere. Task 3 namespaced it the same way as its seven siblings: `Sync::ShareLink` is
+  #     caught by the bare "Sync" check exactly like the rest, with no special-casing either way.
 
   test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
     # CLAUDE.md §14c. The maker layer must not know files are chunks — that is the whole point of
@@ -191,18 +192,30 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # through, silently, on the strength of its NAME. It excluded `app/jobs/maker/*_reaper_job.rb`
   # only by the accident that Dir.glob does not cross `/` without `**`. Two literal paths cost one
   # line each and cannot be widened by someone choosing a filename.
-  # SIX OF THE SEVEN MOVING MODELS' OWN DEFINITION FILES ARE LISTED INDIVIDUALLY, ADDED IN STAGE 3a
-  # TASK 1 FOR THE SAME REASON `app/services/file_layer/chunk.rb` IS: each opens with `class <Name>
-  # < ApplicationRecord`, naming itself, and self-declaration is not the maker layer "reaching
-  # into" the engine -- it IS the engine, exactly as `app/services/sync/**` is above. Left off this
-  # list, ENGINE_MODELS's widened sync_references would flag six false positives that the Stage 3a
-  # plan's own premise grep never had to face, because that grep excluded `app/models` wholesale
-  # (`grep -v '^app/(...|models|...)'`) rather than naming files -- a shortcut that works for a
-  # one-shot grep and not for a glob this test re-runs every time. `version.rb` additionally
-  # references `ManifestChunk` internally (`:10`, `ManifestChunk.where(...)`), a legitimate
-  # engine-to-engine reference the same exclusion covers, since it isn't a second file. `Chunk`'s
-  # own model file (app/models/chunk.rb) needs NO entry here: `Chunk` is deliberately absent from
-  # ENGINE_MODELS (see its comment above), so nothing in this file would ever match it regardless.
+  # `app/models/sync/**/*.rb` COVERS ALL EIGHT MOVING MODELS' OWN DEFINITION FILES WITH ONE GLOB,
+  # AS OF STAGE 3b PHASE A TASK 3 -- SUPERSEDING SIX INDIVIDUAL ENTRIES (ADDED IN STAGE 3a TASK 1)
+  # PLUS `share_link.rb`'s OWN LATER ONE (Task 6). Each of the eight opens with `class Sync::<Name>
+  # < ::ApplicationRecord`, naming itself, and self-declaration is not the maker layer "reaching
+  # into" the engine -- it IS the engine, exactly as `app/services/sync/**` is above. A DIRECTORY
+  # GLOB is now the right shape where six-plus-one individual file entries used to be required: Task
+  # 1's individual listing existed only because `app/models/` is SHARED with every maker model, so a
+  # wholesale `app/models/**` glob would have exempted the maker layer's own models too -- naming
+  # each engine model file was the only way to claim exactly the right eight-minus-Chunk (see below)
+  # without over-claiming. Task 3 moved all eight into their OWN subdirectory, `app/models/sync/`,
+  # which holds nothing else and is never going to (it is the engine's own model namespace, the same
+  # shape `app/services/sync/` and `app/services/storage/` already are above) -- so a glob here
+  # exempts nothing it shouldn't, the identical argument the sharing/ glob below already makes.
+  # `version.rb`'s own internal `Sync::ManifestChunk.where(...)` reference (`:16`, fully qualified
+  # since Task 3 -- see that file's own comment for why the compact `class Sync::Version` form
+  # requires it, unlike a `module Sync; class Version; end; end` nesting) is covered by this same
+  # glob for the same reason: it is engine code referencing engine code, not a second file to name.
+  # `Chunk`'s own model file (app/models/sync/chunk.rb) is covered by this glob TOO now, though it
+  # never needed an entry before Task 3: bare `Chunk` was deliberately excluded from the old
+  # ENGINE_MODELS list (a tokenization problem, not a policy one -- see the note above where that
+  # list used to live), so nothing in this file ever matched it regardless of which bucket its file
+  # sat in. `Sync::Chunk` carries the same "Sync" token every other engine model does, so as of Task
+  # 3 it DOES need to be engine-side for the guard to agree with itself -- and now it is, for free,
+  # by sitting in the same directory as its seven siblings.
   #
   # STAGE 3a TASK 6 ADDS `app/services/sharing/**` AND `app/models/share_link.rb`, and a reader
   # skimming this list needs the argument stated, not assumed -- "sharing a file with someone"
@@ -234,14 +247,16 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # link" for the guard that pins it (mutation-checked: deleting gc.rb's `user.share_links` line
   # turns that test red).
   #
-  # A DIRECTORY GLOB for `sharing/`, not an individual file -- unlike the six models above,
-  # `app/services/sharing/` holds nothing else and is never going to hold a maker-layer file (it
-  # is the share-link feature's own service namespace), so a glob here exempts nothing it
-  # shouldn't the way a bare `app/models/**` would. `docs/plan-sharing.md`'s future Spaces work
-  # (full read/write sharing) lands in this same namespace, sync-side, with no second entry
-  # needed. `share_link.rb` gets an INDIVIDUAL entry instead, matching the six AR models above and
-  # for the identical reason: `app/models/` is shared with every maker model, so only specific
-  # files get named there, never the directory itself.
+  # A DIRECTORY GLOB for `sharing/`, not an individual file -- `app/services/sharing/` holds
+  # nothing else and is never going to hold a maker-layer file (it is the share-link feature's own
+  # service namespace), so a glob here exempts nothing it shouldn't the way a bare `app/models/**`
+  # would. `docs/plan-sharing.md`'s future Spaces work (full read/write sharing) lands in this same
+  # namespace, sync-side, with no second entry needed. `share_link.rb` got an INDIVIDUAL entry here
+  # at the time, for the same reason the six other AR models above did: `app/models/` is shared
+  # with every maker model, so only specific files could be named there, never the directory
+  # itself. STAGE 3b PHASE A TASK 3 SUPERSEDES THAT: `share_link.rb` moved to `app/models/sync/`
+  # alongside its seven siblings and is now covered by the `app/models/sync/**/*.rb` glob above,
+  # same as the rest -- no individual entry for it remains here.
   #
   # The two v1 controllers (ShareController, ShareLinksController) need NO new entry:
   # `app/controllers/v1/**/*.rb`, below, already covers them.
@@ -269,8 +284,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # (`app/controllers/concerns/v1/stash_request_base_url.rb`) sits under
   # `app/controllers/concerns/`, a sibling of `v1/` the blanket glob does not reach, and is Stage
   # 3a Task 5's own documented seam. None of the three would be caught by widening this list
-  # anyway -- `sync_references` matches a bare `Sync` constant or the model names, never a bare
-  # `Storage` constant (only the dedicated `V1::BaseController` test below checks for that) -- so
+  # anyway -- `sync_references` matches a bare `Sync` constant, never a bare `Storage` constant
+  # (only the dedicated `V1::BaseController` test below checks for that) -- so
   # they are recorded here only because "verify every caller is sync-side" is the argument FOR
   # this entry, and naming the exceptions is what makes that argument checkable rather than
   # asserted.
@@ -286,8 +301,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # `:on_const` + `:on_period`, not `:on_const` + `:on_op "::"` (verified: `Sync.engine_present?`
   # lexes identically to the `Sync.load_manifests` trap that motivated dropping the `::`-adjacency
   # requirement in the first place). Both are named individually rather than a `lib/**` glob, for
-  # the same reason the six model files above are: `lib/` holds plenty that is NOT engine-side
-  # (next paragraph), so a directory-wide entry would claim files it has no business claiming.
+  # the same reason the eight model files were before they got their own subdirectory (above):
+  # `lib/` holds plenty that is NOT engine-side (next paragraph), so a directory-wide entry would
+  # claim files it has no business claiming. Unlike the models, these two have no dedicated `lib/`
+  # subdirectory of their own to move into, so they stay named individually rather than globbed.
   #
   # `lib/schema_map.rb` -- ~372 lines describing BOTH sides' tables (`LAYOUT`, `EDGES`) -- is
   # DELIBERATELY NOT added here, even though it is the strongest-looking candidate in `lib/`
@@ -326,13 +343,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     app/jobs/retention_job.rb
     app/channels/**/*.rb
     app/services/file_layer/chunk.rb
-    app/models/version.rb
-    app/models/manifest_chunk.rb
-    app/models/pending_commit.rb
-    app/models/changelog_entry.rb
-    app/models/conflict.rb
-    app/models/file_lock.rb
-    app/models/share_link.rb
+    app/models/sync/**/*.rb
     lib/postgres_pooler_check.rb
     lib/tasks/chunks.rake
   ].freeze
@@ -416,8 +427,9 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   #     credential the whole v1 API accepts (see Authentication), including /v1/maker/*." An
   #     engine that owned this file would leave the maker API unable to authenticate a single
   #     request without the engine mounted -- the identical argument CLAUDE.md §14j already makes
-  #     for why the `Device` MODEL stays host (it is deliberately absent from ENGINE_MODELS
-  #     above). Its two actions are Devise password validation
+  #     for why the `Device` MODEL stays host, never namespaced under `Sync::` and so never a
+  #     candidate for the bare "Sync" check `sync_references` runs. Its two actions are Devise
+  #     password validation
   #     (`User.find_for_authentication`/`valid_for_authentication?`) and `Device.register!`; zero
   #     `Sync::`/`Storage::`/engine-model references of its own.
   #   - `test_users_controller.rb`: a dev/test-only Devise signup seam, gated on
@@ -486,6 +498,16 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # own comment above for which two `lib/` files that makes engine-side (and so subtracted out
     # here same as any other), and for why `lib/schema_map.rb` is swept INTO this scan but never
     # flagged BY it.
+    #
+    # STAGE 3b PHASE A TASK 3 NARROWS THE DETECTOR BACK, WITHOUT NARROWING THE RULE -- the bare
+    # engine model names ENGINE_MODELS used to enumerate are gone from `sync_references` because
+    # they are gone from Ruby: every one of the eight now lives under `Sync::`, so the only
+    # spelling left that reaches one already carries the bare "Sync" token this detector still
+    # checks. This test's own behaviour is unaffected by the simplification -- SYNC_SEAM_EXCEPTIONS
+    # still names only app/models/user.rb, because the ONE real violation Task 1's widening found
+    # (sharing/links.rb) was already fixed by Task 6 moving the file, well before Task 3 touched
+    # anything here, and user.rb's presence on the list comes from ENGINE_ASSOCIATIONS (`:on_ident`
+    # matches on `versions`, `chunks`, etc.), a completely separate mechanism Task 3 does not touch.
     maker_layer_files = (Dir.glob(ROOT.join("app", "**", "*.rb")) +
                           Dir.glob(ROOT.join("lib", "**", "*.rb")) +
                           Dir.glob(ROOT.join("lib", "tasks", "*.rake"))) - engine_side_files
@@ -549,7 +571,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # dedicated, narrow guard on this one file is cheaper than teaching the shared scan to carve an
   # exception out of a glob it already, correctly, includes.
   #
-  # Reuses sync_references (Sync + ENGINE_MODELS + ENGINE_ASSOCIATIONS) and separately checks for
+  # Reuses sync_references (Sync + ENGINE_ASSOCIATIONS) and separately checks for
   # a bare `Storage` const -- NOT folded into sync_references itself, because that method also
   # backs the maker-layer scan above, where Maker::Addons::LibraryOutput's OWN legitimate
   # `Storage::ChunkStore` reference (CLAUDE.md §14a/§14c; pinned by the chunk-internals test at

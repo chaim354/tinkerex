@@ -56,9 +56,9 @@ module V1
         store = Storage::ChunkStore.current
         svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
         store.write_blob(user.id, "svgh", svg)
-        ::ManifestChunk.create!(user_id: user.id, manifest_id: "m", chunk_hash: "svgh",
+        Sync::ManifestChunk.create!(user_id: user.id, manifest_id: "m", chunk_hash: "svgh",
                                 seq: 0, offset: 0, length: svg.bytesize)
-        ::Version.create!(user_id: user.id, version_id: "vr", node_id: "ready.svg", manifest_id: "m")
+        Sync::Version.create!(user_id: user.id, version_id: "vr", node_id: "ready.svg", manifest_id: "m")
         # A preview always belongs to a real, live node in production — FileLayer#read enforces
         # that (tombstoned = gone), so the fixture has to reflect reality.
         user.nodes.create!(node_id: "ready.svg", name: "ready.svg", kind: "file",

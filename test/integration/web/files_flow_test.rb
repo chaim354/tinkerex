@@ -384,7 +384,7 @@ module Web
     # to prove the response BODY, not just the exception class, survived the move unchanged.
     test "begin_upload answers 422 for a manifest with a malformed chunk hash" do
       sign_in
-      assert_no_difference -> { PendingCommit.count } do
+      assert_no_difference -> { Sync::PendingCommit.count } do
         post begin_upload_files_path,
              params: { name: "bad.stl", size: 5,
                        manifest: [ { hash: "not-a-real-hash", offset: 0, length: 5 } ] },
@@ -465,7 +465,7 @@ module Web
     test "begin_upload refuses a name that is not a storable leaf" do
       sign_in
       [ "../../escape.txt", "a/b.txt", "a\\b.txt", "..", ".", "nul\0byte", "x" * 300 ].each do |bad|
-        assert_no_difference -> { PendingCommit.count }, "#{bad.inspect} began a commit" do
+        assert_no_difference -> { Sync::PendingCommit.count }, "#{bad.inspect} began a commit" do
           post begin_upload_files_path,
                params: { name: bad, size: 1, manifest: [] }, as: :json
         end
@@ -476,7 +476,7 @@ module Web
     test "begin_upload refuses a name the library scan will never index" do
       sign_in
       %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
-        assert_no_difference -> { PendingCommit.count }, "#{bad.inspect} began a commit" do
+        assert_no_difference -> { Sync::PendingCommit.count }, "#{bad.inspect} began a commit" do
           post begin_upload_files_path,
                params: { name: bad, size: 1, manifest: [] }, as: :json
         end
