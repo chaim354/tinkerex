@@ -342,17 +342,42 @@ module FileLayer
     # not exist in this suite (see test_helper.rb). Listening on the real stream this adapter would
     # have broadcast to is also the stronger assertion: it proves nothing reached a DEVICE, not
     # merely that one particular method was not called.
-    test "finalize_upload itself broadcasts nothing -- callers own that decision" do
-      bytes = "silent".b
+    # BOTH DIRECTIONS, because the DEFAULT is the thing worth pinning. An earlier draft of
+    # finalize_upload broadcast nothing and left the nudge to each caller, on the grounds that its
+    # two callers want different things -- which is §14f's "N doors that must all agree" shape,
+    # where a third caller forgets, nothing goes red, and a device silently never hears about a
+    # commit. Now it broadcasts by DEFAULT and Maker::Addons::LibraryOutput opts out explicitly.
+    # A test of only the opt-out would pass just as well against the old, worse design.
+    test "finalize_upload broadcasts by default, so a caller cannot forget" do
+      begun, = begin_a_commit(name: "loud.stl", bytes: "loud".b)
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+      end
+    end
+
+    # `assert_no_broadcasts`, THE SAME IDIOM THE undelete NO-OP TEST ABOVE USES, NOT A STUBBED
+    # `LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
+    # not exist in this suite (see test_helper.rb). Listening on the real stream this adapter would
+    # have broadcast to is also the stronger assertion: it proves nothing reached a DEVICE, not
+    # merely that one particular method was not called.
+    test "finalize_upload(broadcast: false) is silent -- the addon-save opt-out" do
+      begun, = begin_a_commit(name: "silent.stl", bytes: "silent".b)
+      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+        adapter.finalize_upload(@user, commit_id: begun.commit_id, broadcast: false)
+      end
+    end
+
+    # One place both broadcast tests get a ready-to-finalize commit, so they cannot drift apart on
+    # the setup and accidentally test two different things.
+    def begin_a_commit(name:, bytes:)
       hash = Digest::SHA256.hexdigest(bytes)
       begun = adapter.begin_upload(
-        @user, device: @device, name: "silent.stl", parent_node_id: nil, size: bytes.bytesize,
+        @user, device: @device, name:, parent_node_id: nil, size: bytes.bytesize,
         manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
       )
       Storage::ChunkStore.current.put!(@user.id, hash, bytes)
-      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
-        adapter.finalize_upload(@user, commit_id: begun.commit_id)
-      end
+      [ begun, hash ]
     end
 
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---
@@ -1142,5 +1167,19 @@ module FileLayer
     # would have pinned the two backends that were already right while missing the one that was
     # not -- now that the fix has landed and the contract runs against chunk too, keeping a second
     # copy of the same three-line assertion is exactly the drift risk CLAUDE.md 15 warns about.
+    # THE ONE REASON finalize_upload CAN LEAVE Sync::Commit::KindConflict UNRESCUED is that
+    # Maker::Addons::LibraryOutput.existing_at is scoped `kind: "file"`, so a reused node_id is
+    # always a file. That scope is one word, reads like housekeeping, and nothing tested it: drop
+    # it and a DIRECTORY at the same (parent, name) gets reused, Sync::Commit refuses the kind
+    # change, and KindConflict -- a bare StandardError that Tools::AddonsController does not
+    # rescue -- reaches the user as an unhandled 500, where the device-sync side answers a clean
+    # 409. Asserted on the SCOPE's observable effect rather than by reading the method, so it
+    # cannot pass against a version that has quietly lost the filter.
+    test "a directory never satisfies the addon output's existing-file lookup" do
+      dir_id = adapter.mkdir(@user, parent_node_id: nil, name: "collide").node_id
+      assert_nil Maker::Addons::LibraryOutput.send(:existing_at, @user, nil, "collide"),
+                 "a dir at (parent, name) must not be offered up as the file to replace"
+      assert @user.nodes.present.exists?(node_id: dir_id), "and the dir itself is untouched"
+    end
   end
 end

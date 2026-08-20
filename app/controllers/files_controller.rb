@@ -517,15 +517,18 @@ class FilesController < ApplicationController
   # --- Upload: phase 2 (finalize) ---------------------------------------------
   # POST /files/finalize_upload (JSON) { commit_id }
   # Calls FileLayer#finalize_upload (Task 8; verify: true — confirm the bytes actually landed in
-  # storage before creating the immutable version + changelog entry). Broadcasting stays HERE,
-  # not inside the port method: FileLayer::Chunk#finalize_upload's own comment explains why this
-  # is the one write verb where the port does not self-broadcast (its other caller,
-  # Maker::Addons::LibraryOutput, has never broadcast an addon save and this task does not start).
+  # storage before creating the immutable version + changelog entry).
+  #
+  # THE BROADCAST IS THE PORT'S, not this action's, and this comment used to say the opposite.
+  # An earlier draft delegated the nudge to each caller because the two that exist happen to want
+  # different things; that reopened §14f's "N doors that must all agree" shape, where a third
+  # caller forgets and a device silently never hears about a commit. The port now broadcasts by
+  # default and Maker::Addons::LibraryOutput opts out explicitly, which is the same behaviour with
+  # a safe floor. Nothing to do here.
   def finalize_upload
     result = FileLayer.current.finalize_upload(
       current_user, commit_id: params.require(:commit_id), verify: true
     )
-    LibraryChannel.broadcast_change(current_user, result.seq)
     if result.info
       enqueue_preview(node_id: result.info.node_id, name: result.info.name)
       # THE SAME CONFLICT FACT AS THE OTHER TWO DOORS (ProjectFolderIntake#left_unfiled_by_conflict?)

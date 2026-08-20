@@ -79,6 +79,15 @@ module Maker
 
       # The live file already at (parent, name), or nil — what a replace rewrites. Shared by both
       # doors below so they cannot disagree about which file "the one at that name" is.
+      #
+      # `kind: "file"` IS LOAD-BEARING, NOT A TIDY FILTER, and it is the only reason
+      # FileLayer::Chunk#finalize_upload can leave Sync::Commit::KindConflict unrescued. Drop it
+      # and a DIRECTORY at that name gets reused as this save's node_id; Sync::Commit then refuses
+      # to change an existing node's kind and raises KindConflict -- a bare StandardError that
+      # Tools::AddonsController's rescue_from arms (UnsupportedOperation / FetchError / NotFound)
+      # do not name, so the user gets an unhandled 500 where the device-sync side answers a clean
+      # 409 (V1::BaseController rescues it by name). Pinned by a regression test rather than left
+      # to this comment, because the scope is one word and reads like housekeeping.
       def existing_at(user, parent_node_id, name)
         user.nodes.present.find_by(parent_node_id:, name:, kind: "file")
       end
@@ -137,7 +146,13 @@ module Maker
         # would be a wasted storage round-trip confirming something nothing between the two calls
         # could have altered. See FileLayer::Chunk#finalize_upload's own comment for the fuller
         # argument (it is the same one FilesController's `verify: true` is NOT this caller's case).
-        FileLayer.current.finalize_upload(user, commit_id: begun.commit_id, verify: false)
+        # broadcast: false PRESERVES WHAT ADDON SAVES HAVE ALWAYS DONE -- they have never nudged
+        # live devices, relying on the periodic sync instead. It is an explicit opt-out rather
+        # than the port's default so that a THIRD caller of finalize_upload is safe by default;
+        # see FileLayer::Chunk#finalize_upload's own comment. Not a decision this refactor makes
+        # -- just the pre-existing one, now stated out loud at the one door that wants it.
+        FileLayer.current.finalize_upload(user, commit_id: begun.commit_id, verify: false,
+                                          broadcast: false)
         begun.node_id
       end
 
