@@ -69,11 +69,34 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # separate document (its §9: "Stage 3 must widen both [guards] to the bare model names, or its
   # own boundary will be unenforced in exactly the way this document had to be written to
   # discover").
+  # AND WIDENED AGAIN, TO ASSOCIATION ACCESS -- because the constant check alone was WIDER, NOT
+  # STRONGER, and a review proved it rather than suspecting it. `user.versions.find_by(...)` is the
+  # more idiomatic Rails way to reach a related table and it emits NO :on_const token at all, so:
+  #
+  #   - the Task 1 guard would NOT have caught `Node#current_version` -- the exact
+  #     host-model-queries-engine-table violation Task 2 exists to fix, in a file it was scanning
+  #   - `app/services/sharing/links.rb:41` (`user.versions.find_by!`) is a LIVE hit it cannot see,
+  #     one line above the `ManifestChunk` const at :60 that is the only reason that file is listed
+  #
+  # That matters beyond tidiness: Stage 3a Tasks 5 and 6 both lean on this guard reporting clean as
+  # their proof the boundary holds. A guard that misses the idiomatic spelling would have let them
+  # report success over an unenforced boundary -- §15's dominant recorded failure shape, arrived at
+  # by building on a tool nobody had tried to evade.
+  #
+  # ENGINE_ASSOCIATIONS are the `has_many` names User declares for the seven moving models. Matched
+  # as :on_ident (a method call) rather than :on_const. `devices` is absent for the same reason
+  # `Device` is absent from ENGINE_MODELS -- it stays with the host.
+  ENGINE_ASSOCIATIONS = %w[versions chunks manifest_chunks pending_commits changelog_entries
+                           conflicts file_locks].freeze
+
   def sync_references(file)
     rel = Pathname.new(file).relative_path_from(ROOT)
     Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
-      next unless type == :on_const
-      "#{rel}:#{pos.first}" if str == "Sync" || ENGINE_MODELS.include?(str)
+      hit = case type
+      when :on_const then str == "Sync" || ENGINE_MODELS.include?(str)
+      when :on_ident then ENGINE_ASSOCIATIONS.include?(str)
+      end
+      "#{rel}:#{pos.first}" if hit
     end
   end
 
@@ -196,8 +219,21 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # green today, while leaving a dated, findable trail for Task 6 to remove.
   #
   # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how.
+  # user.rb IS HERE FOR A DIFFERENT REASON FROM links.rb, and conflating them would lose the point.
+  # links.rb is maker-layer code REACHING INTO the engine, and it goes when Task 6 moves that file.
+  # user.rb is the DECLARATION SITE: User carries `has_many :versions`, `:chunks`, `:manifest_chunks`,
+  # `:pending_commits`, `:changelog_entries`, `:conflicts`, `:file_locks` -- seven associations to
+  # models that move, on a host model that does not. That is the straddle the boundary design names
+  # (`users` carries engine state, `head_seq` being the other half), and it is 3b's job, not 3a's:
+  # relocating the declarations now means a change this repo would immediately have to redo when the
+  # engine owns them.
+  #
+  # It appears here only because the guard learned to see association access. Before that widening it
+  # was invisible -- which is precisely the argument for the widening: the single largest concentration
+  # of host->engine coupling in the app was sitting unflagged in the guard's own scan set.
   SYNC_SEAM_EXCEPTIONS = %w[
     app/services/sharing/links.rb
+    app/models/user.rb
   ].freeze
 
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do

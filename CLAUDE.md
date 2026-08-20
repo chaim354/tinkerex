@@ -1348,7 +1348,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   permissively: **fastcdc-rs (MIT)**, **desync (BSD-3)**, **restic/chunker (BSD-2)**.
 - **DB: Postgres managed, SQLite self-host, one adapter-agnostic codebase.** No PG-only SQL in
   the hot path. **`next_seq!` must be the FIRST statement** in `Sync::Commit#finalize` /
-  `Mutation#apply` / `Restore` / `Conflicts`, or concurrent commits deadlock on a
+  `Mutation#apply` / `Restore` / `Conflicts` / **`SubtreeDelete`** — five callers, not the four this
+  line listed until 2026-08-20, and the missing one is the cascade, which takes a seq PER NODE
+  (`subtree_delete.rb:20,23`) and so has the most to lose from a lock upgrade. Otherwise concurrent
+  commits deadlock on a
   `FOR KEY SHARE`→`FOR UPDATE` lock upgrade. A **statement-mode pooler breaks it** — the boot
   guard refuses to start behind one.
 - **EVERY REFCOUNT WRITE GOES THROUGH `Sync::Gc.touch_refcounts!`, never a bare `update_all`** —
