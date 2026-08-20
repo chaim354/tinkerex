@@ -68,8 +68,9 @@ reading the last entry.
 
 Phase A of the four-stage arc: namespace the engine `Sync::` in place, in this repo, on the
 existing three-leg CI, so Phase B's extraction is packaging rather than design — the same lesson
-Stage 1 and Stage 3a's own headers give. Five tasks, five commits (four before this entry; this
-one is Task 5, the last of the phase).
+Stage 1 and Stage 3a's own headers give. Five tasks landed as five commits, believed at the time
+to finish the namespacing; a close-out review then found five more bare top-level names the last
+two tasks had missed, landing as a sixth commit (see "Close-out" below).
 
 **Suite: 2552 → 2555 runs, 9596 → 9608 assertions, 0F/0E/3 skips, identical across all three
 `LIBRARY_BACKEND` legs throughout.** `bin/ci` green at 7 gates on every commit.
@@ -96,16 +97,19 @@ one is Task 5, the last of the phase).
   of Phase B's `isolate_namespace`, so a gem shipped later squats one generic top-level name
   instead of eight. 73 bare references requalified (25 `app/`, 48 `test/`, 0 `lib/`), matching
   the plan's ~25/~48 prediction exactly. `Chunk` was the tokenization trap the plan warned about:
-  15 raw hits, and reading each in context found 10 were `FileLayer::Chunk` (a different class
-  entirely, CLAUDE.md §14a's sanctioned adapter) and only 4 the real model. `ENGINE_MODELS` was
+  15 raw hits, and reading each in context found 1 was the model's own definition
+  (`app/models/chunk.rb`, moved+renamed), 10 were `FileLayer::Chunk` (a different class entirely,
+  CLAUDE.md §14a's sanctioned adapter), and 4 the real model used elsewhere. `ENGINE_MODELS` was
   **deleted outright**, not left empty — the bare spellings it existed to catch no longer resolve
   to anything, so the list itself had become the thing CLAUDE.md warns against keeping around
   after its last entry stops doing anything.
-- **Task 4 moved `Storage` and `LibraryChannel` under `Sync::`** — the last two top-level names
-  the engine squatted. Unified under the `Sync` token, this made four already-sanctioned
-  host-touches-engine call sites visible to the "maker layer reaches the sync engine" guard for
-  the *first* time, because they never shared a token with `Sync` before renaming
-  (`V1::StashRequestBaseUrl`, `DevBlobsController`, `Maker::Addons::LibraryOutput`,
+- **Task 4 moved `Storage` and `LibraryChannel` under `Sync::`** — two more top-level names the
+  engine squatted, believed at the time to be the *last* two. That belief was wrong: a close-out
+  review later found five more (`RetentionJob`, `ChunkReaperJob`, `PendingCommitReaperJob`,
+  `Sharing`, `PostgresPoolerCheck` — see "Close-out" below). Unified under the `Sync` token, Task 4
+  made four already-sanctioned host-touches-engine call sites visible to the "maker layer reaches
+  the sync engine" guard for the *first* time, because they never shared a token with `Sync` before
+  renaming (`V1::StashRequestBaseUrl`, `DevBlobsController`, `Maker::Addons::LibraryOutput`,
   `Maker::ProjectIntake`'s `Sync::LibraryChannel.batch` calls) — all four added to
   `SYNC_SEAM_EXCEPTIONS` with the reasoning for each. `app/channels/**` narrowed to
   `app/channels/sync/**`, incidentally fixing a latent misclassification of
@@ -189,6 +193,86 @@ reproduced identically on a clean tree with none of this task's changes applied 
 invocations works correctly and reliably every time. Root cause not chased further (out of scope
 here); a schema-cache staleness carried across chained `db:` tasks within one process, which a
 fresh process per task sidesteps, is the likely shape.
+
+### Close-out — a review found five more bare top-level names, and Task 4's "last two" was wrong
+
+Both Tasks 3 and 4 above believed the engine's top-level squatting was closed. A close-out review
+proved it wasn't: `RetentionJob`, `ChunkReaperJob`, `PendingCommitReaperJob`,
+`Sharing`(`::Links`), and `PostgresPoolerCheck` were all still bare, top-level, un-namespaced —
+and all five were unambiguously engine-side by `SYNC_SIDE_GLOBS`'s own inventory the whole time
+(the three job files individually since long before Stage 3, `lib/postgres_pooler_check.rb`
+individually since Task 2, `app/services/sharing/**` since Stage 3a Task 6). Being ON that list
+was never what namespaced a file — the list says "treat this as engine code", not "this is named
+`Sync::`something" — so all five kept squatting bare names invisible to `sync_references` (it
+only fires on a real `Sync` token) the whole time Tasks 3/4 believed the job was finished. Fixed
+this task's own two false claims above in place rather than leaving them to mislead the next
+reader: Task 3's `Chunk` bucket count (1 own-definition + 10 `FileLayer::Chunk` + 4 real-model —
+the 1 had been silently dropped, so 10+4 read as 14 against a stated 15) and Task 4's "last two"
+(now "two more, not the last — five more followed").
+
+**Moved, `git mv`, same pattern as Tasks 3/4:** compact form + explicit `::ApplicationJob` for the
+three jobs (`app/jobs/{retention,chunk_reaper,pending_commit_reaper}_job.rb` →
+`app/jobs/sync/*_job.rb`, matching `Sync::Version < ::ApplicationRecord`); compact form for
+`Sharing::Links` → `Sync::Sharing::Links` (`app/services/sync/sharing/links.rb`, `module
+Sync::Sharing` wrapping the untouched, already-nested `module Links` — every internal
+cross-reference was already fully `Sync::`-qualified, so there was no lexical-nesting trap to
+resolve either way, and the compact outer wrapper is also what kept the diff a clean rename: the
+first attempt re-indented the whole file into a third nesting level and git's similarity heuristic
+stopped calling it a rename at all, silently breaking "`git mv` so history follows" without
+raising anything — caught by checking `git status`, not assumed); compact form for
+`PostgresPoolerCheck` → `Sync::PostgresPoolerCheck` (`lib/sync/postgres_pooler_check.rb` — **this
+is the first file this arc has namespaced under `lib/`**, see the boot-order finding below).
+`SYNC_SIDE_GLOBS` collapsed three individual job entries into `app/jobs/sync/**/*.rb` and
+`lib/postgres_pooler_check.rb` into `lib/sync/**/*.rb` (the latter FLIPS Task 2's own stated
+reason for naming it individually — "no dedicated `lib/` subdirectory to move into" was true then,
+false now); `app/services/sharing/**/*.rb` was removed outright, superseded for free by the
+existing `app/services/sync/**/*.rb` glob now that `sharing/` nests under `sync/`.
+
+**Every real reference found with Ripper** (`{app,test,lib,config,db}/**/*.rb`, plus a manual
+`.rake`/`.yml`/`.erb` sweep — none had hits beyond `config/recurring.yml`'s three `class:` keys).
+Per-constant real-code hit counts (own definition + every caller, `test/` included):
+`RetentionJob` 8, `ChunkReaperJob` 3, `PendingCommitReaperJob` 1, `Sharing` 16, `PostgresPoolerCheck`
+13 — 41 total. `Sharing` being common English meant reading every hit rather than replacing blind;
+two test classes needed opposite judgment calls as a result, both recorded in
+`test/architecture_invariants_test.rb`'s own `SYNC_SIDE_GLOBS` comment: `Sharing::LinksTest` was
+already compact-namespaced, so it became `Sync::Sharing::LinksTest`; `PostgresPoolerCheckTest`
+was flat, so it stayed flat, both for the reason `a50f0bf`'s `ShareLinkTest` substring near-miss
+already established.
+
+**The boot-order finding.** `config/initializers/postgres_pooler_check.rb` had ALWAYS `require`d
+`lib/postgres_pooler_check.rb` eagerly, at the top of the file, outside `after_initialize` — and
+namespacing the module broke that, live, not hypothetically: `bin/rails zeitwerk:check` raised
+`NameError: uninitialized constant Sync` from inside `module Sync::PostgresPoolerCheck`. Probed
+directly rather than guessed at: at the exact point that initializer file loads,
+`Object.autoload?(:Sync)` is `nil` and `Object.const_defined?(:Sync)` is `false` — on this Rails
+version, `config/initializers/*.rb` load before Zeitwerk's main-loader registration is final, so
+an eager `require` for a file whose compact-form module needs `Sync` pre-resolved has nothing to
+resolve against. (This also settles, empirically, a premise this task's own instructions carried —
+that `lib/` "is not autoloaded" here. It is: `config.autoload_lib(ignore: %w[assets tasks])`,
+`config/application.rb`, registers it with Zeitwerk same as `app/`, confirmed live via
+`bin/rails runner` resolving `PostgresPoolerCheck` by bare reference with no require at all. `lib`
+is SEPARATELY on `$LOAD_PATH` too, from Rails::Engine's own `paths.add "lib", load_path: true` —
+unrelated to `autoload_lib` and the reason the explicit `require` string ever worked before this.)
+The fix: delete the eager top-level `require`. Every actual use of `Sync::PostgresPoolerCheck` in
+that file was already inside `after_initialize`, which runs once `Rails.application.initialize!`
+has finished the whole initializer sequence — by then `Sync` autoloads fine, so the first
+reference there resolves it lazily, exactly like every other `Sync::` reference in the app already
+does (none use an explicit `require`). Boot-refusal-on-bad-pool is unweakened: `after_initialize`
+still runs before Puma binds a port. Full reasoning is in the initializer's own comment now.
+
+**Mutation checks, both required, both confirmed RED then reverted by file copy:**
+1. A `Maker::ProjectIntake` reference injected into `app/jobs/sync/retention_job.rb`'s `#perform` →
+   `ArchitectureInvariantsTest#test_the_sync_engine_never_reaches_into_the_maker_layer's_features`
+   failed: `Expected ["app/jobs/sync/retention_job.rb"] to be empty.`
+2. `config/recurring.yml`'s `class: Sync::RetentionJob` mistyped to `Sync::RetentionJobb` →
+   `RecurringScheduleTest#test_every_scheduled_class_resolves_to_a_real_ActiveJob` failed:
+   `` version_retention: `class: Sync::RetentionJobb` does not resolve to a constant ``. The
+   guard is exactly as strong as claimed.
+
+**Verified:** `bin/rails zeitwerk:check` clean. `bin/ci`: 7 gates green, three legs identical
+(2555 runs / 9608 assertions / 0 failures / 0 errors / 3 skips, matching baseline exactly — no
+test added or removed, only renamed), system 179 runs / 1504 assertions. `bin/rubocop` clean on
+every touched file.
 
 ### Still open, deliberately
 

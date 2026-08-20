@@ -18,7 +18,7 @@ production:
   # keep_all → no-op on self-host; set RETENTION_POLICY=tiered for managed thinning), then
   # sweeps refcount-0 chunks from the DB + object storage. Runs nightly, off-peak.
   version_retention:
-    class: RetentionJob
+    class: Sync::RetentionJob
     queue: background
     schedule: every day at 4am
 
@@ -29,7 +29,7 @@ production:
   # the reaper (24h default) protects in-flight uploads, so weekly is plenty timely for a
   # cost leak. Off-peak, on a different day/hour from version_retention.
   orphan_chunk_reaper:
-    class: ChunkReaperJob
+    class: Sync::ChunkReaperJob
     queue: background
     schedule: every sunday at 5am
 
@@ -42,7 +42,7 @@ production:
   # targeted deletes, it runs HOURLY so the common abandoned-upload leak is reclaimed promptly
   # instead of waiting up to a week for the list-based backstop.
   pending_commit_reaper:
-    class: PendingCommitReaperJob
+    class: Sync::PendingCommitReaperJob
     queue: background
     schedule: every hour at minute 42
 

@@ -104,7 +104,8 @@ seqs and changelog corruption. Use:
 - **RDS Proxy / Supabase / Neon pooler**: transaction mode.
 
 This is **enforced at boot**: `config/initializers/postgres_pooler_check.rb` (logic in
-`lib/postgres_pooler_check.rb`) probes the connection — opens a transaction, checks two
+`lib/sync/postgres_pooler_check.rb`, `Sync::PostgresPoolerCheck` as of Stage 3b Phase A's
+close-out) probes the connection — opens a transaction, checks two
 statements share a backend pid and a session advisory lock stays held — and **refuses to boot**
 if it detects statement-mode pooling, with a fix hint. Best-effort; opt out with
 `DB_SKIP_POOLER_CHECK=1` once you've verified the mode yourself. No-op on SQLite.

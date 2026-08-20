@@ -363,18 +363,67 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # empirically, not merely argued: re-running with the narrower glob adds exactly the two
   # `application_cable/*.rb` files to `maker_layer_files` and produces zero new hits from either --
   # neither references `Sync::` or a bare engine association, so the narrowing is free.
+  #
+  # STAGE 3b PHASE A CLOSE-OUT. A close-out review found FIVE MORE bare top-level engine constants
+  # Tasks 3 and 4 missed -- `RetentionJob`, `ChunkReaperJob`, `PendingCommitReaperJob`,
+  # `Sharing`(::Links), and `PostgresPoolerCheck` -- which is why Task 4's own paragraph above
+  # ("the last two top-level names the engine squatted") and its STATUS.md echo were both false.
+  # All five are unambiguously engine-side by this guard's own inventory before this task touched
+  # anything: the three job files (individually, since `cef39db` -- long before Stage 3a/3b, back
+  # when this guard was first built) and `lib/postgres_pooler_check.rb` (individually, Task 2) were
+  # ALREADY named in SYNC_SIDE_GLOBS below, and `app/services/sharing/**` was already here too
+  # (Stage 3a Task 6). Being ON this list was never what namespaced them -- this list says "treat
+  # this file as engine code no matter what it's named", not "this file is named `Sync::`something"
+  # -- so all five went on squatting bare top-level names the whole time Tasks 3/4 believed the job
+  # was finished, invisible to `sync_references` by construction (it only fires on a real `Sync`
+  # token, and none of the five carried one). CLAUDE.md §14j is the invariant.
+  #
+  # Three glob-collapsing changes, each the identical move Task 3 made for the eight models and
+  # Task 4 made for `Storage`:
+  #
+  #   - The three job files move into their own `app/jobs/sync/` subdirectory (mirroring
+  #     `app/jobs/library/` and `app/jobs/maker/`, the host's own per-namespace job directories),
+  #     so the three individual `app/jobs/*_job.rb` entries below collapse into one
+  #     `app/jobs/sync/**/*.rb` glob -- the directory holds only these three files and is never
+  #     going to hold a fourth thing that isn't engine-side, the same argument `app/models/sync/`
+  #     and `app/channels/sync/` already make.
+  #   - `lib/postgres_pooler_check.rb` moves into a new `lib/sync/` subdirectory, becoming
+  #     `lib/sync/**/*.rb`. This FLIPS the STAGE 3b PHASE A TASK 2 reasoning above rather than
+  #     contradicting it: that paragraph named individually rather than globbed as the answer
+  #     specifically because "these two have no dedicated `lib/` subdirectory of their own to move
+  #     into" -- true then, false now that one of the two has exactly that subdirectory.
+  #     `lib/tasks/chunks.rake` still has no such subdirectory (it is one file among many under
+  #     `lib/tasks/`, most of which is NOT engine-side -- Task 2's own paragraph), so it alone stays
+  #     individually named.
+  #   - `app/services/sharing/**/*.rb` is REMOVED rather than repointed -- `Sharing::Links` becomes
+  #     `Sync::Sharing::Links` at `app/services/sync/sharing/links.rb`, so it is now covered for
+  #     free by the `app/services/sync/**/*.rb` glob two lines up, the identical shape Task 4 used
+  #     to retire `app/services/storage/**` when `Storage` moved under `app/services/sync/storage/`.
+  #     Checked, not assumed: `Dir.glob("app/services/sharing/**/*.rb")` returns `[]` post-move.
+  #
+  # Every real reference to the five renamed constants was found with Ripper (not grep), scoped to
+  # `{app,test,lib,config,db}/**/*.rb` plus a manual sweep of `.rake`/`.yml`/`.erb` files (`Sharing`
+  # is common English, so every hit was read in context rather than replaced blind -- the same
+  # substring trap the a50f0bf commit message records for `test/models/share_link_test.rb`'s test
+  # class briefly picking up a `Sync::` prefix it shouldn't have, from a plain string replace on
+  # "ShareLink" catching the "ShareLink" inside "ShareLinkTest"). Two test classes here needed the
+  # opposite judgment calls, not the same one: `test/services/sharing/links_test.rb`'s
+  # `Sharing::LinksTest` was ALREADY compact-namespaced (unlike `ShareLinkTest`'s flat name), so
+  # extending it to `Sync::Sharing::LinksTest` is the parallel, correct move rather than that same
+  # substring accident; `test/lib/postgres_pooler_check_test.rb`'s flat `PostgresPoolerCheckTest`
+  # stayed flat, for the identical reason `ShareLinkTest` did.
+  # `config/recurring.yml`'s three `class:` values (`RetentionJob`, `ChunkReaperJob`,
+  # `PendingCommitReaperJob`) were requalified too -- `test/recurring_schedule_test.rb` resolves
+  # them with `safe_constantize`, so a stale bare name there would have failed loudly, not silently.
   SYNC_SIDE_GLOBS = %w[
     app/services/sync/**/*.rb
     app/services/sync.rb
-    app/services/sharing/**/*.rb
     app/controllers/v1/**/*.rb
-    app/jobs/chunk_reaper_job.rb
-    app/jobs/pending_commit_reaper_job.rb
-    app/jobs/retention_job.rb
+    app/jobs/sync/**/*.rb
     app/channels/sync/**/*.rb
     app/services/file_layer/chunk.rb
     app/models/sync/**/*.rb
-    lib/postgres_pooler_check.rb
+    lib/sync/**/*.rb
     lib/tasks/chunks.rake
   ].freeze
 
