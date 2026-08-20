@@ -290,16 +290,40 @@ module Maker
       assert_nothing_raised { Maker::GeneratePreviewJob.perform_now(preview.id, filename: "art.lbrn2") }
 
       preview.reload
-      if Maker::Previews::Lbrn2.available?
+      if Maker::Previews::Svg.available?
         assert_equal "ready", preview.status
         assert_equal "image/png", preview.asset.content_type
       else
-        assert_equal "unsupported", preview.status
+        # No embedded raster in this fixture AND no rasterizer -> Lbrn2::NoThumbnail, a plain
+        # StandardError, which the job records as `failed`. Not `unsupported`: the renderer IS
+        # available here (see Lbrn2#available?), this particular file just has nothing to draw
+        # from. The same answer Mage gives for the same condition.
+        assert_equal "failed", preview.status
       end
     end
 
+    # THE GATE THIS ARC FIXED, DRIVEN THROUGH THE JOB RATHER THAN THE RENDERER. Asking
+    # `Lbrn2.available?` directly proves nothing about what a user sees -- the job is what
+    # consults the gate and what writes the terminal status, and the bug was entirely in that
+    # consultation. Before the fix this row came back "unsupported" with its PNG sitting
+    # unread inside the file.
+    test "a LightBurn file carrying an embedded raster renders even with no rasterizer" do
+      png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+      xml = %(<LightBurnProject><Thumbnail Source="#{png_b64}"/><Shape Type="Rect" W="1" H="1"/></LightBurnProject>)
+      stage_version(node_id: "embedded.lbrn2", version_id: "vemb", bytes: xml)
+      preview = @user.maker_previews.create!(node_id: "embedded.lbrn2", version_id: "vemb", kind: "thumbnail")
+
+      without_svg_rasterizer do
+        Maker::GeneratePreviewJob.perform_now(preview.id, filename: "embedded.lbrn2")
+      end
+
+      preview.reload
+      assert_equal "ready", preview.status
+      assert_equal "image/png", preview.asset.content_type
+    end
+
     test "persists parsed metadata for a LightBurn file" do
-      skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+      skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
       lbrn2 = File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
       stage_version(node_id: "design.lbrn2", version_id: "vmeta", bytes: lbrn2)
       preview = @user.maker_previews.create!(node_id: "design.lbrn2", version_id: "vmeta", kind: "thumbnail")

@@ -1626,14 +1626,27 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   line**: each format is `PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION`, so a
   shared change bumps the shared term and all five names move together. The outcome above is
   unchanged — what moved is that the arithmetic now does it, instead of three remembered edits.
-- **`available?` IS ABOUT THE THUMBNAIL, `available_for?(kind)` IS WHAT THE JOB ASKS.** The 2D
-  vector renderers gate `available?` on **resvg**, because their thumbnail is a rasterized SVG; the
-  measure payload is Nokogiri and arithmetic and needs nothing external. One gate marked a
-  perfectly measurable `.svg`/`.dxf`/`.lbrn2` **`unsupported`** on a box without the binary, while
-  `.mage` (unconditionally `available?`) measured fine — the feature silently format-dependent on
-  exactly the boxes least likely to have it. A test asking `available_for?("geometry")` on a box
-  that HAS resvg passes however it is implemented; **stub the rasterizer absent or it proves
-  nothing**.
+- **`available?` ASKS WHETHER THIS BOX HAS *ANY* PATH TO A THUMBNAIL — NOT WHETHER IT HAS THE
+  RASTERIZER.** `Svg` and `Dxf` gate on **resvg**, because a rasterized SVG is their only path.
+  **`Lbrn2` and `Mage` are unconditionally `true`**, because both formats carry the authoring
+  app's own render in `<Thumbnail Source="base64png">` and extracting it is pure Ruby. That split
+  is the rule; it is not two conventions. Getting it wrong is silent and terminal: `Lbrn2` gated
+  on resvg until 2026-08-19 and marked a file **whose PNG was sitting right there**
+  `unsupported` on any box without the binary, while the byte-identical `.mage` rendered —
+  §14a's one-condition-two-answers, split by format. **A renderer with an embedded-raster path
+  therefore also owns the toolchain check in its FALLBACK** (`#outline_thumbnail`, raising
+  `NoThumbnail` — the same class `Mage` and `ThreeMf` already use), or the check has nowhere to
+  live and a resvg-less box gets an ENOENT from inside the rasterizer instead of a named state.
+- **`available_for?(kind)` EXISTS ONLY WHERE IT CAN ANSWER DIFFERENTLY FROM `available?`** — i.e.
+  on `Svg`/`Dxf`, whose thumbnail needs resvg while the measure payload (Nokogiri + arithmetic)
+  does not. `Lbrn2` and `Mage` **do not define it**: with `available?` already true it could only
+  repeat them, and `GeneratePreviewJob#available_for?` falls through to `available?` for a
+  renderer that omits it. A test asking `available_for?("geometry")` on a box that HAS resvg
+  passes however it is implemented; **stub the rasterizer absent or it proves nothing** — and the
+  same trap has a second mouth: `RendererContractTest` does `next unless renderer.available?`, so
+  flipping a renderer to unconditionally-true **stops it skipping** and its fixture must then be
+  one that renders with no toolchain (hence `embedded-thumb.lbrn2` beside `sample.mage`). Both
+  halves are invisible on a box that has the binary.
 - **A MillMage `<Shape>` CARRIES `OpIndex`, A LIGHTBURN ONE `CutIndex`** — `Lbrn2.layer_index`
   reads either, and the `||` is unambiguous because no file writes both. The thumbnail cannot see
   the difference (a MillMage file has no `<CutSetting>`, so a nil index and a real one both fall

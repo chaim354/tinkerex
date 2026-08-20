@@ -5,12 +5,54 @@ module Maker
     class Lbrn2Test < ActiveSupport::TestCase
       setup { @lbrn2 = File.binread(Rails.root.join("test/fixtures/files/sample.lbrn2")) }
 
-      test "is available whenever the SVG path is (pure-Ruby XML→SVG, no native dep)" do
-        assert_equal Maker::Previews::Svg.available?, Maker::Previews::Lbrn2.available?
+      # AVAILABLE UNCONDITIONALLY, THE SAME ANSWER MAGE GIVES, AND FOR THE SAME REASON: a
+      # LightBurn file carries its own full-colour render in <Thumbnail Source="base64png">, and
+      # pulling that out is pure Ruby. Gating the whole renderer on resvg marked a file whose PNG
+      # was sitting right there `unsupported` -- a terminal status -- while the byte-identical
+      # situation in a .mage rendered fine. `available?` asks whether THIS BOX has any path to a
+      # thumbnail, and for these two formats it always does.
+      #
+      # Svg and Dxf keep `available? = SvgRasterizer.available?` and that is not an inconsistency:
+      # they have no embedded raster to fall back ON, so for them the rasterizer is the only path.
+      test "is available with no rasterizer on the box, because the embedded raster needs none" do
+        without_svg_rasterizer do
+          assert_not Maker::Previews::Svg.available?,
+                     "precondition: the rasterizer must read absent, or this proves nothing"
+          assert Maker::Previews::Lbrn2.available?
+        end
+      end
+
+      test "answers availability identically to Mage, with or without a rasterizer" do
+        assert_equal Maker::Previews::Mage.available?, Maker::Previews::Lbrn2.available?
+        without_svg_rasterizer do
+          assert_equal Maker::Previews::Mage.available?, Maker::Previews::Lbrn2.available?
+        end
+      end
+
+      # The fallback IS the SVG path, so where resvg is absent this is terminal -- the same
+      # NoThumbnail Mage and ThreeMf already raise for the same condition, rather than a fourth
+      # spelling the job would have to classify.
+      test "raises NoThumbnail with neither an embedded raster nor a rasterizer" do
+        bare = %(<LightBurnProject><Shape Type="Rect" W="1" H="1"/></LightBurnProject>)
+        without_svg_rasterizer do
+          assert_raises(Maker::Previews::Lbrn2::NoThumbnail) do
+            Maker::Previews::Lbrn2.render(bare, size: 512)
+          end
+        end
+      end
+
+      test "renders the embedded raster with no rasterizer on the box" do
+        png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        xml = %(<LightBurnProject><Thumbnail Source="#{png_b64}"/><Shape Type="Rect" W="1" H="1"/></LightBurnProject>)
+        without_svg_rasterizer do
+          result = Maker::Previews::Lbrn2.render(xml, size: 512)
+          assert_equal "image/png", result[:content_type]
+          assert_equal 1, result[:width], "the embedded PNG verbatim, not a re-render"
+        end
       end
 
       test "render falls back to the geometry parser (PNG) when there is no embedded thumbnail" do
-        skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
 
         # The fixture has no <Thumbnail>, so this exercises the geometry -> SVG -> PNG fallback.
         result = Maker::Previews::Lbrn2.render(@lbrn2, size: 256)
@@ -66,7 +108,7 @@ module Maker
       end
 
       test "render attaches parsed metadata alongside the image (geometry path)" do
-        skip "resvg not installed on this box" unless Maker::Previews::Lbrn2.available?
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
         result = Maker::Previews::Lbrn2.render(@lbrn2, size: 256)
         assert_equal "image/png", result[:content_type]
         assert_kind_of Hash, result[:metadata]

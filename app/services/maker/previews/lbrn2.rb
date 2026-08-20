@@ -32,6 +32,11 @@ module Maker
 
       ParseError = Class.new(StandardError)
 
+      # Neither an embedded raster NOR a rasterizer to draw the outlines with. The same class
+      # Mage and ThreeMf already raise for the same condition, so the job classifies one shape
+      # rather than three.
+      NoThumbnail = Class.new(StandardError)
+
       EXTENSIONS = %w[lbrn2 lbrn].freeze
 
       DEFAULT_STROKE = "#000000".freeze
@@ -120,12 +125,30 @@ module Maker
       # Divisible by 4, so an unrotated ellipse's axis extents are hit exactly.
       ELLIPSE_SAMPLES = 32
 
-      def available? = Maker::Previews::Svg.available?
-
-      # THE MEASURE PAYLOAD NEEDS NO RASTERIZER — it is this file's parser plus arithmetic, and
-      # the embedded-thumbnail path it would otherwise fall back to is irrelevant to it. See
-      # `GeneratePreviewJob#available_for?`.
-      def available_for?(kind) = kind == "geometry" || available?
+      # UNCONDITIONALLY TRUE, THE SAME ANSWER MAGE GIVES, AND THE SAME ARGUMENT: a LightBurn file
+      # carries its own full-colour render in <Thumbnail Source="base64png">, and pulling that out
+      # is pure Ruby. This used to read `Svg.available?`, which marked a file whose PNG was sitting
+      # right there `unsupported` — a TERMINAL status — on any box without resvg, while the
+      # byte-identical situation in a .mage rendered fine. One condition, two answers, split by
+      # format: this repo's recorded failure shape.
+      #
+      # Svg and Dxf keep the toolchain gate and that is NOT an inconsistency left behind. The
+      # question `available?` asks is "does this box have ANY path to a thumbnail for this
+      # format" — those two have no embedded raster to fall back on, so for them the rasterizer
+      # is the only path and its absence really is terminal. Lbrn2 and Mage always have one.
+      #
+      # NO `available_for?` BESIDE IT, matching Mage: with `available?` unconditionally true the
+      # kind-aware override is a tautology, and a method that cannot answer differently from the
+      # one it wraps is a second place to keep in step for no gain. `GeneratePreviewJob
+      # #available_for?` falls through to `available?` for a renderer that does not define it.
+      #
+      # DELIBERATELY NO `THUMBNAIL_REVISION` BUMP. The rendered bytes are identical on every box
+      # that has resvg — which is every shipped deployment, since the Dockerfile copies it in — so
+      # a bump would re-render ~1400 LightBurn thumbnails on the live share library to fix nothing
+      # there. It only changes the outcome where resvg is absent, and `Enqueue` re-enqueues on a
+      # revision change even from `unsupported`, so a dev box that accumulated wrong rows is one
+      # bump (or one row delete) away from recovering whenever that is actually wanted.
+      def available? = true
 
       # Which build of this renderer produced a stored artifact — see
       # `Maker::Previews::Enqueue.revision_for`, which compares it against the row's
@@ -163,8 +186,23 @@ module Maker
 
         meta = Maker::Previews::LbrnMetadata.parse(lbrn2_bytes)
         img = Maker::Previews::EmbeddedThumbnail.extract(lbrn2_bytes) ||
-              Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
+              outline_thumbnail(lbrn2_bytes, size:)
         img.merge(metadata: meta)
+      end
+
+      # The fallback for a file with no embedded raster (older LightBurn versions, or a
+      # hand-authored file). IT MUST CHECK FOR ITSELF, because `available?` no longer does it on
+      # this renderer's behalf — that check moving out of the gate is exactly what lets a file
+      # WITH a raster render here, and it has to land somewhere or a box without resvg gets an
+      # ENOENT from deep inside the rasterizer instead of a named condition.
+      #
+      # NAMED FOR WHAT IT PRODUCES (a raster of the outlines), not for what it reads — `render`
+      # already has a `kind: "geometry"` arm returning a JSON coordinate payload, and two things
+      # called "geometry" in one file is how the wrong one gets called. Mage's twin says the same.
+      def outline_thumbnail(lbrn2_bytes, size:)
+        raise NoThumbnail, "LightBurn file has no embedded thumbnail" unless Maker::Previews::Svg.available?
+
+        Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
       end
 
       # Parse a LightBurn document.

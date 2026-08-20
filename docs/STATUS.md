@@ -201,12 +201,19 @@ The commit messages carry the specifics; representative ones:
 ### Verification
 
 `bin/rails test` (chunk) and `LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test`:
-**2517 runs / 9589 assertions / 0 failures / 0 errors / 3 pre-existing skips — identical on both
-legs**, re-run and confirmed at the close of this documentation task. Growth across the arc's own
-commits, each count as measured at the time (starting from Task 5, the first commit whose message
-recorded one): **2482/9486** after `delete` (Task 5) → **2487/9501** after `undelete` (Task 6) →
-**2495/9515** after the seam guard (Task 7) → **2515/9585** after the byte path (Task 8) →
-**2517/9589 final**, after the three review-driven fixes in `f9a5221`. `bin/ci`'s own gate list
+**2528 runs / 9619 assertions / 0 failures / 0 errors / 3 pre-existing skips — identical on both
+legs**, measured after merging `origin/main` into the branch at close-out. Growth across the arc's
+own commits, each count as measured at the time (starting from Task 5, the first commit whose
+message recorded one): **2482/9486** after `delete` (Task 5) → **2487/9501** after `undelete`
+(Task 6) → **2495/9515** after the seam guard (Task 7) → **2515/9585** after the byte path
+(Task 8) → **2517/9589** after the three review-driven fixes in `f9a5221` → **2518/9594** after
+the close-out review's New Folder 500 fix (`9ba935b`).
+
+**THE ARC'S OWN DELTA IS 2459 → 2518**, +59 runs. The 2528 above is that plus the ten tests
+`origin/main` gained while this branch was open (PRs #198/#199 — a schema map, a background-jobs
+diagram, and a LightBurn `available?` fix), merged in to resolve a docs-only conflict in this file
+and CLAUDE.md. Both numbers are stated because only the first is attributable to this work, and a
+single figure here would silently claim credit for the other ten. `bin/ci`'s own gate list
 and count are unchanged by this arc (eight gates; the s3 leg needs its five `LIBRARY_S3_*` stub
 knobs, see CLAUDE.md §13).
 
@@ -276,6 +283,79 @@ thin standalone host app for that engine and `FileLayer::ChunkRemote` in the mak
 maker app a sync client of its own changelog. Both Stage 1 and Stage 3/4 require creating or
 pushing to new repositories — outward-facing actions needing explicit go-ahead — which is why
 Stage 2 went first from a standing start.
+
+---
+## 2026-08-19: `Lbrn2#available?` gated on a binary it did not need (branch `claude/background-jobs-containers-diagram-540ed3`)
+
+**Suite: 2457 -> 2462 runs, 9441 assertions, 0F/0E/3S, identical across all three `LIBRARY_BACKEND`
+legs. `bin/ci` green (10 gates, ~61 s).**
+
+Found while drawing a runtime map of every job, container and library, from the question *"why does
+mage not use resvg like lbrn2"*. The premise was wrong in an interesting direction: **it does** —
+`Mage#outline_thumbnail` calls `Lbrn2.to_svg` verbatim and the geometry arm delegates to
+`LbrnGeometry`, inheriting its `PAYLOAD_REVISION` rather than declaring one free to drift. The two
+renderers were one renderer wearing two names, and they disagreed about exactly one thing.
+
+**The bug.** `Lbrn2.available?` was `Svg.available?` — "is resvg on this box". But `#render` reaches
+the rasterizer only as a *fallback*: `EmbeddedThumbnail.extract(bytes) || <outline render>`, and a
+LightBurn file carries its own full-colour render in `<Thumbnail Source="base64png">`. So on a box
+without resvg the job's gate raised `Unsupported` and wrote the **terminal** status `unsupported`
+for a file whose PNG was sitting unread inside it, while the byte-identical situation in a `.mage`
+— `available? = true` — rendered fine. CLAUDE.md §14a's one-condition-two-answers, split by format,
+and `mage.rb`'s own comment had been arguing the correct position the whole time.
+
+**The fix is `available? = true`, and the check moves into the fallback.** `Lbrn2` grows
+`#outline_thumbnail`, which raises `NoThumbnail` when `Svg.available?` is false — the same class
+`Mage` and `ThreeMf` already raise for the same condition, so the job classifies one shape rather
+than three. `available_for?` is **deleted** from `Lbrn2`: with `available?` unconditionally true it
+could only repeat itself, and `GeneratePreviewJob#available_for?` already falls through to
+`available?` for a renderer that omits it. `Svg` and `Dxf` keep both methods unchanged — they have
+no embedded raster to fall back on, so for them the rasterizer really is the only path. The rule
+that outlives this is in **§14h**.
+
+**No `THUMBNAIL_REVISION` bump, deliberately.** The rendered bytes are identical on every box that
+has resvg, which is every shipped deployment. `Enqueue` re-enqueues on a revision change even from
+`unsupported`, so a bump *would* recover wrongly-marked rows — but there are none in production, and
+it would re-render ~1400 LightBurn thumbnails on the live share library to fix nothing there.
+
+**Two breakages the local suite could not see, both found by running with `RESVG_BIN` pointed at
+nothing.** That is the only way to inspect the box this change is *for*:
+
+1. **`RendererContractTest` does `next unless renderer.available?`** — so flipping the gate stopped
+   it skipping, and `sample.lbrn2` (no embedded raster) raised `NoThumbnail` where it used to skip
+   silently. Fixed by giving Lbrn2 a fixture that renders with no toolchain, `embedded-thumb.lbrn2`,
+   exactly as `sample.mage` already was for Mage. **Every `.lbrn2` fixture in the repo lacked a
+   `<Thumbnail>`; `sample.mage` has one — which is precisely why Mage's entry had never tripped it.**
+2. **`geometry_test`'s `%w[lbrn2 dxf svg]` loop** asserted `assert_not renderer.available?` as its
+   *"or this proves nothing"* precondition, and `assert_not available_for?("thumbnail")`. Both are
+   now false of lbrn2. It drops to `%w[dxf svg]`, and a new test asserts the higher bar the two
+   embedded-raster formats clear — measurable **and** thumbnail-able with no rasterizer — through
+   the **job's** gate rather than a method neither of them defines.
+
+**Baseline check, because the resvg-less box was never green.** Same command on the merge-base:
+**4 failures + 1 error**, identical after. One of them changes class — `SvgRasterizer::RasterizeError:
+resvg not runnable` becomes `Lbrn2::NoThumbnail` — which is the guard doing its job, a named
+condition instead of an ENOENT from inside the rasterizer. Those five remain pre-existing and out of
+scope; a box with no resvg is not a supported configuration.
+
+**Mutation-checked three ways** (§15), each restored after: reverting `available?` to the old gate
+-> **4 failures**; deleting the `NoThumbnail` guard from the fallback -> **1 failure**; pointing the
+contract fixture back at `sample.lbrn2` -> **1 error, but only under `RESVG_BIN=/nonexistent`**,
+which is the whole point of that entry.
+
+**`without_svg_rasterizer` is now shared, in `test_helper.rb`.** Three suites need it and there were
+already two spellings (`geometry_test`'s private stub, `mage_test`'s `ENV["RESVG_BIN"]` + `reset_bin!`);
+a third copy is how one of them silently stops stubbing what it means to. `geometry_test`'s duplicate
+is deleted and its hard-won note — minitest 6 dropped `minitest/mock`, so `Object#stub` is a LoadError
+here, hence the hand-rolled `UnboundMethod` rebind — travels onto the shared helper rather than being
+orphaned beside the code it documented. `mage_test`'s is left alone: it is green and untouched by this.
+
+**Not changed, recorded instead.** `NoThumbnail` is a plain `StandardError`, so the job's
+`rescue StandardError` writes **`failed`**, not `unsupported` — for `Lbrn2`, `Mage` and `ThreeMf`
+alike. Arguably all three want `GeneratePreviewJob::Unsupported` (terminal, and what `Mesh` already
+raises when f3d is absent), since `failed` re-enqueues on every `Enqueue` call. Left as-is because it
+is pre-existing, identical across the three, reachable only without resvg, and changing it means
+changing Mage and ThreeMf too — a different arc from making the pair agree.
 
 ---
 
