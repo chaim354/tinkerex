@@ -2035,6 +2035,53 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ---
 
+### 14j. The maker/sync boundary (Stage 3a)
+
+Six invariants the engine's eventual extraction rests on. Each was found by measuring, and most
+were invisible to the `Sync::`-shaped guards that preceded them.
+
+- **THE `Sync::` NAMESPACE WAS NEVER THE BOUNDARY.** The engine's own models are **bare top-level
+  constants** — `Version`, `Chunk`, `ManifestChunk`, `PendingCommit`, `ChangelogEntry`, `Conflict`,
+  `FileLock` — so every audit built from a `Sync::` grep measured one visible slice. The guard in
+  `architecture_invariants_test.rb` now matches those names **and their `has_many` association
+  spellings** (`user.versions`, `user.chunks`, …), because the const check alone was **wider, not
+  stronger**: `user.versions.find_by(...)` emits no `:on_const` token at all, so it would not have
+  caught `Node#current_version` — the very violation Stage 3a Task 2 fixed, in a file it was
+  scanning.
+- **`Device` STAYS WITH THE HOST, and is deliberately absent from the guard's model list.** Its
+  token is the ONLY credential the whole v1 API accepts, **including all fourteen `v1/maker/*`
+  controllers** — an engine that owned it would leave the maker API unable to authenticate without
+  the engine mounted. Pinned by a mutation that must stay **GREEN**: `Device.register!` in a maker
+  file is not a violation. In Stage 4 the standalone sync server carries its own `devices` table,
+  the same way `nodes` works under the wire-only contract.
+- **THE ENGINE PUBLISHES; THE HOST SUBSCRIBES (`Sync::Hooks`).** `V1::CommitsController#finalize`
+  used to call `Maker::Previews::Enqueue` and `Maker::ProjectIntakeJob` directly — not shared data
+  the engine needs, but host **business logic**, which an engine cannot require and still run
+  standalone. Three properties, each load-bearing: it fires **after** the commit transaction commits
+  (§14e's `enqueue_after_transaction_commit` bug is what happens otherwise), a **raising subscriber
+  never fails the commit** (that "best-effort" claim was previously unenforced — nothing rescued
+  around it), and a host that **registers nothing still works**. Guarded in both directions now: no
+  maker→engine references, and **no engine→`Maker::` references at all** (currently zero, asserted
+  with no exception list).
+- **`share_links` IS THE ENGINE'S, and `Sync::Gc` is why.** `Sync::Gc.apply_retention!` reads
+  `share_links` to protect versions live links point at (`gc.rb:106-114`); **split the two and
+  nightly retention silently destroys the bytes behind URLs users have already sent to other
+  people** — no build break, no red test. It is engine-side by construction anyway: share links
+  need a real `versions` row (`require_capability! :versioned`), so they **cannot exist on share or
+  s3 at all**. `lib/schema_map.rb` had filed them under "Sync control plane" all along.
+- **`maker_previews.version_id` AND `maker_file_attachments.version_id` ARE NOT EDGES INTO
+  `versions`.** That column is a backend-polymorphic `content_token` — a version UUID on chunk, a
+  **content hash** on share/s3 — and `versions` holds **zero rows** for those nodes on the other two
+  backends, since only `Sync::Commit`/`Restore`/`Conflicts` ever create one. `schema_map.rb` drew
+  them as references and was corrected; drawing them back would make Stage 3b move two maker tables
+  it must not move.
+- **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
+  `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
+  deployment — which has no changelog and never calls it — was being refused a boot for a rule that
+  cannot apply to it. `Sync.engine_present?` is the seam Stage 3b replaces. Both halves were covered
+  and the **default parameter wiring them together was not**: severing it left the entire suite
+  green, silently reintroducing the bug. Test the wire, not only the ends.
+
 ## 15. Working agreements for the coding agent
 
 - Permissive licenses only (§9); check new deps.
