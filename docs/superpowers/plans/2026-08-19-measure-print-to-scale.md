@@ -921,6 +921,24 @@ The strips are reserved rather than overlaid, so an unclipped contour prints str
 > fixture starts at (0, 0), where a displaced window shows up as content in the wrong place rather
 > than as an empty page. Keep it there, and if you change it, check the test can still fail.
 
+> **THE INSTRUMENT BELOW IS WRONG — corrected in the implementation, kept here as the record.**
+> The code block uses `getBoundingClientRect` on the drawn group. **Chrome ignores `clip-path` in
+> `getBoundingClientRect` AND in `getBBox`**, probed against the *correct* nested groups: both
+> report the full unclipped extent (`left=10 top=17 right=410 bottom=517` for a 400 × 500 part).
+> So this assertion would have gone **RED against correct code** — 1954 px measured against 935
+> expected — and could never observe a clip in either direction.
+>
+> The instrument that works is **hit testing**, which is what Task 4's fix comment used by hand:
+> `elementsFromPoint` (plural — the question is "is the part painted here", not "is it topmost
+> here", and Tasks 6-8 add furniture to this same sheet that a topmost reading would start
+> answering about), bisecting to find each painted edge. Expect `[10, 17, 205.9, 247.4]` for
+> left/top/right/bottom.
+>
+> The input below is also under-powered: a 40 mm-wide part on a 195.9 mm content box never reaches
+> the right edge, so the horizontal window goes unexercised and `bottom` alone cannot see a window
+> displaced sideways. Use 400 × 500, still at the origin — the (0,0) constraint above is right and
+> its reason stands.
+
 - [ ] **Step 1: Write the failing test**
 
 Add to `test/system/measure_print_test.rb`:
@@ -970,7 +988,8 @@ Expected: PASS, with 1 more test than before this task — Task 4 already wired 
 
 - [ ] **Step 3: Mutation-check it**
 
-In `renderSheet`, temporarily remove the `"clip-path": `url(#${clipId})`,` line from the `group` attributes. Run:
+In `renderSheet`, temporarily remove the `"clip-path"` attribute — note it now lives on `clipped`,
+the outer group, not on `group`, after Task 4's nesting fix. Run:
 
 ```bash
 bin/rails test test/system/measure_print_test.rb
