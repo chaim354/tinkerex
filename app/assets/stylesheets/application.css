@@ -152,10 +152,12 @@ dl.meta dd { margin: 0; }
    is nothing but a UA-stylesheet `display: none`, so `.btn`'s own `display: inline-block` — an
    AUTHOR rule — outranks it and the attribute paints nothing at all. Measured in the browser
    rather than reasoned about: hidden=true, computed display `block`, width 48px, plainly there
-   in the screenshot. This file already carries the same one-line fix twice, for
-   `.box-toc-list li[hidden]` and `.addon-card[hidden]` — those are the precedent, not an
-   exception. Every other `hidden` in app/views is on an `<input type=file>`, which has no
-   author `display` to outrank the UA rule, which is why this had not bitten before. */
+   in the screenshot. The real precedent in this file is `.addon-card[hidden]` — `.addon-card`
+   computes `flex` from an author rule, so that line is the same fix. `.box-toc-list li[hidden]`
+   LOOKS like a second one and is not: that li computes `list-item` with no author rule to
+   outrank, so it is redundant with the UA stylesheet rather than a fix for it. Every other
+   `hidden` in app/views is on an `<input type=file>`, which likewise has no author `display` —
+   which is why this had not bitten before a `.btn` needed it. */
 .measure-actions .btn[hidden] { display: none; }
 
 /* login */
