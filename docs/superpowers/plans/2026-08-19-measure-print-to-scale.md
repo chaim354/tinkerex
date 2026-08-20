@@ -1334,8 +1334,12 @@ Append to the file:
 //
 // THE POSITION COMES FROM `b`, THE FULL-RESOLUTION BBOX, never from `p`. Nothing here re-derives a
 // measurement: the text is whatever meta.sizeLabel returned.
+// NOTE THE ARGUMENT ORDER. `text` is `(doc, x, y, content, anchor)` — anchor LAST and optional,
+// changed in Task 6 so `el`'s nullish guard has a live caller. An earlier draft of this snippet
+// carried the old `(…, "middle", content)` order, which prints the literal word "middle" in every
+// label and hands the label string to `text-anchor`.
 function labelNode(doc, shape, content) {
-  const node = text(doc, (shape.b[0] + shape.b[2]) / 2, shape.b[3] + 3.6, "middle", content)
+  const node = text(doc, (shape.b[0] + shape.b[2]) / 2, shape.b[3] + 3.6, content, "middle")
   node.setAttribute("data-role", "size")
   return node
 }
@@ -2206,6 +2210,13 @@ git commit -m "feat(measure): print the selected parts at 1:1, on remembered pap
 - Modify: `docs/STATUS.md`
 - Modify: `CLAUDE.md` (§14h)
 
+> **Carried from Task 7 — a last-row label can be clipped away silently.** Pagination is computed
+> from the geometry's union box and knows nothing about the label sitting under it, so on the last
+> row a part whose bbox bottom clears the content box by < 4.4 mm has its label sliced, and by
+> < 0.69 mm loses it entirely (measured on Letter: 226 mm labelled, 228 mm cut, 230 mm none).
+> Fixing it means changing `buildSheets`, which would move Tasks 2 and 3's pinned numbers — so it
+> is recorded in the code rather than fixed. State it, with the numbers.
+>
 > **Carried from Task 6's review — `WORST_WIDE` bounds the eleven scripts SAMPLED, not non-ASCII.**
 > Four characters exceed 3.71 mm at 3 mm sans-serif, measured: **U+FDFD ﷽ ARABIC LIGATURE
 > BISMILLAH 19.4532** (5.2×), U+2E3B THREE-EM DASH 7.9804, U+2E3A TWO-EM DASH 5.3604, U+0BF5 ௵
