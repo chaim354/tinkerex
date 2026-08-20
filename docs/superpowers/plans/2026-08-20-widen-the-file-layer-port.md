@@ -536,6 +536,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ### Task 4: `Chunk#move`, and collapse `Maker::MoveNode`
 
+> **Task 3 established two things every remaining verb inherits.** (a) The broadcast is asserted
+> with `assert_broadcast_on`, never by watching `head_seq` — `Sync::Mutation` advances head_seq on
+> its own, so the head_seq spelling stays GREEN when the broadcast is deleted. `chunk_test.rb`
+> already has `include ActionCable::TestHelper` from Task 3. (b) Collapsing a caller's branch can
+> break a TEST FAKE that stood in for `FileLayer.current` and got away with not implementing the
+> verb, because the caller's own short-circuit used to run first. Task 3 hit this in
+> `test/services/maker/project_intake_test.rb`. Expect it; fix the fake, do not weaken the caller.
+
 **Files:**
 - Modify: `app/services/file_layer/chunk.rb`
 - Modify: `app/services/maker/move_node.rb:209-233`
@@ -556,12 +564,18 @@ Append to `FileLayer::ChunkTest`:
       assert_equal "after.stl",  node.reload.name
     end
 
-    test "move appends a changelog entry so devices converge" do
+    # ASSERTED ON THE BROADCAST ITSELF, not on head_seq. Task 3 proved the head_seq spelling
+    # cannot fail for the reason it exists: Sync::Mutation advances head_seq whether or not
+    # anything broadcasts, so deleting the broadcast left that test GREEN. `assert_broadcast_on`
+    # with the EXACT payload also catches a broadcast carrying a stale seq, which a count would
+    # not. Requires `include ActionCable::TestHelper` on the test case.
+    test "move broadcasts the new head_seq so devices converge" do
       node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "before.stl", kind: "file",
                                  deleted: false, mtime: 0)
-      before = @user.reload.head_seq
-      adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
-      assert_operator @user.reload.head_seq, :>, before
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
+      end
     end
 ```
 
@@ -691,12 +705,17 @@ Append to `FileLayer::ChunkTest`:
       assert_predicate child.reload, :deleted?, "a dir delete must cascade, never orphan children"
     end
 
-    test "delete appends a changelog entry so devices converge" do
+    # On the BROADCAST, not head_seq -- see the note in Task 4. NOTE the expected seq: a subtree
+    # delete of a childless file is ONE mutation, so head_seq + 1. If you write this test against
+    # a node WITH children, SubtreeDelete tombstones each one and the final seq is higher; assert
+    # what the cascade actually produces rather than assuming one.
+    test "delete broadcasts the new head_seq so devices converge" do
       node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "gone.stl", kind: "file",
                                  deleted: false, mtime: 0)
-      before = @user.reload.head_seq
-      adapter.delete(@user, node_id: node.node_id)
-      assert_operator @user.reload.head_seq, :>, before
+      expected = @user.reload.head_seq + 1
+      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+        adapter.delete(@user, node_id: node.node_id)
+      end
     end
 ```
 
@@ -1260,6 +1279,24 @@ Replace **"The `port_writable?` two-door branch is written out FIVE times, not t
 In §4's Mount row, delete the parenthetical **"(no `client/fs-fskit` crate on `main`)"** — the crate exists (`f40c101`). Keep the rest of the sentence, which is still true: FSKit is not a shipping mount path and needs a paid Apple Developer membership.
 
 In §8, replace the pairing-code sentence with a description of `POST /v1/devices/login` (email + password → device token), noting that pairing codes were the earlier mechanism. The endpoint's own comment in `config/routes.rb` says it *"Replaces the pairing-code flow."*
+
+- [ ] **Step 4b: Sweep the comments that name the deleted branch methods**
+
+Collapsing the four callers deletes `Maker::LibraryFolder#chunk_mkdir`/`#port_mkdir`,
+`Maker::MoveNode#chunk_move`/`#port_move` and the inline branches in `FilesController#destroy` and
+`TrashController#restore`. Comments in OTHER files still name them. Task 3 found these five and
+more will have accumulated by Task 8:
+
+```bash
+grep -rn "chunk_mkdir\|port_mkdir\|chunk_move\|port_move" app/ test/ docs/ CLAUDE.md
+```
+
+Known at the time of writing: `app/controllers/library_browse_controller.rb:39`,
+`app/services/library/reserved_names.rb:9`, `test/integration/web/library_browse_test.rb:128,149`,
+`test/jobs/library/scan_job_test.rb:286`. Nothing executable depends on these names — they are
+prose — which is exactly why nothing goes red and why they must be swept deliberately. Update each
+to describe what the code does NOW; do not simply delete the sentence if it was making a point
+worth keeping.
 
 - [ ] **Step 5: Write the STATUS.md entry**
 
