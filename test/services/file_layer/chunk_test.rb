@@ -5,7 +5,7 @@ require_relative "adapter_mutation_contract"
 
 module FileLayer
   # The Chunk adapter over the sync engine's content-addressed store: this is today's
-  # node -> version -> manifest_chunks -> Storage::ChunkStore read path, moved behind the port.
+  # node -> version -> manifest_chunks -> Sync::Storage::ChunkStore read path, moved behind the port.
   class ChunkTest < ActiveSupport::TestCase
     include FileLayerAdapterContract
     # Task 7: chunk joins share and s3 on the mkdir/move/delete/undelete contract -- all three
@@ -18,7 +18,7 @@ module FileLayer
     include ActionCable::TestHelper
 
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "chunk-adapter-#{SecureRandom.hex(4)}@example.com")
       @device = Device.register!(user: @user, name: "t")
     end
@@ -46,7 +46,7 @@ module FileLayer
     def create_file!(name:, bytes:)
       node_id = SecureRandom.uuid
       hash = Digest::SHA256.hexdigest(bytes)
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       cid = SecureRandom.uuid
       Sync::Commit.begin(
         user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
@@ -101,7 +101,7 @@ module FileLayer
     # its own two-chunk one with distinct bytes.
     test "read assembles a multi-chunk manifest in seq order" do
       node_id = SecureRandom.uuid
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       first, second = "AAA", "BB"
       h1 = Digest::SHA256.hexdigest(first)
       h2 = Digest::SHA256.hexdigest(second)
@@ -146,7 +146,7 @@ module FileLayer
     # A HASH THAT NAMES NO REAL CONTENT MUST STILL BE SecureRandom, NEVER A REPEATED-CHARACTER
     # LITERAL LIKE "a" * 64 -- found live, by running this exact suite repeatedly rather than by
     # reasoning about it. MemoryChunkStore's root is `tmp/dev-chunks[-N]`, a directory that
-    # survives ACROSS separate `bin/rails test`/`bin/ci` invocations (Storage::ChunkStore.reset! in
+    # survives ACROSS separate `bin/rails test`/`bin/ci` invocations (Sync::Storage::ChunkStore.reset! in
     # setup only clears the memoized STORE INSTANCE, never the files it already wrote), while a
     # fresh test DB's user_id sequence restarts low on every `db:test:prepare`. Two runs apart, an
     # EARLIER run's user could reuse the SAME integer id a LATER run's fresh @user gets, and
@@ -192,7 +192,7 @@ module FileLayer
       refute_nil begun.node_id
       refute @user.nodes.exists?(node_id: begun.node_id),
              "begin alone must not create the node -- only finalize does"
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
       assert_equal begun.node_id, finalized.info.node_id
     end
@@ -211,7 +211,7 @@ module FileLayer
         size: bytes.bytesize, manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
       )
       assert_equal existing_id, begun.node_id
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       adapter.finalize_upload(@user, commit_id: begun.commit_id, verify: false)
       assert_equal "new", adapter.read(@user, node_id: existing_id)
       assert_equal 1, @user.nodes.where(node_id: existing_id).count,
@@ -245,7 +245,7 @@ module FileLayer
         @user, device: @device, name: "bracket.stl", parent_node_id: nil, size: bytes.bytesize,
         manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
       )
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
 
       assert_instance_of FileLayer::UploadFinalized, finalized
@@ -268,7 +268,7 @@ module FileLayer
         @user, device: @device, name: "ghost.stl", parent_node_id: nil, size: 5,
         manifest: [ { "hash" => hash, "offset" => 0, "length" => 5 } ]
       )
-      # Deliberately no Storage::ChunkStore put here.
+      # Deliberately no Sync::Storage::ChunkStore put here.
       err = assert_raises(FileLayer::ChunksMissing) do
         adapter.finalize_upload(@user, commit_id: begun.commit_id)
       end
@@ -305,7 +305,7 @@ module FileLayer
           { "hash" => hash2, "offset" => 5, "length" => 5 }
         ]
       )
-      Storage::ChunkStore.current.put!(@user.id, hash1, "aaaaa") # only the first lands
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash1, "aaaaa") # only the first lands
       err = assert_raises(FileLayer::ChunksMissing) do
         adapter.finalize_upload(@user, commit_id: begun.commit_id)
       end
@@ -319,7 +319,7 @@ module FileLayer
     # broadcast itself, not on head_seq, because head_seq not moving is true for an unrelated
     # reason (nothing in #begin_upload advances it) and would pass even if a broadcast were added.
     test "begin_upload does not broadcast" do
-      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+      assert_no_broadcasts(Sync::LibraryChannel.broadcasting_for(@user)) do
         adapter.begin_upload(
           @user, device: @device, name: "quiet.stl", parent_node_id: nil, size: 5,
           manifest: [ { "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 } ]
@@ -334,11 +334,11 @@ module FileLayer
     # never has). Folding the broadcast into the port would silently START broadcasting every addon
     # save -- a real user-visible change this task does not make. `seq` rides back out on
     # UploadFinalized instead, and each caller decides; FilesController's own
-    # `LibraryChannel.broadcast_change(current_user, result.seq)` call is what the browser upload
+    # `Sync::LibraryChannel.broadcast_change(current_user, result.seq)` call is what the browser upload
     # flow relies on now (files_flow_test.rb exercises that path over real HTTP).
     #
     # `assert_no_broadcasts`, THE SAME IDIOM THE undelete NO-OP TEST ABOVE USES, NOT A STUBBED
-    # `LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
+    # `Sync::LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
     # not exist in this suite (see test_helper.rb). Listening on the real stream this adapter would
     # have broadcast to is also the stronger assertion: it proves nothing reached a DEVICE, not
     # merely that one particular method was not called.
@@ -351,19 +351,19 @@ module FileLayer
     test "finalize_upload broadcasts by default, so a caller cannot forget" do
       begun, = begin_a_commit(name: "loud.stl", bytes: "loud".b)
       expected = @user.reload.head_seq + 1
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: expected) do
         adapter.finalize_upload(@user, commit_id: begun.commit_id)
       end
     end
 
     # `assert_no_broadcasts`, THE SAME IDIOM THE undelete NO-OP TEST ABOVE USES, NOT A STUBBED
-    # `LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
+    # `Sync::LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
     # not exist in this suite (see test_helper.rb). Listening on the real stream this adapter would
     # have broadcast to is also the stronger assertion: it proves nothing reached a DEVICE, not
     # merely that one particular method was not called.
     test "finalize_upload(broadcast: false) is silent -- the addon-save opt-out" do
       begun, = begin_a_commit(name: "silent.stl", bytes: "silent".b)
-      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+      assert_no_broadcasts(Sync::LibraryChannel.broadcasting_for(@user)) do
         adapter.finalize_upload(@user, commit_id: begun.commit_id, broadcast: false)
       end
     end
@@ -376,7 +376,7 @@ module FileLayer
         @user, device: @device, name:, parent_node_id: nil, size: bytes.bytesize,
         manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
       )
-      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
       [ begun, hash ]
     end
 
@@ -417,17 +417,17 @@ module FileLayer
     # test's setup to mop up: the contract calls this hook, and a leaked PresignOnlyStore
     # would surface as an unrelated failure elsewhere in the worker.
     def with_transient_backend_failure(&block)
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(http_error(403), &block)
     ensure
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
-    # A REAL Storage::S3ChunkStore — the only store whose presigned URL points OFF-BOX, which is
+    # A REAL Sync::Storage::S3ChunkStore — the only store whose presigned URL points OFF-BOX, which is
     # the condition #blob redirects on and #download preserves.
     #
     # REAL rather than a double, and not for purity: the condition under test is literally
-    # `store.is_a?(Storage::S3ChunkStore)`, so a stand-in would have to BE one to exercise it.
+    # `store.is_a?(Sync::Storage::S3ChunkStore)`, so a stand-in would have to BE one to exercise it.
     #
     # NO NETWORK, and that is a property of the class rather than luck: Aws::S3::Client.new is
     # lazy (it does not connect) and presigning is local HMAC — CLAUDE.md §14, "server presigning
@@ -443,13 +443,13 @@ module FileLayer
     # `current=` is a global, so it is reset on the way out exactly as with_transient_backend_failure
     # does: a leaked S3ChunkStore would surface as an unrelated failure elsewhere in the worker.
     def with_s3_chunk_store
-      Storage::ChunkStore.current = Storage::S3ChunkStore.new(
+      Sync::Storage::ChunkStore.current = Sync::Storage::S3ChunkStore.new(
         bucket: "b", region: "us-east-1", access_key_id: "ak", secret_access_key: "sk",
         endpoint: "https://s3.example.invalid"
       )
       yield
     ensure
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     # Contract hook. Chunk presigns on ALL THREE stores, so "give this backend every chance to
@@ -491,7 +491,7 @@ module FileLayer
     # other test in this file.
     test "a MULTI-chunk file on real object storage streams — it must not redirect to chunk one" do
       node_id = SecureRandom.uuid
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       h1 = Digest::SHA256.hexdigest("AAA")
       h2 = Digest::SHA256.hexdigest("BB")
       store.put!(@user.id, h1, "AAA")
@@ -532,7 +532,7 @@ module FileLayer
     # stream that has already started.
     #
     # THE TRAP, and it is the reason these two tests look the way they do: `download` captures
-    # `store = Storage::ChunkStore.current` EAGERLY, at the top of the method, OUTSIDE the
+    # `store = Sync::Storage::ChunkStore.current` EAGERLY, at the top of the method, OUTSIDE the
     # Enumerator. Install THE STORE after calling `adapter.download` and the enumerator has
     # already closed over the ORIGINAL — it drains clean and nothing raises (probed exactly
     # that way first: the drain returned "streamed" with an http_get stubbed to raise
@@ -557,7 +557,7 @@ module FileLayer
     # a SHORT FILE with a hole in it, 200 and correctly named.
     test "a chunk that vanishes MID-DRAIN raises NotFound rather than streaming a hole" do
       node_id = SecureRandom.uuid
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       h1 = Digest::SHA256.hexdigest("AAA")
       h2 = Digest::SHA256.hexdigest("BB")
       store.put!(@user.id, h1, "AAA")
@@ -575,7 +575,7 @@ module FileLayer
       Sync::Commit.finalize(user: @user, commit_id: cid)
 
       # BEFORE the download call — see THE TRAP above.
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       # PresignOnlyStore signs "https://example.invalid/<hash>", so the URL names the chunk.
       # The error is built HERE, not inside the lambda: define_singleton_method rebinds `self`
       # to FileLayer::Chunk, so a test helper called from inside the body is a NoMethodError.
@@ -594,7 +594,7 @@ module FileLayer
     # file is permanently gone. 403 is the exact shape of the original incident.
     test "a 403 mid-drain is TRANSIENT on download too (FetchError, not NotFound)" do
       id = create_file!(name: "creds.stl", bytes: "secret")
-      Storage::ChunkStore.current = PresignOnlyStore.new # BEFORE the download call
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new # BEFORE the download call
       with_http_get_raising(http_error(403)) do
         d = adapter.download(@user, node_id: id, disposition: "attachment")
         assert_raises(FileLayer::FetchError) { d.enum.to_a }
@@ -603,7 +603,7 @@ module FileLayer
 
     test "a 404 on the presigned GET is a missing chunk (terminal NotFound)" do
       id = create_file!(name: "e.stl", bytes: "gone")
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(http_error(404)) do
         assert_raises(FileLayer::NotFound) { adapter.read(@user, node_id: id) }
       end
@@ -611,7 +611,7 @@ module FileLayer
 
     test "a 403 on the presigned GET is TRANSIENT (FetchError, not NotFound)" do
       id = create_file!(name: "f.stl", bytes: "creds")
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(http_error(403)) do
         assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
       end
@@ -619,7 +619,7 @@ module FileLayer
 
     test "a 5xx on the presigned GET is TRANSIENT" do
       id = create_file!(name: "g.stl", bytes: "boom")
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(http_error(500)) do
         assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
       end
@@ -627,7 +627,7 @@ module FileLayer
 
     test "a network error on the presigned GET is TRANSIENT" do
       id = create_file!(name: "h.stl", bytes: "net")
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(SocketError.new("no dns")) do
         assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
       end
@@ -635,7 +635,7 @@ module FileLayer
 
     test "a timeout on the presigned GET is TRANSIENT" do
       id = create_file!(name: "i.stl", bytes: "slow")
-      Storage::ChunkStore.current = PresignOnlyStore.new
+      Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(Net::ReadTimeout.new) do
         assert_raises(FileLayer::FetchError) { adapter.read(@user, node_id: id) }
       end
@@ -660,7 +660,7 @@ module FileLayer
       first_token = adapter.stat(@user, node_id: id).content_token
 
       hash = Digest::SHA256.hexdigest("second")
-      Storage::ChunkStore.current.put!(@user.id, hash, "second")
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, "second")
       cid = SecureRandom.uuid
       Sync::Commit.begin(
         user: @user, device: @device, commit_id: cid, node_id: id, parent_node_id: nil,
@@ -687,7 +687,7 @@ module FileLayer
     test "exceeding MAX_BYTES raises NotFound (host-protection cap)" do
       # Two oversized chunks so the running buffer trips MAX_BYTES on the second.
       half = FileLayer::MAX_BYTES / 2 + 1
-      store = Storage::ChunkStore.current
+      store = Sync::Storage::ChunkStore.current
       hash1 = SecureRandom.hex(32)
       hash2 = SecureRandom.hex(32)
       store.put!(@user.id, hash1, "a" * half)
@@ -713,7 +713,7 @@ module FileLayer
       other_device = Device.register!(user: other, name: "t2")
       node_id = SecureRandom.uuid
       hash = Digest::SHA256.hexdigest("secret")
-      Storage::ChunkStore.current.put!(other.id, hash, "secret")
+      Sync::Storage::ChunkStore.current.put!(other.id, hash, "secret")
       cid = SecureRandom.uuid
       Sync::Commit.begin(
         user: other, device: other_device, commit_id: cid, node_id:, parent_node_id: nil,
@@ -730,7 +730,7 @@ module FileLayer
       # under test: without it, live_node! short-circuits and this test proves nothing about
       # tenant scoping (verified by mutation — see below).
       own_hash = Digest::SHA256.hexdigest("mine")
-      Storage::ChunkStore.current.put!(@user.id, own_hash, "mine")
+      Sync::Storage::ChunkStore.current.put!(@user.id, own_hash, "mine")
       own_cid = SecureRandom.uuid
       Sync::Commit.begin(
         user: @user, device: @device, commit_id: own_cid, node_id:, parent_node_id: nil,
@@ -770,15 +770,15 @@ module FileLayer
     # A mutation that does not broadcast leaves every device's tree diverged from the server's,
     # silently -- pull is incremental, so nothing anywhere reports it. Asserted on the CHANGELOG
     # rather than by stubbing the broadcast: the changelog entry is what a device actually reads,
-    # and a test that stubs LibraryChannel proves only that we called our own method.
+    # and a test that stubs Sync::LibraryChannel proves only that we called our own method.
     #
     # THE head_seq ASSERTION ALONE CANNOT CATCH A MISSING BROADCAST, AND IT DID NOT: mutation-
-    # checked by deleting Chunk#mkdir's `LibraryChannel.broadcast_change(user, seq)` line, this
+    # checked by deleting Chunk#mkdir's `Sync::LibraryChannel.broadcast_change(user, seq)` line, this
     # test (with only the assert_operator below) stayed GREEN -- head_seq is advanced by
     # Sync::Mutation.apply, not by the broadcast, so the two facts are independent and asserting
     # one says nothing about the other. That is a guard that cannot fail for the reason it
     # exists, which CLAUDE.md 15 says is no guard at all. assert_broadcast_on is what closes it:
-    # it listens on the real stream a device subscribes to (LibraryChannel.broadcasting_for),
+    # it listens on the real stream a device subscribes to (Sync::LibraryChannel.broadcasting_for),
     # the same helper LibraryChannelTest and ProjectIntakeTest already use, so this is the
     # established idiom here rather than a one-off. The exact payload is asserted, not just a
     # count -- User#next_seq! is `head_seq + 1` under a row lock (app/models/user.rb), so a
@@ -787,7 +787,7 @@ module FileLayer
     # count check and still diverge a device.
     test "mkdir appends a changelog entry so devices converge" do
       before = @user.reload.head_seq
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: before + 1) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: before + 1) do
         adapter.mkdir(@user, parent_node_id: nil, name: "cad")
       end
       assert_operator @user.reload.head_seq, :>, before, "mkdir must advance head_seq"
@@ -915,7 +915,7 @@ module FileLayer
       node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "before.stl", kind: "file",
                                  deleted: false, mtime: 0)
       expected = @user.reload.head_seq + 1
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: expected) do
         adapter.move(@user, node_id: node.node_id, new_parent_node_id: nil, new_name: "after.stl")
       end
     end
@@ -1012,7 +1012,7 @@ module FileLayer
       node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "solo.stl", kind: "file",
                                  deleted: false, mtime: 0)
       expected = @user.reload.head_seq + 1
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: expected) do
         adapter.delete(@user, node_id: node.node_id)
       end
     end
@@ -1029,7 +1029,7 @@ module FileLayer
       child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
                                   name: "kid.stl", kind: "file", deleted: false, mtime: 0)
       before = @user.reload.head_seq
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: before + 2) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: before + 2) do
         adapter.delete(@user, node_id: dir.node_id)
       end
       assert_equal before + 2, @user.reload.head_seq, "one seq per node -- dir plus one child"
@@ -1139,7 +1139,7 @@ module FileLayer
       id = create_file!(name: "bcast.stl", bytes: "b")
       delete_file!(id)
       expected = @user.reload.head_seq + 1
-      assert_broadcast_on(LibraryChannel.broadcasting_for(@user), head_seq: expected) do
+      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(@user), head_seq: expected) do
         adapter.undelete(@user, node_id: id)
       end
     end
@@ -1152,7 +1152,7 @@ module FileLayer
     test "undelete on an already-live node is a no-op that does not broadcast" do
       id = create_file!(name: "already-live.stl", bytes: "b")
       before = @user.reload.head_seq
-      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+      assert_no_broadcasts(Sync::LibraryChannel.broadcasting_for(@user)) do
         info = adapter.undelete(@user, node_id: id)
         assert_equal id, info.node_id
       end

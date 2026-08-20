@@ -9,7 +9,7 @@ module Web
     # no LIBRARY_PATH) doesn't fail these on backend construction — they aren't share tests.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def sign_in(email = "maker@example.com")

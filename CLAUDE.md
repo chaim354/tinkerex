@@ -2086,6 +2086,37 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   cannot apply to it. `Sync.engine_present?` is the seam Stage 3b replaces. Both halves were covered
   and the **default parameter wiring them together was not**: severing it left the entire suite
   green, silently reintroducing the bug. Test the wire, not only the ends.
+- **`db/migrate/` IS NEVER REWRITTEN FOR THE EXTRACTION, AND `db/engine_schema.rb` IS WHY THAT
+  DOES NOT COST A SECOND SOURCE OF TRUTH.** Four already-run migrations mix host and engine DDL in
+  one `change` (`20260611010000_create_sync_engine.rb` — `users`/`devices`/`nodes` **and** five
+  engine tables, including `users.head_seq`, which has no separate migration of its own;
+  `..._add_mode_to_nodes.rb` and `..._add_mtime_to_nodes.rb`, each `nodes` **and**
+  `pending_commits`; `20260819120000_drop_redundant_prefix_indexes.rb`, across 7 engine + 3 maker
+  tables). Splitting them — new timestamps for the engine halves — was rejected on a concrete
+  failure, not merely the tail-wagging-the-dog argument: a database that already ran the original
+  (every environment this app has, including three live Unraid backends) has no
+  `schema_migrations` row for a newly-invented timestamp, so the split engine half reports PENDING
+  and then fails with "table already exists" the moment it runs — fixable only by hand-inserting
+  `schema_migrations` rows on every live database, the exact backup/restore-adjacent operational
+  risk §14i exists to keep out of casual reach (Stage 3b plan, Task 5).
+  So the eight engine tables' DDL now has TWO checked-in descriptions on purpose: the real one,
+  spread across those four files plus six purely-engine migrations inside `db/migrate/` (untouched,
+  forever); and `db/engine_schema.rb`, ONE consolidated, standalone `ActiveRecord::Migration`
+  Phase B copies into the gem near-verbatim. The second is GENERATED — by `lib/engine_schema.rb`,
+  which extracts each table's `create_table`/`add_foreign_key` lines as literal TEXT out of
+  `db/schema.rb` rather than re-deriving and re-rendering them (no parser step for a bug to hide
+  in) — and `test/engine_schema_test.rb` fails the moment a fresh regeneration stops matching what
+  is checked in, so a migration touching one of the eight tables without a
+  `bin/rails engine_schema:generate` in the same commit goes RED, not silently stale. That test's
+  strong check does not stop at text: it RUNS the generated migration against a throwaway
+  `:memory:` database (seeded with nothing but a stand-in `users` table — every one of the eight
+  extracted `add_foreign_key` lines names that HOST table, which the engine does not define; Task
+  6 already commits to `User`/`Node`/`Device` as host requirements, and whether the gem's real
+  migration keeps those eight FK lines or moves them to a host-side migration is Phase B's
+  decision, deliberately left open here) and diffs the result — sorted, so physical column order
+  never enters it — against what this app's own already-migrated database reports for the same
+  eight tables. Two independently-obtained descriptions agreeing is the proof; a text match alone
+  would not have caught a wrong block boundary that still renders as plausible-looking Ruby.
 
 ## 15. Working agreements for the coding agent
 

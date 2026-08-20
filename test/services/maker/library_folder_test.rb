@@ -73,7 +73,7 @@ module Maker
     class ChunkBranch < LibraryFolderTest
       setup do
         pin_file_layer_backend("chunk")
-        Storage::ChunkStore.reset!
+        Sync::Storage::ChunkStore.reset!
         @user = User.create!(email: "lf-#{SecureRandom.hex(4)}@example.com",
                              confirmed_at: Time.current, omniauth_signup: true)
       end

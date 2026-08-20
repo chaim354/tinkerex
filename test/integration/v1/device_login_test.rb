@@ -13,7 +13,7 @@ module V1
     # still opens the maker layer -- is in capability_gating_test.rb.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     def login(email:, password:, device_name: "laptop")

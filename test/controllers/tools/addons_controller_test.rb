@@ -49,7 +49,7 @@ module Tools
       )
       @user = User.create!(email: "addons@example.com", password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       # Mirrors GeneratorsControllerTest/BoxesControllerTest: on the s3 CI leg, FileLayer.current
       # otherwise resolves to a REAL FileLayer::S3 pointed at CI's stub (non-existent) bucket
       # creds, so an unstubbed save 403s against actual AWS instead of exercising the save path.

@@ -9,7 +9,7 @@ module Maker
     #   - share/s3 (port_writable): FileLayer#write (bytes -> file/object).
     #   - chunk (syncable):        a single-chunk FileLayer#begin_upload/#finalize_upload (Task 8's
     #                              port verbs, wrapping the same two-phase Sync::Commit flow the
-    #                              web uploader drives) + Storage::ChunkStore#put for the one
+    #                              web uploader drives) + Sync::Storage::ChunkStore#put for the one
     #                              chunk's bytes, driven server-side (the bytes are generated here
     #                              — there is no client to presign for; §15 is aimed at client
     #                              uploads, and there is no client). See #write_chunk for why the
@@ -108,7 +108,7 @@ module Maker
       # WRITE involvement at all (FileLayer::Chunk#write still refuses, unmoved), and unlike
       # share/s3 the old bytes stay restorable.
       #
-      # AS OF TASK 8, THIS IS THE ONLY LEGITIMATE DIRECT `Storage::ChunkStore` CALL IN THE MAKER
+      # AS OF TASK 8, THIS IS THE ONLY LEGITIMATE DIRECT `Sync::Storage::ChunkStore` CALL IN THE MAKER
       # LAYER (CLAUDE.md §14c; architecture_invariants_test.rb pins the count at exactly one and
       # names this file), AND THE `.put` STAYS HERE RATHER THAN FOLDING INTO
       # FileLayer::Chunk#begin_upload — a real choice, not an oversight, argued once so it does not
@@ -121,7 +121,7 @@ module Maker
       #      would give the SAME METHOD two incompatible contracts ("I hand back URLs" vs. "I write
       #      bytes myself"), decided by which caller is asking — the kind of caller-shaped branch
       #      this class's other verbs (mkdir/move/delete/undelete) never need.
-      #   2. This caller does not need the port for it. `Storage::ChunkStore#put` is ALREADY a
+      #   2. This caller does not need the port for it. `Sync::Storage::ChunkStore#put` is ALREADY a
       #      documented, first-class part of the store's own public API for exactly this situation
       #      (see its comment: "the exception for SERVER-GENERATED content... there is no client to
       #      presign for") — it is not a layering violation this class backed into, it is the
@@ -140,7 +140,7 @@ module Maker
           node_id: existing&.node_id, base_version_id: existing&.current_version_id,
           size: bytes.bytesize, mtime: (Time.current.to_f * 1e9).to_i, manifest:
         )
-        begun.missing.each { |h| Storage::ChunkStore.current.put(user.id, h, bytes) }
+        begun.missing.each { |h| Sync::Storage::ChunkStore.current.put(user.id, h, bytes) }
         # verify: false, UNCHANGED FROM BEFORE THIS TASK — the bytes above were just written
         # SYNCHRONOUSLY, in this same method call, by this same process; re-verifying they landed
         # would be a wasted storage round-trip confirming something nothing between the two calls

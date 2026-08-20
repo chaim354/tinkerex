@@ -9,8 +9,8 @@ module Maker
       # chunk-adapter test and pins the adapter it tests rather than taking whatever
       # LIBRARY_BACKEND the process happens to carry.
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
-      @store = Storage::ChunkStore.current
+      Sync::Storage::ChunkStore.reset!
+      @store = Sync::Storage::ChunkStore.current
       @user  = User.create!(email: "job@example.com")
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
     end
@@ -35,9 +35,9 @@ module Maker
     def stage_version(node_id:, version_id:, bytes:, manifest_id: "m", name: nil)
       hash = "h-#{version_id}"
       @store.write_blob(@user.id, hash, bytes)
-      ManifestChunk.create!(user_id: @user.id, manifest_id:, chunk_hash: hash,
+      Sync::ManifestChunk.create!(user_id: @user.id, manifest_id:, chunk_hash: hash,
                             seq: 0, offset: 0, length: bytes.bytesize)
-      version = Version.create!(user_id: @user.id, version_id:, node_id:, manifest_id:)
+      version = Sync::Version.create!(user_id: @user.id, version_id:, node_id:, manifest_id:)
       # A preview always belongs to a real, live node in production — FileLayer#read now
       # enforces that (tombstoned = gone), so the fixture has to reflect reality.
       stage_node(node_id:, version_id:, name:)
@@ -415,9 +415,9 @@ module Maker
       # Live node + version, but the chunk bytes are missing from the store → FileBytes::NotFound.
       # The node is staged deliberately: without it, read rejects the node as not-live and this
       # test would still go green while never reaching the missing-chunk path it exists to cover.
-      ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",
+      Sync::ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",
                             seq: 0, offset: 0, length: 3)
-      Version.create!(user_id: @user.id, version_id: "v3", node_id: "broken.svg", manifest_id: "mx")
+      Sync::Version.create!(user_id: @user.id, version_id: "v3", node_id: "broken.svg", manifest_id: "mx")
       stage_node(node_id: "broken.svg", version_id: "v3")
       preview = @user.maker_previews.create!(node_id: "broken.svg", version_id: "v3")
 

@@ -1,13 +1,18 @@
 class User < ApplicationRecord
   has_many :devices, dependent: :destroy
   has_many :nodes, dependent: :destroy
-  has_many :versions, dependent: :destroy
-  has_many :chunks, dependent: :destroy
-  has_many :changelog_entries, dependent: :destroy
-  has_many :pending_commits, dependent: :destroy
-  has_many :conflicts, dependent: :destroy
-  has_many :file_locks, dependent: :destroy
-  has_many :share_links, dependent: :destroy
+  # Stage 3b Phase A Task 3: the seven engine models these associations reach are now
+  # `Sync::*`, so each needs an explicit class_name: — Rails derives one from the association
+  # NAME (`versions` -> "Version") and that guess no longer resolves to anything. `manifest_chunks`
+  # has no has_many here at all (reached by the string manifest_id everywhere), which is why
+  # this list is seven, not eight.
+  has_many :versions, class_name: "Sync::Version", dependent: :destroy
+  has_many :chunks, class_name: "Sync::Chunk", dependent: :destroy
+  has_many :changelog_entries, class_name: "Sync::ChangelogEntry", dependent: :destroy
+  has_many :pending_commits, class_name: "Sync::PendingCommit", dependent: :destroy
+  has_many :conflicts, class_name: "Sync::Conflict", dependent: :destroy
+  has_many :file_locks, class_name: "Sync::FileLock", dependent: :destroy
+  has_many :share_links, class_name: "Sync::ShareLink", dependent: :destroy
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
   has_many :maker_tags, class_name: "Maker::Tag", dependent: :destroy
   has_many :maker_taggings, class_name: "Maker::Tagging", dependent: :destroy

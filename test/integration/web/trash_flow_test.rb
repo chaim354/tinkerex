@@ -14,7 +14,7 @@ module Web
     # what pin that the two mechanisms both still work behind it.
     setup do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
     end
 
     PASSWORD = "correct horse battery staple".freeze

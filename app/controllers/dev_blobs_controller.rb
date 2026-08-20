@@ -30,7 +30,7 @@ class DevBlobsController < ActionController::Base
   private
 
   def ensure_memory_store
-    @store = Storage::ChunkStore.current
-    head :not_found unless @store.is_a?(Storage::MemoryChunkStore)
+    @store = Sync::Storage::ChunkStore.current
+    head :not_found unless @store.is_a?(Sync::Storage::MemoryChunkStore)
   end
 end

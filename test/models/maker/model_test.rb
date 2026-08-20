@@ -97,7 +97,7 @@ module Maker
 
     test "ensure_library_folder! creates Models/<slug> and stores its node_id" do
       pin_file_layer_backend("chunk")
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       m = @user.maker_models.create!(title: "Desk Dragon")
       folder = m.ensure_library_folder!(@user)
       assert_equal m.folder_node_id, folder.node_id

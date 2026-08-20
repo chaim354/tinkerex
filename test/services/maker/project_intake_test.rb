@@ -101,7 +101,7 @@ module Maker
 
     # --- the nudge ---------------------------------------------------------------
     #
-    # LibraryChannel's header has always said "one event per commit — never per-operation", and the
+    # Sync::LibraryChannel's header has always said "one event per commit — never per-operation", and the
     # sweep was the thing violating it: each move is its own Sync::Mutation.apply and each category
     # subfolder its own ensure_path!, so filing N files broadcast N+1 times. Devices converged fine
     # (pull is incremental), which is exactly why it went unnoticed — the cost is all server-side:
@@ -116,7 +116,7 @@ module Maker
     test "filing many files emits ONE nudge, carrying the final head_seq" do
       5.times { |i| file("part#{i}.stl") }
 
-      stream = LibraryChannel.broadcasting_for(@user)
+      stream = Sync::LibraryChannel.broadcasting_for(@user)
       result = nil
       # Counts only what happens INSIDE the block, which is the assertion that matters.
       assert_broadcasts(stream, 1) { result = intake }
@@ -136,7 +136,7 @@ module Maker
     test "a sweep with nothing to file broadcasts nothing at all" do
       file("already.stl", parent: dir("cad").node_id)
 
-      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) { intake }
+      assert_no_broadcasts(Sync::LibraryChannel.broadcasting_for(@user)) { intake }
     end
 
     # --- the attach step ---------------------------------------------------------

@@ -73,12 +73,12 @@ module Maker
     #     API calls inside one browser-facing request. docs/r2-migration.md / docs/STATUS.md
     #     measured ~85–205 ms per comparable call against a real R2 bucket, so at the low end alone
     #     that is several seconds an upload's response would sit waiting on.
-    #   - Chunk: filing N files fires N synchronous LibraryChannel.broadcast_change calls (one per
+    #   - Chunk: filing N files fires N synchronous Sync::LibraryChannel.broadcast_change calls (one per
     #     Sync::Mutation.apply inside MoveNode#chunk_move) PLUS one more per category subfolder
     #     Maker::LibraryFolder.ensure_path! has to create along the way — verified directly: 25
     #     same-category files (all .stl, one new folder) broadcast 26 times, 25 files split across
     #     two categories (two new folders) broadcast 27, both measured at ~43–50 ms on local SQLite
-    #     with no contention. LibraryChannel's own header states the intent this pattern strains
+    #     with no contention. Sync::LibraryChannel's own header states the intent this pattern strains
     #     under load: "Coarse (one event per commit) — never per-operation." Each broadcast's
     #     Sync::Mutation.apply also takes the user-row lock in User#next_seq! (a Postgres FOR
     #     UPDATE) inside its own transaction — a serialization point this local-SQLite-with-no-
@@ -237,10 +237,10 @@ module Maker
       # A dry run never refuses — seeing this number is the entire reason to run one.
       refused = !dry_run && inbox_total > cap
       # ONE NUDGE FOR THE WHOLE USER SWEEP. #call already batches its own run; wrapping the loop
-      # here makes those batches JOIN (LibraryChannel.batch is a no-op when one is already open for
+      # here makes those batches JOIN (Sync::LibraryChannel.batch is a no-op when one is already open for
       # the same user), so fifty projects emit one message instead of fifty. Without this the
       # per-project batching would still be a 50x improvement and a 50x remaining waste.
-      results = LibraryChannel.batch(user) do
+      results = Sync::LibraryChannel.batch(user) do
         projects.map do |project|
           [ project, for_project(user:, project:, dry_run:, move: !refused) ]
         end
@@ -414,12 +414,12 @@ module Maker
       inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id })
       # ONE NUDGE FOR THE WHOLE RUN, not one per file. Each move is its own Sync::Mutation.apply and
       # each ensure_path! its own folder creation, so filing 25 files broadcast 26 times — against
-      # LibraryChannel's own stated contract ("never per-operation") and, on managed Postgres, 500
+      # Sync::LibraryChannel's own stated contract ("never per-operation") and, on managed Postgres, 500
       # serialized locks + 500 Solid Cable rows + 500 nudges per device for a 500-file sweep. The
       # pull protocol makes one nudge sufficient: a device pulls everything after its own cursor,
       # so the final head_seq subsumes every seq before it. Batches JOIN, so .for_user's loop over
       # projects collapses to a single nudge for the entire sweep rather than one per project.
-      moved, skipped, skips, plan = LibraryChannel.batch(@user) { file_all(inbox) }
+      moved, skipped, skips, plan = Sync::LibraryChannel.batch(@user) { file_all(inbox) }
 
       Result.new(attached:, moved:, skipped:, skips:, plan:, status: :ok)
     end

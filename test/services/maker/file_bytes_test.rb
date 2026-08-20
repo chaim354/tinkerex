@@ -7,7 +7,7 @@ module Maker
   # if these constants ever stop resolving, preview retries break silently.
   class FileBytesTest < ActiveSupport::TestCase
     setup do
-      Storage::ChunkStore.reset!
+      Sync::Storage::ChunkStore.reset!
       FileLayer.reset!
       @user = User.create!(email: "shim-#{SecureRandom.hex(4)}@example.com")
       @device = Device.register!(user: @user, name: "t")
@@ -44,7 +44,7 @@ module Maker
       pin_file_layer_backend("chunk")
       node_id = SecureRandom.uuid
       hash = Digest::SHA256.hexdigest("real bytes")
-      Storage::ChunkStore.current.put!(@user.id, hash, "real bytes")
+      Sync::Storage::ChunkStore.current.put!(@user.id, hash, "real bytes")
       cid = SecureRandom.uuid
       Sync::Commit.begin(
         user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
