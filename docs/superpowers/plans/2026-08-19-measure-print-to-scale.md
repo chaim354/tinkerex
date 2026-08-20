@@ -733,6 +733,41 @@ Add to `test/system/measure_print_test.rb`:
     assert_in_delta 50.0, xs.max - xs.min, 0.001, "the two parts are 50 mm apart in the file"
   end
 
+  # THE CLIP IS PINNED AT STRING LEVEL HERE; ONLY ITS EFFECTIVENESS WAITS FOR TASK 5. Deleting
+  # the <clipPath> element AND the clip-path attribute outright left the whole suite green — which
+  # is exactly how a clip built in the wrong coordinate space survived 24 mutations. Neither claim
+  # below needs layout: the rect must equal contentBox(paper), and the group must name the id the
+  # clipPath actually carries (`clipId` is spelled twice, and a one-sided edit is silent — this
+  # repo's own N-copies-that-must-agree shape).
+  #
+  # THE NESTING IS ALSO ASSERTED, because it is load-bearing rather than stylistic: the clip must
+  # sit on an UNTRANSFORMED ancestor. Collapse the two groups and userSpaceOnUse resolves the
+  # window in the translated space, so it travels with the geometry and the sheet prints blank.
+  test "the clip is a content-box rect on an untransformed ancestor of the moved geometry" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document,
+          m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+        const rect = svg.querySelector("clipPath rect")
+        const clipped = svg.querySelector("[clip-path]")
+        return JSON.stringify({
+          rect: [ "x", "y", "width", "height" ].map((a) => Number(rect.getAttribute(a))),
+          refMatchesId: clipped.getAttribute("clip-path") ===
+                        `url(#${svg.querySelector("clipPath").id})`,
+          // The clipping element must carry NO transform of its own...
+          clippedHasTransform: clipped.hasAttribute("transform"),
+          // ...and the transform must live on a descendant of it.
+          transformInside: clipped.querySelector("[transform]") !== null,
+        })
+      })()
+    JS
+
+    assert_equal [ 10, 17, 195.9, 230.4 ], out["rect"].map { |v| v.round(4) }
+    assert out["refMatchesId"], "the group must name the id the clipPath actually carries"
+    refute out["clippedHasTransform"], "userSpaceOnUse resolves in the referencing element's space"
+    assert out["transformInside"], "the page transform belongs on a descendant of the clip"
+  end
+
   # THE CONTOURS ARE BUILT FRESH FROM shape.p, NEVER CLONED FROM THE SCREEN. A clone would drag
   # the transparent fat hit-twin (.measure-contour--hit), the hover/selected/marked classes and
   # the layer colour onto paper — a printed sheet with an 8-unit-wide invisible stroke on it.
@@ -790,14 +825,25 @@ export function renderSheet(doc, page, meta) {
   }))
   svg.appendChild(clip)
 
+  // TWO NESTED GROUPS, AND THE NESTING IS THE WHOLE POINT — DO NOT COLLAPSE THEM INTO ONE.
+  //
+  // `clipPathUnits` defaults to `userSpaceOnUse`, and that means the user space of the element
+  // that REFERENCES the clip — not the page. So putting `clip-path` and `transform` on one group
+  // makes the clip window move WITH the geometry instead of staying on the paper. Verified in
+  // Chrome by hit testing, not reasoned: with both on one group, a point inside the content box
+  // is not painted at all. On this repo's own nested-plate fixture the sheet prints a 20 x 3 mm
+  // scrap of one corner; for an ordinary laser file whose parts sit at POSITIVE coordinates the
+  // translate is negative, the window lands off-paper entirely, and THE WHOLE SHEET PRINTS BLANK.
+  // No error, nothing logged, on a page that is otherwise perfectly formed.
+  const clipped = el(doc, "g", { "clip-path": `url(#${clipId})` })
   // ONE TRANSFORM FOR THE WHOLE PAGE, not one per shape: parts keep their relative positions
   // because they are all moved by the same amount.
   const group = el(doc, "g", {
-    "clip-path": `url(#${clipId})`,
     transform: `translate(${page.translateX} ${page.translateY})`,
   })
   for (const shape of page.shapes) group.appendChild(contourNode(doc, shape))
-  svg.appendChild(group)
+  clipped.appendChild(group)
+  svg.appendChild(clipped)
 
   return svg
 }
@@ -819,9 +865,18 @@ function contourNode(doc, shape) {
   return el(doc, shape.k ? "polygon" : "polyline", attrs)
 }
 
-function el(doc, tag, attrs) {
+function el(doc, tag, attrs, text) {
   const node = doc.createElementNS(SVG_NS, tag)
-  for (const [ key, value ] of Object.entries(attrs)) node.setAttribute(key, value)
+  for (const [ key, value ] of Object.entries(attrs)) {
+    // A null or undefined value writes the literal string "undefined". Sheet furniture is full of
+    // conditional attributes, so skip here rather than making every call site remember.
+    if (value != null) node.setAttribute(key, value)
+  }
+  // THE TEXT DOOR EXISTS SO `textContent` IS THE ONLY SPELLING AVAILABLE. The header carries a
+  // library filename — user-controlled, and legitimately able to contain `<` on a NAS-scanned
+  // share — so building it as markup is an injection into a same-origin iframe. Four call sites
+  // each remembering that rule is four chances to forget; one door is none.
+  if (text != null) node.textContent = text
   return node
 }
 ```
@@ -859,6 +914,12 @@ The strips are reserved rather than overlaid, so an unclipped contour prints str
 
 **Files:**
 - Test: `test/system/measure_print_test.rb`
+
+> **The fixture choice is load-bearing, and Task 4's review is why.** For a selection at POSITIVE
+> coordinates a mis-built clip paints *nothing at all*, so a "content escapes into the calibration
+> strip" assertion passes trivially — green for the opposite of the right reason. This task's
+> fixture starts at (0, 0), where a displaced window shows up as content in the wrong place rather
+> than as an empty page. Keep it there, and if you change it, check the test can still fail.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1065,14 +1126,13 @@ function line(doc, x1, y1, x2, y2) {
   return el(doc, "line", { x1, y1, x2, y2, stroke: "#000", "stroke-width": 0.2 })
 }
 
+// The fourth argument goes through `el`'s text door, which sets `textContent` — NEVER an
+// interpolated markup string. `meta.name` is a library filename, user-controlled and legitimately
+// able to contain `<` on a NAS-scanned share. See printSheets.
 function text(doc, x, y, anchor, content) {
-  const node = el(doc, "text", {
+  return el(doc, "text", {
     x, y, "font-size": 3, "font-family": "sans-serif", "text-anchor": anchor, fill: "#000",
-  })
-  // textContent, NEVER an interpolated markup string — `meta.name` is a library filename, which is
-  // user-controlled and can legitimately contain `<` on a NAS-scanned share. See printSheets.
-  node.textContent = content
-  return node
+  }, content)
 }
 ```
 
