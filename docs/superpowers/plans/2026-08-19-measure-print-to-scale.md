@@ -511,7 +511,7 @@ export function buildSheets(shapes, paper) {
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 6 runs, 0 failures.
+Expected: 7 runs, 0 failures.
 
 - [ ] **Step 5: Commit**
 
@@ -636,7 +636,7 @@ const round = (v) => Math.round(v * 10) / 10
 bin/rails test test/system/measure_print_test.rb
 ```
 
-Expected: 9 runs, 0 failures.
+Expected: 10 runs, 0 failures.
 
 - [ ] **Step 5: Commit**
 
