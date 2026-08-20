@@ -469,6 +469,271 @@ class MeasurePrintTest < ApplicationSystemTestCase
                  "row-major tiles, and the filter preserves array order within each tile"
   end
 
+  # ---- lib/print_sheet.js: rendering -----------------------------------------------------------
+  #
+  # NOT ASSERTED HERE, DELIBERATELY: whether the <clipPath> this renderer builds actually CLIPS.
+  # It is built and referenced below and its rect shows up in every outerHTML these tests print,
+  # but a clip only does anything once the page is laid out, which is Task 5's assertion and needs
+  # the sheet attached to a document. What IS pinned here is everything that decides the sheet's
+  # size and what is drawn on it.
+
+  # The plan's render input: a 60 x 40 closed part at the origin, kept because the two scale
+  # assertions want a part whose dimensions ARE the numbers being asserted.
+  SIXTY_BY_FORTY = <<~JS.freeze
+    [{ b: [0, 0, 60, 40], k: 1, i: 0, o: 1,
+       p: [[0, 0], [60, 0], [60, 40], [0, 40], [0, 0]] }]
+  JS
+
+  # ONE SPELLING OF THE `meta` ARGUMENT rather than one per test. Nothing in renderSheet reads it
+  # yet — the header, the calibration strip and the size labels are later tasks — but it is part of
+  # the call, and `sizeLabel` returning null is the "no label for this shape" answer.
+  META = '{ name: "plate.lbrn2", date: "2026-08-19", sizeLabel: () => null }'.freeze
+
+  # THE SCALE MECHANISM, ASSERTED AS THE TWO LITERALS THAT CONSTITUTE IT. A width in px with the
+  # same viewBox draws an identical-looking page at the wrong size, and no visual check catches it.
+  #
+  # TWO PAPERS, NOT THE PLAN'S ONE. Against Letter alone every one of these attributes can be a
+  # HARD-CODED STRING and all three assertions stay GREEN, while the A4, A3 and Tabloid the picker
+  # also offers come out DECLARED as Letter — the printer then fits a 210 mm page into a 215.9 mm
+  # declaration and every part on it is 2.8% wrong. Verified: replacing all four interpolations
+  # with Letter's own literals is GREEN through the Letter block and RED on the A4 one, and the
+  # actual it prints is the giveaway — `width="215.9mm" ... viewBox="0 0 215.9 279.4"` wrapped
+  # around a content rect of `width="190" height="248"`, which is A4's. The page knows its own
+  # size; only what it DECLARES to the printer is wrong.
+  #
+  # MUTATION-CHECKED SIX WAYS, all RED here, all with a distinguishable actual:
+  #   width `${paper.w}px`         width="215.9px"
+  #   both pairs hard-coded        RED on the A4 block, `to include "width=\"210mm\""`
+  #   width/height swapped         width="279.4mm" height="215.9mm"
+  #   viewBox extents swapped      viewBox="0 0 279.4 215.9"
+  #   viewBox spans the CONTENT    viewBox="0 0 195.9 259.4"
+  #   createElement, no namespace  viewbox="0 0 215.9 279.4" — setAttribute lowercases the name on
+  #                                an HTML-namespace element, so the camel-cased literal is what
+  #                                notices the elements are not SVG at all
+  test "a sheet declares its size in millimetres and spans the same number of user units" do
+    html = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META}).outerHTML
+    JS
+
+    assert_includes html, 'width="215.9mm"'
+    assert_includes html, 'height="279.4mm"'
+    assert_includes html, 'viewBox="0 0 215.9 279.4"'
+
+    a4 = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.A4).pages[0], #{META}).outerHTML
+    JS
+
+    assert_includes a4, 'width="210mm"'
+    assert_includes a4, 'height="297mm"'
+    assert_includes a4, 'viewBox="0 0 210 297"'
+  end
+
+  # A 60 x 40 part must span 60 x 40 USER UNITS, which the assertion above has just established
+  # are millimetres. Asserting only "a polygon exists" is answered exactly as well by a polygon of
+  # the wrong size — CLAUDE.md §14h's Z-up lesson, one feature over.
+  #
+  # MUTATION-CHECKED: transposing the point format to `${y},${x}` is RED ("Expected |60.0 - 40.0|
+  # (20.0) to be <= 0.001"). It is a SPAN test, though, so it cannot see a renderer that draws the
+  # right extent out of the wrong data — see the exact-points assertion further down for what does.
+  test "a 60 x 40 part spans exactly 60 by 40 user units on the sheet" do
+    points = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META})
+       .querySelector("polygon").getAttribute("points")
+    JS
+
+    xs = points.split(/\s+/).map { |p| p.split(",").first.to_f }
+    ys = points.split(/\s+/).map { |p| p.split(",").last.to_f }
+    assert_in_delta 60.0, xs.max - xs.min, 0.001
+    assert_in_delta 40.0, ys.max - ys.min, 0.001
+  end
+
+  # TWO PARTS MUST KEEP THEIR REAL SEPARATION — the entire point of "true positions". A transform
+  # applied per shape instead of per page would draw both parts perfectly and stack them.
+  #
+  # MUTATION-CHECKED: emitting only the first shape is RED ("the two parts are 50 mm apart in the
+  # file. Expected |50.0 - 0| (50.0) to be <= 0.001"), as is transposing the point format. It reads
+  # the UNTRANSFORMED `points` attribute, so it is blind to the page transform itself — that is the
+  # last test in this section, and nothing above it can see one.
+  test "two parts keep their real separation on the sheet" do
+    xs = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document,
+        m.buildSheets([
+          // Min-supplier second — see Task 1's union test.
+          { b: [50, 0, 60, 10],  k: 1, i: 0, o: 2, p: [[50, 0], [60, 0], [60, 10], [50, 0]] },
+          { b: [0, 0, 10, 10],   k: 1, i: 0, o: 1, p: [[0, 0], [10, 0], [10, 10], [0, 0]] },
+        ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon")).map((n) =>
+         Math.min(...n.getAttribute("points").split(/\\s+/).map((p) => parseFloat(p)))))
+    JS
+
+    assert_in_delta 50.0, xs.max - xs.min, 0.001, "the two parts are 50 mm apart in the file"
+  end
+
+  # THE CONTOURS ARE BUILT FRESH FROM shape.p, NEVER CLONED FROM THE SCREEN. A clone would drag
+  # the transparent fat hit-twin (.measure-contour--hit), the hover/selected/marked classes and
+  # the layer colour onto paper — a printed sheet with an 8-unit-wide invisible stroke on it.
+  #
+  # MUTATION-CHECKED: dropping `stroke: "#000"` is RED (`to include "stroke=\"#000\""`), and
+  # dropping `fill: "none"` is RED on the line below it. The refute is a TRIPWIRE rather than a
+  # guard with a mutation of its own — nothing in this renderer can emit that string today, which
+  # is the point: it goes red the day somebody reaches for cloneNode.
+  test "the sheet carries no screen-only classes and prints in black" do
+    html = in_print_sheet(<<~JS)
+      m.renderSheet(document,
+        m.buildSheets(#{SIXTY_BY_FORTY}, m.PAPERS.Letter).pages[0], #{META}).outerHTML
+    JS
+
+    refute_includes html, "measure-contour"
+    assert_includes html, 'stroke="#000"'
+    # AND AS AN OUTLINE, NOT A SILHOUETTE. SVG's default fill is BLACK, so a contourNode that
+    # merely omitted `fill` prints every closed part as a solid black slab — hiding every internal
+    # feature the sheet exists to check, and emptying a cartridge doing it. Neither assertion above
+    # can see that: the stroke is still #000 and no screen-only class has appeared.
+    assert_includes html, 'fill="none"'
+  end
+
+  # OPEN CONTOURS EXIST, AND A <polygon> CLOSES ONE FOR THEM. `k` is 0 for a path that never
+  # closes — an engraved line, a DXF LWPOLYLINE with no closed flag — and a polygon draws a segment
+  # from its last point back to its first that the design does not contain. Every shape in the four
+  # tests above is `k: 1`, so `shape.k ? "polygon" : "polyline"` could be the constant "polygon"
+  # with all of them GREEN.
+  #
+  # AND THE POINTS ARE ASSERTED AS THE EXACT STRING THE PRINTER WILL PARSE, which a "spans 60 user
+  # units" assertion cannot substitute for in three separate directions. All three are
+  # MUTATION-CHECKED, and the first two are GREEN in the span test above:
+  #
+  #   drawing shape.b's corners   ["0,0 30,0 30,20 0,20", "0,0 30,0 30,20 0,20"] — every part
+  #     becomes its own BOUNDING BOX (a circle prints square) while spanning the identical extent.
+  #     Not a hypothetical reach for this payload: `b` is the key every printed NUMBER must come
+  #     from (§14h), which is exactly what makes it the easy slip here.
+  #   `Math.round` on each coord  ["0,0 30,0 30,20 0,20 0,0", "0,0 13,20 30,5"] — at one user unit
+  #     per millimetre a "tidy" rounds every vertex to the nearest MILLIMETRE, and whole-number
+  #     test data cannot see it. Hence the 12.5.
+  #   `${y},${x}` transposed      ["0,0 0,30 20,30 20,0 0,0", "0,0 20,12.5 5,30"]
+  #
+  # AND FOUR MORE, all RED here: always "polygon" ["polygon", "polygon"]; the ternary inverted
+  # ["polyline", "polygon"]; emitting only the first shape ["polygon"]; createElement instead of
+  # createElementNS ["POLYGON", "POLYLINE"] — tagName is upper-cased for an HTML-namespace element.
+  test "an open contour prints as a polyline and a closed one as a polygon" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const svg = m.renderSheet(document, m.buildSheets([
+          { b: [0, 0, 30, 20], k: 1, i: 0, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+          // SAME BBOX as the closed part, and no vertex of it on a bbox corner.
+          { b: [0, 0, 30, 20], k: 0, i: 0, o: 2, p: [[0, 0], [12.5, 20], [30, 5]] },
+        ], m.PAPERS.Letter).pages[0], #{META})
+        // Document order, which is the order the shapes were appended in.
+        const nodes = Array.from(svg.querySelectorAll("polygon, polyline"))
+        return JSON.stringify({
+          tags: nodes.map((n) => n.tagName),
+          points: nodes.map((n) => n.getAttribute("points")),
+          strokeWidth: nodes.map((n) => n.getAttribute("stroke-width")),
+        })
+      })()
+    JS
+
+    assert_equal [ "polygon", "polyline" ], out["tags"]
+    assert_equal [ "0,0 30,0 30,20 0,20 0,0", "0,0 12.5,20 30,5" ], out["points"]
+    # 0.2 USER UNITS IS 0.2 mm, AND THE BARE NUMBER IS WHAT MAKES THAT TRUE. "0.2mm" is not a
+    # synonym for it: a unit suffix inside an SVG attribute resolves through CSS at 96 dpi, so it
+    # would draw 0.2 * 96 / 25.4 = 0.76 user units — a line nearly four times too fat to cut to,
+    # on a sheet that otherwise still looks entirely right. MUTATION-CHECKED: RED, ["0.2mm",
+    # "0.2mm"], and nothing else in the file asserts stroke-width at all.
+    assert_equal [ "0.2", "0.2" ], out["strokeWidth"]
+  end
+
+  # THE BITMAP PLACEHOLDER DRAWS DASHED, AND ONLY IT. The base64 is deliberately absent from the
+  # payload (§14h) — what matters for fit is the RECTANGLE a photo occupies — so the dashes are the
+  # only thing on paper that says "this outline is not a cut".
+  #
+  # TWO SHAPES, THE BITMAP FIRST, because one shape cannot tell a branch from a constant. Every
+  # shape in the tests above is `i: 0`, so all three broken spellings are GREEN against them.
+  # MUTATION-CHECKED, each with a distinguishable actual: the branch deleted [nil, nil]; the
+  # dasharray set unconditionally ["4 3", "4 3"]; `if (!shape.i)` [nil, "4 3"]. (Emitting only the
+  # first shape is RED here too, ["4 3"].)
+  test "only a bitmap placeholder prints dashed" do
+    dashes = JSON.parse(in_print_sheet(<<~JS))
+      JSON.stringify(Array.from(m.renderSheet(document, m.buildSheets([
+        { b: [0, 0, 30, 20],  k: 1, i: 1, o: 1, p: [[0, 0], [30, 0], [30, 20], [0, 20], [0, 0]] },
+        { b: [40, 0, 70, 20], k: 1, i: 0, o: 2, p: [[40, 0], [70, 0], [70, 20], [40, 20], [40, 0]] },
+      ], m.PAPERS.Letter).pages[0], #{META})
+       .querySelectorAll("polygon, polyline")).map((n) => n.getAttribute("stroke-dasharray")))
+    JS
+
+    assert_equal [ "4 3", nil ], dashes
+  end
+
+  # ONE TRANSFORM MOVES THE WHOLE PAGE, AND NOTHING ABOVE THIS LINE CAN SEE IT AT ALL. Every
+  # assertion in this section reads `points`, which is written in FILE coordinates and is
+  # byte-identical whether the page is translated, translated by the wrong amount, or not
+  # translated at all — so deleting the `transform` outright is GREEN through all six of them.
+  # The user-visible result is geometry drawn at its raw file coordinates: a bracket at x 500 in a
+  # 600 mm laser sheet lands 490 mm off the right edge of a 215.9 mm page, and the sheet prints
+  # blank. Nothing errors and nothing logs — this repo's dominant failure shape.
+  #
+  # A SELECTION OFFSET FROM THE ORIGIN, for the reason Task 3's filter test gives: at (0, 0) the
+  # datum shift is a no-op and `translate(10 17)` is indistinguishable from a hard-coded margin.
+  # TWO SHAPES, because "every contour shares one parent" is trivially true of one.
+  #
+  # THE EXPECTATION COMES OFF THE PAGE OBJECT, not from a literal — whether those numbers are
+  # right is Task 2's assertion and is pinned there; what is pinned HERE is that the renderer
+  # applies them, once, to an ancestor of every contour.
+  #
+  # MUTATION-CHECKED SEVEN WAYS, AND EACH FAILS A DIFFERENT ASSERTION, which is how the four below
+  # are shown to carry independent weight rather than restate each other:
+  #
+  #   transform deleted             transform:    Expected: "translate(-490 -283)" Actual: nil
+  #   moved onto each contour       transform:    Expected: "translate(-490 -283)" Actual: nil
+  #   translateX/Y swapped          transform:    Actual: "translate(-283 -490)"
+  #   on the group AND each contour movedShapes:  Expected: 0 Actual: 2  (a DOUBLE move — the only
+  #                                 one of the seven the transform assertion cannot see, since the
+  #                                 group still carries exactly the right string)
+  #   a <g> per contour             parents:      Expected: 1 Actual: 2
+  #   transform on the root <svg>   parentTag:    Expected: "g" Actual: "svg"  (it draws the same
+  #                                 sheet today and moves Task 6's furniture with the geometry)
+  #   only the first shape emitted  contours:     Expected: 2 Actual: 1
+  test "one transform moves the whole page and every contour rides on it" do
+    out = JSON.parse(in_print_sheet(<<~JS))
+      (() => {
+        const page = m.buildSheets([
+          { b: [500, 300, 560, 340], k: 1, i: 0, o: 1,
+            p: [[500, 300], [560, 300], [560, 340], [500, 340], [500, 300]] },
+          { b: [600, 300, 660, 340], k: 1, i: 0, o: 2,
+            p: [[600, 300], [660, 300], [660, 340], [600, 340], [600, 300]] },
+        ], m.PAPERS.Letter).pages[0]
+        const svg = m.renderSheet(document, page, #{META})
+        const nodes = Array.from(svg.querySelectorAll("polygon, polyline"))
+        return JSON.stringify({
+          contours: nodes.length,
+          parents: new Set(nodes.map((n) => n.parentNode)).size,
+          parentTag: nodes.length ? nodes[0].parentNode.tagName : null,
+          transform: nodes.length ? nodes[0].parentNode.getAttribute("transform") : null,
+          expected: `translate(${page.translateX} ${page.translateY})`,
+          movedShapes: nodes.filter((n) => n.hasAttribute("transform")).length,
+          translateX: page.translateX,
+        })
+      })()
+    JS
+
+    assert_equal 2, out["contours"]
+    # GUARDING THIS TEST'S OWN PREMISE, not re-testing buildSheets — hence no mutation of its own.
+    # At translate(10 17) a deleted datum shift looks exactly like a correct one, so if this ever
+    # reads 10 the six assertions built on it have quietly stopped meaning anything.
+    assert_in_delta(-490.0, out["translateX"], 0.001, "MARGIN (10) less the selection's x0 (500)")
+
+    assert_equal 1, out["parents"], "every contour hangs off ONE node, so one move carries them all"
+    assert_equal "g", out["parentTag"]
+    assert_equal out["expected"], out["transform"]
+    # PER PAGE, NEVER PER SHAPE. Moving the same translate onto each contour draws an identical
+    # sheet today and stops doing so the moment anything is nested, sorted or reparented — and it
+    # is the spelling that invites a per-shape VALUE, which is what actually stacks two parts on
+    # top of each other.
+    assert_equal 0, out["movedShapes"]
+  end
+
   private
 
     def in_print_sheet(body)

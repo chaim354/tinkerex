@@ -123,3 +123,67 @@ function touches(shape, box, originX, originY, content) {
 }
 
 const round = (v) => Math.round(v * 10) / 10
+
+const SVG_NS = "http://www.w3.org/2000/svg"
+
+// Build one page as an <svg> element in `doc`.
+//
+// `meta` is { name, date, sizeLabel }. `sizeLabel(shape)` comes from measure_controller.js so the
+// paper and the on-screen readout cannot disagree — and so that it is NEVER re-derived here from
+// `shape.p`, which holds the THINNED drawing points: measuring from those under-reports every
+// curve, and a hole small enough to thin below MIN_CIRCLE_POINTS loses its diameter entirely
+// (CLAUDE.md §14h). Returning null from it omits the label.
+export function renderSheet(doc, page, meta) {
+  const { paper } = page
+  // ONE USER UNIT IS ONE MILLIMETRE, and these two attributes together are the entire scale
+  // mechanism. There is no transform and no dpi constant. Change the width to px, or let the
+  // viewBox span anything other than the paper's own millimetres, and every part on the sheet is
+  // silently the wrong size while the page still looks right.
+  const svg = el(doc, "svg", {
+    xmlns: SVG_NS,
+    width: `${paper.w}mm`, height: `${paper.h}mm`,
+    viewBox: `0 0 ${paper.w} ${paper.h}`,
+  })
+
+  const content = contentBox(paper)
+  const clipId = `mp-clip-${page.col}-${page.row}`
+  const clip = el(doc, "clipPath", { id: clipId })
+  clip.appendChild(el(doc, "rect", {
+    x: content.x, y: content.y, width: content.w, height: content.h,
+  }))
+  svg.appendChild(clip)
+
+  // ONE TRANSFORM FOR THE WHOLE PAGE, not one per shape: parts keep their relative positions
+  // because they are all moved by the same amount.
+  const group = el(doc, "g", {
+    "clip-path": `url(#${clipId})`,
+    transform: `translate(${page.translateX} ${page.translateY})`,
+  })
+  for (const shape of page.shapes) group.appendChild(contourNode(doc, shape))
+  svg.appendChild(group)
+
+  return svg
+}
+
+// BUILT FRESH FROM shape.p, NEVER CLONED FROM THE ON-SCREEN NODE. A clone drags the transparent
+// fat hit-twin (.measure-contour--hit, an 8px stroke), the hover/selected/marked classes and the
+// layer colour onto paper.
+//
+// BLACK, not the layer colour: a mono printer turns a layer palette into indistinguishable greys,
+// and this sheet exists to be measured and cut against. 0.2 mm is a line you can cut to.
+function contourNode(doc, shape) {
+  const attrs = {
+    points: shape.p.map(([x, y]) => `${x},${y}`).join(" "),
+    fill: "none", stroke: "#000", "stroke-width": 0.2,
+  }
+  // A bitmap's base64 is deliberately absent from the payload; it is the RECTANGLE a photo
+  // occupies that matters for fit, and it draws dashed here exactly as it does on screen.
+  if (shape.i) attrs["stroke-dasharray"] = "4 3"
+  return el(doc, shape.k ? "polygon" : "polyline", attrs)
+}
+
+function el(doc, tag, attrs) {
+  const node = doc.createElementNS(SVG_NS, tag)
+  for (const [ key, value ] of Object.entries(attrs)) node.setAttribute(key, value)
+  return node
+}
