@@ -1031,6 +1031,23 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 > sites this task defines; a fifth added later is one keystroke away. Add
 > `if (typeof attrs === "string") throw new Error(...)` to `el` and pin it.
 >
+> **THE FILENAME MUST BE TRUNCATED — A CODE FIX, NOT A TEST FIX.** Measured on A4 (the narrowest
+> content box we ship, 190 mm): the centred warning occupies roughly x 81..129, leaving ~71 mm for
+> the left text — which a **40-character filename overruns**, overprinting
+> `Print at 100% — do NOT scale to fit` on the one sheet whose entire purpose is a scale check.
+> `Rev C bracket assembly plate final.lbrn2` already collides; a 70-character name buries the
+> warning completely and runs under the sheet label too. Ordinary lengths for a NAS-scanned share.
+> Nothing truncates today, so there is nothing to assert — the gap is in the code.
+>
+> Truncate in the **MIDDLE**, keeping head and tail: a maker distinguishing `panel-v11.lbrn2` from
+> `panel-v12.svg` needs the extension as much as the start. Derive the budget from `content.w` and
+> a **measured worst-case glyph width** at 3 mm sans-serif — measure it in the browser rather than
+> guessing, since an all-caps `W` is far wider than the average and a filename is arbitrary user
+> input. Pin it with a pathological name (a long run of `W`) on **A4**, asserting via `getBBox`
+> that the left text's right edge sits left of the warning's left edge. A constant that holds for
+> `plate.lbrn2` and fails for `WWWWWWWW…` is the same under-powered input this plan has now
+> recorded sixteen times.
+>
 > **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
 > which SVG does not care about. Nothing in this task prints a content-box number **as text** — but
 > if you add one that does, round it.
