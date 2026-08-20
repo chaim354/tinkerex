@@ -236,6 +236,46 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     app/models/user.rb
   ].freeze
 
+  # THE OTHER DIRECTION, WHICH NOTHING GUARDED UNTIL STAGE 3a TASK 4 CLOSED THE LAST ONE. Every
+  # guard in this file until now asked "does maker code reach into the engine?". The reverse --
+  # the engine reaching into the HOST'S FEATURES -- is a different and arguably worse coupling:
+  # not shared data the engine legitimately needs, but business logic that must EXIST for the
+  # engine to run. An engine requiring a preview pipeline cannot be run standalone, which is goal
+  # one of the whole separation.
+  #
+  # It was real, not hypothetical: V1::CommitsController#finalize called Maker::Previews::Enqueue
+  # and Maker::ProjectIntakeJob directly, defended by a comment arguing it was the least-bad layer
+  # to put them in. Task 4 dissolved that dilemma with Sync::Hooks -- the engine publishes, the
+  # host subscribes -- and the count is now ZERO, which is why this asserts zero with no exception
+  # list. It could not have been written before, and it is cheapest to add at the exact moment the
+  # number reaches zero rather than after the next one is added back.
+  #
+  # v1/maker/** IS EXCLUDED and that is not a loophole: those fourteen controllers ARE the maker
+  # API. They live under app/controllers/v1/ for routing reasons only, which is the same thing that
+  # makes the "twelve controllers move" figure meaningless (boundary design §7).
+  test "the sync engine never reaches into the maker layer's features" do
+    engine_files = %w[app/services/sync/**/*.rb app/services/sync.rb app/channels/**/*.rb
+                      app/controllers/v1/**/*.rb]
+                   .flat_map { |g| Dir.glob(ROOT.join(g)) }
+                   .reject { |f| f.include?("/v1/maker/") }
+
+    offenders = engine_files.select { |file| maker_references(file).any? }
+                            .map { |f| Pathname.new(f).relative_path_from(ROOT).to_s }.sort
+
+    assert_empty offenders,
+                 "engine code reaching into Maker:: -- publish through Sync::Hooks and let the " \
+                 "host subscribe (app/services/sync/hooks.rb), so a bare sync server with no " \
+                 "maker layer still runs: #{offenders}"
+  end
+
+  # Ripper, not grep, for the reason sync_references gives: a comment or string naming Maker:: is
+  # not a reference, and this tree is full of prose that names it.
+  def maker_references(file)
+    Ripper.lex(File.read(file)).each_cons(2).filter_map do |(pos, type, str, _), (_, t2, s2, _)|
+      "#{pos.first}" if type == :on_const && str == "Maker" && t2 == :on_op && s2 == "::"
+    end
+  end
+
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
     # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
     # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
