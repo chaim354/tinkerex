@@ -1041,11 +1041,15 @@ git commit -m "test(measure): prove the content clip is attached and effective, 
 >
 > Truncate in the **MIDDLE**, keeping head and tail: a maker distinguishing `panel-v11.lbrn2` from
 > `panel-v12.svg` needs the extension as much as the start. Derive the budget from `content.w` and
-> a **measured worst-case glyph width** at 3 mm sans-serif — measure it in the browser rather than
-> guessing, since an all-caps `W` is far wider than the average and a filename is arbitrary user
-> input. Pin it with a pathological name (a long run of `W`) on **A4**, asserting via `getBBox`
-> that the left text's right edge sits left of the warning's left edge. A constant that holds for
-> `plate.lbrn2` and fails for `WWWWWWWW…` is the same under-powered input this plan has now
+> a **measured worst-case glyph width** at 3 mm sans-serif. **Measure it; do not guess — this
+> instruction originally said `W` and the measurement disproved it.** The widest printable ASCII
+> advance is `@` at **3.0432 mm**; `W` is 2.8296 and only fifth (`@` 3.0432, `…` 2.9979, `W`
+> 2.8296, `%` 2.6655, `M` 2.4973), so a `W`-tuned budget is 7% short of what a filename can
+> actually contain. Pin it with a pathological name on **A4**, asserting via `getBBox` that the
+> left text's right edge sits left of the warning's left edge — and **assert the constant against a
+> fresh in-browser measurement of the widest glyph**, because the geometric assertion alone clears
+> the warning by ~5.7 mm and a `W`-tuned constant passes it. A constant that holds for
+> `plate.lbrn2` and fails for the real worst case is the same under-powered input this plan has now
 > recorded sixteen times.
 >
 > **From Task 4:** the content box's height serializes as `230.39999999999998` in an attribute,
