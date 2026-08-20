@@ -92,9 +92,10 @@ module FileLayerMutationContract
 
   # THE PORT'S ANSWER TO "THE DESTINATION IS TAKEN" ON MOVE, PINNED ACROSS ALL THREE BACKENDS AS
   # OF TASK 4 -- see the header note above for what this closes (every PORT caller now gets one
-  # answer) and what it deliberately does not (the sync engine's own doors -- CLAUDE.md 12 item
-  # 11 stays open: a device push through the mount can still land a duplicate sibling on chunk,
-  # because Sync::Commit validates a manifest exhaustively and the name not at all).
+  # answer) and what it deliberately does not (the sync engine's own doors -- CLAUDE.md 14c's
+  # recorded gap stays open: a device push through the mount can still land a duplicate sibling on
+  # chunk, because Sync::Commit validates a manifest exhaustively and the name not at all. NOT
+  # 12 item 11, which is a different gap one layer up -- see the module header).
   def test_mutation_contract_move_refuses_a_taken_destination
     a = make_file(name: "a.stl", bytes: "aaa")
     make_file(name: "b.stl", bytes: "bbb")

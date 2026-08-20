@@ -600,6 +600,41 @@ module FileLayer
     # Built with nodes.create! rather than through a door, because there is no PORT verb that
     # makes a symlink -- the sync engine's own #symlink is the only maker, and this test is about
     # what mkdir REFUSES, not about how the occupant arrived.
+    # CHUNK ALLOWS A DIRECTORY MOVE, AND THIS IS WHAT EARNS THAT CLAIM. Share earns its own with
+    # an explicit probe ("2/2 children re-homed, no ghosts"); chunk asserted it only by having no
+    # kind check at all, which is a claim nothing exercised.
+    #
+    # WHY A SINGLE-ROW Sync::Mutation IS ENOUGH HERE, WHEN delete NEEDS SubtreeDelete'S CASCADE:
+    # a node's POSITION is defined by descendants POINTING AT its node_id, which the move does not
+    # touch -- there is no redundant path string on a child to go stale (chunk nodes carry a NULL
+    # storage_path; that column is share/s3's). `deleted` is the opposite: a per-row FLAG that the
+    # graph does not imply, so it has to be written onto every descendant explicitly. Same tree,
+    # two different kinds of fact, which is why the two verbs delegate to two different services.
+    # Get this backwards and a dir delete orphans its subtree -- §14a's sharpest recorded trap.
+    test "move re-homes a DIRECTORY without disturbing its subtree" do
+      dir   = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: nil, name: "old",
+                                  kind: "dir", deleted: false, mtime: 0)
+      child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                  name: "kid.stl", kind: "file", deleted: false, mtime: 0)
+      grandkid_dir = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
+                                         name: "nested", kind: "dir", deleted: false, mtime: 0)
+      grandkid = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: grandkid_dir.node_id,
+                                     name: "deep.stl", kind: "file", deleted: false, mtime: 0)
+
+      info = adapter.move(@user, node_id: dir.node_id, new_parent_node_id: nil, new_name: "new")
+
+      assert_equal "new", info.name
+      assert_equal "dir", info.kind
+      # EVERY DESCENDANT STILL LIVE AND STILL POINTING WHERE IT WAS. A cascade that re-wrote them
+      # would be the bug, not the fix: their parent pointers are already correct by construction.
+      [ child, grandkid_dir, grandkid ].each do |n|
+        assert_not n.reload.deleted, "#{n.name} must survive its ancestor's move"
+      end
+      assert_equal dir.node_id,          child.reload.parent_node_id
+      assert_equal dir.node_id,          grandkid_dir.reload.parent_node_id
+      assert_equal grandkid_dir.node_id, grandkid.reload.parent_node_id
+    end
+
     test "mkdir refuses a cross-kind collision -- a live SYMLINK too, not just a file" do
       @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: nil, name: "link",
                           kind: "symlink", deleted: false, mtime: 0,
