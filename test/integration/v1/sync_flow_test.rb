@@ -150,7 +150,8 @@ module V1
       assert_response :success
 
       node = user.nodes.find_by(node_id:)
-      assert_equal "1" * 64, node.current_version.manifest_chunks.first.chunk_hash,
+      version = user.versions.find_by(version_id: node.current_version_id)
+      assert_equal "1" * 64, version.manifest_chunks.first.chunk_hash,
                    "restore points current version at the old manifest's chunks"
 
       # move + delete
