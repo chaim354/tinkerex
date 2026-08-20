@@ -2,7 +2,7 @@
 #
 # Architectural invariants (CLAUDE.md §2/§8/§15) — bytes NEVER flow through Rails:
 #   - Upload: the BROWSER hashes the file (SHA-256, JS SubtleCrypto), asks us to begin a
-#     commit (Sync::Commit.begin → presigned PUT URLs for the MISSING chunks only — dedup
+#     commit (FileLayer#begin_upload → presigned PUT URLs for the MISSING chunks only — dedup
 #     for free), PUTs the bytes straight to storage, then asks us to finalize the version.
 #   - Download/view: FileLayer#download answers with a Delivery, and §15 holds wherever the
 #     backend has a URL signer — chunk and s3 both hand back a Redirect and the browser fetches
@@ -15,9 +15,12 @@
 # front the app with a proxy, x_sendfile_header hands the file off without Rails touching it at
 # all. Do not "fix" this back to a presign: there is no URL to sign.
 #
-# The web UI reuses the SAME Sync::Commit two-phase machinery and per-user presign paths
-# as the desktop client, so a web upload produces a valid content-addressed manifest +
-# immutable version with correct refcounts. No second, bytes-through-Rails write path.
+# The web UI reuses the SAME two-phase machinery and per-user presign paths as the desktop
+# client — FileLayer#begin_upload/#finalize_upload, the port verbs Task 8 put in front of
+# Sync::Commit's own two-phase flow, which is what this controller named directly before Task 8
+# and does not any longer (see #begin_upload/#finalize_upload below) — so a web upload produces a
+# valid content-addressed manifest + immutable version with correct refcounts. No second,
+# bytes-through-Rails write path.
 class FilesController < ApplicationController
   # ONE named mechanism for what this deployment can do, reachable from the views AND from the v1
   # API. Not two: a view reaching for FileLayer.current.capabilities inline while a controller
@@ -53,12 +56,15 @@ class FilesController < ApplicationController
   #
   # begin/finalize are gated on `syncable` rather than on `!port_writable`, and the difference is
   # the whole reason port_writable is a stated capability instead of an inference: these two
-  # actions do not need "the port refuses writes", they need Sync::Commit -- which is what
-  # `syncable` names, and which is the same gate V1::CommitsController uses for the same
-  # machinery. A backend with neither flow (port_writable false, syncable false) would be told
-  # "yes, use the two-phase flow" by the derived gate and 500 in Sync::Commit; the stated one
-  # tells it the truth. `port_writable` still selects which form the UI renders -- that is its
-  # one job, and it is a different question from this one.
+  # actions do not need "the port refuses writes", they need the sync engine's two-phase commit
+  # flow -- FileLayer#begin_upload/#finalize_upload (Task 8; Sync::Commit itself, underneath) --
+  # which is what `syncable` names, and which is the same gate V1::CommitsController uses for the
+  # same machinery, one layer closer to Sync::Commit than this controller now reaches. A backend
+  # with neither flow (port_writable false, syncable false) would be told "yes, use the two-phase
+  # flow" by the derived gate and a NotImplementedError from Share/S3's own refusing stubs (still
+  # a 500, just from a different, honestly-named door); the stated gate tells it the truth instead.
+  # `port_writable` still selects which form the UI renders -- that is its one job, and it is a
+  # different question from this one.
   require_capability! :syncable, only: %i[begin_upload finalize_upload],
                                  hint: "Upload through POST /files, which writes to this " \
                                        "deployment's library backend directly."
@@ -450,8 +456,9 @@ class FilesController < ApplicationController
   # --- Upload: phase 1 (begin) -------------------------------------------------
   # POST /files/begin_upload (JSON)
   #   { name, size, parent_node_id?, manifest: [{hash, offset, length}, ...] }
-  # -> { commit_id, node_id, put_urls: { hash => url }, get_base }
-  # Reuses Sync::Commit.begin: records the pending commit + presigns ONLY missing chunks.
+  # -> { commit_id, node_id, put_urls: { hash => url }, missing }
+  # Calls FileLayer#begin_upload (Task 8): records the pending commit + presigns ONLY missing
+  # chunks. This controller no longer names Sync::Commit at all -- the port wraps it.
   def begin_upload
     name = params.require(:name)
     # THE NAME CHECK THIS DOOR NEVER HAD — both halves of it, and it was the WEAKEST of the three
@@ -467,8 +474,21 @@ class FilesController < ApplicationController
     # made the divergence visible. The one guard is the one written here.
     #
     # AT `begin`, NOT `finalize`, because this is where a name enters the system — #finalize_upload
-    # is handed a commit_id and never sees a name. Refusing before Sync::Commit.begin also means no
-    # PendingCommit row is written for a name that can never become a legal node.
+    # is handed a commit_id and never sees a name. Refusing before FileLayer#begin_upload also
+    # means no PendingCommit row is written for a name that can never become a legal node.
+    #
+    # STAYS AT THIS DOOR, NOT MOVED INTO THE PORT (Task 8's own design question, argued rather than
+    # assumed): CLAUDE.md §14c's recorded failure shape is exactly "a guard that exists on two
+    # backends and silently does not on the third", born from re-implementing one check PER
+    # ADAPTER. Share and S3 already validate names inside their OWN `leaf!`; a THIRD, independent
+    # copy inside Chunk#begin_upload would be that failure shape again, not a fix for it — the
+    # actual fix (2026-08-10) was making every web door that MINTS a name call this SAME shared
+    # pairing before choosing a backend at all, which is what already happens here. Moving it into
+    # the port would also strand it: LibraryOutput's own save door (Tools::AddonsController#
+    # parse_files) already runs the identical pairing before EVER reaching FileLayer, so a copy
+    # inside Chunk#begin_upload would run a second time for that caller and never for this one
+    # gaining anything — the door is the layer that knows a name is about to be minted; the port
+    # does not.
     #
     # Same pairing as Tools::AddonsController#parse_files and LibraryBrowseController#create_folder:
     # syntax first, then the library's own reserved namespace. See Library::ReservedNames.
@@ -477,36 +497,37 @@ class FilesController < ApplicationController
                     status: :unprocessable_entity
     end
     manifest = (params[:manifest] || []).map { |c| c.permit(:hash, :offset, :length).to_h }
-    commit_id = SecureRandom.uuid
-    node_id   = SecureRandom.uuid
 
-    result = Sync::Commit.begin(
-      user: current_user, device: web_device,
-      commit_id:, node_id:, parent_node_id: params[:parent_node_id],
-      name:, base_version_id: nil, size: params.require(:size).to_i,
-      mtime: (Time.current.to_f * 1e9).to_i, manifest:
+    result = FileLayer.current.begin_upload(
+      current_user, device: web_device, name:, parent_node_id: params[:parent_node_id],
+      size: params.require(:size).to_i, mtime: (Time.current.to_f * 1e9).to_i, manifest:
     )
 
     render json: {
-      commit_id: result.commit_id, node_id:,
+      commit_id: result.commit_id, node_id: result.node_id,
       put_urls: result.put_urls, missing: result.missing
     }
-  rescue Sync::Commit::InvalidManifest => e
-    render json: { error: e.message }, status: :unprocessable_entity
+    # No `rescue FileLayer::UnsupportedOperation` here -- a malformed manifest raises it now
+    # (Chunk#begin_upload re-raises Sync::Commit::InvalidManifest as this), and the controller's
+    # own class-level `rescue_from FileLayer::UnsupportedOperation` (above) already renders
+    # `{ error: e.message }` at 422, byte-identical to what this action's old per-action rescue
+    # produced. A second, redundant rescue here would only ever shadow that one.
   end
 
   # --- Upload: phase 2 (finalize) ---------------------------------------------
   # POST /files/finalize_upload (JSON) { commit_id }
-  # Reuses Sync::Commit.finalize (verify: true — confirm the bytes actually landed in
-  # storage before creating the immutable version + changelog entry).
+  # Calls FileLayer#finalize_upload (Task 8; verify: true — confirm the bytes actually landed in
+  # storage before creating the immutable version + changelog entry). Broadcasting stays HERE,
+  # not inside the port method: FileLayer::Chunk#finalize_upload's own comment explains why this
+  # is the one write verb where the port does not self-broadcast (its other caller,
+  # Maker::Addons::LibraryOutput, has never broadcast an addon save and this task does not start).
   def finalize_upload
-    version, seq = Sync::Commit.finalize(
-      user: current_user, commit_id: params.require(:commit_id), verify: true
+    result = FileLayer.current.finalize_upload(
+      current_user, commit_id: params.require(:commit_id), verify: true
     )
-    LibraryChannel.broadcast_change(current_user, seq)
-    node = current_user.nodes.find_by(node_id: version.node_id)
-    if node
-      enqueue_preview(node_id: version.node_id, name: node.name)
+    LibraryChannel.broadcast_change(current_user, result.seq)
+    if result.info
+      enqueue_preview(node_id: result.info.node_id, name: result.info.name)
       # THE SAME CONFLICT FACT AS THE OTHER TWO DOORS (ProjectFolderIntake#left_unfiled_by_conflict?)
       # IS DELIBERATELY NOT SURFACED IN THE JSON BELOW, checked rather than assumed. This endpoint's
       # only caller, lib/chunk_upload.js's uploadChunkFile, awaits this POST purely for its side
@@ -518,10 +539,10 @@ class FilesController < ApplicationController
       # asks #left_unfiled_by_conflict? about the result. If a JSON consumer of this endpoint ever
       # needs the fact, #left_unfiled_by_conflict?/#project_intake_notice already exist for it --
       # wire it in here rather than reinventing the check.
-      intake_project_folder(version.node_id)
+      intake_project_folder(result.info.node_id)
     end
-    render json: { version_id: version.version_id, seq: }
-  rescue Sync::Commit::ChunksMissing => e
+    render json: { version_id: result.version_id, seq: result.seq }
+  rescue FileLayer::ChunksMissing => e
     render json: { error: "chunks_missing", missing: e.hashes }, status: :unprocessable_entity
   end
 

@@ -7,10 +7,13 @@ module Maker
     # each is written into the file library through the existing FileLayer machinery and tied to
     # `state` as an AddonFile with its role. The helper never inspects the bytes. Backend-neutral:
     #   - share/s3 (port_writable): FileLayer#write (bytes -> file/object).
-    #   - chunk (syncable):        a single-chunk Sync::Commit + Storage::ChunkStore#put, exactly
-    #                              what the web uploader does, driven server-side (the bytes are
-    #                              generated here — there is no client to presign for; §15 is aimed
-    #                              at client uploads, and there is no client).
+    #   - chunk (syncable):        a single-chunk FileLayer#begin_upload/#finalize_upload (Task 8's
+    #                              port verbs, wrapping the same two-phase Sync::Commit flow the
+    #                              web uploader drives) + Storage::ChunkStore#put for the one
+    #                              chunk's bytes, driven server-side (the bytes are generated here
+    #                              — there is no client to presign for; §15 is aimed at client
+    #                              uploads, and there is no client). See #write_chunk for why the
+    #                              ChunkStore#put call stays here rather than folding into the port.
     # Writes to `parent_node_id` (default: root) with the caller's names, and CREATES — the
     # AddonFile join is the tie. A file may override BOTH of those: its own `parent_node_id`, and
     # `replace: true` to rewrite what is already at that name instead of refusing. Both default to
@@ -93,22 +96,49 @@ module Maker
       # existing node_id with its current version as `base_version_id`, and the sync engine treats
       # it as the ordinary fast-forward it is (§6: a base that IS current is a clean fast-forward;
       # a stale one becomes a recorded conflict rather than a silent drop). So chunk needs no port
-      # involvement at all, and unlike share/s3 the old bytes stay restorable.
+      # WRITE involvement at all (FileLayer::Chunk#write still refuses, unmoved), and unlike
+      # share/s3 the old bytes stay restorable.
+      #
+      # AS OF TASK 8, THIS IS THE ONLY LEGITIMATE DIRECT `Storage::ChunkStore` CALL IN THE MAKER
+      # LAYER (CLAUDE.md §14c; architecture_invariants_test.rb pins the count at exactly one and
+      # names this file), AND THE `.put` STAYS HERE RATHER THAN FOLDING INTO
+      # FileLayer::Chunk#begin_upload — a real choice, not an oversight, argued once so it does not
+      # get "simplified" back the other way:
+      #
+      #   1. `#begin_upload` is genuinely a TWO-CALLER method with one shape: it hands back
+      #      presigned PUT urls and never itself touches a byte, which is exactly what keeps
+      #      CLAUDE.md 15 (bytes never flow through Rails) true for the flow it exists to serve —
+      #      a BROWSER upload. Teaching it to also accept and write bytes on this caller's behalf
+      #      would give the SAME METHOD two incompatible contracts ("I hand back URLs" vs. "I write
+      #      bytes myself"), decided by which caller is asking — the kind of caller-shaped branch
+      #      this class's other verbs (mkdir/move/delete/undelete) never need.
+      #   2. This caller does not need the port for it. `Storage::ChunkStore#put` is ALREADY a
+      #      documented, first-class part of the store's own public API for exactly this situation
+      #      (see its comment: "the exception for SERVER-GENERATED content... there is no client to
+      #      presign for") — it is not a layering violation this class backed into, it is the
+      #      sanctioned door, and calling it directly costs nothing #begin_upload could improve on.
+      #   3. It keeps `#begin_upload`'s contract identical for both callers: `result.missing` names
+      #      exactly the chunks NOT YET in storage, on the fast-forward path exactly as it did
+      #      before this task. A caller that already holds the bytes writes those chunks itself,
+      #      precisely as it always has; a caller that does not (the browser) PUTs them.
       def write_chunk(user, parent_node_id, f, replace = false)
         bytes = f[:bytes].b
         existing = (existing_at(user, parent_node_id, f[:name]) if replace)
-        node_id = existing&.node_id || SecureRandom.uuid
-        commit_id = SecureRandom.uuid
         hash = Digest::SHA256.hexdigest(bytes)
         manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-        result = Sync::Commit.begin(
-          user:, device: addon_device(user), commit_id:, node_id:, parent_node_id:,
-          name: f[:name], base_version_id: existing&.current_version_id, size: bytes.bytesize,
-          mtime: (Time.current.to_f * 1e9).to_i, manifest:
+        begun = FileLayer.current.begin_upload(
+          user, device: addon_device(user), name: f[:name], parent_node_id:,
+          node_id: existing&.node_id, base_version_id: existing&.current_version_id,
+          size: bytes.bytesize, mtime: (Time.current.to_f * 1e9).to_i, manifest:
         )
-        result.missing.each { |h| Storage::ChunkStore.current.put(user.id, h, bytes) }
-        Sync::Commit.finalize(user:, commit_id:, verify: false)
-        node_id
+        begun.missing.each { |h| Storage::ChunkStore.current.put(user.id, h, bytes) }
+        # verify: false, UNCHANGED FROM BEFORE THIS TASK — the bytes above were just written
+        # SYNCHRONOUSLY, in this same method call, by this same process; re-verifying they landed
+        # would be a wasted storage round-trip confirming something nothing between the two calls
+        # could have altered. See FileLayer::Chunk#finalize_upload's own comment for the fuller
+        # argument (it is the same one FilesController's `verify: true` is NOT this caller's case).
+        FileLayer.current.finalize_upload(user, commit_id: begun.commit_id, verify: false)
+        begun.node_id
       end
 
       # A dedicated device so addon writes are attributable and don't reuse a UI/session device.

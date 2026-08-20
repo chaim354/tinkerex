@@ -126,7 +126,7 @@ module FileLayer
     # THE BYTE WRITE PATH IS STILL NOT CHUNK MODE'S, and this is the one refusal Stage 2 kept.
     # The four metadata verbs now go through the port; `write` must never join them, because it
     # takes an IO and would push bytes through Rails, which CLAUDE.md 15 forbids. Chunk uploads are
-    # Sync::Commit's two-phase presigned flow -- begin_upload/finalize_upload, arriving in Task 8.
+    # the port's own begin_upload/finalize_upload (Task 8, below) -- the two-phase presigned flow.
     #
     # NotImplementedError is a ScriptError, NOT a StandardError, so `rescue => e` and ActiveJob's
     # retry_on do not catch it. That is deliberate and load-bearing: the answer must stay loud.
@@ -138,6 +138,221 @@ module FileLayer
       refute_kind_of StandardError, err,
                      "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
                      "silently not catch it"
+    end
+
+    # ===========================================================================================
+    # Task 8: begin_upload / finalize_upload -- the two-phase presigned flow as port verbs.
+    #
+    # A HASH THAT NAMES NO REAL CONTENT MUST STILL BE SecureRandom, NEVER A REPEATED-CHARACTER
+    # LITERAL LIKE "a" * 64 -- found live, by running this exact suite repeatedly rather than by
+    # reasoning about it. MemoryChunkStore's root is `tmp/dev-chunks[-N]`, a directory that
+    # survives ACROSS separate `bin/rails test`/`bin/ci` invocations (Storage::ChunkStore.reset! in
+    # setup only clears the memoized STORE INSTANCE, never the files it already wrote), while a
+    # fresh test DB's user_id sequence restarts low on every `db:test:prepare`. Two runs apart, an
+    # EARLIER run's user could reuse the SAME integer id a LATER run's fresh @user gets, and
+    # store.exists?(user_id, hash) keys on exactly that pair -- so a fixed literal hash used by a
+    # "this chunk is missing" test can silently start reading as "already present" once some
+    # earlier run happened to write chunks/<reused-id>/<that-literal> to disk. Caught as
+    # `test_finalize_upload_defaults_to_verifying...`: "FileLayer::ChunksMissing expected but
+    # nothing was raised", intermittently, only on a machine with prior runs' leftover blobs --
+    # which is exactly why it read as environmental flake at first rather than a test bug.
+    # SecureRandom.hex(32) has no such history to collide with.
+    # ===========================================================================================
+
+    # THE PORT NEVER SEES A BYTE, which is the whole reason this pair exists rather than a
+    # byte-taking `write`. Proven structurally, not just asserted in prose: begin_upload's
+    # signature below has nowhere to put bytes even if a caller wanted to hand them over, and this
+    # test's own manifest hash is never backed by real content anywhere in the chunk store --
+    # begin_upload succeeds anyway, because all it does is ask "which of these hashes are already
+    # known" and presign PUT urls for the rest.
+    test "begin_upload returns presigned PUT urls for missing chunks, without touching any bytes" do
+      hash = SecureRandom.hex(32)
+      result = adapter.begin_upload(
+        @user, device: @device, name: "part.stl", parent_node_id: nil, size: 5,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => 5 } ]
+      )
+      assert_instance_of FileLayer::UploadBegun, result
+      assert_equal [ hash ], result.missing
+      assert_equal [ hash ], result.put_urls.keys
+      assert_match %r{\Ahttp://|\A/dev/blobs/}, result.put_urls.fetch(hash),
+                   "put_urls must actually be usable URLs, not raw store keys"
+    end
+
+    # node_id IS OPTIONAL, AND SELF-MINTED WHEN OMITTED -- the common "this is a new file" case,
+    # which is every browser upload through FilesController. Pinned as a REAL, freshly-created node
+    # id (present in `user.nodes` only after finalize, since begin only stages a PendingCommit) --
+    # not merely "some string was returned" -- via the full round trip below.
+    test "begin_upload mints a fresh node_id when the caller has none to reuse" do
+      bytes = "fresh".b
+      hash = Digest::SHA256.hexdigest(bytes)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "fresh.stl", parent_node_id: nil, size: bytes.bytesize,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
+      )
+      refute_nil begun.node_id
+      refute @user.nodes.exists?(node_id: begun.node_id),
+             "begin alone must not create the node -- only finalize does"
+      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
+      assert_equal begun.node_id, finalized.info.node_id
+    end
+
+    # node_id IS ECHOED BACK, NOT REPLACED, WHEN THE CALLER SUPPLIES ONE -- LibraryOutput's replace
+    # flow depends on this: it names an EXISTING node_id so the commit becomes a new version of
+    # that same node (§6's fast-forward), and a port that silently minted a different one instead
+    # would turn every addon re-save into a duplicate file rather than a revision.
+    test "begin_upload reuses a caller-supplied node_id rather than minting one" do
+      existing_id = create_file!(name: "reuse.stl", bytes: "old")
+      bytes = "new".b
+      hash = Digest::SHA256.hexdigest(bytes)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "reuse.stl", parent_node_id: nil, node_id: existing_id,
+        base_version_id: @user.nodes.find_by!(node_id: existing_id).current_version_id,
+        size: bytes.bytesize, manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
+      )
+      assert_equal existing_id, begun.node_id
+      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      adapter.finalize_upload(@user, commit_id: begun.commit_id, verify: false)
+      assert_equal "new", adapter.read(@user, node_id: existing_id)
+      assert_equal 1, @user.nodes.where(node_id: existing_id).count,
+                   "a reused node_id must stay ONE node, not become a second one alongside it"
+    end
+
+    # RE-RAISES Sync::Commit::InvalidManifest AS FileLayer::UnsupportedOperation, MESSAGE
+    # PRESERVED -- the controller's existing class-level rescue_from FileLayer::UnsupportedOperation
+    # renders `{ error: e.message }` at 422, so losing the message here would silently blank that
+    # response body. Asserted by MUTATING: a stub that raises UnsupportedOperation with a DIFFERENT
+    # message must be caught by re-running this assertion; see the mutation-check note in the
+    # method's own comment.
+    test "begin_upload re-raises an invalid manifest as the port's own UnsupportedOperation" do
+      err = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.begin_upload(
+          @user, device: @device, name: "bad.stl", parent_node_id: nil, size: 5,
+          manifest: [ { "hash" => "not-a-real-hash", "offset" => 0, "length" => 5 } ]
+        )
+      end
+      assert_match(/invalid chunk hash/, err.message,
+                   "the message Sync::Commit::InvalidManifest would have raised must survive")
+    end
+
+    # THE FULL ROUND TRIP: begin -> put the missing chunk's bytes -> finalize -> real, readable
+    # file. This is the same shape create_file! already builds by calling Sync::Commit directly;
+    # here it goes entirely through the port, which is the whole point of this task.
+    test "the full begin/put/finalize round trip produces a real readable file" do
+      bytes = "solid bracket".b
+      hash = Digest::SHA256.hexdigest(bytes)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "bracket.stl", parent_node_id: nil, size: bytes.bytesize,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
+      )
+      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
+
+      assert_instance_of FileLayer::UploadFinalized, finalized
+      refute_nil finalized.version_id
+      refute_nil finalized.seq
+      assert_equal begun.node_id, finalized.info.node_id
+      assert_equal "bracket.stl", finalized.info.name
+      assert_equal "file", finalized.info.kind
+      assert_equal bytes.bytesize, finalized.info.size
+      assert_equal "solid bracket", adapter.read(@user, node_id: begun.node_id)
+    end
+
+    # verify: true IS THE DEFAULT (the safer of the two existing callers' choices), so a caller
+    # that forgets to think about it gets the confirm-the-bytes-landed check. This is what
+    # FilesController relies on passing implicitly-safe behaviour forward: never PUTting the bytes
+    # must fail loudly, not create a version pointing at chunks nobody can ever read.
+    test "finalize_upload defaults to verifying, and refuses when the bytes never arrived" do
+      hash = SecureRandom.hex(32)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "ghost.stl", parent_node_id: nil, size: 5,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => 5 } ]
+      )
+      # Deliberately no Storage::ChunkStore put here.
+      err = assert_raises(FileLayer::ChunksMissing) do
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+      end
+      assert_equal [ hash ], err.hashes
+      refute @user.nodes.exists?(node_id: begun.node_id),
+             "a rejected finalize must not create the node"
+    end
+
+    # verify: false SKIPS THE CHECK -- Maker::Addons::LibraryOutput's own choice, unchanged by this
+    # task, because it writes the chunk itself, synchronously, earlier in the SAME method call, so
+    # there is nothing between the two port calls that could have made the bytes vanish. Proven
+    # here structurally: finalize succeeds even though the bytes were never put anywhere, which
+    # would raise ChunksMissing under the default.
+    test "finalize_upload verify: false skips the landed-bytes check" do
+      hash = SecureRandom.hex(32)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "trusted.stl", parent_node_id: nil, size: 5,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => 5 } ]
+      )
+      finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id, verify: false)
+      assert @user.nodes.exists?(node_id: finalized.info.node_id)
+    end
+
+    # RE-RAISES Sync::Commit::ChunksMissing AS FileLayer::ChunksMissing -- both existing callers
+    # that handle this (FilesController, V1::CommitsController's own direct Sync::Commit use) read
+    # `.hashes` back out, so losing them would silently blank the "which chunks to retry" answer.
+    test "finalize_upload's ChunksMissing carries the same hashes Sync::Commit::ChunksMissing would" do
+      hash1 = SecureRandom.hex(32)
+      hash2 = SecureRandom.hex(32)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "partial.stl", parent_node_id: nil, size: 10,
+        manifest: [
+          { "hash" => hash1, "offset" => 0, "length" => 5 },
+          { "hash" => hash2, "offset" => 5, "length" => 5 }
+        ]
+      )
+      Storage::ChunkStore.current.put!(@user.id, hash1, "aaaaa") # only the first lands
+      err = assert_raises(FileLayer::ChunksMissing) do
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+      end
+      assert_equal [ hash2 ], err.hashes
+    end
+
+    # begin_upload ITSELF DOES NOT BROADCAST -- it only stages a PendingCommit row (no changelog
+    # entry, no head_seq movement; Sync::Commit.begin never touches either), so broadcasting here
+    # would tell every device to pull for a change that has not happened yet, possibly never will
+    # (the caller may never finalize). Pinned the same way undelete's own no-op case is: on the
+    # broadcast itself, not on head_seq, because head_seq not moving is true for an unrelated
+    # reason (nothing in #begin_upload advances it) and would pass even if a broadcast were added.
+    test "begin_upload does not broadcast" do
+      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+        adapter.begin_upload(
+          @user, device: @device, name: "quiet.stl", parent_node_id: nil, size: 5,
+          manifest: [ { "hash" => SecureRandom.hex(32), "offset" => 0, "length" => 5 } ]
+        )
+      end
+    end
+
+    # THE ONE DELIBERATE DEPARTURE FROM mkdir/move/delete/undelete'S OWN PATTERN, AND THE REASON
+    # THIS SUITE HAS NO "finalize_upload broadcasts" TEST BESIDE mkdir'S: finalize_upload does NOT
+    # broadcast internally, because unlike those four verbs it has TWO callers with DIFFERENT
+    # existing behaviour for the same fact (FilesController broadcasts; Maker::Addons::LibraryOutput
+    # never has). Folding the broadcast into the port would silently START broadcasting every addon
+    # save -- a real user-visible change this task does not make. `seq` rides back out on
+    # UploadFinalized instead, and each caller decides; FilesController's own
+    # `LibraryChannel.broadcast_change(current_user, result.seq)` call is what the browser upload
+    # flow relies on now (files_flow_test.rb exercises that path over real HTTP).
+    #
+    # `assert_no_broadcasts`, THE SAME IDIOM THE undelete NO-OP TEST ABOVE USES, NOT A STUBBED
+    # `LibraryChannel.broadcast_change` -- minitest 6 dropped minitest/mock, so `Object#stub` does
+    # not exist in this suite (see test_helper.rb). Listening on the real stream this adapter would
+    # have broadcast to is also the stronger assertion: it proves nothing reached a DEVICE, not
+    # merely that one particular method was not called.
+    test "finalize_upload itself broadcasts nothing -- callers own that decision" do
+      bytes = "silent".b
+      hash = Digest::SHA256.hexdigest(bytes)
+      begun = adapter.begin_upload(
+        @user, device: @device, name: "silent.stl", parent_node_id: nil, size: bytes.bytesize,
+        manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
+      )
+      Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+      assert_no_broadcasts(LibraryChannel.broadcasting_for(@user)) do
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+      end
     end
 
     # --- moved from test/services/maker/{file_bytes_test,file_bytes_edges_test}.rb ---

@@ -6,6 +6,9 @@ module Web
   # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
   class FilesFlowTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
+    # For the finalize_upload broadcast test below -- same idiom chunk_test.rb, library_channel_test.rb
+    # and project_intake_test.rb already use for assert_broadcast_on/assert_no_broadcasts.
+    include ActionCable::TestHelper
     # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
     # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
     # need to before Phase 4 Task 3: #blob reached for Storage::ChunkStore.current directly, which
@@ -369,6 +372,71 @@ module Web
       post begin_upload_files_path, params: { name: "b.txt", size: bytes.bytesize, manifest: }, as: :json
       assert_response :success
       assert_empty JSON.parse(response.body)["put_urls"]
+    end
+
+    # ---- begin_upload / finalize_upload: the two port-verb error paths (Task 8) -------------
+    #
+    # Neither of these had ANY test coverage at this layer before Task 8 -- only the underlying
+    # Sync::Commit.begin/.finalize had unit tests, and V1::CommitsController's OWN chunks_missing
+    # response was covered, but never this controller's. Both responses moved from a per-action
+    # `rescue Sync::Commit::*` to FileLayer::Chunk re-raising through the port's own vocabulary
+    # (see Chunk#begin_upload/#finalize_upload's own comments); these drive the REAL HTTP request
+    # to prove the response BODY, not just the exception class, survived the move unchanged.
+    test "begin_upload answers 422 for a manifest with a malformed chunk hash" do
+      sign_in
+      assert_no_difference -> { PendingCommit.count } do
+        post begin_upload_files_path,
+             params: { name: "bad.stl", size: 5,
+                       manifest: [ { hash: "not-a-real-hash", offset: 0, length: 5 } ] },
+             as: :json
+      end
+      assert_response :unprocessable_entity
+      assert_match(/invalid chunk hash/, JSON.parse(response.body)["error"])
+    end
+
+    test "finalize_upload answers 422 chunks_missing when the bytes were never PUT" do
+      sign_in
+      hash = SecureRandom.hex(32)
+      manifest = [ { hash:, offset: 0, length: 5 } ]
+      post begin_upload_files_path, params: { name: "ghost.stl", size: 5, manifest: }, as: :json
+      assert_response :success
+      begun = JSON.parse(response.body)
+      refute_empty begun["put_urls"], "the store must not already know this hash"
+
+      # Deliberately no PUT of the bytes here.
+      post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+      assert_response :unprocessable_entity
+      body = JSON.parse(response.body)
+      assert_equal "chunks_missing", body["error"]
+      assert_equal [ hash ], body["missing"]
+      assert_not User.find_by!(email: "web@example.com").nodes.exists?(node_id: begun["node_id"]),
+                 "a rejected finalize must not create the node"
+    end
+
+    # Drives the REAL request end to end -- FilesController#finalize_upload now reads `result.seq`
+    # off FileLayer::UploadFinalized and calls LibraryChannel.broadcast_change itself (Task 8: the
+    # port method does NOT self-broadcast, unlike mkdir/move/delete/undelete; see
+    # Chunk#finalize_upload's own comment for why). A wrong field read there (or a dropped call)
+    # would still return 200 -- only listening on the real stream can catch it, which is why this
+    # is asserted here rather than only at the adapter level.
+    test "finalize_upload broadcasts the new head_seq over the real request" do
+      user = sign_in
+      before = user.reload.head_seq
+      bytes = "bcast via http".b
+      hash = Digest::SHA256.hexdigest(bytes)
+      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
+      post begin_upload_files_path, params: { name: "bcast.stl", size: bytes.bytesize, manifest: }, as: :json
+      assert_response :success
+      begun = JSON.parse(response.body)
+      begun["put_urls"].each_value do |url|
+        put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
+        assert_response :ok
+      end
+
+      assert_broadcast_on(LibraryChannel.broadcasting_for(user), head_seq: before + 1) do
+        post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+      end
+      assert_response :success
     end
 
     # ---- begin_upload: the name is a name ------------------------------------------------

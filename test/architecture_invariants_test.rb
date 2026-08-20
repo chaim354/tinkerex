@@ -121,60 +121,25 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     app/services/file_layer/chunk.rb
   ].freeze
 
-  # TWO FILES ARE NAMED HERE, NOT ZERO, BECAUSE THE BYTE PATH ISN'T DONE YET. FilesController's
-  # begin_upload/finalize_upload and Maker::Addons::LibraryOutput both still call Sync::Commit
-  # directly for chunk-mode uploads -- CLAUDE.md's own Stage 2 note says so ("Task 8 (the byte
-  # path) is still to come"). Asserting zero hits here would be asserting something false today,
-  # the same argument the chunk-internals test above makes for "one hit" over "no hits" -- and it
-  # would tell whoever runs this suite before Task 8 lands that the branch is broken when it is
-  # exactly on plan.
-  #
-  # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY -- see the test below for how.
-  SYNC_SEAM_EXCEPTIONS = %w[
-    app/controllers/files_controller.rb
-    app/services/maker/addons/library_output.rb
-  ].freeze
-
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
     # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
     # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
     # FileLayer::Chunk all four metadata verbs specifically so the maker layer never has to reach
-    # past the port for them again; this is what keeps that true going forward, on every file the
-    # tree grows rather than only the ones remembered at the time this was written.
+    # past the port for them again; Task 8 closed the last two call sites (FilesController's
+    # begin_upload/finalize_upload and Maker::Addons::LibraryOutput's own upload, both now behind
+    # FileLayer#begin_upload/#finalize_upload) -- so this is now a flat assertion of the whole
+    # rule rather than a count-and-name check against a shrinking allowlist. (It was that allowlist
+    # until Task 8: SYNC_SEAM_EXCEPTIONS named exactly those two files while the byte path was
+    # still in progress, and its own comment said to delete it, and simplify this test to the one
+    # assertion below, the moment it emptied. This is that simplification.)
     sync_side = SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
     maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) - sync_side
 
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
-    offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
 
-    # NAMED, NOT COUNTED, in both directions -- a mutation that swaps one offender for another
-    # while holding the count steady is caught only by asserting WHICH files, matching this
-    # file's own "assert the files, not merely a count" rule from the chunk-internals test above.
-    extra = offending_files - SYNC_SEAM_EXCEPTIONS # a NEW violation, not on the list
-    stale = SYNC_SEAM_EXCEPTIONS - offending_files # a LISTED file that no longer violates
-
-    assert_empty extra,
-                 "NEW maker-layer file(s) reaching into Sync:: directly, not on the Task 8 " \
-                 "exception list:\n  #{extra.join("\n  ")}\n" \
-                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this " \
-                 "really is byte-path work waiting on Task 8, add it to SYNC_SEAM_EXCEPTIONS " \
-                 "and say so in the PR -- do not let this test go red silently past that."
-    assert_empty stale,
-                 "SYNC_SEAM_EXCEPTIONS lists file(s) that no longer reach into Sync:: directly:\n" \
-                 "  #{stale.join("\n  ")}\n" \
-                 "Task 8 fixed this -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
-                 "you do, remove the constant entirely and simplify this test's two assertions " \
-                 "above to a single `assert_empty offending_files`."
-    # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY. Without this, a dutiful editor
-    # could shrink SYNC_SEAM_EXCEPTIONS to `[]` one Task-8 fix at a time (the two assertions
-    # above stay green the whole way) and leave it sitting there -- an allowlist for nothing,
-    # which the next reader has to re-derive is pointless before trusting it. This fails THAT
-    # state too, so whoever removes the last entry is told, in the same run, to delete the
-    # constant and both comments above it, not just leave `[] .freeze` behind.
-    assert_not_empty SYNC_SEAM_EXCEPTIONS,
-                     "SYNC_SEAM_EXCEPTIONS is empty, which means Task 8 is done: delete this " \
-                     "constant and its two comments, and simplify this test to `assert_empty " \
-                     "maker_layer_files.flat_map { |file| sync_references(file) }`."
+    assert_empty hits,
+                 "maker-layer file(s) reaching into Sync:: directly:\n  #{hits.join("\n  ")}\n" \
+                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d)."
   end
 
   test "NotImplementedError is never rescued" do

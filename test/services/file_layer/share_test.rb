@@ -563,6 +563,35 @@ module FileLayer
       FileLayer.const_set(:MAX_BYTES, original)
     end
 
+    # --- the two-phase presigned flow refuses (Task 8) -------------------------------------
+    #
+    # THE OTHER HALF OF Chunk#write's OWN REFUSAL, MIRRORED. This backend is port_writable, so
+    # its uploads go through #write above, in one request; the sync engine's two-phase presigned
+    # commit is meaningless here (there is no chunk store to presign INTO). In the real app
+    # FilesController never reaches this -- begin_upload/finalize_upload are gated on `syncable`,
+    # which this backend answers false, so the 501 a caller actually sees comes from that
+    # capability gate, before the action runs (see share_delivery_test.rb's own coverage of that
+    # gate). These exist so a caller that reaches the adapter directly -- bypassing the controller
+    # entirely -- gets a named, loud refusal naming the door that DOES work, rather than a
+    # NoMethodError that reads as an oversight, matching Chunk#write's own reasoning exactly.
+    test "begin_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.begin_upload(@user, name: "x.stl", size: 1,
+                             manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 1 } ])
+      end
+      assert_match(/write/, err.message)
+      refute_kind_of StandardError, err,
+                     "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
+                     "silently not catch it"
+    end
+
+    test "finalize_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.finalize_upload(@user, commit_id: SecureRandom.uuid)
+      end
+      assert_match(/write/, err.message)
+    end
+
     # --- delete -> trash (phase 2b) --------------------------------------------------------
 
     test "delete moves the file to trash keyed by node_id and tombstones the node" do

@@ -405,6 +405,32 @@ module FileLayer
       FileLayer.const_set(:MAX_BYTES, original)
     end
 
+    # --- the two-phase presigned flow refuses (Task 8) -------------------------------------
+    #
+    # THE OTHER HALF OF Chunk#write's OWN REFUSAL, MIRRORED — see FileLayer::ShareTest's identical
+    # pair for the full argument. FilesController never reaches this in the real app
+    # (begin_upload/finalize_upload gate on `syncable`, which this backend answers false, so the
+    # capability gate itself is what a caller actually sees); these exist for a caller that reaches
+    # the adapter directly, so it gets a named refusal instead of a NoMethodError.
+    test "begin_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.begin_upload(@user, name: "x.stl", size: 1,
+                             manifest: [ { "hash" => "a" * 64, "offset" => 0, "length" => 1 } ])
+      end
+      assert_match(/write/, err.message)
+      refute_kind_of StandardError, err,
+                     "NotImplementedError must stay a ScriptError -- a rescue-based gate would " \
+                     "silently not catch it"
+      assert_equal 0, @fake.calls[:put_object], "a refused begin must not touch the bucket"
+    end
+
+    test "finalize_upload refuses, naming #write as the real door" do
+      err = assert_raises(NotImplementedError) do
+        adapter.finalize_upload(@user, commit_id: SecureRandom.uuid)
+      end
+      assert_match(/write/, err.message)
+    end
+
     # ------------------------------------------------------------------------------------------
     # CROSS-KIND OCCUPANCY — a directory occupying a file's name, and the reverse.
     #

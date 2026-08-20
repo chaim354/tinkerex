@@ -249,6 +249,32 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE OTHER HALF OF Chunk#write's REFUSAL (Task 8), mirrored — this backend is port_writable,
+    # so its uploads go through #write above, all in one request; the sync engine's presigned
+    # two-phase flow (begin a commit, PUT missing chunks, finalize) is meaningless for a plain
+    # mounted directory, which has no chunk store to presign INTO. FilesController never reaches
+    # this: begin_upload/finalize_upload are gated on `syncable`, which this backend answers false,
+    # so the 501 a caller actually sees comes from that capability gate, before the call — never
+    # from this raise. This exists anyway for the same reason Chunk#write does: a caller that
+    # somehow reaches this class directly (a test, a future non-HTTP caller) gets a named, loud
+    # refusal that says which door DOES work, rather than a NoMethodError that reads as an
+    # oversight. ONE message, reused by both methods below, because they are one fact ("this
+    # backend takes bytes through #write") tripped over from two different calls — the same
+    # sharing #destination_vacant! already argues for, and Chunk::WRITE_MSG's own header explains
+    # why sharing is fine for a fact but not for per-verb remediation advice; there is no per-verb
+    # advice to diverge on here; both name the identical other door.
+    TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
+                    "request), not the sync engine's two-phase presigned flow".freeze
+
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
+    def finalize_upload(_user, commit_id: nil, verify: true)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
     # Create ONE directory `name` under `parent_node_id` (nil = library root). Reuses write's exact
     # guards — leaf!/observable!/resolve_inside! — because a mkdir that skips them re-opens the
     # scan-wedge bug class this file documents (a live node at a path no scan can pair). Idempotent:

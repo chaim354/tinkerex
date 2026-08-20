@@ -81,5 +81,39 @@ module FileLayer
         assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"
       end
     end
+
+    # Task 8's two return types. Both are plain immutable Data objects, same as FileInfo above --
+    # the assertions here are deliberately as thin as FileInfo's own: what matters about a Data
+    # type is that it HOLDS its fields and cannot be mutated after construction, not that a unit
+    # test re-derives the port behaviour that builds one (chunk_test.rb already does that).
+    test "UploadBegun carries the fields a caller needs to drive the two-phase flow" do
+      begun = FileLayer::UploadBegun.new(
+        commit_id: "c1", node_id: "n1", put_urls: { "h1" => "https://example/h1" }, missing: [ "h1" ]
+      )
+      assert_equal "c1", begun.commit_id
+      assert_equal "n1", begun.node_id
+      assert_equal({ "h1" => "https://example/h1" }, begun.put_urls)
+      assert_equal [ "h1" ], begun.missing
+      assert_raises(NoMethodError) { begun.node_id = "n2" }
+    end
+
+    test "UploadFinalized carries version_id/seq unconditionally and info separately" do
+      info = FileLayer::FileInfo.new(node_id: "n1", name: "a.stl", kind: "file", size: 5,
+                                     mtime: 123, content_token: "v1")
+      finalized = FileLayer::UploadFinalized.new(version_id: "v1", seq: 42, info:)
+      assert_equal "v1", finalized.version_id
+      assert_equal 42, finalized.seq
+      assert_equal info, finalized.info
+      assert_raises(NoMethodError) { finalized.seq = 43 }
+    end
+
+    # `info` CAN BE NIL -- the belt-and-braces case Chunk#finalize_upload's own comment explains
+    # (a node that cannot be found immediately after the transaction that wrote it committed).
+    # Data.define permits nil for any member; this test exists to say the nil is EXPECTED here,
+    # not to catch Ruby forbidding it.
+    test "UploadFinalized allows a nil info" do
+      finalized = FileLayer::UploadFinalized.new(version_id: "v1", seq: 1, info: nil)
+      assert_nil finalized.info
+    end
   end
 end

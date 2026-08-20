@@ -346,6 +346,25 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
+    # THE OTHER HALF OF Chunk#write's REFUSAL (Task 8), mirrored — see FileLayer::Share's identical
+    # pair for the full argument (this backend is port_writable, the two-phase presigned flow is
+    # meaningless for a bucket with no sync-engine chunk store behind it, and FilesController never
+    # reaches this in practice because begin_upload/finalize_upload gate on `syncable` first). ITS
+    # OWN CONSTANT, NOT Share's — a shared literal across two unrelated classes with no common
+    # ancestor would be two definitions pretending to be one, which is worse than two that just say
+    # the same thing; `name` still resolves each to its own class correctly either way.
+    TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
+                    "request), not the sync engine's two-phase presigned flow".freeze
+
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
+    def finalize_upload(_user, commit_id: nil, verify: true)
+      raise NotImplementedError, TWO_PHASE_MSG
+    end
+
     # Create ONE directory under `parent_node_id`. On S3 a "directory" is a zero-byte dir-MARKER
     # object `<key>/` (the shape the console mints and S3Observer reads as a dir, not a phantom
     # file) plus a dir node. The marker is what makes an EMPTY folder survive a scan: with no object
