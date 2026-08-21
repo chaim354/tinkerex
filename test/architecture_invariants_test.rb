@@ -508,7 +508,6 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   SYNC_SEAM_EXCEPTIONS = %w[
     app/controllers/v1/base_controller.rb
     app/models/user.rb
-    app/controllers/concerns/v1/stash_request_base_url.rb
     app/controllers/dev_blobs_controller.rb
     app/services/maker/addons/library_output.rb
     app/services/maker/project_intake.rb
