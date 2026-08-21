@@ -1589,13 +1589,26 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   the one entry point that runs inside a browser-facing request (the eager nudge) rather
   than an unattended job. Collapsing them would let one upload's response wait on the cost
   `MAX_MOVES` is willing to accept for a background job.
-- **`EAGER_MAX_MOVES = 25` WAS MEASURED ON CHUNK / LOCAL SQLITE ONLY — NOT AN EVEN BOUND
-  ACROSS BACKENDS.** On S3, `FileLayer::S3#move` is three sequential, unbatched network
-  calls per file (a HEAD, a COPY, a DELETE), so the default is 25 × 3 = 75 sequential S3
-  calls inside one browser-facing request. It stays 25 anyway — it fails toward SLOW, not
-  WRONG, on every backend, and is operator-tunable via `PROJECT_ORGANIZE_EAGER_MAX_MOVES`
-  — but an S3 deployment expecting large backlog uploads is the one where an operator
-  should consider tuning it DOWN, not up.
+- **THE EAGER CAP IS BACKEND-AWARE: `EAGER_MAX_MOVES = 25`, `EAGER_MAX_MOVES_S3 = 5`.** 25 was
+  measured on chunk / local SQLite and is not an even bound across backends: `FileLayer::S3#move`
+  is three sequential, unbatched network calls per file (a HEAD, a COPY, a DELETE), so 25 eager
+  moves is **75 sequential S3 round-trips inside one browser-facing request** — at the 85–205 ms
+  per call measured against a real R2 bucket, **six to fifteen seconds** an upload's response sits
+  waiting. 5 keeps the same promise (a handful of files dropped in a folder file themselves
+  immediately) at roughly a second. `PROJECT_ORGANIZE_EAGER_MAX_MOVES` still overrides on every
+  backend, so an operator who set it keeps exactly what they set.
+  - **An earlier version of this bullet said "it stays 25 anyway" and was left behind when the
+    code stopped doing that** — it went on asserting a single even bound for months after the
+    split landed, which is the stale-claim shape §15 warns about, in the file that is loaded into
+    every session. Recorded here rather than quietly corrected, because the *first* version of
+    this bullet already argued 25 was uneven across backends and then left the number the same
+    on all three: naming the asymmetry is not the same as fixing it.
+  - **`eager_max_moves` ASKS THE ADAPTER'S CLASS (`is_a?(FileLayer::S3)`), AND THAT IS NOT §14b's
+    RECORDED TRAP.** That trap was a **gate** — `is_a?(Share)` decided *whether* to index, so an
+    unrecognised backend was silently skipped and an S3 library never got indexed at all. This is
+    a **threshold**, and the property it keys on ("one move here is three network round-trips") is
+    not a capability any adapter declares. An unrecognised backend falls through to 25 — today's
+    behaviour everywhere — so it fails toward SLOW, never toward silence or data loss.
 - **A CALLER MUST READ `intake_project_folder`'S RETURN VALUE, NOT JUST TRIGGER ITS SIDE
   EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose
   eager nudge lost a collision at its destination folder went from a refused write with a
