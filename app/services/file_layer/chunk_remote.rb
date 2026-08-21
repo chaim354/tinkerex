@@ -208,11 +208,45 @@ module FileLayer
       stat(user, node_id:)
     end
 
-    # ── THE TWO-PHASE UPLOAD IS NOT HERE YET ─────────────────────────────────────────────────
+    # ── THE TWO-PHASE UPLOAD ─────────────────────────────────────────────────────────────────
     #
-    # `begin_upload`/`finalize_upload` are the last pair, and they are a different shape from these
-    # four: they move BYTES, over presigned URLs, and their contract is FileLayerWritableContract
-    # rather than the mutation one. Left for their own PR rather than bolted on here.
+    # THIS IS WHERE §15 IS EARNED IN REMOTE MODE. `begin_upload` asks the sync server to presign PUT
+    # URLs for whichever chunks it is missing; the CALLER puts the bytes straight at storage and then
+    # finalizes. Neither this app nor the sync server ever holds a byte -- which is exactly the flow
+    # `port_writable: false` selects in the UI, and why "cannot accept uploads" is the wrong reading
+    # of that flag (§14a).
+    #
+    # `device:` IS ACCEPTED AND UNUSED, DELIBERATELY. The port hands it over because Chunk needs one
+    # to attribute the commit; here the server derives the device from the bearer token this app
+    # authenticates with, so passing ours would be telling the server about a device it does not
+    # have. Dropping the kwarg instead would break the shared port signature for every caller.
+    def begin_upload(user, name:, size:, manifest:, device: nil, parent_node_id: nil,
+                     node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
+      node_id ||= SecureRandom.uuid
+      body = transport.post("/v1/commit", {
+        commit_id: SecureRandom.uuid, node_id:, parent_node_id:, name:, base_version_id:,
+        size:, mtime: mtime || (Time.current.to_f * 1e9).to_i, mode:, manifest:
+      })
+
+      UploadBegun.new(commit_id: body["commit_id"], node_id:,
+                      put_urls: body["put_urls"] || {}, missing: Array(body["missing"]))
+    end
+
+    # `broadcast:` IS ACCEPTED AND UNUSED for the same reason `device:` is: the SERVER broadcasts to
+    # the devices attached to it when the commit lands, and this app is one of those devices rather
+    # than the thing doing the notifying. Maker::Addons::LibraryOutput passes `broadcast: false`
+    # (§14a) and gets what it asked for either way -- there is nothing here to suppress.
+    def finalize_upload(user, commit_id:, verify: true, broadcast: true)
+      body = transport.post("/v1/commit/#{commit_id}/finalize", { verify: })
+      version_id = body["version_id"]
+      refresh!(user)
+
+      # FINDS THE NODE BY THE VERSION THE SERVER JUST MADE, not by a commit_id this app would have to
+      # remember. The mirror has just been pulled, so `current_version_id` is the server's own answer
+      # to "which node did that commit belong to" -- one fewer piece of local state to keep correct.
+      node = user.nodes.present.find_by(current_version_id: version_id)
+      UploadFinalized.new(version_id:, seq: body["seq"], info: node ? file_info(node) : nil)
+    end
     #
     # `mkdir`, `move`, `delete`, `undelete`, `begin_upload` and `finalize_upload` each already have
     # a server endpoint (design §6) and are the next piece. `write` will never appear: chunk-family

@@ -134,6 +134,27 @@ module FileLayer
         assert_raises(FileLayer::FetchError) { transport.get("/v1/tree") }
       end
 
+      test "chunks_missing keeps its own class AND its hashes, not a flattened 422" do
+        # ADDED BECAUSE A MUTATION STAYED GREEN. The upload suite mirrors this mapping inside its own
+        # loopback transport, so breaking the REAL Transport here changed nothing there -- the exact
+        # divergence that suite's own comment warned about, proven by mutation rather than avoided by
+        # the warning. This test drives the real class over a real socket, so it cannot be fooled the
+        # same way.
+        #
+        # The `missing` hashes are the whole point: a caller is meant to upload those and finalize
+        # again. Flattened into UnsupportedOperation they are gone and the upload is unrecoverable.
+        canned "/v1/commit/x/finalize", status: 422,
+               body: { error: "chunks_missing", missing: [ "a" * 64, "b" * 64 ] }.to_json
+
+        err = assert_raises(FileLayer::ChunksMissing) { transport.post("/v1/commit/x/finalize") }
+        assert_equal [ "a" * 64, "b" * 64 ], err.hashes
+      end
+
+      test "an ordinary 422 is still UnsupportedOperation, so the arm above is not a catch-all" do
+        canned "/v1/commit/y/finalize", status: 422, body: { error: "some_other_reason" }.to_json
+        assert_raises(FileLayer::UnsupportedOperation) { transport.post("/v1/commit/y/finalize") }
+      end
+
       test "an empty 2xx body is an empty hash, not a parser error" do
         canned "/v1/nodes/x", status: 204, body: ""
         assert_equal({}, transport.delete("/v1/nodes/x"))

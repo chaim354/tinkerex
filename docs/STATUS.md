@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 PR 5: chunk_remote's metadata mutations, against the real engine**)
+**Updated:** 2026-08-21 (**Stage 4 PR 6: the chunk_remote adapter is complete — 12/12 port verbs**)
 
 ## What this file is
 
@@ -60,7 +60,56 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 5 — the metadata mutations (branch `claude/stage-4-write-verbs`)
+## Latest (2026-08-21): Stage 4 PR 6 — the two-phase upload, and the adapter is complete (branch `claude/stage-4-upload-pair`)
+
+`begin_upload`/`finalize_upload`. **`FileLayer::ChunkRemote` now implements all 12 port verbs.**
+Still not selectable — the `FileLayer.build` arm is the last step. `bin/ci` green at 8 gates:
+**2446 runs, 9115 assertions, three legs identical**.
+
+### Where §15 is earned in remote mode
+
+`begin_upload` asks the sync server to presign PUT URLs for the chunks it is missing; the CALLER
+puts bytes straight at storage and then finalizes. Neither this app nor the sync server holds a
+byte. That is the flow `port_writable: false` selects in the UI — and why "cannot accept uploads"
+remains the wrong reading of that flag (§14a).
+
+### Two kwargs accepted and unused, deliberately
+
+`device:` — the port hands one over because Chunk needs it to attribute a commit; here the server
+derives the device from the bearer token this app authenticates with, so passing ours would tell the
+server about a device it does not have. `broadcast:` — the SERVER notifies the devices attached to
+it; this app is one of those devices rather than the notifier. Dropping either kwarg would break the
+shared port signature for every caller.
+
+### `chunks_missing` had to be mapped in the transport, not the adapter
+
+The server answers it as a **422**, which the generic arm would flatten into `UnsupportedOperation`
+and discard the `missing` hashes — the one piece of information a caller needs to recover (upload
+those, finalize again). It is a port condition with its own class, so turning it into one is the
+transport's job, exactly like every other status it maps.
+
+### THE TEST DOUBLE DIVERGED FROM THE REAL CLASS, AND ITS OWN COMMENT HAD PREDICTED IT
+
+The upload suite drives the real engine through a loopback transport that mirrors `Transport`'s
+error mapping — with a comment saying "if this diverged, the suite would be exercising a translation
+that does not ship." Then deleting the `chunks_missing` arm from the REAL `Transport` left that
+suite **green**, because it was using its own copy.
+
+Predicting a divergence in a comment does not detect it. The mapping is now covered in
+`transport_test.rb`, over a real socket against the real class, plus an ordinary-422 test so the new
+arm is not a catch-all. The mutation now fails.
+
+### And an assertion that could not fail
+
+The round-trip test first read the bytes back as
+`assert_equal bytes, @adapter.read(...) rescue nil` — the rescue swallowed the very failure the line
+existed to catch. Fixed, and kept as a note in the file: an assertion that cannot fail is worse than
+no assertion, because it looks like coverage.
+
+Other mutations, restoring green: finalize stops pulling (2 failures), `begin_upload` drops the
+client-minted node_id (5 errors).
+
+## 2026-08-21: Stage 4 PR 5 — the metadata mutations (branch `claude/stage-4-write-verbs`)
 
 `mkdir`, `move`, `delete`, `undelete` on `FileLayer::ChunkRemote`, satisfying
 **`FileLayerMutationContract`**. Still not selectable. `bin/ci` green at 8 gates: **2439 runs,

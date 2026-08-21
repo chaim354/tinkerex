@@ -88,6 +88,16 @@ module FileLayer
         code = response.code.to_i
         return parse(response) if code.between?(200, 299)
 
+        body = parse(response)
+
+        # `chunks_missing` IS A PORT CONDITION WITH ITS OWN CLASS, AND IT CARRIES DATA. The server
+        # answers it as a 422, which the generic arm below would flatten into UnsupportedOperation --
+        # discarding the `missing` hashes, which are the entire point of the error: the caller is
+        # meant to upload those chunks and finalize again. Mapping it here rather than in the
+        # adapter keeps this class's job intact (wire condition -> port vocabulary) instead of
+        # making the adapter re-parse a message the transport already read.
+        raise FileLayer::ChunksMissing, Array(body["missing"]) if body["error"] == "chunks_missing"
+
         message = error_message(response) || "HTTP #{code}"
         case code
         when 404          then raise FileLayer::NotFound, "#{path}: #{message}"
