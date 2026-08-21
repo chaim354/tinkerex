@@ -1,6 +1,18 @@
 # Omakase Ruby styling for Rails
 inherit_gem: { rubocop-rails-omakase: rubocop.yml }
 
+# rubocop-rails' own default excludes `db/*schema.rb` (this app's own db/schema.rb rides on it
+# for free) -- but that pattern is relative to THIS file's own directory, so it does not reach
+# engines/tinkerex-sync/test/dummy/db/schema.rb, a second, real Rails schema dump this repo now
+# has (Stage 3b Task 9b's dummy host app). `bin/rubocop` flagged it (38 offenses, all
+# Layout/SpaceInsideArrayLiteralBrackets on lines rubocop-rails-omakase would never have let a
+# human write) the moment `db:migrate` generated it -- verified, not assumed, by running `bin/
+# rubocop` before this exclude existed. Same reasoning as the upstream pattern, restated for a
+# path one level too deep for it to already cover.
+AllCops:
+  Exclude:
+    - engines/tinkerex-sync/test/dummy/db/*schema.rb
+
 # Overwrite or add rules to create your own house style
 #
 # # Use `[a, [b, c]]` not `[ a, [ b, c ] ]`
