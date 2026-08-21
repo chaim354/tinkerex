@@ -2123,6 +2123,26 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   swapped for `Sync.capability_available?(:syncable)`. **"Two" was always an undercount**, which is
   why the regression guard is a Ripper pass over host constant NAMES rather than a list of the
   specific references known at the time. The engine now names no host constant at all.
+- **THE ENGINE HAS ITS OWN DUMMY HOST AND ITS OWN `bin/ci` GATE (8 now, not 7), AND THAT IS THE ONLY
+  THING THAT PROVES ANY OF THIS.** Everything above is static analysis; `engines/tinkerex-sync/test/dummy`
+  actually boots the engine in a process that has never loaded the maker layer. The single assertion
+  worth keeping: **`Sync::Version.table_name` reads `"versions"` there** — `isolate_namespace`'s
+  `sync_` prefix is the failure the whole namespace decision had to work around, and nothing else
+  catches it. `FileLayer` IS defined in that process, correctly: the engine ships `FileLayer::Chunk`
+  (the sanctioned adapter), so `FileLayer.current`/`.build`/`::Share` are all absent — the engine
+  ships the adapter, the host ships the factory.
+- **`HOST_MODELS` UNDERCOUNTED, AND ONLY BOOTING FOUND IT.** Beyond `User`/`Node`/`Device`, a host
+  must supply `::ApplicationRecord`, `::ApplicationJob` and `::ApplicationCable::Channel` (every
+  `Sync::` class names one explicitly, because Phase A qualified them so `isolate_namespace` could
+  not misresolve them) — **and `limits_concurrency`**, which `Sync::RetentionJob` calls and which is
+  **solid_queue's extension, not core ActiveJob**. The gemspec's own comment claimed "engine jobs are
+  plain ActiveJob"; two of three are. solid_queue stays out of the gemspec anyway — the host picks
+  its queue adapter — so this is a documented host obligation, and the dummy's shim says out loud
+  that it proves nothing about real concurrency enforcement.
+- **THE ENGINE STILL SHIPS NO `config/routes.rb`.** Phase B moved every `Sync::V1::*` controller into
+  the engine and left all routing in the host's, interleaved with host-only device routes and the
+  whole `maker` namespace inside one `namespace :v1`. The dummy hand-copies a sync-only subset. That
+  is a real packaging gap for whenever the gem leaves this repo, not a dummy-app detail.
 - **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
   `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
   deployment — which has no changelog and never calls it — was being refused a boot for a rule that
