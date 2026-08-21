@@ -649,13 +649,24 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     engines/tinkerex-sync/app/services/file_layer/chunk.rb
   ].freeze
 
+  # WIDENED FROM TWO NAMES TO FOUR, BECAUSE "TWO" WAS AN UNDERCOUNT AND SAYING SO IS THE LESSON.
+  # This guard was written naming exactly the two host constants known to be in the engine at the
+  # time -- and Task 9a then found a THIRD (`V1::StashRequestBaseUrl`, reaching FileLayer through a
+  # host concern) that it could not see, because the reference was one file removed. A guard scoped
+  # to the violations you already know about only ever confirms what you already know.
+  #
+  # `Maker` and `ApplicationController` are here for the same reason, before anyone puts one in:
+  # they are host constants a bare mount has no way to resolve. This list is about what the HOST
+  # owns, not about which references happen to exist today.
+  HOST_CONSTANTS = %w[FileLayer LibraryCapabilities Maker ApplicationController].freeze
+
   def host_capability_gate_references(file)
     Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
-      "#{pos.first}" if type == :on_const && %w[FileLayer LibraryCapabilities].include?(str)
+      "#{pos.first}" if type == :on_const && HOST_CONSTANTS.include?(str)
     end
   end
 
-  test "the sync engine's capability gate never names ::FileLayer or ::LibraryCapabilities directly" do
+  test "the sync engine never names a host constant, so a bare mount can load it" do
     hits_by_file = engine_side_files.filter_map { |file|
       refs = host_capability_gate_references(file)
       [ Pathname.new(file).relative_path_from(ROOT).to_s, refs ] if refs.any?
@@ -663,8 +674,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
 
     offenders = hits_by_file.keys.sort - CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS
     assert_empty offenders,
-                 "engine code naming FileLayer or LibraryCapabilities directly -- both host " \
-                 "constants, neither autoloadable in a bare mount. Ask " \
+                 "engine code naming a HOST constant (#{HOST_CONSTANTS.join(', ')}) -- none of " \
+                 "them autoloadable in a bare mount. Ask " \
                  "Sync.capability_available?/Sync.capability_unavailable_message instead " \
                  "(engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb), wired by " \
                  "config/initializers/sync_capabilities.rb on this host: #{offenders}"
@@ -676,7 +687,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     stale = CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS - hits_by_file.keys
     assert_empty stale,
                  "CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS lists a file that no longer " \
-                 "references FileLayer/LibraryCapabilities at all -- remove it: #{stale}"
+                 "references any of #{HOST_CONSTANTS.join(', ')} -- remove it: #{stale}"
   end
 
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
