@@ -304,7 +304,7 @@ Rails.application.routes.draw do
     # content commits (two-phase)
     # EVERY SYNC ROUTE, FROM THE ENGINE'S OWN DEFINITION. They used to be written out here and
     # hand-copied a second time into engines/tinkerex-sync/test/dummy/config/routes.rb -- two
-    # descriptions of one thing, free to drift. See the engine's config/routes.rb for why this is a
+    # descriptions of one thing, free to drift. See lib/tinkerex_sync/v1_routes.rb for why this is a
     # drawer rather than `mount Sync::Engine`: these paths interleave with the host's own inside
     # this very namespace, and a mount owns a whole prefix.
     Sync.draw_v1_routes(self)
