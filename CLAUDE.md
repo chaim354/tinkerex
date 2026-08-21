@@ -72,7 +72,8 @@ intake are in **§14** — that is where a "don't undo this" belongs, not in a t
 | Component | Path | Role |
 |---|---|---|
 | **Rust crates + Tauri app** | `chaim354/tinkerex-client` (separate repo) | fs-provider (local SQLite tree + FastCDC chunk store), the per-OS mount adapters (fs-fuse/fs-cfapi/fs-winfsp/fs-webdav/fs-fskit), sync-client, sync-engine (the daemon: `push`/`pull`/`hydrate`/`sync_once`), the Tauri desktop app, and `maker-app-core`/`juicefs-backend` (leftovers from the abandoned mount path, kept as reference — CLAUDE.md §14e). Extracted from this repo 2026-08-20; own history (166 commits via `git filter-repo`), own CI, own runner registration. `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` has the full inventory and the argument for keeping the `client/` prefix inside that repo's own layout. |
-| **server** | repo root (Rails 8) | Source of truth: models, `Sync::*` services, v1 API, ActionCable. |
+| **server** | repo root (Rails 8) | The maker host: `Maker::*` models and web layer, the `v1/maker/*` API, `User`/`Node`/`Device`, and the `FileLayer` factory. Draws the engine's v1 routes; ships no `Sync::*` itself. |
+| **sync engine** | `chaim354/tinkerex-sync` (separate repo) | The chunk/version/changelog engine as a mountable Rails engine isolated under `Sync`, plus `FileLayer::Chunk`, its eight tables' consolidated migration, and its own dummy host and suite. Extracted 2026-08-20 (109 commits); consumed here as a private `git:` gem. Invariants: **§14j**. |
 | **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time (`Dockerfile`) and exec'd off `PATH` by `Maker::Previews::Stl` at runtime — a **server-side** tool despite being Rust. Lives under `tools/`, not in the Rust-crates repo: nothing there has a path dependency on it. |
 | **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk\|share\|s3`. All three boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
@@ -209,6 +210,11 @@ only on explicit request. `docs/DEPLOY.md`.
                  STATUS.md, DEPLOY.md, roads-not-taken.md, adr/
 ```
 
+**There is no `/engines` here any more either.** The sync engine was extracted to
+`chaim354/tinkerex-sync` on 2026-08-20 and arrives as a private `git:` gem (see the Gemfile's
+own comment for what that costs, and §14j for what moved with it). `db/migrate/` still creates
+its eight tables for THIS app — those migrations were deliberately never rewritten.
+
 **There is no `/client` here any more.** The Rust crates (fs-provider, fs-fuse, fs-cfapi,
 fs-winfsp, fs-webdav, fs-fskit, sync-client, sync-engine, maker-app the Tauri app, plus
 maker-app-core/juicefs-backend) live in their own repo, `chaim354/tinkerex-client`, which
@@ -292,6 +298,15 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 ```sh
 # ALL local gates, one command (this is what CI runs, by name):
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
+                       # 7 gates. The sync engine's own suite is NOT one of them any more -- it
+                       # runs in chaim354/tinkerex-sync, which this repo consumes as a git gem.
+
+# WORKING ON THE SYNC ENGINE: clone it and test it there; there is nothing to edit in this repo.
+#   gh repo clone chaim354/tinkerex-sync && cd tinkerex-sync && bundle install && bundle exec rake test
+# To pick up a change here afterwards (Gemfile.lock pins an exact revision, so nothing moves until
+# you say so -- and test/engine_schema_test.rb goes RED if the engine's DDL and this repo's
+# db/schema.rb disagree, which is the cross-repo obligation made blocking rather than remembered):
+#   bundle update tinkerex-sync
 
 # SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves
 # every credential (exported shell value wins, else 1Password) and backs each .kamal/secrets*
@@ -2037,8 +2052,32 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14j. The maker/sync boundary (Stages 3a and 3b)
 
-Six invariants the engine's eventual extraction rests on. Each was found by measuring, and most
-were invisible to the `Sync::`-shaped guards that preceded them.
+**The engine left this repository on 2026-08-20.** It is `chaim354/tinkerex-sync`, consumed here as
+a private `git:` gem. Everything below still describes the boundary it must keep; what changed is
+where the code sits and, for two of these rules, who can still enforce them.
+
+- **A GUARD THAT SCANS A DIRECTORY DIES SILENTLY WHEN THE DIRECTORY LEAVES, AND ONLY ONE OF THE
+  PAIR SAID SO.** Both engine-side guards were `assert_empty offenders` over a glob of
+  `engines/tinkerex-sync/**`; extraction made that glob `[]`, which satisfies `assert_empty`
+  perfectly. "the sync engine never reaches into the maker layer" went on **passing over nothing**.
+  Its sibling failed only by luck — its stale-exception check named a file that had ceased to
+  exist. Both now live in the engine repo's own `test/architecture_test.rb`, beside a third that
+  asserts the file list is **non-empty** before the other two are trusted. **Do not rebuild them
+  here against the installed gem:** a guard reading a vendored copy reports on whatever revision
+  `Gemfile.lock` pins, so it would go green on a stale pin while the engine's own `main` was broken.
+- **`db/engine_schema.rb` NOW EXISTS TWICE ON PURPOSE, AND A TEST IS WHAT MAKES THAT SAFE.** This
+  repo still owns `db/migrate/` and therefore `db/schema.rb` (see the migrations bullet below —
+  they were never rewritten), so the generator here is still what turns this app's real schema into
+  the consolidated migration; the gem ships its own copy because a fresh host cannot read this
+  repository at all. `test/engine_schema_test.rb` asserts the two are byte-identical, so a
+  migration touching one of the eight tables goes **red here** until the gem is updated and
+  `bundle update tinkerex-sync` is run. The cross-repo obligation is real work, and a schema change
+  is exactly when it must be impossible to forget.
+- **THE DOCKER BUILD IS THE ONE PLACE A PRIVATE `git:` GEM COSTS SOMETHING.** `bundle install` runs
+  in an image with no keychain and no `gh`, so it takes a BuildKit secret (`TINKEREX_SYNC_TOKEN`,
+  via kamal `builder.secrets`). It is passed as `GIT_CONFIG_COUNT/KEY/VALUE` on that ONE command
+  rather than `git config --global`, which writes `/root/.gitconfig` and would ship the token
+  **inside the image** having been "only" in a secret mount.
 
 - **THE `Sync::` NAMESPACE WAS NEVER THE BOUNDARY.** The engine's own models are **bare top-level
   constants** — `Version`, `Chunk`, `ManifestChunk`, `PendingCommit`, `ChangelogEntry`, `Conflict`,
@@ -2080,7 +2119,8 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   backends, since only `Sync::Commit`/`Restore`/`Conflicts` ever create one. `schema_map.rb` drew
   them as references and was corrected; drawing them back would make Stage 3b move two maker tables
   it must not move.
-- **THE ENGINE IS A MOUNTED RAILS ENGINE AT `engines/tinkerex-sync/`, ISOLATED UNDER `Sync`.** A gem
+- **THE ENGINE IS A MOUNTED RAILS ENGINE, ISOLATED UNDER `Sync`** (at `engines/tinkerex-sync/`
+  until the 2026-08-20 extraction; its own repository since). A gem
   squatting `Version`, `Chunk`, `Conflict` and `FileLock` at top level cannot be given to anyone, so
   Stage 3b moved all fifteen top-level engine names under one. **`isolate_namespace` sets
   `table_name_prefix` to `sync_`, which would make every model look for a `sync_versions` table that
@@ -2091,8 +2131,9 @@ were invisible to the `Sync::`-shaped guards that preceded them.
 - **THE BOUNDARY IS A DIRECTORY, NOT A GLOB LIST, AND THAT IS WHY THE GUARD SURVIVED THE MOVE.**
   `SYNC_SIDE_GLOBS` listed paths under `app/` and `lib/`; when Phase B moved 51 files into the
   engine, those globs matched **three**, two of them host controllers — and a `Maker::` reference
-  planted in the engine's own `gc.rb` left the suite **green**. Anything inside `engines/` is engine,
-  anything outside is host, and there is no list to fall out of step with a move.
+  planted in the engine's own `gc.rb` left the suite **green**. A directory beat a list — and then
+  the directory itself left, which is the sharper version of the same lesson: see the silent-death
+  bullet at the top of this section. **Everything in `app/` and `lib/` is host now, full stop.**
 - **THE ENGINE SHIPS THE BASE CONTROLLER AND THE HOST INHERITS IT, NEVER THE REVERSE.**
   `V1::BaseController < Sync::V1::BaseController` keeps all fourteen `v1/maker/*` controllers on the
   shared v1 infrastructure while the engine's own twelve get a base they can carry into a standalone
@@ -2123,8 +2164,10 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   swapped for `Sync.capability_available?(:syncable)`. **"Two" was always an undercount**, which is
   why the regression guard is a Ripper pass over host constant NAMES rather than a list of the
   specific references known at the time. The engine now names no host constant at all.
-- **THE ENGINE HAS ITS OWN DUMMY HOST AND ITS OWN `bin/ci` GATE (8 now, not 7), AND THAT IS THE ONLY
-  THING THAT PROVES ANY OF THIS.** Everything above is static analysis; `engines/tinkerex-sync/test/dummy`
+- **THE ENGINE HAS ITS OWN DUMMY HOST, AND THAT IS THE ONLY THING THAT PROVES ANY OF THIS.**
+  It had a `bin/ci` gate here too (8 gates, not 7) until the extraction; that gate is **deleted, not
+  adapted** — its own comment said to do exactly that — so `bin/ci` is back to **7** and the engine's
+  suite runs in its own repo. Everything above is static analysis; the engine's `test/dummy`
   actually boots the engine in a process that has never loaded the maker layer. The single assertion
   worth keeping: **`Sync::Version.table_name` reads `"versions"` there** — `isolate_namespace`'s
   `sync_` prefix is the failure the whole namespace decision had to work around, and nothing else

@@ -1,6 +1,6 @@
 # HOST-SIDE WIRING for the sync engine's capability-gate seam (Stage 3b Task 9; Sync module
-# methods at engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb; the gate itself at
-# engines/tinkerex-sync/app/controllers/concerns/sync/v1/capability_gate.rb). CLAUDE.md §14j used
+# methods at the tinkerex-sync gem's lib/tinkerex_sync/sync_module.rb; the gate itself at its
+# app/controllers/concerns/sync/v1/capability_gate.rb). CLAUDE.md §14j used
 # to record two host constants the engine referenced directly — `::LibraryCapabilities` and
 # `::FileLayer.current.capabilities.versioned?` — which stopped a bare mount from loading at all.
 # This file is what replaces those direct references: the engine asks `Sync.capability_available?`

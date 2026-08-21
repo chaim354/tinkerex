@@ -2,17 +2,28 @@ source "https://rubygems.org"
 
 # Bundle edge Rails instead: gem "rails", github: "rails/rails", branch: "main"
 
-# THE SYNC ENGINE, mounted from a path rather than a git source ON PURPOSE (Stage 3b Phase B).
-# A private git: source would make `bundle install` need cross-repo credentials on every fresh
-# clone and in CI -- the same operator burden that has left tinkerex-client's four workflows
-# unable to run since Stage 1. A path: source gets the whole point of the engine (isolation, its
-# own suite, a real mount) with none of that, and leaves the move to its own repo as a
-# filter-repo of ONE self-contained directory, which is exactly the shape that made client/
-# extract cleanly.
+# THE SYNC ENGINE, from its own repository (chaim354/tinkerex-sync) since 2026-08-20. It lived at
+# engines/tinkerex-sync/ as a `path:` source through Stage 3b -- deliberately, so that the eventual
+# extraction was a filter-repo of ONE self-contained directory rather than a design problem. That
+# is done, the directory is gone, and this repo no longer carries a copy of the engine.
+#
+# A PRIVATE git: SOURCE NEEDS CREDENTIALS WHEREVER `bundle install` RUNS. That cost was accepted
+# here, not discovered: local shells and the self-hosted runner already resolve it through the
+# operator's git credential helper, and the DOCKER BUILD -- which has neither a keychain nor a
+# logged-in gh -- gets an explicit build secret instead (see the Dockerfile's own comment and
+# config/deploy.yml's `builder.secrets`). A fresh clone on a machine with no GitHub credentials
+# cannot `bundle install` this repo. That is the honest consequence of depending on a private
+# repository, not a bug to be worked around.
+#
+# Gemfile.lock PINS THE EXACT REVISION, so `branch: "main"` is where updates come FROM, never what
+# a build resolves to -- `bundle update tinkerex-sync` is the deliberate act that moves it, and a
+# deploy in between builds the same commit every time.
+#
 # `require:` is spelled out because Bundler derives the require path from the HYPHENATED gem name
 # ("tinkerex-sync"), while the entry point is lib/tinkerex_sync.rb -- the usual Ruby convention that
 # a hyphen in a gem name means a `/` in the path, which is not the shape here.
-gem "tinkerex-sync", path: "engines/tinkerex-sync", require: "tinkerex_sync"
+gem "tinkerex-sync", git: "https://github.com/chaim354/tinkerex-sync.git", branch: "main",
+                     require: "tinkerex_sync"
 gem "rails", "~> 8.1.1"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"

@@ -38,7 +38,23 @@ RUN apt-get update -qq && \
 # Install application gems
 COPY Gemfile Gemfile.lock vendor ./
 
-RUN bundle install && \
+# THE SYNC ENGINE IS A PRIVATE git: DEPENDENCY (chaim354/tinkerex-sync -- see the Gemfile's own
+# comment), which makes this the one build step in the image that needs a credential. The token
+# arrives as a BuildKit secret, passed by kamal through `builder.secrets` in config/deploy.yml and
+# resolved from .kamal/secrets-common; a secret mount exists only for the life of this RUN and is
+# never written to a layer, unlike an ARG or an ENV, both of which survive in `docker history`.
+#
+# THE REWRITE IS PASSED THROUGH GIT_CONFIG_* RATHER THAN `git config --global`, and that is the
+# whole point rather than a style choice: `git config --global` writes /root/.gitconfig, which IS
+# part of the layer, so the token would ship inside the image having been "only" in a secret mount.
+# GIT_CONFIG_COUNT/KEY/VALUE hand git the same setting through the environment of ONE command, so
+# there is no file to forget to delete. The `rm -rf` below additionally clears bundler's git cache
+# and the cloned engine's own .git, which is where a remote URL would otherwise be recorded.
+RUN --mount=type=secret,id=TINKEREX_SYNC_TOKEN \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0="url.https://$(cat /run/secrets/TINKEREX_SYNC_TOKEN)@github.com/.insteadOf" \
+    GIT_CONFIG_VALUE_0="https://github.com/" \
+    bundle install && \
     rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git && \
     # -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
     bundle exec bootsnap precompile -j 1 --gemfile

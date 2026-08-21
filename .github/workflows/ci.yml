@@ -228,21 +228,3 @@ jobs:
           name: screenshots
           path: ${{ github.workspace }}/tmp/screenshots
           if-no-files-found: ignore
-
-  # THE SYNC ENGINE'S OWN SUITE (Stage 3b Task 9b), against its own dummy host app in
-  # engines/tinkerex-sync/test/dummy — proof the engine boots and passes with nothing else
-  # attached, not just that its source text contains no forbidden reference (that half is
-  # ArchitectureInvariantsTest, which stays in the `test` job above). `bundle install` here is the
-  # SAME `bundle exec` context `bin/ci engine`'s command reuses (config/ci.rb's own comment: the
-  # dummy app deliberately has no second Gemfile), so this job needs no extra setup step beyond
-  # the usual one.
-  test-engine:
-    runs-on: [self-hosted, macos]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
-        run: bundle install --quiet
-      - name: Run the sync engine's own suite
-        env:
-          RAILS_ENV: test
-        run: bin/ci engine
