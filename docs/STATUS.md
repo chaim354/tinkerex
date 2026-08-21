@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 begins: the chunk_remote wire, not yet selectable**)
+**Updated:** 2026-08-21 (**Stage 4 PR 2: the maker app can mirror a remote changelog**)
 
 ## What this file is
 
@@ -60,7 +60,60 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 1 — the `chunk_remote` wire (branch `claude/stage-4-chunk-remote`)
+## Latest (2026-08-21): Stage 4 PR 2 — the changelog apply loop (branch `claude/stage-4-apply-loop`)
+
+`FileLayer::ChunkRemote::ChangelogSync` — pulls deltas from a remote sync server and applies them to
+this app's own `nodes`, which is what `apply_remote` does in Rust. This is the piece that makes
+`chunk_remote` reads LOCAL SQL. Still not selectable; `FileLayer.build` has no arm.
+
+`bin/ci` green at 8 gates: **2394 runs, 9036 assertions, three legs identical**.
+
+### One upsert for every op, not a branch per op
+
+Every entry carries the node's full post-change state (`Sync::Changes.serialize` emits
+parent/name/kind/deleted/mode/mtime), so "apply" is "make the local row equal that" whatever the op
+was. A per-op state machine would be six chances to disagree with the server about a state the
+server already sent. The op is retained only for the delete-with-no-node-payload case.
+
+### `nodes.size` is populated here, and that is the payoff
+
+The finding from PR 1 acted on: sizes come off `entry["version"]["size"]` and land on the node, so
+`stat_all` in remote mode is **one** query where `Chunk#stat_all` needs two.
+
+### The pruned gap
+
+`oldest_seq` is why the server sends it. A cursor below what survives retention means the delta has a
+**hole**, and applying it leaves a tree that is silently wrong. The answer is to stop trusting the
+cursor and re-read `/v1/tree` — and then **sweep** local rows the server did not list, because
+without that a resync is additive and every file deleted while we were behind stays visible forever.
+`cursor.positive?` guards the first sync, which is below every `oldest_seq` and is not a gap.
+
+### The cursor lives in its own column, not in `head_seq`
+
+`users.remote_sync_cursor`. `head_seq` means "the highest seq this app ISSUED"; this means "the
+highest it RECEIVED". They coincide only because a chunk deployment is both sides at once. The
+hazard that decided it: a deployment migrating chunk → chunk_remote would carry a stale local
+`head_seq` and the loop would read it as a cursor and **silently skip every entry below it**.
+
+### MUTATION-TESTING HUNG RATHER THAN FAILED, AND THAT WAS THE FINDING
+
+Freezing the cursor write turned the pull into an **infinite loop**: a full page keeps the
+short-page break false, so it refetched `since: 0` forever — holding a request or a job with no
+error anywhere. The loop had no guard that the cursor actually advances. It now raises
+`FetchError` when the cursor fails to move (`<=`, not `==`, since going backwards loops just as
+happily), with a regression test. Removing that guard **hangs again**, which is the proof it is
+load-bearing rather than decorative.
+
+Other mutations, all restoring green: no gap check (2 failures), resync sweep removed (1), size not
+recorded (2), first-sync-treated-as-gap (3 failures + 4 errors), cursor frozen (8 errors, fails fast
+now instead of hanging).
+
+### Also
+
+Two of the first test failures were the TEST modelling the wire wrong, not the code: a page shorter
+than the limit means caught up, so one entry per page correctly ended the loop. Fixed the test.
+
+## 2026-08-21: Stage 4 PR 1 — the `chunk_remote` wire (branch `claude/stage-4-chunk-remote`)
 
 **Plan:** `docs/superpowers/plans/2026-08-21-engine-optional-and-stage-4.md` (Arc B). **Design:**
 `docs/superpowers/specs/2026-08-20-chunk-repo-separation-design.md` §6.
