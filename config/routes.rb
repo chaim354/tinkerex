@@ -275,6 +275,25 @@ Rails.application.routes.draw do
   end
 
   # --- Sync engine API (v1) ---
+  #
+  # STAGE 3b PHASE B TASK 7: the sync routes below now dispatch to Sync::V1::* -- the engine's
+  # controllers, in engines/tinkerex-sync/app/controllers/sync/v1/ -- but every URL, route name
+  # and HTTP verb here is BYTE-IDENTICAL to before this task (diffed against `bin/rails routes`
+  # captured before it, empty diff). That preservation is a hard requirement: real desktop
+  # clients are deployed against these URLs.
+  #
+  # EVERY SYNC `to:`/`controller:` BELOW NOW CARRIES A LEADING `/`, AND THE SLASH IS NOT
+  # DECORATION -- it is Rails' own escape hatch for "this controller path is absolute, ignore the
+  # enclosing scope's module", and without it every one of these would silently misroute. Both
+  # this `namespace :v1` and the sync engine's controllers happen to share the path segment "v1"
+  # for unrelated reasons (this block's is a URL/route-name prefix that must stay put; the
+  # engine's is its OWN v1-API-versioning choice, Sync::V1::), so an UNqualified `to: "commits#create"`
+  # here does not miss by nesting the module wrong -- Rails resolves it to `V1::CommitsController`,
+  # a controller not in this file's own namespace :maker block and not autoloadable anywhere in
+  # this app, so it would 404 the moment it dispatched, not merely at boot. Verified rather than
+  # assumed: a leading-slash `to: "/sync/v1/commits#create"` was proven with
+  # `Rails.application.routes.recognize_path("/v1/commit", method: :post)` returning
+  # `{controller: "sync/v1/commits", action: "create"}` before this rewrite touched every line.
   namespace :v1 do
     # Device enrollment by login (the Dropbox model): email+password -> a device token.
     # Replaces the pairing-code flow. No Bearer auth — the credentials ARE the auth.
@@ -283,36 +302,36 @@ Rails.application.routes.draw do
     resources :devices, only: [ :create ]
 
     # content commits (two-phase)
-    post "commit", to: "commits#create"
-    post "commit/:commit_id/finalize", to: "commits#finalize"
+    post "commit", to: "/sync/v1/commits#create"
+    post "commit/:commit_id/finalize", to: "/sync/v1/commits#finalize"
 
     # pull
-    get "changes", to: "changes#index"
-    get "tree", to: "tree#index"
+    get "changes", to: "/sync/v1/changes#index"
+    get "tree", to: "/sync/v1/tree#index"
 
     # search (name/path; scoped to the device's user — for the web UI / a fresh device)
-    get "search", to: "search#index"
+    get "search", to: "/sync/v1/search#index"
 
     # metadata ops + history
-    post "nodes", to: "nodes#mkdir"
-    post "nodes/symlink", to: "nodes#symlink"
-    delete "nodes/:node_id", to: "nodes#destroy"
-    post "nodes/:node_id/move", to: "nodes#move"
-    get "nodes/:node_id/versions", to: "nodes#versions"
-    post "nodes/:node_id/restore", to: "nodes#restore"
-    post "nodes/:node_id/resolve_conflict", to: "nodes#resolve_conflict"
+    post "nodes", to: "/sync/v1/nodes#mkdir"
+    post "nodes/symlink", to: "/sync/v1/nodes#symlink"
+    delete "nodes/:node_id", to: "/sync/v1/nodes#destroy"
+    post "nodes/:node_id/move", to: "/sync/v1/nodes#move"
+    get "nodes/:node_id/versions", to: "/sync/v1/nodes#versions"
+    post "nodes/:node_id/restore", to: "/sync/v1/nodes#restore"
+    post "nodes/:node_id/resolve_conflict", to: "/sync/v1/nodes#resolve_conflict"
 
     # conflicts (offline-edit divergence)
-    get "conflicts", to: "conflicts#index"
+    get "conflicts", to: "/sync/v1/conflicts#index"
 
     # trash / undelete (deleted-file recovery; deletes are tombstones + versions kept)
-    get "trash", to: "trash#index"
-    post "trash/:node_id/restore", to: "trash#restore"
+    get "trash", to: "/sync/v1/trash#index"
+    post "trash/:node_id/restore", to: "/sync/v1/trash#restore"
 
     # best-effort advisory edit locks
-    post "nodes/:node_id/lock", to: "nodes#lock"
-    post "nodes/:node_id/unlock", to: "nodes#unlock"
-    get "locks", to: "locks#index"
+    post "nodes/:node_id/lock", to: "/sync/v1/nodes#lock"
+    post "nodes/:node_id/unlock", to: "/sync/v1/nodes#unlock"
+    get "locks", to: "/sync/v1/locks#index"
 
     namespace :maker do
       resources :items, only: %i[index show create update destroy] do
@@ -352,21 +371,21 @@ Rails.application.routes.draw do
     end
 
     # hydration
-    post "chunks/download", to: "chunks#download"
+    post "chunks/download", to: "/sync/v1/chunks#download"
 
     # Read-only share links. Owner side (authenticated): mint/revoke a link to one immutable
     # version. Redeem side (anonymous — the link token is the auth, no device bearer): view
     # the version's metadata + presign GETs for its chunks.
-    resources :share_links, only: %i[create destroy]
-    get  "share/:token",          to: "share#show"
-    post "share/:token/download", to: "share#download"
+    resources :share_links, only: %i[create destroy], controller: "/sync/v1/share_links"
+    get  "share/:token",          to: "/sync/v1/share#show"
+    post "share/:token/download", to: "/sync/v1/share#download"
 
     # The `local` (filesystem) chunk backend's storage tier — presigned, HMAC-authorized blob
     # PUT/GET (no bearer token; the URL's signature is the auth). Only active under
     # STORAGE_BACKEND=local; a 404/403 otherwise. The hash is hex (`[0-9a-f]+`), constrained so the
     # route can't capture a path with slashes.
-    put "chunks/blob/:user_id/:hash", to: "chunks/blob#upload", constraints: { hash: /[0-9a-f]+/ }
-    get "chunks/blob/:user_id/:hash", to: "chunks/blob#download", constraints: { hash: /[0-9a-f]+/ }
+    put "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#upload", constraints: { hash: /[0-9a-f]+/ }
+    get "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#download", constraints: { hash: /[0-9a-f]+/ }
   end
 
   # ActionCable mount (change notifications)

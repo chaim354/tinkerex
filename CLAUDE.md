@@ -2035,7 +2035,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ---
 
-### 14j. The maker/sync boundary (Stage 3a)
+### 14j. The maker/sync boundary (Stages 3a and 3b)
 
 Six invariants the engine's eventual extraction rests on. Each was found by measuring, and most
 were invisible to the `Sync::`-shaped guards that preceded them.
@@ -2080,6 +2080,26 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   backends, since only `Sync::Commit`/`Restore`/`Conflicts` ever create one. `schema_map.rb` drew
   them as references and was corrected; drawing them back would make Stage 3b move two maker tables
   it must not move.
+- **THE ENGINE IS A MOUNTED RAILS ENGINE AT `engines/tinkerex-sync/`, ISOLATED UNDER `Sync`.** A gem
+  squatting `Version`, `Chunk`, `Conflict` and `FileLock` at top level cannot be given to anyone, so
+  Stage 3b moved all fifteen top-level engine names under one. **`isolate_namespace` sets
+  `table_name_prefix` to `sync_`, which would make every model look for a `sync_versions` table that
+  does not exist** — the override must be defined **BEFORE** `isolate_namespace` runs, because that
+  method's own `on_load(:active_record)` hook re-defines it later in boot and clobbers a lexically
+  lower one regardless of position. `Sync::Version.table_name` must read `"versions"`; check it, do
+  not assume it.
+- **THE BOUNDARY IS A DIRECTORY, NOT A GLOB LIST, AND THAT IS WHY THE GUARD SURVIVED THE MOVE.**
+  `SYNC_SIDE_GLOBS` listed paths under `app/` and `lib/`; when Phase B moved 51 files into the
+  engine, those globs matched **three**, two of them host controllers — and a `Maker::` reference
+  planted in the engine's own `gc.rb` left the suite **green**. Anything inside `engines/` is engine,
+  anything outside is host, and there is no list to fall out of step with a move.
+- **THE ENGINE SHIPS THE BASE CONTROLLER AND THE HOST INHERITS IT, NEVER THE REVERSE.**
+  `V1::BaseController < Sync::V1::BaseController` keeps all fourteen `v1/maker/*` controllers on the
+  shared v1 infrastructure while the engine's own twelve get a base they can carry into a standalone
+  mount. An engine inheriting a host class cannot load without that specific app, which defeats
+  shipping it. **Two host dependencies remain in the engine and are recorded, not hidden**:
+  `Sync::V1::BaseController` includes `::LibraryCapabilities` and `Sync::V1::ShareController` reads
+  `::FileLayer.current.capabilities.versioned?`. A bare mount cannot load those two today.
 - **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
   `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
   deployment — which has no changelog and never calls it — was being refused a boot for a rule that

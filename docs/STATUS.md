@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Stage 3b Phase A: the engine namespaces to `Sync::` in place, and its migrations get a generated, guarded consolidation**)
+**Updated:** 2026-08-20 (**Stage 3b Phase B: the sync engine is a mounted Rails engine, in-repo at `engines/tinkerex-sync/`**)
 
 ## What this file is
 
@@ -57,6 +57,64 @@ reading the last entry.
   it writes nothing, on purpose — so its "would file" answer is optimistic whenever the
   destination folder already holds a same-named file. Not a gap to close; it is what
   "writes nothing" costs.
+
+---
+
+## Latest (2026-08-20): Stage 3b Phase B — the engine becomes a mounted Rails engine (branch `claude/stage-3b-phase-b`)
+
+**Plan:** `docs/superpowers/plans/2026-08-20-stage-3b-extract-the-engine.md`. Invariants: **CLAUDE.md §14j**.
+
+**51 files / 3,860 lines moved into `engines/tinkerex-sync/`**, isolated under `Sync`, mounted from a
+`path:` Gemfile entry. `bin/ci` green at 7 gates; **2555 runs, 9608 assertions, three legs identical**
+— unchanged, because this moves code rather than adding any. `zeitwerk:check` clean.
+
+### Why `path:` and not a separate repo yet
+
+A private `git:` source makes `bundle install` need cross-repo credentials on every fresh clone and
+in CI — **the same operator burden that has left `tinkerex-client`'s four workflows unable to run
+since Stage 1.** A `path:` source delivers everything Stage 3 actually promises (isolation, a real
+mount, a self-contained tree) with none of it, and leaves the move to `chaim354/tinkerex-sync`
+(created, private, empty) as a `filter-repo` of **one directory** — the exact shape that let `client/`
+extract with unfragmented history in under an hour.
+
+### Three things that only surfaced by running it
+
+- **`isolate_namespace` sets `table_name_prefix` to `sync_`.** Every model would have looked for a
+  `sync_versions` table. Worse, the obvious fix does not work: `isolate_namespace`'s own
+  `on_load(:active_record)` hook **re-defines** the method later in boot and clobbers a lexically
+  lower override. It has to be defined **before** the call, where that method's
+  `unless mod.respond_to?(:table_name_prefix)` guard skips it. Verified against railties 8.1.3.1.
+- **`Sync.engine_present?` can never live in the engine's `app/services/sync.rb`.** The engine defines
+  `module Sync` eagerly at `Bundler.require` time, so a file matching an already-defined namespace's
+  exact root is **silently never autoloaded** — eager_load included, no error anywhere. Confirmed with
+  a bare `Zeitwerk::Loader` probe outside Rails. It lives in `lib/tinkerex_sync/sync_module.rb`,
+  plain-required.
+- **Sync routes have no `/v1/sync/` prefix**, so an unqualified `to: "commits#create"` inside
+  `namespace :v1` resolves against that namespace and lands on a controller that no longer exists.
+  Fixed with a leading `/` — `to: "/sync/v1/commits#create"`. `bin/rails routes` diffed before and
+  after: **every prefix, verb and URI pattern byte-identical**; only the controller column moved.
+  Real desktop clients are deployed against those URLs.
+
+### The guard went blind, and that is the finding worth keeping
+
+`SYNC_SIDE_GLOBS` listed paths under `app/` and `lib/`. After the move it matched **three** files —
+two of them the host controllers the list exists to exclude. **A `Maker::` reference planted in the
+engine's own `sync/gc.rb` left the suite green.** The guard that proves the engine can run without the
+maker layer had gone blind to the engine, and it would have shipped looking healthy.
+
+Repointed at the engine **directory**, which is stronger than the glob list ever was: the engine is one
+tree, there is no list to fall out of step with a move. Both mutations now go red. And on its first run
+it immediately caught a real new host→engine dependency Phase B had introduced —
+`V1::BaseController < Sync::V1::BaseController` — which was invisible for as long as the file set
+pointed at the old locations.
+
+### Left open, deliberately
+
+Two host dependencies remain inside the engine and are recorded rather than hidden:
+`Sync::V1::BaseController` includes `::LibraryCapabilities`, and `Sync::V1::ShareController` reads
+`::FileLayer.current.capabilities.versioned?`. **A bare mount cannot load those two today** — that is
+Task 9's problem (the dummy app and the engine's own suite), not something to paper over now. The
+engine also has no test suite of its own yet; its coverage still rides in the host's flat `test/` tree.
 
 ---
 

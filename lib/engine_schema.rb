@@ -59,10 +59,18 @@ module EngineSchema
     def source_path = root.join(SOURCE)
     def output_path = root.join(OUTPUT)
 
-    # The eight table names, sorted -- see the header for why this reads app/models/sync/ rather
-    # than naming the tables directly.
+    # The eight table names, sorted -- see the header for why this reads the models' own
+    # directory rather than naming the tables directly.
+    #
+    # `engines/tinkerex-sync/app/models/sync/*.rb`, NOT `app/models/sync/*.rb` -- STAGE 3b PHASE B
+    # TASK 7 moved the eight model files into the engine after this file and its test were
+    # written; the derivation source had to follow them or `tables` silently returns `[]` (an
+    # empty glob raises nothing) and every table-count assertion downstream fails with "expected
+    # 8, got 0" rather than a clear "can't find the models" error. The MODELS moved; the
+    # TABLES/migrations did not (CLAUDE.md §14j: db/migrate/ stays host, forever) -- this glob is
+    # the one line that has to know where the Ruby source of the name list now lives.
     def tables
-      @tables ||= Dir.glob(root.join("app/models/sync/*.rb")).map { |f|
+      @tables ||= Dir.glob(root.join("engines/tinkerex-sync/app/models/sync/*.rb")).map { |f|
         "Sync::#{File.basename(f, ".rb").camelize}".constantize.table_name
       }.sort
     end
