@@ -199,6 +199,16 @@ asset_path: /rails/public/assets
 builder:
   arch: amd64
 
+  # THE SYNC ENGINE IS A PRIVATE git: DEPENDENCY, so `bundle install` inside the image needs a
+  # credential that the build host has and the container does not (see the Dockerfile's own
+  # comment, and the Gemfile's). kamal passes this as a BuildKit secret -- a mount that exists for
+  # one RUN and never lands in a layer -- resolved from .kamal/secrets-common, which is the right
+  # file because EVERY destination builds the same image and so needs it (§14g: only universally
+  # required keys may live there; test/deploy_hygiene_test.rb enforces that, and reads this very
+  # list to decide what "universally required" means).
+  secrets:
+    - TINKEREX_SYNC_TOKEN
+
   # # Build image via remote server (useful for faster amd64 builds on arm64 computers)
   # remote: ssh://docker@docker-builder-server
   #

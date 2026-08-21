@@ -34,12 +34,14 @@ class EngineSchemaTest < ActiveSupport::TestCase
   end
 
   test "the eight engine tables are exactly what app/models/sync/ declares, once each" do
-    # engines/tinkerex-sync/app/models/sync/, NOT app/models/sync/ -- Stage 3b Phase B Task 7
-    # moved the eight model files there, after both this test and EngineSchema.tables were
-    # written against the pre-move path. Re-derived INDEPENDENTLY from EngineSchema.tables's own
-    # glob (lib/engine_schema.rb), on purpose -- the whole point of this assertion is catching the
-    # two falling out of step, which a shared helper for the path would defeat.
-    from_models = Dir.glob(Rails.root.join("engines/tinkerex-sync/app/models/sync/*.rb")).map { |f|
+    # THE GEM'S app/models/sync/, since the 2026-08-20 extraction -- the models have moved twice
+    # (app/models/sync/ -> engines/tinkerex-sync/ -> their own repository) and this glob followed
+    # both times. Re-derived INDEPENDENTLY from EngineSchema.tables's own glob
+    # (lib/engine_schema.rb), on purpose -- the whole point of this assertion is catching the two
+    # falling out of step, which a shared helper for the path would defeat. That is why the gem
+    # directory is looked up again here rather than borrowed from EngineSchema.gem_root.
+    gem_dir = Gem.loaded_specs.fetch("tinkerex-sync").gem_dir
+    from_models = Dir.glob(File.join(gem_dir, "app/models/sync/*.rb")).map { |f|
       "Sync::#{File.basename(f, ".rb").camelize}".constantize.table_name
     }.sort
 
@@ -104,5 +106,34 @@ class EngineSchemaTest < ActiveSupport::TestCase
       indexes: conn.indexes(table).map { |i| [ i.columns, i.unique ] }.sort,
       foreign_keys: conn.foreign_keys(table).map { |fk| [ fk.from_table, fk.to_table, fk.column ] }.sort
     }
+  end
+  # THE FOURTH FAILURE MODE, ADDED BY THE 2026-08-20 EXTRACTION: this repo's generated
+  # db/engine_schema.rb and the copy the GEM ships have drifted apart.
+  #
+  # Both exist, and both must. This repository still owns db/migrate/ and therefore db/schema.rb
+  # (CLAUDE.md §14j -- the migrations were never rewritten for the extraction, on purpose), so the
+  # generator here is still what turns THIS app's real schema into the consolidated migration. The
+  # gem ships its own copy because a fresh host installing tinkerex-sync has no access to this
+  # repository at all. Two checked-in descriptions of one DDL is exactly the shape CLAUDE.md warns
+  # about everywhere else, and the answer is the same one used for db/engine_schema.rb itself: not
+  # "have only one", but "make the second one unable to drift quietly".
+  #
+  # WHAT THIS TURNS RED, AND WHAT TO DO ABOUT IT: a migration lands here touching one of the eight
+  # tables, `bin/rails engine_schema:generate` updates db/engine_schema.rb, the first test above
+  # goes green again -- and this one fails, because the gem is still shipping the old DDL. The fix
+  # is a commit in chaim354/tinkerex-sync updating its db/engine_schema.rb, then
+  # `bundle update tinkerex-sync` here. That cross-repo obligation is real work, and a schema
+  # change is precisely when it must be impossible to forget.
+  test "the gem ships the same engine schema this repo generates" do
+    gem_copy = Pathname.new(Gem.loaded_specs.fetch("tinkerex-sync").gem_dir).join("db/engine_schema.rb")
+
+    assert gem_copy.exist?,
+           "the tinkerex-sync gem ships no db/engine_schema.rb -- a fresh host has no way to " \
+           "create the eight engine tables. Expected it at #{gem_copy}."
+
+    assert_equal EngineSchema.render, gem_copy.read,
+                 "the tinkerex-sync gem's db/engine_schema.rb no longer matches what this repo " \
+                 "generates from db/schema.rb. Update it in chaim354/tinkerex-sync and " \
+                 "`bundle update tinkerex-sync` here -- see this test's own comment."
   end
 end

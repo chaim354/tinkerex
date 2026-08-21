@@ -277,7 +277,7 @@ Rails.application.routes.draw do
   # --- Sync engine API (v1) ---
   #
   # STAGE 3b PHASE B TASK 7: the sync routes below now dispatch to Sync::V1::* -- the engine's
-  # controllers, in engines/tinkerex-sync/app/controllers/sync/v1/ -- but every URL, route name
+  # controllers, in the tinkerex-sync gem's app/controllers/sync/v1/ -- but every URL, route name
   # and HTTP verb here is BYTE-IDENTICAL to before this task (diffed against `bin/rails routes`
   # captured before it, empty diff). That preservation is a hard requirement: real desktop
   # clients are deployed against these URLs.
@@ -303,7 +303,7 @@ Rails.application.routes.draw do
 
     # content commits (two-phase)
     # EVERY SYNC ROUTE, FROM THE ENGINE'S OWN DEFINITION. They used to be written out here and
-    # hand-copied a second time into engines/tinkerex-sync/test/dummy/config/routes.rb -- two
+    # hand-copied a second time into the gem's own test/dummy/config/routes.rb -- two
     # descriptions of one thing, free to drift. See lib/tinkerex_sync/v1_routes.rb for why this is a
     # drawer rather than `mount Sync::Engine`: these paths interleave with the host's own inside
     # this very namespace, and a mount owns a whole prefix.

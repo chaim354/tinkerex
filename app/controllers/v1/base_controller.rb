@@ -1,7 +1,7 @@
 module V1
   # STAGE 3b PHASE B TASK 7: this class's ENTIRE former body -- `include Authentication`,
   # `include LibraryCapabilities`, and the five generic JSON rescue_froms -- moved to
-  # `Sync::V1::BaseController` (engines/tinkerex-sync/app/controllers/sync/v1/base_controller.rb),
+  # `Sync::V1::BaseController` (the tinkerex-sync gem, app/controllers/sync/v1/base_controller.rb),
   # which this class now inherits from rather than reimplementing. See that class's own header
   # comment for the three-option decision and the argument for this one; the short version is
   # that the alternative (this engine's twelve controllers inheriting a HOST-defined base) makes

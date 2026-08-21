@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**Stage 3b Phase B: the sync engine is a mounted Rails engine, in-repo at `engines/tinkerex-sync/`**)
+**Updated:** 2026-08-20 (**the sync engine is extracted: `chaim354/tinkerex-sync`, consumed here as a private `git:` gem**)
 
 ## What this file is
 
@@ -60,7 +60,100 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-20): Stage 3b Phase B — the engine becomes a mounted Rails engine (branch `claude/stage-3b-phase-b`)
+## Latest (2026-08-20): the sync engine is extracted to its own repository (branch `claude/extract-sync-engine`)
+
+`chaim354/tinkerex-sync` — **109 commits**, tests green standalone, consumed here as a private
+`git:` gem. `engines/tinkerex-sync/` is gone from this repo. Invariants: **CLAUDE.md §14j**.
+
+`bin/ci` green at **7 gates** (was 8 — the engine gate is deleted, not adapted, exactly as its own
+comment instructed): **2362 runs, 8991 assertions, three legs identical**. The engine's own suite,
+in its own repo: **207 runs, 672 assertions, 1 skip** (a Postgres pooler probe needing a live PG).
+
+### `kamal deploy` was already broken, and the extraction is what found it
+
+Phase B added `gem "tinkerex-sync", path: "engines/tinkerex-sync"` on 2026-08-20. The Dockerfile
+copies `Gemfile Gemfile.lock vendor` and *then* runs `bundle install`; `engines/` does not arrive
+until the later `COPY . .`. So `bundle install` failed with **"The path .../engines/tinkerex-sync
+does not exist"** from the moment Phase B merged. Nothing caught it: `bin/ci` does not build the
+image, and no deploy ran in between. **Reproduced before it was believed** — Gemfile + lock +
+vendor copied to an empty directory, `BUNDLE_DEPLOYMENT=1 bundle install`, same error.
+
+It is fixed by the cutover rather than in spite of it: a `git:` source needs no local directory.
+What it needs instead is a credential, which the image has no other way to get — `TINKEREX_SYNC_TOKEN`,
+a BuildKit secret via kamal `builder.secrets`, passed as `GIT_CONFIG_COUNT/KEY/VALUE` **on that one
+command**. Not `git config --global`: that writes `/root/.gitconfig`, which is part of the layer, so
+the token would ship inside the image having been "only" in a secret mount.
+
+### History: 108 commits, and the paths are left as they actually were
+
+A naive `--path engines/tinkerex-sync/` yields **12** commits — the directory is four days old. The
+engine's real history is under its pre-move paths, and **neither method of recovering it is
+reliable**, which is worth recording because both look authoritative:
+
+- **`git log --follow` produces false positives AND false negatives.** It paired empty `.keep` files
+  and the dummy's new `device.rb` stand-in with unrelated host files (which would have dragged host
+  history into a repo meant to stand alone), and it **missed** `app/services/storage/` entirely —
+  9 commits including `ChunkStore#put`.
+- **Rename records are incomplete.** The `Storage`→`Sync::Storage` move is recorded as **delete +
+  add**, not a rename: namespacing changed the files too much for git's similarity detection.
+
+So the path set was built from recorded renames, walked transitively, then **audited** (101 paths,
+none a live host file, none a host crown jewel). Old paths were kept **as they were** rather than
+rewritten to the gem layout: asserting that `app/models/version.rb` "is" `app/models/sync/version.rb`
+is a claim git itself disagrees with, and a wrong one attributes the wrong changes to the wrong file
+while looking perfectly authoritative. `git log --all -- <old-path>` finds the earlier work; the
+README says so.
+
+**Verified before anything was deleted:** the extracted root tree hashed `32d090a7`, byte-identical
+to `engines/tinkerex-sync/` at `1175af5`; no host file appears in any of the **151** distinct paths
+the new history has ever held; and a fresh clone of the pushed repo diffed against the directory
+showed only the intended packaging additions.
+
+### A guard died silently, which is the finding worth keeping
+
+Both engine-side architecture guards scanned `engines/tinkerex-sync/**` and both are
+`assert_empty offenders`. Extraction made that glob `[]` — **which satisfies `assert_empty`
+perfectly**. "the sync engine never reaches into the maker layer" went on *passing over nothing*.
+Only its sibling failed, and only by luck: its stale-exception check named a file that had ceased
+to exist.
+
+Both moved to the engine repo's `test/architecture_test.rb`, beside a **third** that asserts the
+file list is non-empty before the other two are trusted. All three mutation-checked there
+(`Maker::Previews` planted → 2 failures; `LibraryCapabilities` planted → 1; glob pointed at nothing
+→ 2; restored → 0). They were deliberately **not** rebuilt here against the installed gem: a guard
+reading a vendored copy reports on whatever revision `Gemfile.lock` pins, so it would go green on a
+stale pin while the engine's own `main` was broken.
+
+### The schema now exists in two repos, with a test between them
+
+This repo still owns `db/migrate/` and `db/schema.rb` (never rewritten — §14j), so its generator is
+still what produces the consolidated migration; the gem ships its own copy because a fresh host
+cannot read this repository. `test/engine_schema_test.rb` gained a fourth failure mode asserting the
+two are byte-identical — mutation-checked both ways (drift the gem's copy → red; remove it → red).
+A migration touching one of the eight tables now goes **red here** until the gem is updated and
+`bundle update tinkerex-sync` is run.
+
+Two globs also had to follow the models *again* — `lib/engine_schema.rb` and the test's deliberately
+independent re-derivation both now resolve through `Gem.loaded_specs`. An empty glob raises nothing,
+so this is the third time that comment has been rewritten rather than left to rot.
+
+### Still open from this arc
+
+- **`chaim354/tinkerex-sync` has no CI workflow and no registered runner.** Its 207 tests run on
+  demand and nowhere automatically. This is the same operator gap that has left `tinkerex-client`'s
+  four workflows unable to run since Stage 1, now widened to a second repo. `bin/ci` here no longer
+  covers the engine at all, so that gap is real coverage lost, not merely deferred.
+- **`TINKEREX_SYNC_TOKEN` does not exist in 1Password yet** (`op://tinkerex/github-tinkerex-sync/token`,
+  needs read access to the private repo). `bin/secrets-preflight --all` will report it missing, and
+  a deploy cannot build until it is created. Deploys were already failing before this arc, so this
+  replaces a silent break with a named prerequisite.
+- **`SYNC_SIDE_GLOBS` in `test/architecture_invariants_test.rb` is dead code** — defined, never read.
+  It was superseded by the directory boundary in Phase B and is doubly obsolete now that the
+  directory is gone. Left in place deliberately: excising it means unpicking ~90 lines of
+  intertwined prose that also documents the surviving `SYNC_SEAM_EXCEPTIONS`, and that is a separate,
+  careful edit rather than a rider on this one.
+
+## 2026-08-20: Stage 3b Phase B — the engine becomes a mounted Rails engine (branch `claude/stage-3b-phase-b`)
 
 **Plan:** `docs/superpowers/plans/2026-08-20-stage-3b-extract-the-engine.md`. Invariants: **CLAUDE.md §14j**.
 
@@ -68,7 +161,7 @@ reading the last entry.
 `path:` Gemfile entry. `bin/ci` green at 7 gates; **2555 runs, 9608 assertions, three legs identical**
 — unchanged, because this moves code rather than adding any. `zeitwerk:check` clean.
 
-### Why `path:` and not a separate repo yet
+### Why `path:` and not a separate repo yet — *superseded the same day; see the extraction entry above*
 
 A private `git:` source makes `bundle install` need cross-repo credentials on every fresh clone and
 in CI — **the same operator burden that has left `tinkerex-client`'s four workflows unable to run
@@ -208,7 +301,7 @@ fix, `timeout: 15000`, for the identical reason.
 
 ---
 
-## Latest (2026-08-20): Stage 3b Phase A — the engine namespaces to `Sync::` in place (branch `claude/stage-3b-phase-a`)
+## 2026-08-20: Stage 3b Phase A — the engine namespaces to `Sync::` in place (branch `claude/stage-3b-phase-a`)
 
 **Plan:** `docs/superpowers/plans/2026-08-20-stage-3b-extract-the-engine.md`. **Boundary design:**
 `docs/superpowers/specs/2026-08-20-stage-3-boundary-design.md` §6/§8/§8b. Invariants added to

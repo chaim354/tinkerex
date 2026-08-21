@@ -62,15 +62,30 @@ module EngineSchema
     # The eight table names, sorted -- see the header for why this reads the models' own
     # directory rather than naming the tables directly.
     #
-    # `engines/tinkerex-sync/app/models/sync/*.rb`, NOT `app/models/sync/*.rb` -- STAGE 3b PHASE B
-    # TASK 7 moved the eight model files into the engine after this file and its test were
-    # written; the derivation source had to follow them or `tables` silently returns `[]` (an
-    # empty glob raises nothing) and every table-count assertion downstream fails with "expected
-    # 8, got 0" rather than a clear "can't find the models" error. The MODELS moved; the
-    # TABLES/migrations did not (CLAUDE.md §14j: db/migrate/ stays host, forever) -- this glob is
-    # the one line that has to know where the Ruby source of the name list now lives.
+    # Where bundler unpacked the tinkerex-sync gem. Raises a named error rather than returning
+    # nil, because every caller below treats the result as a real directory.
+    def gem_root
+      spec = Gem.loaded_specs["tinkerex-sync"]
+      raise "tinkerex-sync gem is not loaded -- cannot locate the engine's models" unless spec
+
+      spec.gem_dir
+    end
+
+    # THE GEM'S OWN app/models/sync/*.rb -- the models have now moved TWICE, and this glob has had
+    # to follow them both times. Phase B moved them from app/models/sync/ into
+    # engines/tinkerex-sync/; the 2026-08-20 extraction moved them out of this repository
+    # altogether, into chaim354/tinkerex-sync. `Gem.loaded_specs` is how a host asks bundler where
+    # a git-sourced gem was actually unpacked, which is the only spelling that survives the gem
+    # being re-resolved to a new revision.
+    #
+    # AN EMPTY GLOB RAISES NOTHING, which is the whole reason this comment keeps getting rewritten
+    # instead of the glob being left to rot: `tables` would silently return [] and every
+    # table-count assertion downstream would fail with "expected 8, got 0" rather than anything
+    # naming the real cause. The MODELS moved; the TABLES and migrations did not (CLAUDE.md §14j:
+    # db/migrate/ stays host, forever), so this is still the one line that has to know where the
+    # Ruby source of the name list lives.
     def tables
-      @tables ||= Dir.glob(root.join("engines/tinkerex-sync/app/models/sync/*.rb")).map { |f|
+      @tables ||= Dir.glob(File.join(gem_root, "app/models/sync/*.rb")).map { |f|
         "Sync::#{File.basename(f, ".rb").camelize}".constantize.table_name
       }.sort
     end

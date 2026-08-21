@@ -590,105 +590,28 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # A directory is a better answer than a glob list ever was. The engine is now one tree; anything
   # inside it is engine, anything outside is host. There is no list to keep in step with a move,
   # which is exactly the failure this replaced.
-  ENGINE_ROOT = "engines/tinkerex-sync".freeze
-
-  def engine_side_files
-    Dir.glob(ROOT.join(ENGINE_ROOT, "**", "*.rb")) + Dir.glob(ROOT.join(ENGINE_ROOT, "**", "*.rake"))
-  end
-
-  test "the sync engine never reaches into the maker layer's features" do
-    engine_files = engine_side_files
-
-    offenders = engine_files.select { |file| maker_references(file).any? }
-                            .map { |f| Pathname.new(f).relative_path_from(ROOT).to_s }.sort
-
-    assert_empty offenders,
-                 "engine code reaching into Maker:: -- publish through Sync::Hooks and let the " \
-                 "host subscribe (app/services/sync/hooks.rb), so a bare sync server with no " \
-                 "maker layer still runs: #{offenders}"
-  end
-
-  # Ripper, not grep, for the reason sync_references gives: a comment or string naming Maker:: is
-  # not a reference, and this tree is full of prose that names it.
-  def maker_references(file)
-    Ripper.lex(File.read(file)).each_cons(2).filter_map do |(pos, type, str, _), (_, t2, s2, _)|
-      "#{pos.first}" if type == :on_const && str == "Maker" && t2 == :on_op && s2 == "::"
-    end
-  end
-
-  # STAGE 3b TASK 9. CLAUDE.md §14j used to record two host constants the engine referenced
-  # directly -- `Sync::V1::BaseController` `include ::LibraryCapabilities`, and
-  # `Sync::V1::ShareController` reading `::FileLayer.current.capabilities.versioned?` -- neither
-  # autoloadable in a bare mount with no host application present. Both are now routed through
-  # `Sync.capability_available?`/`Sync.capability_unavailable_message`
-  # (engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb), a host-configurable seam that
-  # defaults to "available, always" and costs the engine no knowledge of either host name. This
-  # test is what keeps it that way: it is a REGRESSION guard, not a one-time grep, for the exact
-  # failure shape this file's own header warns about elsewhere -- "the guard went blind" the
-  # moment Phase B moved 51 files and SYNC_SIDE_GLOBS kept matching the old locations. A future
-  # edit that re-adds either constant to the engine gets caught here rather than rediscovered by
-  # someone trying to mount tinkerex-sync standalone.
+  # THE TWO ENGINE-SIDE GUARDS LIVE IN THE ENGINE'S OWN REPOSITORY NOW, AND THAT IS NOT A
+  # DEMOTION -- IT IS THE ONLY PLACE THEY CAN STILL FAIL.
   #
-  # NO TRAILING `::` REQUIRED, UNLIKE maker_references -- both real uses this test replaced were
-  # BARE (`include ::LibraryCapabilities`, `::FileLayer.current...`), never followed by a nested
-  # constant, so requiring one would have missed the very references this test exists to catch.
-  # Ripper's `:on_const` token type already rules out a comment or a string (see sync_references'
-  # own comment for the same argument, and why a text-pattern match cannot make this
-  # distinction) -- so a bare name-and-type match is both correct and the simplest thing that
-  # is.
+  # "the sync engine never reaches into the maker layer's features" and "the sync engine never
+  # names a host constant" both scanned engines/tinkerex-sync/**. The 2026-08-20 extraction moved
+  # that directory into chaim354/tinkerex-sync, so the glob started returning [] -- and both tests
+  # are `assert_empty offenders`, which an empty file list satisfies perfectly. They would have
+  # gone on passing forever over nothing, which is this repo's own recorded worst failure shape.
+  # Only ONE of the pair said so: the stale-exception check inside the second test flunked because
+  # CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS still named a file that no longer existed. The first
+  # test went green. That asymmetry is the argument for the third guard the engine repo now
+  # carries, which asserts its own file list is non-empty before trusting either scan.
   #
-  # SCOPED TO THESE TWO NAMES, DELIBERATELY -- NOT "the engine names no host constant at all."
-  # `FileLayer::Chunk` (engines/tinkerex-sync/app/services/file_layer/chunk.rb) is a THIRD,
-  # already-known exception this test must never flag: it is Task 7's sanctioned inverse of this
-  # same problem (the engine SHIPS a FileLayer PORT ADAPTER; the host's factory CHOOSES it), not
-  # a stray reference, and its own header argues the point at length. Its one hit is `module
-  # FileLayer` on line 1, reopening the namespace it adapts -- verified with this same detector,
-  # not assumed. Excluded by NAME rather than by loosening the detector itself, which would just
-  # as easily hide a real new violation landing in the same file.
-  CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS = %w[
-    engines/tinkerex-sync/app/services/file_layer/chunk.rb
-  ].freeze
-
-  # WIDENED FROM TWO NAMES TO FOUR, BECAUSE "TWO" WAS AN UNDERCOUNT AND SAYING SO IS THE LESSON.
-  # This guard was written naming exactly the two host constants known to be in the engine at the
-  # time -- and Task 9a then found a THIRD (`V1::StashRequestBaseUrl`, reaching FileLayer through a
-  # host concern) that it could not see, because the reference was one file removed. A guard scoped
-  # to the violations you already know about only ever confirms what you already know.
+  # They are now tinkerex-sync's test/architecture_test.rb, same detectors, same HOST_CONSTANTS
+  # list, same single sanctioned exception (its FileLayer::Chunk port adapter), re-mutation-checked
+  # there. Do NOT reconstruct them here against the installed gem: a guard that reads a vendored
+  # copy of someone else's source reports on whatever revision Gemfile.lock happens to pin, so it
+  # would go green on a stale pin while the engine's own main branch was broken -- and the engine
+  # repo's CI is the thing that should be red in that case.
   #
-  # `Maker` and `ApplicationController` are here for the same reason, before anyone puts one in:
-  # they are host constants a bare mount has no way to resolve. This list is about what the HOST
-  # owns, not about which references happen to exist today.
-  HOST_CONSTANTS = %w[FileLayer LibraryCapabilities Maker ApplicationController].freeze
-
-  def host_capability_gate_references(file)
-    Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
-      "#{pos.first}" if type == :on_const && HOST_CONSTANTS.include?(str)
-    end
-  end
-
-  test "the sync engine never names a host constant, so a bare mount can load it" do
-    hits_by_file = engine_side_files.filter_map { |file|
-      refs = host_capability_gate_references(file)
-      [ Pathname.new(file).relative_path_from(ROOT).to_s, refs ] if refs.any?
-    }.to_h
-
-    offenders = hits_by_file.keys.sort - CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS
-    assert_empty offenders,
-                 "engine code naming a HOST constant (#{HOST_CONSTANTS.join(', ')}) -- none of " \
-                 "them autoloadable in a bare mount. Ask " \
-                 "Sync.capability_available?/Sync.capability_unavailable_message instead " \
-                 "(engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb), wired by " \
-                 "config/initializers/sync_capabilities.rb on this host: #{offenders}"
-
-    # THE EXCEPTION MUST STAY LIVE, NOT LINGER AS DEAD WEIGHT hiding nothing -- if
-    # file_layer/chunk.rb ever stops referencing FileLayer at all (a rewrite, a rename), this
-    # catches the exception list going stale rather than leaving a future reader to wonder
-    # whether it still means anything.
-    stale = CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS - hits_by_file.keys
-    assert_empty stale,
-                 "CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS lists a file that no longer " \
-                 "references any of #{HOST_CONSTANTS.join(', ')} -- remove it: #{stale}"
-  end
+  # WHAT STAYS HERE IS THE OTHER DIRECTION, and it is unaffected by the move: the maker layer
+  # reaching INTO the engine is a fact about THIS repo's files, which are still here to be scanned.
 
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
     # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
@@ -728,11 +651,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # (sharing/links.rb) was already fixed by Task 6 moving the file, well before Task 3 touched
     # anything here, and user.rb's presence on the list comes from ENGINE_ASSOCIATIONS (`:on_ident`
     # matches on `versions`, `chunks`, etc.), a completely separate mechanism Task 3 does not touch.
-    # EVERYTHING IN app/ AND lib/ IS HOST NOW -- the subtraction below is a no-op since Phase B, and
-    # it is kept only so this reads as the same question it always asked. The engine physically left.
-    maker_layer_files = (Dir.glob(ROOT.join("app", "**", "*.rb")) +
-                          Dir.glob(ROOT.join("lib", "**", "*.rb")) +
-                          Dir.glob(ROOT.join("lib", "tasks", "*.rake"))) - engine_side_files
+    # EVERYTHING IN app/ AND lib/ IS HOST, FULL STOP. This used to subtract `engine_side_files`,
+    # which was already a no-op after Phase B (the engine sat under engines/, matched by neither
+    # glob) and became meaningless when the 2026-08-20 extraction took that directory out of the
+    # repository altogether. Subtracting an empty set is not a safety net; it is a line that makes
+    # a future reader look for a boundary inside app/ and lib/ that has not existed for two stages.
+    maker_layer_files = Dir.glob(ROOT.join("app", "**", "*.rb")) +
+                        Dir.glob(ROOT.join("lib", "**", "*.rb")) +
+                        Dir.glob(ROOT.join("lib", "tasks", "*.rake"))
 
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
     offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
