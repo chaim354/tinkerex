@@ -217,8 +217,17 @@ module FileLayerAdapterContract
       # Assert the MESSAGE, not just the class: NotImplementedError is reachable from five places
       # in this codebase (FileLayer.build, ChunkStore's abstract methods, Sync::RetentionPolicy),
       # so the class alone would let an unrelated raise satisfy this.
-      assert_match(/Sync::Commit/, err.message,
-                   "a refusal must name the path the caller SHOULD use")
+      #
+      # MATCHES THE PORT'S VOCABULARY, NOT ONE ADAPTER'S INTERNALS. This read /Sync::Commit/ until
+      # chunk_remote was wired to this contract and failed on it -- a second chunk-family adapter is
+      # the only thing that could reveal it, which is what a shared contract is for. Sync::Commit is
+      # what happens UNDERNEATH the port in one deployment; a caller told to use it learns nothing
+      # it can act on, and chunk_remote has no local Sync::Commit at all. `begin_upload` is the door
+      # the caller actually uses, it is what §14a names, and Chunk's own message already said so --
+      # the old pattern was matching its parenthetical.
+      assert_match(/begin_upload/, err.message,
+                   "a refusal must name the PORT VERB the caller should use, not the machinery " \
+                   "beneath it -- a caller cannot act on the name of an internal service")
     end
   end
 

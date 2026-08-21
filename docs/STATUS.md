@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 PR 3: remote metadata reads answer from local SQL**)
+**Updated:** 2026-08-21 (**Stage 4 PR 4: chunk_remote passes the shared adapter contract**)
 
 ## What this file is
 
@@ -60,7 +60,66 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 3 — the metadata read verbs (branch `claude/stage-4-read-verbs`)
+## Latest (2026-08-21): Stage 4 PR 4 — manifests, byte reads, and the shared contract (branch `claude/stage-4-byte-reads`)
+
+`chunk_remote` now satisfies **`FileLayerAdapterContract`** — the same bar Chunk, Share and S3 pass.
+Until this it was measured only by its own tests, which is not the same thing. Still not selectable.
+
+`bin/ci` green at 8 gates: **2427 runs, 9103 assertions, three legs identical**.
+
+### `remote_manifest_chunks`, keyed by version_id
+
+`POST /v1/chunks/download` presigns HASHES; it cannot be asked "what are the chunks for node X".
+Manifests arrive unbidden in `/v1/changes` and `/v1/tree`, so a sync client's job is to keep them —
+the Rust `fs-provider` does exactly this. A new per-node endpoint would break "zero new sync-server
+endpoints". Keyed by `version_id` rather than `manifest_id` on purpose: every lookup starts from a
+`content_token`, which IS a version id, and keeping old versions' manifests is what makes
+`read(content_token: <older>)` work — a contract requirement, not a nicety.
+
+### The capability had to change, and the contract is what forced it
+
+`presignable` was **true** (copied from Chunk) and is now **false**. The contract asserts the only
+thing the flag means: `presignable? == download returns a Redirect`, with every chance to presign.
+
+This adapter cannot redirect, for §14a's own reason. `Chunk#download` redirects only when it can
+prove the store is real S3, because memory and local stores presign to URLs **Rails itself serves**.
+ChunkRemote cannot make that check — the URL is signed by another server whose store it cannot see,
+so a `local`-backed sync server would have us redirect a browser into someone else's Rails. The
+remote also signs no disposition or filename for us, and redirecting a multi-chunk file is silent
+truncation. So `download` always **streams**, and the cost (download bytes pass through this app, a
+§15 departure of share's kind) is stated in the code rather than hidden. The inbound fetch is still
+direct-from-storage.
+
+### The shared contract had a chunk-specific assumption, and only a second chunk-family adapter could reveal it
+
+`test_contract_port_writable_agrees_with_what_write_actually_does` asserted the refusal message
+matched `/Sync::Commit/`. That is what happens UNDERNEATH the port in one deployment; a caller told
+to use it learns nothing actionable, and chunk_remote has no local `Sync::Commit` at all. Generalised
+to `/begin_upload/` — the port verb §14a names, which Chunk's own message already contained (the old
+pattern was matching its parenthetical). All four adapters pass the generalised assertion.
+
+`write` also had to be ADDED, refusing with `NotImplementedError`. Omitting it was a real mistake:
+the port requires every adapter to answer the verb, and a chunk-family backend answers by refusing.
+
+### Mutation-checking stayed green once, and that was the finding
+
+Making `fetch_chunk` return empty bytes for a chunk the server declined to presign passed **all 21**
+contract tests — the fake server always presigns what it holds, so the missing-URL branch was never
+taken. That mutation is **silent truncation**: a short file delivered with a 200 and the right name,
+the precise failure §14a records for redirecting a multi-chunk file. Two tests now cover it (read
+and the lazily-drained stream), and the mutation fails.
+
+Others, all restoring green: `presignable` back to true (1 failure + 1 error), storage 5xx mapped to
+NotFound (1), `write` stops refusing (1).
+
+### Also
+
+The architecture guard flagged `chunk_remote.rb` — for the bare identifier `chunks`, an engine
+association name that was also a local variable. **Renamed the variable rather than loosening the
+guard**: requiring a receiver dot would trade a real detector for a naming convenience, and that
+detector exists precisely because `user.chunks.where(...)` emits no const token.
+
+## 2026-08-21: Stage 4 PR 3 — the metadata read verbs (branch `claude/stage-4-read-verbs`)
 
 `stat`, `stat_all` and `trashed` on `FileLayer::ChunkRemote`, answering from **local SQL with no
 wire at all**. Still not selectable. `bin/ci` green at 8 gates: **2404 runs, 9051 assertions, three

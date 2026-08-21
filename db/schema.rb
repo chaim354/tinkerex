@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_21_130000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -455,6 +455,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
     t.index ["user_id", "commit_id"], name: "index_pending_commits_on_user_id_and_commit_id", unique: true
   end
 
+  create_table "remote_manifest_chunks", force: :cascade do |t|
+    t.string "chunk_hash", null: false
+    t.datetime "created_at", null: false
+    t.bigint "length", null: false
+    t.bigint "offset", null: false
+    t.integer "seq", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.string "version_id", null: false
+    t.index ["user_id", "version_id", "seq"], name: "index_remote_manifest_chunks_on_version_and_seq", unique: true
+  end
+
   create_table "share_links", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.datetime "expires_at"
@@ -534,6 +546,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_21_120000) do
   add_foreign_key "manifest_chunks", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "pending_commits", "users"
+  add_foreign_key "remote_manifest_chunks", "users"
   add_foreign_key "share_links", "users"
   add_foreign_key "user_identities", "users"
   add_foreign_key "versions", "users"
