@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 PR 4: chunk_remote passes the shared adapter contract**)
+**Updated:** 2026-08-21 (**Stage 4 PR 5: chunk_remote's metadata mutations, against the real engine**)
 
 ## What this file is
 
@@ -60,7 +60,64 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 4 — manifests, byte reads, and the shared contract (branch `claude/stage-4-byte-reads`)
+## Latest (2026-08-21): Stage 4 PR 5 — the metadata mutations (branch `claude/stage-4-write-verbs`)
+
+`mkdir`, `move`, `delete`, `undelete` on `FileLayer::ChunkRemote`, satisfying
+**`FileLayerMutationContract`**. Still not selectable. `bin/ci` green at 8 gates: **2439 runs,
+9112 assertions, three legs identical**.
+
+### Decided locally, performed remotely
+
+The collision checks run against the **local mirror**, which is where Chunk runs them too — the
+server's `mkdir` is `find_or_initialize_by(node_id:)` and takes the name it is given. So it is a
+**check, not a lock**: the same TOCTOU §14a records for `S3#write`, widened by however stale the
+mirror is. Another device can take the name in between. That is a property of the protocol, not of
+this class — the server is the only thing that could hold such a lock, and asking it to would be a
+new endpoint the design forbids.
+
+Every mutation **pulls afterwards** rather than guessing the new local state. The endpoints answer
+`{seq:}`, not a node; inventing the row we think we just made is how a mirror drifts from its source.
+
+### The contract runs against the REAL engine, not a fake
+
+These nine tests are about semantics the SERVER owns — cross-kind refusal, cycle rejection,
+tombstone-not-destroy, subtree cascade, restoring the same `node_id`. A fake would have to
+reimplement all of it, and **a fake that shares this adapter's assumptions confirms them** (§14e's
+`FakeS3`, where inverse encodings kept 79/80 green over silent data loss). So the transport
+dispatches into this app's own v1 endpoints: the wire is simulated, everything it reaches is real.
+
+### THE LOOPBACK SUITE IS STRUCTURALLY BLIND TO ONE THING, AND MUTATION-TESTING FOUND IT
+
+Deleting `refresh!` outright left **all nine green**. The reason is the suite's own shape: server
+and client share ONE DATABASE there, so `Sync::Mutation.apply` writes the very `nodes` row the
+adapter then reads, and the pull is redundant. In a real deployment those are two databases and the
+pull is the only thing that carries a write back.
+
+`refresh_after_write_test.rb` gives the server state the client does **not** have — a transport that
+accepts a mutation and reports it only through `/v1/changes`. With `refresh!` removed that suite
+fails (1 failure, 2 errors). Recorded because the blind spot is a property of loopback testing in
+general, not a one-off: **when the fake shares the real thing's database, it also shares its
+convergence.**
+
+### A skip that had to gate on the capability, not on the constant
+
+The loopback suite first skipped `unless defined?(Sync)`. The engine is LOADED on all three backend
+legs (they pin `SYNC_ENGINE=1`), but its v1 endpoints are `syncable`-gated and answer 501 on share
+and s3 — so the loopback got `UnsupportedOperation` from the wire rather than from anything the
+adapter decided. Present and live are two different questions.
+
+### `chunk_fetch:` became injectable, for the same reason `transport:` is
+
+They talk to different servers — the transport to the sync server with a device token, the fetcher
+to object storage with no credential of ours — so a suite that can substitute one and not the other
+exercises half a round trip. It also surfaced a fact worth keeping: a memory- or local-backed store
+presigns a **relative** URL, which is exactly why `ChunkRemote` refuses to redirect a browser at one.
+
+Mutations, all restoring green: no collision check (2 failures), `except_node_id` dropped (1 error),
+`refresh!` removed (green in loopback, **1 failure + 2 errors** in the new suite), `undelete`
+checking `present` instead of `exists?` (1 error).
+
+## 2026-08-21: Stage 4 PR 4 — manifests, byte reads, and the shared contract (branch `claude/stage-4-byte-reads`)
 
 `chunk_remote` now satisfies **`FileLayerAdapterContract`** — the same bar Chunk, Share and S3 pass.
 Until this it was measured only by its own tests, which is not the same thing. Still not selectable.
