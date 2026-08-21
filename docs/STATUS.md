@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**share and s3 no longer load the sync engine at all**)
+**Updated:** 2026-08-21 (**Stage 4 begins: the chunk_remote wire, not yet selectable**)
 
 ## What this file is
 
@@ -60,7 +60,63 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): the engine becomes optional — share and s3 stop loading it (branch `claude/engine-optional`)
+## Latest (2026-08-21): Stage 4 PR 1 — the `chunk_remote` wire (branch `claude/stage-4-chunk-remote`)
+
+**Plan:** `docs/superpowers/plans/2026-08-21-engine-optional-and-stage-4.md` (Arc B). **Design:**
+`docs/superpowers/specs/2026-08-20-chunk-repo-separation-design.md` §6.
+
+`bin/ci` green at 8 gates: **2383 runs, 9015 assertions, three legs identical**.
+
+### Deliberately not selectable
+
+`LibraryBackend` still offers chunk, share and s3, and `FileLayer.build` has no `chunk_remote` arm.
+The adapter class and its transport land FIRST so the wire and its error vocabulary can be built
+against a real server before anything can route at them; **adding the arm is the last step of the
+arc**, so a half-implemented adapter can never be reached by a deployment.
+
+### The error mapping is the design, and it is one invariant re-applied
+
+`FileLayer::ChunkRemote::Transport` turns wire conditions into the port's vocabulary. §14a already
+paid for the rule on share — *"an unmounted share must never read as 'your file is permanently
+gone'"* — and a remote sync server is an unmounted share with a longer wire:
+
+| wire | port | why |
+|---|---|---|
+| timeout / refused / 5xx | `FetchError` | retryable, 503. The file is fine; the network is not |
+| 404 | `NotFound` | terminal, 404 |
+| 409 / 422 / 501 | `UnsupportedOperation` | 422. Never succeeds on retry — that is what separates it |
+| **401 / 403** | **`FetchError`** | a rejected device token is an OPERATOR condition (expired, rotated, revoked), not a statement about the file. `NotFound` would tell a user their library vanished because a credential lapsed |
+
+Every transport-level failure is converted inside `#perform`; letting a raw `Errno` escape would
+reach `FilesController`'s rescue table unmapped and **500** — a network blip shown as a broken app.
+
+Mutation-checked, all restoring green: 401→NotFound (1 failure), 5xx→NotFound (2), the connection
+rescue removed (7 failures + 5 errors), 409/422→FetchError (1).
+
+### Two findings recorded for the apply loop
+
+- **`nodes.size` already exists and is NULL on chunk.** Only `Library::Reconciler` (share/s3) writes
+  it; `Chunk#stat_all` reads sizes from `versions` instead, costing a second query. Verified on a
+  live row: `node.size=nil` while `version.size=12`. If the changelog-apply loop populates it,
+  `stat_all` here is **one** query rather than two — better than the backend it replaces.
+- **`ChunkRemote` is NOT a subclass of `Chunk`**, though it looks like the obvious move. `Chunk`
+  ships in the gem, and a chunk_remote deployment does not load the gem at all — inheriting would
+  reintroduce exactly the dependency this backend exists to remove. Arc A is what made that
+  possible.
+
+### Test harness note
+
+The suite drives a real `TCPServer` on a loopback port rather than stubbing `Net::HTTP`: a class
+whose entire job is turning wire conditions into error classes would otherwise assert its own
+intent (§14e's `FakeS3` lesson). WEBrick left stdlib in Ruby 3.0, and thirty lines of socket
+handling was preferred to adding a gem for one file.
+
+### Still to come in Arc B
+
+The Ruby changelog-apply loop, the read verbs against local `nodes`, the write verbs over the wire,
+a standalone host for the engine, and finally the `FileLayer.build` arm.
+
+## 2026-08-21: the engine becomes optional — share and s3 stop loading it (branch `claude/engine-optional`)
 
 **Plan:** `docs/superpowers/plans/2026-08-21-engine-optional-and-stage-4.md`. Invariants: **CLAUDE.md §14j**.
 Arc A of two; **Stage 4 (Arc B) has not started** and is sized there honestly.
