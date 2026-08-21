@@ -113,7 +113,12 @@ module FileLayer
           entries.each do |entry|
             node = entry["node"]
             if node
+              # The manifest rides on the ENTRY, not inside its node payload, so it is handed down
+              # rather than dug out of `payload` in upsert -- which also serves /v1/tree, where it
+              # IS nested. One upsert, two payload shapes, and this is the seam between them.
+              @current_manifest = entry["manifest"]
               upsert(node, deleted: node["deleted"], version: entry["version"])
+              @current_manifest = nil
             else
               # THE SERVER SENT NO NODE PAYLOAD. Sync::Changes only includes one when the row still
               # exists, so this is a node hard-removed since the entry was written. Marking the
@@ -143,10 +148,30 @@ module FileLayer
         if version
           row.current_version_id = version["version_id"]
           row.size = version["size"]
+          # THE MANIFEST IS KEPT, NOT DISCARDED. It arrives unbidden with every put, and
+          # POST /v1/chunks/download cannot be asked "what are the chunks for node X" -- only
+          # "presign these hashes". Dropping it here would leave byte reads with no way to name the
+          # chunks they need, and the only alternative is a new server endpoint the design forbids.
+          store_manifest(version["version_id"], payload["manifest"] || @current_manifest)
         end
         row.symlink_target = Base64.decode64(payload["symlink_target"]) if payload["symlink_target"]
 
         row.save!
+      end
+
+      # IDEMPOTENT BY DELETE-THEN-INSERT, because a resync re-applies versions this app already has
+      # and `insert_all` would collide on the unique (user, version, seq) index. Replacing rather
+      # than skipping also means a manifest that somehow differs is corrected rather than kept --
+      # the server is the source of truth for what a version is made of.
+      def store_manifest(version_id, manifest)
+        return if version_id.blank? || manifest.blank?
+
+        RemoteManifestChunk.where(user_id: @user.id, version_id:).delete_all
+        rows = manifest.each_with_index.map do |c, i|
+          { user_id: @user.id, version_id:, seq: i, chunk_hash: c["hash"],
+            offset: c["offset"], length: c["length"], created_at: Time.current, updated_at: Time.current }
+        end
+        RemoteManifestChunk.insert_all(rows)
       end
     end
   end

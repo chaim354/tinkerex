@@ -109,11 +109,16 @@ module FileLayer
         end
       end
 
-      test "byte reads are absent, not stubbed to lie" do
-        # Deliberate: read/download need a locally-persisted manifest, which is the next piece. A
-        # stub answering NotFound would be a lie about a file that exists.
-        assert_not @adapter.respond_to?(:read), "read appeared without a manifest store behind it"
-        assert_not @adapter.respond_to?(:download), "download appeared without a manifest store"
+      test "byte reads now exist, and the write refusal still does" do
+        # This asserted read/download were ABSENT until the manifest store landed. Kept, inverted,
+        # rather than deleted: the pair is what says which verbs this adapter has, and `write` must
+        # go on refusing forever -- chunk-family backends are not port_writable, and a byte write
+        # would push bytes through Rails (§15).
+        assert @adapter.respond_to?(:read)
+        assert @adapter.respond_to?(:download)
+        assert_raises(NotImplementedError) do
+          @adapter.write(@user, parent_node_id: nil, name: "x.stl", io: StringIO.new("x"))
+        end
       end
     end
   end

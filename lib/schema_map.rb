@@ -53,6 +53,14 @@ module SchemaMap
       "tables" => %w[changelog_entries pending_commits conflicts file_locks share_links] },
     { "label" => "File layer", "group" => "sync",
       "tables" => %w[nodes versions manifest_chunks chunks] },
+    # chunk_remote's LOCAL MIRROR of a remote server's manifests (Stage 4). Its own row rather than
+    # a place among the engine tables above: those are the engine's, written by Sync::Commit in a
+    # deployment that IS the sync server, while this is written by a client that only talks to one.
+    # `remote_manifest_chunks.version_id` is an app-level reference to a `versions` row THIS
+    # DATABASE DOES NOT HAVE -- so there is no edge to draw, and drawing one would claim a join
+    # that cannot be made.
+    { "label" => "Remote sync mirror", "group" => "sync",
+      "tables" => %w[remote_manifest_chunks] },
     { "label" => "Files ↔ maker", "group" => "maker",
       "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
                      maker_addon_states maker_addon_state_revisions] },

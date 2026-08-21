@@ -30,10 +30,40 @@ module FileLayer
     # name: the UI drives the two-phase presigned flow, which is how a chunk_remote upload happens
     # -- it is not "cannot accept uploads"), and `dir_deletable` stays TRUE because the server's
     # SubtreeDelete cascades exactly as it does in-process.
+    # `presignable: FALSE`, WHICH IS THE ONE PLACE THIS DIVERGES FROM CHUNK, AND THE CONTRACT IS
+    # WHAT FORCED THE QUESTION. It read `true` here until `FileLayerAdapterContract` was wired and
+    # asserted the only thing the flag actually means: `presignable? == download returns a Redirect`,
+    # with the store given every chance to mint a URL.
+    #
+    # This adapter cannot redirect, and the reason is §14a's own. `Chunk#download` redirects a
+    # single-chunk file ONLY when it can prove the store is real S3, because memory and local stores
+    # presign to URLs RAILS ITSELF serves. ChunkRemote cannot make that check: the URL is signed by
+    # ANOTHER server whose store this app has no visibility into, so a `local`-backed sync server
+    # would have us redirect a browser into someone else's Rails with no way to know we had. The
+    # remote also signs no disposition or filename for us, and redirecting a MULTI-chunk file is
+    # silent truncation.
+    #
+    # So the honest answer is false: THIS ADAPTER cannot hand a browser a URL. That the remote can
+    # presign for our own inbound fetch is a different question -- exactly the distinction §14a
+    # already draws when it notes `manifest#download` gates on `syncable`, NOT `presignable`. Nothing
+    # in the app gates on this flag today (checked), so the cost is a stream where a redirect might
+    # have served, which is stated in `#download` rather than hidden.
     CAPABILITIES = Capabilities.new(
-      versioned: true, syncable: true, presignable: true,
+      versioned: true, syncable: true, presignable: false,
       scannable: false, port_writable: false, dir_deletable: true
     ).freeze
+
+    # `write` EXISTS IN ORDER TO REFUSE, and its absence was a real omission the contract caught.
+    # The port requires every adapter to answer this verb; a chunk-family backend answers by
+    # refusing, because `write` takes an IO and a server-side byte write would push bytes through
+    # Rails (§15). The upload path is the two-phase presigned pair instead. NotImplementedError is
+    # deliberate and must stay UN-RESCUED -- it is a ScriptError, so `rescue => e` does not catch it,
+    # and a 501 here would be factually wrong: the caller used the wrong door (§14a).
+    WRITE_MSG = "chunk_remote uploads go through begin_upload/finalize_upload, not write"
+
+    def write(_user, parent_node_id: nil, name: nil, io: nil, replace: false)
+      raise NotImplementedError, WRITE_MSG
+    end
 
     def initialize(transport: nil)
       @transport = transport
@@ -75,21 +105,85 @@ module FileLayer
       end
     end
 
-    # ── BYTE READS ARE NOT HERE YET, AND THE ABSENCE IS DELIBERATE ────────────────────────────
+    # ── BYTE READS: THE MANIFEST IS LOCAL, THE BYTES ARE NOT ─────────────────────────────────
     #
-    # `read` and `download` need a MANIFEST -- the chunk hashes and offsets that
-    # POST /v1/chunks/download turns into presigned URLs. Manifests arrive in /v1/changes and
-    # /v1/tree payloads, and ChangelogSync currently discards them; persisting them locally is a
-    # schema addition and its own piece of work. There is no per-node manifest endpoint to fetch one
-    # on demand (checked against `bin/rails routes`), and inventing one would break the design's
-    # "zero new sync-server endpoints".
+    # ChangelogSync mirrored the manifest, so naming the manifest costs no round trip. Fetching them
+    # does: POST /v1/chunks/download presigns the hashes, and the bytes come straight from object
+    # storage. §15 holds -- the sync server never proxies a byte, and neither do we on the way in.
+
+    def read(user, node_id:, content_token: nil)
+      node = live_node!(user, node_id)
+      version_id = content_token.presence || node.current_version_id
+      manifest = manifest_for(user, version_id)
+      raise NotFound, "no manifest for #{node_id.inspect} at #{version_id.inspect}" if manifest.empty?
+
+      urls = presign(manifest.map(&:chunk_hash))
+      +"".b.tap { |buf| manifest.each { |c| buf << fetch_chunk(c, urls) } }
+    end
+
+    # ALWAYS STREAMS; NEVER REDIRECTS, AND THAT IS NOT AN OVERSIGHT COPIED FROM THE WRONG SIBLING.
+    # `Chunk#download` redirects a single-chunk file only when it can PROVE the store is real S3
+    # (`store.is_a?(S3ChunkStore)`), because §14a records that memory and local stores presign to
+    # URLs Rails itself serves -- redirecting there sends the browser back through the app.
     #
-    # They are left UNDEFINED rather than stubbed to raise. A stub that answers NotFound would be a
-    # lie about a file that exists, and one that raises NotImplementedError would be a ScriptError
-    # that `rescue => e` does not catch (§14a). Undefined means an incomplete adapter fails loudly
-    # as exactly what it is -- and it cannot be reached anyway: FileLayer.build has no arm for it.
+    # ChunkRemote cannot perform that check. The URL is signed by ANOTHER server, whose store this
+    # app has no visibility into; a `local`-backed sync server hands back a URL pointing at its own
+    # Rails, and we would be redirecting a browser into someone else's app with no idea we had done
+    # it. Two further reasons the same way: the remote signs no disposition or filename for us
+    # (§14a's silent inline-vs-attachment divergence), and redirecting a MULTI-chunk file hands the
+    # browser its first chunk with a 200 and the right name -- silent truncation.
+    #
+    # THE COST IS STATED, NOT HIDDEN: download bytes pass through this app, a departure from §15 of
+    # the same kind share makes for the same kind of reason (there is nothing here we can safely
+    # presign). The INBOUND fetch is still direct-from-storage, so the sync server proxies nothing.
+    def download(user, node_id:, disposition:, content_type: nil)
+      node = live_node!(user, node_id)
+      manifest = manifest_for(user, node.current_version_id)
+      raise NotFound, "no manifest for node #{node_id.inspect}" if manifest.empty?
+
+      urls = presign(manifest.map(&:chunk_hash))
+      Delivery::Stream.new(enum: Enumerator.new { |y| manifest.each { |c| y << fetch_chunk(c, urls) } })
+    end
+
+    # ── WRITES ARE NOT HERE YET, AND THE ABSENCE IS DELIBERATE ────────────────────────────────
+    #
+    # `mkdir`, `move`, `delete`, `undelete`, `begin_upload` and `finalize_upload` each already have
+    # a server endpoint (design §6) and are the next piece. `write` will never appear: chunk-family
+    # backends are not `port_writable`, and an upload goes through the two-phase presigned pair.
+    #
+    # They are left UNDEFINED rather than stubbed to raise. A stub answering NotFound would be a lie
+    # about a file that exists, and NotImplementedError is a ScriptError that `rescue => e` does not
+    # catch (§14a). Undefined means an incomplete adapter fails loudly as exactly what it is -- and
+    # it cannot be reached anyway: FileLayer.build has no arm for it.
 
     private
+
+    def manifest_for(user, version_id)
+      return [] if version_id.blank?
+
+      RemoteManifestChunk.where(user_id: user.id).for_version(version_id).to_a
+    end
+
+    # ONE ROUND TRIP FOR THE WHOLE FILE, not one per chunk. The endpoint takes an array and answers
+    # a hash, and a 40-chunk file would otherwise be 40 sequential requests before the first byte.
+    def presign(hashes)
+      body = transport.post("/v1/chunks/download", { hashes: hashes.uniq })
+      body["urls"] || {}
+    end
+
+    # A HASH THE SERVER DECLINED TO PRESIGN IS NotFound, NOT a nil that concatenates into a
+    # silently-short file. `manifest#download` omits any hash the user does not own, so an absent URL
+    # means the chunk is gone or was never ours -- and a truncated download that reports success is
+    # exactly the failure §14a records for a multi-chunk redirect.
+    def fetch_chunk(chunk, urls)
+      url = urls[chunk.chunk_hash]
+      raise NotFound, "sync server did not presign chunk #{chunk.chunk_hash}" if url.blank?
+
+      bytes = ChunkFetch.get(url)
+      raise NotFound, "chunk #{chunk.chunk_hash} could not be fetched" if bytes.nil?
+
+      bytes
+    end
 
     def live_node!(user, node_id)
       user.nodes.present.find_by(node_id:) ||
