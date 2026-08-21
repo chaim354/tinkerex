@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 PR 2: the maker app can mirror a remote changelog**)
+**Updated:** 2026-08-21 (**Stage 4 PR 3: remote metadata reads answer from local SQL**)
 
 ## What this file is
 
@@ -60,7 +60,52 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 2 — the changelog apply loop (branch `claude/stage-4-apply-loop`)
+## Latest (2026-08-21): Stage 4 PR 3 — the metadata read verbs (branch `claude/stage-4-read-verbs`)
+
+`stat`, `stat_all` and `trashed` on `FileLayer::ChunkRemote`, answering from **local SQL with no
+wire at all**. Still not selectable. `bin/ci` green at 8 gates: **2404 runs, 9051 assertions, three
+legs identical**.
+
+### The design's central claim, made real
+
+ChangelogSync has already mirrored the server's tree into this app's own `nodes`, so these three
+answer from the database the request is already talking to. **A sync server that is down makes the
+library STALE, not broken** — which is what local-first means (§2), and the opposite of what a
+naive remote adapter would do.
+
+Enforced rather than asserted: the adapter under test is constructed with **no transport**, so any
+of the three reaching for one raises `KeyError` on the missing `CHUNK_REMOTE_URL`.
+
+### `stat_all` is ONE query, where `Chunk#stat_all` needs two
+
+The payoff of PR 2 recording `size` on the node. Chunk reads sizes from `versions` because
+`nodes.size` is NULL there. Both the constant-in-N assertion (the contract's actual requirement) and
+the literal `1` are asserted — the literal is meaningful here precisely because it is a comparison
+against a sibling backend, not a pinned magic number.
+
+### Byte reads are ABSENT, not stubbed
+
+`read`/`download` need a manifest — the chunk hashes `POST /v1/chunks/download` turns into presigned
+URLs. Manifests arrive in `/v1/changes` and `/v1/tree` payloads and ChangelogSync currently discards
+them; persisting them is a schema addition and its own PR. There is **no per-node manifest
+endpoint** (checked against `bin/rails routes`), and inventing one would break the design's "zero new
+sync-server endpoints".
+
+They are left undefined rather than stubbed: a stub answering `NotFound` would be a lie about a file
+that exists, and `NotImplementedError` is a `ScriptError` that `rescue => e` does not catch (§14a).
+A test asserts they do **not** respond, so the absence is deliberate rather than forgotten.
+
+**Consequence:** `FileLayerAdapterContract` is not yet included for this adapter — seven of its
+twenty tests exercise `read`. Wiring it is the acceptance criterion for the byte-read PR, not
+something to claim early.
+
+### `content_token` is the version id, matching Chunk exactly
+
+It has to be: the token is what a caller hands back to `read`, and what `maker_previews` stores to
+decide whether an artifact is stale. A different spelling would silently invalidate every preview on
+a deployment that switched to chunk_remote. Mutation-checked (swapping it for `node_id` fails).
+
+## 2026-08-21: Stage 4 PR 2 — the changelog apply loop (branch `claude/stage-4-apply-loop`)
 
 `FileLayer::ChunkRemote::ChangelogSync` — pulls deltas from a remote sync server and applies them to
 this app's own `nodes`, which is what `apply_remote` does in Rust. This is the piece that makes
