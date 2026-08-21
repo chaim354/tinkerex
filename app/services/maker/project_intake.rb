@@ -240,7 +240,7 @@ module Maker
       # here makes those batches JOIN (Sync::LibraryChannel.batch is a no-op when one is already open for
       # the same user), so fifty projects emit one message instead of fifty. Without this the
       # per-project batching would still be a 50x improvement and a 50x remaining waste.
-      results = Sync::LibraryChannel.batch(user) do
+      results = LibraryBroadcast.batch(user) do
         projects.map do |project|
           [ project, for_project(user:, project:, dry_run:, move: !refused) ]
         end
@@ -419,7 +419,7 @@ module Maker
       # pull protocol makes one nudge sufficient: a device pulls everything after its own cursor,
       # so the final head_seq subsumes every seq before it. Batches JOIN, so .for_user's loop over
       # projects collapses to a single nudge for the entire sweep rather than one per project.
-      moved, skipped, skips, plan = Sync::LibraryChannel.batch(@user) { file_all(inbox) }
+      moved, skipped, skips, plan = LibraryBroadcast.batch(@user) { file_all(inbox) }
 
       Result.new(attached:, moved:, skipped:, skips:, plan:, status: :ok)
     end

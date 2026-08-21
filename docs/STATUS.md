@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-20 (**the sync engine is extracted: `chaim354/tinkerex-sync`, consumed here as a private `git:` gem**)
+**Updated:** 2026-08-21 (**share and s3 no longer load the sync engine at all**)
 
 ## What this file is
 
@@ -60,7 +60,67 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-20): the sync engine is extracted to its own repository (branch `claude/extract-sync-engine`)
+## Latest (2026-08-21): the engine becomes optional — share and s3 stop loading it (branch `claude/engine-optional`)
+
+**Plan:** `docs/superpowers/plans/2026-08-21-engine-optional-and-stage-4.md`. Invariants: **CLAUDE.md §14j**.
+Arc A of two; **Stage 4 (Arc B) has not started** and is sized there honestly.
+
+`bin/ci` green at **8 gates** (was 7): **2371 runs, 9000 assertions, three legs identical**, plus a
+new fourth backend leg at 7 runs / 12 assertions.
+
+### Why Arc A comes first, and what it does NOT buy
+
+Stage 4's `FileLayer::ChunkRemote` talks to a sync server over HTTP, so a maker app in that mode has
+no more business loading the engine than a share deployment does. Doing Stage 4 first would build the
+remote adapter while the engine was still mandatory in-process — proving nothing about separability.
+
+It does **not** shrink the image (the gem is still installed, just not required) and does **not** drop
+the eight tables (`db/migrate/` still creates them). What it buys is that "the engine is optional" is
+**executed** rather than asserted.
+
+### The design decision this forced
+
+`V1::BaseController < Sync::V1::BaseController` was Phase B's deliberate direction. A superclass
+resolves when the class body loads, so with no engine the maker app's own API had **no base class**
+and could not eager-load — and all fourteen `v1/maker/*` controllers inherit it. Both directions
+cannot be true of one class.
+
+The host now stands on `ActionController::API` with its own copy of the twelve-line device-auth
+concern. The engine's base is unchanged and still right for a bare mount. The duplication is
+structural — neither side can require the other in the case that matters, and the concern's only real
+dependency, `Device`, is host-owned anyway (§14j) — so `test/v1_auth_parity_test.rb` compares the two
+method bodies and fails on drift, the same answer `engine_schema_test.rb` uses.
+
+### Two things found by probing rather than reading
+
+- **`dependent: :destroy` constantizes.** A String `class_name:` is lazy, so loading `User` was fine
+  either way — but an ordinary `user.destroy` raised `Missing model class Sync::Version` on share/s3.
+  Nothing at boot showed it. The plan said to probe this rather than assume laziness saved it.
+- **`Maker::ProjectIntake` called `Sync::LibraryChannel.batch` on every backend.** It was on the
+  architecture guard's exception list, so the coupling was *documented* — and never *executed*
+  without the engine. Now behind `LibraryBroadcast`, a 24-line seam that yields when there is no
+  engine (there are no seqs to coalesce, so that is the same behaviour minus bookkeeping). The
+  exception list traded a 700-line service for the seam.
+
+### The test-count problem, and the fourth leg
+
+§15 requires the three legs to report identical counts. Once share/s3 stop loading the engine they
+legitimately cannot — engine tests have no engine. Keeping the engine loaded only in test would leave
+the conditional executed by nothing (§14a's recorded bug); letting counts diverge retires a real guard.
+
+So the three legs pin `SYNC_ENGINE=1` and stay identical, and a fourth leg pins `SYNC_ENGINE=0` and
+runs one focused suite. **Both paths execute.**
+
+### The new guard was vacuous, and mutation-checking is what found it
+
+`no_engine_boot_test.rb` first skipped when `defined?(Sync)`. So the mutation that makes
+`engine_wanted?` unconditionally true — the exact regression it exists to catch — loaded the engine,
+skipped every test in the file, and reported **success**. It now skips on whether the leg was
+*invoked*, so absence is the claim rather than the precondition. Four mutations pass now: the whole
+predicate forced true (fails), the override honouring `0` as true (2 failures), `user.rb`'s
+associations unconditional (1 error), an initializer's guard removed (boot crash); all restore green.
+
+## 2026-08-20: the sync engine is extracted to its own repository (branch `claude/extract-sync-engine`)
 
 `chaim354/tinkerex-sync` — **109 commits**, tests green standalone, consumed here as a private
 `git:` gem. `engines/tinkerex-sync/` is gone from this repo. Invariants: **CLAUDE.md §14j**.

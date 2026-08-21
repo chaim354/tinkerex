@@ -2065,6 +2065,42 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14j. The maker/sync boundary (Stages 3a and 3b)
 
+**And share/s3 stopped loading it on 2026-08-21.** The gem is `require: false`; `config/application.rb`
+requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **8 gates**, not 7.
+
+- **`SYNC_ENGINE` EXISTS SO BOTH PATHS ARE EXECUTED, NOT SO ONE CAN BE ARGUED.** The three backend
+  legs set `SYNC_ENGINE=1` and keep the engine loaded even on share/s3, so all three still report
+  **identical** counts and §15's ambient-backend guard is untouched. A **fourth leg**
+  (`test-no-engine`) sets `SYNC_ENGINE=0` and is the only place the engine is genuinely absent.
+  Neither alone works: without the override the counts diverge and a real guard is retired to
+  accommodate one expected case; without the fourth leg the conditional is executed by **nothing**,
+  which is §14a's recorded bug verbatim. An **empty** value reads as unset, not false — kamal's
+  `env.clear` blanks rather than removes (§14c).
+- **`V1::BaseController` STANDS ON `ActionController::API`, REVERSING PHASE B'S DIRECTION, AND BOTH
+  DIRECTIONS CANNOT BE TRUE OF ONE CLASS.** Phase B had it inherit `Sync::V1::BaseController` so the
+  fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure. A superclass resolves when
+  the class body loads, so with no engine the maker app's own API had no base class and could not
+  eager-load. The **engine's** base is unchanged and still right for a bare mount (§14j's original
+  argument holds — an engine inheriting a host class cannot load standalone). It deliberately does
+  **not** include `CapabilityGate`: checked, not assumed — no controller under `app/controllers/v1/`
+  calls `require_capability!`.
+- **DEVICE AUTH IS DUPLICATED BY STRUCTURAL NECESSITY, AND `test/v1_auth_parity_test.rb` IS WHAT
+  MAKES THAT SAFE.** Neither side can require the other in the case that matters. The test compares
+  the two method bodies (normalised past comments and namespace) and fails when they drift — the
+  same answer `engine_schema_test.rb` uses. Its one real dependency, `Device`, is host-owned anyway.
+- **`dependent: :destroy` CONSTANTIZES; A STRING `class_name:` DOES NOT SAVE YOU.** Probed, not
+  reasoned. `User`'s seven `Sync::` associations are declared only when the engine is wanted,
+  because an ordinary `user.destroy` otherwise raised `Missing model class Sync::Version` on
+  share/s3 — and **nothing at boot showed it**.
+- **`recurring.yml` USES `command:`, NOT `class:`, FOR THE THREE ENGINE JOBS.** Solid Queue resolves
+  a `class:` at load and reads ONE file with no merge mechanism, so the gate has to live in the
+  entry — the same shape `library_scan` already used.
+- **A GUARD THAT SKIPS ON THE THING IT ASSERTS IS VACUOUS.** `no_engine_boot_test.rb` first skipped
+  when `defined?(Sync)` — so the mutation that makes `engine_wanted?` always true loaded the engine,
+  skipped every test, and reported **success**. Found by mutation-checking, not by reading. It now
+  skips on whether the leg was **invoked** (`ENV["SYNC_ENGINE"] == "0"`), so absence is the claim
+  rather than the precondition.
+
 **The engine left this repository on 2026-08-20.** It is `chaim354/tinkerex-sync`, consumed here as
 a private `git:` gem. Everything below still describes the boundary it must keep; what changed is
 where the code sits and, for two of these rules, who can still enforce them.
