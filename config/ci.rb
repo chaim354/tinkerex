@@ -88,6 +88,29 @@ GATES = {
 
   "system" => ->(ci) do
     ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
+  end,
+
+  # THE SYNC ENGINE'S OWN SUITE, RUN ON ITS OWN DUMMY HOST APP — Stage 3b Task 9b. Every other
+  # gate above runs `bin/rails ... test` FROM THIS APP, which is exactly what this gate must NOT
+  # do: the whole point is proving engines/tinkerex-sync/ boots and passes with NOTHING but its
+  # own test/dummy/ host behind it, so this app's test_helper.rb, fixtures, and 250+ other test
+  # files must never enter the picture. `cd` first, rather than `bundle exec rake -C ...` — Rake's
+  # `-f <path>` LOADS a Rakefile wherever it is but does not `Dir.chdir` there first (unlike
+  # make), so engines/tinkerex-sync/Rakefile's `Rake::TestTask` pattern ("test/**/*_test.rb")
+  # would otherwise resolve against THIS app's own test/ directory instead of the engine's.
+  #
+  # `bundle exec`, not a bare `rake`, for the same reason every other gate's command runs under
+  # this app's Gemfile: engines/tinkerex-sync/test/dummy/config/boot.rb deliberately reuses THIS
+  # repo's Bundler context rather than a second Gemfile (see that file's own comment) — a bare
+  # `rake` could resolve to a different `rake` on $PATH entirely.
+  #
+  # NOTE FOR WHOEVER SPLITS THIS GEM INTO ITS OWN REPOSITORY: this gate, and its ci.yml job, stop
+  # applying the moment engines/tinkerex-sync/ is no longer part of this checkout — the engine
+  # gets its OWN `bin/ci`-shaped workflow in its own repo at that point, and this gate should be
+  # deleted here, not adapted.
+  "engine" => ->(ci) do
+    ci.step "Tests: Sync engine (own dummy host app)",
+            "cd engines/tinkerex-sync && bundle exec rake test"
   end
 }.freeze
 

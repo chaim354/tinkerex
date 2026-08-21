@@ -132,8 +132,75 @@ both engine-side now, so no host controller uses it any more. Likely a pure relo
 sole consumers already live in the engine), not a host/engine split like `LibraryCapabilities`
 needed, but genuinely not-yet-done work — CLAUDE.md §14j records it beside the two Task 9a closed.
 
-**The rest of Task 9 is still open**: the dummy app (Task 6) and the engine's own test suite —
-its coverage still rides in the host's flat `test/` tree.
+**Task 9b (2026-08-20, branch `claude/post-3b`) closed the rest of Task 9: a dummy host app
+(`engines/tinkerex-sync/test/dummy/`) and the engine's own test suite, empirically proving what
+Tasks 1–9a had only shown by static analysis — that the engine boots with nothing but a bare
+host behind it.** `Sync::Version.table_name == "versions"` (never `sync_versions`) in a process
+that has never heard of `FileLayer`, `Maker`, or `LibraryCapabilities` — the single assertion the
+whole `isolate_namespace`/`table_name_prefix` override existed to make true, now actually checked
+rather than argued for.
+
+**The dummy demanded more than `TinkerexSync::HOST_MODELS` (`User`, `Node`, `Device`) says, and
+none of the extras are hidden — each has its own header explaining why:**
+- `::ApplicationRecord`, `::ApplicationJob`, `::ApplicationCable::Channel` — bare framework
+  boilerplate every `Sync::` model/job/channel names explicitly (`< ::ApplicationRecord` etc.),
+  parallel to `ApplicationController` in `ArchitectureInvariantsTest::HOST_CONSTANTS` but absent
+  from that list. `ApplicationJob` in particular: two of the three engine job files' own comments
+  already flagged the gap ("missed by Tasks 3/4... `ApplicationJob` is host boilerplate") — found
+  by reading the code the boot proof was about to exercise, not by grepping a list that never
+  named it.
+- **`Sync::RetentionJob` calls `limits_concurrency`, which is not core ActiveJob at all — it is
+  solid_queue's `ActiveJob::ConcurrencyControls` extension**, contradicting the gemspec's own
+  "engine jobs are plain ActiveJob" claim (the other two job classes genuinely are; this one
+  isn't). Requiring the real gem was tried and rejected empirically (`NameError: uninitialized
+  constant ActiveModel` three files into solid_queue's own require graph, absent a full
+  `rails/all` boot this dummy deliberately does not carry) — the dummy instead carries a
+  clearly-labelled shim (`test/dummy/config/initializers/limits_concurrency_shim.rb`) that lets
+  the class load and its `perform` body run via `perform_now`, and says plainly that it proves
+  nothing about real concurrency enforcement.
+- **The engine ships no `config/routes.rb` of its own.** Stage 3b Phase B Task 7 moved every
+  `Sync::V1::*` controller into the engine; routing stayed entirely in the host's
+  `config/routes.rb`, interleaved with two host-only device routes and the whole `maker`
+  namespace inside one `namespace :v1` block. The dummy's own `config/routes.rb` is a hand-copied
+  sync-only subset (verified line-for-line against the host's), not shared or generated — a real
+  packaging gap for whenever this gem actually leaves the monorepo.
+- **`Sync::Storage::MemoryChunkStore` presigns to a bare path string (`/dev/blobs/...`) with zero
+  host-constant reference** (confirmed clean by the existing Ripper guard) — but nothing under
+  `engines/tinkerex-sync/app` ever serves that path. The dummy carries its own
+  `DevBlobsController` + two routes, mirroring the host's, so presigned PUT/GET round-trips are
+  exercised for real rather than silently 404ing unnoticed.
+
+**Of the ~34 sync-side test files in the host suite, 28 moved unmodified (git history preserved)
+and 6 moved with a small, mechanical edit** (dropping `pin_file_layer_backend("chunk")` — a
+HOST-only helper touching `FileLayer`, meaningless in a bare mount where
+`Sync.capability_check` stays at its "available, always" default and there is nothing ambient to
+pin against — plus, in three files, dropping Devise-only `confirmed_at:`/`omniauth_signup:`
+kwargs this dummy's `User` never declared). **Left with the host, deliberately**:
+`architecture_invariants_test.rb`, `schema_map_test.rb`, `recurring_schedule_test.rb`,
+`commit_finalize_hook_test.rb` (tests the host's own hook wiring),
+`capability_gating_test.rb` and `device_login_test.rb`/`test_users_seam_test.rb` (exercise
+host-only controllers/wiring), and `sync_flow_test.rb` (six of seven tests are clean sync-flow
+coverage; the seventh asserts `Maker::GeneratePreviewJob` gets enqueued via the host's
+`Sync::Hooks` subscriber — splitting the file to move six-sevenths of it was judged not worth the
+risk).
+
+Counts, reconciled exactly: host suite **2558 → 2360** runs (**−198**, all moved), engine suite
+**204** runs (198 moved + **6 new** in `boot_test.rb`, including a full commit→finalize→tree round
+trip over real HTTP) — **2360 + 204 = 2564 = 2558 + 6**. Assertions: host **9617 → 8978** (all
+three `bin/ci` legs, identically — one lower than a naive `9617 − 640` because of a pre-existing,
+test-order-dependent ±1 unrelated to this move) plus engine's **664** = **9642** total. Skips: 3
+total either way — `PostgresPoolerCheckTest`'s Postgres-only skip moved with its file, host now 2,
+engine 1. **`bin/ci` is now 8 gates** (`config/ci.rb`'s new `"engine"` gate,
+`.github/workflows/ci.yml`'s new `test-engine` job — `cd engines/tinkerex-sync && bundle exec
+rake test`, deliberately never touching this app's own `test/test_helper.rb` or its 250+ other
+test files), three legs still identical.
+
+**One flake observed, not chased further, and not new**: one `bin/ci` run out of six (across full
+runs and targeted `system engine` pairs) hit a transient error in the engine gate under the
+combined disk pressure of a full run; the other five were clean. `test/dummy/config/database.yml`
+already carries the same `timeout: 15000` CLAUDE.md §12.7/§14e diagnosed and fixed for the host's
+own SQLite — this is a second database that can occasionally hit the identical class of fsync
+stall under load, not a new bug the move introduced.
 
 ---
 
