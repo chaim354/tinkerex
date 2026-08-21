@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-21 (**Stage 4 PR 6: the chunk_remote adapter is complete — 12/12 port verbs**)
+**Updated:** 2026-08-21 (**Stage 4 is COMPLETE: `chunk_remote` is a selectable backend**)
 
 ## What this file is
 
@@ -60,7 +60,63 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-21): Stage 4 PR 6 — the two-phase upload, and the adapter is complete (branch `claude/stage-4-upload-pair`)
+## Latest (2026-08-21): Stage 4 is complete — `chunk_remote` is selectable (branch `claude/stage-4-build-arm`)
+
+The arm in `FileLayer.build`, plus a boot guard. **`LIBRARY_BACKEND=chunk_remote` now builds
+`FileLayer::ChunkRemote` with no sync engine in the process** — which is Stage 4's entire claim, and
+was verified by running it rather than argued. `bin/ci` green at 8 gates: **2451 runs, 9132
+assertions, three legs identical**.
+
+### The arm was deliberately last
+
+The adapter landed over six PRs with no arm here, so a half-built backend was never reachable by any
+deployment: an unknown `LIBRARY_BACKEND` raises, which is the honest answer for something that does
+not work yet. Nothing about that was incidental — it is why none of the six needed a feature flag.
+
+### The boot guard names both knobs at once
+
+`CHUNK_REMOTE_URL` and `CHUNK_REMOTE_TOKEN`, config presence only, **no network** — the rule §14a
+states for the S3 guard, sharper here: a sync server being down is precisely the condition
+chunk_remote exists to survive, since reads answer from the mirror. Refusing to boot for it would
+defeat the design.
+
+### The standalone host, and the two obligations it exposed
+
+`chaim354/tinkerex-sync` now ships `host/` — the engine, the three declared models, device enrolment,
+nothing else. Building it found two host obligations `test/dummy` could never have found, because the
+dummy proves the engine BOOTS and never exercised either path:
+
+- **`config.x.verify_finalize`** was set only by this repo's initializer. Every other host got an
+  **empty `OrderedOptions`** — not `nil`, because `config.x.anything` auto-vivifies, and an empty one
+  is **truthy**. A `nil?` guard for "unset" therefore cannot fire (tried; it silently did nothing),
+  and the value reached `Sync::Commit.finalize` as `verify:`, crashing deeper on a nil it led to. The
+  engine now defaults it in its own railtie, guarded on an actual boolean.
+- **`config/cable.yml` did not exist.** The engine broadcasts on every commit, so ActionCable's config
+  was `nil` and the broadcast raised `undefined method 'fetch' for nil` *from inside the commit*. The
+  engine cannot default an adapter choice, so it is a declared obligation and `host/` ships an answer.
+
+Three wrong guesses preceded checking the actual runtime value, which took one command. Recorded
+because the lesson is the arc's own: **the empirical check was cheaper than the reasoning that
+replaced it.**
+
+### Stage 4, done
+
+| | |
+|---|---|
+| PR 1 | transport + capabilities |
+| PR 2 | changelog apply loop |
+| PR 3 | metadata reads (local SQL) |
+| PR 4 | manifests, byte reads, the read contract |
+| PR 5 | metadata mutations, the mutation contract |
+| PR 6 | the two-phase upload — 12/12 verbs |
+| PR 7 | the standalone host (`tinkerex-sync`) |
+| PR 8 | the build arm — selectable |
+
+**Not yet deployed or exercised against a real remote server.** `host/`'s journey test proves the
+protocol end to end in one process; a live two-box run is the obvious next verification and has not
+been done.
+
+## 2026-08-21: Stage 4 PR 6 — the two-phase upload, and the adapter is complete (branch `claude/stage-4-upload-pair`)
 
 `begin_upload`/`finalize_upload`. **`FileLayer::ChunkRemote` now implements all 12 port verbs.**
 Still not selectable — the `FileLayer.build` arm is the last step. `bin/ci` green at 8 gates:

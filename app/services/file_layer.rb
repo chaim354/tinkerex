@@ -133,6 +133,17 @@ module FileLayer
         # and reads ENV once at boot.
         LibraryBackendCheck.check!
         S3.from_env
+      # THE LAST STEP OF STAGE 4, AND IT IS DELIBERATELY THE LAST. ChunkRemote landed over six PRs
+      # with no arm here, so a half-built adapter was never reachable by any deployment -- an
+      # unknown LIBRARY_BACKEND raises, which is the honest answer for a backend that does not work
+      # yet. The arm is what turns twelve implemented verbs into something an operator can select.
+      #
+      # `check!` for the same reason S3 asks: ChunkRemote's transport fetches CHUNK_REMOTE_URL and
+      # CHUNK_REMOTE_TOKEN lazily, so without this the first missing knob would surface as a KeyError
+      # on somebody's first request rather than at boot, and name only one of the two.
+      when "chunk_remote"
+        LibraryBackendCheck.check!
+        ChunkRemote.new
       else
         raise ArgumentError, "unknown LIBRARY_BACKEND #{ENV['LIBRARY_BACKEND'].inspect}"
       end

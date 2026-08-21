@@ -43,6 +43,7 @@ module LibraryBackendCheck
   # or LIBRARY_S3_PREFIX, which are genuinely optional (endpoint = R2/SeaweedFS/MinIO; prefix = a
   # sub-root within the bucket, whose absence means "the whole bucket" and is a valid choice).
   S3_REQUIRED = %w[LIBRARY_S3_BUCKET LIBRARY_S3_ACCESS_KEY_ID LIBRARY_S3_SECRET_ACCESS_KEY].freeze
+  CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL CHUNK_REMOTE_TOKEN].freeze
 
   # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
   # too, so a bad configuration gets this explanation even when the boot guard did not run (the
@@ -63,6 +64,7 @@ module LibraryBackendCheck
     case backend
     when "share" then check_share!(env["LIBRARY_PATH"])
     when "s3"    then check_s3!(env)
+    when "chunk_remote" then check_chunk_remote!(env)
     end
     # No `else`: an unknown backend is FileLayer.build's ArgumentError to raise, not this guard's.
     # Duplicating it here would give the operator two different messages for one typo.
@@ -76,6 +78,19 @@ module LibraryBackendCheck
   # a crash loop, right when an operator most needs the app up to look at it. Credential and
   # reachability errors surface on first USE as FetchError, which is retryable BY DESIGN (see
   # FileLayer::FetchError). Presence is what boot can honestly check; validity is not.
+  # CONFIG PRESENCE ONLY, AND NO NETWORK -- the same rule §14a states for the S3 guard, for the same
+  # reason: a boot that depends on a third party being reachable turns a blip into a crash loop. That
+  # the sync server is down is exactly the condition chunk_remote is built to survive (reads answer
+  # from the local mirror), so refusing to boot for it would defeat the design.
+  def self.check_chunk_remote!(env)
+    missing = CHUNK_REMOTE_REQUIRED.reject { |knob| env[knob].present? }
+    return if missing.empty?
+
+    raise Error, "LIBRARY_BACKEND=chunk_remote requires #{missing.join(', ')} — the sync server " \
+                 "this app syncs against, and the device token it authenticates with. Mint one on " \
+                 "that host with `bin/rails sync:device:issue`."
+  end
+
   def self.check_s3!(env)
     # blank?, not key? — "" and "   " are the same operator error as unset (an empty line in a
     # .env, a shell variable that expanded to nothing), and calling them configured just hands

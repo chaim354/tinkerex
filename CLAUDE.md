@@ -405,7 +405,13 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14a. The FileLayer port
 
-- **`LIBRARY_BACKEND=chunk|share|s3`, chosen per DEPLOYMENT, not per user.** Reads:
+- **`LIBRARY_BACKEND=chunk|share|s3|chunk_remote`, chosen per DEPLOYMENT, not per user.** `chunk_remote`
+  landed 2026-08-21 (Stage 4): the maker app as a SYNC CLIENT against a standalone sync server. Reads
+  answer from a locally-mirrored `nodes` (so §2's "the WAN is never in the metadata path" is true of
+  the maker app for the first time), writes go over the v1 API, and **the engine is not in the
+  process at all** — which is what Arc A made possible. Its capabilities match chunk's except
+  `presignable: FALSE`: it cannot verify that a URL another server signed points off-box, so it
+  streams (`FileLayer::ChunkRemote`'s own header carries the argument). Reads:
   `stat`/`stat_all`/`read`/`download`/`trashed` — all three adapters answer all five.
   Metadata writes (`mkdir`/`move`/`delete`/`undelete`) are **all three, since Stage 2**
   (2026-08-20); only the BYTE write (`write`) stays **Share + S3 only** — chunk's own
