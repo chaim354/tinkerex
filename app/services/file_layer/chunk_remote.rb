@@ -65,8 +65,15 @@ module FileLayer
       raise NotImplementedError, WRITE_MSG
     end
 
-    def initialize(transport: nil)
+    # `chunk_fetch:` IS INJECTABLE FOR THE SAME REASON `transport:` IS, and it is a second seam
+    # rather than a convenience. The two talk to DIFFERENT servers -- the transport to the sync
+    # server with a device token, this to object storage with no credential of ours -- so a test
+    # that can substitute one and not the other can only exercise half the round trip. A sync
+    # server backed by a memory or local store presigns URLs IT serves, which is exactly the case
+    # this seam lets a suite reach without standing up object storage.
+    def initialize(transport: nil, chunk_fetch: ChunkFetch)
       @transport = transport
+      @chunk_fetch = chunk_fetch
     end
 
     def capabilities = CAPABILITIES
@@ -145,7 +152,67 @@ module FileLayer
       Delivery::Stream.new(enum: Enumerator.new { |y| manifest.each { |c| y << fetch_chunk(c, urls) } })
     end
 
-    # ── WRITES ARE NOT HERE YET, AND THE ABSENCE IS DELIBERATE ────────────────────────────────
+    # ── METADATA MUTATIONS: DECIDED LOCALLY, PERFORMED REMOTELY ──────────────────────────────
+    #
+    # THE COLLISION CHECKS RUN AGAINST THE LOCAL MIRROR, WHICH IS WHERE CHUNK RUNS THEM TOO. The
+    # server's own endpoints do not check: `mkdir` is `find_or_initialize_by(node_id:)` and takes
+    # the name it is given. Chunk calls `destination_vacant!` before `Sync::Mutation.apply` for that
+    # reason, and this adapter has to make the same call against the tree ChangelogSync mirrored.
+    #
+    # SO IT IS A CHECK, NOT A LOCK -- the same TOCTOU §14a already records for `S3#write`, widened
+    # by however stale the mirror is. Another device can take the name between our check and the
+    # server's write. That is a property of the protocol, not of this class: the server is the only
+    # thing that could hold such a lock, and asking it to would be a new endpoint the design forbids.
+    #
+    # EVERY MUTATION PULLS AFTERWARDS rather than guessing at the new local state. The endpoints
+    # answer `{seq:}`, not a node, and inventing the row we think we just made is how a mirror
+    # drifts from its source -- one round trip is the honest price of the server being authoritative.
+
+    def mkdir(user, parent_node_id: nil, name: nil)
+      existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "dir")
+      return file_info(existing) if existing
+
+      destination_vacant!(user, parent_node_id, name)
+      node_id = SecureRandom.uuid
+      transport.post("/v1/nodes", { node_id:, parent_node_id:, name:, mode: 0o755,
+                                    mtime: (Time.current.to_f * 1e9).to_i })
+      refresh!(user)
+      stat(user, node_id:)
+    end
+
+    def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
+      live_node!(user, node_id)
+      destination_vacant!(user, new_parent_node_id, new_name, except_node_id: node_id)
+      transport.post("/v1/nodes/#{node_id}/move",
+                     { new_parent_node_id:, new_name: })
+      refresh!(user)
+      stat(user, node_id:)
+    end
+
+    # Returns nil, matching Chunk. `dir_deletable` is true because the server's SubtreeDelete
+    # cascades the whole subtree in one call exactly as it does in-process -- the cascade is the
+    # server's, so remote mode inherits it rather than reimplementing it.
+    def delete(user, node_id: nil)
+      live_node!(user, node_id)
+      transport.delete("/v1/nodes/#{node_id}")
+      refresh!(user)
+      nil
+    end
+
+    # NotFound for a node that never existed, matching Chunk -- and note it checks `exists?`, NOT
+    # `present`, because the node being deleted is the whole precondition.
+    def undelete(user, node_id: nil)
+      user.nodes.exists?(node_id:) || raise(NotFound, "node #{node_id.inspect} does not exist")
+      transport.post("/v1/trash/#{node_id}/restore", {})
+      refresh!(user)
+      stat(user, node_id:)
+    end
+
+    # ── THE TWO-PHASE UPLOAD IS NOT HERE YET ─────────────────────────────────────────────────
+    #
+    # `begin_upload`/`finalize_upload` are the last pair, and they are a different shape from these
+    # four: they move BYTES, over presigned URLs, and their contract is FileLayerWritableContract
+    # rather than the mutation one. Left for their own PR rather than bolted on here.
     #
     # `mkdir`, `move`, `delete`, `undelete`, `begin_upload` and `finalize_upload` each already have
     # a server endpoint (design §6) and are the next piece. `write` will never appear: chunk-family
@@ -179,10 +246,28 @@ module FileLayer
       url = urls[chunk.chunk_hash]
       raise NotFound, "sync server did not presign chunk #{chunk.chunk_hash}" if url.blank?
 
-      bytes = ChunkFetch.get(url)
+      bytes = @chunk_fetch.get(url)
       raise NotFound, "chunk #{chunk.chunk_hash} could not be fetched" if bytes.nil?
 
       bytes
+    end
+
+    # PULLS THE CHANGELOG AFTER A WRITE, so the local mirror reflects what the server actually did
+    # rather than what we asked for. It is also what makes the returned FileInfo trustworthy: `stat`
+    # reads the mirror, so without this it would answer from the state before our own mutation.
+    def refresh!(user)
+      ChangelogSync.new(user, transport:).call
+    end
+
+    # The same rule Chunk enforces, against the mirror. `except_node_id` is what makes a move onto a
+    # node's OWN current name a no-op rather than a self-collision -- the defect §14a records for
+    # Share and S3, which both shipped it.
+    def destination_vacant!(user, parent_node_id, name, except_node_id: nil)
+      taken = user.nodes.present.where(parent_node_id:, name:)
+      taken = taken.where.not(node_id: except_node_id) if except_node_id
+      return unless taken.exists?
+
+      raise UnsupportedOperation, "#{name.inspect} already exists in that folder"
     end
 
     def live_node!(user, node_id)
