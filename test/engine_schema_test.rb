@@ -34,7 +34,12 @@ class EngineSchemaTest < ActiveSupport::TestCase
   end
 
   test "the eight engine tables are exactly what app/models/sync/ declares, once each" do
-    from_models = Dir.glob(Rails.root.join("app/models/sync/*.rb")).map { |f|
+    # engines/tinkerex-sync/app/models/sync/, NOT app/models/sync/ -- Stage 3b Phase B Task 7
+    # moved the eight model files there, after both this test and EngineSchema.tables were
+    # written against the pre-move path. Re-derived INDEPENDENTLY from EngineSchema.tables's own
+    # glob (lib/engine_schema.rb), on purpose -- the whole point of this assertion is catching the
+    # two falling out of step, which a shared helper for the path would defeat.
+    from_models = Dir.glob(Rails.root.join("engines/tinkerex-sync/app/models/sync/*.rb")).map { |f|
       "Sync::#{File.basename(f, ".rb").camelize}".constantize.table_name
     }.sort
 

@@ -713,18 +713,51 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # now-provably-unreachable pass that used to run beside it. The test's NAME and its PROTECTION
   # are UNCHANGED: a `Storage::` reference in base_controller.rb is still forbidden, just caught
   # the same way any other `Sync::` reference already was.
-  test "V1::BaseController names no Sync:: or Storage:: constant" do
-    file = ROOT.join("app/controllers/v1/base_controller.rb").to_s
-    hits = sync_references(file)
+  #
+  # STAGE 3b PHASE B TASK 7 RELAXES "ZERO" TO "EXACTLY ONE, AND ONLY THAT ONE" -- NOT A RETREAT,
+  # A DIFFERENT WORLD. This test's own reasoning, up to now, was that a Sync:: reference here
+  # "forces the whole sync engine to load just to parse the maker API" -- true when Sync:: was
+  # in-repo code sharing this app's Zeitwerk tree, so an eager reference could pull in a heavy
+  # dependency graph a share/s3 request never needed. It stopped being true the moment tinkerex-sync
+  # became a real gem: `gem "tinkerex-sync", path: "engines/tinkerex-sync"` is REQUIRED at
+  # Bundler.require time, unconditionally, on every LIBRARY_BACKEND, before a single line of this
+  # app's own code is even autoloaded -- there is no longer a "parse the maker API without loading
+  # the sync engine" outcome for this guard to protect. What replaced it is a NEW, NARROWER
+  # question this task's own V1::BaseController split had to answer for real (see
+  # app/controllers/v1/base_controller.rb's header for the three-option decision): the engine now
+  # ships a base controller that carries Authentication/LibraryCapabilities/the generic rescues,
+  # and V1::BaseController -- still inherited by all fourteen v1/maker/* controllers -- inherits
+  # FROM it, on purpose. `class BaseController < Sync::V1::BaseController` is that decision made
+  # real, and it is the ONE reference this file may now carry. The invariant this test still
+  # enforces, and the reason it is not simply deleted: NOTHING ELSE may creep back in beside that
+  # one line -- a rescue_from, a before_action, a stray call -- the exact shape Stage 3a Task 5
+  # removed and this test has guarded ever since.
+  test "V1::BaseController names no Sync:: or Storage:: constant beyond its own superclass" do
+    path = ROOT.join("app/controllers/v1/base_controller.rb")
+    hits = sync_references(path.to_s)
 
-    assert_empty hits,
-                 "V1::BaseController must not reference Sync:: or Storage:: (Stage 3a Task 5), " \
-                 "found:\n  #{hits.join("\n  ")}\n" \
-                 "All fourteen v1/maker/* controllers inherit this class, so a reference here " \
-                 "forces the whole sync engine to load just to parse the maker API. Move it down " \
-                 "into the sync controller that actually raises/needs it -- see " \
-                 "V1::CommitsController, V1::ChunksController, and " \
-                 "app/controllers/concerns/v1/stash_request_base_url.rb for the existing shape."
+    superclass_line = path.readlines.find { |l| l.include?("class BaseController <") }
+    assert superclass_line&.include?("Sync::V1::BaseController"),
+           "expected app/controllers/v1/base_controller.rb to declare " \
+           "`class BaseController < Sync::V1::BaseController` (Stage 3b Phase B Task 7) -- " \
+           "found #{superclass_line.inspect}. Did the class declaration move or get reworded?"
+
+    # NOT MATCHED BY LINE NUMBER, DELIBERATELY -- a hardcoded literal shifts the moment a line is
+    # added above it, the exact "assert a spelling, not a behaviour" trap CLAUDE.md §14e warns
+    # about for timestamps and applies here to line numbers. The check above already proves the
+    # superclass declaration is real and correctly spelled, which guarantees Ripper counts it as
+    # one of `hits` (it names the const `Sync`); asserting the TOTAL is exactly 1 is therefore
+    # sufficient to prove that one hit IS that line and nothing else snuck in beside it.
+    assert_equal 1, hits.size,
+                 "V1::BaseController must reference Sync:: or Storage:: in EXACTLY one place -- " \
+                 "its own `class BaseController < Sync::V1::BaseController` declaration -- " \
+                 "found #{hits.size}:\n  #{hits.join("\n  ")}\n" \
+                 "All fourteen v1/maker/* controllers inherit this class. A SECOND reference " \
+                 "(a rescue_from, a before_action, a stray call) belongs on the sync controller " \
+                 "that actually raises/needs it instead -- see V1::CommitsController, " \
+                 "V1::ChunksController, and app/controllers/concerns/v1/stash_request_base_url.rb " \
+                 "for the existing shape -- or, if it is truly shared v1 infrastructure, on " \
+                 "Sync::V1::BaseController itself, which this class already inherits."
   end
 
   test "NotImplementedError is never rescued" do
