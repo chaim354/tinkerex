@@ -2139,10 +2139,19 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   plain ActiveJob"; two of three are. solid_queue stays out of the gemspec anyway — the host picks
   its queue adapter — so this is a documented host obligation, and the dummy's shim says out loud
   that it proves nothing about real concurrency enforcement.
-- **THE ENGINE STILL SHIPS NO `config/routes.rb`.** Phase B moved every `Sync::V1::*` controller into
-  the engine and left all routing in the host's, interleaved with host-only device routes and the
-  whole `maker` namespace inside one `namespace :v1`. The dummy hand-copies a sync-only subset. That
-  is a real packaging gap for whenever the gem leaves this repo, not a dummy-app detail.
+- **THE ENGINE OWNS ITS ROUTES, AS A DRAWER RATHER THAN A MOUNT, AND THAT IS NOT THE CONVENTIONAL
+  SHAPE FOR A REASON.** `Sync.draw_v1_routes(mapper)` lives in `lib/tinkerex_sync/v1_routes.rb`; the
+  host and the dummy each call it once inside their own `namespace :v1`. **`mount Sync::Engine` cannot
+  express this**: the sync paths are not a contiguous block under a prefix of their own, they are
+  INTERLEAVED with the host's inside one namespace — `devices/login` and `resources :devices` above
+  them, the whole `namespace :maker` between them — and a mount owns an entire prefix. Introducing a
+  `/v1/sync/` prefix to make a mount possible would break every deployed desktop client.
+  **NOT at `config/routes.rb`**: `Rails::Engine` reserves that path and evaluates it itself, so the
+  drawer loaded twice there (`already initialized constant Sync::V1_ROUTES`) — caught by diffing
+  `bin/rails routes`, not by reading. Living under `lib/` says structurally that this engine is not
+  mounted. Guarded by `test/engine_routes_test.rb`, which asks the DRAWER what it defines rather
+  than hard-coding a list — a list there would be the third copy of the thing the drawer exists to
+  stop there being two of.
 - **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
   `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
   deployment — which has no changelog and never calls it — was being refused a boot for a rule that

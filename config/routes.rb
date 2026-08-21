@@ -302,36 +302,13 @@ Rails.application.routes.draw do
     resources :devices, only: [ :create ]
 
     # content commits (two-phase)
-    post "commit", to: "/sync/v1/commits#create"
-    post "commit/:commit_id/finalize", to: "/sync/v1/commits#finalize"
+    # EVERY SYNC ROUTE, FROM THE ENGINE'S OWN DEFINITION. They used to be written out here and
+    # hand-copied a second time into engines/tinkerex-sync/test/dummy/config/routes.rb -- two
+    # descriptions of one thing, free to drift. See the engine's config/routes.rb for why this is a
+    # drawer rather than `mount Sync::Engine`: these paths interleave with the host's own inside
+    # this very namespace, and a mount owns a whole prefix.
+    Sync.draw_v1_routes(self)
 
-    # pull
-    get "changes", to: "/sync/v1/changes#index"
-    get "tree", to: "/sync/v1/tree#index"
-
-    # search (name/path; scoped to the device's user — for the web UI / a fresh device)
-    get "search", to: "/sync/v1/search#index"
-
-    # metadata ops + history
-    post "nodes", to: "/sync/v1/nodes#mkdir"
-    post "nodes/symlink", to: "/sync/v1/nodes#symlink"
-    delete "nodes/:node_id", to: "/sync/v1/nodes#destroy"
-    post "nodes/:node_id/move", to: "/sync/v1/nodes#move"
-    get "nodes/:node_id/versions", to: "/sync/v1/nodes#versions"
-    post "nodes/:node_id/restore", to: "/sync/v1/nodes#restore"
-    post "nodes/:node_id/resolve_conflict", to: "/sync/v1/nodes#resolve_conflict"
-
-    # conflicts (offline-edit divergence)
-    get "conflicts", to: "/sync/v1/conflicts#index"
-
-    # trash / undelete (deleted-file recovery; deletes are tombstones + versions kept)
-    get "trash", to: "/sync/v1/trash#index"
-    post "trash/:node_id/restore", to: "/sync/v1/trash#restore"
-
-    # best-effort advisory edit locks
-    post "nodes/:node_id/lock", to: "/sync/v1/nodes#lock"
-    post "nodes/:node_id/unlock", to: "/sync/v1/nodes#unlock"
-    get "locks", to: "/sync/v1/locks#index"
 
     namespace :maker do
       resources :items, only: %i[index show create update destroy] do
@@ -371,21 +348,15 @@ Rails.application.routes.draw do
     end
 
     # hydration
-    post "chunks/download", to: "/sync/v1/chunks#download"
 
     # Read-only share links. Owner side (authenticated): mint/revoke a link to one immutable
     # version. Redeem side (anonymous — the link token is the auth, no device bearer): view
     # the version's metadata + presign GETs for its chunks.
-    resources :share_links, only: %i[create destroy], controller: "/sync/v1/share_links"
-    get  "share/:token",          to: "/sync/v1/share#show"
-    post "share/:token/download", to: "/sync/v1/share#download"
 
     # The `local` (filesystem) chunk backend's storage tier — presigned, HMAC-authorized blob
     # PUT/GET (no bearer token; the URL's signature is the auth). Only active under
     # STORAGE_BACKEND=local; a 404/403 otherwise. The hash is hex (`[0-9a-f]+`), constrained so the
     # route can't capture a path with slashes.
-    put "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#upload", constraints: { hash: /[0-9a-f]+/ }
-    get "chunks/blob/:user_id/:hash", to: "/sync/v1/chunks/blob#download", constraints: { hash: /[0-9a-f]+/ }
   end
 
   # ActionCable mount (change notifications)
