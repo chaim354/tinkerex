@@ -207,7 +207,7 @@ builder:
   # required keys may live there; test/deploy_hygiene_test.rb enforces that, and reads this very
   # list to decide what "universally required" means).
   secrets:
-    - TINKEREX_SYNC_TOKEN
+    - TINKEREX_SYNC_DEPLOY_KEY
 
   # # Build image via remote server (useful for faster amd64 builds on arm64 computers)
   # remote: ssh://docker@docker-builder-server

@@ -79,10 +79,12 @@ image, and no deploy ran in between. **Reproduced before it was believed** — G
 vendor copied to an empty directory, `BUNDLE_DEPLOYMENT=1 bundle install`, same error.
 
 It is fixed by the cutover rather than in spite of it: a `git:` source needs no local directory.
-What it needs instead is a credential, which the image has no other way to get — `TINKEREX_SYNC_TOKEN`,
-a BuildKit secret via kamal `builder.secrets`, passed as `GIT_CONFIG_COUNT/KEY/VALUE` **on that one
-command**. Not `git config --global`: that writes `/root/.gitconfig`, which is part of the layer, so
-the token would ship inside the image having been "only" in a secret mount.
+What it needs instead is a credential, which the image has no other way to get — a **read-only
+deploy key** scoped to that single repository (`TINKEREX_SYNC_DEPLOY_KEY`, base64, a BuildKit secret
+via kamal `builder.secrets`), passed as `GIT_CONFIG_COUNT/KEY/VALUE` **on that one command**. Not
+`git config --global`: that writes `/root/.gitconfig`, which is part of the layer, so the secret
+would ship inside the image having been "only" in a secret mount. The full argument, and the four
+properties that make it safe, are in CLAUDE.md §14j.
 
 ### History: 108 commits, and the paths are left as they actually were
 
@@ -143,10 +145,19 @@ so this is the third time that comment has been rewritten rather than left to ro
   demand and nowhere automatically. This is the same operator gap that has left `tinkerex-client`'s
   four workflows unable to run since Stage 1, now widened to a second repo. `bin/ci` here no longer
   covers the engine at all, so that gap is real coverage lost, not merely deferred.
-- **`TINKEREX_SYNC_TOKEN` does not exist in 1Password yet** (`op://tinkerex/github-tinkerex-sync/token`,
-  needs read access to the private repo). `bin/secrets-preflight --all` will report it missing, and
-  a deploy cannot build until it is created. Deploys were already failing before this arc, so this
-  replaces a silent break with a named prerequisite.
+- **`TINKEREX_SYNC_DEPLOY_KEY` is not in 1Password yet** (`op://tinkerex/tinkerex-sync-deploy-key/base64`).
+  The key itself **exists and is live** — a read-only ed25519 deploy key on `chaim354/tinkerex-sync`,
+  added via `gh repo deploy-key add`, verified to clone and verified to be **refused a push**. Only
+  the vault entry is outstanding, and deliberately so: it was held back until the leaked 1Password
+  service-account token (see below) is rotated, because writing a fresh private key into a vault
+  reachable by a leaked credential hands it straight over. **The Docker build is now VERIFIED** —
+  built end to end with the real key, gem present, Rails booting and mounting the engine inside the
+  image, and no key material anywhere in its filesystem.
+- **A 1Password service-account token was leaked into a session transcript on 2026-08-21** by a
+  malformed shell check (`${VAR:-no}` prints the VALUE when set, not the fallback). It grants access
+  to the `tinkerex` vault and **must be revoked and re-minted**. This is the second instance of
+  §14g's own rule — the first printed a live ghcr PAT and forced a rotation — and the shape is the
+  same both times: a construct that looks like it tests for presence and actually prints.
 - **`SYNC_SIDE_GLOBS` in `test/architecture_invariants_test.rb` is dead code** — defined, never read.
   It was superseded by the directory boundary in Phase B and is doubly obsolete now that the
   directory is gone. Left in place deliberately: excising it means unpicking ~90 lines of
