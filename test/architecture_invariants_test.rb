@@ -617,6 +617,69 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     end
   end
 
+  # STAGE 3b TASK 9. CLAUDE.md §14j used to record two host constants the engine referenced
+  # directly -- `Sync::V1::BaseController` `include ::LibraryCapabilities`, and
+  # `Sync::V1::ShareController` reading `::FileLayer.current.capabilities.versioned?` -- neither
+  # autoloadable in a bare mount with no host application present. Both are now routed through
+  # `Sync.capability_available?`/`Sync.capability_unavailable_message`
+  # (engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb), a host-configurable seam that
+  # defaults to "available, always" and costs the engine no knowledge of either host name. This
+  # test is what keeps it that way: it is a REGRESSION guard, not a one-time grep, for the exact
+  # failure shape this file's own header warns about elsewhere -- "the guard went blind" the
+  # moment Phase B moved 51 files and SYNC_SIDE_GLOBS kept matching the old locations. A future
+  # edit that re-adds either constant to the engine gets caught here rather than rediscovered by
+  # someone trying to mount tinkerex-sync standalone.
+  #
+  # NO TRAILING `::` REQUIRED, UNLIKE maker_references -- both real uses this test replaced were
+  # BARE (`include ::LibraryCapabilities`, `::FileLayer.current...`), never followed by a nested
+  # constant, so requiring one would have missed the very references this test exists to catch.
+  # Ripper's `:on_const` token type already rules out a comment or a string (see sync_references'
+  # own comment for the same argument, and why a text-pattern match cannot make this
+  # distinction) -- so a bare name-and-type match is both correct and the simplest thing that
+  # is.
+  #
+  # SCOPED TO THESE TWO NAMES, DELIBERATELY -- NOT "the engine names no host constant at all."
+  # `FileLayer::Chunk` (engines/tinkerex-sync/app/services/file_layer/chunk.rb) is a THIRD,
+  # already-known exception this test must never flag: it is Task 7's sanctioned inverse of this
+  # same problem (the engine SHIPS a FileLayer PORT ADAPTER; the host's factory CHOOSES it), not
+  # a stray reference, and its own header argues the point at length. Its one hit is `module
+  # FileLayer` on line 1, reopening the namespace it adapts -- verified with this same detector,
+  # not assumed. Excluded by NAME rather than by loosening the detector itself, which would just
+  # as easily hide a real new violation landing in the same file.
+  CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS = %w[
+    engines/tinkerex-sync/app/services/file_layer/chunk.rb
+  ].freeze
+
+  def host_capability_gate_references(file)
+    Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
+      "#{pos.first}" if type == :on_const && %w[FileLayer LibraryCapabilities].include?(str)
+    end
+  end
+
+  test "the sync engine's capability gate never names ::FileLayer or ::LibraryCapabilities directly" do
+    hits_by_file = engine_side_files.filter_map { |file|
+      refs = host_capability_gate_references(file)
+      [ Pathname.new(file).relative_path_from(ROOT).to_s, refs ] if refs.any?
+    }.to_h
+
+    offenders = hits_by_file.keys.sort - CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS
+    assert_empty offenders,
+                 "engine code naming FileLayer or LibraryCapabilities directly -- both host " \
+                 "constants, neither autoloadable in a bare mount. Ask " \
+                 "Sync.capability_available?/Sync.capability_unavailable_message instead " \
+                 "(engines/tinkerex-sync/lib/tinkerex_sync/sync_module.rb), wired by " \
+                 "config/initializers/sync_capabilities.rb on this host: #{offenders}"
+
+    # THE EXCEPTION MUST STAY LIVE, NOT LINGER AS DEAD WEIGHT hiding nothing -- if
+    # file_layer/chunk.rb ever stops referencing FileLayer at all (a rewrite, a rename), this
+    # catches the exception list going stale rather than leaving a future reader to wonder
+    # whether it still means anything.
+    stale = CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS - hits_by_file.keys
+    assert_empty stale,
+                 "CAPABILITY_GATE_HOST_REFERENCE_EXCEPTIONS lists a file that no longer " \
+                 "references FileLayer/LibraryCapabilities at all -- remove it: #{stale}"
+  end
+
   test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
     # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
     # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
@@ -752,9 +815,11 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # the sync engine" outcome for this guard to protect. What replaced it is a NEW, NARROWER
   # question this task's own V1::BaseController split had to answer for real (see
   # app/controllers/v1/base_controller.rb's header for the three-option decision): the engine now
-  # ships a base controller that carries Authentication/LibraryCapabilities/the generic rescues,
-  # and V1::BaseController -- still inherited by all fourteen v1/maker/* controllers -- inherits
-  # FROM it, on purpose. `class BaseController < Sync::V1::BaseController` is that decision made
+  # ships a base controller that carries Authentication/the generic rescues (and, since Stage 3b
+  # Task 9, its own CapabilityGate in place of what used to be a direct `LibraryCapabilities`
+  # include -- see Sync::V1::BaseController's header), and V1::BaseController -- still inherited
+  # by all fourteen v1/maker/* controllers -- inherits FROM it, on purpose. `class BaseController
+  # < Sync::V1::BaseController` is that decision made
   # real, and it is the ONE reference this file may now carry. The invariant this test still
   # enforces, and the reason it is not simply deleted: NOTHING ELSE may creep back in beside that
   # one line -- a rescue_from, a before_action, a stray call -- the exact shape Stage 3a Task 5

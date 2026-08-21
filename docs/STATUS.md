@@ -110,11 +110,30 @@ pointed at the old locations.
 
 ### Left open, deliberately
 
-Two host dependencies remain inside the engine and are recorded rather than hidden:
-`Sync::V1::BaseController` includes `::LibraryCapabilities`, and `Sync::V1::ShareController` reads
-`::FileLayer.current.capabilities.versioned?`. **A bare mount cannot load those two today** — that is
-Task 9's problem (the dummy app and the engine's own suite), not something to paper over now. The
-engine also has no test suite of its own yet; its coverage still rides in the host's flat `test/` tree.
+Two host dependencies remained inside the engine, recorded rather than hidden:
+`Sync::V1::BaseController` included `::LibraryCapabilities`, and `Sync::V1::ShareController` read
+`::FileLayer.current.capabilities.versioned?`. **Task 9a (2026-08-20, branch `claude/post-3b`)
+closed both**, through a host-configurable seam rather than a direct reference:
+`Sync::V1::CapabilityGate` (the engine's own `require_capability!`) and `Sync::V1::ShareController`
+now ask `Sync.capability_available?`/`Sync.capability_unavailable_message`
+(`lib/tinkerex_sync/sync_module.rb`) — two `mattr_accessor`s defaulting to "available, always" for
+a bare mount, wired by `config/initializers/sync_capabilities.rb` on this host so its 501 bodies
+stay byte-identical (`test/integration/v1/capability_gating_test.rb` unchanged, still green;
+mutation-checked three ways — neuter the host wiring, flip the standalone default, break the 501
+status — all three go red). Regression-guarded going forward, not just proven once: a Ripper check
+in `test/architecture_invariants_test.rb`.
+
+**Task 9a also found a THIRD, previously unnamed host dependency it did not close**:
+`Sync::V1::CommitsController` and `Sync::V1::ChunksController` both
+`include ::V1::StashRequestBaseUrl` (`app/controllers/concerns/v1/stash_request_base_url.rb`), a host file
+whose own `stash_request_base_url` method reads `FileLayer.current.capabilities.syncable?`
+directly — and whose own header already says its only two callers are those exact controllers,
+both engine-side now, so no host controller uses it any more. Likely a pure relocation (the file's
+sole consumers already live in the engine), not a host/engine split like `LibraryCapabilities`
+needed, but genuinely not-yet-done work — CLAUDE.md §14j records it beside the two Task 9a closed.
+
+**The rest of Task 9 is still open**: the dummy app (Task 6) and the engine's own test suite —
+its coverage still rides in the host's flat `test/` tree.
 
 ---
 

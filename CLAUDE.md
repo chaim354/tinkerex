@@ -2097,9 +2097,36 @@ were invisible to the `Sync::`-shaped guards that preceded them.
   `V1::BaseController < Sync::V1::BaseController` keeps all fourteen `v1/maker/*` controllers on the
   shared v1 infrastructure while the engine's own twelve get a base they can carry into a standalone
   mount. An engine inheriting a host class cannot load without that specific app, which defeats
-  shipping it. **Two host dependencies remain in the engine and are recorded, not hidden**:
-  `Sync::V1::BaseController` includes `::LibraryCapabilities` and `Sync::V1::ShareController` reads
-  `::FileLayer.current.capabilities.versioned?`. A bare mount cannot load those two today.
+  shipping it.
+- **STAGE 3b TASK 9 CLOSED THE TWO NAMED HOST DEPENDENCIES ABOVE, THROUGH A HOST-CONFIGURABLE
+  PREDICATE, NOT A DIRECT REFERENCE.** `Sync::V1::CapabilityGate`
+  (`engines/tinkerex-sync/app/controllers/concerns/sync/v1/capability_gate.rb`) is the engine's own
+  `require_capability!`, replacing `Sync::V1::BaseController`'s `include ::LibraryCapabilities`; and
+  `Sync::V1::ShareController` asks the same seam instead of
+  `::FileLayer.current.capabilities.versioned?` directly. Both ask
+  `Sync.capability_available?`/`Sync.capability_unavailable_message`
+  (`lib/tinkerex_sync/sync_module.rb`) — two `mattr_accessor`s defaulting to **"available,
+  always,"** the correct permanent answer for a bare mount (this engine IS the sync engine; the
+  capability question exists only because a HOST can configure a share/s3 backend that lacks
+  versions/a changelog, §14a). `config/initializers/sync_capabilities.rb` wires both, once, to
+  `FileLayer.current.capabilities` and `LibraryCapabilities::CAPABILITY_ABSENT`, so this app's 501
+  bodies stay byte-identical (`test/integration/v1/capability_gating_test.rb`, unchanged, still
+  green). Regression-guarded by a Ripper check
+  (`test/architecture_invariants_test.rb`, "the sync engine's capability gate never names
+  ::FileLayer or ::LibraryCapabilities directly") — not a one-time grep, because that is exactly
+  how the guard that should have caught THIS pattern went blind after Phase B moved 51 files.
+- **A THIRD, PREVIOUSLY UNNAMED HOST DEPENDENCY REMAINS, FOUND BUT NOT CLOSED BY TASK 9:
+  `::V1::StashRequestBaseUrl`.** `Sync::V1::CommitsController` and `Sync::V1::ChunksController` both
+  `include ::V1::StashRequestBaseUrl` (`app/controllers/concerns/v1/stash_request_base_url.rb`) —
+  a HOST file, explicitly qualified, same shape as the two above — and that file's own
+  `stash_request_base_url` method reads `FileLayer.current.capabilities.syncable?` directly. Its
+  own header already documents it as included ONLY by those two controllers, both now engine-side,
+  so no HOST controller uses it any more — the cheap fix is likely a pure relocation
+  (`Sync::V1::StashRequestBaseUrl`, engine-side, swapping its one `FileLayer` line for
+  `Sync.capability_available?(:syncable)`), not a host/engine split like `LibraryCapabilities`
+  needed. Left for whoever picks this up next; the point recorded here is that "two" was always an
+  undercount and the regression guard above is deliberately scoped to the two names it actually
+  closed, not to "the engine names no host constant at all."
 - **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
   `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
   deployment — which has no changelog and never calls it — was being refused a boot for a rule that
