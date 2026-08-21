@@ -494,7 +494,19 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # `Storage`/`LibraryChannel` live under `Sync::` at all, which after Task 4 is permanently (short
   # of the whole engine actually extracting in Phase B, at which point the question of what counts
   # as "the maker layer" changes shape entirely).
+  # base_controller.rb IS THE NEWEST ENTRY AND THE MOST DELIBERATE ONE. Phase B made the host's
+  # V1::BaseController a one-line subclass of the engine's Sync::V1::BaseController, so that all
+  # fourteen v1/maker/* controllers keep inheriting the same shared v1 infrastructure they always
+  # did while the engine's own twelve controllers get a base they can carry into a standalone
+  # mount. The direction is deliberate: the ENGINE ships the base and the HOST inherits it, never
+  # the reverse -- an engine inheriting from a host class cannot load without that specific app,
+  # which defeats the point of shipping it.
+  #
+  # This appearing here is the repointed guard EARNING ITS KEEP on its first run: it is a real new
+  # host->engine dependency that Phase B introduced, and it was invisible for as long as the file
+  # set still pointed at app/ and lib/.
   SYNC_SEAM_EXCEPTIONS = %w[
+    app/controllers/v1/base_controller.rb
     app/models/user.rb
     app/controllers/concerns/v1/stash_request_base_url.rb
     app/controllers/dev_blobs_controller.rb
@@ -566,10 +578,23 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # history). `end_with?` on the relative-glob suffix, not `File.basename`, so a same-named file
   # elsewhere in the tree (there is none today) could never be silently swept up by this rejection
   # too.
+  # THE BOUNDARY IS PHYSICAL NOW, AND THAT MAKES THIS GUARD STRONGER RATHER THAN WEAKER -- but it
+  # had to be repointed, and for a while after Phase B's move it silently was not.
+  #
+  # WHAT WENT WRONG, because it is the most instructive thing in this file: SYNC_SIDE_GLOBS listed
+  # paths under app/ and lib/. Phase B moved all 51 of those files into engines/tinkerex-sync/, so
+  # the globs matched **three** files afterwards -- two of which are the HOST controllers the list
+  # exists to exclude. Measured, not feared: a `Maker::` reference planted in the engine's own
+  # sync/gc.rb left the suite GREEN. The guard that proves the engine can run without the maker
+  # layer had gone blind to the engine.
+  #
+  # A directory is a better answer than a glob list ever was. The engine is now one tree; anything
+  # inside it is engine, anything outside is host. There is no list to keep in step with a move,
+  # which is exactly the failure this replaced.
+  ENGINE_ROOT = "engines/tinkerex-sync".freeze
+
   def engine_side_files
-    SYNC_SIDE_GLOBS.flat_map { |glob| Dir.glob(ROOT.join(glob)) }
-                   .reject { |f| f.include?("/v1/maker/") ||
-                                 f.end_with?("/v1/devices_controller.rb", "/v1/test_users_controller.rb") }
+    Dir.glob(ROOT.join(ENGINE_ROOT, "**", "*.rb")) + Dir.glob(ROOT.join(ENGINE_ROOT, "**", "*.rake"))
   end
 
   test "the sync engine never reaches into the maker layer's features" do
@@ -630,6 +655,8 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # (sharing/links.rb) was already fixed by Task 6 moving the file, well before Task 3 touched
     # anything here, and user.rb's presence on the list comes from ENGINE_ASSOCIATIONS (`:on_ident`
     # matches on `versions`, `chunks`, etc.), a completely separate mechanism Task 3 does not touch.
+    # EVERYTHING IN app/ AND lib/ IS HOST NOW -- the subtraction below is a no-op since Phase B, and
+    # it is kept only so this reads as the same question it always asked. The engine physically left.
     maker_layer_files = (Dir.glob(ROOT.join("app", "**", "*.rb")) +
                           Dir.glob(ROOT.join("lib", "**", "*.rb")) +
                           Dir.glob(ROOT.join("lib", "tasks", "*.rake"))) - engine_side_files
