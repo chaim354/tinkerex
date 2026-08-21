@@ -2073,11 +2073,24 @@ where the code sits and, for two of these rules, who can still enforce them.
   migration touching one of the eight tables goes **red here** until the gem is updated and
   `bundle update tinkerex-sync` is run. The cross-repo obligation is real work, and a schema change
   is exactly when it must be impossible to forget.
-- **THE DOCKER BUILD IS THE ONE PLACE A PRIVATE `git:` GEM COSTS SOMETHING.** `bundle install` runs
-  in an image with no keychain and no `gh`, so it takes a BuildKit secret (`TINKEREX_SYNC_TOKEN`,
-  via kamal `builder.secrets`). It is passed as `GIT_CONFIG_COUNT/KEY/VALUE` on that ONE command
-  rather than `git config --global`, which writes `/root/.gitconfig` and would ship the token
-  **inside the image** having been "only" in a secret mount.
+- **THE DOCKER BUILD IS THE ONE PLACE A PRIVATE `git:` GEM COSTS SOMETHING, AND IT PAYS WITH A
+  READ-ONLY DEPLOY KEY, NOT A TOKEN.** `bundle install` runs in an image with no keychain and no
+  `gh`. A PAT would carry the whole account's access in to read one repo — and GitHub has had no
+  API for minting one since `POST /authorizations` was sunset in 2020, while `gh repo deploy-key
+  add` creates exactly the narrower thing. Four properties, each load-bearing:
+  - **The Gemfile stays on `https://`; only the build rewrites to SSH.** Deploy keys are SSH-only,
+    but switching the Gemfile would break every developer and the CI runner, which both already
+    resolve the https URL through an ordinary credential helper.
+  - **The secret is BASE64.** An OpenSSH key is multi-line and kamal resolves secrets through
+    Dotenv, which handles one line reliably and several only by luck — and would fail as an
+    unreadable key rather than as anything naming the cause.
+  - **`GIT_CONFIG_COUNT/KEY/VALUE` on that ONE command, never `git config --global`**, which writes
+    `/root/.gitconfig` — part of the layer, so it is the one way to leak a secret mount back out.
+  - **The decoded key is written and deleted inside a single `RUN`**, so no layer records it.
+  Verified by building, not by reading: the image was built, the gem is at
+  `bundler/gems/tinkerex-sync-<sha>`, Rails boots and mounts the engine — and a grep of the whole
+  filesystem for the key's own blob finds **nothing** (`/root/.ssh` holds only a `known_hosts`
+  entry, which is a public host key).
 
 - **THE `Sync::` NAMESPACE WAS NEVER THE BOUNDARY.** The engine's own models are **bare top-level
   constants** — `Version`, `Chunk`, `ManifestChunk`, `PendingCommit`, `ChangelogEntry`, `Conflict`,
