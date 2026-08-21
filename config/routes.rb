@@ -307,7 +307,12 @@ Rails.application.routes.draw do
     # descriptions of one thing, free to drift. See lib/tinkerex_sync/v1_routes.rb for why this is a
     # drawer rather than `mount Sync::Engine`: these paths interleave with the host's own inside
     # this very namespace, and a mount owns a whole prefix.
-    Sync.draw_v1_routes(self)
+    # DRAWN ONLY WHEN THE ENGINE IS LOADED. share/s3 do not load it (config/application.rb), so
+    # `Sync` is undefined here and naming it would fail at route-draw time -- and its endpoints
+    # would 501 on those backends anyway (every one gates on `syncable` or `versioned`). The
+    # difference is that a route that does not exist 404s, which is the honest answer for a
+    # deployment whose engine is not in the process at all.
+    Sync.draw_v1_routes(self) if LibraryBackend.engine_wanted?
 
 
     namespace :maker do

@@ -22,6 +22,12 @@
 # while writing this file (`bin/rails test` with no CI env var, so `config.eager_load` is off, per
 # config/environments/test.rb). The BLOCK passed to on_commit_finalized still only runs later, per
 # request, same as before; only the REGISTRATION call itself needed deferring.
+# NO-OP WITHOUT THE ENGINE. On share/s3 the sync engine is not loaded at all
+# (config/application.rb), so every `Sync` constant below is undefined -- and an initializer that
+# merely NAMES one raises `uninitialized constant Sync` and takes the whole boot down. The guard is
+# here at the top rather than inside, because the reference is what fails, not the call.
+return unless LibraryBackend.engine_wanted?
+
 Rails.application.config.after_initialize do
   Sync::Hooks.on_commit_finalized do |user:, node:, version:|
     # Eagerly render a thumbnail for a file synced from the desktop/API client, not just web

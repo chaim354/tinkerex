@@ -34,6 +34,12 @@
 # `after_initialize` still runs before `initialize!` returns, so a raise here still aborts boot
 # before Puma binds a port, matching `lib/library_backend_check.rb`'s own comment on the same
 # point.
+# NO-OP WITHOUT THE ENGINE. On share/s3 the sync engine is not loaded at all
+# (config/application.rb), so every `Sync` constant below is undefined -- and an initializer that
+# merely NAMES one raises `uninitialized constant Sync` and takes the whole boot down. The guard is
+# here at the top rather than inside, because the reference is what fails, not the call.
+return unless LibraryBackend.engine_wanted?
+
 Rails.application.config.after_initialize do
   # The whole eligibility decision — adapter prefix, the DB_SKIP_POOLER_CHECK escape hatch, AND
   # (Stage 3a) whether this deployment has a changelog at all — is Sync::PostgresPoolerCheck.probe?, so

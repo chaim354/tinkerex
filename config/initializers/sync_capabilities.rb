@@ -29,6 +29,12 @@
 # `Rails.application.initialize!` has returned — but the ASSIGNMENT statement itself
 # (`Sync.capability_check = ...`) still needs the bare `Sync` constant resolvable to run at all,
 # and that is what `after_initialize` guarantees.
+# NO-OP WITHOUT THE ENGINE. On share/s3 the sync engine is not loaded at all
+# (config/application.rb), so every `Sync` constant below is undefined -- and an initializer that
+# merely NAMES one raises `uninitialized constant Sync` and takes the whole boot down. The guard is
+# here at the top rather than inside, because the reference is what fails, not the call.
+return unless LibraryBackend.engine_wanted?
+
 Rails.application.config.after_initialize do
   # Same call `Sync::V1::CapabilityGate`'s own predecessor made per-request: `FileLayer.current` is a
   # lazily-built singleton (`app/services/file_layer.rb`), so re-reading it on every call, rather
