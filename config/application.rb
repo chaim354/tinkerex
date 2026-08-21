@@ -6,6 +6,17 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# THE SYNC ENGINE IS LOADED ONLY BY THE ONE BACKEND THAT USES IT. The gem is in the Gemfile and the
+# lockfile unconditionally -- a conditional `gem` line makes Gemfile.lock environment-dependent,
+# which BUNDLE_DEPLOYMENT=1 rejects outright -- but it is declared `require: false`, so Bundler.require
+# above does not load it and this line decides.
+#
+# IT HAS TO HAPPEN HERE, not in an initializer: a Rails::Engine subclass registers itself when its
+# class body executes, and initializers run long after the engine would have had to be in the
+# railtie chain to contribute routes, paths or its own initializers.
+require_relative "../lib/library_backend"
+require "tinkerex_sync" if LibraryBackend.engine_wanted?
+
 module Tinkerex
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -14,7 +25,7 @@ module Tinkerex
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks])
+    config.autoload_lib(ignore: %w[assets tasks library_backend.rb])
 
     # ACTIVE STORAGE VARIANTS ARE OFF, and this is a security setting, not a tuning one.
     #

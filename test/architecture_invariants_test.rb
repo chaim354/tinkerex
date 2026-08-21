@@ -506,11 +506,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # host->engine dependency that Phase B introduced, and it was invisible for as long as the file
   # set still pointed at app/ and lib/.
   SYNC_SEAM_EXCEPTIONS = %w[
-    app/controllers/v1/base_controller.rb
     app/models/user.rb
     app/controllers/dev_blobs_controller.rb
     app/services/maker/addons/library_output.rb
-    app/services/maker/project_intake.rb
+    app/services/library_broadcast.rb
   ].freeze
 
   # THE OTHER DIRECTION, WHICH NOTHING GUARDED UNTIL STAGE 3a TASK 4 CLOSED THE LAST ONE. Every
@@ -753,22 +752,30 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # app/controllers/v1/base_controller.rb's header for the three-option decision): the engine now
   # ships a base controller that carries Authentication/the generic rescues (and, since Stage 3b
   # Task 9, its own CapabilityGate in place of what used to be a direct `LibraryCapabilities`
-  # include -- see Sync::V1::BaseController's header), and V1::BaseController -- still inherited
-  # by all fourteen v1/maker/* controllers -- inherits FROM it, on purpose. `class BaseController
-  # < Sync::V1::BaseController` is that decision made
-  # real, and it is the ONE reference this file may now carry. The invariant this test still
-  # enforces, and the reason it is not simply deleted: NOTHING ELSE may creep back in beside that
-  # one line -- a rescue_from, a before_action, a stray call -- the exact shape Stage 3a Task 5
-  # removed and this test has guarded ever since.
-  test "V1::BaseController names no Sync:: or Storage:: constant beyond its own superclass" do
+  # include -- see Sync::V1::BaseController's header).
+  #
+  # THE DIRECTION REVERSED ON 2026-08-21, AND THE ASSERTION REVERSED WITH IT. Phase B had
+  # `class BaseController < Sync::V1::BaseController`, so the fourteen v1/maker/* controllers rode
+  # the engine's v1 infrastructure. That is unsurvivable once share/s3 stop loading the engine: a
+  # superclass is resolved when the class body loads, so the maker app's own API had no base class
+  # and could not eager-load. The host now stands on ActionController::API with its own copy of the
+  # device-auth concern. The engine's base is UNCHANGED and still right for a bare mount -- both
+  # directions cannot be true of one class, which is why this became a design decision rather than
+  # a guard tweak.
+  #
+  # WHAT THIS TEST STILL ENFORCES IS THE SAME INVARIANT IT ALWAYS DID, only stricter: this file may
+  # now name NO Sync:: constant at all, where before it could name exactly one. Nothing may creep
+  # back in -- a rescue_from reaching into the engine, a before_action, a stray call -- the shape
+  # Stage 3a Task 5 removed and this test has guarded ever since.
+  test "V1::BaseController names no Sync:: or Storage:: constant at all" do
     path = ROOT.join("app/controllers/v1/base_controller.rb")
     hits = sync_references(path.to_s)
 
     superclass_line = path.readlines.find { |l| l.include?("class BaseController <") }
-    assert superclass_line&.include?("Sync::V1::BaseController"),
+    assert superclass_line&.include?("ActionController::API"),
            "expected app/controllers/v1/base_controller.rb to declare " \
-           "`class BaseController < Sync::V1::BaseController` (Stage 3b Phase B Task 7) -- " \
-           "found #{superclass_line.inspect}. Did the class declaration move or get reworded?"
+           "`class BaseController < ActionController::API` -- found #{superclass_line.inspect}. " \
+           "Inheriting the engine's base again makes share/s3 unable to load the maker v1 API."
 
     # NOT MATCHED BY LINE NUMBER, DELIBERATELY -- a hardcoded literal shifts the moment a line is
     # added above it, the exact "assert a spelling, not a behaviour" trap CLAUDE.md §14e warns
@@ -776,7 +783,7 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # superclass declaration is real and correctly spelled, which guarantees Ripper counts it as
     # one of `hits` (it names the const `Sync`); asserting the TOTAL is exactly 1 is therefore
     # sufficient to prove that one hit IS that line and nothing else snuck in beside it.
-    assert_equal 1, hits.size,
+    assert_equal 0, hits.size,
                  "V1::BaseController must reference Sync:: or Storage:: in EXACTLY one place -- " \
                  "its own `class BaseController < Sync::V1::BaseController` declaration -- " \
                  "found #{hits.size}:\n  #{hits.join("\n  ")}\n" \

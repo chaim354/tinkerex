@@ -211,6 +211,20 @@ jobs:
 
   # The browser tier. Its own job so its cost stays visible as it grows, rather than inflating the
   # unit-test job. See test/system/README.md for what earns a place in it.
+  # The ONLY job where the sync engine is genuinely not in the process. The three backend jobs
+  # above pin SYNC_ENGINE=1 so their counts stay identical (§15); this one is what actually executes
+  # config/application.rb's conditional require. See config/ci.rb's own comment for why both exist.
+  test-no-engine:
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Run the no-engine boot suite
+        env:
+          RAILS_ENV: test
+        run: bin/ci test-no-engine
+
   system-test:
     runs-on: [self-hosted, macos]
     steps:

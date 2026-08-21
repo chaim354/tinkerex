@@ -71,7 +71,7 @@ GATES = {
     # trap aborts instead of handing `rm -rf` an empty argument.
     ci.step "Tests: Rails (share backend)",
             'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
-            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test'
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" SYNC_ENGINE=1 bin/rails db:test:prepare test'
   end,
 
   "test-s3" => ->(ci) do
@@ -82,8 +82,27 @@ GATES = {
     ci.step "Tests: Rails (s3 backend)",
             "env LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket " \
             "LIBRARY_S3_REGION=us-east-1 LIBRARY_S3_ACCESS_KEY_ID=ci " \
-            "LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library " \
+            "LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library SYNC_ENGINE=1 " \
             "bin/rails db:test:prepare test"
+  end,
+
+  # THE FOURTH BACKEND LEG, AND THE ONLY ONE WHERE THE ENGINE IS GENUINELY ABSENT.
+  #
+  # The three legs above now set SYNC_ENGINE=1, so they keep the engine loaded even on share and s3
+  # and go on reporting IDENTICAL run and assertion counts -- §15's guard against a test quietly
+  # depending on the ambient LIBRARY_BACKEND is unchanged by any of this. That guard is worth more
+  # than the convenience of letting the counts drift.
+  #
+  # But it means those legs no longer execute the no-engine path at all, and a conditional nobody
+  # runs is CLAUDE.md §14a's recorded bug verbatim: a boot guard that passed the entire suite and
+  # took production down. So this leg boots share with SYNC_ENGINE=0 and runs ONE focused file that
+  # asserts what "no engine" is supposed to mean. Its counts differ from the other three by design,
+  # which is why it is a separate suite rather than the same suite with a flag.
+  "test-no-engine" => ->(ci) do
+    ci.step "Tests: share with NO sync engine loaded",
+            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" SYNC_ENGINE=0 ' \
+            "bin/rails db:test:prepare test TEST=test/integration/no_engine_boot_test.rb"
   end,
 
   "system" => ->(ci) do

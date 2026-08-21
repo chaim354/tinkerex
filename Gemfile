@@ -22,8 +22,11 @@ source "https://rubygems.org"
 # `require:` is spelled out because Bundler derives the require path from the HYPHENATED gem name
 # ("tinkerex-sync"), while the entry point is lib/tinkerex_sync.rb -- the usual Ruby convention that
 # a hyphen in a gem name means a `/` in the path, which is not the shape here.
+# `require: false` -- config/application.rb loads it, and only when LIBRARY_BACKEND wants it.
+# The gem stays here UNCONDITIONALLY: a conditional `gem` line would make Gemfile.lock depend on
+# the environment that resolved it, and BUNDLE_DEPLOYMENT=1 refuses a lock that does not match.
 gem "tinkerex-sync", git: "https://github.com/chaim354/tinkerex-sync.git", branch: "main",
-                     require: "tinkerex_sync"
+                     require: false
 gem "rails", "~> 8.1.1"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"
