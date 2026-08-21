@@ -195,12 +195,16 @@ engine 1. **`bin/ci` is now 8 gates** (`config/ci.rb`'s new `"engine"` gate,
 rake test`, deliberately never touching this app's own `test/test_helper.rb` or its 250+ other
 test files), three legs still identical.
 
-**One flake observed, not chased further, and not new**: one `bin/ci` run out of six (across full
-runs and targeted `system engine` pairs) hit a transient error in the engine gate under the
-combined disk pressure of a full run; the other five were clean. `test/dummy/config/database.yml`
-already carries the same `timeout: 15000` CLAUDE.md §12.7/§14e diagnosed and fixed for the host's
-own SQLite — this is a second database that can occasionally hit the identical class of fsync
-stall under load, not a new bug the move introduced.
+**Flakiness observed across full `bin/ci` runs, not chased further, and not new, not
+engine-specific**: 2 of 4 complete (all-8-gates) `bin/ci` runs hit a transient single-test error
+under the combined disk pressure of running every gate back to back — once in the new `engine`
+gate, once in the pre-existing `test-s3` leg (host-only code this task never touched); neither
+reproduced on an immediate targeted re-run, and three further `bin/ci system engine` pairs (the
+adjacency the first failure suggested) were all clean. Consistent with CLAUDE.md §12.7/§14e's own
+diagnosis (a measured SQLite fsync stall under sustained concurrent disk I/O, not a lock-logic
+bug), now with a SECOND SQLite database (`engines/tinkerex-sync/test/dummy/storage/test.sqlite3`)
+sharing the same disk under load. `test/dummy/config/database.yml` already carries the host's own
+fix, `timeout: 15000`, for the identical reason.
 
 ---
 
