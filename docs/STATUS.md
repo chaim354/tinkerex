@@ -25,6 +25,17 @@ reading the last entry.
 > against the code rather than copied forward. The bullets below are this file's own carried
 > caveats; that document is the one to read for what to do next.
 
+- **The three backend legs are NOT reporting identical counts today, and nothing enforces that they
+  do.** §15 says a divergence means a test depends on the ambient `LIBRARY_BACKEND` and is a real
+  bug. Measured on `origin/main` over three fresh runs of the share leg: **9132/23, 9134/22,
+  9132/23** — the flap is small (±2 assertions, ±1 skip), pre-existing, and varies BETWEEN RUNS of
+  the same leg, so it is nondeterminism rather than a clean backend dependency. `bin/ci` prints the
+  three counts and never compares them; the rule has always relied on a human reading them.
+- **§12.7's `SQLite3::BusyException` is recurring.** Caught once in four fresh share-leg runs on
+  2026-08-23: `Web::ProjectTasksTest#test_delete_a_task`, `database is locked`, raised from
+  `sign_in`. §12.7 recorded 0 of 8 runs red after `timeout: 15000`; this box now also runs three
+  self-hosted Actions runner services, which is exactly the sustained disk I/O §12.7 says the
+  failure needs. Not re-diagnosed — recorded so the next person does not start from "it was fixed".
 - **`importer_controller.js` has a THIRD extension→role table.** `roleFor` (lines 10–18) is
   hand-duplicated in JS and never gained `vector`, `cad_source`, or now `document`. **Nothing is
   broken:** the value never leaves the browser — only `node_id`/`cover` are POSTed and the server

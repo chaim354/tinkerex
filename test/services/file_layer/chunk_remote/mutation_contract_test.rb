@@ -73,7 +73,14 @@ module FileLayer
         # `syncable`-gated and answer 501 on share and s3 -- so the loopback got
         # UnsupportedOperation from the wire rather than from anything this adapter decided. The
         # engine being present and its endpoints being live are two different questions.
-        skip "the v1 sync endpoints are 501 on this backend" unless FileLayer.current.capabilities.syncable?
+        # READS ENV, NOT FileLayer.current, AND THE DIFFERENCE IS ORDER-DEPENDENCE.
+        # `FileLayer.current` is global mutable state -- test_helper's `pin_file_layer_backend`
+        # swaps it, so in the full parallel suite whether this skipped depended on what had run
+        # before it in the same worker. In isolation these files were perfectly deterministic;
+        # the flap only appeared in the whole-suite counts, which is the hardest place to see it.
+        # LibraryBackend re-reads ENV on every call and nothing mutates it, so this asks the same
+        # question of something stable.
+        skip "the v1 sync endpoints are 501 on this backend" unless LibraryBackend.name == "chunk"
         Sync::Storage::ChunkStore.reset!
         @user = User.create!(email: "remote-mutation-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
