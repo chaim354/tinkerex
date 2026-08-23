@@ -6,6 +6,19 @@ class User < ApplicationRecord
   # NAME (`versions` -> "Version") and that guess no longer resolves to anything. `manifest_chunks`
   # has no has_many here at all (reached by the string manifest_id everywhere), which is why
   # this list is seven, not eight.
+  # UNCONDITIONAL, UNLIKE THE Sync:: ASSOCIATIONS BELOW, and the difference is which side owns the
+  # class. Those name engine models that do not exist on share/s3; RemoteManifestChunk is a HOST
+  # model whose table every deployment has, so there is nothing to guard.
+  #
+  # `dependent:` IS REQUIRED HERE, NOT DECORATION: the table carries a real foreign key to `users`,
+  # so without it `user.destroy` raises ActiveRecord::InvalidForeignKey the moment a chunk_remote
+  # deployment has mirrored anything. Probed rather than assumed -- and found by deleting a leftover
+  # test user by hand, where the manifest rows had to be cleared first for the destroy to work.
+  #
+  # `:delete_all`, NOT `:destroy`: these rows have no callbacks and there is one PER CHUNK PER
+  # VERSION, so a large library would instantiate thousands of objects to run nothing on each.
+  has_many :remote_manifest_chunks, dependent: :delete_all
+
   # DECLARED ONLY WHEN THE ENGINE IS LOADED, and `class_name:` being a STRING is not enough to
   # make that unnecessary -- which was probed, not reasoned. A string class_name is lazy, so
   # merely loading User is fine either way; but `dependent: :destroy` constantizes on destroy, and
