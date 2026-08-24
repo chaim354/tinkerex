@@ -133,7 +133,11 @@ end
 bin/rails test test/bin_sync_server_test.rb
 ```
 
-Expected: 3 failures, the first `bin/sync-server is missing`.
+Expected: `3 runs, 1 assertions, 1 failures, 2 errors`. Note the split — only the first is a
+*failure*. `Open3.capture2e` RAISES `Errno::ENOENT` on a nonexistent executable rather than
+returning a non-zero status, so the other two are *errors*. Both mean "the script does not exist
+yet", which is the checkpoint; an implementer matching the literal word "failures" would think
+this step had gone wrong.
 
 - [ ] **Step 3: Write the script**
 
@@ -153,9 +157,14 @@ Create `bin/sync-server`:
 #   prepare  migrate the host DB, mint a device token, write tmp/sync-server.env, print it
 #   start    run the server in the FOREGROUND on $SYNC_PORT (the caller backgrounds it)
 #
-# THERE IS NO /up ON THIS HOST -- its routes are the v1 namespace plus dev/blobs and nothing else
-# (checked, not assumed). So readiness is probed with an authenticated GET /v1/devices/whoami,
-# which has the side benefit of proving the token works rather than only that a port is open.
+# THE HOST DOES HAVE /up (tinkerex-sync host/config/routes.rb), added after this plan was
+# drafted -- and it is not a static 200: it runs User.count and answers 503 on an empty schema,
+# because that host's first real deploy reported healthy with no tables. A caller waiting on this
+# server should probe BOTH /up and an authenticated GET /v1/devices/whoami, because they answer
+# different questions -- /up says "there is a schema and I can reach it," whoami says "and the
+# credential I just minted is accepted." A bare port check says neither. THIS SCRIPT IMPLEMENTS
+# NEITHER PROBE -- prepare and start do not curl anything. This paragraph is guidance for the
+# CALLER (CI, and a human), which is exactly why it has to stay true.
 set -euo pipefail
 
 PORT="${SYNC_PORT:-3002}"
@@ -220,7 +229,8 @@ esac
 chmod +x bin/sync-server && bin/rails test test/bin_sync_server_test.rb
 ```
 
-Expected: `3 runs, 6 assertions, 0 failures, 0 errors`.
+Expected: `3 runs, 12 assertions, 0 failures, 0 errors`. Twelve, not six — `assert_includes`
+costs two assertions each in this Minitest version (`assert_respond_to` then `assert`).
 
 - [ ] **Step 5: Prove it against a real checkout**
 
@@ -229,8 +239,11 @@ gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 bin/sync-server prepare
 ```
 
-Expected: two `KEY=value` lines, and `CHUNK_REMOTE_TOKEN` is a 64-character hex string. If
-`sync:device:issue` changes its output format this step is where you find out, not in CI.
+Expected: two `KEY=value` lines, and `CHUNK_REMOTE_TOKEN` is **43 characters of URL-safe
+base64** (`[A-Za-z0-9_-]`). Not 64 hex — `Device.register!` is `SecureRandom.urlsafe_base64(32)`;
+64-hex is the SHA256 *digest*, which never leaves the server. Do not write a hex assertion
+anywhere against this value. If `sync:device:issue` changes its output format this step is where
+you find out, not in CI.
 
 - [ ] **Step 6: Commit**
 
@@ -744,14 +757,21 @@ jobs:
           set -a; . tmp/sync-server.env; set +a
           bin/sync-server start &
           SRV=$!
+          # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up runs
+          # User.count on that host and answers 503 on an empty schema -- it exists because its
+          # first real deploy reported healthy with no tables. whoami then proves the credential
+          # bin/sync-server just minted is actually accepted. A bare port check answers neither,
+          # and a schema-less server would otherwise surface as nine confusing failures in the
+          # journey suite instead of one clear failure here.
           for i in $(seq 1 60); do
-            curl -sf -H "Authorization: Bearer $CHUNK_REMOTE_TOKEN" \
-              "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null && { echo "sync server up"; break; }
+            curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null && { echo "sync server has a schema"; break; }
             sleep 1
           done
+          curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null || {
+            echo "sync server never became ready"; kill $SRV 2>/dev/null; exit 1; }
           curl -sf -H "Authorization: Bearer $CHUNK_REMOTE_TOKEN" \
             "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
-              echo "sync server never became ready"; kill $SRV 2>/dev/null; exit 1; }
+              echo "the device token was rejected"; kill $SRV 2>/dev/null; exit 1; }
           set +e
           LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
             test test/integration/chunk_remote_journey_test.rb
