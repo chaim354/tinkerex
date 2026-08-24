@@ -46,14 +46,30 @@ jobs:
         run: bundle install --quiet
 
       # Boot + test in ONE step so the server stays alive for the whole suite -- the same reason
-      # client-contract.yml's own comment gives. Readiness is an AUTHENTICATED whoami rather than a
-      # port check: this host has no /up route, and a token that does not work would otherwise
-      # surface as nine confusing 401s instead of one clear failure here.
+      # client-contract.yml's own comment gives.
       - name: Boot the sync server and run the chunk_remote journey
         env:
           TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
           SYNC_PORT: "3002"
         run: |
+          # LEFTOVER-PROCESS GUARD, BEFORE ANYTHING TRIES TO BIND THE PORT. This runner is the
+          # sole registered one (CLAUDE.md §15) and PERSISTENT, and `cancel-in-progress: true`
+          # above means a fixup push to an open PR cancels the PREVIOUS run of this same job --
+          # plausibly while it is inside the readiness loop or the test run below, i.e. after
+          # `bin/sync-server start &` and before the `kill $SRV` cleanup ever runs. If that
+          # backgrounded server survives cancellation, the NEXT run cannot bind :$SYNC_PORT; its
+          # own `/up` probe then succeeds against the ZOMBIE (it has its own valid schema, from
+          # ITS run's `prepare`), and `whoami` fails against a token the zombie's database has
+          # never seen (this run's checkout+prepare is fresh) -- a loud but MISLEADING "the
+          # device token was rejected" that repeats on every run until a human kills the process
+          # by hand. Verified on this box: BSD xargs already skips invoking `kill` at all when
+          # its input is empty (no `-r` needed -- `-r` exists here but is a GNU-compat flag this
+          # form deliberately does not depend on, since a plain runner update should not be able
+          # to silently re-open this gap). What DOES need the guard is `lsof -ti` itself: it
+          # exits 1 when nothing matches, which trips `set -e`'s default pipefail on the common
+          # (nothing to kill) case before the port is ever touched -- `|| true` on the whole pipe
+          # is what keeps that ordinary case from failing the step.
+          lsof -ti tcp:"$SYNC_PORT" | xargs kill -9 2>/dev/null || true
           bin/sync-server prepare
           set -a; . tmp/sync-server.env; set +a
           bin/sync-server start &
@@ -88,8 +104,11 @@ jobs:
           # THE SKIP ASSERTION IS THE REAL GUARD, AND THE IN-SUITE CANARY CANNOT REPLACE IT.
           #
           # `skip_unless_remote_server` is what stands between this suite and testing nothing.
-          # Break it to always skip and the run is `9 runs, 1 assertions, 0 failures, 8 skips`
-          # and EXIT 0 -- MEASURED under exactly that mutation, not reasoned. The canary test
+          # Break it to always skip and the run is
+          # `10 runs, 1 assertions, 0 failures, 0 errors, 9 skips` and EXIT 0 -- MEASURED against
+          # a real server under exactly that mutation, not reasoned (re-measured 2026-08-24: the
+          # suite grew to 10 tests with the restore-order test, 9 of which call this helper --
+          # the canary does not). The canary test
           # inside the suite is deliberately decoupled from that helper, which is precisely why
           # no mutation of the helper can falsify the canary's own assertion: it proves that IT
           # ran, never that its siblings did. Nothing inside a suite can assert about its own
