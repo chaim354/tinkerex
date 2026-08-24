@@ -1,0 +1,110 @@
+name: Sync contract
+
+# THE PER-PR PROOF THAT THE MAKER APP STILL WORKS AGAINST A REAL STANDALONE SYNC SERVER.
+# Stage 5 Arc A; design doc docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md.
+#
+# NOT A bin/ci GATE, AND THAT IS A CONSTRAINT RATHER THAN A PREFERENCE. test/ci_hygiene_test.rb
+# asserts SET EQUALITY between `bin/ci --list-ci` and ci.yml's gate jobs, and a second test allows
+# only `setup` in LOCAL_ONLY_GATES -- so a gate that is red is a main that is red, and this suite is
+# EXPECTED to be red until Arc B closes the gaps it exists to measure. client-contract.yml is the
+# precedent: a cross-repo wire-contract workflow that boots a real server and never invokes bin/ci.
+# `test-chunk-remote` becomes a real gate at the end of Arc B, when it can be green.
+#
+# macos, NOT linux: only charless-MacBook-Pro-maker-mac is registered (CLAUDE.md §15), so a linux
+# job here would queue for 24h at 0 elapsed and be auto-cancelled -- the five-week dark-CI failure
+# ci/preflight.sh exists to prevent. macos jobs are exempt from the preflight gate because the
+# preflight job itself runs on macos, and NO ruby/setup-ruby appears below: it assumes a hosted
+# /Users/runner layout this box does not have, and ci_hygiene_test.rb fails if it reappears.
+on:
+  pull_request: {}
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chunk-remote-journey:
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v7
+
+      # SECOND CHECKOUT: the sync engine is a separate private repo, and secrets.GITHUB_TOKEN is
+      # scoped to THIS repo only. Operator action: create the TINKEREX_SYNC_TOKEN repo secret (a
+      # fine-grained token scoped to chaim354/tinkerex-sync, contents:read) -- the same shape
+      # client-contract.yml already needs for TINKEREX_CLIENT_TOKEN.
+      - name: Check out tinkerex-sync
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-sync
+          token: ${{ secrets.TINKEREX_SYNC_TOKEN }}
+          path: tinkerex-sync
+
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+
+      # Boot + test in ONE step so the server stays alive for the whole suite -- the same reason
+      # client-contract.yml's own comment gives. Readiness is an AUTHENTICATED whoami rather than a
+      # port check: this host has no /up route, and a token that does not work would otherwise
+      # surface as nine confusing 401s instead of one clear failure here.
+      - name: Boot the sync server and run the chunk_remote journey
+        env:
+          TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
+          SYNC_PORT: "3002"
+        run: |
+          bin/sync-server prepare
+          set -a; . tmp/sync-server.env; set +a
+          bin/sync-server start &
+          SRV=$!
+          # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up runs
+          # User.count on that host and answers 503 on an empty schema -- it exists because its
+          # first real deploy reported healthy with no tables. whoami then proves the credential
+          # bin/sync-server just minted is actually accepted. A bare port check answers neither,
+          # and a schema-less server would otherwise surface as nine confusing failures in the
+          # journey suite instead of one clear failure here.
+          for i in $(seq 1 60); do
+            curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null && { echo "sync server has a schema"; break; }
+            sleep 1
+          done
+          curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null || {
+            echo "sync server never became ready"; kill $SRV 2>/dev/null; exit 1; }
+          curl -sf -H "Authorization: Bearer $CHUNK_REMOTE_TOKEN" \
+            "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
+              echo "the device token was rejected"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          # ONE CHAINED INVOCATION WITH `TEST=`, and neither half is optional. A bare path
+          # (`... test <path>`) is an Unrecognized command; `bin/rails test TEST=<path>` alone
+          # raises InvalidTestError, because `TEST=` is read only on the RAKE dispatch path and
+          # chaining is what puts `test` there. config/ci.rb's test-no-engine gate uses this exact
+          # form. Split it in two and this step runs nothing.
+          LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+            test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          kill $SRV 2>/dev/null || true
+
+          # THE SKIP ASSERTION IS THE REAL GUARD, AND THE IN-SUITE CANARY CANNOT REPLACE IT.
+          #
+          # `skip_unless_remote_server` is what stands between this suite and testing nothing.
+          # Break it to always skip and the run is `9 runs, 1 assertions, 0 failures, 8 skips`
+          # and EXIT 0 -- MEASURED under exactly that mutation, not reasoned. The canary test
+          # inside the suite is deliberately decoupled from that helper, which is precisely why
+          # no mutation of the helper can falsify the canary's own assertion: it proves that IT
+          # ran, never that its siblings did. Nothing inside a suite can assert about its own
+          # siblings' skips.
+          #
+          # This step can, because it is the one place that KNOWS a server is up -- it just
+          # probed /up and whoami above. With a server configured, a skip is never legitimate.
+          #
+          # `${PIPESTATUS[0]}`, NOT `$?`: after a pipe `$?` is tee's status, and tee always
+          # succeeds. That exact mistake already put a wrong "exits 0" claim into this plan.
+          if grep -qE ', [1-9][0-9]* skips' tmp/journey-ci.txt; then
+            echo "::error::The journey suite SKIPPED with a sync server configured and reachable."
+            echo "A skip here means skip_unless_remote_server stopped discriminating, and the"
+            echo "suite reported success having asserted nothing -- the failure this gate exists"
+            echo "to make impossible."
+            exit 1
+          fi
+          exit $code
