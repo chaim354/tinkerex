@@ -525,10 +525,23 @@ LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
   test TEST=test/integration/chunk_remote_journey_test.rb
 ```
 
-**The `TEST=` form is required, not stylistic.** `bin/rails db:test:prepare test <path>` does NOT work —
-`bin/rails` dispatches one top-level command and reads the path as a second one, printing
-`Unrecognized command` **and exiting 0**. A CI step written that way is green having run nothing.
-`config/ci.rb`'s own `test-no-engine` gate already uses `TEST=` for exactly this reason; follow it.
+**Two forms matter here and only one works. Get this right or the step runs no tests.**
+
+- `bin/rails db:test:prepare test <bare path>` — **does not work.** `bin/rails` dispatches one
+  top-level command and reads the path as a second, printing `Unrecognized command` and exiting
+  **1**. Loud, at least.
+- `bin/rails test TEST=<path>` **on its own also does not work** — `Rails::TestUnit::Runner` parses
+  ARGV as literal paths and has no `TEST=` handling, so it fails with `InvalidTestError`. The
+  `TEST=` convention only exists on the RAKE dispatch path.
+- `bin/rails db:test:prepare test TEST=<path>` — **one invocation, chained** — is the form that
+  works, and it is what `config/ci.rb`'s own `test-no-engine` gate already uses. Do not "simplify"
+  it into two commands; the chaining is what puts `test` on the rake path where `TEST=` is read.
+
+*(An earlier draft of this note claimed the bare-path form exits **0**, which would have meant a CI
+step reporting green having run nothing. That was wrong, and wrong in the direction that causes
+panic: the claim came from reading `$?` after a pipeline, so it reported `tail`'s status rather than
+`bin/rails`'s. Measured properly it is 1. The lesson is the one this repo already records — check
+the exit status of the command you mean, not of the last thing in the pipe.)*
 
 Expected: `3 runs`, 0 skips. Record whether they pass or fail **verbatim** — do not fix anything
 yet. Arc A's product is the measurement; Arc B is where fixes go.
@@ -860,10 +873,11 @@ jobs:
             "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
               echo "the device token was rejected"; kill $SRV 2>/dev/null; exit 1; }
           set +e
-          # `TEST=`, NOT a bare path. `bin/rails db:test:prepare test <path>` prints
-          # "Unrecognized command" and EXITS 0 -- this step would report green having run no
-          # tests at all, which is the one failure mode a gate must never have. config/ci.rb's
-          # test-no-engine gate uses the same form.
+          # ONE CHAINED INVOCATION WITH `TEST=`, and neither half is optional. A bare path
+          # (`... test <path>`) is an Unrecognized command; `bin/rails test TEST=<path>` alone
+          # raises InvalidTestError, because `TEST=` is read only on the RAKE dispatch path and
+          # chaining is what puts `test` there. config/ci.rb's test-no-engine gate uses this exact
+          # form. Split it in two and this step runs nothing.
           LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
             test TEST=test/integration/chunk_remote_journey_test.rb
           code=$?
