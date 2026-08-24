@@ -1083,47 +1083,63 @@ module FileLayer
       assert_not node.deleted
     end
 
-    # AN ORPHAN COMES BACK AT THE ROOT RATHER THAN RAISING -- to_root: true, matching what
-    # TrashController has always passed on the chunk branch. Built the way a user actually reaches
-    # this now that Task 5 landed cascading delete, NOT by hand-tombstoning a parent: a directory
-    # delete tombstones its whole subtree (Sync::SubtreeDelete), so a child's PARENT ends up ALSO
-    # tombstoned as a side effect of one ordinary folder delete.
-    test "an orphan, its parent tombstoned by a cascading delete, comes back at the root" do
+    # AN ORPHANED RESTORE IS REFUSED RATHER THAN REPARENTED TO THE ROOT -- THIS REVERSES WHAT
+    # USED TO STAND HERE (`to_root: true`, matching what TrashController had always passed on the
+    # chunk branch). The old rule's own evidence is what overturned it: a bottom-up restore
+    # permanently scatters a folder's contents to the root, restoring the parent afterward does
+    # not reunite them, and since a directory delete tombstones its whole subtree in one call
+    # (Sync::SubtreeDelete), reaching that scatter is the MAINLINE case, not a hand-crafted edge
+    # case. A refusal is recoverable (restore the folder, then the file); a silent scatter is not.
+    # See Chunk#undelete's own comment (the sync-engine gem) and CLAUDE.md 14a for the full
+    # argument, including why V1::TrashController -- the device API, not this app -- keeps its
+    # own caller-supplied `to_root:` regardless.
+    #
+    # Built the way a user actually reaches this (Task 5's cascading delete), NOT by hand-
+    # tombstoning a parent: a directory delete tombstones its whole subtree (Sync::SubtreeDelete),
+    # so a child's PARENT ends up ALSO tombstoned as a side effect of one ordinary folder delete.
+    test "an orphan, its parent tombstoned by a cascading delete, refuses to restore" do
       dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "adir", kind: "dir",
                                   deleted: false, mtime: 0)
       child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
                                   name: "kid.stl", kind: "file", deleted: false, mtime: 0)
       adapter.delete(@user, node_id: dir.node_id) # cascades -- dir AND child are now tombstoned
 
-      info = adapter.undelete(@user, node_id: child.node_id)
+      error = assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.undelete(@user, node_id: child.node_id)
+      end
+      assert_match(/folder/i, error.message,
+                   "the message must tell the user what to DO, not merely that it failed")
 
-      assert_equal "kid.stl", info.name
-      assert_nil child.reload.parent_node_id, "an orphan is reparented to the root, not raised on"
-      assert_not child.deleted
+      assert child.reload.deleted, "a refused restore must not half-apply"
+      assert_equal dir.node_id, child.parent_node_id, "the parent pointer must be untouched"
     end
 
-    # RESTORE ORDER IS NOT COMMUTATIVE, AND TASK 5'S CASCADE MADE THAT MAINLINE RATHER THAN A RARE
-    # HAND-CRAFTED EDGE CASE -- see the orphan test above and Chunk#undelete's own comment for the
-    # full argument. Restoring the CHILD first permanently nulls its parent_node_id; restoring the
-    # PARENT afterward does not reunite them, because nothing about reviving the parent touches a
-    # child it no longer points at. THIS IS THE DOCUMENTED BEHAVIOUR, NOT A BUG: top-down restore
-    # (parent, then children) preserves structure, and V1::TrashController deliberately exposes
-    # to_root as a caller choice (defaulting to a 409) for exactly this reason. Named so a future
-    # reader sees a scattered folder as the known trade-off it is, not a regression to "fix" by
-    # teaching undelete to re-parent a revived child onto a since-revived parent.
-    test "restoring a child before its tombstoned parent scatters it -- documented, not a bug" do
+    # RESTORE ORDER USED TO BE NOT COMMUTATIVE, AND THIS TEST USED TO DOCUMENT THE SCATTER THAT
+    # PRODUCED AS INTENTIONAL ("documented, not a bug"). That scatter is no longer reachable: the
+    # child restore above now raises before it can touch parent_node_id, so top-down restore
+    # (parent, then child) is not merely "the order that happens to preserve structure" any more
+    # -- it is the ONLY order that succeeds at all. See CLAUDE.md 14a for why "ordering restores
+    # is a caller's job, not this adapter's" was overturned by its own stated evidence.
+    test "restoring a child before its tombstoned parent is refused; parent-first preserves structure" do
       dir   = @user.nodes.create!(node_id: SecureRandom.uuid, name: "bdir", kind: "dir",
                                   deleted: false, mtime: 0)
       child = @user.nodes.create!(node_id: SecureRandom.uuid, parent_node_id: dir.node_id,
                                   name: "kid.stl", kind: "file", deleted: false, mtime: 0)
       adapter.delete(@user, node_id: dir.node_id) # cascades
 
-      adapter.undelete(@user, node_id: child.node_id) # child first -- reparented to root
-      adapter.undelete(@user, node_id: dir.node_id)   # parent second -- back, but too late to help
+      assert_raises(FileLayer::UnsupportedOperation) do
+        adapter.undelete(@user, node_id: child.node_id) # child first -- refused, parent still gone
+      end
+      assert child.reload.deleted, "the refused child restore must not half-apply"
+
+      adapter.undelete(@user, node_id: dir.node_id)   # parent first -- succeeds, nothing was orphaning it
+      adapter.undelete(@user, node_id: child.node_id) # parent is live now, so the child restore succeeds too
 
       assert_nil dir.reload.parent_node_id # was already root-level -- unaffected either way
-      assert_nil child.reload.parent_node_id,
-                 "restoring the parent after must not reunite them -- order is not commutative"
+      child.reload
+      assert_not child.deleted
+      assert_equal dir.node_id, child.parent_node_id,
+                   "parent-first restore must reunite the child with its actual folder"
     end
 
     # ASSERTED ON THE BROADCAST ITSELF, not on head_seq -- same reasoning as mkdir/move/delete's

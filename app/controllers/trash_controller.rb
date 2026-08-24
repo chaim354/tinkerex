@@ -22,22 +22,42 @@
 # why the port answers it and this controller does not.
 class TrashController < ApplicationController
   # Deliberately the same shape as FilesController's, and the same argument: from the browser's
-  # side "no such node", "not in the trash", "its bytes were purged" and "something is already at
-  # that path" are one condition — the user cannot act on the difference, and none of them means
-  # the restore happened. The message promises nothing it cannot keep: notably NOT "it's gone",
-  # which is false for the occupied-destination case.
+  # side "no such node" and "not in the trash" are one condition — the user cannot act on the
+  # difference, and neither means the restore happened. The message promises nothing it cannot
+  # keep.
   #
-  # UnsupportedOperation IS IN THIS LIST BECAUSE THE FOURTH CONDITION ABOVE IS ITS ONLY WAY HERE.
-  # `undelete` raised NotFound for an occupied destination until the clobber fix; the class moved,
-  # and this rescue's INTENT did not — the sentence above already named that case as one it
-  # catches. Left out, an ordinary "something is at that path now" restore became a 500 rather
-  # than the alert this line was written to give it (caught by s3_write_test.rb, not by reading).
-  #
-  # NOT mapped to e.message the way FilesController maps it: there the message IS the answer (the
-  # name is taken, pick another); here the flattening above is deliberate and predates this.
-  rescue_from ActiveRecord::RecordNotFound, FileLayer::NotFound,
-              FileLayer::UnsupportedOperation do
+  # UnsupportedOperation USED TO SHARE THIS FLATTENING AND NO LONGER DOES — see the rescue below.
+  # It was here because an occupied-destination clobber ("something is already at that path") is
+  # the SAME kind of condition as the two above: the user cannot act on the difference, and
+  # `undelete` raised NotFound for it until the clobber fix moved the class, so leaving it out
+  # made an ordinary "something is at that path now" restore a 500 rather than the alert this line
+  # was written to give it (caught by s3_write_test.rb, not by reading). That case still gets this
+  # flattened message — it moved, not disappeared.
+  rescue_from ActiveRecord::RecordNotFound, FileLayer::NotFound do
     redirect_to trash_index_path, alert: "Couldn't restore that item."
+  end
+
+  # SPLIT OUT OF THE RESCUE ABOVE BECAUSE UnsupportedOperation NOW NAMES TWO CONDITIONS AND ONLY
+  # ONE OF THEM FITS "the user cannot act on the difference." The occupied-destination clobber
+  # (still true, see above) genuinely has nothing more to say than "it failed." The orphaned
+  # restore does: since the reversal recorded in CLAUDE.md 14a, restoring a node whose own FOLDER
+  # was tombstoned by the same cascading delete raises this rather than scattering the node to the
+  # root — and "restore the folder first" is something a person reading a flash message can
+  # actually go and do, unlike any of the other conditions this controller rescues.
+  #
+  # NOT TOLD APART BY e.message, WHICH IS WHY THIS DOES NOT MAP e.message THE WAY FilesController
+  # DOES FOR ITS OWN UnsupportedOperation. FileLayer::Chunk raises a hand-written sentence for the
+  # orphan case; FileLayer::ChunkRemote's message is the WIRE's own "<path>: parent_deleted"
+  # (Transport#interpret echoes the server's JSON `error` field verbatim, and that field is a
+  # machine code, not prose meant for a screen — CLAUDE.md 14c's "branch on the code, never the
+  # prose" rule, one door over). Pattern-matching either shape here would couple a web flash
+  # message to wording a gem or a standalone server can reword without this file ever noticing.
+  # So `restore_refusal_message` asks the CATALOG instead — `current_user.nodes`, which every
+  # backend populates identically — the same question `Sync::Trash.parent_deleted?` answers
+  # server-side: is the tombstoned node's own parent ALSO gone? That is correct regardless of
+  # which backend, or which of the two conditions, actually raised.
+  rescue_from FileLayer::UnsupportedOperation do
+    redirect_to trash_index_path, alert: restore_refusal_message
   end
 
   # NOT the alert above, and the distinction is the port's most consequential one: an unmounted
@@ -72,10 +92,33 @@ class TrashController < ApplicationController
   # port can drive.
   #
   # THE PORT ANSWERS A FileInfo ON EVERY BACKEND, so the flash reads one field regardless of which
-  # adapter served it. `to_root: true` and its consequences — an orphan revives at the root,
-  # restore order is not commutative — live in Chunk#undelete's own comment now, not here.
+  # adapter served it. An orphaned restore — its own folder tombstoned by the same cascading
+  # delete — no longer reaches this line at all: it raises UnsupportedOperation instead, rescued
+  # above. That reversal, and why, live in Chunk#undelete's own comment (the sync-engine gem) and
+  # CLAUDE.md 14a, not here.
   def restore
     info = FileLayer.current.undelete(current_user, node_id: params[:id])
     redirect_to files_path, notice: "Restored #{info.name}."
+  end
+
+  private
+
+  # THE ONE THING THAT MAKES restore_refusal_message HONEST RATHER THAN A GUESS: it does not
+  # infer the orphan condition from e.message (see the rescue_from comment above for why that
+  # would be fragile), it RE-DERIVES it from this app's own catalog, mirroring
+  # Sync::Trash.parent_deleted? exactly — a blank parent_node_id means root-level, never an
+  # orphan; otherwise the parent must be MISSING or ITSELF tombstoned. Anything else (an unknown
+  # node, a live parent — the occupied-destination clobber lands here) falls through to the same
+  # flattened message every other UnsupportedOperation has always gotten, because naming a folder
+  # would be actively wrong advice for that case.
+  def restore_refusal_message
+    node = current_user.nodes.find_by(node_id: params[:id])
+    return "Couldn't restore that item." if node&.parent_node_id.blank?
+
+    parent = current_user.nodes.find_by(node_id: node.parent_node_id)
+    return "Couldn't restore that item." unless parent.nil? || parent.deleted
+
+    "That file's folder was deleted too. Restore #{parent ? parent.name.inspect : "the folder"} " \
+      "first, and its contents come back with it."
   end
 end

@@ -427,7 +427,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   because the maker layer branched around the port (§14d used to count five `port_writable?`
   copies for exactly this). It no longer can: in remote chunk mode there is no `Sync::*` in the
   process to branch into. So `mkdir`/`move` → `Sync::Mutation.apply`, `undelete` →
-  `Sync::Trash.restore(to_root: true)`, and `delete` → **`Sync::SubtreeDelete.call`** — **never**
+  `Sync::Trash.restore` (no longer forcing `to_root: true` — see below), and
+  `delete` → **`Sync::SubtreeDelete.call`** — **never**
   `Sync::Mutation.apply(op: "delete")`, which tombstones only the node it is handed and
   **orphans every descendant**. That trap is the one thing this bullet always existed to protect
   and it survives verbatim. **`write` still refuses, and must**: it takes an IO, and a
@@ -456,14 +457,39 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
   working nudge, not a silent gap.
-- **Chunk's `undelete` restores an orphan to the ROOT, and restore order is NOT commutative** —
-  `Sync::Trash.restore(to_root: true)` NULLS `parent_node_id` when the parent is itself
-  tombstoned. Since `delete` now cascades a directory in one call (`Sync::SubtreeDelete`),
-  restoring a CHILD before its PARENT is the mainline case, not a hand-crafted edge case: one
-  folder delete tombstones every descendant, and a bottom-up restore permanently scatters that
-  folder's contents to the root — restoring the parent afterward does not reunite them, because
-  the child's `parent_node_id` is already nil. Not fixed: top-down restore already preserves
-  structure, and ordering restores is a caller's job, not this adapter's.
+- **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSES
+  THE RULE THAT USED TO STAND HERE.** The old rule: `Sync::Trash.restore(to_root: true)` NULLs
+  `parent_node_id` when the parent is itself tombstoned, reparenting an orphan to the library ROOT
+  rather than raising, with restoring the folder afterward left to reunite nothing because the
+  child's pointer was already gone. **This bullet's own evidence is what overturned it.** It said,
+  in the same breath: since `delete` cascades a whole directory in one call
+  (`Sync::SubtreeDelete`), restoring a CHILD before its PARENT is the MAINLINE case, not a
+  hand-crafted edge case — one folder delete tombstones every descendant — and a bottom-up restore
+  "permanently scatters that folder's contents to the root, irreversibly," which it then declined
+  to fix ("ordering restores is a caller's job, not this adapter's"). An outcome that silent, on
+  that common a path, and that irreversible is worth refusing even though refusing is less
+  convenient than succeeding: **a refusal is recoverable — restore the folder, then the file; a
+  scatter is not.**
+  `FileLayer::Chunk#undelete` no longer passes `to_root: true` — the call now takes
+  `Sync::Trash.restore`'s own default (`to_root: false`), which raises `Sync::Trash::ParentDeleted`
+  for an orphan, mapped to `UnsupportedOperation` with a message naming the ACTION a user can take
+  ("restore the folder first"), not just the failure. `FileLayer::ChunkRemote` already answered
+  this way — it posts no `to_root` in its restore body and takes the standalone server's own
+  strict default, so the server's 409 was already reaching `Transport#interpret` as this same
+  exception class before chunk changed. Chunk is CONVERGING on chunk_remote's answer, not adopting
+  a third rule; a real journey suite run against a standalone server is what caught the two
+  adapters disagreeing in the first place (§15: probe over argument, again). Pinned across all
+  four backends by the shared mutation contract
+  (`test/services/file_layer/adapter_mutation_contract.rb`), gated on `dir_deletable?`: share and
+  s3 cannot reach this state through the port AT ALL — directory delete is refused outright on
+  both, so there is no door that ever produces a live child under a tombstoned parent for them to
+  disagree about.
+  **`Sync::V1::TrashController`** — the sync engine's own DEVICE-facing API, not this repo's web
+  `TrashController` — keeps a direct `Sync::Trash.restore` call with a **caller-supplied**
+  `to_root:`, deliberately, and that is not an oversight to "fix" into agreement: a device client
+  can ask for the strict 409 and prompt its own UI, where a browser Restore click has no such
+  prompt and this app's web `TrashController` chooses the refusal on the user's behalf instead —
+  see its own comment for the actionable message that refusal now carries.
 - **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
   `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
   sharing one `(parent, name)` where share and s3 both refuse that clobber in their own

@@ -35,9 +35,15 @@
 #   - WHERE THE BYTES GO. Share's `.trash/<node_id>/<name>` layout is share's own test; s3 trashes
 #     by key prefix; chunk moves no bytes. Encoding one backend's storage layout in a shared
 #     contract is the leak the port exists to prevent.
-#   - `undelete`'s DESTINATION FOR AN ORPHAN. Share restores under the (tombstoned) parent's path,
-#     which still exists on a filesystem; chunk restores to the ROOT, because a tombstoned parent
-#     has no path to restore under. Both are right for their backend.
+#   - `undelete`'s DESTINATION FOR AN ORPHAN is NOT on this list any more either. It used to read
+#     "Share restores under the (tombstoned) parent's path... chunk restores to the ROOT... Both
+#     are right for their backend" -- that divergence is now CLOSED: an orphaned restore is
+#     REFUSED on every backend that can reach the state at all, rather than answered differently
+#     per adapter (CLAUDE.md 14a has the full argument for why the old rule was overturned by its
+#     own recorded evidence). Pinned below, gated on `dir_deletable?` for the same reason the
+#     delete-refusal test further down is: a cascading directory delete is the only PORT door that
+#     ever produces a live child under a tombstoned parent, and share/s3 have no such door at all
+#     -- see test_mutation_contract_undelete_refuses_an_orphan_whose_parent_is_still_tombstoned.
 #   - A MOVE ONTO A TAKEN NAME is NOT on this list any more -- Task 4 closed it. All three
 #     backends now refuse it identically through the port (UnsupportedOperation), pinned below
 #     rather than left to each adapter's own suite -- see
@@ -152,6 +158,44 @@ module FileLayerMutationContract
 
     assert_not @user.nodes.find_by!(node_id:).deleted
     assert_equal "restored", adapter.read(@user, node_id:)
+  end
+
+  # AN ORPHANED RESTORE MUST ANSWER THE SAME WAY ON EVERY BACKEND THAT CAN REACH THE STATE AT
+  # ALL -- CLAUDE.md 14a's rule, and its own reversal. This used to be a documented, PERMITTED
+  # divergence (see this file's header, before it was rewritten): chunk reparented the orphan to
+  # the library root, chunk_remote's server refused with a 409. A real journey suite against a
+  # standalone sync server is what caught the two disagreeing (§15: probe over argument, not for
+  # the first time). Both now refuse: an outcome that is silent, reached on the MAINLINE path (one
+  # cascading directory delete orphans every descendant), and irreversible once taken, is worth
+  # refusing even though refusing is less convenient than reparenting to the root -- a refusal is
+  # recoverable (restore the folder, then the file); a scatter is not.
+  #
+  # GATED ON `dir_deletable?`, matching the delete-refusal test below and for the identical
+  # reason: a cascading directory delete is the only PORT door that ever tombstones a parent out
+  # from under a still-referenced live child. On chunk and chunk_remote, dir_deletable? is true
+  # and `adapter.delete(dir)` cascades (Sync::SubtreeDelete, or the standalone server's own
+  # cascade behind the wire). On share and s3, dir_deletable? is false -- `adapter.delete` on a
+  # directory is refused outright, so there is no PORT-reachable door that ever produces this
+  # state, and the scenario is structurally UNREACHABLE there rather than merely untested. (Share's
+  # own `undelete` has a related but SEPARATE hazard when a directory disappears via a SCAN
+  # tombstone rather than a trash one -- a scan tombstone keeps `storage_path`, so `undelete` can
+  # silently reconstruct the folder on disk under a still-dead parent NODE. That is a different
+  # mechanism from the one closed here and is not pinned by this test.)
+  def test_mutation_contract_undelete_refuses_an_orphan_whose_parent_is_still_tombstoned
+    skip "dir_deletable? is false -- no port door ever orphans a child on this backend" unless
+      adapter.capabilities.dir_deletable?
+
+    dir_id = make_dir(name: "orphan-parent")
+    child_id = make_file(name: "kid.stl", bytes: "b")
+    adapter.move(@user, node_id: child_id, new_parent_node_id: dir_id, new_name: "kid.stl")
+
+    adapter.delete(@user, node_id: dir_id) # cascades -- dir AND child are now tombstoned
+
+    assert_raises(FileLayer::UnsupportedOperation) do
+      adapter.undelete(@user, node_id: child_id)
+    end
+    assert @user.nodes.find_by!(node_id: child_id).deleted,
+           "a refused restore must not half-apply"
   end
 
   # The capability from Task 1, asserted as a CONDITIONAL rather than a fixed expectation, because

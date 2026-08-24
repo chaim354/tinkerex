@@ -140,8 +140,8 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert_includes response.body, name
 
     post restore_trash_path(node_id)
-    # TrashController's failure arms redirect to trash_index_path with an alert (:40, :46) while
-    # success goes to files_path with a notice (:79), so the destination alone would discriminate
+    # TrashController's failure arms redirect to trash_index_path with an alert (:36, :59) while
+    # success goes to files_path with a notice (:99), so the destination alone would discriminate
     # here -- the alert check is kept anyway so every redirect in this file reads the same way.
     assert_redirected_to files_path
     assert_nil flash[:alert], "restore was refused: #{flash[:alert]}"
@@ -205,32 +205,34 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                "folder/subfolder/file.stl, which is exactly §14a's recorded trap"
   end
 
-  # GAP (d), CONFIRMED, NOT ASSUMED. §14a: "chunk's undelete restores an orphan to the ROOT, and
-  # restore order is NOT commutative -- Sync::Trash.restore(to_root: true) NULLs parent_node_id
-  # when the parent is itself tombstoned... restoring a CHILD before its PARENT... permanently
-  # scatters that folder's contents to the root." That is true of the EMBEDDED chunk adapter only,
-  # and the reason is a PARAMETER, not a difference in the underlying restore logic: the one shared
-  # implementation, `Sync::Trash.restore(user:, node_id:, to_root: false)`, defaults `to_root` to
-  # FALSE (tinkerex-sync's app/services/sync/trash.rb:30). `FileLayer::Chunk#undelete` is the one
-  # caller that overrides it -- `to_root: true`, unconditionally (tinkerex-sync's
-  # app/services/file_layer/chunk.rb:497) -- because it runs in-process and is free to choose. The
-  # STANDALONE server's own endpoint, `Sync::V1::TrashController#restore`, reads `to_root` from the
-  # REQUEST instead of hardcoding it (`params[:to_root]`, defaulting false), and
-  # `FileLayer::ChunkRemote#undelete` posts an EMPTY body (chunk_remote.rb:206:
-  # `transport.post("/v1/trash/#{node_id}/restore", {})`) -- it never sends `to_root: true`. So on
-  # chunk_remote the parent-still-tombstoned case hits the server's default, raises
-  # `Sync::Trash::ParentDeleted`, and is rendered `409 {error: "parent_deleted"}`;
-  # `Transport#interpret` maps 409 to `FileLayer::UnsupportedOperation` (transport.rb:104); this
-  # app's `TrashController` rescue_from redirects to `trash_index_path` with alert "Couldn't
-  # restore that item." (trash_controller.rb:40) instead of to `files_path` with the restore having
-  # happened. THE RESTORE IS REFUSED, NOT SILENTLY SCATTERED -- a real divergence from §14a, and
-  # arguably a safer failure mode than the one it documents (nothing is silently reorganized), but
-  # it is not what §14a promises, and a caller written against that promise gets an unexplained 409
-  # instead. Arc B's fix is a `to_root:` argument on the port's `undelete` verb, threaded through to
-  # this POST's body. The assertions below are UNCHANGED from what §14a says SHOULD happen -- not
-  # adjusted to match what was found, per this task's own rule, so the test fails at the first one
-  # that diverges (the redirect target) rather than reaching the parent_node_id check at all.
-  test "restoring a child before its parent restores it to the root, per §14a's restore-order trap" do
+  # GAP (d), CLOSED -- AND THIS TEST'S OWN ASSERTIONS ARE WHAT CHANGE, PER THE ONE EXCEPTION THIS
+  # ARC'S RULES CARVE OUT FOR THEMSELVES. §14a used to document: "chunk's undelete restores an
+  # orphan to the ROOT, and restore order is NOT commutative -- Sync::Trash.restore(to_root: true)
+  # NULLs parent_node_id when the parent is itself tombstoned... restoring a CHILD before its
+  # PARENT... permanently scatters that folder's contents to the root." That was true of the
+  # EMBEDDED chunk adapter only, and the reason was a PARAMETER, not a difference in the underlying
+  # restore logic: the one shared implementation, `Sync::Trash.restore(user:, node_id:, to_root:
+  # false)`, defaults `to_root` to FALSE (tinkerex-sync's app/services/sync/trash.rb).
+  # `FileLayer::Chunk#undelete` was the one caller overriding it -- `to_root: true`,
+  # unconditionally -- because it ran in-process and was free to choose, while
+  # `FileLayer::ChunkRemote#undelete` posts an EMPTY body (chunk_remote.rb:
+  # `transport.post("/v1/trash/#{node_id}/restore", {})`) and never sent `to_root: true`. So on
+  # chunk_remote the parent-still-tombstoned case always hit the server's strict default, raised
+  # `Sync::Trash::ParentDeleted`, and came back `409 {error: "parent_deleted"}` -- REFUSED, not
+  # scattered. Running THIS test against a real standalone server is what surfaced that the two
+  # adapters disagreed; a conformance corpus in `tinkerex-sync` now pins both arms of the server's
+  # own behaviour (`to_root` true and false), and this repo's job was only ever to pick one.
+  #
+  # THE DECISION, ONCE THE DIVERGENCE SURFACED: converge on the SAFER answer, not the DOCUMENTED
+  # one. `Chunk#undelete` no longer passes `to_root: true`, so chunk now refuses too -- see
+  # CLAUDE.md 14a for the full argument (the old bullet's own evidence, that a bottom-up restore is
+  # the mainline case since a cascading delete and permanently unrecoverable once taken, is what
+  # overturned the bullet itself). That makes the assertions this test used to pin -- a silent
+  # scatter to the root -- describe behaviour the code no longer has, which is exactly what this
+  # file's own header and Arc B's worklist forbid changing a test to paper over. This is the
+  # DECLARED exception: the assertions below are REWRITTEN, not relaxed, to pin the refusal and the
+  # recoverable path around it (restore the folder, then the child) in place of the scatter.
+  test "restoring a child before its tombstoned parent is refused, per §14a's reversed rule" do
     skip_unless_remote_server
     user = sign_in
     folder = "#{journey_prefix}-restore-order"
@@ -250,17 +252,43 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert_not user.nodes.present.exists?(node_id: child),
                "the cascade should have tombstoned the child along with the folder"
 
-    # THE CHILD, FIRST -- WHILE THE PARENT FOLDER IS STILL TOMBSTONED. The parent is deliberately
-    # never restored in this test; that is the whole point of the ordering.
+    # THE CHILD, FIRST -- WHILE THE PARENT FOLDER IS STILL TOMBSTONED. This used to succeed and
+    # scatter the child to the root; it is now REFUSED. TrashController's UnsupportedOperation
+    # rescue redirects to trash_index_path (never files_path -- that is success's own redirect)
+    # with an alert that names the action, not just the failure.
+    post restore_trash_path(child)
+    assert_redirected_to trash_index_path
+    assert_match(/folder/i, flash[:alert],
+                 "the refusal must tell the user to restore the folder, not merely that it failed " \
+                 "-- got #{flash[:alert].inspect}")
+    assert_not user.nodes.present.exists?(node_id: child),
+               "a refused restore must not half-apply -- the child stays tombstoned"
+
+    # FOLLOW THE REDIRECT, THE WAY A BROWSER WOULD -- and not merely for realism. Flash is
+    # designed to survive exactly ONE further request so the page it redirects to can display it;
+    # chaining the next POST directly (as this test used to) leaves that alert un-consumed, and it
+    # would still read back non-nil after the FOLDER restore below even though that response never
+    # set it -- a false failure this test hit once, about the test's own flash bookkeeping rather
+    # than about anything TrashController does.
+    get trash_index_path
+    assert_response :success
+
+    # THE FOLDER, THEN THE CHILD -- THE ONLY ORDER THAT NOW SUCCEEDS AT ALL. Restoring the parent
+    # first used to be merely the order that happened to preserve structure; the other order is
+    # refused outright now, so this is the only path back to a live child.
+    post restore_trash_path(folder_node.node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "restoring the folder was refused: #{flash[:alert]}"
+
     post restore_trash_path(child)
     assert_redirected_to files_path
-    assert_nil flash[:alert], "restoring the child was refused: #{flash[:alert]}"
+    assert_nil flash[:alert],
+               "restoring the child was refused even once its folder was back: #{flash[:alert]}"
 
     restored_child = user.nodes.present.find_by!(node_id: child)
-    assert_nil restored_child.parent_node_id,
-               "§14a: restoring a child before its still-tombstoned parent should scatter it to " \
-               "the library ROOT (parent_node_id nil), never silently reunite it with a parent " \
-               "that is not live -- got parent_node_id=#{restored_child.parent_node_id.inspect}"
+    assert_equal folder_node.node_id, restored_child.parent_node_id,
+                 "parent-first restore must reunite the child with its actual folder, never " \
+                 "scatter it to the root -- got parent_node_id=#{restored_child.parent_node_id.inspect}"
   end
 
   # GAP (a), RE-SCOPED 2026-08-24. The original version of this test asserted that a bare
