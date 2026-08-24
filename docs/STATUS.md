@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-24 (**Stage 5 Arc A+B: chunk_remote closes 10/10 — `test-chunk-remote` is a real `bin/ci` gate**)
+**Updated:** 2026-08-24 (**Stage 5 Arc A+B: chunk_remote closes 10/10 — `test-chunk-remote` is a real `bin/ci` gate; deployed to all three Unraid backends**)
 
 ## What this file is
 
@@ -71,7 +71,44 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-24): Stage 5 Arc A+B — chunk_remote closes 10/10; `test-chunk-remote` becomes a real `bin/ci` gate (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`)
+## Latest (2026-08-24): Stage 5 Arc A+B — chunk_remote closes 10/10; `test-chunk-remote` becomes a real `bin/ci` gate — **MERGED + DEPLOYED** (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`)
+
+### Deployed to the three Unraid backends, 2026-08-24
+
+`ghcr.io/chaim354/tinkerex:98f078de5bcb`, built once and rolled to all three. The box had been on
+`8b45e3c` for 44 hours, so this shipped Arc A and Arc B together. **OVH untouched** — a bare
+"deploy" is Unraid only (§7).
+
+| backend | container | `/up` (`.local` / `.home`) |
+|---|---|---|
+| chunk | `tinkerex-web-98f078de…` | 200 / 200 |
+| share | `tinkerex-web-share-98f078de…` | 200 / 200 |
+| s3 | `tinkerex-web-s3-98f078de…` | 200 / 200 |
+
+**THE USER-VISIBLE CHANGE ON THE CHUNK BOX IS THE ORPHAN-RESTORE REFUSAL.** Restoring a file whose
+folder was also deleted now answers *"That file's folder was deleted too. Restore the folder first
+and its contents come back with it."* instead of silently dropping that file at the library root.
+Intended — the scatter was irreversible and the refusal is not (§14a) — but it is a behaviour
+change on a live library, not an internal one.
+
+**Verified by EXERCISING it on the box, not by reading the file.** Through the port, in the running
+container, inside a rolled-back transaction: mkdir a folder, mkdir a child inside it, `delete` the
+folder (watching the cascade tombstone the child), then `undelete` the child — which returned
+`FileLayer::UnsupportedOperation` with that message. `probe users left behind: 0`.
+
+**Two checks that would have lied, recorded because the obvious one was the wrong one:**
+
+- **A whole-file grep for `to_root: true` in the deployed gem returned TRUE** — matching the
+  rewritten comment that *quotes the old behaviour it reversed*. A grep cannot tell code from prose
+  about code. Reading the `undelete` method body with comment lines stripped is what actually
+  showed `Sync::Trash.restore(user:, node_id:)` and the `rescue Sync::Trash::ParentDeleted` arm.
+- **Reading the source in the image is the FLOOR, not the proof.** It shows a file was copied; it
+  does not show that the process loaded it. Only triggering the refusal settles that — which is
+  why the probe exists and why the first probe attempt failing on a wrong
+  `Sync::Mutation.apply` signature was worth redoing through the port rather than talking around.
+
+`chunk_remote` ships in this image but is selected by no deployment — the three boxes still run
+chunk, share and s3. Standing a remote sync server up is Stage 5 Arc D, not started.
 
 **Plan:** `docs/superpowers/plans/2026-08-23-arc-a-chunk-remote-proof.md` (Arc A) and
 `docs/superpowers/plans/2026-08-24-arc-b-close-the-four-gaps.md` (Arc B, Tasks 1–5). **Design:**
