@@ -298,8 +298,15 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 ```sh
 # ALL local gates, one command (this is what CI runs, by name):
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
-                       # 7 gates. The sync engine's own suite is NOT one of them any more -- it
-                       # runs in chaim354/tinkerex-sync, which this repo consumes as a git gem.
+                       # 9 gates (8 run under CI -- `setup` is local-only, bin/ci --list-ci). The
+                       # sync engine's own suite is NOT one of them any more -- it runs in
+                       # chaim354/tinkerex-sync, which this repo consumes as a git gem.
+# ONE gate needs a DIFFERENT sibling checkout, not that gem: `test-chunk-remote` drives the maker
+# app against a real chaim354/tinkerex-sync HOST app (a standalone Rails server, not the engine).
+# It boots that server itself via bin/sync-server, which needs ../tinkerex-sync checked out as a
+# sibling (same convention as tinkerex-client below) -- a missing checkout fails loudly and names
+# the clone command, it does not fall through to a confusing connection error:
+#   gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
 # WORKING ON THE SYNC ENGINE: clone it and test it there; there is nothing to edit in this repo.
 #   gh repo clone chaim354/tinkerex-sync && cd tinkerex-sync && bundle install && bundle exec rake test
@@ -427,7 +434,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   because the maker layer branched around the port (§14d used to count five `port_writable?`
   copies for exactly this). It no longer can: in remote chunk mode there is no `Sync::*` in the
   process to branch into. So `mkdir`/`move` → `Sync::Mutation.apply`, `undelete` →
-  `Sync::Trash.restore(to_root: true)`, and `delete` → **`Sync::SubtreeDelete.call`** — **never**
+  `Sync::Trash.restore` (no longer forcing `to_root: true` — see below), and
+  `delete` → **`Sync::SubtreeDelete.call`** — **never**
   `Sync::Mutation.apply(op: "delete")`, which tombstones only the node it is handed and
   **orphans every descendant**. That trap is the one thing this bullet always existed to protect
   and it survives verbatim. **`write` still refuses, and must**: it takes an IO, and a
@@ -442,13 +450,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `port_writable?` once chunk started answering `delete`, which made one call have two answers —
   the shape §14a forbids. Agreement across three backends is three samples, not an identity —
   the same coincidence `scannable` was added to stop encoding twice (`is_a?(Share)`).
-- **`begin_upload`/`finalize_upload` are port verbs, and NEITHER is the byte-taking `write`
-  above.** The port never holds a byte: `begin_upload` returns presigned PUT URLs for whichever
-  chunks the store is missing, the caller PUTs straight to object storage — except
-  `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to presign
-  for, so it calls `Storage::ChunkStore#put` directly instead (the one sanctioned
-  chunk-internals call outside this class, §14c) — and `finalize_upload` records the version.
-  That is what keeps §15 true for a chunk-mode upload.
+- **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
+  byte-taking `write` above.** The port never holds a byte: `begin_upload` returns presigned PUT
+  URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
+  except `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to
+  presign for, so it calls the port's own `put_chunk` instead, and `finalize_upload` records the
+  version. That is what keeps §15 true for a chunk-mode upload. **`put_chunk` is a port verb,
+  implemented differently per adapter, rather than one shared call** — until Arc B (2026-08-23) it
+  *was* one shared call, `Storage::ChunkStore#put`, dialed directly from `LibraryOutput` (then
+  §14c's one sanctioned chunk-internals exception), and that direct call was a `NameError` on any
+  deployment that does not load the sync engine in-process — `chunk_remote` is exactly that
+  deployment, and every addon save there raised, measured against a live standalone server. The
+  fix could not be one shared implementation: `FileLayer::Chunk#put_chunk` writes the embedded
+  store IN-PROCESS, but `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over
+  HTTP, because on embedded chunk a presigned URL for the memory/local store can point BACK AT
+  RAILS ITSELF (no off-box store to presign to locally) — a server-side PUT to it would be a
+  LOOPBACK call into the same Puma pool, §14e's recorded reentrancy bug (14–24 second stalls,
+  outright 404s). Only the adapter knows which situation it is in, so the caller cannot decide,
+  which is why this had to become a port verb instead of a helper either adapter could call. The
+  maker layer now names **zero** chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
   always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
@@ -456,14 +476,85 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
   working nudge, not a silent gap.
-- **Chunk's `undelete` restores an orphan to the ROOT, and restore order is NOT commutative** —
-  `Sync::Trash.restore(to_root: true)` NULLS `parent_node_id` when the parent is itself
-  tombstoned. Since `delete` now cascades a directory in one call (`Sync::SubtreeDelete`),
-  restoring a CHILD before its PARENT is the mainline case, not a hand-crafted edge case: one
-  folder delete tombstones every descendant, and a bottom-up restore permanently scatters that
-  folder's contents to the root — restoring the parent afterward does not reunite them, because
-  the child's `parent_node_id` is already nil. Not fixed: top-down restore already preserves
-  structure, and ordering restores is a caller's job, not this adapter's.
+- **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSES
+  THE RULE THAT USED TO STAND HERE.** The old rule: `Sync::Trash.restore(to_root: true)` NULLs
+  `parent_node_id` when the parent is itself tombstoned, reparenting an orphan to the library ROOT
+  rather than raising, with restoring the folder afterward left to reunite nothing because the
+  child's pointer was already gone. **This bullet's own evidence is what overturned it.** It said,
+  in the same breath: since `delete` cascades a whole directory in one call
+  (`Sync::SubtreeDelete`), restoring a CHILD before its PARENT is the MAINLINE case, not a
+  hand-crafted edge case — one folder delete tombstones every descendant — and a bottom-up restore
+  "permanently scatters that folder's contents to the root, irreversibly," which it then declined
+  to fix ("ordering restores is a caller's job, not this adapter's"). An outcome that silent, on
+  that common a path, and that irreversible is worth refusing even though refusing is less
+  convenient than succeeding: **a refusal is recoverable — restore the folder, then the file; a
+  scatter is not.**
+  `FileLayer::Chunk#undelete` no longer passes `to_root: true` — the call now takes
+  `Sync::Trash.restore`'s own default (`to_root: false`), which raises `Sync::Trash::ParentDeleted`
+  for an orphan, mapped to `UnsupportedOperation` with a message naming the ACTION a user can take
+  ("restore the folder first"), not just the failure. `FileLayer::ChunkRemote` already answered
+  this way — it posts no `to_root` in its restore body and takes the standalone server's own
+  strict default, so the server's 409 was already reaching `Transport#interpret` as this same
+  exception class before chunk changed. Chunk is CONVERGING on chunk_remote's answer, not adopting
+  a third rule; a real journey suite run against a standalone server is what caught the two
+  adapters disagreeing in the first place (§15: probe over argument, again). Pinned across all
+  four backends by the shared mutation contract
+  (`test/services/file_layer/adapter_mutation_contract.rb`), gated on `dir_deletable?`: share and
+  s3 cannot reach this state through the port AT ALL — directory delete is refused outright on
+  both, so there is no door that ever produces a live child under a tombstoned parent for them to
+  disagree about.
+  **`Sync::V1::TrashController`** — the sync engine's own DEVICE-facing API, not this repo's web
+  `TrashController` — keeps a direct `Sync::Trash.restore` call with a **caller-supplied**
+  `to_root:`, deliberately, and that is not an oversight to "fix" into agreement: a device client
+  can ask for the strict 409 and prompt its own UI, where a browser Restore click has no such
+  prompt and this app's web `TrashController` chooses the refusal on the user's behalf instead —
+  see its own comment for the actionable message that refusal now carries.
+- **THE LOCAL MIRROR IS DELIBERATELY STALE BETWEEN PULLS, AND ONLY THE RECURRING JOB MAY CLOSE
+  THAT GAP — NEVER A READ PATH.** `FileLayer::ChunkRemote#refresh!` has five TRIGGERING
+  operations, all this app's own writes — `mkdir`/`move`/`delete`/`undelete`/`finalize_upload`
+  (chunk_remote.rb) — and `ChangelogSync`'s only OTHER caller anywhere in `app/`, `lib/` or
+  `config/` is the job named below. A node another device, or the sync server itself, creates is
+  invisible to the maker UI until one of those five fires — confirmed by driving it: a node posted
+  straight to the server's own `/v1/nodes` stayed absent from `user.nodes.present` (checked
+  directly, not merely rendered) with nothing else touched; only after
+  `FileLayer::RemoteChangelogPullJob.perform_now` runs does a subsequent `GET /files` show it.
+  `FileLayer::RemoteChangelogPullJob` (Arc B gap (a)) is the sanctioned freshness
+  mechanism: a per-user recurring pull, `config/recurring.yml`'s `remote_changelog_pull` entry,
+  every 2 minutes, gated to `chunk_remote` ONLY — `.pull_all!`'s
+  `FileLayer.current.is_a?(FileLayer::ChunkRemote)` check, a CLASS check rather than a new
+  `Capabilities` member, because `syncable` is true for chunk AND chunk_remote alike and cannot
+  tell "this app's `nodes` table is a mirror of a REMOTE changelog" from "chunk shares this app's
+  own database with the engine in-process." **Do not "fix" staleness by adding a synchronous pull
+  to `FilesController#index` or any other read** — that is precisely the WAN-in-the-metadata-path
+  §2 exists to forbid, made on every request rather than once every 2 minutes, and it is what the
+  journey suite's own rewritten test now pins against (a plain read asserted NOT to see a
+  server-side node) rather than for. Bounded staleness (~2 minutes) is the trade, the same one
+  `Library::ScanJob`'s poll already makes for share/s3.
+- **`LibraryBroadcast.batch` HAS THREE ANSWERS NOW, NOT TWO, AND THE SPLIT IS "IS THERE A
+  CHANGELOG TO COALESCE AGAINST", NOT "IS THE ENGINE LOADED."** Engine present (chunk) delegates
+  to `Sync::LibraryChannel.batch`, unchanged. Engine absent used to be a bare `yield`
+  unconditionally — right for share/s3 (no changelog at all, nothing to coalesce, so `yield` is
+  the SAME behaviour with the bookkeeping removed, not a degraded one) but wrong for
+  `chunk_remote`, which has no engine in-process yet DOES have a changelog, reached over HTTP:
+  left alone, an eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation on top of
+  the mutation's own request — a batch of 3 moves cost 3 pulls, measured, two WAN round trips per
+  file. `FileLayer::ChunkRemote#batch` (Arc B gap (c)) is that backend's own coalescing: a
+  `Thread.current` frame, DELIBERATELY never an ivar on `self` — `FileLayer.current` memoizes ONE
+  adapter instance for the whole process, shared across every Puma thread, so per-batch state
+  living on the object would let one request's batch leak into a concurrent request's unrelated
+  mutation. `#move` alone dirties it, through a new `#refresh_or_defer!` that marks the open batch
+  dirty instead of pulling; the batch's own `ensure` block pulls exactly once, on ANY exit, not
+  only success, because every move that ran before an exception has already committed on the
+  SERVER. **`mkdir` is DELIBERATELY NOT deferred, and must not be made "uniform" with `move`** —
+  `Maker::LibraryFolder#ensure_segment` reads the mirror row back in the SAME call that creates
+  it, right after `mkdir` returns, so deferring that pull would turn an ordinary new category
+  folder — created mid-sweep the first time a project sees it — into an
+  `ActiveRecord::RecordNotFound`. `delete`/`undelete`/`finalize_upload` keep their unconditional
+  `refresh!` for the identical reason: each hands a caller a state read from the very row the pull
+  just created or updated. `move` alone has no such reader — `Maker::MoveNode#apply_move`'s own
+  comment says outright that the RELOAD is the return value, never trusting what `move` hands
+  back — which is what makes deferring safe there and only there; a future editor "simplifying"
+  the deferral onto all five verbs reintroduces a crash on the very first folder a sweep creates.
 - **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
   `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
   sharing one `(parent, name)` where share and s3 both refuse that clobber in their own
@@ -819,9 +910,9 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   written were **left in place** (ordinary library files a user may have renamed or attached;
   a migration must not delete user bytes).
 - **`Maker::Addons::LibraryOutput` is the ONE output path**, backend-neutral on
-  `port_writable?`. It is also the **one legitimate direct `Storage::ChunkStore` call in the
-  maker layer** (addon output has no client to presign for). So the phase-1 decoupling proof
-  is *"one hit, and it is `library_output.rb`"*, **not** "no hits":
+  `port_writable?`. It reaches chunk-family storage entirely through port verbs now —
+  `begin_upload`/`put_chunk`/`finalize_upload` — so the phase-1 decoupling proof is **"no hits, full
+  stop"**:
   `grep -rn "manifest_chunks\|ChunkStore" $(find app -type d -name maker) --include='*.rb' | grep -v ':[0-9]*: *#'`
   The `grep -v` is load-bearing, not noise — without it the check reports comments that
   *describe* the removed coupling. **A proof that cries wolf gets ignored.** So is the `find`:
@@ -829,11 +920,16 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   not honour `**`** — spelling the set out named `services`/`models`/`jobs` and silently skipped
   `app/controllers/v1/maker` (14 files) and `app/models/concerns/maker` (1).
   **`test/architecture_invariants_test.rb` now RUNS this and DERIVES the directory set from the
-  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting both the count *and* the
-  file — so the claim can no longer drift the way it did before (it read "no hits" for months
-  after the addon framework made the true answer one), and a NEW `app/<x>/maker/` is covered the
-  day it is created. Change the code and the test tells you; change the exception on purpose and
-  update the test and this bullet together.
+  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting the offending set is
+  *empty* — so the claim can no longer drift the way it did before: it read "no hits" for months
+  after the addon framework made the true answer one (`library_output.rb`'s own direct
+  `Storage::ChunkStore#put` call, the one sanctioned exception between the phase-1 decoupling and
+  Arc B), and it would have gone on reading "exactly one, and it is library_output.rb" indefinitely
+  had Arc B Task 2 not driven the count back to zero by giving `put_chunk` a port-verb
+  implementation on both `FileLayer::Chunk` and `FileLayer::ChunkRemote` (§14a). A NEW
+  `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
+  new direct exception ever becomes genuinely unavoidable, update the test and this bullet
+  together, deliberately.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
@@ -1257,6 +1353,14 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   would be one too many" no longer applies; there is no fourth left to count against.
   (Excluded on purpose: `require_capability!` gates and views that pick an upload FORM —
   those select a UI, which is `port_writable`'s stated job.)
+  **THIS COUNT IS NOT §14c's chunk-internals-reference count, and Arc B is exactly where the two
+  stopped agreeing** — both happened to read "one" from the addon framework's start until Arc B
+  Task 2, which is coincidence, not identity (the same warning this file gives repeatedly about
+  `scannable`/`port_writable`/`dir_deletable` agreeing on three backends). This one — how many
+  places branch on `port_writable?` to pick an upload flow — is still ONE, unchanged: `write_chunk`
+  still exists and is still the chunk-family half of that branch. What went to zero is the OTHER
+  count, one level down inside `write_chunk`: how many places call chunk-store internals directly.
+  `put_chunk` becoming a port verb removed that call without touching this branch at all.
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
 - **Controllers reach `Sync::` through exactly one door, `FileLayer::Chunk` — enforced by a
@@ -2072,7 +2176,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 ### 14j. The maker/sync boundary (Stages 3a and 3b)
 
 **And share/s3 stopped loading it on 2026-08-21.** The gem is `require: false`; `config/application.rb`
-requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **8 gates**, not 7.
+requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **9 gates**, not 8 — `test-chunk-remote`
+(Stage 5 Arc B, 2026-08-24) is the ninth; see §14a for what it drives.
 
 - **`SYNC_ENGINE` EXISTS SO BOTH PATHS ARE EXECUTED, NOT SO ONE CAN BE ARGUED.** The three backend
   legs set `SYNC_ENGINE=1` and keep the engine loaded even on share/s3, so all three still report
@@ -2345,8 +2450,11 @@ On a **`claude/*` or other non-default branch**, when the work is complete and t
 green, **commit, push, and open a PR — do not stop to ask.** That is standing authorization;
 treat it as the default close-out for a task, and use `/finish-branch` to run it.
 
-- **Green means bare `bin/ci`** (all gates: style, scan, test, test-share, test-s3, system).
-  The three test legs must report **identical** counts.
+- **Green means bare `bin/ci`** — every gate `bin/ci --list-ci` names (not a hand-copied list
+  here: one already went stale once by omitting `test-no-engine`, and a list is exactly the drift
+  this file's own §15 warns against elsewhere). **The three backend test legs** — `test`,
+  `test-share`, `test-s3`, NOT `test-no-engine` or `test-chunk-remote`, which are separate focused
+  suites by design (config/ci.rb's own comment on each) — **must report identical run counts.**
 - **Merging always needs an explicit go-ahead.** Never merge, never `--admin`-merge, never
   push to `main`.
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to

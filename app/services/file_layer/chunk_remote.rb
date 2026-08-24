@@ -167,6 +167,47 @@ module FileLayer
     # EVERY MUTATION PULLS AFTERWARDS rather than guessing at the new local state. The endpoints
     # answer `{seq:}`, not a node, and inventing the row we think we just made is how a mirror
     # drifts from its source -- one round trip is the honest price of the server being authoritative.
+    # `#move` is the one deliberate exception, and only from inside `#batch` -- see both for why.
+
+    # `#batch` IS LibraryBroadcast's `chunk_remote` ARM (app/services/library_broadcast.rb), reached
+    # whenever the engine is not loaded but FileLayer.current is this class. That file's own comment
+    # explains why share/s3 stay a bare `yield` (no changelog, nothing to coalesce) and why the
+    # argument stops there: this backend's changelog is real, just remote, so the per-call price
+    # `#refresh_or_defer!` pays on every `#move` is exactly the cost Sync::LibraryChannel.batch was
+    # written to coalesce for embedded chunk -- and per THAT class's own comment ("once the engine
+    # is remote... coalescing becomes the remote adapter's concern"), this is that adapter.
+    #
+    # THE SHAPE DELIBERATELY MIRRORS Sync::LibraryChannel.batch: a `Thread.current` frame, not an
+    # ivar on `self`. FileLayer.current memoizes ONE adapter instance for the whole process
+    # (`FileLayer.current ||= build`), shared across every Puma thread, so per-batch state living on
+    # this object would let one request's batch leak into a concurrent request's unrelated
+    # mutation. A batch re-entered by the SAME user JOINS the open one -- Maker::ProjectIntake.for_user
+    # wraps a loop over projects, and each project's own #call wraps its own file_all, both for the
+    # SAME user, and the inner one must contribute to the outer's single deferred pull rather than
+    # triggering one of its own. A DIFFERENT user's batch is not a shape this app produces, but is
+    # handled honestly anyway: it pushes its own frame and the first is restored on the way out,
+    # rather than being silently absorbed into it.
+    #
+    # THE PULL RUNS IN `ensure`, ON ANY EXIT, NOT ONLY THE HAPPY PATH. A deferral that only pulls
+    # when the block succeeds is worse than no deferral at all: every move that ran before an
+    # exception has already committed on the SERVER (each is its own request), so a batch that
+    # raises partway through leaves the mirror stale at precisely the moment something has gone
+    # wrong and a caller is most likely to read it next.
+    BATCH_KEY = :chunk_remote_refresh_batch
+
+    def batch(user)
+      outer = Thread.current[BATCH_KEY]
+      return yield if outer && outer[:user_id] == user.id
+
+      Thread.current[BATCH_KEY] = { user_id: user.id, dirty: false }
+      begin
+        yield
+      ensure
+        active = Thread.current[BATCH_KEY]
+        Thread.current[BATCH_KEY] = outer
+        refresh!(user) if active && active[:dirty]
+      end
+    end
 
     def mkdir(user, parent_node_id: nil, name: nil)
       existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "dir")
@@ -180,12 +221,31 @@ module FileLayer
       stat(user, node_id:)
     end
 
+    # THE ONE CALLER OF `#refresh_or_defer!` -- DELIBERATELY NOT `mkdir`/`delete`/`undelete`/
+    # `finalize_upload` TOO, which would be the more "uniform" reading of #batch's job. Those four
+    # all hand a caller state read back IMMEDIATELY, in the same call, from the very mirror row
+    # `#refresh!` is what creates or updates: `mkdir`'s only production caller,
+    # Maker::LibraryFolder#ensure_segment, does `info = mkdir(...); user.nodes.find_by!(node_id:
+    # info.node_id)` right after -- a query against a row that, for a freshly-created folder, exists
+    # NOWHERE ELSE until a pull applies it (RefreshAfterWriteTest's "mkdir returns state the server
+    # reported, which only a pull could have supplied" pins exactly this, with the local database
+    # starting empty). Deferring that pull would turn an ordinary new category folder, created
+    # mid-sweep the first time a project sees a category it has not filed before, into an
+    # ActiveRecord::RecordNotFound.
+    #
+    # `move` has no equivalent reader. Its return value is discarded by every caller today,
+    # including Maker::MoveNode#apply_move -- whose own comment says outright that the RELOAD is
+    # the return value: `node.reload` reads the local mirror directly rather than trusting what
+    # this method hands back, so a `stat` answering pre-move state while a batch is still open is a
+    # value nothing consumes, not a silent wrong answer something acts on. That is what makes
+    # deferring safe here and only here -- it is not merely "the call this arc's test happens to
+    # cover."
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       live_node!(user, node_id)
       destination_vacant!(user, new_parent_node_id, new_name, except_node_id: node_id)
       transport.post("/v1/nodes/#{node_id}/move",
                      { new_parent_node_id:, new_name: })
-      refresh!(user)
+      refresh_or_defer!(user)
       stat(user, node_id:)
     end
 
@@ -230,6 +290,43 @@ module FileLayer
 
       UploadBegun.new(commit_id: body["commit_id"], node_id:,
                       put_urls: body["put_urls"] || {}, missing: Array(body["missing"]))
+    end
+
+    # WRITES ONE CHUNK'S BYTES -- `FileLayer::Chunk#put_chunk`'s remote sibling, and the reason
+    # `#put_chunk` is a PORT VERB rather than a helper either caller could share. Arc B Task 2:
+    # before this existed, `Maker::Addons::LibraryOutput` called
+    # `Sync::Storage::ChunkStore.current.put` directly -- CLAUDE.md §14c's one sanctioned
+    # chunk-internals reference, and a `NameError` on any deployment (this one included) that does
+    # not load the sync engine. Every addon save on chunk_remote raised, measured against a live
+    # standalone server.
+    #
+    # THE TWO ADAPTERS CANNOT SHARE ONE IMPLEMENTATION, which is the whole argument for a port verb
+    # instead of a shared helper. On EMBEDDED chunk, a presigned URL for the memory or local store
+    # points BACK AT THIS SAME RAILS PROCESS (`DevBlobsController` -- there is no off-box store to
+    # presign to locally), so a server-side PUT to it would be a LOOPBACK call into the same Puma
+    # pool: CLAUDE.md §14e's recorded reentrancy bug, measured at 14-24 second stalls and outright
+    # 404s. That is why `FileLayer::Chunk#put_chunk` writes its store IN-PROCESS instead of PUTting
+    # to a URL of its own. On chunk_remote there is no in-process store to write -- the presigned
+    # URL always points at the STANDALONE sync server's object storage, never at this app -- so an
+    # ordinary outbound HTTP PUT is not merely safe here, it is the only way these bytes can move
+    # without this app becoming a relay for them (§15). Only the ADAPTER knows which situation it
+    # is in; the caller (`Maker::Addons::LibraryOutput`) must not have to.
+    #
+    # `begun:` is the SAME `UploadBegun` `#begin_upload` already returned to the caller -- this
+    # reads `put_urls`, the field `Chunk#put_chunk` has no use for (it reads `hash` straight
+    # against its own store instead). One signature across the port, each adapter reading the part
+    # it needs, matching how `device:`/`broadcast:` are accepted-and-unused on the arms that don't
+    # need them.
+    #
+    # `.fetch(hash)` is bare and UNRESCUED on purpose: `begin_upload`'s own contract
+    # (`FileLayer::UploadBegun`'s header) guarantees `put_urls` is keyed by exactly the entries in
+    # `missing`, and every production caller iterates `missing` to get `hash` in the first place
+    # (see `Maker::Addons::LibraryOutput#write_chunk`) -- so a miss here is a caller passing a hash
+    # that was never in `missing`, a LOCAL contract violation, not a wire condition to translate
+    # into the port's vocabulary the way `#fetch_chunk` (the download side) does for a hash the
+    # SERVER legitimately declined to presign.
+    def put_chunk(_user, begun:, hash:, bytes:)
+      @chunk_fetch.put(begun.put_urls.fetch(hash), bytes)
     end
 
     # `broadcast:` IS ACCEPTED AND UNUSED for the same reason `device:` is: the SERVER broadcasts to
@@ -284,6 +381,23 @@ module FileLayer
       raise NotFound, "chunk #{chunk.chunk_hash} could not be fetched" if bytes.nil?
 
       bytes
+    end
+
+    # `#move`'S OWN DEFERRAL CHECK, KEPT OUT OF `#refresh!` ITSELF SO `#refresh!` STAYS THE ONE
+    # THING EVERY OTHER CALLER CAN TRUST TO BE UNCONDITIONAL -- see `#move`'s own comment for why
+    # mkdir/delete/undelete/finalize_upload must NOT get this treatment. Marks the open batch dirty
+    # and returns without touching the network when one is open for THIS user; otherwise behaves
+    # exactly as `#refresh!` always has. Outside any `#batch` call `Thread.current[BATCH_KEY]` is
+    # nil, so every existing caller -- RefreshAfterWriteTest, the mutation contract, every
+    # `adapter.move` in the shared adapter suites -- sees IDENTICAL behaviour to before this method
+    # existed.
+    def refresh_or_defer!(user)
+      batch = Thread.current[BATCH_KEY]
+      if batch && batch[:user_id] == user.id
+        batch[:dirty] = true
+      else
+        refresh!(user)
+      end
     end
 
     # PULLS THE CHANGELOG AFTER A WRITE, so the local mirror reflects what the server actually did

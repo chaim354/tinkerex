@@ -7,13 +7,17 @@ module Maker
     # each is written into the file library through the existing FileLayer machinery and tied to
     # `state` as an AddonFile with its role. The helper never inspects the bytes. Backend-neutral:
     #   - share/s3 (port_writable): FileLayer#write (bytes -> file/object).
-    #   - chunk (syncable):        a single-chunk FileLayer#begin_upload/#finalize_upload (Task 8's
-    #                              port verbs, wrapping the same two-phase Sync::Commit flow the
-    #                              web uploader drives) + Sync::Storage::ChunkStore#put for the one
-    #                              chunk's bytes, driven server-side (the bytes are generated here
-    #                              — there is no client to presign for; §15 is aimed at client
-    #                              uploads, and there is no client). See #write_chunk for why the
-    #                              ChunkStore#put call stays here rather than folding into the port.
+    #   - chunk / chunk_remote (syncable): a single-chunk FileLayer#begin_upload/#put_chunk/
+    #                              #finalize_upload — three port verbs wrapping the same two-phase
+    #                              commit flow the web uploader drives, driven server-side (the
+    #                              bytes are generated here — there is no client to presign for;
+    #                              §15 is aimed at client uploads, and there is no client here). See
+    #                              #write_chunk for why `#put_chunk` is a port verb rather than a
+    #                              parameter on `#begin_upload` or a direct chunk-store call — it
+    #                              used to be the latter (CLAUDE.md §14c's one sanctioned
+    #                              chunk-internals reference), until that call turned out to be a
+    #                              `NameError` on any deployment not loading the sync engine, which
+    #                              `chunk_remote` (Arc B) is.
     # Writes to `parent_node_id` (default: root) with the caller's names, and CREATES — the
     # AddonFile join is the tie. A file may override BOTH of those: its own `parent_node_id`, and
     # `replace: true` to rewrite what is already at that name instead of refusing. Both default to
@@ -99,7 +103,7 @@ module Maker
         info.node_id
       end
 
-      # --- chunk: single-chunk two-phase commit, driven server-side -------------
+      # --- chunk / chunk_remote: single-chunk two-phase commit, driven server-side ------------
       #
       # A REPLACE HERE IS JUST A NEW VERSION, which is what versioning is FOR — commit against the
       # existing node_id with its current version as `base_version_id`, and the sync engine treats
@@ -108,11 +112,18 @@ module Maker
       # WRITE involvement at all (FileLayer::Chunk#write still refuses, unmoved), and unlike
       # share/s3 the old bytes stay restorable.
       #
-      # AS OF TASK 8, THIS IS THE ONLY LEGITIMATE DIRECT `Sync::Storage::ChunkStore` CALL IN THE MAKER
-      # LAYER (CLAUDE.md §14c; architecture_invariants_test.rb pins the count at exactly one and
-      # names this file), AND THE `.put` STAYS HERE RATHER THAN FOLDING INTO
-      # FileLayer::Chunk#begin_upload — a real choice, not an oversight, argued once so it does not
-      # get "simplified" back the other way:
+      # THE BYTES GO THROUGH `#put_chunk`, A PORT VERB — NOT THROUGH A DIRECT
+      # `Sync::Storage::ChunkStore` CALL, WHICH IS WHAT USED TO SIT HERE. Until Arc B Task 2 this
+      # was CLAUDE.md §14c's one sanctioned chunk-internals reference (architecture_invariants_test.rb
+      # pinned the maker layer's count at exactly one and named this file); it is gone, and that
+      # test now pins the count at ZERO. The direct call was a `NameError` waiting to happen on any
+      # deployment that does not load the sync engine in-process — `LIBRARY_BACKEND=chunk_remote` is
+      # exactly that deployment, and every addon save there raised, measured against a live
+      # standalone server.
+      #
+      # `#put_chunk` IS ITS OWN PORT VERB RATHER THAN A PARAMETER ON `#begin_upload`, for the same
+      # three reasons that argument has always had (unchanged by this task — only the WRITE moved,
+      # from a direct store call to a port call):
       #
       #   1. `#begin_upload` is genuinely a TWO-CALLER method with one shape: it hands back
       #      presigned PUT urls and never itself touches a byte, which is exactly what keeps
@@ -121,15 +132,24 @@ module Maker
       #      would give the SAME METHOD two incompatible contracts ("I hand back URLs" vs. "I write
       #      bytes myself"), decided by which caller is asking — the kind of caller-shaped branch
       #      this class's other verbs (mkdir/move/delete/undelete) never need.
-      #   2. This caller does not need the port for it. `Sync::Storage::ChunkStore#put` is ALREADY a
-      #      documented, first-class part of the store's own public API for exactly this situation
-      #      (see its comment: "the exception for SERVER-GENERATED content... there is no client to
-      #      presign for") — it is not a layering violation this class backed into, it is the
-      #      sanctioned door, and calling it directly costs nothing #begin_upload could improve on.
+      #   2. A caller that already holds the bytes (this one) writes them itself, through the port;
+      #      a caller that does not (the browser) PUTs them itself, straight to storage. Two
+      #      different callers doing two different things was always the shape — `#put_chunk`
+      #      exists so THIS caller's half is a port verb too, not a backdoor around one.
       #   3. It keeps `#begin_upload`'s contract identical for both callers: `result.missing` names
-      #      exactly the chunks NOT YET in storage, on the fast-forward path exactly as it did
-      #      before this task. A caller that already holds the bytes writes those chunks itself,
-      #      precisely as it always has; a caller that does not (the browser) PUTs them.
+      #      exactly the chunks NOT YET in storage, exactly as it did before this task.
+      #
+      # AND `#put_chunk` CANNOT BE ONE SHARED HELPER EITHER — THE TWO ADAPTERS CANNOT SHARE ONE
+      # IMPLEMENTATION, which is the whole reason this had to become a port verb rather than a
+      # method on this class that both `Chunk` and `ChunkRemote` could call. On embedded chunk, a
+      # presigned URL for the memory/local store can point BACK AT THIS SAME RAILS PROCESS (there
+      # is no off-box store to presign to locally), so a server-side PUT to it would be a LOOPBACK
+      # call into the same Puma pool — CLAUDE.md §14e's recorded reentrancy bug, measured at 14-24
+      # second stalls and outright 404s. `FileLayer::Chunk#put_chunk` writes its store IN-PROCESS
+      # instead; `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over HTTP,
+      # because on chunk_remote the URL always points at the STANDALONE sync server, never at this
+      # app. Only the adapter knows which situation it is in — this caller does not, and must not
+      # have to.
       def write_chunk(user, parent_node_id, f, replace = false)
         bytes = f[:bytes].b
         existing = (existing_at(user, parent_node_id, f[:name]) if replace)
@@ -140,12 +160,13 @@ module Maker
           node_id: existing&.node_id, base_version_id: existing&.current_version_id,
           size: bytes.bytesize, mtime: (Time.current.to_f * 1e9).to_i, manifest:
         )
-        begun.missing.each { |h| Sync::Storage::ChunkStore.current.put(user.id, h, bytes) }
+        begun.missing.each { |h| FileLayer.current.put_chunk(user, begun:, hash: h, bytes:) }
         # verify: false, UNCHANGED FROM BEFORE THIS TASK — the bytes above were just written
-        # SYNCHRONOUSLY, in this same method call, by this same process; re-verifying they landed
-        # would be a wasted storage round-trip confirming something nothing between the two calls
-        # could have altered. See FileLayer::Chunk#finalize_upload's own comment for the fuller
-        # argument (it is the same one FilesController's `verify: true` is NOT this caller's case).
+        # SYNCHRONOUSLY, in this same method call (in-process on chunk, over one blocking HTTP PUT
+        # on chunk_remote); re-verifying they landed would be a wasted storage round-trip
+        # confirming something nothing between the two calls could have altered. See
+        # FileLayer::Chunk#finalize_upload's own comment for the fuller argument (it is the same
+        # one FilesController's `verify: true` is NOT this caller's case).
         # broadcast: false PRESERVES WHAT ADDON SAVES HAVE ALWAYS DONE -- they have never nudged
         # live devices, relying on the periodic sync instead. It is an explicit opt-out rather
         # than the port's default so that a THIRD caller of finalize_upload is safe by default;

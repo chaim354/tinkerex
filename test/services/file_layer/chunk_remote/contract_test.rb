@@ -59,6 +59,17 @@ module FileLayer
             urls = hashes.select { |h| @blobs.key?(h) }
                          .to_h { |h| [ h, "http://127.0.0.1:#{@port}/blob/#{h}" ] }
             [ 200, "application/json", { urls: }.to_json ]
+          elsif path.to_s.start_with?("/blob/") && verb == "PUT"
+            # THE PRESIGNED-PUT HALF, for #put_chunk -- object storage accepting a raw body at a
+            # URL it minted, same as the GET arm below accepts nothing but a URL. Mirrors the real
+            # store: a bad upload is a transient failure (503), never anything that looks like the
+            # file being gone.
+            hash = path.split("/").last
+            if @put_failure then [ 503, "text/plain", "try again" ]
+            else
+              @blobs[hash] = body.to_s.b
+              [ 200, "text/plain", "" ]
+            end
           elsif path.to_s.start_with?("/blob/")
             hash = path.split("/").last
             if @blob_failure then [ 503, "text/plain", "try again" ]
@@ -112,6 +123,48 @@ module FileLayer
                                     chunk_hash: Digest::SHA256.hexdigest(tail), offset: 4, length: 4)
 
         assert_equal "AAAABBBB", adapter.read(@user, node_id: id)
+      end
+
+      # ── #put_chunk (CLAUDE.md §14a; Arc B Task 2) ─────────────────────────────────────────
+      #
+      # `Maker::Addons::LibraryOutput` used to write chunk bytes with a direct
+      # `Sync::Storage::ChunkStore#put` call -- a `NameError` on this backend, which never loads
+      # the engine. `#put_chunk` replaces it with an ordinary presigned PUT, driven against a REAL
+      # socket for the same reason every other test in this file is: a stubbed Net::HTTP would only
+      # confirm the adapter's own assumptions about what a PUT looks like.
+      #
+      # NO `#begin_upload` CALL HERE -- this fake server implements only `/v1/chunks/download` and
+      # `/blob/*`, matching what `FileLayerAdapterContract` (read-only) needs. `put_chunk`'s
+      # signature only needs an `UploadBegun` carrying `put_urls`, so one is built by hand rather
+      # than teaching this fixture a `/v1/commit` endpoint it has no other reason to grow.
+      test "put_chunk PUTs bytes to the presigned URL, and a subsequent GET reads them back" do
+        bytes = "fresh bytes from an addon".b
+        hash = Digest::SHA256.hexdigest(bytes)
+        begun = FileLayer::UploadBegun.new(
+          commit_id: "c1", node_id: "n1", missing: [ hash ],
+          put_urls: { hash => "http://127.0.0.1:#{@port}/blob/#{hash}" }
+        )
+
+        assert_nil @blobs[hash], "the fake store must not already have this chunk"
+        adapter.put_chunk(@user, begun:, hash:, bytes:)
+
+        assert_equal bytes, @blobs[hash], "the fake server's own store must hold exactly what was PUT"
+      end
+
+      # TRANSIENT, NOT TERMINAL -- the same rule `with_transient_backend_failure` pins for reads,
+      # on the write side: a rejected PUT says nothing about whether the FILE exists, so it must
+      # never be confused with the file being gone.
+      test "put_chunk raises FetchError, not a silent failure, when storage rejects the PUT" do
+        bytes = "will not land".b
+        hash = Digest::SHA256.hexdigest(bytes)
+        begun = FileLayer::UploadBegun.new(
+          commit_id: "c1", node_id: "n1", missing: [ hash ],
+          put_urls: { hash => "http://127.0.0.1:#{@port}/blob/#{hash}" }
+        )
+
+        @put_failure = true
+        assert_raises(FileLayer::FetchError) { adapter.put_chunk(@user, begun:, hash:, bytes:) }
+        assert_nil @blobs[hash], "a rejected PUT must not leave a partial/garbage entry behind"
       end
 
       def adapter
