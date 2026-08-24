@@ -263,10 +263,39 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                "that is not live -- got parent_node_id=#{restored_child.parent_node_id.inspect}"
   end
 
-  # GAP (a). `refresh!` is called only from mkdir/move/delete/undelete/finalize_upload
-  # (chunk_remote.rb:179,188,198,207,242) and ChangelogSync has no other caller in app/, lib/ or
-  # config/. So a node another device pushed is invisible here until THIS app happens to write
-  # something. Arc B's fix is a recurring per-user pull.
+  # GAP (a), RE-SCOPED 2026-08-24. The original version of this test asserted that a bare
+  # `get files_path` -- a PLAIN READ -- made a node pushed by another device visible. No permitted
+  # implementation can satisfy that assertion, and trying to satisfy it anyway is what exposed the
+  # real defect underneath it:
+  #
+  #   - CLAUDE.md §2: "the WAN is never in the metadata path." §14a's entire claim for
+  #     chunk_remote is that reads answer from the LOCALLY-MIRRORED `nodes` table *so that* §2
+  #     becomes true of the maker app for the first time (chunk_remote.rb's own header: "READS ARE
+  #     LOCAL SQL, WRITES GO OVER THE WIRE"). A page load that reaches the sync server to answer a
+  #     read would violate that on every request, not just this one -- so the old assertion could
+  #     only be made to pass by an implementation the architecture exists to forbid.
+  #   - The staleness this test now pins is therefore §2 being HONOURED, not a bug: the mirror is
+  #     deliberately behind the server between pulls, and a plain read must never close that gap
+  #     itself.
+  #   - The actual freshness mechanism is FileLayer::RemoteChangelogPullJob (Arc B), scheduled from
+  #     config/recurring.yml's `remote_changelog_pull` entry and covered by its own unit test
+  #     (test/jobs/file_layer/remote_changelog_pull_job_test.rb, including the chunk_remote-only
+  #     gate, mutation-checked in both directions). Its SCHEDULING is a deployment concern this
+  #     suite cannot exercise: test/recurring_schedule_test.rb's own header records that
+  #     "config/recurring.yml is loaded by the Solid Queue SUPERVISOR, not by the Rails process the
+  #     suite boots" -- no such Supervisor runs under `bin/rails test`, so nothing here can observe
+  #     the schedule firing on its own. What this suite CAN and SHOULD prove is the mechanism
+  #     itself: invoking the pull the scheduler performs in production makes a remotely-created
+  #     node visible, both in the mirror and on the rendered page.
+  #   - `refresh!` is still called only from mkdir/move/delete/undelete/finalize_upload
+  #     (chunk_remote.rb:179,188,198,207,242), and ChangelogSync's only OTHER caller anywhere in
+  #     app/, lib/ or config/ is this job -- so a node another device pushed stays invisible until
+  #     either this app writes something of its own or the recurring pull runs. The real fix for
+  #     LATENCY (as opposed to eventual correctness) is a sync -> maker webhook or an ActionCable
+  #     subscription to the remote host's own broadcast -- still out of scope.
+  #
+  # Do not "fix" this back to asserting that a bare page load refreshes the mirror -- that is the
+  # assertion this rewrite exists to retire, not a property to restore.
   test "a node created directly on the sync server becomes visible without a local write" do
     skip_unless_remote_server
     user = sign_in
@@ -278,12 +307,24 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     transport.post("/v1/nodes", { node_id:, parent_node_id: nil, name:, mode: 0o755,
                                   mtime: (Time.current.to_f * 1e9).to_i })
 
-    get files_path
-    assert_response :success
+    assert_not user.nodes.present.exists?(node_id:),
+               "a plain read must NOT reach the WAN (CLAUDE.md §2) -- a node pushed elsewhere is " \
+               "correctly invisible until the mirror is next pulled; if this assertion is false, " \
+               "something has put a synchronous server call on a read path, which is the " \
+               "regression this test exists to catch"
+
+    FileLayer::RemoteChangelogPullJob.perform_now(user_id: user.id)
 
     assert user.nodes.present.exists?(node_id:),
-           "a node pushed by another device never reaches the mirror: there is no periodic pull " \
-           "and no ActionCable subscription, so the maker UI cannot see it at all"
+           "the recurring pull (config/recurring.yml's remote_changelog_pull in production; " \
+           "invoked directly here because bin/rails test never runs the Solid Queue Supervisor " \
+           "that would fire it on a schedule) must bring a node pushed by another device into " \
+           "the mirror"
+
+    get files_path
+    assert_response :success
+    assert_includes response.body, name,
+                     "the mirror has the node, but the rendered page does not show it"
   end
 
   # GAP (b). port_writable is false on chunk_remote, so Maker::Addons::LibraryOutput#write takes
