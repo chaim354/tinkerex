@@ -52,6 +52,10 @@ class BinSyncServerTest < ActiveSupport::TestCase
   # Gemfile into the fake checkout is the point: a real Gemfile hands Bundler's own
   # version-dependent behaviour -- which this test does not control and must not depend on -- a
   # chance to touch this box's gem environment or reach for the network.
+  #
+  # RESIDUAL, NOT CLOSED: the bundle stub always exits 0, so this cannot tell
+  # `bundle install --quiet && bin/rails db:prepare` from a weakened `;`-joined version that
+  # would run db:prepare after a failed install.
   test "prepare's happy path writes both keys from what the rake task actually printed" do
     Dir.mktmpdir("sync-stub") do |sync_dir|
       host_bin = File.join(sync_dir, "host", "bin")
@@ -91,29 +95,23 @@ class BinSyncServerTest < ActiveSupport::TestCase
       STUB
       File.chmod(0o755, bundle_stub)
 
-      # prepare writes to the REAL repo's tmp/sync-server.env -- there is no override for that
-      # path, so a developer's (or another test's) existing file must survive this test having
-      # run, regardless of whether one was there to begin with.
-      env_file = Rails.root.join("tmp/sync-server.env")
-      preexisting = env_file.exist? ? env_file.read : nil
+      # An ISOLATED path, never the real tmp/sync-server.env -- see ENV_FILE's own comment in
+      # bin/sync-server for why a save-and-restore of the real file isn't safe here.
+      env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
-      begin
-        out, status = Open3.capture2e(
-          { "TINKEREX_SYNC_DIR" => sync_dir, "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}" },
-          SCRIPT.to_s, "prepare"
-        )
+      out, status = Open3.capture2e(
+        {
+          "TINKEREX_SYNC_DIR" => sync_dir,
+          "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
+          "SYNC_SERVER_ENV_FILE" => env_file.to_s
+        },
+        SCRIPT.to_s, "prepare"
+      )
 
-        assert status.success?, "prepare should succeed against a stubbed checkout:\n#{out}"
-        written = env_file.read
-        assert_includes written, "CHUNK_REMOTE_URL="
-        assert_includes written, "CHUNK_REMOTE_TOKEN=stub-devtoken-9f8e7d6c5b4a"
-      ensure
-        if preexisting
-          env_file.write(preexisting)
-        else
-          FileUtils.rm_f(env_file)
-        end
-      end
+      assert status.success?, "prepare should succeed against a stubbed checkout:\n#{out}"
+      written = env_file.read
+      assert_includes written, "CHUNK_REMOTE_URL="
+      assert_includes written, "CHUNK_REMOTE_TOKEN=stub-devtoken-9f8e7d6c5b4a"
     end
   end
 end

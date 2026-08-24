@@ -27,7 +27,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 SYNC_DIR="${TINKEREX_SYNC_DIR:-$REPO_ROOT/../tinkerex-sync}"
 HOST_DIR="$SYNC_DIR/host"
-ENV_FILE="$REPO_ROOT/tmp/sync-server.env"
+# Overridable so the hermetic happy-path test in test/bin_sync_server_test.rb can point this at
+# an isolated tmpdir path instead of the real repo file. A save-and-restore of the real file was
+# tried first and rejected: Ruby's `ensure` runs on a normal return or on SIGINT, but NOT on
+# SIGKILL, and this suite runs on a PERSISTENT self-hosted macOS box, not a throwaway CI VM -- a
+# test run killed at the wrong moment would leave tmp/sync-server.env corrupted for every run
+# after it, not just that one. The default below is unchanged, so an unset var changes nothing.
+ENV_FILE="${SYNC_SERVER_ENV_FILE:-$REPO_ROOT/tmp/sync-server.env}"
 
 usage() {
   echo "usage: bin/sync-server {prepare|start}" >&2
