@@ -67,7 +67,7 @@ door, and therefore reports only real defects.
 | File | Responsibility |
 |---|---|
 | `bin/sync-server` (create) | Resolve a sibling `tinkerex-sync`, prepare its DB, mint a device token, boot it. Two subcommands so CI can background the boot. |
-| `test/support/chunk_remote_journey.rb` (create) | The harness: skip logic, web sign-in, and an upload helper that PUTs bytes to a real remote URL over `Net::HTTP` rather than through the integration session. |
+| `test/support/chunk_remote_journey.rb` (create) | The harness: skip logic, web sign-in, and an upload helper that PUTs bytes to a real remote URL over `Net::HTTP` rather than through the integration session. Required by the journey test itself, NOT from `test_helper.rb` — see Task 2 Step 2. |
 | `test/integration/chunk_remote_journey_test.rb` (create) | The journey itself, one test per flow. The only file that knows what "works" means. |
 | `.github/workflows/sync-contract.yml` (create) | Boot the server on the macOS runner and run the journey suite. Not a `bin/ci` gate. |
 | `test/bin_sync_server_test.rb` (create) | Guards `bin/sync-server`'s contract without needing a checkout: executable, fails loudly and names the clone command when the sibling is missing. |
@@ -258,7 +258,7 @@ git commit -m "Boot a standalone sync host from a sibling checkout"
 
 **Files:**
 - Create: `test/support/chunk_remote_journey.rb`
-- Modify: `test/test_helper.rb` (add one `require`)
+- Modify: nothing. `test_helper.rb` is deliberately NOT touched — see Step 2.
 
 - [ ] **Step 1: Write the harness**
 
@@ -339,30 +339,50 @@ module ChunkRemoteJourney
 end
 ```
 
-- [ ] **Step 2: Require it from the test helper**
+- [ ] **Step 2: Do NOT require it from `test_helper.rb`**
 
-In `test/test_helper.rb`, beside the other `require_relative "support/..."` lines, add:
+There is nothing to do in this step except understand why. An earlier draft of this plan added a
+`require_relative` to `test/test_helper.rb`; that is wrong, and checking the tree is what showed
+it. `test_helper.rb` requires exactly two things (`config/environment`, `rails/test_help`) and no
+support file at all. Every support file in this suite is required **by the test that needs it**:
 
-```ruby
-require_relative "support/chunk_remote_journey"
+```
+test/controllers/tools/addons_controller_test.rb:2:  require_relative "../../support/fake_addon_source"
+test/integration/library/s3_library_test.rb:2:       require_relative "../../support/fake_s3"
+test/application_system_test_case.rb:2:              require_relative "support/worker_budget"
 ```
 
-If no such block exists, add the line immediately after the final existing `require` at the top
-of the file.
+A global require would load this harness — and `net/http` — into all 218 test files to serve one,
+and would put a `sign_in` helper into the namespace of suites that already define their own
+(`test/integration/web/*_test.rb` define a private `sign_in` each; at least six do). Task 3's
+test file requires it directly instead.
 
-- [ ] **Step 3: Verify the suite still loads and is unaffected**
+Confirm the convention for yourself before moving on:
 
 ```bash
+grep -n require test/test_helper.rb
+```
+
+Expected: two lines, `config/environment` and `rails/test_help`. If a support require has appeared
+there since this plan was written, follow whatever the file now does rather than this note.
+
+- [ ] **Step 3: Verify the harness parses and nothing else moved**
+
+Nothing requires the harness yet, so the only thing to check here is that the file is valid Ruby
+and that the existing suite is untouched:
+
+```bash
+ruby -c test/support/chunk_remote_journey.rb
 bin/rails test test/bin_sync_server_test.rb
 ```
 
-Expected: `3 runs, 6 assertions, 0 failures, 0 errors` — the harness loads without changing
-anything.
+Expected: `Syntax OK`, then `4 runs, 17 assertions, 0 failures, 0 errors` — Task 1's suite,
+unchanged, because this task adds a file nothing loads yet.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add test/support/chunk_remote_journey.rb test/test_helper.rb
+git add test/support/chunk_remote_journey.rb
 git commit -m "Add the chunk_remote journey harness"
 ```
 
@@ -381,6 +401,7 @@ Create `test/integration/chunk_remote_journey_test.rb`:
 # frozen_string_literal: true
 
 require "test_helper"
+require_relative "../support/chunk_remote_journey"
 
 # DRIVES THE MAKER APP AGAINST A REAL STANDALONE SYNC SERVER. Every node here is created through a
 # real door -- never `user.nodes.create!` -- because a hand-built row exists only in the local
