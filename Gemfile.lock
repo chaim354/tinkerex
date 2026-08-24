@@ -1,6 +1,6 @@
 GIT
   remote: https://github.com/chaim354/tinkerex-sync.git
-  revision: 8483ecf4f6f04ce1b981a4ef2c7ab3b3e1cc55f6
+  revision: 16619b09a328767dde89ce0e169844fded5a0a6c
   branch: main
   specs:
     tinkerex-sync (0.1.0)
