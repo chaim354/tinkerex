@@ -8,10 +8,17 @@ require_relative "../support/chunk_remote_journey"
 # mirror and the server has never heard of it, so a write verb against one would 404 for a reason
 # that says nothing about chunk_remote.
 #
-# THIS SUITE IS EXPECTED TO BE RED WHEN IT LANDS. It is Arc A's instrument, not Arc A's product:
-# the failures it reports are the measured work-list for Arc B. It is deliberately NOT a bin/ci
-# gate -- test/ci_hygiene_test.rb asserts set equality between `bin/ci --list-ci` and ci.yml's gate
-# jobs, so a red gate is a red main. .github/workflows/sync-contract.yml carries the signal.
+# THIS SUITE IS ARC A'S INSTRUMENT, NOT ARC A'S PRODUCT -- but be precise about which tests that
+# covers. An earlier version of this comment claimed the whole class was "expected to be red when
+# it lands," and that was already wrong once: these three tests came back GREEN on the FIRST run
+# against a real standalone server, not asserted on faith -- verified against that server's own
+# log as genuine wire traffic (a presigned chunk PUT, `finalize` inserting a real
+# `Version`/`Node`/`ChangelogEntry` row apiece, and the `/v1/changes` pull that refreshes the local
+# mirror's `nodes` table). The failures Arc B works from are the three tests Task 5 adds -- each
+# names its own expected failure individually, rather than this docstring claiming one on the
+# whole file's behalf. It is deliberately NOT a bin/ci gate -- test/ci_hygiene_test.rb asserts set
+# equality between `bin/ci --list-ci` and ci.yml's gate jobs, so a red gate is a red main.
+# .github/workflows/sync-contract.yml carries the signal.
 class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   include ChunkRemoteJourney
 
