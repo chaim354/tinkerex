@@ -40,8 +40,9 @@ module FileLayer
         def parse = JSON.parse(@s.response.body) rescue {}
       end
 
-      # Fetches a presigned chunk URL through the session: a memory-backed store presigns a
-      # RELATIVE path (it points at Rails itself), which has no host to open a socket to in-process.
+      # Fetches (and, for #put_chunk, writes) a presigned chunk URL through the session: a
+      # memory-backed store presigns a RELATIVE path (it points at Rails itself), which has no
+      # host to open a socket to in-process -- matching why LoopbackTransport exists at all.
       class LoopbackFetch
         def initialize(session) = @s = session
 
@@ -51,6 +52,18 @@ module FileLayer
           raise FileLayer::FetchError, "storage answered #{@s.response.status}" unless @s.response.status == 200
 
           @s.response.body.b
+        end
+
+        # Mirrors ChunkFetch.put -- a raw PUT with the bytes as the body, driven through the
+        # session because a real Net::HTTP socket has nothing to connect to for a relative,
+        # in-process presigned URL (same reason `.get` above cannot open one either).
+        def put(url, bytes)
+          uri = URI.parse(url)
+          @s.put(uri.respond_to?(:request_uri) ? uri.request_uri : url, params: bytes,
+                 headers: { "CONTENT_TYPE" => "application/octet-stream" })
+          return if @s.response.status == 200
+
+          raise FileLayer::FetchError, "storage answered #{@s.response.status} for a PUT"
         end
       end
 
@@ -117,9 +130,12 @@ module FileLayer
         begun = @adapter.begin_upload(@user, name: "trip.stl", size: bytes.bytesize,
                                       manifest: manifest_for(bytes), device: @device)
 
-        # The caller puts bytes at storage itself -- neither this app nor the sync server touches
-        # them, which is §15 in remote mode.
-        Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
+        # The caller puts bytes at storage itself, through the port's own `#put_chunk` verb --
+        # neither this app nor the sync server touches them, which is §15 in remote mode. This is
+        # the exact call `Maker::Addons::LibraryOutput#write_chunk` makes in production (Arc B Task
+        # 2); driving it here rather than poking `Sync::Storage::ChunkStore` directly is what makes
+        # this "full round trip" test actually exercise the real port verb, not a stand-in for it.
+        @adapter.put_chunk(@user, begun:, hash:, bytes:)
 
         finalized = @adapter.finalize_upload(@user, commit_id: begun.commit_id)
         assert finalized.version_id.present?

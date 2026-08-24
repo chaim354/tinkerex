@@ -8,7 +8,10 @@ require "ripper"
 # undetected: it read "returns nothing" for months after the addon framework made the true answer
 # "exactly one hit, and it is library_output.rb" — corrected only when a fresh reader happened to
 # type the command. A proof nobody runs is a comment. Same pattern as ci_hygiene_test.rb and
-# deploy_hygiene_test.rb: guard the facts no other test can see.
+# deploy_hygiene_test.rb: guard the facts no other test can see. (The count moved again since —
+# Arc B Task 2 gave both chunk adapters a `#put_chunk` port verb, so as of this file's own next
+# test the true answer is back to zero. Left as history rather than rewritten: it is what this
+# paragraph is arguing FROM, not a claim about the file's current behaviour.)
 #
 # Implemented by READING FILES, not by shelling out to grep — the same choice deploy_hygiene_test.rb
 # makes when it parses YAML instead of grepping it. No shell, no BSD/GNU differences, and the
@@ -148,15 +151,20 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   #     anywhere. Task 3 namespaced it the same way as its seven siblings: `Sync::ShareLink` is
   #     caught by the bare "Sync" check exactly like the rest, with no special-casing either way.
 
-  test "the maker layer reaches for chunk internals in exactly one place, and that place is the addon output path" do
+  test "the maker layer reaches for chunk internals nowhere at all" do
     # CLAUDE.md §14c. The maker layer must not know files are chunks — that is the whole point of
-    # the FileLayer port. The ONE legitimate exception is addon-generated output, which has no
-    # client to presign for: in chunk mode the server itself drives a single-chunk Sync::Commit plus
-    # the put, mirroring what the web uploader does from the browser.
+    # the FileLayer port. Addon-generated output USED TO BE the one legitimate exception: it has no
+    # client to presign for, so in chunk mode the server itself drove a single-chunk Sync::Commit
+    # plus a direct `Sync::Storage::ChunkStore#put`, mirroring what the web uploader does from the
+    # browser. Arc B Task 2 closed it: `#put_chunk` is now a port verb both `FileLayer::Chunk` and
+    # `FileLayer::ChunkRemote` implement, so `Maker::Addons::LibraryOutput` no longer reaches past
+    # the port at all — the direct call was a `NameError` on any deployment that does not load the
+    # sync engine, and `chunk_remote` is exactly that deployment.
     #
-    # The assertion is "one hit, and it is library_output.rb" — NOT "no hits". Asserting zero would
-    # be asserting something false, and asserting only the count would let the coupling migrate to
-    # some other file while the test stayed green.
+    # The assertion is "no hits, full stop" now. It used to be "one hit, and it is
+    # library_output.rb" — asserting the bare count alone would have let the coupling migrate to
+    # some other file while the test stayed green, which is why this still asserts the SET is
+    # empty rather than merely that its size is 0 (a size-only assertion cannot name an offender).
     # The directory set is DERIVED FROM THE TREE — `app/**/maker` is every maker directory there
     # is — so a NEW `app/<x>/maker/` is covered the day it is created. It was a remembered list
     # of three and silently missed `app/controllers/v1/maker` + `app/models/concerns/maker` (15
@@ -165,15 +173,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     # stimulus_hygiene_test.rb's registered_identifiers.
     hits = offending(%w[app/**/maker], /manifest_chunks|ChunkStore/)
 
-    assert_equal 1, hits.size,
-                 "expected exactly ONE chunk-internals reference in the maker layer, got #{hits.size}:\n" \
+    assert_empty hits,
+                 "expected ZERO chunk-internals references in the maker layer, got #{hits.size}:\n" \
                  "  #{hits.join("\n  ")}\n" \
-                 "A NEW one means the maker/file-layer split (CLAUDE.md §14a) has been breached — " \
-                 "route the write through FileLayer#write or Sync::Commit instead. If the existing " \
-                 "one MOVED, update this test and CLAUDE.md §14c together."
-    assert_match %r{\Aapp/services/maker/addons/library_output\.rb:\d+\z}, hits.sole,
-                 "the one permitted chunk-internals reference must live in " \
-                 "Maker::Addons::LibraryOutput (the single addon output path), but it is at #{hits.sole}"
+                 "A hit means the maker/file-layer split (CLAUDE.md §14a) has been breached — route " \
+                 "the write through FileLayer#write, #put_chunk or #begin_upload/#finalize_upload " \
+                 "instead. If a new direct reference is genuinely unavoidable, update this test and " \
+                 "CLAUDE.md §14c together, deliberately — do not let this test go red silently past " \
+                 "that."
   end
 
   # Paths that are NOT "the maker layer" for THIS guard, and so are never scanned by it: the sync
@@ -478,11 +485,13 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   #   - `app/controllers/dev_blobs_controller.rb` -- a DEV/TEST-ONLY stand-in for object storage
   #     itself, not under `app/controllers/v1/` at all, so no v1 glob was ever going to reach it
   #     either. It presigns to itself because there is no off-box store to presign to locally.
-  #   - `app/services/maker/addons/library_output.rb` -- CLAUDE.md §14c's ONE sanctioned
-  #     maker-layer chunk-internals reference, ALREADY named and pinned by the chunk-internals test
-  #     at the top of this file ("the maker layer reaches for chunk internals in exactly one
-  #     place"). That test enforces there is exactly one such file; this list is what lets THIS
-  #     test agree with it instead of contradicting it.
+  #   - `app/services/maker/addons/library_output.rb` NO LONGER APPEARS HERE, as of Arc B Task 2 --
+  #     it used to be listed for CLAUDE.md §14c's ONE sanctioned maker-layer chunk-internals
+  #     reference (a direct `Sync::Storage::ChunkStore#put` call), named by the chunk-internals
+  #     test at the top of this file. `#put_chunk` is now a port verb both `FileLayer::Chunk` and
+  #     `FileLayer::ChunkRemote` implement, so that file names no bare `Sync` token at all any
+  #     more -- keeping it on this list once it stopped violating anything would itself fail the
+  #     "stale entry" assertion two tests below, immediately.
   #   - `app/services/maker/project_intake.rb` -- the deliberate host-calls-engine public API,
   #     `Sync::LibraryChannel.batch` (Stage 3a Task 4 Step 5; the class comment on
   #     app/channels/sync/library_channel.rb spells out why it must stay callable and public).
@@ -508,7 +517,6 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   SYNC_SEAM_EXCEPTIONS = %w[
     app/models/user.rb
     app/controllers/dev_blobs_controller.rb
-    app/services/maker/addons/library_output.rb
     app/services/library_broadcast.rb
   ].freeze
 
@@ -738,6 +746,10 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # now-provably-unreachable pass that used to run beside it. The test's NAME and its PROTECTION
   # are UNCHANGED: a `Storage::` reference in base_controller.rb is still forbidden, just caught
   # the same way any other `Sync::` reference already was.
+  # (library_output.rb ITSELF IS GONE FROM SYNC_SEAM_EXCEPTIONS NOW, per Arc B Task 2 -- see the
+  # note above that constant. Its `Storage::ChunkStore` reference, the thing this paragraph is
+  # explaining the history of, no longer exists; the history stands because it explains why the
+  # dedicated Ripper pass was retired, not because the file is still on the list today.)
   #
   # STAGE 3b PHASE B TASK 7 RELAXES "ZERO" TO "EXACTLY ONE, AND ONLY THAT ONE" -- NOT A RETREAT,
   # A DIFFERENT WORLD. This test's own reasoning, up to now, was that a Sync:: reference here

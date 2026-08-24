@@ -443,13 +443,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `port_writable?` once chunk started answering `delete`, which made one call have two answers —
   the shape §14a forbids. Agreement across three backends is three samples, not an identity —
   the same coincidence `scannable` was added to stop encoding twice (`is_a?(Share)`).
-- **`begin_upload`/`finalize_upload` are port verbs, and NEITHER is the byte-taking `write`
-  above.** The port never holds a byte: `begin_upload` returns presigned PUT URLs for whichever
-  chunks the store is missing, the caller PUTs straight to object storage — except
-  `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to presign
-  for, so it calls `Storage::ChunkStore#put` directly instead (the one sanctioned
-  chunk-internals call outside this class, §14c) — and `finalize_upload` records the version.
-  That is what keeps §15 true for a chunk-mode upload.
+- **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
+  byte-taking `write` above.** The port never holds a byte: `begin_upload` returns presigned PUT
+  URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
+  except `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to
+  presign for, so it calls the port's own `put_chunk` instead, and `finalize_upload` records the
+  version. That is what keeps §15 true for a chunk-mode upload. **`put_chunk` is a port verb,
+  implemented differently per adapter, rather than one shared call** — until Arc B (2026-08-23) it
+  *was* one shared call, `Storage::ChunkStore#put`, dialed directly from `LibraryOutput` (then
+  §14c's one sanctioned chunk-internals exception), and that direct call was a `NameError` on any
+  deployment that does not load the sync engine in-process — `chunk_remote` is exactly that
+  deployment, and every addon save there raised, measured against a live standalone server. The
+  fix could not be one shared implementation: `FileLayer::Chunk#put_chunk` writes the embedded
+  store IN-PROCESS, but `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over
+  HTTP, because on embedded chunk a presigned URL for the memory/local store can point BACK AT
+  RAILS ITSELF (no off-box store to presign to locally) — a server-side PUT to it would be a
+  LOOPBACK call into the same Puma pool, §14e's recorded reentrancy bug (14–24 second stalls,
+  outright 404s). Only the adapter knows which situation it is in, so the caller cannot decide,
+  which is why this had to become a port verb instead of a helper either adapter could call. The
+  maker layer now names **zero** chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
   always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
@@ -845,9 +857,9 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   written were **left in place** (ordinary library files a user may have renamed or attached;
   a migration must not delete user bytes).
 - **`Maker::Addons::LibraryOutput` is the ONE output path**, backend-neutral on
-  `port_writable?`. It is also the **one legitimate direct `Storage::ChunkStore` call in the
-  maker layer** (addon output has no client to presign for). So the phase-1 decoupling proof
-  is *"one hit, and it is `library_output.rb`"*, **not** "no hits":
+  `port_writable?`. It reaches chunk-family storage entirely through port verbs now —
+  `begin_upload`/`put_chunk`/`finalize_upload` — so the phase-1 decoupling proof is **"no hits, full
+  stop"**:
   `grep -rn "manifest_chunks\|ChunkStore" $(find app -type d -name maker) --include='*.rb' | grep -v ':[0-9]*: *#'`
   The `grep -v` is load-bearing, not noise — without it the check reports comments that
   *describe* the removed coupling. **A proof that cries wolf gets ignored.** So is the `find`:
@@ -855,11 +867,16 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   not honour `**`** — spelling the set out named `services`/`models`/`jobs` and silently skipped
   `app/controllers/v1/maker` (14 files) and `app/models/concerns/maker` (1).
   **`test/architecture_invariants_test.rb` now RUNS this and DERIVES the directory set from the
-  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting both the count *and* the
-  file — so the claim can no longer drift the way it did before (it read "no hits" for months
-  after the addon framework made the true answer one), and a NEW `app/<x>/maker/` is covered the
-  day it is created. Change the code and the test tells you; change the exception on purpose and
-  update the test and this bullet together.
+  tree** (`%w[app/**/maker]`) rather than repeating the list, asserting the offending set is
+  *empty* — so the claim can no longer drift the way it did before: it read "no hits" for months
+  after the addon framework made the true answer one (`library_output.rb`'s own direct
+  `Storage::ChunkStore#put` call, the one sanctioned exception between the phase-1 decoupling and
+  Arc B), and it would have gone on reading "exactly one, and it is library_output.rb" indefinitely
+  had Arc B Task 2 not driven the count back to zero by giving `put_chunk` a port-verb
+  implementation on both `FileLayer::Chunk` and `FileLayer::ChunkRemote` (§14a). A NEW
+  `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
+  new direct exception ever becomes genuinely unavoidable, update the test and this bullet
+  together, deliberately.
 - **Addon bundles are served by the `addons` Kamal accessory** (`chaim354/tinkerex-addons`), not
   shipped inside the Rails image — **publishing the bundle image IS the addon deploy; Rails is
   never rebuilt.** `deploy.yml` sets `ADDON_SOURCE_URL: http://tinkerex-addons`. Read the
@@ -1283,6 +1300,14 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   would be one too many" no longer applies; there is no fourth left to count against.
   (Excluded on purpose: `require_capability!` gates and views that pick an upload FORM —
   those select a UI, which is `port_writable`'s stated job.)
+  **THIS COUNT IS NOT §14c's chunk-internals-reference count, and Arc B is exactly where the two
+  stopped agreeing** — both happened to read "one" from the addon framework's start until Arc B
+  Task 2, which is coincidence, not identity (the same warning this file gives repeatedly about
+  `scannable`/`port_writable`/`dir_deletable` agreeing on three backends). This one — how many
+  places branch on `port_writable?` to pick an upload flow — is still ONE, unchanged: `write_chunk`
+  still exists and is still the chunk-family half of that branch. What went to zero is the OTHER
+  count, one level down inside `write_chunk`: how many places call chunk-store internals directly.
+  `put_chunk` becoming a port verb removed that call without touching this branch at all.
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
 - **Controllers reach `Sync::` through exactly one door, `FileLayer::Chunk` — enforced by a

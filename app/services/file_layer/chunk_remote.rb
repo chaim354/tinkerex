@@ -292,6 +292,43 @@ module FileLayer
                       put_urls: body["put_urls"] || {}, missing: Array(body["missing"]))
     end
 
+    # WRITES ONE CHUNK'S BYTES -- `FileLayer::Chunk#put_chunk`'s remote sibling, and the reason
+    # `#put_chunk` is a PORT VERB rather than a helper either caller could share. Arc B Task 2:
+    # before this existed, `Maker::Addons::LibraryOutput` called
+    # `Sync::Storage::ChunkStore.current.put` directly -- CLAUDE.md §14c's one sanctioned
+    # chunk-internals reference, and a `NameError` on any deployment (this one included) that does
+    # not load the sync engine. Every addon save on chunk_remote raised, measured against a live
+    # standalone server.
+    #
+    # THE TWO ADAPTERS CANNOT SHARE ONE IMPLEMENTATION, which is the whole argument for a port verb
+    # instead of a shared helper. On EMBEDDED chunk, a presigned URL for the memory or local store
+    # points BACK AT THIS SAME RAILS PROCESS (`DevBlobsController` -- there is no off-box store to
+    # presign to locally), so a server-side PUT to it would be a LOOPBACK call into the same Puma
+    # pool: CLAUDE.md §14e's recorded reentrancy bug, measured at 14-24 second stalls and outright
+    # 404s. That is why `FileLayer::Chunk#put_chunk` writes its store IN-PROCESS instead of PUTting
+    # to a URL of its own. On chunk_remote there is no in-process store to write -- the presigned
+    # URL always points at the STANDALONE sync server's object storage, never at this app -- so an
+    # ordinary outbound HTTP PUT is not merely safe here, it is the only way these bytes can move
+    # without this app becoming a relay for them (§15). Only the ADAPTER knows which situation it
+    # is in; the caller (`Maker::Addons::LibraryOutput`) must not have to.
+    #
+    # `begun:` is the SAME `UploadBegun` `#begin_upload` already returned to the caller -- this
+    # reads `put_urls`, the field `Chunk#put_chunk` has no use for (it reads `hash` straight
+    # against its own store instead). One signature across the port, each adapter reading the part
+    # it needs, matching how `device:`/`broadcast:` are accepted-and-unused on the arms that don't
+    # need them.
+    #
+    # `.fetch(hash)` is bare and UNRESCUED on purpose: `begin_upload`'s own contract
+    # (`FileLayer::UploadBegun`'s header) guarantees `put_urls` is keyed by exactly the entries in
+    # `missing`, and every production caller iterates `missing` to get `hash` in the first place
+    # (see `Maker::Addons::LibraryOutput#write_chunk`) -- so a miss here is a caller passing a hash
+    # that was never in `missing`, a LOCAL contract violation, not a wire condition to translate
+    # into the port's vocabulary the way `#fetch_chunk` (the download side) does for a hash the
+    # SERVER legitimately declined to presign.
+    def put_chunk(_user, begun:, hash:, bytes:)
+      @chunk_fetch.put(begun.put_urls.fetch(hash), bytes)
+    end
+
     # `broadcast:` IS ACCEPTED AND UNUSED for the same reason `device:` is: the SERVER broadcasts to
     # the devices attached to it when the commit lands, and this app is one of those devices rather
     # than the thing doing the notifying. Maker::Addons::LibraryOutput passes `broadcast: false`
