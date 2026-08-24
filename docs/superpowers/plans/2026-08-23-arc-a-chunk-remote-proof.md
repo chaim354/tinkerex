@@ -1,0 +1,1081 @@
+# Arc A — the executable proof that `chunk_remote` works
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** stand up a real standalone sync server, drive the maker app against it under
+`LIBRARY_BACKEND=chunk_remote`, and turn "chunk_remote works" into a measured result — a
+checked-in inventory of exactly what is broken, produced by running the thing rather than by
+reading it.
+
+**Architecture:** a `bin/sync-server` script boots a sibling `chaim354/tinkerex-sync` checkout's
+`host/` app and mints a device token. A **journey suite** signs in to the maker app and drives the
+real user flows (upload, list, download, mkdir, move, delete, trash, restore, addon save, project
+intake, freshness) against that server. A separate workflow, `sync-contract.yml`, runs it on every
+PR. The journey suite **skips cleanly when no server is configured**, so `bin/ci` stays green
+while `sync-contract.yml` carries the red signal.
+
+**Tech Stack:** Rails 8, Minitest / `ActionDispatch::IntegrationTest`, `Net::HTTP` (stdlib),
+bash, GitHub Actions on the self-hosted macOS runner.
+
+**Spec:** `docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md`, Arc A.
+
+---
+
+## Scope, and two corrections to the spec this plan makes
+
+**This plan is Arc A Part 1 only — the executable proof, entirely in this repo.** Arc A's other
+half (A2, the portable conformance corpus, and A3, the normative `sync-protocol.md` rewrite) is a
+sibling plan whose tasks run in `../tinkerex-sync`. It shares nothing with this plan but the boot
+recipe, so the two can be executed in either order or in parallel.
+
+Two things the spec assumed that measurement contradicted. Both are recorded here rather than
+worked around silently:
+
+**1. `test-chunk-remote` cannot be a `bin/ci` gate yet, so this plan ships a separate workflow
+instead.** `test/ci_hygiene_test.rb` asserts SET EQUALITY between `bin/ci --list-ci` and `ci.yml`'s
+gate jobs, and a second test asserts `setup` is the only gate permitted in `LOCAL_ONLY_GATES`. So
+a gate that is red is a `main` that is red, and there is no sanctioned parking spot. The precedent
+for a cross-repo wire-contract check that is *not* a gate is already in the tree:
+`.github/workflows/client-contract.yml`, which boots a real Rails server and runs the Rust
+integration suite without ever invoking `bin/ci`. `test-chunk-remote` becomes a real gate at the
+end of Arc B, when it can be green.
+
+**2. The leg runs a focused journey suite, NOT the full maker suite.** Three measured reasons:
+
+- **One shared remote library.** `ChunkRemote` resolves a single process-wide token
+  (`chunk_remote.rb:327-328`), so every test's maker user maps to ONE sync-server user. The suite
+  runs in parallel workers; they would all write into that one library.
+- **No per-test isolation exists to fix it.** Rolling back the maker DB does not roll back the sync
+  server, so a `mkdir "Projects"` in test A makes test B's identical mkdir a 409 — noise failures
+  that say nothing about chunk_remote. Per-test library isolation needs a provisioning endpoint,
+  which is **Arc C**. That is an ordering dependency the spec did not have: **the full-suite leg
+  comes after Arc C, not in Arc A.**
+- **63 of 218 test files build nodes with `user.nodes.create!`** (255 occurrences). Those read fine
+  on chunk_remote — reads are local SQL against `user.nodes` — but any of them that then calls a
+  write verb POSTs about a node the server has never heard of. That is a test-shape problem, not a
+  chunk_remote defect, and it would dominate the inventory.
+
+A journey suite is sequential, uses one library on purpose, creates every node through a real
+door, and therefore reports only real defects.
+
+---
+
+## File Structure
+
+| File | Responsibility |
+|---|---|
+| `bin/sync-server` (create) | Resolve a sibling `tinkerex-sync`, prepare its DB, mint a device token, boot it. Two subcommands so CI can background the boot. |
+| `test/support/chunk_remote_journey.rb` (create) | The harness: skip logic, web sign-in, and an upload helper that PUTs bytes to a real remote URL over `Net::HTTP` rather than through the integration session. Required by the journey test itself, NOT from `test_helper.rb` — see Task 2 Step 2. |
+| `test/integration/chunk_remote_journey_test.rb` (create) | The journey itself, one test per flow. The only file that knows what "works" means. |
+| `.github/workflows/sync-contract.yml` (create) | Boot the server on the macOS runner and run the journey suite. Not a `bin/ci` gate. |
+| `test/bin_sync_server_test.rb` (create) | Guards `bin/sync-server`'s contract without needing a checkout: executable, fails loudly and names the clone command when the sibling is missing. |
+| `docs/superpowers/plans/2026-08-23-arc-b-worklist.md` (create, Task 7) | The measured inventory. Generated from the run, not written from memory. |
+| `docs/STATUS.md` (modify) | The arc entry, same branch, same PR (§15). |
+
+---
+
+## Task 1: `bin/sync-server`
+
+**Files:**
+- Create: `bin/sync-server`
+- Test: `test/bin_sync_server_test.rb`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/bin_sync_server_test.rb`:
+
+```ruby
+# frozen_string_literal: true
+
+require "test_helper"
+require "open3"
+
+# GUARDS THE ONE THING THAT CAN BE GUARDED WITHOUT A CHECKOUT: that a missing sibling repo fails
+# LOUDLY and names the fix. This is the shape scripts/r2-cutover/smoke.sh already uses for
+# tinkerex-client, and the reason is the same -- nothing in bin/ci boots a sync server, so the
+# script's failure message IS its error handling (CLAUDE.md §14i: some things cannot go red in CI,
+# so the message has to carry the whole story).
+class BinSyncServerTest < ActiveSupport::TestCase
+  SCRIPT = Rails.root.join("bin/sync-server")
+
+  test "the script is executable" do
+    assert SCRIPT.exist?, "bin/sync-server is missing"
+    assert SCRIPT.executable?, "bin/sync-server must be chmod +x or CI cannot invoke it"
+  end
+
+  test "a missing sibling checkout exits non-zero and names the clone command" do
+    out, status = Open3.capture2e(
+      { "TINKEREX_SYNC_DIR" => Dir.mktmpdir("absent") }, SCRIPT.to_s, "prepare"
+    )
+
+    assert_not status.success?, "a missing tinkerex-sync must fail, not fall through:\n#{out}"
+    assert_includes out, "chaim354/tinkerex-sync",
+                     "the failure must name the repo, not just the path it looked in"
+    assert_includes out, "gh repo clone",
+                     "the failure must name the command that fixes it"
+  end
+
+  test "an unknown subcommand is refused rather than silently doing nothing" do
+    out, status = Open3.capture2e(SCRIPT.to_s, "frobnicate")
+
+    assert_not status.success?
+    assert_includes out, "prepare", "the usage message must name the real subcommands"
+    assert_includes out, "start"
+  end
+end
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+```bash
+bin/rails test test/bin_sync_server_test.rb
+```
+
+Expected: `3 runs, 1 assertions, 1 failures, 2 errors`. Note the split — only the first is a
+*failure*. `Open3.capture2e` RAISES `Errno::ENOENT` on a nonexistent executable rather than
+returning a non-zero status, so the other two are *errors*. Both mean "the script does not exist
+yet", which is the checkpoint; an implementer matching the literal word "failures" would think
+this step had gone wrong.
+
+- [ ] **Step 3: Write the script**
+
+Create `bin/sync-server`:
+
+```bash
+#!/usr/bin/env bash
+# BOOT A STANDALONE tinkerex-sync HOST, for local chunk_remote work and for sync-contract.yml.
+#
+# WHY A SIBLING CHECKOUT RATHER THAN THE INSTALLED GEM. The gem currently ships host/, so
+# `bundle show tinkerex-sync`/host would work today -- and stops working the moment Stage 5 Arc D
+# removes the gem, which is the whole direction of travel. A sibling checkout is the durable
+# answer and matches the ../tinkerex-client convention this repo already uses
+# (scripts/r2-cutover/smoke.sh, .github/workflows/client-contract.yml).
+#
+# TWO SUBCOMMANDS, because CI has to background the boot and still know the token:
+#   prepare  migrate the host DB, mint a device token, write tmp/sync-server.env, print it
+#   start    run the server in the FOREGROUND on $SYNC_PORT (the caller backgrounds it)
+#
+# THE HOST DOES HAVE /up (tinkerex-sync host/config/routes.rb), added after this plan was
+# drafted -- and it is not a static 200: it runs User.count and answers 503 on an empty schema,
+# because that host's first real deploy reported healthy with no tables. A caller waiting on this
+# server should probe BOTH /up and an authenticated GET /v1/devices/whoami, because they answer
+# different questions -- /up says "there is a schema and I can reach it," whoami says "and the
+# credential I just minted is accepted." A bare port check says neither. THIS SCRIPT IMPLEMENTS
+# NEITHER PROBE -- prepare and start do not curl anything. This paragraph is guidance for the
+# CALLER (CI, and a human), which is exactly why it has to stay true.
+set -euo pipefail
+
+PORT="${SYNC_PORT:-3002}"
+EMAIL="${SYNC_EMAIL:-maker@example.com}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+SYNC_DIR="${TINKEREX_SYNC_DIR:-$REPO_ROOT/../tinkerex-sync}"
+HOST_DIR="$SYNC_DIR/host"
+ENV_FILE="$REPO_ROOT/tmp/sync-server.env"
+
+usage() {
+  echo "usage: bin/sync-server {prepare|start}" >&2
+  echo "  prepare  migrate the sync host DB, mint a device token, write tmp/sync-server.env" >&2
+  echo "  start    boot the sync host in the foreground on \$SYNC_PORT (default $PORT)" >&2
+}
+
+require_checkout() {
+  if [ ! -d "$HOST_DIR" ]; then
+    echo "tinkerex-sync host app not found at $HOST_DIR" >&2
+    echo "" >&2
+    echo "The sync engine lives in chaim354/tinkerex-sync. Clone it as a sibling:" >&2
+    echo "    gh repo clone chaim354/tinkerex-sync $SYNC_DIR" >&2
+    echo "or point this script at an existing checkout:" >&2
+    echo "    TINKEREX_SYNC_DIR=/path/to/tinkerex-sync $0 ${1:-prepare}" >&2
+    exit 1
+  fi
+}
+
+case "${1:-}" in
+  prepare)
+    require_checkout prepare
+    mkdir -p "$REPO_ROOT/tmp"
+    ( cd "$HOST_DIR" && bundle install --quiet && bin/rails db:prepare )
+    # The token is printed ONCE by the task (only a SHA256 digest is stored), so capture it here.
+    token="$(cd "$HOST_DIR" && EMAIL="$EMAIL" bin/rails sync:device:issue \
+             | awk '/^device_token:/ { print $2 }')"
+    if [ -z "$token" ]; then
+      echo "sync:device:issue printed no device_token -- refusing to write a blank credential" >&2
+      exit 1
+    fi
+    {
+      echo "CHUNK_REMOTE_URL=http://127.0.0.1:$PORT"
+      echo "CHUNK_REMOTE_TOKEN=$token"
+    } > "$ENV_FILE"
+    cat "$ENV_FILE"
+    ;;
+  start)
+    require_checkout start
+    cd "$HOST_DIR"
+    exec env STORAGE_BACKEND=local bin/rails server -p "$PORT" -b 127.0.0.1
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
+```
+
+- [ ] **Step 4: Make it executable and run the test**
+
+```bash
+chmod +x bin/sync-server && bin/rails test test/bin_sync_server_test.rb
+```
+
+Expected: `3 runs, 12 assertions, 0 failures, 0 errors`. Twelve, not six — `assert_includes`
+costs two assertions each in this Minitest version (`assert_respond_to` then `assert`).
+
+- [ ] **Step 5: Prove it against a real checkout**
+
+```bash
+gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
+bin/sync-server prepare
+```
+
+Expected: two `KEY=value` lines, and `CHUNK_REMOTE_TOKEN` is **43 characters of URL-safe
+base64** (`[A-Za-z0-9_-]`). Not 64 hex — `Device.register!` is `SecureRandom.urlsafe_base64(32)`;
+64-hex is the SHA256 *digest*, which never leaves the server. Do not write a hex assertion
+anywhere against this value. If `sync:device:issue` changes its output format this step is where
+you find out, not in CI.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add bin/sync-server test/bin_sync_server_test.rb
+git commit -m "Boot a standalone sync host from a sibling checkout"
+```
+
+---
+
+## Task 2: the journey harness
+
+**Files:**
+- Create: `test/support/chunk_remote_journey.rb`
+- Modify: nothing. `test_helper.rb` is deliberately NOT touched — see Step 2.
+
+- [ ] **Step 1: Write the harness**
+
+> **As built.** The block below is the file as it actually shipped (`3b78c6f`), not as first
+> drafted. Five defects in the first draft were found by review and are worth knowing about
+> because each is a shape that recurs: `assert_response :redirect` could not fail (a FAILED
+> Devise sign-in redirects too); a comment named a Rails-mangled method name that can never
+> exist; the content-addressed store makes the `Net::HTTP` path go dark on any repeat of fixed
+> bytes; the PUT had no timeout while `Transport` one file over sets 5s/30s against the same
+> server; and `journey_prefix` is per TEST, not per run. Do not re-derive the first draft.
+
+Create `test/support/chunk_remote_journey.rb`:
+
+```ruby
+# frozen_string_literal: true
+
+require "net/http"
+
+# THE RIG FOR DRIVING THE MAKER APP AGAINST A REAL SYNC SERVER.
+#
+# THE SKIP IS ON THE SERVER, NEVER ON THE CLAIM. §14j records a guard that skipped on
+# `defined?(Sync)` -- the very thing it asserted -- so the mutation that broke it made every test
+# skip and the suite report success. Here the skip is on whether a server was CONFIGURED, which is
+# a precondition, and the "does not skip when a server is configured" test in
+# test/integration/chunk_remote_journey_test.rb is the mutation-check that the precondition is
+# not quietly always false. Named by its DESCRIPTION, not Rails' mangled method name -- `test
+# "..."` turns a string into `test_<description, spaces to underscores>`, and a hand-typed guess
+# at that mangling is a second spelling that can silently drift from the real one.
+module ChunkRemoteJourney
+  PASSWORD = "correct horse battery staple"
+
+  def self.configured? = ENV["CHUNK_REMOTE_URL"].present? && ENV["CHUNK_REMOTE_TOKEN"].present?
+
+  def skip_unless_remote_server
+    return if ChunkRemoteJourney.configured? && ENV["LIBRARY_BACKEND"] == "chunk_remote"
+
+    skip "needs LIBRARY_BACKEND=chunk_remote plus CHUNK_REMOTE_URL/CHUNK_REMOTE_TOKEN " \
+         "(bin/sync-server prepare && bin/sync-server start)"
+  end
+
+  # Real password auth against the maker app -- the web UI is session-authed, never the v1 token
+  # (§14d), so a journey that skipped this would exercise a door no user goes through.
+  def sign_in(email = "journey@example.com")
+    user = User.find_by(email:) ||
+           User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
+    post user_session_path, params: { user: { email:, password: PASSWORD } }
+    # NOT `assert_response :redirect` -- a FAILED sign-in redirects too (Devise's own
+    # FailureApp#redirect, and this app's per-IP rate-limit hook in Users::SessionsController,
+    # both `redirect_to`), so a bare 3xx cannot tell success from failure and every request this
+    # helper's caller makes afterward would silently run unauthenticated while this reported fine.
+    # `files_path` is the real destination -- ApplicationController#after_sign_in_path_for.
+    assert_redirected_to files_path
+    user
+  end
+
+  # THE UPLOAD, AND THE ONE PLACE THIS DIFFERS STRUCTURALLY FROM Web::FilesFlowTest.
+  #
+  # That suite does `put url, params: bytes` -- an INTEGRATION-SESSION request, which works only
+  # because embedded chunk presigns a RELATIVE path back into the same app. chunk_remote's
+  # put_urls are ABSOLUTE and point at the sync server, which the integration session cannot
+  # reach. Net::HTTP is not a stylistic choice here; it is the only thing that can perform this
+  # request, and using the session instead would silently upload nothing and still assert 200.
+  def upload_through_ui(name, bytes, parent_node_id: nil)
+    hash = Digest::SHA256.hexdigest(bytes)
+    manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
+
+    post begin_upload_files_path,
+         params: { name:, size: bytes.bytesize, manifest:, parent_node_id: }, as: :json
+    assert_response :success, "begin_upload failed: #{response.body}"
+    begun = JSON.parse(response.body)
+
+    # CONTENT-ADDRESSED, SO A REPEAT OF FIXED BYTES GOES DARK HERE. journey_prefix (below)
+    # randomizes the NAME, never the BYTES -- the sync server dedupes chunks by content hash, so
+    # a second upload of identical bytes gets back an EMPTY put_urls (the store already has that
+    # chunk), and this loop is a correct no-op. finalize_upload's verify: true still passes,
+    # because the bytes genuinely are there -- from a PREVIOUS run. This method's own headline
+    # claim, that Net::HTTP is the only thing that can perform this request, silently stops being
+    # exercised while the suite stays green. A caller that wants to exercise the wire must vary
+    # its CONTENT, not just the filename.
+    (begun["put_urls"] || {}).each_value { |url| put_bytes_to_storage(url, bytes) }
+
+    post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+    assert_response :success, "finalize_upload failed: #{response.body}"
+    begun["node_id"]
+  end
+
+  def put_bytes_to_storage(url, bytes)
+    uri = URI.parse(url)
+    req = Net::HTTP::Put.new(uri)
+    req["Content-Type"] = "application/octet-stream"
+    req.body = bytes
+    # TIMEOUTS AND THE RESCUE LIST MATCH FileLayer::ChunkRemote::Transport, which talks to this
+    # same server for the same reason: Ruby's stdlib default (60s) would turn an unstarted or
+    # hung sync server into a slow, unexplained hang here instead of a fast, readable failure.
+    res = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https",
+                           open_timeout: FileLayer::ChunkRemote::Transport::OPEN_TIMEOUT,
+                           read_timeout: FileLayer::ChunkRemote::Transport::READ_TIMEOUT) do |h|
+      h.request(req)
+    end
+    assert res.is_a?(Net::HTTPSuccess),
+           "PUT #{uri} returned #{res.code}: #{res.body.to_s[0, 200]}"
+  rescue Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Errno::ECONNRESET,
+         SocketError, OpenSSL::SSL::SSLError, IOError => e
+    flunk "PUT #{uri} could not reach the sync server (#{e.class}): #{e.message} -- " \
+          "is it running? (bin/sync-server start)"
+  end
+
+  # A PREFIX UNIQUE TO EACH TEST, NOT EACH RUN. Minitest instantiates a fresh test instance per
+  # test METHOD, so `@journey_prefix ||=` memoizes once per test rather than once per suite
+  # execution -- a stronger property, but worth stating precisely: a future reader could
+  # otherwise assume the prefix is stable across the tests in this file and build on that. It
+  # matters because one sync library is shared by every test in this suite (see the plan's scope
+  # note) and the server does not roll back with the maker DB. Real per-test isolation on the
+  # SERVER's own state needs Arc C's provisioning endpoint; until then, disjoint names are what
+  # keeps two runs of the same test from colliding at 409.
+  def journey_prefix = @journey_prefix ||= "j#{SecureRandom.hex(4)}"
+end
+```
+
+- [ ] **Step 2: Do NOT require it from `test_helper.rb`**
+
+There is nothing to do in this step except understand why. An earlier draft of this plan added a
+`require_relative` to `test/test_helper.rb`; that is wrong, and checking the tree is what showed
+it. `test_helper.rb` requires exactly two things (`config/environment`, `rails/test_help`) and no
+support file at all. Every support file in this suite is required **by the test that needs it**:
+
+```
+test/controllers/tools/addons_controller_test.rb:2:  require_relative "../../support/fake_addon_source"
+test/integration/library/s3_library_test.rb:2:       require_relative "../../support/fake_s3"
+test/application_system_test_case.rb:2:              require_relative "support/worker_budget"
+```
+
+A global require would load this harness — and `net/http` — into all 218 test files to serve one,
+and would put a `sign_in` helper into the namespace of suites that already define their own
+(`test/integration/web/*_test.rb` define a private `sign_in` each; at least six do). Task 3's
+test file requires it directly instead.
+
+Confirm the convention for yourself before moving on:
+
+```bash
+grep -n require test/test_helper.rb
+```
+
+Expected: two lines, `config/environment` and `rails/test_help`. If a support require has appeared
+there since this plan was written, follow whatever the file now does rather than this note.
+
+- [ ] **Step 3: Verify the harness parses and nothing else moved**
+
+Nothing requires the harness yet, so the only thing to check here is that the file is valid Ruby
+and that the existing suite is untouched:
+
+```bash
+ruby -c test/support/chunk_remote_journey.rb
+bin/rails test test/bin_sync_server_test.rb
+```
+
+Expected: `Syntax OK`, then `4 runs, 17 assertions, 0 failures, 0 errors` — Task 1's suite,
+unchanged, because this task adds a file nothing loads yet.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add test/support/chunk_remote_journey.rb
+git commit -m "Add the chunk_remote journey harness"
+```
+
+---
+
+## Task 3: the journey — reads and byte round-trip
+
+**Files:**
+- Create: `test/integration/chunk_remote_journey_test.rb`
+
+- [ ] **Step 1: Write the test**
+
+Create `test/integration/chunk_remote_journey_test.rb`:
+
+```ruby
+# frozen_string_literal: true
+
+require "test_helper"
+require_relative "../support/chunk_remote_journey"
+
+# DRIVES THE MAKER APP AGAINST A REAL STANDALONE SYNC SERVER. Every node here is created through a
+# real door -- never `user.nodes.create!` -- because a hand-built row exists only in the local
+# mirror and the server has never heard of it, so a write verb against one would 404 for a reason
+# that says nothing about chunk_remote.
+#
+# THIS SUITE IS AN INSTRUMENT, NOT A PRODUCT -- the failures it reports are the measured
+# work-list for Arc B. Be precise about WHICH tests are expected to fail, because the imprecise
+# version of this sentence was already wrong once: an earlier draft said "this suite is expected
+# to be red when it lands," and the first three tests (sign-in, the two-phase presigned upload,
+# the byte-exact download, the files index) came back GREEN against a real standalone server on
+# the first run -- verified against the sync server's own log as real wire traffic, not a masked
+# pass. The three tests that ARE expected to fail are Task 5's, and they say so individually. It is deliberately NOT a bin/ci
+# gate -- test/ci_hygiene_test.rb asserts set equality between `bin/ci --list-ci` and ci.yml's gate
+# jobs, so a red gate is a red main. .github/workflows/sync-contract.yml carries the signal.
+class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
+  include ChunkRemoteJourney
+
+  setup { skip_unless_remote_server }
+
+  # THE MUTATION-CHECK ON THE SKIP ITSELF. §14j: a guard that skips on the thing it asserts is
+  # vacuous, and it reported SUCCESS while asserting nothing. Break `skip_unless_remote_server` to
+  # always skip and this test is the one that notices.
+  test "the journey suite does not skip when a server is configured" do
+    assert ChunkRemoteJourney.configured?,
+           "setup should have skipped this test if no server were configured"
+    assert_equal "chunk_remote", ENV["LIBRARY_BACKEND"]
+    assert_kind_of FileLayer::ChunkRemote, FileLayer.current
+  end
+
+  test "an upload round-trips byte-for-byte through the sync server" do
+    sign_in
+    # CONTENT varies, not just the filename. Chunks are content-addressed, so a repeat of fixed
+    # bytes dedupes to an empty put_urls and the Net::HTTP upload path silently never runs --
+    # see upload_through_ui's own comment. The suite would stay green while proving nothing.
+    bytes = "solid #{journey_prefix}\nendsolid\n".b
+    node_id = upload_through_ui("#{journey_prefix}-bracket.stl", bytes)
+
+    get blob_file_path(node_id)
+    assert_response :success
+    assert_equal bytes, response.body,
+                 "the bytes that came back are not the bytes that went in"
+  end
+
+  test "an uploaded file appears on the files page" do
+    user = sign_in
+    name = "#{journey_prefix}-listed.stl"
+    upload_through_ui(name, "listed #{journey_prefix}".b)
+
+    get files_path
+    assert_response :success
+    assert_includes response.body, name
+
+    assert user.nodes.present.exists?(name:),
+           "the local mirror should hold the node after finalize_upload refreshed it"
+  end
+end
+```
+
+- [ ] **Step 2: Run it with no server and verify it SKIPS rather than fails**
+
+```bash
+bin/rails test test/integration/chunk_remote_journey_test.rb
+```
+
+Expected: `3 runs, 0 assertions, 0 failures, 0 errors, 3 skips`. This is what keeps `bin/ci`
+green while the journey is red.
+
+- [ ] **Step 3: Run it against a real server**
+
+In one terminal:
+
+```bash
+bin/sync-server prepare && bin/sync-server start
+```
+
+In another:
+
+```bash
+set -a; . tmp/sync-server.env; set +a
+LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+  test TEST=test/integration/chunk_remote_journey_test.rb
+```
+
+**Two forms matter here and only one works. Get this right or the step runs no tests.**
+
+- `bin/rails db:test:prepare test <bare path>` — **does not work.** `bin/rails` dispatches one
+  top-level command and reads the path as a second, printing `Unrecognized command` and exiting
+  **1**. Loud, at least.
+- `bin/rails test TEST=<path>` **on its own also does not work** — `Rails::TestUnit::Runner` parses
+  ARGV as literal paths and has no `TEST=` handling, so it fails with `InvalidTestError`. The
+  `TEST=` convention only exists on the RAKE dispatch path.
+- `bin/rails db:test:prepare test TEST=<path>` — **one invocation, chained** — is the form that
+  works, and it is what `config/ci.rb`'s own `test-no-engine` gate already uses. Do not "simplify"
+  it into two commands; the chaining is what puts `test` on the rake path where `TEST=` is read.
+
+*(An earlier draft of this note claimed the bare-path form exits **0**, which would have meant a CI
+step reporting green having run nothing. That was wrong, and wrong in the direction that causes
+panic: the claim came from reading `$?` after a pipeline, so it reported `tail`'s status rather than
+`bin/rails`'s. Measured properly it is 1. The lesson is the one this repo already records — check
+the exit status of the command you mean, not of the last thing in the pipe.)*
+
+Expected: `3 runs`, 0 skips. Record whether they pass or fail **verbatim** — do not fix anything
+yet. Arc A's product is the measurement; Arc B is where fixes go.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add test/integration/chunk_remote_journey_test.rb
+git commit -m "Journey: reads and the byte round-trip against a real sync server"
+```
+
+---
+
+## Task 4: the journey — the four metadata mutations
+
+**Files:**
+- Modify: `test/integration/chunk_remote_journey_test.rb`
+
+- [ ] **Step 1: Add the tests**
+
+Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
+
+```ruby
+  test "a folder can be created, and a file moved into it" do
+    user = sign_in
+    folder = "#{journey_prefix}-folder"
+    node_id = upload_through_ui("#{journey_prefix}-moved.stl", "moved #{journey_prefix}".b)
+
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success, "create_folder failed: #{response.body}"
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    # THROUGH Maker::MoveNode, NOT a controller: verified against `bin/rails routes` -- FilesController
+    # exposes GET/DELETE on /files/:id and no update action at all, so there is no PATCH door to
+    # drive. MoveNode is the named service §14d says every web move goes through, which makes it the
+    # real door here rather than a shortcut past one.
+    Maker::MoveNode.call(user, node: user.nodes.present.find_by!(node_id:),
+                         new_parent_node_id: folder_node.node_id)
+
+    assert_equal folder_node.node_id, user.nodes.present.find_by!(node_id:).parent_node_id,
+                 "the move did not reach the mirror -- refresh! after move is what puts it there"
+  end
+
+  test "a file can be deleted, listed in trash, and restored" do
+    user = sign_in
+    name = "#{journey_prefix}-doomed.stl"
+    node_id = upload_through_ui(name, "doomed #{journey_prefix}".b)
+
+    # `assert_response :redirect` WOULD NOT DISCRIMINATE HERE, and that is the same defect the
+    # journey harness's own sign_in had. FilesController redirects to files_path on SUCCESS
+    # (files_controller.rb:628, with a notice) and its three rescue_from arms redirect to
+    # files_path on EVERY html failure (:106 NotFound, :124 FetchError, :134
+    # UnsupportedOperation), each with an ALERT. Same status, same Location -- the flash is the
+    # only thing that differs, so it is what gets asserted.
+    delete file_path(node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "delete was refused: #{flash[:alert]}"
+    assert_not user.nodes.present.exists?(node_id:), "delete did not tombstone the mirror row"
+
+    get trash_index_path
+    assert_response :success
+    assert_includes response.body, name
+
+    post restore_trash_path(node_id)
+    # TrashController's failure arms redirect to trash_index_path with an alert (:40, :46) while
+    # success goes to files_path with a notice (:79), so the destination alone would discriminate
+    # here -- the alert check is kept anyway so every redirect in this file reads the same way.
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "restore was refused: #{flash[:alert]}"
+    assert user.nodes.present.exists?(node_id:), "restore did not revive the mirror row"
+  end
+
+  test "a directory delete cascades, because dir_deletable is true on chunk_remote" do
+    user = sign_in
+    folder = "#{journey_prefix}-cascade"
+
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    child = upload_through_ui("#{journey_prefix}-child.stl", "child #{journey_prefix}".b,
+                              parent_node_id: folder_node.node_id)
+
+    delete file_path(folder_node.node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "the directory delete was refused: #{flash[:alert]}"
+
+    assert_not user.nodes.present.exists?(node_id: child),
+               "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
+               "recorded trap, and dir_deletable is true precisely because the server cascades"
+  end
+```
+
+- [ ] **Step 2: Verify they skip with no server**
+
+```bash
+bin/rails test test/integration/chunk_remote_journey_test.rb
+```
+
+Expected: `6 runs, 0 assertions, 0 failures, 0 errors, 6 skips`.
+
+- [ ] **Step 3: Run against the server and record the result verbatim**
+
+```bash
+set -a; . tmp/sync-server.env; set +a
+LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+  test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-mutations.txt
+```
+
+Do not fix failures. Every route helper above was verified against `bin/rails routes` while this
+plan was written (`library_folders`, `restore_trash`, `trash_index`, `file`, `blob_file`,
+`begin_upload_files`, `finalize_upload_files`, `user_session`) — if one is missing, that is a real
+change in the app and belongs in the work-list, not in a quick substitution here.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add test/integration/chunk_remote_journey_test.rb
+git commit -m "Journey: mkdir, move, delete, trash, restore, and the directory cascade"
+```
+
+---
+
+## Task 5: the journey — the three known gaps
+
+**Files:**
+- Modify: `test/integration/chunk_remote_journey_test.rb`
+
+These three tests assert what SHOULD happen. All three are expected to FAIL. Write them anyway
+and do not weaken them — a test rewritten to match a defect is how a defect becomes a
+specification.
+
+- [ ] **Step 1: Add the freshness test**
+
+Append inside the class:
+
+```ruby
+  # GAP (a). `refresh!` is called only from mkdir/move/delete/undelete/finalize_upload
+  # (chunk_remote.rb:179,188,198,207,242) and ChangelogSync has no other caller in app/, lib/ or
+  # config/. So a node another device pushed is invisible here until THIS app happens to write
+  # something. Arc B's fix is a recurring per-user pull.
+  test "a node created directly on the sync server becomes visible without a local write" do
+    user = sign_in
+    name = "#{journey_prefix}-from-elsewhere"
+    transport = FileLayer::ChunkRemote::Transport.new(
+      base_url: ENV.fetch("CHUNK_REMOTE_URL"), token: ENV.fetch("CHUNK_REMOTE_TOKEN")
+    )
+    node_id = SecureRandom.uuid
+    transport.post("/v1/nodes", { node_id:, parent_node_id: nil, name:, mode: 0o755,
+                                  mtime: (Time.current.to_f * 1e9).to_i })
+
+    get files_path
+    assert_response :success
+
+    assert user.nodes.present.exists?(node_id:),
+           "a node pushed by another device never reaches the mirror: there is no periodic pull " \
+           "and no ActionCable subscription, so the maker UI cannot see it at all"
+  end
+```
+
+- [ ] **Step 2: Add the addon-save test**
+
+Append inside the class:
+
+```ruby
+  # GAP (b). port_writable is false on chunk_remote, so Maker::Addons::LibraryOutput#write takes
+  # #write_chunk, which calls Sync::Storage::ChunkStore.current.put (library_output.rb:143) -- a
+  # constant that does not exist in this process. Arc B's fix is a `put_chunk` port verb.
+  test "an addon save writes its output into the library" do
+    user = sign_in
+    state = Maker::AddonState.create!(user:, addon_key: "journey", name: "j", data: {})
+
+    files = [ { name: "#{journey_prefix}-out.svg", bytes: "<svg/>".b,
+                content_type: "image/svg+xml", role: "output" } ]
+
+    assert_nothing_raised do
+      Maker::Addons::LibraryOutput.write(user:, state:, parent_node_id: nil, files:)
+    end
+    assert user.nodes.present.exists?(name: "#{journey_prefix}-out.svg"),
+           "the addon's output never reached the library"
+  end
+```
+
+`maker_addon_states` carries exactly `id, addon_key, created_at, data, name, revision,
+updated_at, user_id` (checked while writing this plan), so those four attributes are sufficient. Do
+not stub `LibraryOutput` — the call under test is the whole point.
+
+- [ ] **Step 3: Add the batching test**
+
+Append inside the class:
+
+```ruby
+  # GAP (c). LibraryBroadcast.batch degrades to a bare `yield` without the engine
+  # (library_broadcast.rb:21), so N moves are N changelog pulls -- two WAN round-trips per file
+  # inside a browser-facing request. Arc B's fix gives `batch` a real job on chunk_remote:
+  # suppress the intermediate refresh! and pull once at the end.
+  test "a batch of moves costs one changelog pull, not one per move" do
+    user = sign_in
+    folder = "#{journey_prefix}-batch"
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success
+    dest = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    ids = 3.times.map { |i| upload_through_ui("#{journey_prefix}-b#{i}.stl", "b#{i} #{journey_prefix}".b) }
+
+    pulls = 0
+    original = FileLayer::ChunkRemote::ChangelogSync.method(:new)
+    FileLayer::ChunkRemote::ChangelogSync.stub(:new, ->(*a, **k) { pulls += 1; original.call(*a, **k) }) do
+      LibraryBroadcast.batch(user) do
+        ids.each { |id| FileLayer.current.move(user, node_id: id, new_parent_node_id: dest.node_id) }
+      end
+    end
+
+    assert_equal 1, pulls,
+                 "a batch of 3 moves pulled the changelog #{pulls} times; batch must defer the " \
+                 "refresh so an eager project-intake sweep is not 2 WAN round-trips per file"
+  end
+```
+
+- [ ] **Step 4: Verify all nine skip with no server**
+
+```bash
+bin/rails test test/integration/chunk_remote_journey_test.rb
+```
+
+Expected: `9 runs, 0 assertions, 0 failures, 0 errors, 9 skips`.
+
+- [ ] **Step 5: Confirm `bin/ci` is still green**
+
+```bash
+bin/ci
+```
+
+Expected: every gate passes, three legs identical. If this is red, stop — the journey suite must
+never be able to red `bin/ci`, and something has leaked out of the skip.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add test/integration/chunk_remote_journey_test.rb
+git commit -m "Journey: the three known gaps, asserted as they should behave"
+```
+
+---
+
+## Task 6: the `sync-contract.yml` workflow
+
+**Files:**
+- Create: `.github/workflows/sync-contract.yml`
+
+- [ ] **Step 1: Write the workflow**
+
+Create `.github/workflows/sync-contract.yml`:
+
+```yaml
+name: Sync contract
+
+# THE PER-PR PROOF THAT THE MAKER APP STILL WORKS AGAINST A REAL STANDALONE SYNC SERVER.
+# Stage 5 Arc A; design doc docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md.
+#
+# NOT A bin/ci GATE, AND THAT IS A CONSTRAINT RATHER THAN A PREFERENCE. test/ci_hygiene_test.rb
+# asserts SET EQUALITY between `bin/ci --list-ci` and ci.yml's gate jobs, and a second test allows
+# only `setup` in LOCAL_ONLY_GATES -- so a gate that is red is a main that is red, and this suite is
+# EXPECTED to be red until Arc B closes the gaps it exists to measure. client-contract.yml is the
+# precedent: a cross-repo wire-contract workflow that boots a real server and never invokes bin/ci.
+# `test-chunk-remote` becomes a real gate at the end of Arc B, when it can be green.
+#
+# macos, NOT linux: only charless-MacBook-Pro-maker-mac is registered (CLAUDE.md §15), so a linux
+# job here would queue for 24h at 0 elapsed and be auto-cancelled -- the five-week dark-CI failure
+# ci/preflight.sh exists to prevent. macos jobs are exempt from the preflight gate because the
+# preflight job itself runs on macos, and NO ruby/setup-ruby appears below: it assumes a hosted
+# /Users/runner layout this box does not have, and ci_hygiene_test.rb fails if it reappears.
+on:
+  pull_request: {}
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chunk-remote-journey:
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v7
+
+      # SECOND CHECKOUT: the sync engine is a separate private repo, and secrets.GITHUB_TOKEN is
+      # scoped to THIS repo only. Operator action: create the TINKEREX_SYNC_TOKEN repo secret (a
+      # fine-grained token scoped to chaim354/tinkerex-sync, contents:read) -- the same shape
+      # client-contract.yml already needs for TINKEREX_CLIENT_TOKEN.
+      - name: Check out tinkerex-sync
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-sync
+          token: ${{ secrets.TINKEREX_SYNC_TOKEN }}
+          path: tinkerex-sync
+
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+
+      # Boot + test in ONE step so the server stays alive for the whole suite -- the same reason
+      # client-contract.yml's own comment gives. Readiness is an AUTHENTICATED whoami rather than a
+      # port check: this host has no /up route, and a token that does not work would otherwise
+      # surface as nine confusing 401s instead of one clear failure here.
+      - name: Boot the sync server and run the chunk_remote journey
+        env:
+          TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
+          SYNC_PORT: "3002"
+        run: |
+          bin/sync-server prepare
+          set -a; . tmp/sync-server.env; set +a
+          bin/sync-server start &
+          SRV=$!
+          # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up runs
+          # User.count on that host and answers 503 on an empty schema -- it exists because its
+          # first real deploy reported healthy with no tables. whoami then proves the credential
+          # bin/sync-server just minted is actually accepted. A bare port check answers neither,
+          # and a schema-less server would otherwise surface as nine confusing failures in the
+          # journey suite instead of one clear failure here.
+          for i in $(seq 1 60); do
+            curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null && { echo "sync server has a schema"; break; }
+            sleep 1
+          done
+          curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null || {
+            echo "sync server never became ready"; kill $SRV 2>/dev/null; exit 1; }
+          curl -sf -H "Authorization: Bearer $CHUNK_REMOTE_TOKEN" \
+            "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
+              echo "the device token was rejected"; kill $SRV 2>/dev/null; exit 1; }
+          set +e
+          # ONE CHAINED INVOCATION WITH `TEST=`, and neither half is optional. A bare path
+          # (`... test <path>`) is an Unrecognized command; `bin/rails test TEST=<path>` alone
+          # raises InvalidTestError, because `TEST=` is read only on the RAKE dispatch path and
+          # chaining is what puts `test` there. config/ci.rb's test-no-engine gate uses this exact
+          # form. Split it in two and this step runs nothing.
+          LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+            test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          kill $SRV 2>/dev/null || true
+
+          # THE SKIP ASSERTION IS THE REAL GUARD, AND THE IN-SUITE CANARY CANNOT REPLACE IT.
+          #
+          # `skip_unless_remote_server` is what stands between this suite and testing nothing.
+          # Break it to always skip and the run is `9 runs, 1 assertions, 0 failures, 8 skips`
+          # and EXIT 0 -- MEASURED under exactly that mutation, not reasoned. The canary test
+          # inside the suite is deliberately decoupled from that helper, which is precisely why
+          # no mutation of the helper can falsify the canary's own assertion: it proves that IT
+          # ran, never that its siblings did. Nothing inside a suite can assert about its own
+          # siblings' skips.
+          #
+          # This step can, because it is the one place that KNOWS a server is up -- it just
+          # probed /up and whoami above. With a server configured, a skip is never legitimate.
+          #
+          # `${PIPESTATUS[0]}`, NOT `$?`: after a pipe `$?` is tee's status, and tee always
+          # succeeds. That exact mistake already put a wrong "exits 0" claim into this plan.
+          if grep -qE ', [1-9][0-9]* skips' tmp/journey-ci.txt; then
+            echo "::error::The journey suite SKIPPED with a sync server configured and reachable."
+            echo "A skip here means skip_unless_remote_server stopped discriminating, and the"
+            echo "suite reported success having asserted nothing -- the failure this gate exists"
+            echo "to make impossible."
+            exit 1
+          fi
+          exit $code
+```
+
+- [ ] **Step 2: Verify the hygiene guards accept it**
+
+```bash
+bin/rails test test/ci_hygiene_test.rb
+```
+
+Expected: all tests pass. Specifically `no workflow targets a GitHub-hosted runner`,
+`no job running on macos uses ruby/setup-ruby`, and
+`ci.yml's gate jobs are exactly the gates bin/ci says CI must run` must all stay green — the last
+one only because this workflow adds no `bin/ci` gate.
+
+- [ ] **Step 3: Mutation-check the hygiene guards against this file**
+
+Temporarily change `runs-on: [self-hosted, macos]` to `runs-on: macos-latest` and re-run:
+
+```bash
+bin/rails test test/ci_hygiene_test.rb
+```
+
+Expected: RED, on `no workflow targets a GitHub-hosted runner`. **Restore the line and confirm
+green again.** A guard that has never failed has not been shown to work (§15).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add .github/workflows/sync-contract.yml
+git commit -m "Run the chunk_remote journey against a real sync server on every PR"
+```
+
+---
+
+## Task 7: the measured Arc B work-list
+
+**Files:**
+- Create: `docs/superpowers/plans/2026-08-23-arc-b-worklist.md`
+
+This is the deliverable Arc A exists for. It is **generated from a run**, never written from
+memory — that is the difference between this document and the three gaps the spec already lists.
+
+- [ ] **Step 1: Capture a full run**
+
+```bash
+bin/sync-server prepare
+set -a; . tmp/sync-server.env; set +a
+bin/sync-server start &
+SRV=$!
+sleep 5
+LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+  test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-run.txt
+kill $SRV
+```
+
+- [ ] **Step 2: Write the work-list from `tmp/journey-run.txt`**
+
+Create `docs/superpowers/plans/2026-08-23-arc-b-worklist.md` with this structure, filling every
+row from the captured output. Paste the real failure message for each — a paraphrase is a second
+description that can drift from the first.
+
+```markdown
+# Arc B work-list — measured, not predicted
+
+**Source:** `test/integration/chunk_remote_journey_test.rb` run under
+`LIBRARY_BACKEND=chunk_remote` against a real `tinkerex-sync` host on <DATE>, commit <SHA>.
+Raw output: <paste the summary line, e.g. "9 runs, N assertions, F failures, E errors, 0 skips">.
+
+| # | Test | Verdict | Failure, verbatim | Predicted by the spec? |
+|---|---|---|---|---|
+| 1 | the journey suite does not skip when a server is configured | | | n/a — the skip canary |
+| 2 | an upload round-trips byte-for-byte | | | no |
+| 3 | an uploaded file appears on the files page | | | no |
+| 4 | a folder can be created, and a file moved into it | | | no |
+| 5 | a file can be deleted, listed in trash, and restored | | | no |
+| 6 | a directory delete cascades (three levels) | | | no |
+| 7 | a node created on the server becomes visible | | | YES — gap (a) |
+| 8 | an addon save writes its output | | | YES — gap (b) |
+| 9 | a batch of moves costs one changelog pull | | | YES — gap (c) |
+| 10 | restoring a child before its parent restores it to the root | | | **NO — gap (d), found by running it** |
+
+## What the spec did not predict
+
+**GAP (d) — `chunk_remote` REFUSES a restore that embedded `chunk` performs.** Write this one up
+in full; it is the finding the reading pass missed, and it is §14a's own forbidden shape — one
+condition, two answers, across two backends in the same family.
+
+- `FileLayer::Chunk#undelete` calls `Sync::Trash.restore(user:, node_id:, to_root: true)`. That
+  `to_root: true` is unconditional and deliberate; §14a documents the resulting behaviour at
+  length (an orphan comes back at the ROOT, and restore order is therefore not commutative).
+- `FileLayer::ChunkRemote#undelete` posts an **empty body** to `/v1/trash/:node_id/restore`.
+- The server casts `params[:to_root]`, which is absent, to **false**, and `Sync::Trash.restore`
+  raises `ParentDeleted` when the node is orphaned and `to_root` is false.
+- That surfaces as 409 → `FileLayer::UnsupportedOperation` → `TrashController`'s rescue arm →
+  "Couldn't restore that item."
+
+So restoring a child while its parent is still tombstoned SUCCEEDS on chunk and is REFUSED on
+chunk_remote. Arguably the safer failure mode — but it is not what §14a promises, and a user
+moving between the two deployments gets different answers. Arc B's fix is to thread `to_root:`
+through the port's `undelete` verb into that POST body; whether the default should be `true`
+(matching chunk) or the refusal should be adopted by BOTH backends is a decision for that arc,
+not this one. **Record it; do not fix it here.**
+
+<Add a section for any OTHER failure whose "Predicted" column is "no". If there are none beyond
+gap (d), say so explicitly.>
+
+## What this does NOT cover
+
+The full maker suite. It cannot run against one shared remote library (see the Arc A plan's scope
+note), so this work-list is bounded by what ten journeys touch. The full-suite leg is an Arc C
+follow-on, once per-test library provisioning exists.
+```
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add docs/superpowers/plans/2026-08-23-arc-b-worklist.md
+git commit -m "Record the measured Arc B work-list"
+```
+
+---
+
+## Task 8: STATUS.md, same branch, same PR
+
+**Files:**
+- Modify: `docs/STATUS.md`
+
+- [ ] **Step 1: Write the entry**
+
+Add an entry at the top of the "Latest" section of `docs/STATUS.md`, dated 2026-08-23, branch
+`claude/stage-5-arc-a`, covering:
+
+- What Arc A shipped: `bin/sync-server`, the journey harness, nine journey tests,
+  `sync-contract.yml`, and the measured work-list.
+- **The numbers**: `bin/ci` gate count and its run/assertion totals; the journey suite's
+  runs/failures against a real server; how many failures the spec had predicted and how many it
+  had not.
+- **The two spec corrections this plan made and why**: `test-chunk-remote` cannot be a `bin/ci`
+  gate while it is red (`ci_hygiene_test.rb` set equality), and the full-suite leg depends on Arc
+  C's per-test library provisioning rather than being available in Arc A.
+- That `sync-contract.yml` is **expected red** and what closes it.
+
+Per §15 this is part of the work, not a tidy-up afterwards: amend this arc's entry on later PRs
+rather than appending a new one per PR.
+
+- [ ] **Step 2: Verify no doc claim names an unverified commit**
+
+```bash
+bin/verify-fix-log
+```
+
+Expected: no unresolved references.
+
+- [ ] **Step 3: Final gate run**
+
+```bash
+bin/ci
+```
+
+Expected: all gates pass, the three test legs report identical counts. `sync-contract.yml` is
+red in GitHub Actions and that is the intended state.
+
+- [ ] **Step 4: Commit and open the PR**
+
+```bash
+git add docs/STATUS.md
+git commit -m "STATUS: Arc A — the chunk_remote proof, and what it measured"
+git push -u origin claude/stage-5-arc-a
+gh pr create --fill
+```
+
+State plainly in the PR body that `sync-contract.yml` is expected to be red, that this is the
+signal Arc A exists to produce, and that Arc B closes it.
