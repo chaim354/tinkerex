@@ -129,4 +129,89 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
                "recorded trap, and dir_deletable is true precisely because the server cascades"
   end
+
+  # GAP (a). `refresh!` is called only from mkdir/move/delete/undelete/finalize_upload
+  # (chunk_remote.rb:179,188,198,207,242) and ChangelogSync has no other caller in app/, lib/ or
+  # config/. So a node another device pushed is invisible here until THIS app happens to write
+  # something. Arc B's fix is a recurring per-user pull.
+  test "a node created directly on the sync server becomes visible without a local write" do
+    user = sign_in
+    name = "#{journey_prefix}-from-elsewhere"
+    transport = FileLayer::ChunkRemote::Transport.new(
+      base_url: ENV.fetch("CHUNK_REMOTE_URL"), token: ENV.fetch("CHUNK_REMOTE_TOKEN")
+    )
+    node_id = SecureRandom.uuid
+    transport.post("/v1/nodes", { node_id:, parent_node_id: nil, name:, mode: 0o755,
+                                  mtime: (Time.current.to_f * 1e9).to_i })
+
+    get files_path
+    assert_response :success
+
+    assert user.nodes.present.exists?(node_id:),
+           "a node pushed by another device never reaches the mirror: there is no periodic pull " \
+           "and no ActionCable subscription, so the maker UI cannot see it at all"
+  end
+
+  # GAP (b). port_writable is false on chunk_remote, so Maker::Addons::LibraryOutput#write takes
+  # #write_chunk, which calls Sync::Storage::ChunkStore.current.put (library_output.rb:143) -- a
+  # constant that does not exist in this process. Arc B's fix is a `put_chunk` port verb.
+  test "an addon save writes its output into the library" do
+    user = sign_in
+    state = Maker::AddonState.create!(user:, addon_key: "journey", name: "j", data: {})
+
+    files = [ { name: "#{journey_prefix}-out.svg", bytes: "<svg/>".b,
+                content_type: "image/svg+xml", role: "output" } ]
+
+    assert_nothing_raised do
+      Maker::Addons::LibraryOutput.write(user:, state:, parent_node_id: nil, files:)
+    end
+    assert user.nodes.present.exists?(name: "#{journey_prefix}-out.svg"),
+           "the addon's output never reached the library"
+  end
+
+  # GAP (c). LibraryBroadcast.batch degrades to a bare `yield` without the engine
+  # (library_broadcast.rb:21), so N moves are N changelog pulls -- two WAN round-trips per file
+  # inside a browser-facing request. Arc B's fix gives `batch` a real job on chunk_remote:
+  # suppress the intermediate refresh! and pull once at the end.
+  #
+  # TEST BUG FIXED HERE: the plan's own source stubbed this with `ChangelogSync.stub(:new, ...)`
+  # (Minitest::Mock's Object#stub). This repo is pinned to minitest 6.0.6 (Gemfile.lock), which
+  # has dropped minitest/mock from the gem entirely -- `require "minitest/mock"` raises LoadError,
+  # confirmed by hand, and no companion mock gem is bundled (grepping the whole test/ tree for
+  # `.stub(` or `Minitest::Mock` turns up zero other uses, so this was never available, not merely
+  # unused). `.stub` would have raised NoMethodError on `ChangelogSync`, failing for a reason that
+  # says nothing about GAP (c). Replaced with a manual define_singleton_method/remove_method pair
+  # that performs the identical interception -- count the call, forward to the real `new` -- and
+  # restores the original in an ensure so the patch cannot leak into another test. It still drives
+  # the real production path (LibraryBroadcast.batch -> ChunkRemote#move -> refresh! ->
+  # ChangelogSync.new(...).call), so it genuinely counts changelog pulls; nothing about the
+  # assertion below was softened.
+  test "a batch of moves costs one changelog pull, not one per move" do
+    user = sign_in
+    folder = "#{journey_prefix}-batch"
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success
+    dest = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    ids = 3.times.map { |i| upload_through_ui("#{journey_prefix}-b#{i}.stl", "b#{i} #{journey_prefix}".b) }
+
+    pulls = 0
+    original_new = FileLayer::ChunkRemote::ChangelogSync.method(:new)
+    FileLayer::ChunkRemote::ChangelogSync.define_singleton_method(:new) do |*a, **k|
+      pulls += 1
+      original_new.call(*a, **k)
+    end
+
+    begin
+      LibraryBroadcast.batch(user) do
+        ids.each { |id| FileLayer.current.move(user, node_id: id, new_parent_node_id: dest.node_id) }
+      end
+    ensure
+      FileLayer::ChunkRemote::ChangelogSync.singleton_class.send(:remove_method, :new)
+    end
+
+    assert_equal 1, pulls,
+                 "a batch of 3 moves pulled the changelog #{pulls} times; batch must defer the " \
+                 "refresh so an eager project-intake sweep is not 2 WAN round-trips per file"
+  end
 end
