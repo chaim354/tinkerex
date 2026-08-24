@@ -148,6 +148,15 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert user.nodes.present.exists?(node_id:), "restore did not revive the mirror row"
   end
 
+  # DEEPENED PAST ONE LEVEL, DELIBERATELY. The original fixture was folder -> file, which a
+  # server-side SubtreeDelete could satisfy with a single `WHERE parent_node_id = ?` and no
+  # recursion -- passing this exact test while still orphaning folder/subfolder/file.stl. §14a's
+  # trap is about EVERY descendant, not merely direct children, so the fixture now nests a
+  # subfolder under the folder and a grandchild under that, and the delete is issued against the
+  # TOP folder only. The one-level half of this test is kept and already verified empirically: an
+  # orphaning delete genuinely fails here, because `Node.present` filters on the row's own
+  # `deleted` column, not on its ancestor chain, so an untombstoned child stays visible even with a
+  # tombstoned parent -- this fixture cannot pass by accident.
   test "a directory delete cascades, because dir_deletable is true on chunk_remote" do
     skip_unless_remote_server
     user = sign_in
@@ -159,6 +168,26 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
 
     child = upload_through_ui("#{journey_prefix}-child.stl", "child #{journey_prefix}".b,
                               parent_node_id: folder_node.node_id)
+    # THE MISSING PRECONDITION. Without this, a future regression in begin_upload's
+    # parent_node_id plumbing fails this test with a message blaming SubtreeDelete for an upload
+    # bug it had nothing to do with.
+    assert_equal folder_node.node_id, user.nodes.present.find_by!(node_id: child).parent_node_id,
+                 "the upload did not land under the folder -- this is an upload precondition, not " \
+                 "part of the cascade being tested"
+
+    subfolder = "#{journey_prefix}-cascade-sub"
+    post library_folders_path, params: { name: subfolder, parent_node_id: folder_node.node_id },
+                               as: :json
+    assert_response :success, "create_folder (nested) failed: #{response.body}"
+    subfolder_node = user.nodes.present.find_by!(name: subfolder, kind: "dir")
+    assert_equal folder_node.node_id, subfolder_node.parent_node_id,
+                 "the nested folder did not land under the top folder"
+
+    grandchild = upload_through_ui("#{journey_prefix}-grandchild.stl",
+                                   "grandchild #{journey_prefix}".b,
+                                   parent_node_id: subfolder_node.node_id)
+    assert_equal subfolder_node.node_id, user.nodes.present.find_by!(node_id: grandchild).parent_node_id,
+                 "the grandchild upload did not land under the subfolder"
 
     delete file_path(folder_node.node_id)
     assert_redirected_to files_path
@@ -167,6 +196,71 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert_not user.nodes.present.exists?(node_id: child),
                "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
                "recorded trap, and dir_deletable is true precisely because the server cascades"
+    assert_not user.nodes.present.exists?(node_id: subfolder_node.node_id),
+               "SubtreeDelete must cascade to the nested folder itself, not just the file " \
+               "directly inside the top folder"
+    assert_not user.nodes.present.exists?(node_id: grandchild),
+               "SubtreeDelete must recurse past one level -- a delete that only tombstones DIRECT " \
+               "children would pass a one-level fixture and still orphan " \
+               "folder/subfolder/file.stl, which is exactly §14a's recorded trap"
+  end
+
+  # GAP (d), CONFIRMED, NOT ASSUMED. §14a: "chunk's undelete restores an orphan to the ROOT, and
+  # restore order is NOT commutative -- Sync::Trash.restore(to_root: true) NULLs parent_node_id
+  # when the parent is itself tombstoned... restoring a CHILD before its PARENT... permanently
+  # scatters that folder's contents to the root." That is true of the EMBEDDED chunk adapter only,
+  # and the reason is a PARAMETER, not a difference in the underlying restore logic: the one shared
+  # implementation, `Sync::Trash.restore(user:, node_id:, to_root: false)`, defaults `to_root` to
+  # FALSE (tinkerex-sync's app/services/sync/trash.rb:30). `FileLayer::Chunk#undelete` is the one
+  # caller that overrides it -- `to_root: true`, unconditionally (tinkerex-sync's
+  # app/services/file_layer/chunk.rb:497) -- because it runs in-process and is free to choose. The
+  # STANDALONE server's own endpoint, `Sync::V1::TrashController#restore`, reads `to_root` from the
+  # REQUEST instead of hardcoding it (`params[:to_root]`, defaulting false), and
+  # `FileLayer::ChunkRemote#undelete` posts an EMPTY body (chunk_remote.rb:206:
+  # `transport.post("/v1/trash/#{node_id}/restore", {})`) -- it never sends `to_root: true`. So on
+  # chunk_remote the parent-still-tombstoned case hits the server's default, raises
+  # `Sync::Trash::ParentDeleted`, and is rendered `409 {error: "parent_deleted"}`;
+  # `Transport#interpret` maps 409 to `FileLayer::UnsupportedOperation` (transport.rb:104); this
+  # app's `TrashController` rescue_from redirects to `trash_index_path` with alert "Couldn't
+  # restore that item." (trash_controller.rb:40) instead of to `files_path` with the restore having
+  # happened. THE RESTORE IS REFUSED, NOT SILENTLY SCATTERED -- a real divergence from §14a, and
+  # arguably a safer failure mode than the one it documents (nothing is silently reorganized), but
+  # it is not what §14a promises, and a caller written against that promise gets an unexplained 409
+  # instead. Arc B's fix is a `to_root:` argument on the port's `undelete` verb, threaded through to
+  # this POST's body. The assertions below are UNCHANGED from what §14a says SHOULD happen -- not
+  # adjusted to match what was found, per this task's own rule, so the test fails at the first one
+  # that diverges (the redirect target) rather than reaching the parent_node_id check at all.
+  test "restoring a child before its parent restores it to the root, per §14a's restore-order trap" do
+    skip_unless_remote_server
+    user = sign_in
+    folder = "#{journey_prefix}-restore-order"
+
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    child = upload_through_ui("#{journey_prefix}-restore-child.stl",
+                              "restore-order #{journey_prefix}".b, parent_node_id: folder_node.node_id)
+    assert_equal folder_node.node_id, user.nodes.present.find_by!(node_id: child).parent_node_id,
+                 "the upload did not land under the folder before the delete"
+
+    delete file_path(folder_node.node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "the directory delete was refused: #{flash[:alert]}"
+    assert_not user.nodes.present.exists?(node_id: child),
+               "the cascade should have tombstoned the child along with the folder"
+
+    # THE CHILD, FIRST -- WHILE THE PARENT FOLDER IS STILL TOMBSTONED. The parent is deliberately
+    # never restored in this test; that is the whole point of the ordering.
+    post restore_trash_path(child)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "restoring the child was refused: #{flash[:alert]}"
+
+    restored_child = user.nodes.present.find_by!(node_id: child)
+    assert_nil restored_child.parent_node_id,
+               "§14a: restoring a child before its still-tombstoned parent should scatter it to " \
+               "the library ROOT (parent_node_id nil), never silently reunite it with a parent " \
+               "that is not live -- got parent_node_id=#{restored_child.parent_node_id.inspect}"
   end
 
   # GAP (a). `refresh!` is called only from mkdir/move/delete/undelete/finalize_upload
