@@ -15,7 +15,11 @@ reimplementable in any language in an afternoon.
 **Tech Stack:** Ruby (recorder + verifier), YAML (scenarios), JSON Schema (format spec), the
 standalone `host/` app as the server under test.
 
-**Design:** `docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md` §A2.
+**Design:** `docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md`, Arc A
+section A2. **That file is not on this branch** — it lands with PR #226 (`claude/stage-5-arc-a`),
+which is unmerged. Read it there, or take the preamble below as self-contained, which it is
+deliberately meant to be: a task that cannot be executed without chasing an unmerged branch is a
+task that will be executed wrong.
 
 ---
 
