@@ -172,13 +172,33 @@ Actions once it runs, because it drives all ten journeys and four of them fail f
 above — that is Arc A doing its job, not a defect in Arc A. It closes when Arc B closes gaps
 (a)–(c) and a decision is made on (d).
 
-**It has not run yet, on two independent counts, both confirmed rather than assumed:**
-`gh run list --workflow=sync-contract.yml` 404s — "workflow sync-contract.yml not found on the
-default branch" — because the workflow exists only on this unmerged branch. And even once merged,
-its second checkout step fails before the suite runs at all: `gh secret list` returns zero rows, so
-**the `TINKEREX_SYNC_TOKEN` repo secret does not exist yet**. An operator has to mint a
-fine-grained PAT scoped to `chaim354/tinkerex-sync` (`contents:read`) and add it as a repo secret —
-the same operator action `client-contract.yml` already required for `TINKEREX_CLIENT_TOKEN`.
+**IT HAS NOW RUN IN GITHUB ACTIONS, AND IT REPRODUCED THE LOCAL MEASUREMENT EXACTLY:**
+`10 runs, 106 assertions, 3 failures, 1 errors, 0 skips` — byte-identical to the local capture, on
+a self-hosted macOS runner, against a sync server the job booted itself (run 32727636686). **0
+skips**, so the step's own skip-assertion correctly stayed silent; exit 1 from the four real
+failures. Checkout, `bundle install`, server boot, readiness probes and the suite all executed.
+
+Its FIRST run did not get that far, and the way it failed is worth keeping. The workflow originally
+used `token: ${{ secrets.TINKEREX_SYNC_TOKEN }}` and that secret had never existed — the job died
+in 21s with `##[error]Input required and not supplied: token`, before a single test ran. Nobody
+predicted it; the workflow proved it about itself on first contact.
+
+**The fix was a read-only DEPLOY KEY, not a PAT, and the reason is partly that a PAT is not
+creatable at all without a browser.** `POST /authorizations` 404s — GitHub sunset it in 2020, which
+§14j already recorded for the Docker build. `gh repo deploy-key add` creates exactly the narrower
+thing: one repo, read-only, no account-wide reach, no expiry to forget. `tinkerex-sync` now carries
+`ci-sync-contract` beside the existing `docker-build` key, the private half is in the `tinkerex`
+1Password vault (verified byte-identical by SHA256 against the local file before that file was
+deleted), and `TINKEREX_SYNC_DEPLOY_KEY` is the repo secret. `actions/checkout`'s `ssh-key:` input
+takes it.
+
+**`client-contract.yml` HAS THE IDENTICAL GAP AND IT IS STILL OPEN — it is merely invisible.**
+`TINKEREX_CLIENT_TOKEN` does not exist either, and five more checkouts in `nightly.yml` name it.
+That workflow reports SUCCESS — in **8 seconds**, which is `preflight` alone: its
+`engine-integration` job is linux-gated, linux is not a registered runner, so the job is *skipped,
+not passing* (§15) and never reaches the checkout that would fail. The day a linux runner is
+registered, seven job-instances fail at once. Deliberately left for its own change rather than
+widened into this arc.
 
 ### The reviews' most reusable finding: a suite cannot vouch for its own siblings' skips
 
@@ -198,9 +218,12 @@ a skip is never legitimate.
 ### What this arc did not do
 
 **No gap was fixed** — every commit here touches only `bin/`, `test/`, `.github/workflows/`, and
-`docs/`. Arc A measures; Arc B repairs. The workflow has never executed in GitHub Actions (above),
-and the secret it needs to even check out does not exist. Read nothing here as `chunk_remote`
-parity — only as an honest, checked-in map of exactly where it is not.
+`docs/`; `git diff --stat` against `app/`, `lib/` and `config/` is empty. Arc A measures; Arc B
+repairs. Read nothing here as `chunk_remote` parity — only as an honest, checked-in map of exactly
+where it is not. What remains genuinely unproven: the four gaps are reproduced but unfixed, gap (d)
+needs a DECISION rather than a patch (either `chunk_remote` sends `to_root: true` to match embedded
+chunk, or chunk adopts the refusal), and the full maker suite has still never run against a remote
+sync server — that needs Arc C's per-test provisioning, as above.
 
 ## 2026-08-21: Stage 4 is complete — `chunk_remote` is selectable (branch `claude/stage-4-build-arm`)
 
