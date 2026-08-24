@@ -879,10 +879,33 @@ jobs:
           # chaining is what puts `test` there. config/ci.rb's test-no-engine gate uses this exact
           # form. Split it in two and this step runs nothing.
           LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
-            test TEST=test/integration/chunk_remote_journey_test.rb
-          code=$?
+            test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
+          code=${PIPESTATUS[0]}
           set -e
           kill $SRV 2>/dev/null || true
+
+          # THE SKIP ASSERTION IS THE REAL GUARD, AND THE IN-SUITE CANARY CANNOT REPLACE IT.
+          #
+          # `skip_unless_remote_server` is what stands between this suite and testing nothing.
+          # Break it to always skip and the run is `9 runs, 1 assertions, 0 failures, 8 skips`
+          # and EXIT 0 -- MEASURED under exactly that mutation, not reasoned. The canary test
+          # inside the suite is deliberately decoupled from that helper, which is precisely why
+          # no mutation of the helper can falsify the canary's own assertion: it proves that IT
+          # ran, never that its siblings did. Nothing inside a suite can assert about its own
+          # siblings' skips.
+          #
+          # This step can, because it is the one place that KNOWS a server is up -- it just
+          # probed /up and whoami above. With a server configured, a skip is never legitimate.
+          #
+          # `${PIPESTATUS[0]}`, NOT `$?`: after a pipe `$?` is tee's status, and tee always
+          # succeeds. That exact mistake already put a wrong "exits 0" claim into this plan.
+          if grep -qE ', [1-9][0-9]* skips' tmp/journey-ci.txt; then
+            echo "::error::The journey suite SKIPPED with a sync server configured and reachable."
+            echo "A skip here means skip_unless_remote_server stopped discriminating, and the"
+            echo "suite reported success having asserted nothing -- the failure this gate exists"
+            echo "to make impossible."
+            exit 1
+          fi
           exit $code
 ```
 
