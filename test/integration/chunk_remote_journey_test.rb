@@ -60,4 +60,73 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert user.nodes.present.exists?(name:),
            "the local mirror should hold the node after finalize_upload refreshed it"
   end
+
+  test "a folder can be created, and a file moved into it" do
+    user = sign_in
+    folder = "#{journey_prefix}-folder"
+    node_id = upload_through_ui("#{journey_prefix}-moved.stl", "moved #{journey_prefix}".b)
+
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success, "create_folder failed: #{response.body}"
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    # THROUGH Maker::MoveNode, NOT a controller: verified against `bin/rails routes` -- FilesController
+    # exposes GET/DELETE on /files/:id and no update action at all, so there is no PATCH door to
+    # drive. MoveNode is the named service §14d says every web move goes through, which makes it the
+    # real door here rather than a shortcut past one.
+    Maker::MoveNode.call(user, node: user.nodes.present.find_by!(node_id:),
+                         new_parent_node_id: folder_node.node_id)
+
+    assert_equal folder_node.node_id, user.nodes.present.find_by!(node_id:).parent_node_id,
+                 "the move did not reach the mirror -- refresh! after move is what puts it there"
+  end
+
+  test "a file can be deleted, listed in trash, and restored" do
+    user = sign_in
+    name = "#{journey_prefix}-doomed.stl"
+    node_id = upload_through_ui(name, "doomed #{journey_prefix}".b)
+
+    # `assert_response :redirect` WOULD NOT DISCRIMINATE HERE, and that is the same defect the
+    # journey harness's own sign_in had. FilesController redirects to files_path on SUCCESS
+    # (files_controller.rb:628, with a notice) and its three rescue_from arms redirect to
+    # files_path on EVERY html failure (:106 NotFound, :124 FetchError, :134
+    # UnsupportedOperation), each with an ALERT. Same status, same Location -- the flash is the
+    # only thing that differs, so it is what gets asserted.
+    delete file_path(node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "delete was refused: #{flash[:alert]}"
+    assert_not user.nodes.present.exists?(node_id:), "delete did not tombstone the mirror row"
+
+    get trash_index_path
+    assert_response :success
+    assert_includes response.body, name
+
+    post restore_trash_path(node_id)
+    # TrashController's failure arms redirect to trash_index_path with an alert (:40, :46) while
+    # success goes to files_path with a notice (:79), so the destination alone would discriminate
+    # here -- the alert check is kept anyway so every redirect in this file reads the same way.
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "restore was refused: #{flash[:alert]}"
+    assert user.nodes.present.exists?(node_id:), "restore did not revive the mirror row"
+  end
+
+  test "a directory delete cascades, because dir_deletable is true on chunk_remote" do
+    user = sign_in
+    folder = "#{journey_prefix}-cascade"
+
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
+
+    child = upload_through_ui("#{journey_prefix}-child.stl", "child #{journey_prefix}".b,
+                              parent_node_id: folder_node.node_id)
+
+    delete file_path(folder_node.node_id)
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "the directory delete was refused: #{flash[:alert]}"
+
+    assert_not user.nodes.present.exists?(node_id: child),
+               "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
+               "recorded trap, and dir_deletable is true precisely because the server cascades"
+  end
 end
