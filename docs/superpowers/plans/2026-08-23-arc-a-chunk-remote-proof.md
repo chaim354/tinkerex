@@ -1015,7 +1015,7 @@ gap (d), say so explicitly.>
 ## What this does NOT cover
 
 The full maker suite. It cannot run against one shared remote library (see the Arc A plan's scope
-note), so this work-list is bounded by what nine journeys touch. The full-suite leg is an Arc C
+note), so this work-list is bounded by what ten journeys touch. The full-suite leg is an Arc C
 follow-on, once per-test library provisioning exists.
 ```
 
