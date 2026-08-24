@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# BOOT A STANDALONE tinkerex-sync HOST, for local chunk_remote work and for sync-contract.yml.
+#
+# WHY A SIBLING CHECKOUT RATHER THAN THE INSTALLED GEM. The gem currently ships host/, so
+# `bundle show tinkerex-sync`/host would work today -- and stops working the moment Stage 5 Arc D
+# removes the gem, which is the whole direction of travel. A sibling checkout is the durable
+# answer and matches the ../tinkerex-client convention this repo already uses
+# (scripts/r2-cutover/smoke.sh, .github/workflows/client-contract.yml).
+#
+# TWO SUBCOMMANDS, because CI has to background the boot and still know the token:
+#   prepare  migrate the host DB, mint a device token, write tmp/sync-server.env, print it
+#   start    run the server in the FOREGROUND on $SYNC_PORT (the caller backgrounds it)
+#
+# THE HOST DOES HAVE /up (tinkerex-sync host/config/routes.rb), added after this plan was
+# drafted -- and it is not a static 200: it runs User.count and answers 503 on an empty schema,
+# because that host's first real deploy reported healthy with no tables. A caller waiting on this
+# server should probe BOTH /up and an authenticated GET /v1/devices/whoami, because they answer
+# different questions -- /up says "there is a schema and I can reach it," whoami says "and the
+# credential I just minted is accepted." A bare port check says neither. THIS SCRIPT IMPLEMENTS
+# NEITHER PROBE -- prepare and start do not curl anything. This paragraph is guidance for the
+# CALLER (CI, and a human), which is exactly why it has to stay true.
+set -euo pipefail
+
+PORT="${SYNC_PORT:-3002}"
+EMAIL="${SYNC_EMAIL:-maker@example.com}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+SYNC_DIR="${TINKEREX_SYNC_DIR:-$REPO_ROOT/../tinkerex-sync}"
+HOST_DIR="$SYNC_DIR/host"
+ENV_FILE="$REPO_ROOT/tmp/sync-server.env"
+
+usage() {
+  echo "usage: bin/sync-server {prepare|start}" >&2
+  echo "  prepare  migrate the sync host DB, mint a device token, write tmp/sync-server.env" >&2
+  echo "  start    boot the sync host in the foreground on \$SYNC_PORT (default $PORT)" >&2
+}
+
+require_checkout() {
+  if [ ! -d "$HOST_DIR" ]; then
+    echo "tinkerex-sync host app not found at $HOST_DIR" >&2
+    echo "" >&2
+    echo "The sync engine lives in chaim354/tinkerex-sync. Clone it as a sibling:" >&2
+    echo "    gh repo clone chaim354/tinkerex-sync $SYNC_DIR" >&2
+    echo "or point this script at an existing checkout:" >&2
+    echo "    TINKEREX_SYNC_DIR=/path/to/tinkerex-sync $0 ${1:-prepare}" >&2
+    exit 1
+  fi
+}
+
+case "${1:-}" in
+  prepare)
+    require_checkout prepare
+    mkdir -p "$REPO_ROOT/tmp"
+    ( cd "$HOST_DIR" && bundle install --quiet && bin/rails db:prepare )
+    # The token is printed ONCE by the task (only a SHA256 digest is stored), so capture it here.
+    token="$(cd "$HOST_DIR" && EMAIL="$EMAIL" bin/rails sync:device:issue \
+             | awk '/^device_token:/ { print $2 }')"
+    if [ -z "$token" ]; then
+      echo "sync:device:issue printed no device_token -- refusing to write a blank credential" >&2
+      exit 1
+    fi
+    {
+      echo "CHUNK_REMOTE_URL=http://127.0.0.1:$PORT"
+      echo "CHUNK_REMOTE_TOKEN=$token"
+    } > "$ENV_FILE"
+    cat "$ENV_FILE"
+    ;;
+  start)
+    require_checkout start
+    cd "$HOST_DIR"
+    exec env STORAGE_BACKEND=local bin/rails server -p "$PORT" -b 127.0.0.1
+    ;;
+  *)
+    usage
+    exit 64
+    ;;
+esac
