@@ -447,8 +447,13 @@ require_relative "../support/chunk_remote_journey"
 # mirror and the server has never heard of it, so a write verb against one would 404 for a reason
 # that says nothing about chunk_remote.
 #
-# THIS SUITE IS EXPECTED TO BE RED WHEN IT LANDS. It is Arc A's instrument, not Arc A's product:
-# the failures it reports are the measured work-list for Arc B. It is deliberately NOT a bin/ci
+# THIS SUITE IS AN INSTRUMENT, NOT A PRODUCT -- the failures it reports are the measured
+# work-list for Arc B. Be precise about WHICH tests are expected to fail, because the imprecise
+# version of this sentence was already wrong once: an earlier draft said "this suite is expected
+# to be red when it lands," and the first three tests (sign-in, the two-phase presigned upload,
+# the byte-exact download, the files index) came back GREEN against a real standalone server on
+# the first run -- verified against the sync server's own log as real wire traffic, not a masked
+# pass. The three tests that ARE expected to fail are Task 5's, and they say so individually. It is deliberately NOT a bin/ci
 # gate -- test/ci_hygiene_test.rb asserts set equality between `bin/ci --list-ci` and ci.yml's gate
 # jobs, so a red gate is a red main. .github/workflows/sync-contract.yml carries the signal.
 class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
@@ -516,8 +521,14 @@ In another:
 
 ```bash
 set -a; . tmp/sync-server.env; set +a
-LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare test test/integration/chunk_remote_journey_test.rb
+LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+  test TEST=test/integration/chunk_remote_journey_test.rb
 ```
+
+**The `TEST=` form is required, not stylistic.** `bin/rails db:test:prepare test <path>` does NOT work —
+`bin/rails` dispatches one top-level command and reads the path as a second one, printing
+`Unrecognized command` **and exiting 0**. A CI step written that way is green having run nothing.
+`config/ci.rb`'s own `test-no-engine` gate already uses `TEST=` for exactly this reason; follow it.
 
 Expected: `3 runs`, 0 skips. Record whether they pass or fail **verbatim** — do not fix anything
 yet. Arc A's product is the measurement; Arc B is where fixes go.
@@ -611,7 +622,8 @@ Expected: `6 runs, 0 assertions, 0 failures, 0 errors, 6 skips`.
 
 ```bash
 set -a; . tmp/sync-server.env; set +a
-LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare test test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-mutations.txt
+LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+  test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-mutations.txt
 ```
 
 Do not fix failures. Every route helper above was verified against `bin/rails routes` while this
@@ -836,8 +848,12 @@ jobs:
             "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
               echo "the device token was rejected"; kill $SRV 2>/dev/null; exit 1; }
           set +e
+          # `TEST=`, NOT a bare path. `bin/rails db:test:prepare test <path>` prints
+          # "Unrecognized command" and EXITS 0 -- this step would report green having run no
+          # tests at all, which is the one failure mode a gate must never have. config/ci.rb's
+          # test-no-engine gate uses the same form.
           LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
-            test test/integration/chunk_remote_journey_test.rb
+            test TEST=test/integration/chunk_remote_journey_test.rb
           code=$?
           set -e
           kill $SRV 2>/dev/null || true
@@ -892,7 +908,7 @@ bin/sync-server start &
 SRV=$!
 sleep 5
 LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
-  test test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-run.txt
+  test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-run.txt
 kill $SRV
 ```
 
