@@ -429,7 +429,10 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
 
   test "an upload round-trips byte-for-byte through the sync server" do
     sign_in
-    bytes = "solid journey\nendsolid\n".b
+    # CONTENT varies, not just the filename. Chunks are content-addressed, so a repeat of fixed
+    # bytes dedupes to an empty put_urls and the Net::HTTP upload path silently never runs --
+    # see upload_through_ui's own comment. The suite would stay green while proving nothing.
+    bytes = "solid #{journey_prefix}\nendsolid\n".b
     node_id = upload_through_ui("#{journey_prefix}-bracket.stl", bytes)
 
     get blob_file_path(node_id)
@@ -441,7 +444,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   test "an uploaded file appears on the files page" do
     user = sign_in
     name = "#{journey_prefix}-listed.stl"
-    upload_through_ui(name, "listed".b)
+    upload_through_ui(name, "listed #{journey_prefix}".b)
 
     get files_path
     assert_response :success
@@ -502,7 +505,7 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
   test "a folder can be created, and a file moved into it" do
     user = sign_in
     folder = "#{journey_prefix}-folder"
-    node_id = upload_through_ui("#{journey_prefix}-moved.stl", "moved".b)
+    node_id = upload_through_ui("#{journey_prefix}-moved.stl", "moved #{journey_prefix}".b)
 
     post library_folders_path, params: { name: folder }, as: :json
     assert_response :success, "create_folder failed: #{response.body}"
@@ -522,7 +525,7 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
   test "a file can be deleted, listed in trash, and restored" do
     user = sign_in
     name = "#{journey_prefix}-doomed.stl"
-    node_id = upload_through_ui(name, "doomed".b)
+    node_id = upload_through_ui(name, "doomed #{journey_prefix}".b)
 
     delete file_path(node_id)
     assert_response :redirect
@@ -545,7 +548,7 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
     assert_response :success
     folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
 
-    child = upload_through_ui("#{journey_prefix}-child.stl", "child".b,
+    child = upload_through_ui("#{journey_prefix}-child.stl", "child #{journey_prefix}".b,
                               parent_node_id: folder_node.node_id)
 
     delete file_path(folder_node.node_id)
@@ -666,7 +669,7 @@ Append inside the class:
     assert_response :success
     dest = user.nodes.present.find_by!(name: folder, kind: "dir")
 
-    ids = 3.times.map { |i| upload_through_ui("#{journey_prefix}-b#{i}.stl", "b#{i}".b) }
+    ids = 3.times.map { |i| upload_through_ui("#{journey_prefix}-b#{i}.stl", "b#{i} #{journey_prefix}".b) }
 
     pulls = 0
     original = FileLayer::ChunkRemote::ChangelogSync.method(:new)
