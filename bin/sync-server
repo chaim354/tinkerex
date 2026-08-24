@@ -63,6 +63,9 @@ case "${1:-}" in
       echo "CHUNK_REMOTE_URL=http://127.0.0.1:$PORT"
       echo "CHUNK_REMOTE_TOKEN=$token"
     } > "$ENV_FILE"
+    # Tokens live only on the box, chmod 600, never in git -- same rule, same words, as
+    # ping.env in bin/backup-cron-install: this file holds a live device credential too.
+    chmod 600 "$ENV_FILE"
     cat "$ENV_FILE"
     ;;
   start)
