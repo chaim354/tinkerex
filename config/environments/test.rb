@@ -62,4 +62,17 @@ Rails.application.configure do
 
   # Raise error when a before_action's only/except options reference missing actions.
   config.action_controller.raise_on_missing_callback_actions = true
+
+  # Encrypt fixture values for any column an `encrypts` model declares, before they're inserted
+  # -- config/initializers/active_record_encryption.rb#support_unencrypted_data is FALSE, so a
+  # fixture-loaded plaintext value under an encrypted column would come back from the model as
+  # ActiveRecord::Encryption::Errors::Decryption on first read, not as the plaintext the YAML
+  # said. This app has no `encrypts` attribute yet (Task 4 adds the first one, a per-user
+  # sync-server device token on `users`) and no `users.yml` fixture either -- every test creates
+  # users with `User.create!`, which runs the real encrypted setter, so today this flag changes
+  # nothing observable: `ActiveRecord::Fixture.prepend ActiveRecord::Encryption::EncryptedFixtures`
+  # (activerecord's railtie.rb) touches a fixture row only via `model_class.encrypted_attributes`,
+  # which is empty for every model right now. Set anyway, now, rather than left for Task 4 to
+  # discover the hard way if it ever adds a fixture file that populates an encrypted column.
+  config.active_record.encryption.encrypt_fixtures = true
 end

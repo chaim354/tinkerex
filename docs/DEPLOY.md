@@ -168,6 +168,78 @@ GitHub secrets (`grep -c '${{ secrets\.'` → 0 in each): the test gates run on 
 env, and `cross-os-e2e.yml` uses a fixed test account. So a service account is currently only
 worth minting for unattended *deploys* — wire it into CI when a job first needs a real credential.
 
+### Active Record encryption keys (config/credentials.yml.enc)
+
+Arc C's per-user sync-server device token (`users`, Task 4) is the first column in this app to use
+`encrypts`. The three keys it needs — `primary_key`, `deterministic_key`, `key_derivation_salt` —
+were generated once with `bin/rails db:encryption:init` and live inside
+`config/credentials.yml.enc` under `active_record_encryption:`, alongside `secret_key_base`.
+`config/initializers/active_record_encryption.rb` has the argument for pairing them with
+`support_unencrypted_data: false` from day one.
+
+**No new deploy plumbing — say this plainly rather than implying otherwise.** These keys reach
+every deployment exactly the way `secret_key_base` always has: `RAILS_MASTER_KEY` decrypts
+`config/credentials.yml.enc` at boot, and `RAILS_MASTER_KEY` is *already* resolved for all four
+destinations from one line — `.kamal/secrets-common`'s `RAILS_MASTER_KEY=$(cat
+config/master.key)`, read by base, s3, share and ovh alike (§2b). Confirmed live on 2026-08-24,
+not assumed:
+
+```
+$ bin/secrets-preflight --all
+base   ok  RAILS_MASTER_KEY (32 bytes)
+s3     ok  RAILS_MASTER_KEY (32 bytes)
+share  ok  RAILS_MASTER_KEY (32 bytes)
+ovh    ok  RAILS_MASTER_KEY (32 bytes)
+```
+
+Same 32 bytes, same file, all four — because every destination reads the *same* local
+`config/master.key` fresh at deploy time rather than a per-destination copy. The encryption keys
+therefore ship the moment `config/credentials.yml.enc` is committed and any of the four is next
+deployed; there is nothing destination-specific to configure, and nothing to add to
+`.kamal/secrets*`.
+
+**If `RAILS_MASTER_KEY` is ever rotated, every already-encrypted column becomes unreadable —
+unless the rotation carries the plaintext credentials forward.** The three encryption keys live
+*inside* the file `RAILS_MASTER_KEY` decrypts; they are not derived from `RAILS_MASTER_KEY`
+itself. So rotating the master key is safe for encrypted data **only if** the rotation is
+decrypt-with-old → re-encrypt-with-new (the `active_record_encryption:` block carried over
+byte-for-byte), never regenerate-`config/credentials.yml.enc`-from-scratch. Verified, not assumed:
+a `RAILS_MASTER_KEY` that is present but simply *wrong* (doesn't match the ciphertext) doesn't
+degrade gracefully — it raises `ActiveSupport::MessageEncryptor::InvalidMessage` uncaught, out of
+Devise's own `secret_key_base`-reading initializer, and takes the boot down. That's a different
+failure than the *empty*-key case a few sections up (`Missing secret_key_base`, from a worktree
+with no `config/master.key`) — both crash-loop and fail kamal-proxy's health check, so kamal keeps
+the old container either way, but the error text an operator sees differs.
+
+Before rotating:
+
+1. Decrypt the current `config/credentials.yml.enc` with the *current* `config/master.key` and
+   hold that plaintext briefly — never committed, never logged, same handling as the keys
+   themselves get (this doc's own instructions never print a key value, and neither should you).
+2. Generate the new master key.
+3. Re-encrypt the *same* plaintext under the new key (`active_record_encryption:` unchanged;
+   rotate `secret_key_base` too if that's also the goal).
+4. Commit the newly-encrypted `config/credentials.yml.enc` and replace `config/master.key` locally
+   — **together, in one change**, before redeploying anything. Each `kamal deploy` builds a fresh
+   image from the current commit (baking in whatever `config/credentials.yml.enc` that commit
+   has) and separately resolves `RAILS_MASTER_KEY` from the *local* `config/master.key` at that
+   same moment — so shipping one half of the pair without the other to any destination reproduces
+   the crash above on that box.
+5. Only discard the old master key once every destination has redeployed from the new pair and
+   passed its health check.
+
+**Losing `config/master.key` outright — not rotating it, losing it, with no backup** — is
+unrecoverable rather than merely inconvenient: the three encryption keys exist nowhere else, were
+never derived from anything else, and nothing in object storage or the database can reconstruct
+them. Every encrypted column becomes permanently unreadable, the same single-point-of-failure that
+already exists for `secret_key_base` (losing it today invalidates every session) — this just
+extends that existing risk to cover encrypted columns too, rather than introducing a new one.
+
+Rotating the encryption keys *themselves* — as opposed to the outer master key protecting the file
+they live in, e.g. after a suspected compromise of `primary_key` — is a different and harder
+operation (`config.active_record.encryption.previous`, re-encrypting every existing row with the
+new key before the old one can be retired). Out of scope here; nothing in this repo does it yet.
+
 ## 3. Verify
 
 ```sh
