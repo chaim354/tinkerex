@@ -260,8 +260,9 @@ Genuinely open:
 4. **Selective sync needs an app surface** (the engine side landed).
 5. **Managed-Postgres at scale** — pick a session/transaction-mode pooler endpoint and run
    a concurrent-commit load test (the boot guard + deadlock fix are in).
-6. **Linux and Windows CI coverage is skipped, not passing** — only the macOS runner is
-   registered. See §15 and `docs/STATUS.md` ("CI runs again").
+6. **Linux and Windows CI coverage is skipped, not passing** — no linux or windows runner is
+   registered in ANY of the three repos (macOS is, in all three; §15 has the measured table and
+   its date). See §15 and `docs/STATUS.md` ("CI runs again").
 7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was an FSYNC problem, and the
    fix is `timeout: 15000`.** Kept as an item rather than deleted because code cites §12 by number.
    It needed sustained **disk I/O**, never CPU: 0 of 12 suite runs on a quiet box against 3 of 8
@@ -2474,12 +2475,25 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   `runs-on: [self-hosted, linux|macos|windows]`. GitHub bills *only* hosted runners
   (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×); self-hosted are **free**. So
   **never add `*-latest`** to a workflow.
-- **Only ONE runner is registered: `charless-MacBook-Pro-maker-mac` (macOS).**
-  `flasher-maker-linux` and `CHAIMDESK-maker-windows` are **not** — verify with
-  `gh api repos/:owner/:repo/actions/runners` rather than trusting this line, and note it
-  needs an **admin-scoped** token: `administration` is not a permission a workflow
-  `GITHUB_TOKEN` can be granted, so **it 403s from inside Actions** and works only from a
-  developer shell.
+- **RUNNERS ARE REGISTERED PER REPOSITORY, AND ALL THREE REPOS NOW HAVE ONE — macOS ONLY.**
+  Measured 2026-08-24 via `gh api repos/:owner/:repo/actions/runners`, all `status=online`,
+  all `labels=[self-hosted, macOS, ARM64, maker-mac]`:
+
+  | repo | runner |
+  |---|---|
+  | `tinkerex` | `charless-MacBook-Pro-maker-mac` |
+  | `tinkerex-sync` | `charless-MBP-maker-mac` |
+  | `tinkerex-client` | `charless-MBP-maker-mac` |
+
+  **`flasher-maker-linux` and `CHAIMDESK-maker-windows` are still registered NOWHERE**, so the
+  linux/windows conclusion below is unchanged. What changed is the count: this line used to read
+  "Only ONE runner is registered", which was true when the other two repos had none and stopped
+  being true as each got its own — `tinkerex-client`'s in particular, which is why its `Rust
+  client` workflow now actually runs (~90 s) instead of queueing forever.
+
+  **Verify rather than trusting this table** — that is the whole reason it names a date. It needs
+  an **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
+  granted, so it **403s from inside Actions** and works only from a developer shell.
 - **`ci.yml`'s jobs therefore target `macos`**, and linux/windows jobs elsewhere are
   `if:`-gated on the repo variable **`CI_RUNNERS`** via `ci/preflight.sh`, so a job whose
   runner is absent is never *scheduled*. That gate fixed a five-week outage: a job matching no
