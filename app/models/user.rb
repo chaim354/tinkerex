@@ -19,6 +19,28 @@ class User < ApplicationRecord
   # VERSION, so a large library would instantiate thousands of objects to run nothing on each.
   has_many :remote_manifest_chunks, dependent: :delete_all
 
+  # ARC C TASK 4: THIS USER'S OWN device token on the standalone sync server, replacing the single
+  # process-wide CHUNK_REMOTE_TOKEN every chunk_remote request used to authenticate with. That env
+  # var is NOT what Provisioning's admin call uses either (that's SYNC_ADMIN_TOKEN, a different,
+  # deployment-wide credential -- Provisioning's own header) -- CHUNK_REMOTE_TOKEN survives only as
+  # a bootstrap DEVICE's own token, minted by `bin/sync-server prepare` and read nowhere in this
+  # app's request-serving code any more (lib/library_backend_check.rb's own comment on
+  # CHUNK_REMOTE_REQUIRED explains why it still gates boot). Nil until this user's first library
+  # write; FileLayer::ChunkRemote::Provisioning fills it in.
+  #
+  # NOT DETERMINISTIC. `encrypts` defaults to non-deterministic (a fresh random IV each write, so
+  # two encryptions of the same plaintext produce different ciphertext -- verified in the commit
+  # that configured encryption for this app), and deterministic encryption exists ONLY to let a
+  # column be queried BY its encrypted value. Nothing here ever does `where(sync_device_token:
+  # ...)` -- a device token is looked up by WHO HOLDS the row (the signed-in user), never the
+  # other way around -- so deterministic buys nothing and only adds a cost: it also leaks equality
+  # (two users who somehow shared a token would have byte-identical ciphertext, visible to
+  # anyone with row access, without either value ever being decrypted). `deterministic: false` is
+  # written out explicitly rather than left on the default, matching this app's existing rule for
+  # `support_unencrypted_data` (config/initializers/active_record_encryption.rb): a default that
+  # happens to already be right is exactly what a future Rails upgrade silently flips.
+  encrypts :sync_device_token, deterministic: false
+
   # DECLARED ONLY WHEN THE ENGINE IS LOADED, and `class_name:` being a STRING is not enough to
   # make that unnecessary -- which was probed, not reasoned. A string class_name is lazy, so
   # merely loading User is fine either way; but `dependent: :destroy` constantizes on destroy, and

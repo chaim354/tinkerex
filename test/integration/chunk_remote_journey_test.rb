@@ -333,9 +333,24 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   test "a node created directly on the sync server becomes visible without a local write" do
     skip_unless_remote_server
     user = sign_in
+
+    # FORCE PROVISIONING FIRST. Arc C: this test simulates "the SAME maker user's other device"
+    # pushing a node straight to the sync server, which now means authenticating as THIS user's
+    # OWN sync_device_token, never the bootstrap CHUNK_REMOTE_TOKEN (that credential belongs to a
+    # different remote user entirely since Task 4 -- using it here would silently push the node
+    # into the WRONG library, and the pull below would then correctly never see it, for a reason
+    # that has nothing to do with what this test exists to prove). Reads never provision
+    # (chunk_remote.rb's own header: "READS ARE LOCAL SQL"), so `sign_in` alone leaves
+    # sync_device_token nil -- a throwaway folder create is the cheapest write available.
+    post library_folders_path, params: { name: "#{journey_prefix}-provision" }, as: :json
+    assert_response :success, "the throwaway folder used to force provisioning failed: #{response.body}"
+    user.reload
+    assert user.sync_device_token.present?, "provisioning did not run -- nothing to build the " \
+           "'other device' transport from below"
+
     name = "#{journey_prefix}-from-elsewhere"
     transport = FileLayer::ChunkRemote::Transport.new(
-      base_url: ENV.fetch("CHUNK_REMOTE_URL"), token: ENV.fetch("CHUNK_REMOTE_TOKEN")
+      base_url: ENV.fetch("CHUNK_REMOTE_URL"), token: user.sync_device_token
     )
     node_id = SecureRandom.uuid
     transport.post("/v1/nodes", { node_id:, parent_node_id: nil, name:, mode: 0o755,

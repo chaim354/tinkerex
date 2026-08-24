@@ -34,7 +34,21 @@ module ChunkRemoteJourney
 
   # Real password auth against the maker app -- the web UI is session-authed, never the v1 token
   # (§14d), so a journey that skipped this would exercise a door no user goes through.
-  def sign_in(email = "journey@example.com")
+  #
+  # THE DEFAULT EMAIL IS PER-TEST-UNIQUE, NOT A FIXED "journey@example.com" -- ARC C changed what
+  # sharing one email across every test in this file would mean. Before Arc C every request
+  # authenticated as the one bootstrap CHUNK_REMOTE_TOKEN device regardless of which maker user was
+  # signed in, so which email `sign_in` used never mattered to the SYNC SERVER at all. Now each
+  # user's first library write lazily provisions its OWN remote library
+  # (FileLayer::ChunkRemote::Provisioning), and the maker test DB rolls back after every test
+  # method while the SYNC SERVER's does not (journey_prefix's own comment) -- so a fixed email
+  # would provision successfully on the FIRST test in a run and then 409 `email_taken` on every
+  # test after it, because the local `sync_device_token` that call produced was rolled back with
+  # everything else while the remote User it created was not. `journey_prefix` was already
+  # memoized per test instance for exactly this kind of collision (see its own comment); reusing it
+  # here gives every test its own remote library instead of merely disjoint node names within a
+  # shared one, which is what that comment already anticipated this arc would let it do.
+  def sign_in(email = "#{journey_prefix}@example.com")
     user = User.find_by(email:) ||
            User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
     post user_session_path, params: { user: { email:, password: PASSWORD } }
@@ -102,10 +116,18 @@ module ChunkRemoteJourney
   # A PREFIX UNIQUE TO EACH TEST, NOT EACH RUN. Minitest instantiates a fresh test instance per
   # test METHOD, so `@journey_prefix ||=` memoizes once per test rather than once per suite
   # execution -- a stronger property, but worth stating precisely: a future reader could
-  # otherwise assume the prefix is stable across the tests in this file and build on that. It
-  # matters because one sync library is shared by every test in this suite (see the plan's scope
-  # note) and the server does not roll back with the maker DB. Real per-test isolation on the
-  # SERVER's own state needs Arc C's provisioning endpoint; until then, disjoint names are what
-  # keeps two runs of the same test from colliding at 409.
+  # otherwise assume the prefix is stable across the tests in this file and build on that.
+  #
+  # DOUBLE DUTY SINCE ARC C: this used to exist only to keep NODE NAMES disjoint within one shared
+  # sync library -- every test in this file provisioned the SAME bootstrap device's library, so
+  # without a unique prefix a `#{...}-bracket.stl` from one run would collide with an identically
+  # named one from the last. `sign_in`'s own comment explains why that sharing is gone: each test
+  # now provisions its OWN remote library, keyed by an email built from THIS prefix. Node-name
+  # collisions across DIFFERENT tests are therefore no longer reachable at all (each test's nodes
+  # live in an entirely separate remote user's tree) -- but a prefix unique to each run is still
+  # worth keeping for the same reason it always was: the sync server's own DB does not roll back
+  # with the maker DB (journey tests reuse ONE long-lived server across many local runs), so a
+  # fixed name would still collide with a PREVIOUS run's own leftover nodes within this run's own
+  # (now-private) library.
   def journey_prefix = @journey_prefix ||= "j#{SecureRandom.hex(4)}"
 end

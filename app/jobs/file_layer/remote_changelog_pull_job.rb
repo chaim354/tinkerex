@@ -48,8 +48,24 @@ module FileLayer
     #
     # `transport:` IS INJECTABLE, for the same reason FileLayer::ChunkRemote's own `transport:` and
     # `chunk_fetch:` seams are (chunk_remote.rb): a test that cannot substitute the wire can only
-    # exercise this job by standing up a real sync server. Left nil in production, where it is built
-    # from the same two ENV vars ChunkRemote itself reads.
+    # exercise this job by standing up a real sync server. Left nil in production, where -- ARC C
+    # TASK 4 -- it is now built PER USER from `user.sync_device_token`, not from a single
+    # process-wide CHUNK_REMOTE_TOKEN. This job used to read that ENV var directly (its own
+    # `default_transport`, below), which was the SAME cross-tenant leak `ChunkRemote#transport`
+    # itself had, one caller over: every user's periodic pull authenticated as the one bootstrap
+    # device, so the sync server always answered with THAT device's changelog regardless of whose
+    # `user_id` this job claimed to be pulling for. Fixed the same way, for the same reason.
+    #
+    # AN UNPROVISIONED USER (transport nil AND no sync_device_token yet) IS SKIPPED, NOT
+    # PROVISIONED. Provisioning is deliberately tied to a user's own interactive first write
+    # (ChunkRemote#device_token_for), not to this unattended sweep -- `pull_all!` fans out to
+    # EVERY user row (below), including accounts that have never opened Files, and a periodic job
+    # that auto-provisions on mere existence would mint a remote library for users who may never
+    # need one. Nothing to pull for a user with no library yet, and nothing wrong either -- the
+    # same shape as the discard_on RecordNotFound below, just decided one line earlier. A test
+    # that injects `transport:` bypasses this entirely, matching ChunkRemote's own contract for an
+    # injected transport (chunk_remote.rb's constructor comment) -- so no existing test here,
+    # which all pass `transport:` explicitly, needed to change for this.
     #
     # NO RESCUE HERE, DELIBERATELY -- matching ScanJob's "no retry_on, no discard_on" for
     # Library::Scanner::UnsafeScan. A raising pull (an unreachable server, a rejected token) is an
@@ -58,7 +74,9 @@ module FileLayer
     # keeps that failure from stacking up rather than a caught-and-logged exception here.
     def perform(user_id:, transport: nil)
       user = User.find(user_id)
-      ChunkRemote::ChangelogSync.new(user, transport: transport || default_transport).call
+      return if transport.nil? && user.sync_device_token.blank?
+
+      ChunkRemote::ChangelogSync.new(user, transport: transport || default_transport(user)).call
     end
 
     # THE FAN-OUT, FOLLOWING Library::ScanJob.scan_all!'s SHAPE EXACTLY: `User.find_each` +
@@ -95,10 +113,15 @@ module FileLayer
     private
 
     # Built lazily, and only when the caller did not inject one, so merely loading this class never
-    # demands CHUNK_REMOTE_URL/CHUNK_REMOTE_TOKEN -- matching ChunkRemote#transport's own reasoning.
-    def default_transport
+    # demands CHUNK_REMOTE_URL or a token -- matching ChunkRemote#transport's own reasoning. Reads
+    # `user.sync_device_token` directly rather than `user.sync_device_token.presence || raise`: by
+    # the time this is called, `#perform`'s own guard above has already refused a blank token, so a
+    # blank one reaching `Transport.new` here would be this method being called from somewhere that
+    # skipped that guard -- a bug worth a confusing 401 from the sync server rather than a second,
+    # possibly-drifting blank check.
+    def default_transport(user)
       ChunkRemote::Transport.new(base_url: ENV.fetch("CHUNK_REMOTE_URL"),
-                                 token: ENV.fetch("CHUNK_REMOTE_TOKEN"))
+                                 token: user.sync_device_token)
     end
   end
 end

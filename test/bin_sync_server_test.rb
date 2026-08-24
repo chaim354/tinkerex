@@ -53,10 +53,16 @@ class BinSyncServerTest < ActiveSupport::TestCase
   # version-dependent behaviour -- which this test does not control and must not depend on -- a
   # chance to touch this box's gem environment or reach for the network.
   #
+  # `openssl` (SYNC_ADMIN_TOKEN's generator, Arc C) IS DELIBERATELY NOT STUBBED, UNLIKE `bundle`
+  # AND `host/bin/rails`. `openssl rand -hex 32` touches no network, no gem environment and no
+  # database -- it is a local, side-effect-free CLI call this box is already known to have (git and
+  # curl-https both depend on it), so stubbing it would only add a fake with nothing real to
+  # protect against.
+  #
   # RESIDUAL, NOT CLOSED: the bundle stub always exits 0, so this cannot tell
   # `bundle install --quiet && bin/rails db:prepare` from a weakened `;`-joined version that
   # would run db:prepare after a failed install.
-  test "prepare's happy path writes both keys from what the rake task actually printed" do
+  test "prepare's happy path writes all three keys, admin token freshly generated" do
     Dir.mktmpdir("sync-stub") do |sync_dir|
       host_bin = File.join(sync_dir, "host", "bin")
       FileUtils.mkdir_p(host_bin)
@@ -99,19 +105,35 @@ class BinSyncServerTest < ActiveSupport::TestCase
       # bin/sync-server for why a save-and-restore of the real file isn't safe here.
       env_file = Pathname.new(File.join(sync_dir, "sync-server.env"))
 
-      out, status = Open3.capture2e(
-        {
-          "TINKEREX_SYNC_DIR" => sync_dir,
-          "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
-          "SYNC_SERVER_ENV_FILE" => env_file.to_s
-        },
-        SCRIPT.to_s, "prepare"
-      )
+      run_env = {
+        "TINKEREX_SYNC_DIR" => sync_dir,
+        "PATH" => "#{stub_path_dir}:#{ENV.fetch("PATH")}",
+        "SYNC_SERVER_ENV_FILE" => env_file.to_s
+      }
+
+      out, status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
 
       assert status.success?, "prepare should succeed against a stubbed checkout:\n#{out}"
       written = env_file.read
       assert_includes written, "CHUNK_REMOTE_URL="
       assert_includes written, "CHUNK_REMOTE_TOKEN=stub-devtoken-9f8e7d6c5b4a"
+
+      # SYNC_ADMIN_TOKEN: 64 lowercase hex chars (openssl rand -hex 32), on its own line so the
+      # match cannot accidentally span into whatever key follows it in the file.
+      admin_line = written[/^SYNC_ADMIN_TOKEN=.*$/]
+      assert admin_line, "SYNC_ADMIN_TOKEN was not written:\n#{written}"
+      assert_match(/\ASYNC_ADMIN_TOKEN=[0-9a-f]{64}\z/, admin_line,
+                   "expected 64 lowercase hex chars from `openssl rand -hex 32`, got: #{admin_line.inspect}")
+
+      # FRESH EVERY prepare, NOT A FIXED STUB VALUE LIKE THE DEVICE TOKEN ABOVE -- unlike
+      # sync:device:issue, nothing on the sync host mints this value, so `prepare` has to generate
+      # it itself, and a second run must not silently reuse the first's.
+      second_out, second_status = Open3.capture2e(run_env, SCRIPT.to_s, "prepare")
+      assert second_status.success?, "a second prepare should also succeed:\n#{second_out}"
+      second_admin_line = env_file.read[/^SYNC_ADMIN_TOKEN=.*$/]
+      assert_not_equal admin_line, second_admin_line,
+                        "two prepare runs wrote the SAME admin token -- it must be freshly " \
+                        "generated per run, not a fixed or cached value"
     end
   end
 end
