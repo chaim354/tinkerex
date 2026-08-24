@@ -976,21 +976,41 @@ Raw output: <paste the summary line, e.g. "9 runs, N assertions, F failures, E e
 
 | # | Test | Verdict | Failure, verbatim | Predicted by the spec? |
 |---|---|---|---|---|
-| 1 | the journey suite does not skip when a server is configured | | | n/a — the skip guard's own check |
+| 1 | the journey suite does not skip when a server is configured | | | n/a — the skip canary |
 | 2 | an upload round-trips byte-for-byte | | | no |
 | 3 | an uploaded file appears on the files page | | | no |
 | 4 | a folder can be created, and a file moved into it | | | no |
 | 5 | a file can be deleted, listed in trash, and restored | | | no |
-| 6 | a directory delete cascades | | | no |
+| 6 | a directory delete cascades (three levels) | | | no |
 | 7 | a node created on the server becomes visible | | | YES — gap (a) |
 | 8 | an addon save writes its output | | | YES — gap (b) |
 | 9 | a batch of moves costs one changelog pull | | | YES — gap (c) |
+| 10 | restoring a child before its parent restores it to the root | | | **NO — gap (d), found by running it** |
 
 ## What the spec did not predict
 
-<One section per failure whose "Predicted" column is "no". State the symptom, the file and line,
-and what would fix it. If there are none, say so explicitly — that is a real result and it means
-the spec's reading pass was, unusually, complete.>
+**GAP (d) — `chunk_remote` REFUSES a restore that embedded `chunk` performs.** Write this one up
+in full; it is the finding the reading pass missed, and it is §14a's own forbidden shape — one
+condition, two answers, across two backends in the same family.
+
+- `FileLayer::Chunk#undelete` calls `Sync::Trash.restore(user:, node_id:, to_root: true)`. That
+  `to_root: true` is unconditional and deliberate; §14a documents the resulting behaviour at
+  length (an orphan comes back at the ROOT, and restore order is therefore not commutative).
+- `FileLayer::ChunkRemote#undelete` posts an **empty body** to `/v1/trash/:node_id/restore`.
+- The server casts `params[:to_root]`, which is absent, to **false**, and `Sync::Trash.restore`
+  raises `ParentDeleted` when the node is orphaned and `to_root` is false.
+- That surfaces as 409 → `FileLayer::UnsupportedOperation` → `TrashController`'s rescue arm →
+  "Couldn't restore that item."
+
+So restoring a child while its parent is still tombstoned SUCCEEDS on chunk and is REFUSED on
+chunk_remote. Arguably the safer failure mode — but it is not what §14a promises, and a user
+moving between the two deployments gets different answers. Arc B's fix is to thread `to_root:`
+through the port's `undelete` verb into that POST body; whether the default should be `true`
+(matching chunk) or the refusal should be adopted by BOTH backends is a decision for that arc,
+not this one. **Record it; do not fix it here.**
+
+<Add a section for any OTHER failure whose "Predicted" column is "no". If there are none beyond
+gap (d), say so explicitly.>
 
 ## What this does NOT cover
 
