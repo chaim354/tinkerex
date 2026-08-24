@@ -105,6 +105,102 @@ GATES = {
             "bin/rails db:test:prepare test TEST=test/integration/no_engine_boot_test.rb"
   end,
 
+  # THE chunk_remote JOURNEY, AGAINST A REAL STANDALONE tinkerex-sync HOST.
+  #
+  # Used to be .github/workflows/sync-contract.yml -- a SEPARATE workflow, deliberately kept OUT of
+  # bin/ci, because test/ci_hygiene_test.rb asserts SET EQUALITY between `bin/ci --list-ci` and
+  # ci.yml's gate jobs (plus a second test allowing only `setup` into LOCAL_ONLY_GATES above), so a
+  # red gate is a red main -- and this suite was DELIBERATELY RED on arrival while Stage 5 Arc B
+  # measured, then closed, four real gaps (docs/superpowers/plans/2026-08-23-arc-b-worklist.md). It
+  # lived beside bin/ci on the client-contract.yml precedent: a cross-repo wire-contract workflow
+  # that boots a real server and never calls bin/ci. Arc B closed all four gaps -- the suite is
+  # 10/10 against a real server (docs/STATUS.md) -- so it moves in here now: ONE definition, same
+  # as every other gate, and the workflow file is deleted rather than left running the same suite
+  # a second way.
+  #
+  # BOOTS ITS OWN SERVER, RATHER THAN REQUIRING ONE ALREADY RUNNING, so `bin/ci` (bare, or `bin/ci
+  # test-chunk-remote` alone) just works for a developer who already has the sibling checkout --
+  # the same convenience the cross-stack demos in the cheatsheet below already get from
+  # `bin/sync-server`. The failure mode for a MISSING sibling checkout is `bin/sync-server`'s own,
+  # reused rather than reimplemented: `bin/sync-server prepare`'s `require_checkout` names the repo
+  # and the `gh repo clone` command and exits 1 before this script goes anywhere near a socket, so
+  # a developer without ../tinkerex-sync gets that message -- never a bare connection-refused.
+  #
+  # THE SKIP-ASSERTION ARGUMENT, CARRIED OVER FROM sync-contract.yml VERBATIM because it is still
+  # exactly true: nothing INSIDE the suite can vouch for its own siblings' skips. The in-suite
+  # canary ("the journey suite does not skip when a server is configured") proves only that IT ran
+  # -- measured under a deliberately broken skip_unless_remote_server, the suite still went `9
+  # runs, 1 assertions, 0 failures, 8 skips` and exit 0. Nothing inside a suite can assert about
+  # its own siblings' skips; CLAUDE.md §14j's "a guard that skips on the thing it asserts is
+  # vacuous" rebuilt one layer up, inside the very test meant to prevent it. This step is the one
+  # place that KNOWS a server is up -- it just probed /up and whoami below -- so it is what greps
+  # the captured run for a skip and fails outright. With a server configured, a skip is never
+  # legitimate.
+  #
+  # `bash -c`, NOT the single-string form every other multi-command gate above uses:
+  # `${PIPESTATUS[0]}` is a bashism -- the single-string form runs under `/bin/sh -c`, which has no
+  # PIPESTATUS at all -- and it is load-bearing: after `... | tee file`, a bare `$?` is tee's exit
+  # status, which is always 0, so a real journey failure would be swallowed and this gate would
+  # report green over a red suite. That exact mistake already put a wrong "exits 0" claim into an
+  # earlier plan. Passing `"bash", "-c", script` as three separate arguments (rather than one
+  # string) also means the script never passes through an outer shell at all, so nothing in it
+  # needs escaping for Ruby's sake.
+  "test-chunk-remote" => ->(ci) do
+    script = <<~'SCRIPT'
+      set -euo pipefail
+      PORT="${SYNC_PORT:-3002}"
+
+      # LEFTOVER-PROCESS GUARD, before anything tries to bind the port. Harmless if nothing is
+      # listening: lsof exits 1 when it finds nothing, which would trip `set -e` under `pipefail`
+      # before the port is ever touched -- `|| true` on the whole pipe is what keeps that ordinary
+      # case from failing the step. Matters most on a persistent, self-hosted runner, where a
+      # cancelled run (ci.yml's own `cancel-in-progress`) can leave a backgrounded server behind
+      # for the next run to collide with.
+      lsof -ti tcp:"$PORT" | xargs kill -9 2>/dev/null || true
+
+      bin/sync-server prepare
+      set -a; . tmp/sync-server.env; set +a
+
+      bin/sync-server start &
+      SRV=$!
+      trap 'kill "$SRV" 2>/dev/null || true' EXIT
+
+      # TWO PROBES, TWO DIFFERENT QUESTIONS, and neither substitutes for the other. /up runs
+      # User.count on that host and answers 503 on an empty schema -- it exists because its first
+      # real deploy reported healthy with no tables. whoami then proves the credential
+      # bin/sync-server just minted is actually accepted. A bare port check answers neither, and a
+      # schema-less server would otherwise surface as ten confusing journey failures instead of
+      # one clear failure here.
+      for i in $(seq 1 60); do
+        curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null && break
+        sleep 1
+      done
+      curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null || {
+        echo "sync server never became ready"; exit 1; }
+      curl -sf -H "Authorization: Bearer $CHUNK_REMOTE_TOKEN" \
+        "$CHUNK_REMOTE_URL/v1/devices/whoami" >/dev/null || {
+          echo "the device token was rejected"; exit 1; }
+
+      set +e
+      LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
+        test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
+      code=${PIPESTATUS[0]}
+      set -e
+
+      # THE SKIP ASSERTION IS THE REAL GUARD -- see this gate's own comment in config/ci.rb for why
+      # nothing inside the suite itself can stand in for this check.
+      if grep -qE ', [1-9][0-9]* skips' tmp/journey-ci.txt; then
+        echo "::error::the journey suite SKIPPED with a sync server configured and reachable."
+        echo "A skip here means skip_unless_remote_server stopped discriminating, and the suite"
+        echo "reported success having asserted nothing -- the failure this gate exists to make"
+        echo "impossible."
+        exit 1
+      fi
+      exit "$code"
+    SCRIPT
+    ci.step "Tests: chunk_remote journey (real sync server)", "bash", "-c", script
+  end,
+
   "system" => ->(ci) do
     ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
   end

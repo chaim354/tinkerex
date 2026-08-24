@@ -16,9 +16,15 @@ require_relative "../support/chunk_remote_journey"
 # `Version`/`Node`/`ChangelogEntry` row apiece, and the `/v1/changes` pull that refreshes the local
 # mirror's `nodes` table). The failures Arc B works from are the three tests Task 5 adds -- each
 # names its own expected failure individually, rather than this docstring claiming one on the
-# whole file's behalf. It is deliberately NOT a bin/ci gate -- test/ci_hygiene_test.rb asserts set
-# equality between `bin/ci --list-ci` and ci.yml's gate jobs, so a red gate is a red main.
-# .github/workflows/sync-contract.yml carries the signal.
+# whole file's behalf.
+#
+# IT WAS DELIBERATELY NOT A bin/ci GATE WHILE ANY OF THAT WAS TRUE -- test/ci_hygiene_test.rb
+# asserts set equality between `bin/ci --list-ci` and ci.yml's gate jobs, so a red gate is a red
+# main, and this suite was expected to be red until Arc B closed what it measured.
+# .github/workflows/sync-contract.yml carried the signal instead, on the client-contract.yml
+# precedent. Arc B closed all four gaps (CLAUDE.md §14a, docs/STATUS.md); the suite is 10/10
+# against a real server, so it is now `config/ci.rb`'s `test-chunk-remote` gate and
+# sync-contract.yml is gone -- one definition, same as every other gate.
 class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   include ChunkRemoteJourney
 

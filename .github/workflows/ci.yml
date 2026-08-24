@@ -225,6 +225,41 @@ jobs:
           RAILS_ENV: test
         run: bin/ci test-no-engine
 
+  # THE chunk_remote JOURNEY, AGAINST A REAL STANDALONE tinkerex-sync HOST -- config/ci.rb's
+  # `test-chunk-remote` gate, which owns the whole boot/probe/run/skip-check script; see its own
+  # comment there for the mechanism. This job exists only for the two things a gate cannot do for
+  # itself: check out a SECOND repository, and hand it credentials.
+  #
+  # USED TO BE .github/workflows/sync-contract.yml, kept OUT of bin/ci while the suite was
+  # deliberately red (Stage 5 Arc B measured, then closed, four real gaps -- docs/STATUS.md). Now
+  # 10/10 against a real server, it moved in here rather than being left running the same suite a
+  # second way -- one definition, same as every other gate.
+  #
+  # SECOND CHECKOUT: the sync engine is a separate private repo, and secrets.GITHUB_TOKEN is scoped
+  # to THIS repo only. A READ-ONLY DEPLOY KEY, NOT A PAT -- same reasoning as §14j's Docker-build
+  # key: a PAT carries the whole account's reach to read one repo, and GitHub has had no API to
+  # mint one since POST /authorizations was sunset in 2020, so it is also an irreducibly manual,
+  # by-hand-in-a-browser step. `gh repo deploy-key add` creates exactly the narrower thing --
+  # tinkerex-sync's `ci-sync-contract` key, unchanged by the workflow's rename.
+  test-chunk-remote:
+    runs-on: [self-hosted, macos]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out tinkerex-sync
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-sync
+          ssh-key: ${{ secrets.TINKEREX_SYNC_DEPLOY_KEY }}
+          path: tinkerex-sync
+      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
+        run: bundle install --quiet
+      - name: Run the chunk_remote journey against a real sync server
+        env:
+          RAILS_ENV: test
+          TINKEREX_SYNC_DIR: ${{ github.workspace }}/tinkerex-sync
+          SYNC_PORT: "3002"
+        run: bin/ci test-chunk-remote
+
   system-test:
     runs-on: [self-hosted, macos]
     steps:

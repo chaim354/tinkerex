@@ -298,8 +298,15 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 ```sh
 # ALL local gates, one command (this is what CI runs, by name):
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
-                       # 7 gates. The sync engine's own suite is NOT one of them any more -- it
-                       # runs in chaim354/tinkerex-sync, which this repo consumes as a git gem.
+                       # 9 gates (8 run under CI -- `setup` is local-only, bin/ci --list-ci). The
+                       # sync engine's own suite is NOT one of them any more -- it runs in
+                       # chaim354/tinkerex-sync, which this repo consumes as a git gem.
+# ONE gate needs a DIFFERENT sibling checkout, not that gem: `test-chunk-remote` drives the maker
+# app against a real chaim354/tinkerex-sync HOST app (a standalone Rails server, not the engine).
+# It boots that server itself via bin/sync-server, which needs ../tinkerex-sync checked out as a
+# sibling (same convention as tinkerex-client below) -- a missing checkout fails loudly and names
+# the clone command, it does not fall through to a confusing connection error:
+#   gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
 # WORKING ON THE SYNC ENGINE: clone it and test it there; there is nothing to edit in this repo.
 #   gh repo clone chaim354/tinkerex-sync && cd tinkerex-sync && bundle install && bundle exec rake test
@@ -502,6 +509,52 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   can ask for the strict 409 and prompt its own UI, where a browser Restore click has no such
   prompt and this app's web `TrashController` chooses the refusal on the user's behalf instead —
   see its own comment for the actionable message that refusal now carries.
+- **THE LOCAL MIRROR IS DELIBERATELY STALE BETWEEN PULLS, AND ONLY THE RECURRING JOB MAY CLOSE
+  THAT GAP — NEVER A READ PATH.** `FileLayer::ChunkRemote#refresh!` has five TRIGGERING
+  operations, all this app's own writes — `mkdir`/`move`/`delete`/`undelete`/`finalize_upload`
+  (chunk_remote.rb) — and `ChangelogSync`'s only OTHER caller anywhere in `app/`, `lib/` or
+  `config/` is the job named below. A node another device, or the sync server itself, creates is
+  invisible to the maker UI until one of those five fires — confirmed by driving it: a node posted
+  straight to the server's own `/v1/nodes` stayed absent from `user.nodes.present` (checked
+  directly, not merely rendered) with nothing else touched; only after
+  `FileLayer::RemoteChangelogPullJob.perform_now` runs does a subsequent `GET /files` show it.
+  `FileLayer::RemoteChangelogPullJob` (Arc B gap (a)) is the sanctioned freshness
+  mechanism: a per-user recurring pull, `config/recurring.yml`'s `remote_changelog_pull` entry,
+  every 2 minutes, gated to `chunk_remote` ONLY — `.pull_all!`'s
+  `FileLayer.current.is_a?(FileLayer::ChunkRemote)` check, a CLASS check rather than a new
+  `Capabilities` member, because `syncable` is true for chunk AND chunk_remote alike and cannot
+  tell "this app's `nodes` table is a mirror of a REMOTE changelog" from "chunk shares this app's
+  own database with the engine in-process." **Do not "fix" staleness by adding a synchronous pull
+  to `FilesController#index` or any other read** — that is precisely the WAN-in-the-metadata-path
+  §2 exists to forbid, made on every request rather than once every 2 minutes, and it is what the
+  journey suite's own rewritten test now pins against (a plain read asserted NOT to see a
+  server-side node) rather than for. Bounded staleness (~2 minutes) is the trade, the same one
+  `Library::ScanJob`'s poll already makes for share/s3.
+- **`LibraryBroadcast.batch` HAS THREE ANSWERS NOW, NOT TWO, AND THE SPLIT IS "IS THERE A
+  CHANGELOG TO COALESCE AGAINST", NOT "IS THE ENGINE LOADED."** Engine present (chunk) delegates
+  to `Sync::LibraryChannel.batch`, unchanged. Engine absent used to be a bare `yield`
+  unconditionally — right for share/s3 (no changelog at all, nothing to coalesce, so `yield` is
+  the SAME behaviour with the bookkeeping removed, not a degraded one) but wrong for
+  `chunk_remote`, which has no engine in-process yet DOES have a changelog, reached over HTTP:
+  left alone, an eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation on top of
+  the mutation's own request — a batch of 3 moves cost 3 pulls, measured, two WAN round trips per
+  file. `FileLayer::ChunkRemote#batch` (Arc B gap (c)) is that backend's own coalescing: a
+  `Thread.current` frame, DELIBERATELY never an ivar on `self` — `FileLayer.current` memoizes ONE
+  adapter instance for the whole process, shared across every Puma thread, so per-batch state
+  living on the object would let one request's batch leak into a concurrent request's unrelated
+  mutation. `#move` alone dirties it, through a new `#refresh_or_defer!` that marks the open batch
+  dirty instead of pulling; the batch's own `ensure` block pulls exactly once, on ANY exit, not
+  only success, because every move that ran before an exception has already committed on the
+  SERVER. **`mkdir` is DELIBERATELY NOT deferred, and must not be made "uniform" with `move`** —
+  `Maker::LibraryFolder#ensure_segment` reads the mirror row back in the SAME call that creates
+  it, right after `mkdir` returns, so deferring that pull would turn an ordinary new category
+  folder — created mid-sweep the first time a project sees it — into an
+  `ActiveRecord::RecordNotFound`. `delete`/`undelete`/`finalize_upload` keep their unconditional
+  `refresh!` for the identical reason: each hands a caller a state read from the very row the pull
+  just created or updated. `move` alone has no such reader — `Maker::MoveNode#apply_move`'s own
+  comment says outright that the RELOAD is the return value, never trusting what `move` hands
+  back — which is what makes deferring safe there and only there; a future editor "simplifying"
+  the deferral onto all five verbs reintroduces a crash on the very first folder a sweep creates.
 - **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
   `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
   sharing one `(parent, name)` where share and s3 both refuse that clobber in their own
@@ -2123,7 +2176,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 ### 14j. The maker/sync boundary (Stages 3a and 3b)
 
 **And share/s3 stopped loading it on 2026-08-21.** The gem is `require: false`; `config/application.rb`
-requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **8 gates**, not 7.
+requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **9 gates**, not 8 — `test-chunk-remote`
+(Stage 5 Arc B, 2026-08-24) is the ninth; see §14a for what it drives.
 
 - **`SYNC_ENGINE` EXISTS SO BOTH PATHS ARE EXECUTED, NOT SO ONE CAN BE ARGUED.** The three backend
   legs set `SYNC_ENGINE=1` and keep the engine loaded even on share/s3, so all three still report
@@ -2396,8 +2450,11 @@ On a **`claude/*` or other non-default branch**, when the work is complete and t
 green, **commit, push, and open a PR — do not stop to ask.** That is standing authorization;
 treat it as the default close-out for a task, and use `/finish-branch` to run it.
 
-- **Green means bare `bin/ci`** (all gates: style, scan, test, test-share, test-s3, system).
-  The three test legs must report **identical** counts.
+- **Green means bare `bin/ci`** — every gate `bin/ci --list-ci` names (not a hand-copied list
+  here: one already went stale once by omitting `test-no-engine`, and a list is exactly the drift
+  this file's own §15 warns against elsewhere). **The three backend test legs** — `test`,
+  `test-share`, `test-s3`, NOT `test-no-engine` or `test-chunk-remote`, which are separate focused
+  suites by design (config/ci.rb's own comment on each) — **must report identical run counts.**
 - **Merging always needs an explicit go-ahead.** Never merge, never `--admin`-merge, never
   push to `main`.
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to

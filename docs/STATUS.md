@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-23 (**Stage 5 Arc A: the chunk_remote proof — 6 of 10 journeys pass against a real sync server**)
+**Updated:** 2026-08-24 (**Stage 5 Arc A+B: chunk_remote closes 10/10 — `test-chunk-remote` is a real `bin/ci` gate**)
 
 ## What this file is
 
@@ -71,39 +71,71 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-23): Stage 5 Arc A — the chunk_remote proof: 6 of 10 journeys pass against a real sync server (branch `claude/stage-5-arc-a`)
+## Latest (2026-08-24): Stage 5 Arc A+B — chunk_remote closes 10/10; `test-chunk-remote` becomes a real `bin/ci` gate (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`)
 
-**Plan:** `docs/superpowers/plans/2026-08-23-arc-a-chunk-remote-proof.md`. **Design:**
+**Plan:** `docs/superpowers/plans/2026-08-23-arc-a-chunk-remote-proof.md` (Arc A) and
+`docs/superpowers/plans/2026-08-24-arc-b-close-the-four-gaps.md` (Arc B, Tasks 1–5). **Design:**
 `docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md`, Arc A of four
 (A contract, B parity, C per-user enrolment, D packaging + deletion). **Work-list:**
-`docs/superpowers/plans/2026-08-23-arc-b-worklist.md`.
+`docs/superpowers/plans/2026-08-23-arc-b-worklist.md` — the measured record Arc A produced and
+Arc B worked from.
 
 Stage 4 (2026-08-21, below) shipped `FileLayer::ChunkRemote` at 12/12 port verbs and recorded
-plainly that it was "not yet deployed or exercised against a real remote server." Arc A is that
+plainly that it was "not yet deployed or exercised against a real remote server." Arc A was that
 exercise, not another reading pass: **`bin/sync-server`** (boots a sibling
 `chaim354/tinkerex-sync` checkout's `host/` app, mints a device token), a journey harness
 (`test/support/chunk_remote_journey.rb`), ten journey tests driving real web doors
-(`test/integration/chunk_remote_journey_test.rb`), a `sync-contract.yml` workflow that runs them
-on every PR, and the measured Arc B work-list this run produced.
+(`test/integration/chunk_remote_journey_test.rb`), and — while it was still deliberately
+red — a separate `sync-contract.yml` workflow that ran them on every PR. Arc B (this same entry;
+STATUS.md amends an arc in place rather than appending a new one) closed the four gaps Arc A
+measured and then retired that workflow: **the journey suite is 10/10 against a real server, and
+the suite now runs as `config/ci.rb`'s `test-chunk-remote` gate — one definition, in `bin/ci`,
+same as every other gate.** `sync-contract.yml` is deleted, not left running the same suite a
+second way.
 
-**Headline — the first time `chunk_remote` has ever run against a real standalone sync server: 10
-tests, 6 pass, 4 fail** (3 Minitest failures, 1 error). Captured twice in one server session, two
-different random seeds — byte-identical summary line and byte-identical failure messages both
-times, so not a flake and not order-dependent.
+**Headline, Arc A's own measurement (2026-08-23) — the first time `chunk_remote` had ever run
+against a real standalone sync server: 10 tests, 6 pass, 4 fail** (3 Minitest failures, 1 error).
+Captured twice in one server session, two different random seeds — byte-identical summary line
+and byte-identical failure messages both times, so not a flake and not order-dependent.
+**Superseded below: Arc B closed all four, and the suite is now 10 pass / 0 fail, run as a real
+`bin/ci` gate rather than a separate workflow.**
 
-`bin/ci` green at the same **8 gates** Stage 4 left it at (7 CI-run gates via `--list-ci`, plus the
-local-only `setup`). Backend legs: chunk **2468 runs / 9182 assertions**, share **2468 runs / 9158
-assertions**, s3 **2468 runs / 9153 assertions** — run counts identical across all three, 0
-failures/0 errors on each. Assertion and skip counts differ by a handful between legs; that is the
-pre-existing flake this file's own "Still open" section already records ("nothing enforces that
-they do"), not something this arc introduced — none of this arc's commits touch `app/`, `lib/`, or
-`config/` (`git diff --stat` against every such path is empty). `test-no-engine`: 7 runs/12
-assertions. `system`: 179 runs/1504 assertions. Both 0 failures/0 errors. Whole run 1m20s, exit 0.
-Ten of chunk's 19 skips are this arc's own journey suite (`2467→2468` runs, `18→19` skips when the
-tenth test landed, all else unchanged, per `fef92ad`); confirmed in isolation too — the journey
-file alone, no server configured, is `10 runs, 0 assertions, 0 failures, 0 errors, 10 skips`. The
-suite is wired into no backend leg; its skips are a side effect of the file existing, not of any
-gate driving it.
+`bin/ci` green at Arc A's own **8 gates** (7 CI-run gates via `--list-ci`, plus the local-only
+`setup` — the count Stage 4 left it at). Backend legs: chunk **2468 runs / 9182 assertions**,
+share **2468 runs / 9158 assertions**, s3 **2468 runs / 9153 assertions** — run counts identical
+across all three, 0 failures/0 errors on each. Assertion and skip counts differ by a handful
+between legs; that is the pre-existing flake this file's own "Still open" section already records
+("nothing enforces that they do"), not something Arc A introduced — none of Arc A's own commits
+touch `app/`, `lib/`, or `config/` (`git diff --stat` against every such path is empty).
+`test-no-engine`: 7 runs/12 assertions. `system`: 179 runs/1504 assertions. Both 0 failures/0
+errors. Whole run 1m20s, exit 0. Ten of chunk's 19 skips are this arc's own journey suite
+(`2467→2468` runs, `18→19` skips when the tenth test landed, all else unchanged, per `fef92ad`);
+confirmed in isolation too — the journey file alone, no server configured, is `10 runs, 0
+assertions, 0 failures, 0 errors, 10 skips`. The suite was wired into no backend leg at that
+point; its skips were a side effect of the file existing, not of any gate driving it.
+
+**`bin/ci` green at Arc B's final count, 2026-08-24 — nine gates, one more than Arc A left it at,
+because `test-chunk-remote` is now the ninth (eighth via `--list-ci`).** Bare `bin/ci`, every
+gate, exit 0, whole run **1m32.04s** (final run against the complete diff — an earlier run against
+the same code, before this entry's own prose settled, finished in 1m22.77s; the ~10s difference is
+box variance between two consecutive runs, not a regression — see the assertion/skip note below
+for the same variance one level down): Setup 1.41s; Style 6.14s; Security (gem audit, importmap
+audit, Brakeman) 0.39s/1.00s/1.47s, 0 vulnerabilities, 0 Brakeman warnings; **Tests: Rails (chunk
+backend) — 2491 runs / 9233 assertions / 0 failures / 0 errors / 21 skips — 11.24s; Tests: Rails
+(share backend) — 2491 runs / 9202 assertions / 0 failures / 0 errors / 36 skips — 10.63s; Tests:
+Rails (s3 backend) — 2491 runs / 9202 assertions / 0 failures / 0 errors / 36 skips — 10.70s** —
+**run counts identical across all three (2491 = 2491 = 2491)**, exactly what §15 requires;
+assertion/skip counts differ by a handful between legs AND between the two consecutive runs of
+this same code (share alone read 9205/34 one run and 9202/36 the next), still the same
+pre-existing, already-recorded flake, not anything this arc touched (the count moved from 2468 to
+2491 for every backend leg alike between Arc A's capture and this one, from unrelated work landing
+on `main` in between — not evidence against the "identical run counts" guarantee, which is about
+the three legs agreeing with EACH OTHER on a given run, never about matching a prior run's or a
+prior day's absolute number). **Tests: share with NO sync engine loaded — 7 runs / 12 assertions /
+0 failures / 0 errors / 0 skips — 1.91s. Tests: chunk_remote journey (real sync server) — 10 runs /
+124 assertions / 0 failures / 0 errors / 0 skips — 8.62s — the new gate, fully green, identical
+counts on both consecutive runs.** Tests: System (real browser) — 179 runs / 1504 assertions / 0
+failures / 0 errors / 0 skips — 38.53s.
 
 ### The four gaps, measured
 
@@ -144,6 +176,106 @@ memory.
   "chunk adopts the refusal" are on the table; this arc records the divergence, it does not resolve
   it.
 
+### The four gaps, closed (Arc B, 2026-08-24)
+
+One fix per gap, each verified by the SAME journey test that measured the gap above — the
+acceptance criterion was written before the fix, per Arc B's own rule
+(`docs/superpowers/plans/2026-08-24-arc-b-close-the-four-gaps.md`: "do not touch
+`chunk_remote_journey_test.rb` except where a task says so"). **Result: the journey suite moved
+from `10 runs, 6 pass, 4 fail` to `10 runs, 10 pass, 0 fail` — 10/10 against a real server,
+reproduced locally at `10 runs, 124 assertions, 0 failures, 0 errors, 0 skips`.**
+
+- **(a) freshness, `b87230b`.** `FileLayer::RemoteChangelogPullJob` — a per-user recurring pull,
+  `config/recurring.yml`'s new `remote_changelog_pull` entry, every 2 minutes, gated to
+  `chunk_remote` only via `.pull_all!`'s `FileLayer.current.is_a?(FileLayer::ChunkRemote)` check
+  (a class check, not a new `Capabilities` member — `syncable` is true for chunk AND chunk_remote
+  alike and cannot tell "mirrors a remote changelog" from "shares this app's own DB with the
+  in-process engine"). `#perform` fans out via `User.find_each { perform_later }`, one Solid Queue
+  job per user, `limits_concurrency to: 1` per user so a slow or unreachable server cannot stack up
+  retries. Unit-tested in `test/jobs/file_layer/remote_changelog_pull_job_test.rb`, including the
+  chunk_remote-only gate, mutation-checked in both directions.
+  - **HONEST CORRECTION, NOT A FIX MATCHING THE ORIGINAL ASSERTION.** The journey test this gap
+    was measured against originally asserted that a bare `get files_path` — a plain READ — made a
+    node pushed by another device visible. No permitted implementation can satisfy that: CLAUDE.md
+    §2 forbids the WAN in the metadata path, and `chunk_remote`'s entire point is answering reads
+    from the local mirror for the first time. Trying to satisfy the original assertion anyway is
+    what exposed the real defect underneath it. The test is REWRITTEN (Arc B's one declared
+    exception to "don't touch the journey suite"), and it now pins the opposite of what it used to:
+    a node pushed straight to the server's own `/v1/nodes` is asserted **NOT** to be visible after
+    a plain read (`user.nodes.present.exists?(node_id:)` is false), and becomes visible only after
+    `FileLayer::RemoteChangelogPullJob.perform_now(user_id:)` is invoked directly — the call
+    `config/recurring.yml`'s schedule performs in production, since `bin/rails test` never runs the
+    Solid Queue Supervisor that would fire it on a timer. The mirror is DELIBERATELY stale between
+    pulls; that staleness is §2 being honoured, not a bug, and nothing should ever "fix" it by
+    adding a synchronous pull to a read path.
+- **(b) addon saves, `c1ff1f8`.** `put_chunk` is now a port verb — `FileLayer::Chunk#put_chunk`
+  writes the embedded chunk store IN-PROCESS (unchanged from before); `FileLayer::ChunkRemote#put_chunk`
+  PUTs to `begun.put_urls.fetch(hash)` over HTTP, the presigned URL `#begin_upload` already
+  returned. The two CANNOT share one implementation: on embedded chunk a presigned URL for the
+  memory/local store points BACK AT THIS SAME RAILS PROCESS, so a server-side PUT to it would be a
+  loopback call into the same Puma pool — CLAUDE.md §14e's recorded reentrancy bug (14–24 second
+  stalls, outright 404s). `Maker::Addons::LibraryOutput#write_chunk` now calls the port instead of
+  reaching for `Sync::Storage::ChunkStore.current.put` directly, which is what raised
+  `NameError: uninitialized constant Maker::Addons::LibraryOutput::Sync` on any deployment that
+  does not load the sync engine — every `chunk_remote` addon save, measured against the live
+  server.
+  - **THE INVARIANT COUNT: 1 → 0.** `test/architecture_invariants_test.rb`'s chunk-internals guard
+    used to assert "the maker layer reaches for chunk internals in exactly one place, and that
+    place is the addon output path" (`hits.size == 1`, `hits.sole` pinned to
+    `library_output.rb`). It now asserts **zero** — renamed to "the maker layer reaches for chunk
+    internals nowhere at all," `assert_empty hits` — and `library_output.rb` is dropped from
+    `SYNC_SEAM_EXCEPTIONS` in the same commit. The maker layer names no chunk internals at all, on
+    any backend, for the first time since the addon framework existed.
+- **(c) batching, `59685ec`.** `LibraryBroadcast.batch` now has three answers, not two, split on
+  "is there a changelog to coalesce against" rather than "is the engine loaded": engine present
+  (chunk) still delegates to `Sync::LibraryChannel.batch`; engine absent AND `FileLayer.current.is_a?(FileLayer::ChunkRemote)`
+  delegates to the adapter's own new `#batch`; engine absent and NOT chunk_remote (share/s3, no
+  changelog at all) stays a bare `yield`, unchanged. `FileLayer::ChunkRemote#batch` holds its state
+  in a `Thread.current` frame — deliberately never an ivar, because `FileLayer.current` memoizes
+  ONE adapter instance shared across every Puma thread, so per-request state on the object would
+  leak between concurrent requests. `#move` alone dirties the open batch, through a new
+  `#refresh_or_defer!`; the batch's own `ensure` block pulls exactly once, on any exit (not only
+  success, since every move that already ran has already committed on the SERVER).
+  - **THE DEFERRAL IS `move`-ONLY, NOT EVERY MUTATION — RECORD THIS PRECISELY, IT IS NOT A
+    SIMPLIFICATION LEFT FOR LATER.** `mkdir`/`delete`/`undelete`/`finalize_upload` all keep their
+    unconditional `refresh!`. The reason is a real caller, not caution for its own sake:
+    `Maker::LibraryFolder#ensure_segment` calls `mkdir` and reads the mirror row back in the SAME
+    call (`user.nodes.find_by!(node_id: info.node_id)`) — deferring that pull would turn an
+    ordinary new category folder, created mid-sweep the first time a project sees a category it
+    has not filed before, into an `ActiveRecord::RecordNotFound`. `move` alone has no such reader:
+    `Maker::MoveNode#apply_move` re-reads via `node.reload` and never trusts what `move` returns.
+    A future editor "simplifying" the deferral onto all five verbs — on the reasoning that they
+    all call `refresh!` and should therefore all behave alike — reintroduces exactly that crash,
+    on the first folder any project-intake sweep creates.
+- **(d) restore order, `6c0fc49`.** An orphaned restore is now REFUSED on every backend that can
+  reach the state, not reparented to the root on chunk alone. `FileLayer::Chunk#undelete` no
+  longer passes `to_root: true` to `Sync::Trash.restore` — it takes the shared method's own
+  default (`to_root: false`), which raises `Sync::Trash::ParentDeleted` for an orphan, mapped to
+  `UnsupportedOperation` with a message naming the action a user can take ("restore the folder
+  first"). `chunk_remote` already answered this way (it posts no `to_root` in its restore body and
+  takes the standalone server's own strict default), so this is chunk CONVERGING on chunk_remote's
+  answer, not a third rule invented for the occasion.
+  - **THIS REVERSES A RULE CLAUDE.md §14a USED TO STATE, AND THE OLD BULLET'S OWN EVIDENCE IS WHAT
+    OVERTURNED IT.** The old rule: "chunk's undelete restores an orphan to the
+    ROOT, and restore order is NOT commutative... restoring a CHILD before its PARENT is the
+    mainline case, not a hand-crafted edge case... a bottom-up restore permanently scatters that
+    folder's contents to the root" — which it then declined to fix: "ordering restores is a
+    caller's job, not this adapter's." Running the deepened three-level cascade fixture against a
+    real standalone server is what caught chunk and chunk_remote disagreeing about that same
+    scenario (§14a's own forbidden shape: one condition, two answers). Once the divergence
+    surfaced, the decision was to converge on the SAFER of the two documented behaviours, not the
+    one that happened to be written down first — an outcome that silent, on a path the old bullet
+    itself called "the mainline case," and that irreversible ("restoring the parent afterward does
+    not reunite them, because the child's pointer is already gone") is worth refusing even though
+    refusing is less convenient than succeeding: a refusal is recoverable (restore the folder, then
+    the child); a scatter is not. The old bullet's own words — "the mainline case," not an edge
+    case — are exactly what made the silent-scatter behaviour indefensible once someone actually
+    ran it. Pinned across all four backends by the shared mutation contract
+    (`test/services/file_layer/adapter_mutation_contract.rb`), gated on `dir_deletable?` (share/s3
+    cannot reach this state through the port at all, so there is nothing for them to disagree
+    about). Full argument, including what a device client's own API keeps doing differently and
+    why: CLAUDE.md §14a.
+
 ### Two corrections this arc made to its own spec
 
 Both argued at the top of the Arc A plan itself, not buried in a task step:
@@ -154,7 +286,8 @@ Both argued at the top of the Arc A plan itself, not buried in a task step:
    parking spot for a suite that is *supposed* to be red right now. `sync-contract.yml` carries the
    signal instead, on the `client-contract.yml` precedent: a cross-repo wire-contract workflow that
    boots a real server and never calls `bin/ci`. `test-chunk-remote` becomes a real gate at the end
-   of Arc B.
+   of Arc B. **Done, 2026-08-24** — see "Arc B retired the file" below; the promise this
+   correction made is what the rest of this entry delivers.
 2. **The full-suite `chunk_remote` leg depends on Arc C, not Arc A.** `ChunkRemote` resolves a
    single process-wide token (`chunk_remote.rb:327-328`), so every test's maker user maps to ONE
    sync-server user; the maker DB rolls back between tests but the sync server does not, so a
@@ -165,12 +298,11 @@ Both argued at the top of the Arc A plan itself, not buried in a task step:
    never heard of; any write verb against one 404s for a test-shape reason, not a `chunk_remote`
    defect.) The spec did not carry this ordering dependency; measurement found it.
 
-### `sync-contract.yml` is expected RED, and that is the deliverable
+### `sync-contract.yml` was expected RED, that was Arc A's deliverable, and Arc B retired the file
 
-A gate introduced green tells nobody anything. `sync-contract.yml` will report red in GitHub
-Actions once it runs, because it drives all ten journeys and four of them fail for the reasons
-above — that is Arc A doing its job, not a defect in Arc A. It closes when Arc B closes gaps
-(a)–(c) and a decision is made on (d).
+A gate introduced green tells nobody anything. `sync-contract.yml` reported red in GitHub Actions
+once it ran, because it drove all ten journeys and four of them failed for the reasons above —
+that was Arc A doing its job, not a defect in Arc A.
 
 **IT HAS NOW RUN IN GITHUB ACTIONS, AND IT REPRODUCED THE LOCAL MEASUREMENT EXACTLY:**
 `10 runs, 106 assertions, 3 failures, 1 errors, 0 skips` — byte-identical to the local capture, on
@@ -200,6 +332,19 @@ not passing* (§15) and never reaches the checkout that would fail. The day a li
 registered, seven job-instances fail at once. Deliberately left for its own change rather than
 widened into this arc.
 
+**Arc B, 2026-08-24: the file is deleted, not left running the same suite a second way.** Once the
+four gaps above closed and the journey suite went 10/10, the whole reason `sync-contract.yml`
+existed outside `bin/ci` — carrying a signal a gate could not, because a red gate is a red `main`
+— stopped applying. The suite is now `config/ci.rb`'s `test-chunk-remote` gate: the
+boot/probe/run/skip-check script that used to live in this workflow's own inline `run:` step moved
+into that gate's definition verbatim (mechanism unchanged — same leftover-process guard, same two
+readiness probes, same `bash -c`/`${PIPESTATUS[0]}` reasoning for why the single-string form every
+other gate uses would silently swallow a real failure), and `.github/workflows/ci.yml` gained a
+`test-chunk-remote` job whose only work is the two things a gate cannot do for itself: check out
+the second repository and hand it the deploy key. The key itself — `TINKEREX_SYNC_DEPLOY_KEY`,
+`ci-sync-contract` — is unchanged by the rename; the story above about how it came to exist is
+still the accurate account of why it exists.
+
 ### The reviews' most reusable finding: a suite cannot vouch for its own siblings' skips
 
 The in-suite skip canary ("the journey suite does not skip when a server is configured") was built
@@ -213,17 +358,40 @@ asserts is vacuous" rebuilt one layer up, inside the very test meant to prevent 
 therefore moved to `sync-contract.yml` itself, the one place that has already probed `/up` and an
 authenticated `whoami` and so genuinely knows a server is up: it greps its own captured output for
 `, [1-9][0-9]* skips` and fails the step outright if it finds one, because with a server configured
-a skip is never legitimate.
+a skip is never legitimate. **That guarantee moved again with the file** — it now lives inside
+`config/ci.rb`'s `test-chunk-remote` gate, carried over verbatim rather than re-argued, because it
+is still exactly true with a real gate in place: nothing inside the suite can vouch for its own
+siblings' skips regardless of what runs it.
 
-### What this arc did not do
+### What Arc A alone did not do (historical — Arc B did the rest, below)
 
-**No gap was fixed** — every commit here touches only `bin/`, `test/`, `.github/workflows/`, and
-`docs/`; `git diff --stat` against `app/`, `lib/` and `config/` is empty. Arc A measures; Arc B
-repairs. Read nothing here as `chunk_remote` parity — only as an honest, checked-in map of exactly
-where it is not. What remains genuinely unproven: the four gaps are reproduced but unfixed, gap (d)
-needs a DECISION rather than a patch (either `chunk_remote` sends `to_root: true` to match embedded
-chunk, or chunk adopts the refusal), and the full maker suite has still never run against a remote
-sync server — that needs Arc C's per-test provisioning, as above.
+**No gap was fixed by Arc A** — every commit in Arc A touches only `bin/`, `test/`,
+`.github/workflows/`, and `docs/`; `git diff --stat` against `app/`, `lib/` and `config/` was
+empty for that arc alone. Arc A measured; Arc B repaired. At the point Arc A closed, nothing here
+should have been read as `chunk_remote` parity — only as an honest, checked-in map of exactly
+where it was not.
+
+### What Arc B did, and what is still genuinely open
+
+Arc B closed all four gaps (above), each verified by the journey test that measured it, and
+promoted the suite from a separate red workflow to a green `bin/ci` gate. Read the "closed" section
+above as the parity claim this arc now makes — narrower than "chunk_remote works," precisely
+because of what follows.
+
+What Arc B did **not** touch, and what remains genuinely unproven:
+
+- **The full maker suite has still never run against a remote sync server.** `ChunkRemote` resolves
+  a single process-wide token (`chunk_remote.rb:327-328`), so every test's maker user still maps to
+  ONE sync-server user; per-test isolation needs a provisioning endpoint on the sync server, which
+  is Arc C's job (per-user enrolment), not Arc B's. This is unchanged from Arc A's own correction
+  #2 above.
+- **This is still ten journey tests, not the full maker feature set.** Project intake, inventory/
+  BOM, previews/thumbnails, sharing, multi-device convergence beyond the one freshness probe, and
+  concurrent/high-volume behavior are all untouched by this suite — see
+  `docs/superpowers/plans/2026-08-23-arc-b-worklist.md`'s own "What this does NOT cover" section,
+  which is unchanged by Arc B closing the four gaps it measured.
+- **At-rest chunk encryption, real OAuth/OIDC, sharing, selective sync** — all still open per
+  CLAUDE.md §12, untouched by this arc.
 
 ## 2026-08-21: Stage 4 is complete — `chunk_remote` is selectable (branch `claude/stage-4-build-arm`)
 
