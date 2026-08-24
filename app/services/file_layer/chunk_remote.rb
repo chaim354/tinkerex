@@ -167,6 +167,47 @@ module FileLayer
     # EVERY MUTATION PULLS AFTERWARDS rather than guessing at the new local state. The endpoints
     # answer `{seq:}`, not a node, and inventing the row we think we just made is how a mirror
     # drifts from its source -- one round trip is the honest price of the server being authoritative.
+    # `#move` is the one deliberate exception, and only from inside `#batch` -- see both for why.
+
+    # `#batch` IS LibraryBroadcast's `chunk_remote` ARM (app/services/library_broadcast.rb), reached
+    # whenever the engine is not loaded but FileLayer.current is this class. That file's own comment
+    # explains why share/s3 stay a bare `yield` (no changelog, nothing to coalesce) and why the
+    # argument stops there: this backend's changelog is real, just remote, so the per-call price
+    # `#refresh_or_defer!` pays on every `#move` is exactly the cost Sync::LibraryChannel.batch was
+    # written to coalesce for embedded chunk -- and per THAT class's own comment ("once the engine
+    # is remote... coalescing becomes the remote adapter's concern"), this is that adapter.
+    #
+    # THE SHAPE DELIBERATELY MIRRORS Sync::LibraryChannel.batch: a `Thread.current` frame, not an
+    # ivar on `self`. FileLayer.current memoizes ONE adapter instance for the whole process
+    # (`FileLayer.current ||= build`), shared across every Puma thread, so per-batch state living on
+    # this object would let one request's batch leak into a concurrent request's unrelated
+    # mutation. A batch re-entered by the SAME user JOINS the open one -- Maker::ProjectIntake.for_user
+    # wraps a loop over projects, and each project's own #call wraps its own file_all, both for the
+    # SAME user, and the inner one must contribute to the outer's single deferred pull rather than
+    # triggering one of its own. A DIFFERENT user's batch is not a shape this app produces, but is
+    # handled honestly anyway: it pushes its own frame and the first is restored on the way out,
+    # rather than being silently absorbed into it.
+    #
+    # THE PULL RUNS IN `ensure`, ON ANY EXIT, NOT ONLY THE HAPPY PATH. A deferral that only pulls
+    # when the block succeeds is worse than no deferral at all: every move that ran before an
+    # exception has already committed on the SERVER (each is its own request), so a batch that
+    # raises partway through leaves the mirror stale at precisely the moment something has gone
+    # wrong and a caller is most likely to read it next.
+    BATCH_KEY = :chunk_remote_refresh_batch
+
+    def batch(user)
+      outer = Thread.current[BATCH_KEY]
+      return yield if outer && outer[:user_id] == user.id
+
+      Thread.current[BATCH_KEY] = { user_id: user.id, dirty: false }
+      begin
+        yield
+      ensure
+        active = Thread.current[BATCH_KEY]
+        Thread.current[BATCH_KEY] = outer
+        refresh!(user) if active && active[:dirty]
+      end
+    end
 
     def mkdir(user, parent_node_id: nil, name: nil)
       existing = user.nodes.present.find_by(parent_node_id:, name:, kind: "dir")
@@ -180,12 +221,31 @@ module FileLayer
       stat(user, node_id:)
     end
 
+    # THE ONE CALLER OF `#refresh_or_defer!` -- DELIBERATELY NOT `mkdir`/`delete`/`undelete`/
+    # `finalize_upload` TOO, which would be the more "uniform" reading of #batch's job. Those four
+    # all hand a caller state read back IMMEDIATELY, in the same call, from the very mirror row
+    # `#refresh!` is what creates or updates: `mkdir`'s only production caller,
+    # Maker::LibraryFolder#ensure_segment, does `info = mkdir(...); user.nodes.find_by!(node_id:
+    # info.node_id)` right after -- a query against a row that, for a freshly-created folder, exists
+    # NOWHERE ELSE until a pull applies it (RefreshAfterWriteTest's "mkdir returns state the server
+    # reported, which only a pull could have supplied" pins exactly this, with the local database
+    # starting empty). Deferring that pull would turn an ordinary new category folder, created
+    # mid-sweep the first time a project sees a category it has not filed before, into an
+    # ActiveRecord::RecordNotFound.
+    #
+    # `move` has no equivalent reader. Its return value is discarded by every caller today,
+    # including Maker::MoveNode#apply_move -- whose own comment says outright that the RELOAD is
+    # the return value: `node.reload` reads the local mirror directly rather than trusting what
+    # this method hands back, so a `stat` answering pre-move state while a batch is still open is a
+    # value nothing consumes, not a silent wrong answer something acts on. That is what makes
+    # deferring safe here and only here -- it is not merely "the call this arc's test happens to
+    # cover."
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       live_node!(user, node_id)
       destination_vacant!(user, new_parent_node_id, new_name, except_node_id: node_id)
       transport.post("/v1/nodes/#{node_id}/move",
                      { new_parent_node_id:, new_name: })
-      refresh!(user)
+      refresh_or_defer!(user)
       stat(user, node_id:)
     end
 
@@ -284,6 +344,23 @@ module FileLayer
       raise NotFound, "chunk #{chunk.chunk_hash} could not be fetched" if bytes.nil?
 
       bytes
+    end
+
+    # `#move`'S OWN DEFERRAL CHECK, KEPT OUT OF `#refresh!` ITSELF SO `#refresh!` STAYS THE ONE
+    # THING EVERY OTHER CALLER CAN TRUST TO BE UNCONDITIONAL -- see `#move`'s own comment for why
+    # mkdir/delete/undelete/finalize_upload must NOT get this treatment. Marks the open batch dirty
+    # and returns without touching the network when one is open for THIS user; otherwise behaves
+    # exactly as `#refresh!` always has. Outside any `#batch` call `Thread.current[BATCH_KEY]` is
+    # nil, so every existing caller -- RefreshAfterWriteTest, the mutation contract, every
+    # `adapter.move` in the shared adapter suites -- sees IDENTICAL behaviour to before this method
+    # existed.
+    def refresh_or_defer!(user)
+      batch = Thread.current[BATCH_KEY]
+      if batch && batch[:user_id] == user.id
+        batch[:dirty] = true
+      else
+        refresh!(user)
+      end
     end
 
     # PULLS THE CHANGELOG AFTER A WRITE, so the local mirror reflects what the server actually did
