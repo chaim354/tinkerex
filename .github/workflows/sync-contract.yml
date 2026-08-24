@@ -32,14 +32,31 @@ jobs:
       - uses: actions/checkout@v7
 
       # SECOND CHECKOUT: the sync engine is a separate private repo, and secrets.GITHUB_TOKEN is
-      # scoped to THIS repo only. Operator action: create the TINKEREX_SYNC_TOKEN repo secret (a
-      # fine-grained token scoped to chaim354/tinkerex-sync, contents:read) -- the same shape
-      # client-contract.yml already needs for TINKEREX_CLIENT_TOKEN.
+      # scoped to THIS repo only.
+      #
+      # A READ-ONLY DEPLOY KEY, NOT A PAT, AND THE REASON IS THE SAME ONE §14j ALREADY ARGUED FOR
+      # THE DOCKER BUILD. A PAT carries the whole account's reach in order to read one repo, and
+      # GitHub has had no API to mint one since POST /authorizations was sunset in 2020 -- so a PAT
+      # is also an irreducibly manual step, created by hand in a browser and re-created by hand
+      # when it expires. `gh repo deploy-key add` creates exactly the narrower thing: one repo,
+      # read-only, no expiry to forget. tinkerex-sync already carries a `docker-build` key of the
+      # same shape; this is `ci-sync-contract`.
+      #
+      # Operator action, ONCE: put the deploy key's PRIVATE half in the TINKEREX_SYNC_DEPLOY_KEY
+      # repo secret. `ssh-key` wants the private key itself, not a path.
+      #
+      # THE EARLIER DRAFT USED `token: ${{ secrets.TINKEREX_SYNC_TOKEN }}` AND THAT SECRET NEVER
+      # EXISTED, which this workflow proved on its own first run rather than by anyone reasoning
+      # about it: `##[error]Input required and not supplied: token`, 21s, before a single test ran.
+      # Worth knowing why client-contract.yml has never surfaced the identical gap for
+      # TINKEREX_CLIENT_TOKEN -- its job is linux-gated and linux is not a registered runner, so it
+      # is SKIPPED, not passing (§15), and reports success in 8s having run only preflight. This
+      # job runs on macos, which is registered, so it actually executes and actually fails.
       - name: Check out tinkerex-sync
         uses: actions/checkout@v7
         with:
           repository: chaim354/tinkerex-sync
-          token: ${{ secrets.TINKEREX_SYNC_TOKEN }}
+          ssh-key: ${{ secrets.TINKEREX_SYNC_DEPLOY_KEY }}
           path: tinkerex-sync
 
       - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
