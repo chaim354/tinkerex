@@ -22,19 +22,39 @@ require_relative "../support/chunk_remote_journey"
 class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   include ChunkRemoteJourney
 
-  setup { skip_unless_remote_server }
+  # NO SHARED `setup` HERE, DELIBERATELY -- see the canary test immediately below for the reason.
+  # Every other test in this class calls `skip_unless_remote_server` itself, as its own first line.
 
-  # THE MUTATION-CHECK ON THE SKIP ITSELF. §14j: a guard that skips on the thing it asserts is
-  # vacuous, and it reported SUCCESS while asserting nothing. Break `skip_unless_remote_server` to
-  # always skip and this test is the one that notices.
+  # THE MUTATION-CHECK ON THE SKIP ITSELF, KEPT OUT OF `setup` AND OUT OF THE HELPER ON PURPOSE.
+  # §14j records a guard that skipped on `defined?(Sync)` -- the very thing it asserted -- so the
+  # mutation that broke it made every test skip and the suite report success. An earlier version of
+  # THIS test shared `setup { skip_unless_remote_server }` with every other test in the class, which
+  # rebuilt that exact failure one level up: `setup` runs before this test's own body too, so
+  # breaking `skip_unless_remote_server` to always skip took this canary down WITH the other eight
+  # -- the suite reported nine skips, zero failures, success, having asserted nothing. A guard that
+  # shares a mechanism with the thing it checks inherits that thing's failures.
+  #
+  # So this test does not call `skip_unless_remote_server` at all -- it duplicates that method's
+  # CONDITION inline instead. Do not "simplify" this back into `setup` or a call to the helper; that
+  # reintroduces the exact blind spot above. (`ChunkRemoteJourney.configured?` is still shared, but
+  # it is a pure predicate with no skip of its own -- the thing that must not be shared is the
+  # SKIPPING, i.e. `skip_unless_remote_server` itself, and this test performs its own, independent
+  # skip rather than delegating to that method.)
+  #
+  # Two of the three assertions this test used to make were tautological once `setup` had already
+  # skipped for anything but a configured, chunk_remote-backend run -- by the time the body ran,
+  # `configured?` and `LIBRARY_BACKEND == "chunk_remote"` were already-established facts, not open
+  # questions. Only `FileLayer.current`'s class carries independent content, so that is the one
+  # assertion kept.
   test "the journey suite does not skip when a server is configured" do
-    assert ChunkRemoteJourney.configured?,
-           "setup should have skipped this test if no server were configured"
-    assert_equal "chunk_remote", ENV["LIBRARY_BACKEND"]
+    skip "no server configured for this run" unless ChunkRemoteJourney.configured? &&
+      ENV["LIBRARY_BACKEND"] == "chunk_remote"
+
     assert_kind_of FileLayer::ChunkRemote, FileLayer.current
   end
 
   test "an upload round-trips byte-for-byte through the sync server" do
+    skip_unless_remote_server
     sign_in
     # CONTENT varies, not just the filename. Chunks are content-addressed, so a repeat of fixed
     # bytes dedupes to an empty put_urls and the Net::HTTP upload path silently never runs --
@@ -48,12 +68,28 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                  "the bytes that came back are not the bytes that went in"
   end
 
+  # A DEDICATED FOLDER, NOT THE LIBRARY ROOT. This suite is explicitly designed to be re-run
+  # against one long-lived sync server that never rolls back (see journey_prefix's own comment), so
+  # every prior run's uploads accumulate at the root forever. `FilesController::FOLDER_PAGE` is 250
+  # (files_controller.rb:741) and the index defaults to name-ascending, so once accumulated runs
+  # push root children past 250, a randomly-named file no longer lands on the first page and
+  # `assert_includes` starts failing -- with nothing wrong in the app. A folder scopes
+  # `FilesController#index`'s query (`where(parent_node_id: @folder&.node_id)`,
+  # files_controller.rb:192), so a per-run folder holding exactly one file can never be pushed past
+  # the first page, however many runs came before it. `params[:folder]` is a parent node_id
+  # (files_controller.rb:141).
   test "an uploaded file appears on the files page" do
+    skip_unless_remote_server
     user = sign_in
-    name = "#{journey_prefix}-listed.stl"
-    upload_through_ui(name, "listed #{journey_prefix}".b)
+    folder = "#{journey_prefix}-listing"
+    post library_folders_path, params: { name: folder }, as: :json
+    assert_response :success, "create_folder failed: #{response.body}"
+    folder_node = user.nodes.present.find_by!(name: folder, kind: "dir")
 
-    get files_path
+    name = "#{journey_prefix}-listed.stl"
+    upload_through_ui(name, "listed #{journey_prefix}".b, parent_node_id: folder_node.node_id)
+
+    get files_path(folder: folder_node.node_id)
     assert_response :success
     assert_includes response.body, name
 
@@ -62,6 +98,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   end
 
   test "a folder can be created, and a file moved into it" do
+    skip_unless_remote_server
     user = sign_in
     folder = "#{journey_prefix}-folder"
     node_id = upload_through_ui("#{journey_prefix}-moved.stl", "moved #{journey_prefix}".b)
@@ -82,6 +119,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   end
 
   test "a file can be deleted, listed in trash, and restored" do
+    skip_unless_remote_server
     user = sign_in
     name = "#{journey_prefix}-doomed.stl"
     node_id = upload_through_ui(name, "doomed #{journey_prefix}".b)
@@ -111,6 +149,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   end
 
   test "a directory delete cascades, because dir_deletable is true on chunk_remote" do
+    skip_unless_remote_server
     user = sign_in
     folder = "#{journey_prefix}-cascade"
 
@@ -135,6 +174,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   # config/. So a node another device pushed is invisible here until THIS app happens to write
   # something. Arc B's fix is a recurring per-user pull.
   test "a node created directly on the sync server becomes visible without a local write" do
+    skip_unless_remote_server
     user = sign_in
     name = "#{journey_prefix}-from-elsewhere"
     transport = FileLayer::ChunkRemote::Transport.new(
@@ -156,6 +196,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   # #write_chunk, which calls Sync::Storage::ChunkStore.current.put (library_output.rb:143) -- a
   # constant that does not exist in this process. Arc B's fix is a `put_chunk` port verb.
   test "an addon save writes its output into the library" do
+    skip_unless_remote_server
     user = sign_in
     state = Maker::AddonState.create!(user:, addon_key: "journey", name: "j", data: {})
 
@@ -187,6 +228,7 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   # ChangelogSync.new(...).call), so it genuinely counts changelog pulls; nothing about the
   # assertion below was softened.
   test "a batch of moves costs one changelog pull, not one per move" do
+    skip_unless_remote_server
     user = sign_in
     folder = "#{journey_prefix}-batch"
     post library_folders_path, params: { name: folder }, as: :json

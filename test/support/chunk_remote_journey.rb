@@ -8,10 +8,18 @@ require "net/http"
 # `defined?(Sync)` -- the very thing it asserted -- so the mutation that broke it made every test
 # skip and the suite report success. Here the skip is on whether a server was CONFIGURED, which is
 # a precondition, and the "does not skip when a server is configured" test in
-# test/integration/chunk_remote_journey_test.rb is the mutation-check that the precondition is
-# not quietly always false. Named by its DESCRIPTION, not Rails' mangled method name -- `test
-# "..."` turns a string into `test_<description, spaces to underscores>`, and a hand-typed guess
-# at that mangling is a second spelling that can silently drift from the real one.
+# test/integration/chunk_remote_journey_test.rb is the mutation-check for that precondition -- but
+# ONLY because it does NOT call `skip_unless_remote_server` below. An earlier version of that test
+# called this method via `setup { skip_unless_remote_server }`, shared with every other test in the
+# class, which meant breaking THIS method to always skip took the canary down with it: every test
+# skipped, including the one meant to notice, and the suite reported success having asserted
+# nothing -- §14j's failure rebuilt one level up, inside the very test written to catch it. The
+# canary now duplicates this method's CONDITION inline instead of calling it, so a mutation to this
+# method's body cannot reach the canary at all. If you are reading this because you are about to
+# have the canary call `skip_unless_remote_server` for the sake of not repeating the condition:
+# don't -- that call IS the blind spot. Named by its DESCRIPTION, not Rails' mangled method name --
+# `test "..."` turns a string into `test_<description, spaces to underscores>`, and a hand-typed
+# guess at that mangling is a second spelling that can silently drift from the real one.
 module ChunkRemoteJourney
   PASSWORD = "correct horse battery staple"
 
