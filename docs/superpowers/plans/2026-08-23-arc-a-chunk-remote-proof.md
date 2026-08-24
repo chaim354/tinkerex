@@ -577,8 +577,15 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
     name = "#{journey_prefix}-doomed.stl"
     node_id = upload_through_ui(name, "doomed #{journey_prefix}".b)
 
+    # `assert_response :redirect` WOULD NOT DISCRIMINATE HERE, and that is the same defect the
+    # journey harness's own sign_in had. FilesController redirects to files_path on SUCCESS
+    # (files_controller.rb:628, with a notice) and its three rescue_from arms redirect to
+    # files_path on EVERY html failure (:106 NotFound, :124 FetchError, :134
+    # UnsupportedOperation), each with an ALERT. Same status, same Location -- the flash is the
+    # only thing that differs, so it is what gets asserted.
     delete file_path(node_id)
-    assert_response :redirect
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "delete was refused: #{flash[:alert]}"
     assert_not user.nodes.present.exists?(node_id:), "delete did not tombstone the mirror row"
 
     get trash_index_path
@@ -586,7 +593,11 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
     assert_includes response.body, name
 
     post restore_trash_path(node_id)
-    assert_response :redirect
+    # TrashController's failure arms redirect to trash_index_path with an alert (:40, :46) while
+    # success goes to files_path with a notice (:79), so the destination alone would discriminate
+    # here -- the alert check is kept anyway so every redirect in this file reads the same way.
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "restore was refused: #{flash[:alert]}"
     assert user.nodes.present.exists?(node_id:), "restore did not revive the mirror row"
   end
 
@@ -602,7 +613,8 @@ Append inside the class in `test/integration/chunk_remote_journey_test.rb`:
                               parent_node_id: folder_node.node_id)
 
     delete file_path(folder_node.node_id)
-    assert_response :redirect
+    assert_redirected_to files_path
+    assert_nil flash[:alert], "the directory delete was refused: #{flash[:alert]}"
 
     assert_not user.nodes.present.exists?(node_id: child),
                "SubtreeDelete must cascade to descendants -- an orphaned child is §14a's " \
