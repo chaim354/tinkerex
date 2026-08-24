@@ -67,16 +67,28 @@ jobs:
       - uses: actions/checkout@v7
         with: { clean: false }
 
-      # SECOND checkout: the Rust crates now live in a separate private repo, so this needs a PAT
-      # with read access to it — secrets.GITHUB_TOKEN is scoped to THIS repo only and cannot check
-      # out a different one, even a same-owner private repo. Operator action: create the
-      # TINKEREX_CLIENT_TOKEN repo secret (a PAT, or fine-grained token scoped to
-      # chaim354/tinkerex-client, contents:read).
+      # SECOND checkout: the Rust crates live in a separate private repo, and secrets.GITHUB_TOKEN
+      # is scoped to THIS repo only — it cannot check out a different one, even a same-owner
+      # private repo.
+      #
+      # A READ-ONLY DEPLOY KEY, NOT A PAT. This line asked for TINKEREX_CLIENT_TOKEN from the day
+      # the client was extracted (2026-08-20) and that secret WAS NEVER CREATED — for four days
+      # this job could not have checked the client out at all. Nothing went red, because the job
+      # is linux-gated and linux is not a registered runner (§15), so it is SKIPPED, not passing:
+      # the workflow reports success in ~8s having run only `preflight`. The gap was found by its
+      # sibling sync-contract.yml, which runs on macos, hit the identical missing secret on its
+      # first real run, and failed in 21s with "Input required and not supplied: token".
+      #
+      # A deploy key is the narrower credential AND the only one creatable without a browser:
+      # GitHub sunset POST /authorizations in 2020 (§14j records this for the Docker build), so a
+      # fine-grained PAT is an irreducibly manual step that also expires. `gh repo deploy-key add`
+      # gives one repo, read-only, no expiry. chaim354/tinkerex-client carries `ci-client-contract`;
+      # the private half is TINKEREX_CLIENT_DEPLOY_KEY here and in the tinkerex 1Password vault.
       - name: Check out tinkerex-client
         uses: actions/checkout@v7
         with:
           repository: chaim354/tinkerex-client
-          token: ${{ secrets.TINKEREX_CLIENT_TOKEN }}
+          ssh-key: ${{ secrets.TINKEREX_CLIENT_DEPLOY_KEY }}
           path: tinkerex-client
           clean: false
 
