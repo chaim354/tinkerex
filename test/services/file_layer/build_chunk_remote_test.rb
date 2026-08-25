@@ -63,11 +63,19 @@ module FileLayer
       end
     end
 
-    test "chunk_remote does not want the sync engine in its process" do
-      # The property Arc A made possible and this backend depends on: a maker app talking to a sync
-      # server over HTTP has no more use for the engine in-process than a share deployment does.
-      assert_not LibraryBackend.engine_wanted?(env: { "LIBRARY_BACKEND" => "chunk_remote" }),
-                 "chunk_remote must not load the engine -- it talks to one instead of being one"
+    # THE PROPERTY THIS BACKEND WAS BUILT FOR, NOW TRUE BY CONSTRUCTION RATHER THAN BY PREDICATE.
+    # It used to read `assert_not LibraryBackend.engine_wanted?(...)`; that predicate is gone with
+    # the gem (Arc D Part 2), so the honest assertion is the structural one -- the engine is not in
+    # this process at all, for any backend, because it is not a dependency of this app.
+    #
+    # NOT A TAUTOLOGY, AND WORTH KEEPING FOR EXACTLY THE REASON IT WAS WRITTEN: re-adding the gem
+    # for any reason -- a stray Gemfile line, a transitive dependency, a well-meant "just for the
+    # tests" -- silently puts Sync:: back in the process and returns this app to the shape Stage 5
+    # spent four arcs leaving. This goes RED the moment that happens.
+    test "the sync engine is not in this process at all" do
+      assert_not defined?(Sync),
+                 "the sync engine must not be loadable here -- chunk_remote talks to one over " \
+                 "HTTP instead of being one, and no other backend has any use for it"
     end
   end
 end

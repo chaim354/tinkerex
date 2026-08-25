@@ -34,13 +34,19 @@
 # It exists so ProjectIntake does not have to know any of that. The exception list traded a
 # 700-line service for this file, which is the whole of its own boundary.
 module LibraryBroadcast
-  # `chunk_remote` is checked BEFORE falling through to a bare `yield`, as its own line rather than
-  # folded into `engine_wanted?` -- the two questions are independent (`engine_wanted?` asks
-  # whether Sync:: is loaded; this asks whether FileLayer.current happens to be the one adapter
-  # that has no engine but still has a changelog). A future backend answering yes to that gets its
-  # own `is_a?` line beside this one, not a rename of it.
+  # TWO ANSWERS NOW, NOT THREE. The first arm used to delegate to Sync::LibraryChannel.batch when
+  # the engine was loaded in-process; embedded chunk was retired in Arc D Part 2, so the only
+  # backend with a changelog to coalesce against is `chunk_remote`, whose changelog lives on the
+  # standalone sync server and whose coalescing is its own (FileLayer::ChunkRemote#batch, §14a).
+  #
+  # THE `is_a?` STAYS AN `is_a?` AND MUST NOT BECOME A CAPABILITY. The question is not "does this
+  # backend sync" -- it is "does this app hold a per-request batch this adapter can defer work
+  # into", which is a fact about ChunkRemote's implementation rather than about the deployment.
+  # A future backend answering yes gets its own line beside this one.
+  #
+  # The bare `yield` is share and s3: no changelog at all, so there is nothing to coalesce and this
+  # is the SAME behaviour with the bookkeeping removed, not a degraded one.
   def self.batch(user, &block)
-    return Sync::LibraryChannel.batch(user, &block) if LibraryBackend.engine_wanted?
     return FileLayer.current.batch(user, &block) if FileLayer.current.is_a?(FileLayer::ChunkRemote)
 
     yield
