@@ -23,8 +23,10 @@ Workflows then use e.g. `runs-on: [self-hosted, linux]`.
 `client/` — the Rust crates and the Tauri desktop app — moved to its own repo,
 **`chaim354/tinkerex-client`** (`docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`).
 Most of the CI that used to run here moved with it: `build-app.yml`, `install-app-on-runners.yml`,
-`cross-os-e2e.yml`, and all but a handful of `rust-client.yml`'s and `nightly.yml`'s jobs now live
-in `tinkerex-client`'s own workflows.
+`cross-os-e2e.yml`, and `rust-client.yml` now live in `tinkerex-client`'s own workflows. The
+handful that stayed behind went too on 2026-08-25, when `nightly.yml` and `client-contract.yml`
+were deleted (`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). **`ci.yml` is the
+only workflow left in this repo**, and every one of its jobs runs on `macos`.
 
 **Self-hosted runners register PER REPOSITORY, not per org** — a runner registered against
 `chaim354/tinkerex` is invisible to `chaim354/tinkerex-client` and vice versa. So each physical box
@@ -164,6 +166,11 @@ highest privileges, on a machine set to auto-login and never sleep).
 
 ## Enabling the two-device REAL-MOUNT e2e (Linux `/dev/fuse` + macOS interactive)
 
+> **These suites no longer run from this repo.** `nightly.yml` was deleted on 2026-08-25 and the
+> jobs moved to `chaim354/tinkerex-client`
+> (`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). The runner *setup* below is
+> unchanged and still required — read `nightly.yml` below as "the workflow in tinkerex-client".
+
 The nightly `two-device-*` jobs mount **two real kernel mounts at once** and pass files between
 them through the mounts (the syscall→adapter→Provider leg the engine-level e2e can't reach). Each
 self-detects a missing prerequisite and exits `0` with a `BLOCKED` notice (never a false red), so
@@ -187,7 +194,7 @@ cd ~/actions-runner-tinkerex && sudo ./svc.sh stop && sudo ./svc.sh start
 If the runner runs inside a **container**, give the container the device + capability instead:
 `--device /dev/fuse --cap-add SYS_ADMIN` (and `--security-opt apparmor:unconfined` on some hosts).
 
-Verify: `gh workflow run nightly.yml` (or `gh workflow run rust-client.yml -f target=two-device`),
+Verify (from a `tinkerex-client` checkout): `gh workflow run rust-client.yml -f target=two-device`,
 then check the `two-device-fuse-linux` job logs say `mounted` + the A↔B checks, not `BLOCKED`.
 
 ### macOS — run the runner INTERACTIVELY (one-time)
@@ -211,7 +218,7 @@ real `mount_webdav` mounts and passes files A↔B; otherwise it reports `BLOCKED
 > Same pattern as the Windows interactive requirement above. After enabling Linux `/dev/fuse` +
 > the macOS/Windows interactive sessions, the full three-OS real-mount e2e
 > (`two-device-fuse-linux`, `two-device-webdav-macos`, `two-device-cfapi-windows`) runs
-> automatically in `nightly.yml`.
+> automatically — in `tinkerex-client`'s workflows, not here.
 
 ## Security note
 

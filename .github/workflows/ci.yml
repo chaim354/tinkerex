@@ -88,7 +88,7 @@ concurrency:
 # `fs-provider` figure was deleted from CLAUDE.md rather than updated.
 #
 # NO `ruby/setup-ruby` ANYWHERE BELOW, deliberately: it assumes the GitHub-hosted /Users/runner
-# layout this self-hosted Mac does not have (nightly.yml's e2e-macos already works around it). The
+# layout this self-hosted Mac does not have. The
 # runner's service PATH carries mise ruby 3.4.7 — exactly .ruby-version — so `bundle install` is
 # all a job needs. test/ci_hygiene_test.rb fails if the action reappears in a macos job.
 #
@@ -99,10 +99,12 @@ jobs:
   # (the repo variable CI_RUNNERS) and not an API call.
   #
   # The jobs in THIS workflow are not gated on it: they all run on macos, and if the mac runner were
-  # absent this job could not start either, so gating them on it would be circular. nightly.yml and
-  # client-contract.yml each carry their OWN copy of this same job (a workflow file's job outputs
-  # don't cross files) and gate their linux/macos jobs on it. What this job buys ci.yml is the
-  # SUMMARY — a run that states, on its own page, which coverage it did not run.
+  # absent this job could not start either, so gating them on it would be circular. Since the
+  # cross-repo suites left (2026-08-25) there is no linux/windows job here to gate AT ALL, so what
+  # this job buys is entirely the SUMMARY — a run that states, on its own page, that this repo's
+  # coverage stops at macos and where the rest went. Keep it: the moment a linux job returns it
+  # MUST be gated, and test/ci_hygiene_test.rb enforces that. The siblings carry their own copies
+  # of this job (a workflow file's job outputs don't cross files) and gate real jobs on it.
   preflight:
     runs-on: [self-hosted, macos]
     outputs:

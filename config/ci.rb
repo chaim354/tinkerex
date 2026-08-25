@@ -105,7 +105,9 @@ GATES = {
   # red gate is a red main -- and this suite was DELIBERATELY RED on arrival while Stage 5 Arc B
   # measured, then closed, four real gaps (docs/superpowers/plans/2026-08-23-arc-b-worklist.md). It
   # lived beside bin/ci on the client-contract.yml precedent: a cross-repo wire-contract workflow
-  # that boots a real server and never calls bin/ci. Arc B closed all four gaps -- the suite is
+  # that boots a real server and never calls bin/ci. (That workflow was deleted on 2026-08-25 --
+  # it had never run once -- so the precedent is history, not a live example; the argument for
+  # folding this gate INTO bin/ci is what survives.) Arc B closed all four gaps -- the suite is
   # 10/10 against a real server (docs/STATUS.md) -- so it moves in here now: ONE definition, same
   # as every other gate, and the workflow file is deleted rather than left running the same suite
   # a second way.
