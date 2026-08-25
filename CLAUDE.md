@@ -1348,6 +1348,15 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   while the numbers are still in front of you — measured figures, suite counts, what was tried and
   rejected — and those are exactly what a later pass reconstructs badly or omits. Amend the entry
   the arc already has rather than appending a new one per PR; one arc is one entry.
+- **THE ONE STATUS EDIT THAT CANNOT OBEY THAT RULE IS A DEPLOY RECORD, AND IT IS THE NAMED
+  EXCEPTION TO "never push to `main`".** A deploy happens *after* the merge, so its record cannot
+  live in the work's own PR — and recording it in a follow-up PR makes every deploy cost a second
+  merge whose only content is one paragraph, which is exactly the deferral this bullet forbids.
+  So: **amend the arc's existing entry and commit it directly to `main`.** The exception is
+  deliberately narrow — `docs/STATUS.md` only, doc-only, after a deploy you have already VERIFIED
+  on the box. It is not a licence to push code to `main`, and everything else in the close-out
+  rule above still applies. `.claude/commands/deploy.md` makes this the deploy's last step rather
+  than an optional offer.
 
 ### CI
 
