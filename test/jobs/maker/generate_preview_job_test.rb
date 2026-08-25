@@ -5,12 +5,20 @@ module Maker
     include ActiveJob::TestHelper
 
     setup do
-      # Every fixture here is chunk-shaped (write_blob + ManifestChunk + Version), so this is a
-      # chunk-adapter test and pins the adapter it tests rather than taking whatever
-      # LIBRARY_BACKEND the process happens to carry.
-      @store = Sync::Storage::ChunkStore.current
+      # A FRESH SHARE LIBRARY, NOT THE CHUNK STORE. Every fixture here used to be chunk-shaped
+      # (write_blob + ManifestChunk + Version rows) and the suite pinned embedded chunk to match;
+      # with the engine retired there is no in-process store to write a blob into. What these tests
+      # are actually about is the JOB -- compare-and-set on a superseded version, renderer
+      # revisions, unsupported types, missing bytes -- none of which is a claim about which backend
+      # holds them.
+      @root  = use_fresh_share_library!
       @user  = User.create!(email: "job@example.com")
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     # Run the block with `renderer.available?` forced true. Hand-rolled rather than Object#stub:
@@ -30,22 +38,27 @@ module Maker
     # `name:` is the file's real name on the Node row, which the job resolves when no filename
     # arg is given; it defaults to node_id because most tests here use a node_id that already
     # looks like a filename.
+    # THE FAKE version_id IS ALSO WRITTEN AS THE NODE'S content_hash, AND THAT IS THE WHOLE TRICK.
+    # These tests deliberately choose their own version ids ("v1", "v2", ...) to drive the job's
+    # compare-and-set — a slow render of v1 finishing after v2 must not attach v1's bytes to a row
+    # claiming v2 (§14b). On share, `content_token` IS the node's content_hash, and Share#read
+    # REFUSES a token that is not current rather than silently serving current bytes, precisely
+    # because previews key on that token. So writing version_id into content_hash is not a fudge:
+    # it makes the fixture's chosen token genuinely be this file's content token, which is what
+    # the chunk-shaped Version row used to do.
     def stage_version(node_id:, version_id:, bytes:, manifest_id: "m", name: nil)
-      hash = "h-#{version_id}"
-      @store.write_blob(@user.id, hash, bytes)
-      Sync::ManifestChunk.create!(user_id: @user.id, manifest_id:, chunk_hash: hash,
-                            seq: 0, offset: 0, length: bytes.bytesize)
-      version = Sync::Version.create!(user_id: @user.id, version_id:, node_id:, manifest_id:)
-      # A preview always belongs to a real, live node in production — FileLayer#read now
-      # enforces that (tombstoned = gone), so the fixture has to reflect reality.
-      stage_node(node_id:, version_id:, name:)
-      version
+      filename = name || node_id
+      path = @root.join(filename)
+      path.dirname.mkpath
+      path.binwrite(bytes)
+      stage_node(node_id:, version_id:, name:, storage_path: filename)
     end
 
-    def stage_node(node_id:, version_id:, name: nil)
+    def stage_node(node_id:, version_id:, name: nil, storage_path: nil)
       node = @user.nodes.find_or_initialize_by(node_id:)
       node.update!(name: name || node_id, kind: "file", deleted: false,
-                   current_version_id: version_id)
+                   current_version_id: version_id, content_hash: version_id,
+                   storage_path: storage_path || name || node_id)
       node
     end
 
@@ -410,13 +423,24 @@ module Maker
     end
 
     test "a real fetch/render error flips status to failed with the error message" do
-      # Live node + version, but the chunk bytes are missing from the store → FileBytes::NotFound.
-      # The node is staged deliberately: without it, read rejects the node as not-live and this
-      # test would still go green while never reaching the missing-chunk path it exists to cover.
-      Sync::ManifestChunk.create!(user_id: @user.id, manifest_id: "mx", chunk_hash: "gone",
-                            seq: 0, offset: 0, length: 3)
-      Sync::Version.create!(user_id: @user.id, version_id: "v3", node_id: "broken.svg", manifest_id: "mx")
-      stage_node(node_id: "broken.svg", version_id: "v3")
+      # A LIVE NODE WHOSE BYTES ARE NOT THERE. On share that means a node with a storage_path
+      # pointing at a file nobody wrote — the same condition the chunk fixture used to build with a
+      # Version row referencing a chunk hash absent from the store. The node is staged deliberately:
+      # without it, read rejects the node as not-live and this test would still go green while
+      # never reaching the missing-bytes path it exists to cover.
+      #
+      # THE LIBRARY ROOT MUST EXIST FOR THIS TO BE THE TERMINAL ANSWER. Share#read maps ENOENT to
+      # NotFound (terminal -> "failed") only when the root still looks mounted; when the whole root
+      # is gone it answers the RETRYABLE FetchError instead, deliberately, so an unmounted NAS does
+      # not burn every preview to a permanent failure (§14a).
+      #
+      # AN EMPTY ROOT READS AS UNMOUNTED, which is why the decoy below is load-bearing rather than
+      # scenery. `use_fresh_share_library!` gives a real but EMPTY directory, and a library with no
+      # files in it is exactly what a share that failed to mount looks like — so without a sibling
+      # file this test got the retryable FetchError, the preview stayed "processing", and it
+      # asserted the wrong arm. Measured, not reasoned: status came back "processing".
+      @root.join("intact.svg").binwrite(@svg)
+      stage_node(node_id: "broken.svg", version_id: "v3", storage_path: "broken.svg")
       preview = @user.maker_previews.create!(node_id: "broken.svg", version_id: "v3")
 
       Maker::GeneratePreviewJob.perform_now(preview.id, filename: "broken.svg")
@@ -425,7 +449,10 @@ module Maker
       assert_equal "failed", preview.status
       # Pins WHICH failure: without this, deleting the stage_node line above would leave the
       # test green on that error, silently losing the missing-chunk coverage.
-      assert_match(/missing chunk/, preview.error.to_s)
+      assert_match(/broken\.svg/, preview.error.to_s,
+                   "the error must name the file whose bytes were missing -- without this, " \
+                   "deleting the stage_node above leaves the test green on a DIFFERENT failure " \
+                   "(node not live) and the missing-bytes coverage is silently lost")
       assert_not preview.asset.attached?
     end
   end

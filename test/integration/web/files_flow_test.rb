@@ -24,8 +24,7 @@ module Web
     include ActionCable::TestHelper
 
     setup do
-      @root = Pathname.new(Dir.mktmpdir("files-flow"))
-      FileLayer.current = FileLayer::Share.new(root: @root.to_s)
+      @root = use_fresh_share_library!
     end
 
     teardown do
@@ -44,38 +43,9 @@ module Web
       user
     end
 
-    # SEEDS THROUGH THE PORT-WRITABLE DOOR, NOT THE PRESIGNED TWO-PHASE FLOW. This used to mirror
-    # the browser uploader's hash -> begin_upload -> PUT -> finalize_upload chain, which is
-    # `syncable`-gated: with embedded chunk retired (Arc D Part 2) this file runs on the ambient
-    # backend, and on share/s3 that chain is a 501 whose own body tells the caller to
-    # "Upload through POST /files" instead. This does exactly that.
-    #
-    # THE NODE IS LOOKED UP RATHER THAN RETURNED, because POST /files answers a REDIRECT (it is
-    # the HTML door), not the JSON body carrying `node_id` that finalize_upload answered. Ordering
-    # by recency rather than asserting uniqueness is deliberate: several tests here upload the
-    # same NAME twice on purpose (the clobber and replace paths), so `find_by(name:)` would raise
-    # on exactly the cases those tests exist to cover.
-    def upload(name, bytes)
-      post files_path, params: {
-        file: Rack::Test::UploadedFile.new(StringIO.new(bytes), "application/octet-stream",
-                                           original_filename: name)
-      }
-      assert_response :redirect, "POST /files failed: #{response.body[0, 300]}"
-      # THE NODE ID COMES OUT OF THE Location HEADER, NOT A LOOKUP BY NAME. #create answers
-      # `redirect_to file_path(info.node_id)`, so the id it just wrote is already on the wire --
-      # exact, and it cannot be confused by the several tests here that deliberately upload the
-      # same NAME twice (the clobber and replace paths). A name lookup was tried first and is
-      # wrong for a second reason besides ambiguity: it silently reports "not found" for an upload
-      # that was REFUSED, turning a failed write into a confusing RecordNotFound several frames
-      # away from the assertion that cares.
-      loc = response.headers["Location"].to_s
-      # A REFUSED upload also redirects -- to the INDEX, with the reason in the flash. Without this
-      # check `.split("/").last` quietly returns "files", every later `get blob_file_path(node_id)`
-      # 302s back to the index, and the test fails several assertions away from the actual cause.
-      assert_match(%r{/files/[^/]+\z}, loc,
-                   "upload of #{name.inspect} was refused: #{flash[:alert] || flash[:notice]}")
-      loc.split("/").last
-    end
+    # Delegates to test_helper's `port_upload` -- ONE definition, shared with the other suites
+    # that need a file to exist. This was a local helper duplicated into lbrn_geometry_test.rb.
+    def upload(name, bytes) = port_upload(name, bytes)
 
     test "requires login" do
       get files_path
