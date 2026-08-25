@@ -89,6 +89,16 @@ case "${1:-}" in
     mkdir -p "$REPO_ROOT/tmp"
     ( cd "$HOST_DIR" && unset_inherited_bundler_env && bundle install --quiet && bin/rails db:prepare )
     # The token is printed ONCE by the task (only a SHA256 digest is stored), so capture it here.
+    #
+    # THIS DEVICE TOKEN IS A LOCAL/CI ARTIFACT, NOT A DEPLOYMENT CREDENTIAL. It exists so
+    # config/ci.rb's readiness probe can prove sync:device:issue actually minted something this
+    # ephemeral server accepts (GET /v1/devices/whoami) -- a narrower question than "can a real
+    # deployment run." A real chunk_remote deployment's boot guard
+    # (lib/library_backend_check.rb's CHUNK_REMOTE_REQUIRED) does NOT require this any more: Arc C
+    # moved ordinary traffic to per-user `users.sync_device_token`, provisioned lazily via
+    # SYNC_ADMIN_TOKEN below, and the guard now names that instead -- see CHUNK_REMOTE_REQUIRED's
+    # own comment for the full history. Keep minting it here anyway: it is still the one thing that
+    # proves this specific `sync:device:issue` invocation works end to end.
     token="$(cd "$HOST_DIR" && unset_inherited_bundler_env && EMAIL="$EMAIL" bin/rails sync:device:issue \
              | awk '/^device_token:/ { print $2 }')"
     if [ -z "$token" ]; then

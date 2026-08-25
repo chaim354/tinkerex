@@ -138,9 +138,13 @@ module FileLayer
       # unknown LIBRARY_BACKEND raises, which is the honest answer for a backend that does not work
       # yet. The arm is what turns twelve implemented verbs into something an operator can select.
       #
-      # `check!` for the same reason S3 asks: ChunkRemote's transport fetches CHUNK_REMOTE_URL and
-      # CHUNK_REMOTE_TOKEN lazily, so without this the first missing knob would surface as a KeyError
-      # on somebody's first request rather than at boot, and name only one of the two.
+      # `check!` for the same reason S3 asks: ChunkRemote's transport fetches CHUNK_REMOTE_URL
+      # lazily, and FileLayer::ChunkRemote::Provisioning fetches SYNC_ADMIN_TOKEN just as lazily to
+      # auto-provision a library on a user's first write -- so without this call, either missing
+      # knob would surface as a KeyError/FetchError on somebody's first request rather than at boot,
+      # and name only one of the two. (Not CHUNK_REMOTE_TOKEN: Arc C moved ordinary per-user traffic
+      # off that single process-wide credential entirely -- lib/library_backend_check.rb's
+      # CHUNK_REMOTE_REQUIRED has the full history.)
       when "chunk_remote"
         LibraryBackendCheck.check!
         ChunkRemote.new

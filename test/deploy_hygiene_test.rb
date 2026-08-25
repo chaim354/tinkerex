@@ -13,12 +13,14 @@ class DeployHygieneTest < ActiveSupport::TestCase
                     "add `/sidecar/` to .dockerignore — `COPY . .` ships the GPL sidecars otherwise"
   end
 
-  # The three Unraid destinations and the backend name each one's hostnames are built from. OVH is
-  # absent on purpose: it sets no `proxy` block, so it INHERITS the base's (verified pre-existing —
-  # it read ["chunk.tinkerex.local"] before .home was added and ["chunk.tinkerex.local",
+  # The four Unraid destinations and the backend name each one's hostnames are built from. "remote"
+  # (Arc D Task 2, LIBRARY_BACKEND=chunk_remote) joined chunk/share/s3 here the same way s3 once
+  # joined chunk/share — same host, own container, own proxy hostnames. OVH is absent on purpose: it
+  # sets no `proxy` block, so it INHERITS the base's (verified pre-existing — it read
+  # ["chunk.tinkerex.local"] before .home was added and ["chunk.tinkerex.local",
   # "chunk.tinkerex.home"] after). That inheritance looks wrong for an internet-facing host with
   # FORCE_SSL=1, but it is a separate question from this guard and predates it.
-  UNRAID_DESTINATIONS = { nil => "chunk", "share" => "share", "s3" => "s3" }.freeze
+  UNRAID_DESTINATIONS = { nil => "chunk", "share" => "share", "s3" => "s3", "remote" => "remote" }.freeze
 
   test "every Unraid destination registers BOTH a .local and a .home hostname" do
     # kamal-proxy routes on the Host header, so a name that is not in this list is a 404 — including
@@ -71,12 +73,17 @@ class DeployHygieneTest < ActiveSupport::TestCase
     overlay = YAML.load_file(ROOT.join("config/deploy.ovh.yml"), aliases: true)
     # Every env var naming a service that runs as an accessory on the UNRAID host. `_SIDECAR_URL` was
     # the original pattern; ADDON_SOURCE_URL joined it in Phase B and does NOT match that suffix, so
-    # it was silently unguarded until this line was widened. Any future accessory URL must be added
-    # here — the failure mode is identical for all of them: OVH deep-merges the Unraid hostname, the
-    # service reports configured, and every call fails.
-    host_only_url_keys = base.dig("env", "clear").to_h.keys.grep(/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/)
-    assert_equal 3, host_only_url_keys.size,
-                 "expected BOXES_SIDECAR_URL, OPENSCAD_SIDECAR_URL and ADDON_SOURCE_URL in deploy.yml"
+    # it was silently unguarded until this line was widened (CLAUDE.md §14c records exactly that).
+    # CHUNK_REMOTE_URL joined it the same way in Arc D Task 2 — also doesn't match `_SIDECAR_URL`, so
+    # the pattern was widened again, in the same commit that added the key, rather than trusting a
+    # future editor to remember. Any future accessory URL must be added here — the failure mode is
+    # identical for all of them: OVH deep-merges the Unraid hostname, the service reports configured,
+    # and every call fails.
+    host_only_url_keys = base.dig("env", "clear").to_h.keys
+      .grep(/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z|\ACHUNK_REMOTE_URL\z/)
+    assert_equal 4, host_only_url_keys.size,
+                 "expected BOXES_SIDECAR_URL, OPENSCAD_SIDECAR_URL, ADDON_SOURCE_URL and " \
+                 "CHUNK_REMOTE_URL in deploy.yml"
 
     cleared = overlay.dig("env", "clear").to_h
     host_only_url_keys.each do |key|
@@ -296,7 +303,7 @@ class DeployHygieneTest < ActiveSupport::TestCase
 
   # nil is the base destination (`kamal deploy` with no -d), whose file is plain `.kamal/secrets`.
   SECRETS_FILES = { nil => "secrets", "s3" => "secrets.s3", "share" => "secrets.share",
-                    "ovh" => "secrets.ovh" }.freeze
+                    "ovh" => "secrets.ovh", "remote" => "secrets.remote" }.freeze
 
   # Key/value pairs a secrets file DEFINES, parsed without executing anything.
   def secret_definitions(name)

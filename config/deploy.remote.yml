@@ -1,0 +1,83 @@
+# Kamal destination overlay: the CHUNK_REMOTE-backed maker app on the Unraid box (deep-merged over
+# deploy.yml). Deploy with:  kamal deploy -d remote
+#
+# Arc D Task 2 (docs/superpowers/plans/2026-08-25-arc-d-part-1-a-real-remote-deployment.md). A FOURTH
+# container (tinkerex-web-remote) alongside chunk/share/s3 on the SAME box — an ADDITION, not a
+# repointing: the other three keep deploying and running unchanged. This one runs the maker app as a
+# SYNC CLIENT (FileLayer::ChunkRemote, CLAUDE.md §14a) against the standalone `sync` accessory
+# (config/deploy.yml) instead of holding chunks itself. Reads answer from THIS container's own
+# locally-mirrored `nodes` table (§2's "the WAN is never in the metadata path" — true of the maker app
+# for the first time); writes go over HTTP to CHUNK_REMOTE_URL. `chunk_remote` has run the full
+# journey suite against a real standalone server (Arc C) but never on hardware until this — see
+# docs/STATUS.md's Stage 5 entry and this destination's own Task 4 (the live proof, deliberately not
+# done in this commit).
+#
+# Two names — see the `proxy:` comment in deploy.yml for why `.home` exists beside `.local` (short
+# version: `.local` is mDNS-reserved, so Apple devices never resolve it via DNS).
+proxy:
+  hosts:
+    - remote.tinkerex.local
+    - remote.tinkerex.home
+
+# A destination-scoped volume — the base's shared "tinkerex_storage" would put four containers on ONE
+# SQLite database (the same reason s3/share each get their own). This is THIS container's own local
+# mirror of the tree (fs-provider-shaped `nodes` + sync cursor) plus a local chunk-hydration cache —
+# NOT the library's bytes of record, which live on the `sync` accessory's own volume
+# (config/deploy.yml), reached over CHUNK_REMOTE_URL.
+volumes:
+  - "tinkerex_storage_remote:/rails/storage"
+
+env:
+  # env.secret is an ARRAY: Kamal REPLACES it wholesale on merge (deep_merge unions hashes only, the
+  # same asymmetry deploy.s3.yml's own comment describes), so RAILS_MASTER_KEY must be re-listed or
+  # boot dies with "Missing secret_key_base". CHUNK_SECRET_ACCESS_KEY (the base chunk-store credential)
+  # is deliberately DROPPED here, matching deploy.share.yml: this container holds no chunk-store
+  # credential of its own — chunk_remote never resolves a Storage::ChunkStore at all
+  # (app/services/file_layer.rb's chunk_remote arm is `LibraryBackendCheck.check!; ChunkRemote.new`,
+  # nothing else).
+  #
+  # SYNC_ADMIN_TOKEN — read by FileLayer::ChunkRemote::Provisioning to auto-provision a library on a
+  # user's first write (POST /v1/admin/libraries on the sync server), AND required at BOOT by
+  # LibraryBackendCheck.check_chunk_remote! (lib/library_backend_check.rb) — without it this
+  # deployment cannot provision a library for any user, so the guard refuses to start rather than
+  # booting clean and FetchError-ing on someone's first write. Reused, not reinvented: SEE THE SAME
+  # 1Password REFERENCE used for the `sync` accessory's own copy (config/deploy.yml) — one shared
+  # item/field is what guarantees the two sides match; a divergent value 503s provisioning the moment
+  # a user with no sync_device_token yet touches their library (Sync::V1::Admin::
+  # LibrariesController#authenticate_admin! on the far side rejects it). NEVER `.kamal/secrets-common`
+  # (§14g): that file's `$(…)` lines are evaluated EAGERLY for every destination that reads it, and a
+  # share/s3/ovh/chunk deploy sends this credential to nobody. Referenced from THIS destination's own
+  # file, `.kamal/secrets.remote`.
+  #
+  # CHUNK_REMOTE_TOKEN IS DELIBERATELY ABSENT HERE. It was Stage 4's per-request device credential,
+  # narrowed to nothing by Arc C's per-user `users.sync_device_token` — no runtime code in app/ or
+  # lib/ reads it any more, and LibraryBackendCheck.CHUNK_REMOTE_REQUIRED stopped naming it (that
+  # constant's own comment has the full history). It survives only as a LOCAL dev/CI credential
+  # (config/ci.rb's readiness probe, bin/sync-server) that mints and checks a real device against an
+  # ephemeral local server — not a deployment concern, and not something to restore here on the
+  # strength of finding it used elsewhere.
+  secret:
+    - RAILS_MASTER_KEY
+    - SYNC_ADMIN_TOKEN
+  clear:
+    LIBRARY_BACKEND: chunk_remote
+
+    # Points at the `sync` accessory (config/deploy.yml) on this same host's kamal network. Restated
+    # here for a reader who opens only this file — it is also already inherited unchanged from
+    # deploy.yml's own env.clear, which is where test/deploy_hygiene_test.rb's ovh-blanking guard reads
+    # it from. :3000, not the bare hostname: the accessory's image EXPOSEs and binds port 3000 (see the
+    # fuller comment beside this key in deploy.yml).
+    CHUNK_REMOTE_URL: http://tinkerex-sync:3000
+
+    # Belt and braces, matching share.yml/s3.yml's own STORAGE_BACKEND=memory: FileLayer.build's
+    # chunk_remote arm never resolves a chunk store, and Sync.draw_v1_routes never runs for this
+    # destination either (LibraryBackend.engine_wanted? is false for chunk_remote, same as share/s3 —
+    # config/routes.rb), so the inherited CHUNK_ENDPOINT/CHUNK_BUCKET/CHUNK_ACCESS_KEY_ID from
+    # deploy.yml are already unreachable from any code path. This neutralizes them anyway, on the same
+    # defense-in-depth argument s3.yml states for itself rather than a fix for an observed failure.
+    STORAGE_BACKEND: memory
+
+    # Box Generator sidecar (the one `boxes` accessory booted by the default config), shared across all
+    # four app deployments on this host via the kamal network — addons are library-backend-agnostic, so
+    # this is exactly as live on chunk_remote as on chunk/share/s3.
+    BOXES_SIDECAR_URL: http://tinkerex-boxes:8000

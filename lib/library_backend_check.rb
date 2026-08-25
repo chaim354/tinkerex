@@ -43,20 +43,39 @@ module LibraryBackendCheck
   # or LIBRARY_S3_PREFIX, which are genuinely optional (endpoint = R2/SeaweedFS/MinIO; prefix = a
   # sub-root within the bucket, whose absence means "the whole bucket" and is a valid choice).
   S3_REQUIRED = %w[LIBRARY_S3_BUCKET LIBRARY_S3_ACCESS_KEY_ID LIBRARY_S3_SECRET_ACCESS_KEY].freeze
-  # CHUNK_REMOTE_TOKEN's ROLE NARROWED IN ARC C AND THIS LIST DELIBERATELY DID NOT SHRINK WITH IT.
-  # It used to be THE per-request device credential every user's traffic authenticated with; since
-  # Task 4 that job belongs to `users.sync_device_token` (per-user, lazily provisioned -- see
-  # FileLayer::ChunkRemote::Provisioning), and no runtime request-serving code reads
-  # CHUNK_REMOTE_TOKEN any more. It stays required at boot anyway, for what it still IS: proof, at
-  # deploy time, that at least one real device has been minted on the sync server this URL points
-  # at -- the same role `bin/sync-server`'s own smoke test (`GET /v1/devices/whoami`) uses it for.
-  # Dropping it here would let a deployment boot against a URL nobody has ever proven answers to a
-  # real credential. SYNC_ADMIN_TOKEN, the credential Provisioning actually authenticates
-  # auto-provisioning calls with, is deliberately NOT here: most deployments (every self-host,
-  # single-user one) never call that door at all, so requiring it at boot would refuse a
-  # perfectly-working deployment for a feature it may never use -- the same argument the sync
-  # server's OWN authenticate_admin! makes for refusing the ENDPOINT rather than the boot.
-  CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL CHUNK_REMOTE_TOKEN].freeze
+  # CHUNK_REMOTE_TOKEN WAS THE STAGE 4 DESIGN, AND THIS LIST ONCE OUTLIVED IT BY ONE ARC TOO MANY.
+  # It used to be THE per-request device credential every user's traffic authenticated with — one
+  # process-wide token, one shared sync-server identity for the whole deployment. Arc C (per-user
+  # enrolment) replaced that: `users.sync_device_token` is now provisioned LAZILY, per user, the
+  # first time each one actually touches their library (FileLayer::ChunkRemote::Provisioning),
+  # authenticated against the sync server's admin door with SYNC_ADMIN_TOKEN — a single
+  # deployment-wide OPERATOR credential, distinct from any device token, that the sync server
+  # compares against its OWN copy of the same env var name (Sync::V1::Admin::
+  # LibrariesController#authenticate_admin! on the far side). No runtime request-serving code reads
+  # CHUNK_REMOTE_TOKEN any more (grep app/ and lib/: every remaining hit is a comment, this one
+  # included).
+  #
+  # This list did not shrink when that landed, and it was wrong in BOTH directions at once: it
+  # refused to boot without a device token nothing consumes, while SYNC_ADMIN_TOKEN — the one
+  # credential a fresh deployment cannot provision ANY user's library without — went unchecked. The
+  # practical result: a `remote` destination with no SYNC_ADMIN_TOKEN booted CLEANLY and then
+  # FetchError'd the first time any user's first write reached Provisioning, which is a worse
+  # failure than refusing to start (§14e: a config error surfacing later than boot is the thing this
+  # whole module exists to prevent). The old argument for leaving SYNC_ADMIN_TOKEN out — "most
+  # deployments never call that door" — does not hold for the case this guard actually protects: a
+  # freshly stood-up chunk_remote deployment, where EVERY user starts with no sync_device_token and
+  # auto-provisioning on first touch is the designed path, not an edge case. An operator who wants
+  # to pre-seed every device by hand instead is still free to do so (Provisioning's fast path never
+  # touches admin_transport once a token is already set) — they simply do not get a working
+  # deployment with SYNC_ADMIN_TOKEN unset, which is the point.
+  #
+  # THE TWO REMAINING CHUNK_REMOTE_TOKEN REFERENCES (config/ci.rb's readiness probe, bin/sync-server)
+  # ARE LOCAL DEV/CI HELPERS, NOT THIS APP'S OWN BOOT PATH — do not restore this constant on the
+  # strength of finding it still grepped elsewhere. Both mint a real device against an EPHEMERAL
+  # LOCAL sync server and prove that specific mint was accepted (`GET /v1/devices/whoami`); neither
+  # asks "can a real deployment run," which is the only question this module answers. See each
+  # file's own comment for why they keep it.
+  CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL SYNC_ADMIN_TOKEN].freeze
 
   # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
   # too, so a bad configuration gets this explanation even when the boot guard did not run (the
@@ -100,10 +119,13 @@ module LibraryBackendCheck
     return if missing.empty?
 
     raise Error, "LIBRARY_BACKEND=chunk_remote requires #{missing.join(', ')} — the sync server " \
-                 "this app syncs against, and a device token proving it has been reachable and " \
-                 "accepting real devices (ordinary per-user traffic no longer authenticates with " \
-                 "this specific token -- see CHUNK_REMOTE_REQUIRED's own comment). Mint one on " \
-                 "that host with `bin/rails sync:device:issue`."
+                 "this app syncs against, and the operator credential this deployment auto-" \
+                 "provisions every new user's library with (FileLayer::ChunkRemote::Provisioning " \
+                 "calls POST /v1/admin/libraries on that server with it). Without SYNC_ADMIN_TOKEN " \
+                 "this deployment cannot provision a library for ANY user -- it must be the SAME " \
+                 "value the sync server's own SYNC_ADMIN_TOKEN carries, or every provisioning " \
+                 "attempt gets refused as an unrecognised credential (a mismatch is not caught " \
+                 "here, only on a user's first write, as a FetchError)."
   end
 
   def self.check_s3!(env)
