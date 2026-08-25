@@ -72,8 +72,6 @@ module Maker
     # Chunk branch: real chunk backend; folders created via Sync::Mutation (changelog entries).
     class ChunkBranch < LibraryFolderTest
       setup do
-        pin_file_layer_backend("chunk")
-        Sync::Storage::ChunkStore.reset!
         @user = User.create!(email: "lf-#{SecureRandom.hex(4)}@example.com",
                              confirmed_at: Time.current, omniauth_signup: true)
       end

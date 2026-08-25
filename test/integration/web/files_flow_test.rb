@@ -21,8 +21,6 @@ module Web
     # nothing about the assertions below changed, only the declaration of which deployment they
     # are about.
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     # Sign in via the real password auth. Creates a confirmed account if needed, then

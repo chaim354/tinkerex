@@ -13,7 +13,6 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
-      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "browse-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -87,7 +86,6 @@ module Web
     # controller logic here is backend-agnostic and the port's cross-backend mkdir is covered by
     # Maker::LibraryFolderTest, so these pin chunk — the repo's idiom for a port-touching test.
     test "create_folder makes a dir under a parent and returns its node" do
-      pin_file_layer_backend("chunk")
       assert_difference -> { @user.nodes.present.where(kind: "dir").count }, 1 do
         post library_folders_path, params: { parent_node_id: @projects, name: "exports" }
       end
@@ -99,14 +97,12 @@ module Web
     end
 
     test "create_folder at the root uses a nil parent" do
-      pin_file_layer_backend("chunk")
       post library_folders_path, params: { name: "Top" }
       assert_response :created
       assert @user.nodes.present.exists?(name: "Top", parent_node_id: nil, kind: "dir")
     end
 
     test "create_folder rejects a duplicate name in the same folder" do
-      pin_file_layer_backend("chunk")
       assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
         post library_folders_path, params: { parent_node_id: @projects, name: "v2" } # already exists
       end
@@ -131,7 +127,6 @@ module Web
     # the other two would need this suite to carry LIBRARY_PATH and the five LIBRARY_S3_* knobs,
     # which is what the three-leg CI exists to supply.
     test "create_folder answers 422, not 500, when a FILE already holds the name" do
-      pin_file_layer_backend("chunk")
       assert_no_difference -> { @user.nodes.present.where(kind: "dir").count } do
         post library_folders_path, params: { parent_node_id: @projects, name: "readme.txt" }
       end
@@ -140,7 +135,6 @@ module Web
     end
 
     test "create_folder rejects a blank name" do
-      pin_file_layer_backend("chunk")
       post library_folders_path, params: { parent_node_id: @projects, name: "  " }
       assert_response :unprocessable_entity
       assert_match(/blank/i, json["error"])
@@ -158,7 +152,6 @@ module Web
     # `return ... if name.include?("/")` turns the "..", backslash and NUL rows red and leaves the
     # "a/b" row green — which is exactly how a weaker private spelling passed for its own test.
     test "create_folder rejects a name that is not a single storable path segment" do
-      pin_file_layer_backend("chunk")
       [ "a/b", "a\\b", "..", ".", "nul\0byte", "x" * 300 ].each do |bad|
         assert_no_difference -> { @user.nodes.present.where(kind: "dir").count }, "created #{bad.inspect}" do
           post library_folders_path, params: { name: bad }
@@ -183,7 +176,6 @@ module Web
     # Mutation-checked (§15): dropping the Library::ReservedNames call from #create_folder turns
     # every row here red while the syntax case above stays green.
     test "create_folder rejects a name the library scan will never index" do
-      pin_file_layer_backend("chunk")
       %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
         assert_no_difference -> { @user.nodes.present.where(kind: "dir").count }, "created #{bad.inspect}" do
           post library_folders_path, params: { name: bad }
@@ -195,7 +187,6 @@ module Web
     # The near miss, so the guard is pinned as EXACT-match on `.trash` rather than a prefix — a
     # folder called `.trashcan` is an ordinary folder the Scanner indexes.
     test "create_folder accepts a name that merely starts with a reserved prefix" do
-      pin_file_layer_backend("chunk")
       post library_folders_path, params: { name: ".trashcan" }
       assert_response :created
       assert @user.nodes.present.exists?(name: ".trashcan", kind: "dir")

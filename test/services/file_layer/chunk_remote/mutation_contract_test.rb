@@ -81,7 +81,6 @@ module FileLayer
         # LibraryBackend re-reads ENV on every call and nothing mutates it, so this asks the same
         # question of something stable.
         skip "the v1 sync endpoints are 501 on this backend" unless LibraryBackend.name == "chunk"
-        Sync::Storage::ChunkStore.reset!
         @user = User.create!(email: "remote-mutation-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
         @device = Device.register!(user: @user, name: "loopback")

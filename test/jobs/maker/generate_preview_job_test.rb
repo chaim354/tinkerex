@@ -8,8 +8,6 @@ module Maker
       # Every fixture here is chunk-shaped (write_blob + ManifestChunk + Version), so this is a
       # chunk-adapter test and pins the adapter it tests rather than taking whatever
       # LIBRARY_BACKEND the process happens to carry.
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
       @store = Sync::Storage::ChunkStore.current
       @user  = User.create!(email: "job@example.com")
       @svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))

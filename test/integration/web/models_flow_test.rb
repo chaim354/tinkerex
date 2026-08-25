@@ -7,8 +7,6 @@ module Web
     # Views READ file metadata + capabilities through FileLayer.current; pin a real backend so a
     # LIBRARY_BACKEND=share CI leg (no LIBRARY_PATH) doesn't fail on backend construction.
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     def sign_in(email = "maker@example.com")

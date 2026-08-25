@@ -191,12 +191,10 @@ module V1
         FileLayer.current = FileLayer::Share.new(root: @root.to_s)
         @storage_backend = ENV["STORAGE_BACKEND"]
         ENV["STORAGE_BACKEND"] = "s3" # production's default; CHUNK_* deliberately absent
-        Sync::Storage::ChunkStore.reset!
       end
       teardown do
         ENV["STORAGE_BACKEND"] = @storage_backend
         ENV.delete("STORAGE_BACKEND") if @storage_backend.nil?
-        Sync::Storage::ChunkStore.reset!
         FileLayer.reset!
         FileUtils.remove_entry(@root) if @root&.exist?
       end

@@ -18,7 +18,6 @@ module FileLayer
     include ActionCable::TestHelper
 
     setup do
-      Sync::Storage::ChunkStore.reset!
       @user = User.create!(email: "chunk-adapter-#{SecureRandom.hex(4)}@example.com")
       @device = Device.register!(user: @user, name: "t")
     end
@@ -420,7 +419,6 @@ module FileLayer
       Sync::Storage::ChunkStore.current = PresignOnlyStore.new
       with_http_get_raising(http_error(403), &block)
     ensure
-      Sync::Storage::ChunkStore.reset!
     end
 
     # A REAL Sync::Storage::S3ChunkStore — the only store whose presigned URL points OFF-BOX, which is
@@ -449,7 +447,6 @@ module FileLayer
       )
       yield
     ensure
-      Sync::Storage::ChunkStore.reset!
     end
 
     # Contract hook. Chunk presigns on ALL THREE stores, so "give this backend every chance to

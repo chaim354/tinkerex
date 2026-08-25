@@ -95,7 +95,6 @@ module Web
     # --- Chunk mode: the button is absent AND the POST is gated (does not enqueue) ---
 
     test "chunk mode does not show the Rescan button" do
-      pin_file_layer_backend("chunk")
       get files_path
       assert_response :success
       # count: 0, not a body text match -- the user's email contains "rescan".
@@ -109,7 +108,6 @@ module Web
     # alert is the web idiom (FilesController's rescue_from handlers all redirect with a flash);
     # a JSON 501 from require_capability! would show a human raw JSON.
     test "chunk mode: POST /files/rescan does not enqueue a scan, and redirects with an alert" do
-      pin_file_layer_backend("chunk")
       assert_no_enqueued_jobs do
         post rescan_files_path
       end

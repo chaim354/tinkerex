@@ -13,8 +13,6 @@ module Web
     # `.trash`. The page is one page over the port's `trashed`/`undelete`; these two suites are
     # what pin that the two mechanisms both still work behind it.
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     PASSWORD = "correct horse battery staple".freeze

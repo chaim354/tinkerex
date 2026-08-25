@@ -5,8 +5,6 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     def sign_in(email = "maker@example.com")

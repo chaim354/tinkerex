@@ -8,7 +8,6 @@ module Maker
     # Chunk branch: the sync engine owns the tree, so a move must appear in the changelog.
     class ChunkBranch < MoveNodeTest
       setup do
-        pin_file_layer_backend("chunk")
         @user = User.create!(email: "mn-#{SecureRandom.hex(4)}@example.com",
                              confirmed_at: Time.current, omniauth_signup: true)
         @dest = @user.nodes.create!(node_id: "dir-dest", name: "desk-lamp", kind: "dir")

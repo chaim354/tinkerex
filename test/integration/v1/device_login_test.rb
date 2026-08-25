@@ -12,8 +12,6 @@ module V1
     # /v1/tree is the sync surface. The share-mode counterpart -- that enrollment still works and
     # still opens the maker layer -- is in capability_gating_test.rb.
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     def login(email:, password:, device_name: "laptop")

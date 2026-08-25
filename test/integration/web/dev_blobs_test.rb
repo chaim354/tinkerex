@@ -13,8 +13,6 @@ module Web
   # was the last of the 85 web actions that no test drove.
   class DevBlobsTest < ActionDispatch::IntegrationTest
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     test "a PUT then GET round-trips the exact bytes" do
@@ -47,12 +45,10 @@ module Web
       prior = ENV["STORAGE_BACKEND"]
       begin
         ENV["STORAGE_BACKEND"] = "local"
-        Sync::Storage::ChunkStore.reset!
         get "/dev/blobs/chunks/1/anything"
         assert_response :not_found
       ensure
         ENV["STORAGE_BACKEND"] = prior
-        Sync::Storage::ChunkStore.reset!
       end
     end
   end

@@ -4,7 +4,6 @@ module V1
   module Maker
     class PreviewsTest < ActionDispatch::IntegrationTest
       setup do
-        Sync::Storage::ChunkStore.reset!
       end
 
       def register(email: "p@example.com")
@@ -50,7 +49,6 @@ module V1
         # gets pinned. The other five (auth, tenant isolation, param validation, index filtering)
         # are genuinely backend-agnostic — pinning them too would shield them from the exact
         # ambient-dependence signal the ci.yml `test-share-backend` leg exists to produce.
-        pin_file_layer_backend("chunk")
         token = register
         user  = User.find_by(email: "p@example.com")
         store = Sync::Storage::ChunkStore.current
@@ -80,7 +78,6 @@ module V1
       # history, at bytes that do not exist, so the render would then fail and leave the node with
       # NO preview. 422 naming the current version is the honest answer.
       test "POSTing a superseded version is refused rather than clobbering the current render" do
-        pin_file_layer_backend("chunk")
         token = register(email: "stale@example.com")
         user  = User.find_by(email: "stale@example.com")
         user.nodes.create!(node_id: "moved.svg", name: "moved.svg", kind: "file",
@@ -96,7 +93,6 @@ module V1
       end
 
       test "POSTing the CURRENT version is accepted" do
-        pin_file_layer_backend("chunk")
         token = register(email: "current@example.com")
         user  = User.find_by(email: "current@example.com")
         user.nodes.create!(node_id: "here.svg", name: "here.svg", kind: "file",
@@ -113,7 +109,6 @@ module V1
       # anyway would break a client rendering a node it is about to create. Every other test in
       # this file relies on that fall-through.
       test "a node the port cannot resolve falls through rather than 422-ing" do
-        pin_file_layer_backend("chunk")
         token = register(email: "unknown@example.com")
 
         post "/v1/maker/previews", params: { preview: { node_id: "never-synced.svg", version_id: "v9" } },

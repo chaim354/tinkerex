@@ -9,8 +9,6 @@ module V1
   # the controller's rendered JSON, not about the hook module's own return value.
   class CommitFinalizeHookTest < ActionDispatch::IntegrationTest
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     def auth(token) = { "Authorization" => "Bearer #{token}" }

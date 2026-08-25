@@ -5,7 +5,6 @@ module Maker
     include ActiveJob::TestHelper
 
     setup do
-      pin_file_layer_backend("chunk")
       @user = User.create!(email: "pij-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @project = @user.maker_projects.create!(name: "Desk Lamp")

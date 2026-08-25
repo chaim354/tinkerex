@@ -8,8 +8,6 @@ module Web
     include ActiveJob::TestHelper
 
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
       @user = sign_in
       @node_id = upload("measure.lbrn2", file_fixture_bytes("real-export.lbrn2"))
     end

@@ -9,8 +9,6 @@ module V1
     # were blind to the backend: they answered a device asking for a changelog identically whether
     # or not the deployment had one. That blindness WAS the bug the gate fixes.
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
     end
 
     def register(email: "maker@example.com", name: "laptop")

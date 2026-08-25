@@ -14,7 +14,6 @@ module Maker
   # behind every fixture. The doors themselves are covered per-backend in move_node_test.rb.
   class AttachToProjectTest < ActiveSupport::TestCase
     setup do
-      pin_file_layer_backend("chunk")
       @user = User.create!(email: "atp-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @lamp = @user.maker_projects.create!(name: "Desk Lamp")

@@ -65,7 +65,6 @@ require "application_system_test_case"
 class FileMenuTest < ApplicationSystemTestCase
   setup do
     pin_file_layer_backend("chunk")   # chunk-shaped by construction — see uploader_test.rb
-    Sync::Storage::ChunkStore.reset!
     @user = sign_in_as("filemenu@example.com")
   end
 
