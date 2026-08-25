@@ -364,6 +364,47 @@ correction names its own history rather than quietly replacing the text.
 `docs/OPEN-WORK.md` and `docs/AUDIT-2026-08-03.md` took #142's corrections and each gained a header
 saying it **predates the repo separation** — both still describe an in-process engine.
 
+### The two recorded findings, fixed — and §12.10 was wrong a THIRD time
+
+**1. `Maker::ProjectIntakeJob.nudge` has a caller again.** It was callerless from the engine
+extraction: PR #135 built it, `984a3dc` moved its caller behind `Sync::Hooks`, the engine left.
+It is now called from **`FileLayer::ChunkRemote::ChangelogSync#call`**, once per pull, after the
+catch-up loop. Device-push filing latency goes from "up to 15 minutes" to "the 2-minute pull plus
+`NUDGE_DELAY`".
+
+**The audit's own correction of §12.10 was itself wrong.** Written on 2026-08-25, it said re-wiring
+"is a protocol question... the signal would have to cross the wire from the standalone sync server."
+It does not. `ChangelogSync#apply_page` already upserts every node another device pushed — the
+signal was local the whole time. That makes **three consecutive wrong answers on one item**: the
+original "500 synchronous sweeps" refusal (already answered by PR #135), unmerged PR #142's
+"CLOSED" (true when written, false when read), and the audit's "protocol question." §12.10 now
+records all three, because an item this repeatedly wrong earns its history.
+
+Three design points, all mutation-checked in `changelog_sync_test.rb`:
+- **Only live FILE arrivals are collected** — a directory has nothing to file, a tombstone is a
+  removal. Collecting either enqueues sweeps that cannot move anything.
+- **The `maker_projects` lookup is asked ONCE per pull, never per entry.** `nudge`'s "one indexed
+  `exists?`" was costed for a door firing once per FILE; in a page loop that becomes one query per
+  entry to enqueue a job `limits_concurrency` discards anyway. A new `nudge_parents(user:,
+  parent_node_ids:)` takes the set and the per-node `nudge` delegates to it, so there is still one
+  definition.
+- **`full_resync` deliberately does not feed it** — it re-applies the whole tree, so every file
+  would look like an arrival.
+
+Mutations, all red for the right reason: removing the call fails 2 tests; collecting dirs and
+tombstones fails the arrival test; nudging per node instead of per pull fails the query-count test.
+
+**§14f's "SWEEP, NOT A HOOK PER DOOR" is intact.** Nothing added here decides where a file goes; it
+only makes the one sweep happen sooner. That rule is about the FILING DECISION having a single
+implementation reading `nodes` — it still does. A nudge is a trigger, not a copy of the policy.
+
+**2. Two stale comments in `tinkerex-client`'s `sync-engine` fixed.** `Cargo.toml` said "WinfspMount
+stays the default until CfApiMount is proven on real hardware" and `daemon.rs:189` said "Windows
+uses `WinfspMount`" — both pre-flip. `maker-app/src-tauri/src/lib.rs:102-107` has set
+`type Mount = sync_engine::CfApiMount` by default since the flip, verified by live smoke and a
+byte-for-byte check. Corrected in that repo, `cargo check` clean and **no new rustdoc warnings**
+(28 before, 28 after).
+
 **Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
 — "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
 contours displaced". Those record past observations, not current state; re-running them is a

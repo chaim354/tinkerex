@@ -317,22 +317,31 @@ on all three OSes against the sync server — that half's status lives in `tinke
    PR #142 and re-verified against the code.)*
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the models
    and v1 API exist. Obvious next slices.
-10. **A device push through the mount gets no eager nudge — but NOT for the reason this item gave
-    for months, and the mechanism to fix it is already built and sitting callerless.**
-    `Maker::ProjectIntakeJob.nudge` exists (PR #135, 2026-08-05) and **enqueues** a delayed sweep
-    rather than running one, with `limits_concurrency` collapsing a burst into a single sweep — so
-    the old objection here ("a 500-file device sync would become 500 synchronous full-project
-    sweeps") was answered before it was written down, and must not be repeated as a reason to
-    refuse. What actually stopped it: its caller was `V1::CommitsController#finalize`, `984a3dc`
-    moved that call behind the engine's `Sync::Hooks` seam, and the engine then left the repo
-    (§12.12). **This app registers no hook subscriber and serves no finalize**, so nothing reaches
-    the method. `grep -rn "ProjectIntakeJob.nudge" app/` returns the definition and its own error
-    log line — nothing else. Re-wiring it is real design work, not a one-liner: the signal would
-    have to cross the wire from the standalone sync server, which is a protocol question, not a
-    maker-layer one. Until then a file arriving via the mount waits for the 15-minute sweep.
-    *(This item claimed the fix would be "worse, not better" until 2026-08-25; unmerged PR #142
-    claimed it CLOSED. Both were stale — the first ignored PR #135, the second predates the
-    extraction that removed the caller.)*
+10. **CLOSED 2026-08-25 — a device push DOES nudge project-folder filing now. Kept as a numbered
+    slot because §14f and the audit cite "§12.10", and because this item was wrong twice in
+    opposite directions and the next reader deserves both corrections.**
+    `Maker::ProjectIntakeJob.nudge` (PR #135) **enqueues** a delayed sweep rather than running one,
+    with `limits_concurrency` collapsing a burst into a single sweep. It was **callerless** from the
+    engine extraction until now: `984a3dc` moved its caller behind the engine's `Sync::Hooks` seam
+    and the engine left the repo (§12.12). It is now called from
+    **`FileLayer::ChunkRemote::ChangelogSync#call`** — once per pull, after the catch-up loop —
+    because that pull is exactly where this app LEARNS about a node another device pushed. Latency:
+    "up to 15 minutes" → "the 2-minute pull, plus `NUDGE_DELAY`".
+    **Three things not to undo.** Only **live FILE** arrivals are collected (a directory has nothing
+    to file; a tombstone is a removal). The `maker_projects` lookup is asked **once for the whole
+    pull**, never per entry — the per-node form was costed for a door that fires once per file, and
+    in a page loop it would pay a query per entry to enqueue a job `limits_concurrency` discards
+    anyway. And **`full_resync` deliberately does not feed it**: it re-applies the entire tree, so
+    every file would look like an arrival. All three are mutation-checked in
+    `changelog_sync_test.rb`.
+    **The two wrong versions, recorded because both looked reasonable.** Until 2026-08-25 this item
+    refused the fix on the grounds that "a 500-file device sync would become 500 synchronous
+    full-project sweeps" — an objection PR #135 had already answered months earlier. Unmerged
+    PR #142 then recorded the item CLOSED, which was true when written and false by the time it was
+    read. The correction that replaced both, on 2026-08-25, still guessed wrong once more: it said
+    re-wiring "is a protocol question... the signal would have to cross the wire from the standalone
+    sync server." **It does not** — the changelog pull already carries it, locally. Three
+    consecutive wrong answers on one item is why this entry now names its own history.
 11. **Whether a project-scoped upload should duplicate-check across the whole project, not just its
     immediate destination, is an open product question.** Today two files can both be named
     `dup.stl` under one project — the first filed into its category subfolder, the second left at

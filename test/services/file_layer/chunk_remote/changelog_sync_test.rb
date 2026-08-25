@@ -5,6 +5,7 @@ require "test_helper"
 module FileLayer
   class ChunkRemote
     class ChangelogSyncTest < ActiveSupport::TestCase
+      include ActiveJob::TestHelper
       # A transport that answers canned pages and RECORDS what was asked, so paging and cursor
       # advancement are asserted on the requests rather than inferred from the result.
       class FakeTransport
@@ -178,6 +179,65 @@ module FileLayer
         ChangelogSync.new(@user, transport:).call
         assert_equal "real.stl", @user.nodes.find_by(node_id: "real1")&.name,
                      "the applier did not understand a payload the server actually produces"
+      end
+
+      # ---- the device-push project-intake nudge (CLAUDE.md §12.10) -------------------------------
+      # `Maker::ProjectIntakeJob.nudge` was CALLERLESS from the engine extraction until 2026-08-25:
+      # a file pushed by a device waited up to 15 minutes for the periodic sweep. The pull is where
+      # this app learns about such a file, so the nudge is fired here. These pin the three things
+      # that make that cheap and correct: it fires for a project folder, it does NOT fire for a
+      # folder no project owns, and it asks the database ONCE per pull however many files landed.
+
+      test "a device-pushed file under a project folder nudges the intake sweep" do
+        project = @user.maker_projects.create!(name: "Harbor", folder_node_id: "proj-folder")
+        transport = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", parent: "proj-folder") ] },
+                                      head_seq: 1)
+
+        assert_enqueued_with(job: Maker::ProjectIntakeJob) do
+          ChangelogSync.new(@user, transport:).call
+        end
+        assert project.persisted?
+      end
+
+      test "a device-pushed file in a folder NO project owns nudges nothing" do
+        transport = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", parent: "some-folder") ] },
+                                      head_seq: 1)
+
+        assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
+          ChangelogSync.new(@user, transport:).call
+        end
+      end
+
+      test "a directory and a tombstone are not arrivals, so neither nudges" do
+        @user.maker_projects.create!(name: "Harbor", folder_node_id: "proj-folder")
+        transport = FakeTransport.new(
+          pages: { 0 => [ entry(1, "d1", "sub", kind: "dir", parent: "proj-folder"),
+                          entry(2, "n2", "gone.stl", parent: "proj-folder", deleted: true) ] },
+          head_seq: 2
+        )
+
+        assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
+          ChangelogSync.new(@user, transport:).call
+        end
+      end
+
+      test "many files in one pull ask the projects table ONCE, not once per file" do
+        @user.maker_projects.create!(name: "Harbor", folder_node_id: "proj-folder")
+        entries = (1..25).map { |i| entry(i, "n#{i}", "f#{i}.stl", parent: "proj-folder") }
+        transport = FakeTransport.new(pages: { 0 => entries }, head_seq: 25)
+
+        queries = 0
+        counter = ->(_n, _s, _f, _i, payload) do
+          queries += 1 if payload[:sql]&.include?("maker_projects")
+        end
+        ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+          ChangelogSync.new(@user, transport:).call
+        end
+
+        assert_equal 1, queries,
+                     "expected ONE maker_projects lookup for the whole pull, got #{queries} -- " \
+                     "the per-node form would pay one per entry to enqueue a job " \
+                     "limits_concurrency discards anyway"
       end
     end
   end
