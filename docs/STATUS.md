@@ -1,6 +1,6 @@
 # Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-25 (**CLAUDE.md audited for the repo separation — the sync-engine and desktop-client material moved to those repos' own CLAUDE.md, which they did not have before. 2726 → 2404 lines here; §5 was listing six tables this repo no longer has and §15's CI gate list contradicted `config/ci.rb`. No section renumbered; every cited `§N` verified to still resolve.**)
+**Updated:** 2026-08-25 (**CLAUDE.md cut 2,449 → 1,389 lines / ~51.5k → ~27.4k tokens per session. §14c/g/h/i moved to `docs/invariants/` behind stubs at their original anchors — verified lossless; 49 case-history bullets compressed; §12's closed items tombstoned. No section renumbered. New guard: `test/docs_hygiene_test.rb`.**)
 
 ## What this file is
 
@@ -78,7 +78,83 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): CLAUDE.md audited for the repo separation — and the two sibling repos get their first CLAUDE.md
+## Latest (2026-08-25): CLAUDE.md cut roughly in half — area invariants split to `docs/invariants/`, case history moved here
+
+Branch `claude/optimize-claude-md`. A direct continuation of the audit below, which fixed what
+CLAUDE.md *said*; this one fixes what it **costs**. The file is loaded into an agent's context on
+every session, so its length is a tax on every future task.
+
+**Measured before touching anything.** 2,449 lines / 205,836 chars / **~51,500 tokens per session**.
+§14 alone was 1,850 lines across 211 bullets — 75% of the file. Three subsections were 53% of it:
+§14c addons (540 lines), §14h Measure (351), §14a FileLayer (312).
+
+**Result: 2,449 → 1,389 lines, ~51,500 → ~27,400 tokens. A 47% cut with no rule deleted.**
+
+### Lever 1 — split by locality (1,009 lines out, ~32 lines of stubs in)
+
+§14c (addons), §14g (deploy secrets), §14h (the Measure view) and §14i (backup) bind only inside
+their own areas but were paid for on every session. Each moved to `docs/invariants/<area>.md`
+(1,036 lines total including new headers) leaving a stub under its **original §14 anchor** — the
+anchor has to stay, because code cites `§14c` and `§14h` by number. Each stub names the PATHS that
+should send a reader to the file, so the rules are found when they apply instead of skimmed when
+they do not.
+
+**Verified lossless mechanically, not by eye:** the sections were sliced byte-for-byte with a
+script, then every non-trivial line of each original section was asserted present in its new file.
+All four reported OK.
+
+### Lever 2 — compress the case-history bullets (~250 lines)
+
+Measured: **49 of §14's 211 bullets (23%) carried their own case history, occupying 672 lines — 36%
+of §14.** CLAUDE.md's own preamble already forbids this ("if it needs a paragraph of story to
+justify, the story goes in STATUS.md and the rule comes here"), and the story was largely already
+here: of nine distinctive evidence figures sampled (`200 of 400`, `1148 of 5259`, `79/80`,
+`172 of 174`, `58.7 mm`, `85–205 ms`, …), **eight were already in this file**. So the compression
+was mostly de-duplication, not deletion. Each rewritten bullet keeps rule + consequence + pointer;
+the reconstructed argument goes. §14 is now 95 bullets / 832 lines.
+
+Not compressed: ~20 bullets still over 12 lines, in §14a/§14d/§14e/§14f. Those are dense stacks of
+distinct rules rather than narrative — squeezing them further would delete content, not story. The
+file did not reach the ~850 lines first projected, and that is why.
+
+### Lever 3 — tombstone the closed §12 items (~45 lines)
+
+**55 of §12's 88 lines were items already DONE/RESOLVED/CLOSED** (7, 10, 12, 13), alive only because
+code cites them by number. Item 10 spent 24 lines narrating that it had been wrong three times. Each
+is now one to seven lines keeping its number.
+
+**Two lessons lived ONLY in those items and were relocated, not dropped** — checked by grep before
+deleting anything:
+
+- **§12.10's three intake-nudge rules** (live FILE arrivals only; `maker_projects` asked once per
+  pull, never per entry; `full_resync` deliberately not fed) → a new **§14f** bullet. `full_resync`
+  appeared nowhere else in CLAUDE.md.
+- **"A reference count is not a coupling count"** (§12.12) → a new **§14e** bullet. It had **zero**
+  occurrences in this file.
+
+### The header's own justification was invented
+
+CLAUDE.md's "do not renumber" note cited `§15` ~141 times, `§9` ~175, `§10` ~107, `§5` ~95 from
+`grep -rn "§[0-9]" app/ lib/`. **There are 323 `§` references in `app/` and `lib/` in total** — the
+four claimed figures sum to 518. Measured actual: `§14a` 53, `§15` 36, `§14c` 27, `§10` 25, `§6` 20.
+The **rule** was right (323 real citations is ample reason not to renumber); its evidence was
+fiction. Corrected in place, with the retraction kept, per this repo's convention.
+
+### The guard: `test/docs_hygiene_test.rb` (new, 4 tests)
+
+Nothing could previously notice the split rotting. It asserts a 1,500-line ceiling on CLAUDE.md (a
+**ratchet**, not a target), that every `docs/invariants/*.md` is cited by CLAUDE.md, that every
+pointer resolves to a real file, and that the four moved anchors still exist.
+
+**Mutation-checked five ways, all red then green on restore:** delete an invariants file (1 failure),
+add an uncited one (1), renumber the §14c anchor (1), move the whole directory (2), lower the
+ceiling below actual (1). The directory-moved case first raised ENOENT from `Dir.children` rather
+than firing the non-empty assertion the comment claimed; switched to `Dir.glob`, which answers `[]`,
+so the assertion documented in the header is the one that actually fires — §14e's "a guard that
+scans a directory dies silently when the directory leaves", caught by mutation-checking rather than
+by reading.
+
+## 2026-08-25: CLAUDE.md audited for the repo separation — and the two sibling repos get their first CLAUDE.md
 
 Branch `claude/audit-claude-md-repo-separation` (this repo) and `claude/add-claude-md` in each of
 `chaim354/tinkerex-sync` and `chaim354/tinkerex-client`.
