@@ -15,8 +15,11 @@ require "test_helper"
 #     missed GitHub's LARGER hosted runners (`ubuntu-latest-4-cores`, `macos-latest-xlarge`), which
 #     are still hosted and billed at a PREMIUM over the standard images, yet match neither pattern.
 #     Do not revert to matching a name shape — see the test body for the full argument.
-#   * `ruby/setup-ruby@v1` does not work on the self-hosted Mac. nightly.yml's e2e-macos job says so
-#     in a comment and uses the runner's own Ruby instead. Retargeting a Rails job at macos while
+#   * `ruby/setup-ruby@v1` does not work on the self-hosted Mac — it assumes the hosted
+#     /Users/runner layout. Every job here uses the runner's own Ruby instead. (The job that
+#     documented this in a comment, nightly.yml's e2e-macos, left with the cross-repo suites on
+#     2026-08-25 — docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md.) Retargeting a
+#     Rails job at macos while
 #     keeping the action fails at step 2 of every job, on infrastructure rather than on code, which
 #     is the least legible kind of red.
 #   * `bin/brakeman` shipped the Rails scaffold's `ARGV.unshift("--ensure-latest")`, which made the
@@ -91,8 +94,8 @@ class CiHygieneTest < ActiveSupport::TestCase
   end
 
   test "no job running on macos uses ruby/setup-ruby" do
-    # The action assumes the GitHub-hosted /Users/runner layout the self-hosted Mac does not have
-    # (see nightly.yml's e2e-macos, which works around it). The runner's own PATH already carries
+    # The action assumes the GitHub-hosted /Users/runner layout the self-hosted Mac does not have.
+    # The runner's own PATH already carries
     # mise ruby 3.4.7 — exactly .ruby-version — so `bundle install` is all a job needs.
     offenders = []
     each_job do |file, name, job|
@@ -177,7 +180,7 @@ class CiHygieneTest < ActiveSupport::TestCase
     ".dockerignore",                        # deploy_hygiene_test: GPL sidecars out of the app image
     ".rubocop.yml",                         # the style gate's own config
     ".kamal/secrets.share",                 # deploy_hygiene_test: per-destination secrets
-    ".github/workflows/nightly.yml",        # ci_hygiene_test globs EVERY workflow, not just ci.yml
+    ".github/workflows/ci.yml",             # ci_hygiene_test parses this file; a PR editing it must run it
     "sidecar/openscad/catalog/catalog.json", # deploy_hygiene_test: the bundled-.scad licence sweep
     "app/models/user.rb"                    # the ordinary case, and the old allowlist's first entry
   ].freeze
