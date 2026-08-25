@@ -184,7 +184,11 @@ PRINTS the three leg counts and never COMPARES them** (§15), so the identical-c
 a human reading three numbers. And the siblings' half of the handoff is unexecuted: the recipes
 are written, no commit was made in `tinkerex-sync` or `tinkerex-client`.
 
-Gates: bare `bin/ci` green, three legs at identical run counts.
+Gates: bare `bin/ci` green in **2m12.45s**, all nine steps, three legs at **identical run counts
+(2359)** — share 8678 assertions / 30 skips, s3 8678 / 30, chunk_remote 8835 / 5. The +157
+assertions on chunk_remote is the structural difference already documented under 2026-08-25: it
+EXECUTES the 25 tests share and s3 skip. The +2 runs against the 2357 baseline is this arc's own
+`ci_preflight_test.rb` rewrite (7 tests → 9), not the ±2 flap.
 
 ## 2026-08-25: CLAUDE.md cut roughly in half — area invariants split to `docs/invariants/`, case history moved here
 
