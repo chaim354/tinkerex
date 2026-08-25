@@ -294,6 +294,39 @@ the same trap this file warns about elsewhere, and it nearly went into the ledge
 Suites green throughout: 91 runs / 953 assertions (measure system), 267 runs / 963 assertions
 (previews unit), 12 runs / 96 assertions (geometry).
 
+### The remaining sections audited — §14a share/s3, §14b, §14d, §14e, §14f, §14g, §14i
+
+~83 further checks across 106 bullets. **Zero errors.** With §14c and §14h that completes §14:
+roughly **310 checks over the whole file, four findings, all fixed** (one numerical slip in §14h[0];
+three in `test/architecture_invariants_test.rb`).
+
+Two count claims were checked properly rather than by grep, because both are the kind that rot
+quietly:
+
+- **§14d's "the `port_writable?` two-door branch is written out ONCE"** is TRUE, but only once the
+  section's own exclusion clause is applied. Raw grep finds ~20 hits; comments strip to **four**
+  Ruby-code sites: `capabilities.rb:72` (the definition), `models_controller.rb:101` (passing the
+  value into a view), `uploads_controller.rb:110` (`require_port_writable!` — a one-armed GATE), and
+  `library_output.rb:54` (`port_writable? ? write_port : write_chunk`). The doc excludes
+  "`require_capability!` gates and views that pick an upload FORM," which leaves exactly one
+  two-door branch. The exclusion clause is load-bearing, not decoration.
+- **§14b's "both job gates key on `scannable?`, not `is_a?(FileLayer::Share)`"** is TRUE.
+  `scan_job.rb:129` DOES contain a live `adapter.is_a?(FileLayer::Share)`, but it builds ARGS
+  (passing `root:` only for the backend that has a filesystem root), not the gate; the gate is
+  `scannable?` and line 109 is a comment recording that it once was the `is_a?`.
+
+**The pattern behind nearly every false alarm is worth recording, because it explains WHY this file
+stays accurate.** Almost every failing check was a comment matching where code was expected —
+`# NO ARGV.unshift("--ensure-latest") HERE` in `bin/brakeman`, `# ... NOT the ruby-vips FFI gem` in
+the Gemfile, `# never Project#ensure_library_folder!` in `project_intake.rb`, `# BUILT AS NODES,
+NEVER doc.write` in `print_sheet.js`, `innerHTML` appearing only in a comment forbidding it.
+**The code comments restate CLAUDE.md's rules verbatim at the point of enforcement.** That is what
+keeps the two in step: a change to the code lands on the sentence that explains the rule. It is
+also why a naive grep cannot tell "the code does X" from "a comment says never do X," and why the
+audit had to read context every time rather than trust a match count.
+
+Gates: bare `bin/ci` green in 2m10s, three backend legs at identical run counts (2349).
+
 **Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
 — "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
 contours displaced". Those record past observations, not current state; re-running them is a
