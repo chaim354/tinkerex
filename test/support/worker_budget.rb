@@ -38,24 +38,75 @@ module WorkerBudget
   # original failures.
   BYTES_PER_BROWSER_WORKER = 4 * (1024**3)
 
+
   class << self
     # Never returns less than 1, never more than the processor count, and never raises: an
     # unreadable total falls back to the processor count, which is the behaviour this replaces.
     # Failing back to the OLD default rather than to the new cap is deliberate — a machine we
     # cannot measure should behave as it did before this file existed, not inherit a number
     # derived from a box it may look nothing like.
+    # BUDGETS ON WHAT IS FREE RIGHT NOW, NOT ONLY ON WHAT THE BOX HAS — BUT NEVER BELOW `FLOOR`.
+    # Dividing TOTAL memory answers "how many Chromes fit on an idle machine". The condition this
+    # file's header says it exists for is a SECOND browser suite already running, and total-memory
+    # arithmetic cannot see one: both suites compute the same generous number and oversubscribe
+    # together.
+    #
+    # MEASURED, 2026-08-25: two `bin/rails test test/system/` runs started at once on this 24 GB /
+    # 10-core box each took 6 workers — twelve Chromes — and produced **152 and 166 errors** where
+    # either alone produces zero. The box swaps and every Capybara wait becomes the coin flip this
+    # header already warned about. That reached CI in milder form as BoxSectionsTest failing on two
+    # consecutive PRs and passing on every re-run — the CI runner IS this Mac (§15), so a local
+    # `bin/ci` and a CI job genuinely collide.
+    #
+    # NO FLOOR ABOVE 1, DELIBERATELY, AND THAT IS THIS FILE'S EXISTING CONTRACT RATHER THAN A NEW
+    # CHOICE. A first draft floored this at 4 to protect local wall time, and
+    # `test/worker_budget_test.rb` refused it in two places at once: "never returns zero, however
+    # little memory there is" pins 1 on a 512 MB box, and "the budget is per-worker, so the count
+    # scales with memory" pins 8 GB -> 2. Their reasoning wins — a constrained box should run the
+    # suite slowly and correctly rather than quickly and randomly.
+    #
+    # WHAT IT COSTS, measured rather than waved away: on this box mid-session with ~8 GB available
+    # this returns 2 where the old total-memory formula returned 6, and a solo system run took 34 s
+    # at 4 workers against ~31 s at 6. Slower on a busy machine, unchanged on an idle one, and the
+    # thing it buys is that two suites can no longer both plan for an empty box.
+
     def browser_workers
       cores = processor_count
       total = total_memory_bytes
       return cores if total.nil? || total.zero?
 
-      [ [ total / BYTES_PER_BROWSER_WORKER, 1 ].max, cores ].min
+      budget = [ total, available_memory_bytes || total ].min
+      [ [ budget / BYTES_PER_BROWSER_WORKER, 1 ].max, cores ].min
     end
 
     def processor_count
       (Concurrent.available_processor_count || Concurrent.processor_count).floor
     rescue StandardError
       1
+    end
+
+    # WHAT IS ACTUALLY FREE, as distinct from installed. nil on an unrecognised platform or an
+    # unreadable source, and `browser_workers` then falls back to TOTAL — i.e. exactly the old
+    # behaviour, so a machine we cannot measure keeps the number it had before this existed.
+    #
+    # macOS has no single "available" figure: `vm_stat` reports free pages and INACTIVE pages
+    # separately, and inactive memory is reclaimable on demand — counting only `free` would read a
+    # perfectly healthy box as starved, because macOS deliberately keeps free near zero. Linux
+    # publishes MemAvailable, which already means this.
+    def available_memory_bytes
+      case RbConfig::CONFIG["host_os"]
+      when /darwin/i
+        out = `vm_stat 2>/dev/null`
+        page = out[/page size of (\d+) bytes/, 1]&.to_i
+        free = out[/^Pages free:\s+(\d+)/, 1]&.to_i
+        inactive = out[/^Pages inactive:\s+(\d+)/, 1]&.to_i
+        page && free && inactive ? (free + inactive) * page : nil
+      when /linux/i
+        line = File.read("/proc/meminfo")[/^MemAvailable:\s+(\d+) kB/, 1]
+        line && line.to_i * 1024
+      end
+    rescue StandardError
+      nil
     end
 
     # macOS and Linux only, which is every machine this suite runs on. Anything else answers nil
