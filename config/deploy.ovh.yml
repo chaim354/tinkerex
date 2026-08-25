@@ -66,6 +66,14 @@ env:
     # []), it is not a 500, and it is the honest state: OVH has no addon host.
     ADDON_SOURCE_URL: ""
 
+    # The `sync` accessory (Arc D Task 2) runs on the Unraid host too, so `tinkerex-sync` does not
+    # resolve here either — same deep-merge trap, same fix. OVH never runs LIBRARY_BACKEND=chunk_remote
+    # (there is no `-d remote`-equivalent overlay for this box), so blank is also simply correct, not
+    # merely safe: nothing on OVH would ever read this URL even unblanked. Blanked anyway, on the same
+    # belt-and-braces argument as the three URLs above — a future `chunk_remote` leg on OVH would need
+    # its own real value here, not an inherited Unraid-only one.
+    CHUNK_REMOTE_URL: ""
+
     # THE ONE INTERNET-FACING BOX, SO THE ONE THAT NEEDS TLS ENFORCEMENT (2026-07-30).
     #
     # production.rb gates assume_ssl + force_ssl + the /up redirect exclusion behind this flag

@@ -22,11 +22,15 @@ class User < ApplicationRecord
   # ARC C TASK 4: THIS USER'S OWN device token on the standalone sync server, replacing the single
   # process-wide CHUNK_REMOTE_TOKEN every chunk_remote request used to authenticate with. That env
   # var is NOT what Provisioning's admin call uses either (that's SYNC_ADMIN_TOKEN, a different,
-  # deployment-wide credential -- Provisioning's own header) -- CHUNK_REMOTE_TOKEN survives only as
-  # a bootstrap DEVICE's own token, minted by `bin/sync-server prepare` and read nowhere in this
-  # app's request-serving code any more (lib/library_backend_check.rb's own comment on
-  # CHUNK_REMOTE_REQUIRED explains why it still gates boot). Nil until this user's first library
-  # write; FileLayer::ChunkRemote::Provisioning fills it in.
+  # deployment-wide credential -- Provisioning's own header) -- CHUNK_REMOTE_TOKEN is read nowhere in
+  # this app's request-serving code any more, and (Arc D Task 2) no longer gates boot either:
+  # lib/library_backend_check.rb's CHUNK_REMOTE_REQUIRED named it for a while after it stopped
+  # mattering, demanding a credential nothing consumed while SYNC_ADMIN_TOKEN -- the one this
+  # deployment actually cannot provision a library without -- went unchecked. That constant now
+  # names SYNC_ADMIN_TOKEN instead; see its own comment for the full history. CHUNK_REMOTE_TOKEN
+  # survives only as a LOCAL dev/CI credential (config/ci.rb, bin/sync-server), unrelated to this
+  # column. Nil until this user's first library write; FileLayer::ChunkRemote::Provisioning fills it
+  # in.
   #
   # NOT DETERMINISTIC. `encrypts` defaults to non-deterministic (a fresh random IV each write, so
   # two encryptions of the same plaintext produce different ciphertext -- verified in the commit

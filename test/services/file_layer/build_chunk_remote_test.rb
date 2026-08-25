@@ -23,7 +23,7 @@ module FileLayer
 
     CONFIGURED = { "LIBRARY_BACKEND" => "chunk_remote",
                    "CHUNK_REMOTE_URL" => "http://sync.example",
-                   "CHUNK_REMOTE_TOKEN" => "device-token" }.freeze
+                   "SYNC_ADMIN_TOKEN" => "admin-token" }.freeze
 
     test "LIBRARY_BACKEND=chunk_remote builds the remote adapter" do
       build_with(CONFIGURED) do
@@ -46,19 +46,19 @@ module FileLayer
     # §14a gives: a boot that depends on a third party being reachable turns a blip into a crash
     # loop. Here that would be sharper still -- a sync server being down is precisely the condition
     # chunk_remote is built to survive, since reads answer from the local mirror.
-    test "it refuses to boot without a server URL and a token, naming BOTH at once" do
+    test "it refuses to boot without a server URL and an admin token, naming BOTH at once" do
       build_with("LIBRARY_BACKEND" => "chunk_remote") do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
         assert_match(/CHUNK_REMOTE_URL/, err.message)
-        assert_match(/CHUNK_REMOTE_TOKEN/, err.message,
+        assert_match(/SYNC_ADMIN_TOKEN/, err.message,
                      "an operator must learn both knobs at once, not one restart at a time")
       end
     end
 
-    test "a URL without a token is still refused, and names only what is missing" do
+    test "a URL without an admin token is still refused, and names only what is missing" do
       build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example") do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
-        assert_match(/CHUNK_REMOTE_TOKEN/, err.message)
+        assert_match(/SYNC_ADMIN_TOKEN/, err.message)
         assert_no_match(/CHUNK_REMOTE_URL,/, err.message, "it named a knob that was set")
       end
     end

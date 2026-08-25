@@ -171,6 +171,15 @@ GATES = {
       # bin/sync-server just minted is actually accepted. A bare port check answers neither, and a
       # schema-less server would otherwise surface as ten confusing journey failures instead of
       # one clear failure here.
+      #
+      # $CHUNK_REMOTE_TOKEN HERE IS A LOCAL SMOKE-TEST CREDENTIAL, NOT A DEPLOYMENT REQUIREMENT --
+      # this is the one legitimate place it still belongs. It answers "did sync:device:issue mint a
+      # device this ephemeral server actually accepts," a narrower question than "can a real
+      # deployment run." That second question is lib/library_backend_check.rb's
+      # CHUNK_REMOTE_REQUIRED, which stopped naming this var once Arc C moved ordinary traffic to
+      # per-user `users.sync_device_token` and named SYNC_ADMIN_TOKEN instead -- see that constant's
+      # own comment for the full history. Do not read this probe's continued use of
+      # $CHUNK_REMOTE_TOKEN as evidence a deployment still needs it.
       for i in $(seq 1 60); do
         curl -sf "$CHUNK_REMOTE_URL/up" >/dev/null && break
         sleep 1
