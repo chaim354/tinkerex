@@ -51,16 +51,19 @@ module V1
         # ambient-dependence signal the ci.yml `test-share-backend` leg exists to produce.
         token = register
         user  = User.find_by(email: "p@example.com")
-        store = Sync::Storage::ChunkStore.current
+        # A REAL FILE IN A SHARE LIBRARY, where this used to be a blob plus ManifestChunk and
+        # Version rows. `content_hash` carries the fixture's chosen token because on share the
+        # content_token IS content_hash, and Share#read refuses a token that is not current --
+        # which is exactly the property the preview rows below are keyed on.
+        root  = use_fresh_share_library!
+        @root = root
         svg   = File.binread(Rails.root.join("test/fixtures/files/square.svg"))
-        store.write_blob(user.id, "svgh", svg)
-        Sync::ManifestChunk.create!(user_id: user.id, manifest_id: "m", chunk_hash: "svgh",
-                                seq: 0, offset: 0, length: svg.bytesize)
-        Sync::Version.create!(user_id: user.id, version_id: "vr", node_id: "ready.svg", manifest_id: "m")
+        root.join("ready.svg").binwrite(svg)
         # A preview always belongs to a real, live node in production — FileLayer#read enforces
         # that (tombstoned = gone), so the fixture has to reflect reality.
         user.nodes.create!(node_id: "ready.svg", name: "ready.svg", kind: "file",
-                           deleted: false, current_version_id: "vr")
+                           deleted: false, current_version_id: "vr",
+                           content_hash: "vr", storage_path: "ready.svg")
         preview = user.maker_previews.create!(node_id: "ready.svg", version_id: "vr")
         ::Maker::GeneratePreviewJob.perform_now(preview.id, filename: "ready.svg")
         assert_equal "ready", preview.reload.status
@@ -81,7 +84,8 @@ module V1
         token = register(email: "stale@example.com")
         user  = User.find_by(email: "stale@example.com")
         user.nodes.create!(node_id: "moved.svg", name: "moved.svg", kind: "file",
-                           deleted: false, current_version_id: "v2")
+                           deleted: false, current_version_id: "v2",
+                           content_hash: "v2")
 
         assert_no_enqueued_jobs(only: ::Maker::GeneratePreviewJob) do
           post "/v1/maker/previews", params: { preview: { node_id: "moved.svg", version_id: "v1" } },
@@ -96,7 +100,8 @@ module V1
         token = register(email: "current@example.com")
         user  = User.find_by(email: "current@example.com")
         user.nodes.create!(node_id: "here.svg", name: "here.svg", kind: "file",
-                           deleted: false, current_version_id: "v2")
+                           deleted: false, current_version_id: "v2",
+                           content_hash: "v2")
 
         post "/v1/maker/previews", params: { preview: { node_id: "here.svg", version_id: "v2" } },
              as: :json, headers: auth(token)

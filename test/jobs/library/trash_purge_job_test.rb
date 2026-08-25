@@ -138,7 +138,9 @@ module Library
     # The NEGATIVE half of the schedule's gate, matching ScanJobTest's pair exactly. On its own
     # this passes for a `def purge_all!; end`, which is why the positive half below is not optional.
     test "purge_all! no-ops when the deployment is not share-backed" do
-      with_env("LIBRARY_BACKEND" => "chunk") do
+      with_env("LIBRARY_BACKEND" => "chunk_remote",
+               "CHUNK_REMOTE_URL" => "http://sync.invalid",
+               "SYNC_ADMIN_TOKEN" => "test-token") do
         assert_no_enqueued_jobs { Library::TrashPurgeJob.purge_all! }
       end
     end

@@ -13,6 +13,14 @@ module Web
     # `.trash`. The page is one page over the port's `trashed`/`undelete`; these two suites are
     # what pin that the two mechanisms both still work behind it.
     setup do
+      # A fresh library root per test -- see test_helper's own note: the ambient LIBRARY_PATH
+      # outlives the per-test rollback, so Share's clobber refusal rejects a repeated name.
+      @root = use_fresh_share_library!
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     PASSWORD = "correct horse battery staple".freeze
@@ -25,20 +33,9 @@ module Web
       user
     end
 
-    def upload(name, bytes)
-      hash = Digest::SHA256.hexdigest(bytes)
-      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-      post begin_upload_files_path, params: { name:, size: bytes.bytesize, manifest: }, as: :json
-      assert_response :success
-      begun = JSON.parse(response.body)
-      (begun["put_urls"] || {}).each_value do |url|
-        put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
-        assert_response :ok
-      end
-      post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-      assert_response :success
-      begun["node_id"]
-    end
+    # Delegates to test_helper's shared helper: the presigned two-phase chain this used to drive
+    # is `syncable`-gated and answers 501 on share, telling the caller to POST /files instead.
+    def upload(name, bytes) = port_upload(name, bytes)
 
     test "requires login" do
       get trash_index_path

@@ -34,7 +34,11 @@ module V1
     test "the returned token works against the owner's library" do
       User.create!(email: "dev2@example.com", password: PASSWORD, confirmed_at: Time.current)
       token = JSON.parse(login(email: "dev2@example.com", password: PASSWORD).body)["device_token"]
-      get "/v1/tree", params: { after_id: 0 }, headers: { "Authorization" => "Bearer #{token}" }
+      # `/v1/maker/projects`, not `/v1/tree`. The claim is that a token minted here OPENS THE API,
+      # and /v1/tree is the sync engine's endpoint -- gone from this app since Arc D Part 2, so it
+      # would 404 for a reason that has nothing to do with the token. The maker layer is this app's
+      # own and is the surface a device token actually has to reach here.
+      get "/v1/maker/projects", headers: { "Authorization" => "Bearer #{token}" }
       assert_response :success
     end
 
