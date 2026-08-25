@@ -319,7 +319,9 @@ on all three OSes against the sync server — that half's status lives in `tinke
    concurrent-commit load test.
 6. **Linux and Windows CI coverage is skipped, not passing** — no linux or windows runner is
    registered in ANY of the three repos (macOS is, in all three). §15 has the measured table and
-   its date.
+   its date. **Since 2026-08-25 this repo schedules no linux or windows jobs at all**, so the gap
+   is entirely the siblings' — `ci/preflight.sh --summary` now says `— no job in this repo targets
+   it` rather than warning about skipped jobs that do not exist.
 7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was a stalled FSYNC, not bad
    lock logic; the fix is `timeout: 15000`.** The rule that outlives it is **§14e**. Kept as a
    numbered slot because code cites §12 by number. Measurements: `docs/STATUS.md`.
@@ -419,13 +421,16 @@ gh repo clone chaim354/tinkerex-sync   ../tinkerex-sync     # then: bundle insta
 gh repo clone chaim354/tinkerex-client ../tinkerex-client   # its CLAUDE.md has the cargo/mount cheatsheet
 ```
 
-**Two CI legs here still reach into `tinkerex-client`, deliberately.** `nightly.yml` runs the
-Rails-coupled two-device real-mount legs (`two-device-fuse.sh`, `two-device-webdav-macos.sh`)
-because those scripts boot their **own local Rails server** — they `cd` upward to find `bin/rails`
-— so they must run from THIS repo's root even though the scripts live in the sibling. Both
-`nightly.yml` and `client-contract.yml` check the sibling out into a subdirectory and symlink
-`client` to it, so from a job's-eye view the paths are unchanged. `client-contract.yml` boots
-`tinkerex-sync` for the same kind of reason.
+**NO CI LEG HERE REACHES INTO `tinkerex-client` ANY MORE (2026-08-25).** `nightly.yml` and
+`client-contract.yml` are deleted: both tested sync↔client with **no code from this repo
+involved**, and both were broken in ways only measurement showed. `client-contract.yml` had never
+run once — its only real job is linux-gated and `CI_RUNNERS` is `macos`, so every run reported
+SUCCESS having run only `preflight`. `nightly.yml` still booted THIS app's Rails and pointed the
+Rust client at it, three hours after Arc D Part 2 stopped routing `/v1/commit` here. Corrected
+recipes went to the siblings in
+`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`. **`ci.yml` is the only workflow
+left** — seven jobs, all macos: `preflight` plus one per gate, each invoking `bin/ci <gate>`. This repo's half of the wire contract
+is `bin/ci test-chunk-remote`, which is not moving.
 
 **Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev & test run
 on SQLite); macOS keeps creating `" 2"`-suffixed duplicate files in the repo (some sync client?) —
@@ -1358,12 +1363,15 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   **Re-measure rather than trusting this paragraph** — that is why it names a date. It needs an
   **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
   granted, so it **403s from inside Actions** and works only from a developer shell.
-- **`ci.yml`'s jobs therefore target `macos`**, and linux/windows jobs elsewhere are
-  `if:`-gated on the repo variable **`CI_RUNNERS`** via `ci/preflight.sh`, so a job whose
-  runner is absent is never *scheduled*. That gate fixed a five-week outage: a job matching no
-  online runner does **not** fail — it queues 24 h at 0 elapsed and is auto-cancelled, which
-  is why a PR sat UNSTABLE and merging needed `--admin`. **Linux and Windows coverage is
-  skipped, not passing.**
+- **`ci.yml`'s jobs target `macos`, and it is the ONLY workflow here** since the cross-repo
+  suites left (2026-08-25). The `if:`-gate on the repo variable **`CI_RUNNERS`** via
+  `ci/preflight.sh` therefore has nothing left to gate *in this repo* — **keep the mechanism
+  anyway**: it fixed a five-week outage, and the failure it prevents is silent. A job matching no
+  online runner does **not** fail — it queues 24 h at 0 elapsed and is auto-cancelled, which is
+  why a PR sat UNSTABLE and merging needed `--admin`. Any future linux/windows job here MUST be
+  `needs: preflight` + `if:`-gated; `test/ci_hygiene_test.rb` enforces it, and asserts it actually
+  scanned some jobs so the guard cannot go vacuous the way it nearly did. The siblings still gate
+  real jobs this way. **Linux and Windows coverage is skipped, not passing.**
 - **`ruby/setup-ruby` must NOT appear in a `macos` job** — it assumes a hosted
   `/Users/runner` layout this box lacks; the runner's PATH has mise ruby 3.4.7 matching
   `.ruby-version`, so `bundle install --quiet` suffices. `test/ci_hygiene_test.rb` fails if it

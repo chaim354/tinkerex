@@ -1,4 +1,5 @@
 require "test_helper"
+require "tmpdir"
 
 # ci/preflight.sh is what stops a job being SCHEDULED against a runner family that does not exist.
 # That matters because a job whose labels match no online runner does not fail — it queues for 24h
@@ -47,22 +48,67 @@ class CiPreflightTest < ActiveSupport::TestCase
     assert_equal "macos=true\nlinux=false\nwindows=false\n", out
   end
 
-  test "--summary names the absent families and says the run is green about less" do
-    out, status = preflight("macos", "--summary")
+  # THE SUMMARY HAS THREE STATES, NOT TWO, AND THE THIRD IS WHY THESE TESTS PLANT A WORKFLOW.
+  #
+  # Until 2026-08-25 a family was either declared-available or "absent — its jobs were SKIPPED".
+  # Then the cross-repo suites left (docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md)
+  # and this repo stopped having any linux or windows job at all, so the second state started
+  # warning about SKIPPED JOBS THAT DO NOT EXIST. The script now derives a third state by grepping
+  # `runs-on` across the workflow dir.
+  #
+  # Consequence for THIS file: the "absent" branch is no longer reachable from this repo's own
+  # workflows, so a test asserting it must ESTABLISH ITS PRECONDITION rather than assume it. That
+  # is what CI_WORKFLOW_DIR is for. A test that simply dropped the ⛔ assertions would be green
+  # over a branch nothing exercises — §15's dominant failure shape, and the very branch that
+  # protects against five weeks of dark CI.
+
+  test "--summary warns that a targeted family's jobs were SKIPPED when its runner is absent" do
+    # Precondition, established rather than assumed: a workflow with a linux job.
+    # Both families present: macos registered, linux not. Omitting the macos job would make macos
+    # report `—` too, and the test would fail for the wrong reason (it did, first time).
+    fixture = "jobs:\n  a:\n    runs-on: [self-hosted, macos]\n  b:\n    runs-on: [self-hosted, linux]\n"
+    out, status = with_workflows("jobs.yml" => fixture) do
+      preflight("macos", "--summary")
+    end
     assert_equal 0, status, out
     assert_match(/CI runner preflight/, out)
     assert_match(/`macos` \| ✅/, out)
     assert_match(/`linux` \| ⛔/, out)
-    assert_match(/`windows` \| ⛔/, out)
     # The declared value is echoed so a STALE declaration is visible at the point of damage.
     assert_match(/CI_RUNNERS.*`macos`/, out)
     assert_match(/skipped, not passed/i, out)
   end
 
-  test "--summary says so plainly when nothing was skipped" do
-    out, _ = preflight("macos,linux,windows", "--summary")
+  test "--summary does NOT claim skipped coverage for a family no job targets" do
+    # The state this repo is actually in. The old wording said "absent — its jobs were SKIPPED"
+    # about jobs that do not exist, which reads as a coverage gap where there is none to close.
+    out, status = with_workflows("mac-job.yml" => "jobs:\n  x:\n    runs-on: [self-hosted, macos]\n") do
+      preflight("macos", "--summary")
+    end
+    assert_equal 0, status, out
+    assert_match(/`macos` \| ✅/, out)
+    assert_match(/`linux` \| — no job in this repo targets it/, out)
+    assert_match(/`windows` \| — no job in this repo targets it/, out)
+    refute_match(/skipped, not passed/i, out)
+    # But it must not read as a clean bill of health either.
+    assert_match(/NOT a passing row/, out)
+  end
+
+  test "--summary says so plainly when every targeted family is available" do
+    out, _ = with_workflows("all.yml" => "jobs:\n  a:\n    runs-on: [self-hosted, linux]\n  b:\n    runs-on: [self-hosted, windows]\n") do
+      preflight("macos,linux,windows", "--summary")
+    end
     assert_match(/no coverage skipped/i, out)
     refute_match(/⛔/, out)
+  end
+
+  test "the real workflow dir has no linux or windows job, so the summary reports neither as skipped" do
+    # Guards the CLAIM CLAUDE.md §12.6 now makes about this repo. If a linux job returns here
+    # WITHOUT its runner being registered, this goes red and the §12.6 wording needs revisiting —
+    # which is the conversation worth having, rather than a summary quietly warning again.
+    out, _ = preflight("macos", "--summary")
+    refute_match(/⛔/, out,
+                 "a workflow in this repo now targets an unregistered runner family; see CLAUDE.md §12.6")
   end
 
   private
@@ -71,8 +117,26 @@ class CiPreflightTest < ActiveSupport::TestCase
     # the first two tests assert both, so IO.popen's env hash is the right instrument here — a
     # `ENV[...] = nil` in setup would leak into the parent process.
     def preflight(ci_runners, *args)
-      out = IO.popen({ "CI_RUNNERS" => ci_runners }, [ SCRIPT, *args ],
-                     err: [ :child, :out ], &:read)
+      env = { "CI_RUNNERS" => ci_runners }
+      env["CI_WORKFLOW_DIR"] = @workflow_dir if @workflow_dir
+      out = IO.popen(env, [ SCRIPT, *args ], err: [ :child, :out ], &:read)
       [ out, $?.exitstatus ]
+    end
+
+    # Runs the block against a THROWAWAY workflow dir holding exactly the given files.
+    #
+    # Deliberately NOT the real .github/workflows/: a probe file dropped there would fail
+    # ci_hygiene_test (an ungated linux job is precisely what that file forbids) and would race
+    # between parallel test workers, which fork and share the tree.
+    def with_workflows(files)
+      Dir.mktmpdir do |dir|
+        files.each { |name, body| File.write(File.join(dir, name), body) }
+        @workflow_dir = dir
+        begin
+          yield
+        ensure
+          @workflow_dir = nil
+        end
+      end
     end
 end
