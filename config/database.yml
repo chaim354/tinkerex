@@ -31,7 +31,8 @@ default: &default
 
 # Postgres profile (managed/SaaS) — used when DATABASE_URL is set, e.g.
 #   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/tinkerex_test
-# Self-host stays on the SQLite default below. See docs/SYNC_SERVER.md.
+# Self-host stays on the SQLite default below. (Sync-server implementation notes moved to
+# chaim354/tinkerex-sync, docs/SYNC_SERVER.md, on 2026-08-25.)
 #
 # TLS: managed Postgres (Neon/RDS/Supabase) requires TLS. Set it via DATABASE_URL
 #   (...?sslmode=require)  — or override DB_SSLMODE here. We default to `require` for any
@@ -47,9 +48,13 @@ postgres: &postgres
   <% if ENV["DB_SSLROOTCERT"].present? %>
   sslrootcert: <%= ENV["DB_SSLROOTCERT"] %>
   <% end %>
-  # The next_seq! row lock must span a transaction across one backend connection, so a pooler
-  # in front of this MUST be session/transaction mode (never statement). A boot check in
-  # config/initializers/postgres_pooler_check.rb asserts this. See docs/SYNC_SERVER.md.
+  # THIS CONSTRAINT IS THE SYNC SERVER'S, NOT THIS APP'S, SINCE THE ENGINE LEFT (2026-08-25).
+  # It exists because next_seq!'s row lock must span a transaction on one backend connection, so a
+  # pooler in front of THAT server must be session/transaction mode, never statement. This app has
+  # no caller for next_seq! and no boot check for it -- the initializer this comment used to name,
+  # config/initializers/postgres_pooler_check.rb, went with the engine and does not exist here.
+  # See chaim354/tinkerex-sync, docs/SYNC_SERVER.md -- and note the correction attached to that
+  # section: the probe lives there but nothing invokes it yet either.
 
 development:
   <% if ENV["DATABASE_URL"].to_s.start_with?("postgres") %>
@@ -85,7 +90,8 @@ test:
 #    primary). Default DB names derive from the primary (…_cache/_queue/_cable); override any
 #    of them with SOLID_{CACHE,QUEUE,CABLE}_DATABASE_URL (e.g. to put them on a cheaper
 #    instance). NOTE: point the Solid roles at a SESSION/TRANSACTION-mode pooler too — same
-#    constraint as the primary (Solid Queue uses FOR UPDATE SKIP LOCKED). See docs/SYNC_SERVER.md.
+#    constraint as the primary (Solid Queue uses FOR UPDATE SKIP LOCKED). See
+#    chaim354/tinkerex-sync, docs/SYNC_SERVER.md.
 <% pg = ENV["DATABASE_URL"].to_s.start_with?("postgres") %>
 <% derive = ->(role_url, suffix) {
      ENV[role_url].presence ||

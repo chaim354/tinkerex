@@ -215,7 +215,10 @@ class User < ApplicationRecord
   # Pooler note: because the FOR UPDATE lock must span the read+write of head_seq, the
   # transaction's statements must run on ONE backend connection — i.e. a connection pooler in
   # front of Postgres MUST be in SESSION or TRANSACTION mode, never STATEMENT mode. See
-  # docs/SYNC_SERVER.md "Connection pooler".
+  # The pooler constraint this describes is the SYNC SERVER's now, and so is its
+  # documentation: chaim354/tinkerex-sync, docs/SYNC_SERVER.md "Connection pooler".
+  # NOTHING IN THIS PROCESS TAKES THE LOCK -- next_seq! has no caller here (CLAUDE.md
+  # §14e); head_seq survives because V1::DevicesController hands it to a joining device.
   def next_seq!
     lock!
     new_seq = head_seq + 1
