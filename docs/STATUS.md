@@ -288,12 +288,31 @@ rows in them                          []   <- all empty
 ```
 
 So the two communicate over HTTP and nothing else: separate process, separate database, no shared
-constants, no shared gem, and the maker app serves none of the sync API. **What remains is eight
-EMPTY TABLES in this app's schema**, created by `db/migrate/` — which §14j says was deliberately
-never rewritten, because inventing new timestamps for the engine half makes every already-migrated
-database (every environment this app has) report those migrations PENDING and then fail with "table
-already exists", fixable only by hand-editing `schema_migrations` on each live box. Vestigial and
-inert; removing them is a migration decision, not a coupling.
+constants, no shared gem, and the maker app serves none of the sync API.
+
+**AND THE EIGHT TABLES ARE GONE TOO, AS OF `DropRetiredSyncEngineTables` (2026-08-25).** The
+measurement above is the state immediately after the deploy and is kept as the record of it; the
+schema no longer carries them at all. **§14j's rule turned out not to forbid this**, and reading it
+as a blanket prohibition is the mistake worth naming: it says `db/migrate/` is never REWRITTEN,
+because inventing new timestamps for the engine halves of four already-run migrations makes every
+already-migrated database report them PENDING and then fail with "table already exists". A new
+migration that DROPS the tables rewrites nothing — it runs forward on every existing database and
+needs no hand-edited `schema_migrations` rows.
+
+**Emptiness was verified on all three live deployments before the migration was written**, not
+inferred from "no code references them": 0 rows in all eight on chunk_remote, share and s3.
+Dropping a populated table is unrecoverable, so the question is not whether anything reads it.
+
+Two things were deliberately NOT dropped, both found by checking rather than assumed:
+`remote_manifest_chunks` — a confusingly-named but LIVE table that `FileLayer::ChunkRemote` and its
+`ChangelogSync` both read — and `users.head_seq`, still used by `User#next_seq!` and returned by
+`V1::DevicesController`. The migration is deliberately **irreversible**: writing a `down` means
+restating eight `create_table` blocks, which is exactly the drifting second copy of the engine's
+schema this arc removed along with `db/engine_schema.rb`.
+
+`docs/schema-map.html` regenerated: **45 tables / 75 relationships**, down from 53 / 103. The
+schema-map guard caught the drop before the map was updated, naming every stale layout entry and
+edge — a guard doing its job rather than a chore.
 
 **For the Rust rewrite this is the state that was wanted**: the boundary is a wire contract, so a
 replacement sync server has to satisfy `bin/ci test-chunk-remote` (the full 2346-test suite against

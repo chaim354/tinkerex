@@ -49,10 +49,16 @@ module SchemaMap
   LAYOUT = [
     { "label" => "Accounts & devices", "group" => "sync",
       "tables" => %w[users devices user_identities] },
-    { "label" => "Sync control plane", "group" => "sync",
-      "tables" => %w[changelog_entries pending_commits conflicts file_locks share_links] },
+    # THE "Sync control plane" ROW IS GONE AND "File layer" IS DOWN TO `nodes`. Arc D Part 2
+    # retired embedded chunk and 2026-08-25's DropRetiredSyncEngineTables dropped the eight tables
+    # that were the engine's: changelog_entries, pending_commits, conflicts, file_locks,
+    # share_links, versions, manifest_chunks, chunks. They live in chaim354/tinkerex-sync's own
+    # database now, so this map -- which is about THIS app's schema -- has nothing to place.
+    #
+    # `nodes` STAYS, and is no longer a sync table at all: it is the maker app's catalog on every
+    # backend (share and s3 index into it; chunk_remote mirrors a remote changelog into it).
     { "label" => "File layer", "group" => "sync",
-      "tables" => %w[nodes versions manifest_chunks chunks] },
+      "tables" => %w[nodes] },
     # chunk_remote's LOCAL MIRROR of a remote server's manifests (Stage 4). Its own row rather than
     # a place among the engine tables above: those are the engine's, written by Sync::Commit in a
     # deployment that IS the sync server, while this is written by a client that only talks to one.
@@ -91,28 +97,19 @@ module SchemaMap
   # edges are NOT here — they are derived below, because every one of them is the same edge.
   EDGES = [
     # --- sync core ---------------------------------------------------------------
+    #
+    # ONE EDGE LEFT, WHERE THERE WERE TWENTY-TWO. The rest joined `versions`, `manifest_chunks`,
+    # `chunks`, `changelog_entries`, `conflicts`, `file_locks`, `pending_commits` and
+    # `share_links` -- all dropped on 2026-08-25 with the retired sync engine. They were never
+    # constraints, which is the fact this map exists to show: they were bare-string joins, and
+    # they now cross a PROCESS BOUNDARY as well, since the tables they pointed at belong to
+    # chaim354/tinkerex-sync's database and are reached over HTTP.
+    #
+    # `nodes.current_version_id` SURVIVES AS A COLUMN BUT NO LONGER AS AN EDGE HERE: on
+    # chunk_remote it holds a version id from the SYNC SERVER's `versions` table, which this
+    # database does not have -- exactly the situation the `remote_manifest_chunks` note above
+    # already describes, and drawing an edge would claim a join that cannot be made locally.
     [ "nodes.parent_node_id",            "nodes.node_id",               "app", "child of" ],
-    [ "nodes.current_version_id",        "versions.version_id",         "app", "current" ],
-    [ "versions.node_id",                "nodes.node_id",               "app", "version of" ],
-    [ "versions.parent_version_id",      "versions.version_id",         "app", "supersedes" ],
-    [ "versions.device_id",              "devices.id",                  "app", "committed by" ],
-    [ "versions.manifest_id",            "manifest_chunks.manifest_id", "app", "chunk list" ],
-    [ "manifest_chunks.chunk_hash",      "chunks.chunk_hash",           "app", "refcounted" ],
-    [ "changelog_entries.node_id",       "nodes.node_id",               "app", "touched" ],
-    [ "changelog_entries.version_id",    "versions.version_id",         "app", "committed" ],
-    [ "conflicts.node_id",               "nodes.node_id",               "app", "conflicted" ],
-    [ "conflicts.current_version_id",    "versions.version_id",         "app", "kept" ],
-    [ "conflicts.incoming_version_id",   "versions.version_id",         "app", "also kept" ],
-    [ "file_locks.node_id",              "nodes.node_id",               "app", "locks" ],
-    [ "file_locks.device_id",            "devices.id",                  "app", "held by" ],
-    [ "pending_commits.node_id",         "nodes.node_id",               "app", "target" ],
-    [ "pending_commits.parent_node_id",  "nodes.node_id",               "app", "into dir" ],
-    [ "pending_commits.base_version_id", "versions.version_id",         "app", "base" ],
-    [ "pending_commits.device_id",       "devices.id",                  "app", "from" ],
-    [ "pending_commits.manifest_id",     "manifest_chunks.manifest_id", "app", "on finalize" ],
-    [ "share_links.node_id",             "nodes.node_id",               "app", "shares" ],
-    [ "share_links.version_id",          "versions.version_id",         "app", "pinned to" ],
-    [ "share_links.manifest_id",         "manifest_chunks.manifest_id", "app", "bytes" ],
     # --- the maker layer's grip on the file layer: every one a bare string, §14a ---
     [ "maker_file_attachments.node_id",    "nodes.node_id",       "app", "attaches" ],
     [ "maker_previews.node_id",            "nodes.node_id",       "app", "depicts" ],
