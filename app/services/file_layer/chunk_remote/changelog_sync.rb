@@ -22,6 +22,8 @@ module FileLayer
       end
 
       def initialize(user, transport:)
+        # Parents of live files applied by THIS pull, for the project-intake nudge (see #call).
+        @nudge_parents = Set.new
         @user = user
         @transport = transport
       end
@@ -59,10 +61,39 @@ module FileLayer
           break if entries.size < PAGE
         end
 
+        # THE DEVICE-PUSH FAST PATH, RESTORED HERE RATHER THAN AT A COMMIT.
+        #
+        # CLAUDE.md §12.10 recorded `Maker::ProjectIntakeJob.nudge` as live, correct and CALLERLESS:
+        # PR #135 gave it an enqueue-with-delay shape, `984a3dc` moved its caller behind the sync
+        # engine's `Sync::Hooks` seam, and the engine then left this repo -- so nothing reached it
+        # and a file arriving through a device mount waited up to 15 minutes for the periodic sweep.
+        #
+        # THE SIGNAL WAS ALREADY HERE. §12.10 also guessed that re-wiring would need the sync server
+        # to signal this app -- "a protocol question." It does not: this pull is exactly where this
+        # app LEARNS about a node another device pushed, and it learns locally. Latency goes from
+        # "up to 15 minutes" to "the 2-minute pull, plus NUDGE_DELAY".
+        #
+        # AFTER THE LOOP, NOT INSIDE IT, and that placement is the cost control: one `exists?` for
+        # the whole catch-up instead of one per page, and none at all for the overwhelmingly common
+        # pull that applied nothing. A first sync of 200k entries asks it once.
+        #
+        # `full_resync` DELIBERATELY DOES NOT FEED THIS. It re-applies the entire tree, so every
+        # file in the library would look like an arrival; the periodic sweep is the right mechanism
+        # for that case and already covers it.
+        nudge_project_intake
+
         Result.new(applied:, cursor:, resynced:)
       end
 
       private
+
+      # Best-effort by construction -- `nudge_parents` swallows and logs. The cursor is already
+      # committed by the time this runs, so a failure here must never look like a failed pull.
+      def nudge_project_intake
+        return if @nudge_parents.empty?
+
+        Maker::ProjectIntakeJob.nudge_parents(user: @user, parent_node_ids: @nudge_parents.to_a)
+      end
 
       def cursor = @user.remote_sync_cursor
 
@@ -119,6 +150,14 @@ module FileLayer
               @current_manifest = entry["manifest"]
               upsert(node, deleted: node["deleted"], version: entry["version"])
               @current_manifest = nil
+              # A LIVE FILE LANDING SOMEWHERE is the only kind of entry that can need filing, so
+              # only those parents are collected. Directories have nothing to file and a tombstone
+              # is a removal; collecting either would enqueue sweeps for changes that cannot move
+              # anything. The `exists?` that decides whether this is a PROJECT folder is asked once
+              # for the whole pull, in `nudge_project_intake` below -- never here, per entry.
+              if !node["deleted"] && node["kind"] == "file" && node["parent_node_id"].present?
+                @nudge_parents << node["parent_node_id"]
+              end
             else
               # THE SERVER SENT NO NODE PAYLOAD. Sync::Changes only includes one when the row still
               # exists, so this is a node hard-removed since the entry was written. Marking the

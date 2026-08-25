@@ -85,7 +85,29 @@ module Maker
     # BEST-EFFORT: nothing here may fail the commit a device is waiting on.
     def self.nudge(user:, node:)
       return if node.nil? || node.parent_node_id.blank?
-      return unless user.maker_projects.where(folder_node_id: node.parent_node_id).exists?
+
+      nudge_parents(user:, parent_node_ids: [ node.parent_node_id ])
+    end
+
+    # THE SET-SHAPED ENTRY POINT, AND `nudge` ABOVE IS NOW A ONE-NODE CALL INTO IT.
+    #
+    # WHY A SET AT ALL: `nudge`'s "one indexed `exists?` per finalize" costing was written for a
+    # door that fires once PER FILE. `FileLayer::ChunkRemote::ChangelogSync` is the opposite shape
+    # -- one pull applies a whole PAGE of nodes -- so calling the per-node form in that loop would
+    # pay one query per entry to enqueue a job that `limits_concurrency` was going to discard
+    # anyway. This asks the same question ONCE for the whole batch.
+    #
+    # THIS IS NOT AN EIGHTH FILING DOOR, AND §14f'S "SWEEP, NOT A HOOK PER DOOR" IS INTACT. Nothing
+    # here decides where a file goes; it only makes the ONE sweep happen sooner. The rule §14f
+    # states is that the FILING DECISION has a single implementation reading `nodes` -- and it
+    # still does. A nudge is a trigger, not a copy of the policy.
+    #
+    # BEST-EFFORT, LIKE THE FORM IT REPLACES: a pull that has already written its cursor must not
+    # fail because a nudge could not be enqueued.
+    def self.nudge_parents(user:, parent_node_ids:)
+      ids = Array(parent_node_ids).compact_blank.uniq
+      return if ids.empty?
+      return unless user.maker_projects.where(folder_node_id: ids).exists?
 
       set(wait: NUDGE_DELAY).perform_later(user_id: user.id)
     rescue StandardError => e
