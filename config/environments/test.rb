@@ -4,6 +4,30 @@
 # and recreated between test runs. Don't rely on the data there!
 
 Rails.application.configure do
+  # ENCRYPTION KEYS COME FROM LITERALS HERE, NOT FROM CREDENTIALS, AND THAT IS WHAT LETS THE SUITE
+  # RUN WITHOUT A PRODUCTION SECRET.
+  #
+  # Arc C turned Active Record encryption on and put the three keys in config/credentials.yml.enc.
+  # That works locally and on all four deployments, which is what its own review checked -- and it
+  # broke CI on the first push, because credentials need config/master.key, .gitignore line 34
+  # (`/config/*.key`) keeps that file OUT of the repo, and ci.yml supplies no RAILS_MASTER_KEY.
+  # Every `encrypts` model raised `Missing Active Record encryption credential:
+  # active_record_encryption.primary_key` in three jobs at once. The reviewer asked exactly the
+  # right question -- "could this decrypt on one deployment and fail on another?" -- enumerated the
+  # four deployments, and did not count CI, which has no master key at all.
+  #
+  # THESE ARE NOT SECRETS AND MUST NOT BE TREATED AS ANY. They encrypt throwaway rows in a database
+  # rebuilt per run; the value of a test key is that everyone has the same one. Reading the real
+  # keys here would put a production credential on the critical path of `bin/rails test` and make a
+  # fresh clone unable to run the suite -- a cost paid on every contributor, forever, to protect
+  # data that does not exist.
+  #
+  # Production is unchanged: it reads credentials, and `RAILS_MASTER_KEY` already reaches all four
+  # deployments through .kamal/secrets-common (docs/DEPLOY.md).
+  config.active_record.encryption.primary_key = "test-only-primary-key-not-a-secret-000000"
+  config.active_record.encryption.deterministic_key = "test-only-deterministic-key-not-secret-00"
+  config.active_record.encryption.key_derivation_salt = "test-only-key-derivation-salt-not-secret"
+
   # Settings specified here will take precedence over those in config/application.rb.
 
   # While tests run files are not watched, reloading is not necessary.
