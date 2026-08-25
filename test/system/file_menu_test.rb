@@ -64,15 +64,23 @@ require "application_system_test_case"
 #     technicality.
 class FileMenuTest < ApplicationSystemTestCase
   setup do
-    pin_file_layer_backend("chunk")   # chunk-shaped by construction — see uploader_test.rb
+    # A hermetic share library, where this pinned embedded chunk. What the suite is about is the
+    # right-click MENU -- that it opens, closes on an outside click, offers Download and Edit, and
+    # that attaching moves the file -- none of which is a claim about which backend holds bytes.
+    @root = use_fresh_share_library!
     @user = sign_in_as("filemenu@example.com")
+  end
+
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
   end
 
   # Pure DOM/event wiring -- the cheapest thing in this controller to break and the least visible
   # server-side. A bare Node (no version) is enough: FileLayer::Chunk#stat_all includes every
   # present node whether or not it has content (Size renders "—"), so the row shows up.
   test "the right-click file menu opens on its trigger and closes on an outside click" do
-    @user.nodes.create!(node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
     visit files_path
 
     assert_no_selector ".file-menu"
@@ -97,7 +105,7 @@ class FileMenuTest < ApplicationSystemTestCase
   # asserts the controller turns the attribute into a usable entry. Different failures — the
   # attribute can be present on a menu that never reads it, and vice versa.
   test "the right-click menu offers Download, in the grid as well as the list" do
-    node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
     visit files_path(view: "grid")
 
     find(".file-cell", text: "widget.stl").right_click
@@ -124,7 +132,7 @@ class FileMenuTest < ApplicationSystemTestCase
   test "the right-click menu offers Edit in the addon that made the file" do
     prior_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
-    node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "box.svg", kind: "file")
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "box.svg", kind: "file")
     state = @user.maker_addon_states.create!(addon_key: "boxes", name: "shelf box", data: {})
     state.files.create!(node_id: node.node_id, role: "output", position: 0)
 
@@ -145,7 +153,7 @@ class FileMenuTest < ApplicationSystemTestCase
   # ordinary case the attach control exists for.
   test "attaching a file to a project moves it into the project's folder" do
     project, folder = project_with_folder(@user)
-    node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "widget.stl", kind: "file",
+    node = create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file",
                                parent_node_id: folder.node_id)
 
     visit file_path(node.node_id)
@@ -203,26 +211,23 @@ class FileMenuTest < ApplicationSystemTestCase
 
   private
 
-    # A real, committed file — node + version + a chunk actually sitting in the store — needed for
-    # the collision test's "the original is untouched" assertion, which a bare `Node.create!` (no
-    # version) cannot back. Mirrors test/services/file_layer/chunk_test.rb#create_file!.
+    # A REAL FILE WITH ITS BYTES ON DISK, where this used to drive Sync::Commit and put a chunk in
+    # the in-process store. The collision test asserts "the original is untouched", which a bare
+    # Node.create! cannot back -- there has to be real content to still be there afterwards -- and
+    # a file in the share root backs it exactly as a committed chunk did.
     def create_file!(name:, bytes:, parent_node_id: nil)
-      node_id = SecureRandom.uuid
-      hash = Digest::SHA256.hexdigest(bytes)
-      Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
-      commit_id = SecureRandom.uuid
-      Sync::Commit.begin(
-        user: @user, device: device, commit_id:, node_id:, parent_node_id:,
-        name:, base_version_id: nil, size: bytes.bytesize,
-        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
-        manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
-      )
-      Sync::Commit.finalize(user: @user, commit_id:)
-      @user.nodes.find_by!(node_id:)
-    end
-
-    def device
-      @device ||= Device.register!(user: @user, name: "filemenu-system-test")
+      parent = parent_node_id && @user.nodes.find_by(node_id: parent_node_id)
+      rel = parent&.storage_path.present? ? File.join(parent.storage_path, name) : name
+      path = @root.join(rel)
+      path.dirname.mkpath
+      path.binwrite(bytes)
+      # `nodes.create!`, NOT test_helper's create_node!. That helper materialises a placeholder of
+      # its own, so calling it here would write the real bytes above and then immediately overwrite
+      # them with "x" -- which is exactly what happened, and surfaced as this file's collision test
+      # reading back "x" where it expected "original bracket bytes".
+      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file", parent_node_id:,
+                          size: bytes.bytesize, storage_path: rel,
+                          content_hash: Digest::SHA256.hexdigest(bytes))
     end
 
     def assert_eventually(message, timeout: 15)

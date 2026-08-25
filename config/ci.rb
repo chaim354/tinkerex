@@ -220,8 +220,18 @@ GATES = {
     ci.step "Tests: chunk_remote (journey + full suite, real sync server)", "bash", "-c", script
   end,
 
+  # THE SYSTEM GATE NOW NEEDS A LIBRARY_PATH, AND IT DID NOT BEFORE. It sets no LIBRARY_BACKEND,
+  # so it takes FileLayer.build's DEFAULT -- which was embedded `chunk` (needs no configuration at
+  # all) and is `share` since Arc D Part 2 (reads ENV.fetch("LIBRARY_PATH") and raises without it).
+  # Left alone, 82 of these tests failed with `KeyError: key not found: "LIBRARY_PATH"` several
+  # frames from anything mentioning a backend.
+  #
+  # Same mktemp + trap discipline as the `test` gate above, and for the same reason: self-hosted
+  # runners are PERSISTENT, so a stray tmpdir per run accumulates unbounded.
   "system" => ->(ci) do
-    ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
+    ci.step "Tests: System (real browser)",
+            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test:system'
   end
 }.freeze
 

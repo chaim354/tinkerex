@@ -27,10 +27,21 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   SAVE_409 = %r{/tools/boxes - Failed to load resource.+409}
 
   setup do
+    # A fresh library root per test. The system gate shares ONE LIBRARY_PATH for the whole run
+    # while the database rolls back per test, so files outlive the rows that named them and
+    # Share's clobber refusal (§14a) rejects the second test to save a given name -- which
+    # surfaces as 'Not saved. "shelf-box.svg" already exists' rather than as anything about
+    # the feature under test.
+    @root = use_fresh_share_library!
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
     FakeBoxesSidecar.install!
     @user = sign_in_as "boxrevisions@example.com"
+  end
+
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
   end
 
   teardown do

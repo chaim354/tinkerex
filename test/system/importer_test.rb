@@ -47,9 +47,16 @@ require "zip"
 #     every other assertion in the file, which is why that one is written separately.
 class ImporterTest < ApplicationSystemTestCase
   setup do
-    pin_file_layer_backend("chunk")   # chunk-shaped by construction — see uploader_test.rb
+    # A hermetic share library, where this pinned embedded chunk. The subject is the in-browser
+    # unzip and the attach that follows, not the backend underneath it.
+    @root = use_fresh_share_library!
     @user = sign_in_as("importer@example.com")
     @zip = build_bundle
+  end
+
+  teardown do
+    FileLayer.reset!
+    FileUtils.remove_entry(@root) if @root&.exist?
   end
 
   teardown { @zip&.close! }
