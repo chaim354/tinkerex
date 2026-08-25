@@ -71,9 +71,21 @@ module FileLayer
     # that can substitute one and not the other can only exercise half the round trip. A sync
     # server backed by a memory or local store presigns URLs IT serves, which is exactly the case
     # this seam lets a suite reach without standing up object storage.
-    def initialize(transport: nil, chunk_fetch: ChunkFetch)
+    #
+    # `transport:`, INJECTED, IS THE SAME OBJECT FOR EVERY USER -- ARC C TASK 4 CHANGED WHAT THAT
+    # MEANS. Before this arc it was fine because there was only ever ONE token in the whole
+    # deployment to inject. Now a real (non-injected) transport is PER-USER (see #transport below),
+    # so injecting one here is deliberately an escape hatch for tests that want to exercise every
+    # OTHER verb without also exercising per-user token resolution -- every existing test in this
+    # tree that constructs `ChunkRemote.new(transport: ...)` does exactly that, and none of them
+    # needed to change for Task 4, which is the point of keeping this seam's contract unchanged.
+    # `provisioning:` is the analogous seam for the ONE thing `transport:` alone cannot fake --
+    # lazily provisioning a user who has no token yet (#device_token_for below); see Provisioning's
+    # own header for why it is safe to hold as ordinary shared state where `transport:` is not.
+    def initialize(transport: nil, chunk_fetch: ChunkFetch, provisioning: nil)
       @transport = transport
       @chunk_fetch = chunk_fetch
+      @provisioning = provisioning
     end
 
     def capabilities = CAPABILITIES
@@ -124,7 +136,7 @@ module FileLayer
       manifest = manifest_for(user, version_id)
       raise NotFound, "no manifest for #{node_id.inspect} at #{version_id.inspect}" if manifest.empty?
 
-      urls = presign(manifest.map(&:chunk_hash))
+      urls = presign(user, manifest.map(&:chunk_hash))
       +"".b.tap { |buf| manifest.each { |c| buf << fetch_chunk(c, urls) } }
     end
 
@@ -148,7 +160,7 @@ module FileLayer
       manifest = manifest_for(user, node.current_version_id)
       raise NotFound, "no manifest for node #{node_id.inspect}" if manifest.empty?
 
-      urls = presign(manifest.map(&:chunk_hash))
+      urls = presign(user, manifest.map(&:chunk_hash))
       Delivery::Stream.new(enum: Enumerator.new { |y| manifest.each { |c| y << fetch_chunk(c, urls) } })
     end
 
@@ -215,8 +227,8 @@ module FileLayer
 
       destination_vacant!(user, parent_node_id, name)
       node_id = SecureRandom.uuid
-      transport.post("/v1/nodes", { node_id:, parent_node_id:, name:, mode: 0o755,
-                                    mtime: (Time.current.to_f * 1e9).to_i })
+      transport(user).post("/v1/nodes", { node_id:, parent_node_id:, name:, mode: 0o755,
+                                          mtime: (Time.current.to_f * 1e9).to_i })
       refresh!(user)
       stat(user, node_id:)
     end
@@ -243,8 +255,8 @@ module FileLayer
     def move(user, node_id: nil, new_parent_node_id: nil, new_name: nil)
       live_node!(user, node_id)
       destination_vacant!(user, new_parent_node_id, new_name, except_node_id: node_id)
-      transport.post("/v1/nodes/#{node_id}/move",
-                     { new_parent_node_id:, new_name: })
+      transport(user).post("/v1/nodes/#{node_id}/move",
+                           { new_parent_node_id:, new_name: })
       refresh_or_defer!(user)
       stat(user, node_id:)
     end
@@ -254,7 +266,7 @@ module FileLayer
     # server's, so remote mode inherits it rather than reimplementing it.
     def delete(user, node_id: nil)
       live_node!(user, node_id)
-      transport.delete("/v1/nodes/#{node_id}")
+      transport(user).delete("/v1/nodes/#{node_id}")
       refresh!(user)
       nil
     end
@@ -263,7 +275,7 @@ module FileLayer
     # `present`, because the node being deleted is the whole precondition.
     def undelete(user, node_id: nil)
       user.nodes.exists?(node_id:) || raise(NotFound, "node #{node_id.inspect} does not exist")
-      transport.post("/v1/trash/#{node_id}/restore", {})
+      transport(user).post("/v1/trash/#{node_id}/restore", {})
       refresh!(user)
       stat(user, node_id:)
     end
@@ -283,7 +295,7 @@ module FileLayer
     def begin_upload(user, name:, size:, manifest:, device: nil, parent_node_id: nil,
                      node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
       node_id ||= SecureRandom.uuid
-      body = transport.post("/v1/commit", {
+      body = transport(user).post("/v1/commit", {
         commit_id: SecureRandom.uuid, node_id:, parent_node_id:, name:, base_version_id:,
         size:, mtime: mtime || (Time.current.to_f * 1e9).to_i, mode:, manifest:
       })
@@ -334,7 +346,7 @@ module FileLayer
     # than the thing doing the notifying. Maker::Addons::LibraryOutput passes `broadcast: false`
     # (§14a) and gets what it asked for either way -- there is nothing here to suppress.
     def finalize_upload(user, commit_id:, verify: true, broadcast: true)
-      body = transport.post("/v1/commit/#{commit_id}/finalize", { verify: })
+      body = transport(user).post("/v1/commit/#{commit_id}/finalize", { verify: })
       version_id = body["version_id"]
       refresh!(user)
 
@@ -364,8 +376,8 @@ module FileLayer
 
     # ONE ROUND TRIP FOR THE WHOLE FILE, not one per chunk. The endpoint takes an array and answers
     # a hash, and a 40-chunk file would otherwise be 40 sequential requests before the first byte.
-    def presign(hashes)
-      body = transport.post("/v1/chunks/download", { hashes: hashes.uniq })
+    def presign(user, hashes)
+      body = transport(user).post("/v1/chunks/download", { hashes: hashes.uniq })
       body["urls"] || {}
     end
 
@@ -404,7 +416,7 @@ module FileLayer
     # rather than what we asked for. It is also what makes the returned FileInfo trustworthy: `stat`
     # reads the mirror, so without this it would answer from the state before our own mutation.
     def refresh!(user)
-      ChangelogSync.new(user, transport:).call
+      ChangelogSync.new(user, transport: transport(user)).call
     end
 
     # The same rule Chunk enforces, against the mirror. `except_node_id` is what makes a move onto a
@@ -434,13 +446,60 @@ module FileLayer
       )
     end
 
-    # Built lazily rather than in the constructor so that merely naming this class -- which the
-    # architecture guards and `bin/rails runner` both do -- never demands a URL or a token.
-    def transport
-      @transport ||= Transport.new(
-        base_url: ENV.fetch("CHUNK_REMOTE_URL"),
-        token: ENV.fetch("CHUNK_REMOTE_TOKEN")
-      )
+    # ARC C TASK 4 -- PER-USER, AND DELIBERATELY NOT MEMOIZED ON `self`. This used to be
+    # `@transport ||= Transport.new(token: ENV.fetch("CHUNK_REMOTE_TOKEN"))` -- one token, shared by
+    # every request, because there was only ever one device in the whole deployment. That is THE
+    # DEFECT this arc closes (this file's own header, and CLAUDE.md §14a): `FileLayer.current` is
+    # ONE adapter instance shared by every Puma thread (`FileLayer.current ||= build`), so an ivar
+    # memo here is not a per-request cache, it is PROCESS-WIDE STATE -- the first user to call this
+    # method after boot would decide the token every OTHER user's request uses until the process
+    # restarts. Two maker users would share one remote library and see each other's files, which is
+    # a cross-tenant credential leak, not a correctness nit.
+    #
+    # THE FIX IS NOT `Thread.current`, EVEN THOUGH `#batch` ABOVE USES EXACTLY THAT FOR A SIMILAR-
+    # LOOKING PROBLEM. `#batch`'s frame exists to COALESCE STATE ACROSS SEVERAL CALLS within one
+    # logical operation (deferring `refresh!` until a batch closes) -- there is real work to cache.
+    # A per-user Transport has NOTHING to cache: `Transport.new` is four ivar assignments and opens
+    # no connection (every request it makes is its own fresh `Net::HTTP.start` block, in
+    # transport.rb), so building one fresh on every call costs nothing measurable. Thread-local
+    # memoization would ALSO be strictly worse here, not merely unnecessary: Puma reuses threads
+    # across unrelated requests, so a `Thread.current`-cached transport would go on serving a LATER
+    # request for a DIFFERENT user with the FIRST user's token until that specific thread happened
+    # to rotate back to the first user -- a smaller, sneakier version of the same leak, and one that
+    # would also serve a since-rotated token forever. Building fresh every time has no cache to go
+    # stale and no shared slot for a second user to land in. (This is also why the mutation-check
+    # for this method is "put `@transport ||=` back", not "add a wrong kind of cache": ANY caching
+    # keyed on less than the user is the shape of the bug, `Thread.current` included.)
+    #
+    # `@transport` (the CONSTRUCTOR-INJECTED value, note: NOT the old ivar this replaced -- same
+    # name, different job) IS THE ONE EXCEPTION, and it stays exactly as unconditional as it always
+    # was: a test that injects a transport gets THAT OBJECT for every user, on purpose, so every
+    # existing test in this tree that never touches per-user resolution at all keeps working
+    # unchanged. See this class's own constructor comment for why that is the right contract rather
+    # than a gap.
+    def transport(user)
+      return @transport if @transport
+
+      Transport.new(base_url: ENV.fetch("CHUNK_REMOTE_URL"), token: device_token_for(user))
+    end
+
+    # Reads this user's own device token, provisioning a fresh remote library on their first write
+    # if they have never had one (Arc C Task 5; FileLayer::ChunkRemote::Provisioning). `.presence`,
+    # not a bare read: `sync_device_token` is nil until provisioned, never "".
+    def device_token_for(user)
+      user.sync_device_token.presence || provisioning.call(user)
+    end
+
+    # MEMOIZED ON `self`, AND THIS ONE IS SAFE TO BE -- the distinction from `@transport`/
+    # `Thread.current` above is worth stating explicitly rather than trusting a reader to rederive
+    # it. `Provisioning` holds no PER-USER state of its own: its one lazily-built collaborator (the
+    # admin transport) carries SYNC_ADMIN_TOKEN, a single deployment-wide operator credential that
+    # is, BY DESIGN, the same value for every user this process ever provisions -- unlike a device
+    # token, there is no "whose admin token is it" question for a shared instance to get wrong.
+    # Every call still takes `user` as an argument and reads/writes THAT row; nothing here is
+    # cached per-user.
+    def provisioning
+      @provisioning ||= Provisioning.new
     end
   end
 end

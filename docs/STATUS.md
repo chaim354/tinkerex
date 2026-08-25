@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-24 (**Stage 5 Arc A+B: chunk_remote closes 10/10 — `test-chunk-remote` is a real `bin/ci` gate; deployed to all three Unraid backends**)
+**Updated:** 2026-08-24 (**Stage 5 Arc A+B+C: chunk_remote closes 10/10 and gets per-user enrolment — `test-chunk-remote` is a real `bin/ci` gate; deployed to all three Unraid backends; the full-suite-against-a-real-server leg Arc A deferred has now been TRIED and MEASURED, honestly, and it is not gate-worthy yet — see "Arc C" below for precisely why**)
 
 ## What this file is
 
@@ -71,7 +71,7 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-24): Stage 5 Arc A+B — chunk_remote closes 10/10; `test-chunk-remote` becomes a real `bin/ci` gate — **MERGED + DEPLOYED** (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`)
+## Latest (2026-08-24): Stage 5 Arc A+B+C — chunk_remote closes 10/10, gets per-user enrolment, and the full-suite leg gets measured — Arc A+B **MERGED + DEPLOYED**, Arc C on branch `claude/stage-5-arc-c` (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`)
 
 ### Deployed to the three Unraid backends, 2026-08-24
 
@@ -334,6 +334,10 @@ Both argued at the top of the Arc A plan itself, not buried in a task step:
    218 test files build nodes with `user.nodes.create!` — 255 occurrences — which the server has
    never heard of; any write verb against one 404s for a test-shape reason, not a `chunk_remote`
    defect.) The spec did not carry this ordering dependency; measurement found it.
+   **MEASURED, ARC C, 2026-08-24: this prediction correctly named the isolation problem as real
+   (it is — 26/29 residual failures once the bigger noise is stripped) but did not anticipate the
+   bigger noise itself — ~50 test files unconditionally naming `Sync::`/`FileLayer::Chunk`, never
+   exercised in a genuinely engine-absent process at this scale before. See "Arc C" below.**
 
 ### `sync-contract.yml` was expected RED, that was Arc A's deliverable, and Arc B retired the file
 
@@ -417,11 +421,16 @@ because of what follows.
 
 What Arc B did **not** touch, and what remains genuinely unproven:
 
-- **The full maker suite has still never run against a remote sync server.** `ChunkRemote` resolves
-  a single process-wide token (`chunk_remote.rb:327-328`), so every test's maker user still maps to
-  ONE sync-server user; per-test isolation needs a provisioning endpoint on the sync server, which
-  is Arc C's job (per-user enrolment), not Arc B's. This is unchanged from Arc A's own correction
-  #2 above.
+- **SUPERSEDED — see "Arc C" below.** ~~The full maker suite has still never run against a remote
+  sync server. `ChunkRemote` resolves a single process-wide token (`chunk_remote.rb:327-328`), so
+  every test's maker user still maps to ONE sync-server user; per-test isolation needs a
+  provisioning endpoint on the sync server, which is Arc C's job (per-user enrolment), not Arc
+  B's.~~ Arc C removed the process-wide-token half of this (per-user enrolment, below) and then
+  **tried it**: the full suite now runs against a real standalone server. It does not pass — but
+  not for the reason this bullet predicted. Kept here, struck through rather than deleted, because
+  the prediction was half right (isolation IS a real, confirmed problem, 26 of 29 failures once the
+  bigger noise is stripped away) and half wrong (it is not the DOMINANT blocker) — see Arc C's own
+  section for the measured, precise answer.
 - **This is still ten journey tests, not the full maker feature set.** Project intake, inventory/
   BOM, previews/thumbnails, sharing, multi-device convergence beyond the one freshness probe, and
   concurrent/high-volume behavior are all untouched by this suite — see
@@ -429,6 +438,276 @@ What Arc B did **not** touch, and what remains genuinely unproven:
   which is unchanged by Arc B closing the four gaps it measured.
 - **At-rest chunk encryption, real OAuth/OIDC, sharing, selective sync** — all still open per
   CLAUDE.md §12, untouched by this arc.
+
+### Arc C, 2026-08-24 — per-user enrolment, and the full-suite leg finally tried (branch `claude/stage-5-arc-c`)
+
+**Plan:** `docs/superpowers/plans/2026-08-24-arc-c-per-user-enrolment.md`. **Design:**
+`docs/superpowers/specs/2026-08-23-stage-5-engine-leaves-the-process-design.md`, Arc C of four.
+
+Closes the defect Arc A measured and Arc B correctly declined to fix (it was never Arc B's job):
+`ChunkRemote#transport` read ONE process-wide `CHUNK_REMOTE_TOKEN`, so every maker user's writes
+reached the sync server as a single device belonging to a single sync-server user — harmless for
+self-host (tenant = user, §8), a cross-tenant credential leak for anything multi-user.
+
+**Tasks 1–2 (sync repo, `chaim354/tinkerex-sync`) — `POST /v1/admin/libraries`, merged to `main`
+first, per the plan's own cross-repo sequencing rule.** A distinct operator credential,
+`SYNC_ADMIN_TOKEN` — never a device token, compared with `ActiveSupport::SecurityUtils
+.secure_compare` — mints a `User` plus its first `Device`, returning `{user_id, device_id,
+device_token}` once (only the digest is stored, matching `sync:device:issue`). A repeat call for
+an email that already has a library is refused (409 `email_taken`), not silently handed a second
+one. Landed on the sync repo's `main` as `f9da016` before Task 3 started here.
+
+**Task 3 — Rails encryption, not configured anywhere in this app until now.**
+`config/initializers/active_record_encryption.rb` sets `support_unencrypted_data = false`
+explicitly (matches the framework default today, set anyway because a matching default is exactly
+what a future `load_defaults` bump silently flips — CLAUDE.md §14e's own recurring lesson) — taken
+now, while the column it protects (Task 4's) is new and empty, because it only gets more expensive
+to adopt after real unencrypted data exists under a permissive regime. Keys live in
+`config/credentials.yml.enc` under `active_record_encryption:`, reached via the already-deployed
+`RAILS_MASTER_KEY` — no new deploy plumbing. `docs/DEPLOY.md` gained the key-rotation story (what
+happens to an encrypted column if the master key is ever rotated: every already-encrypted value
+becomes permanently undecryptable, so rotation is a "re-encrypt everything first" operation, not a
+"just swap the key" one).
+
+**Task 4 — the per-user token.** `users.sync_device_token` (migration
+`20260824120000_add_sync_device_token_to_users.rb`, nullable, no default — Task 5 fills it in
+lazily), `encrypts :sync_device_token, deterministic: false` on `User` (non-deterministic because
+nothing ever queries by this column's value — a device token is looked up by who holds the row,
+never the reverse — so deterministic would only add a cost: it leaks equality between two rows
+that happen to share a token). `FileLayer::ChunkRemote#transport` is now built PER USER, and —
+this is the part worth stating precisely rather than trusting a reader to rederive it —
+**deliberately NOT memoized at all, not even onto `Thread.current` the way `#batch` (Arc B gap
+(c)) is.** `#batch`'s thread-local frame exists to coalesce STATE ACROSS SEVERAL CALLS within one
+logical operation — there is real work to cache. A per-user `Transport` has nothing to cache:
+`Transport.new` is four ivar assignments and opens no connection (every request is its own fresh
+`Net::HTTP.start` block), so building one fresh on every call costs nothing measurable, and
+`Thread.current` memoization would be **strictly worse than the bug it would replace**: Puma
+reuses threads across unrelated requests, so a thread-local cached transport would go on serving a
+LATER request for a DIFFERENT user with the FIRST user's token until that specific thread happened
+to rotate back — a smaller, sneakier version of the same cross-tenant leak, and one that would
+also keep serving a since-rotated token forever. `CHUNK_REMOTE_TOKEN` survives only as the
+bootstrap credential the boot guard uses to prove at least one real device has been minted on the
+target server (`lib/library_backend_check.rb`'s own comment says so); no per-request code path
+reads it any more.
+
+**MUTATION-CHECK, RUN FRESH FOR THIS ENTRY (CLAUDE.md §15: mutation-check every guard you write —
+this one existed before Task 6 but had never had its number captured in this file).** Restored the
+old shape for one line — `def transport(user); return @transport if @transport;
+@transport = Transport.new(...); end` — and reran
+`test/services/file_layer/chunk_remote/transport_isolation_test.rb`. Three of its four tests went
+red immediately (the fourth, "an injected transport is returned for EVERY user, unconditionally,"
+correctly stayed green — it does not exercise this code path). The concurrent test's own assertion
+message: **"200 of 400 observations carried the WRONG user's token"** — 8 threads (4 per user) ×
+50 iterations, a `Concurrent::CountDownLatch` forcing simultaneous start, and once the first caller
+memoizes, every later call from EITHER user's threads returns that one cached transport, so almost
+exactly half of all 400 observations carry the wrong token, matching the theory precisely rather
+than approximately. Reverted immediately after capturing the number (`git diff --stat` on the file
+confirms byte-identical to the committed version); all four tests green again, `4 runs, 10
+assertions, 0 failures`.
+
+**Task 5 — lazy provisioning, exactly once under concurrency.**
+`FileLayer::ChunkRemote::Provisioning#call`: a user with a token already returns it untouched, no
+lock and no network; a user with none takes `user.with_lock` (the SAME primitive `User#next_seq!`
+already relies on for this exact shape) across the admin HTTP call itself — deliberate, not an
+oversight left for later, because it only ever contends against a SECOND request for the SAME
+not-yet-provisioned user and happens at most once per user, ever. **Concurrency proof, reran for
+this entry:** `test/services/file_layer/chunk_remote/provisioning_test.rb`'s "two simultaneous
+first-uses of the same fresh user provision EXACTLY ONCE" — two real threads, a
+`Concurrent::CountDownLatch`, and a `SlowAdminTransport` fake that sleeps 0.2s **while holding the
+lock** (not padding — the same reasoning CLAUDE.md §14e states for why a passing concurrency test
+is not by itself evidence a lock works: without a forced hold, two fast operations might simply
+never interleave in a short test run even with a broken implementation). Asserts three things
+together: the admin endpoint was hit **exactly once** (`admin.calls == 1`) for one fresh user, both
+threads' returned tokens are **identical** (`tokens.uniq.size == 1` — the loser saw the winner's
+committed value rather than provisioning a second time), and the persisted column matches. `9 runs,
+28 assertions, 0 failures` for the whole provisioning suite, including this test, reran clean.
+`update_column` (not `update_all`) is what writes the minted token — the same reasoning
+`User#next_seq!` already established: no validations/callbacks needed, and critically it goes
+through the SAME attribute-type machinery a plain assignment would, so `encrypts` still runs;
+`update_all` writes raw SQL and would silently store the token in plaintext.
+
+A provisioning failure — the sync server refusing (409 `email_taken`, the ordinary or the rare
+race-loser shape) or being unreachable — becomes `FileLayer::FetchError`, never `NotFound`: the
+library is not gone, and every existing `FileLayer::FetchError` caller across the app already
+renders this correctly (`FilesController`, `TrashController`, `ModelsController`,
+`Projects::UploadsController`, `Tools::AddonsController`) with no new wiring.
+
+#### Task 6 — the full-suite leg, tried honestly
+
+**The literal recipe** (`bin/sync-server prepare && start`, then `LIBRARY_BACKEND=chunk_remote
+bin/rails db:test:prepare test` against the real server it just booted — no `SYNC_ENGINE`
+override, i.e. exactly what a real `chunk_remote` deployment's boot looks like) —
+
+**`2504 runs, 5638 assertions, 10 failures, 808 errors, 27 skips`, 7.06s (Minitest), ~9s wall
+including `db:test:prepare` and server boot.** 818 of 2504 (32.7%) non-passing. **This is NOT the
+fourth `bin/ci` gate Arc A deferred — not close — and it does not become one in this arc.**
+
+Sampled exhaustively, not sparsely: all 813 `Error:` blocks' exception classes (805 `NameError` +
+8 `NoMethodError`), the full backtrace of every one of the 142 occurrences of the single most
+common message, all 10 `Failure:` blocks read individually, and a whole-log grep (not a sample) for
+every isolation/provisioning-collision signature (`email_taken`, `cannot auto-provision`, `the sync
+server refused`) — zero hits.
+
+**Classification — one dominant root cause, not the one Arc A predicted:**
+
+- **Test-shape problem, ~818 of 818 (effectively 100%).** Roughly 50–55 of the 218 test files
+  (`grep`-counted via the `::Sync$`/`FileLayer::Chunk` backtraces) reference `Sync::` or
+  `FileLayer::Chunk` **unconditionally** — in a `setup do Sync::Storage::ChunkStore.reset! end`
+  block (verbatim, `test/integration/v1/maker/previews_test.rb:7`, one of dozens with the identical
+  shape), or via `pin_file_layer_backend("chunk")` (a documented, legitimate helper for testing the
+  CHUNK adapter specifically regardless of the ambient backend — all 142 occurrences of
+  `uninitialized constant #<Class:FileLayer>::Chunk` trace to the SAME line,
+  `app/services/file_layer.rb:120` inside `FileLayer.build`, called by that one helper). Every one
+  of these files was written when the only backends that ever ran a full suite (`test`,
+  `test-share`, `test-s3`) all set `SYNC_ENGINE=1` specifically so the gem stays loaded regardless
+  of ambient backend (§14j) — so authors freely mixed `Sync::` fixture setup with
+  backend-pinning, and NOTHING before this measurement ever ran this much of the suite in a
+  genuinely engine-absent process (`test-no-engine` runs exactly one dedicated file). **This is not
+  a `chunk_remote` defect** — it is architecturally correct that a `chunk_remote` deployment never
+  loads the gem (§14a) — it is ~50 test files never having had to confront that fact before.
+  - Six of the ten `Failure:` (not `Error:`) blocks are `V1::CapabilityGatingTest`, one layer
+    deeper on the same root cause: these expect gated sync ROUTES to exist and answer 501, but
+    ROUTE DRAWING happens once at boot (`config/routes.rb`), which `pin_file_layer_backend`
+    (a per-test `ENV`/`FileLayer.reset!` trick) cannot retroactively undo — so the routes are
+    simply absent (404) rather than present-but-refusing (501). A genuinely new interaction, never
+    exercised before, and still the same family: an assumption that route drawing and adapter
+    selection move together, true on every leg that has ever run the capability-gating suite until
+    this one.
+  - One (`FileLayer::BuildChunkRemoteTest`) is an artifact of **this measurement's own recipe**:
+    the test asserts `LibraryBackendCheck::Error` when `CHUNK_REMOTE_URL`/`TOKEN` are absent, which
+    is only true when nothing else in the ambient environment has set them — but the task's own
+    recipe (`set -a; . tmp/sync-server.env; set +a`) deliberately exports them for every OTHER
+    chunk_remote-aware test to use the real server. Not a defect in the boot guard (which behaved
+    correctly: both were present, so it did not raise) — a narrow, fixable test assumption.
+- **Isolation problem (maker DB rolls back, sync server does not) — zero confirmed occurrences in
+  this run**, not because it is fixed but because it is masked: the files most at risk (a static
+  `sign_in(email = "...")` default reused across many test methods in one class — 16 files carry
+  this exact shape, `grep`-enumerated) are almost all ALSO in the `Sync::`-reference bucket above
+  and fail before ever reaching a provisioning call. `test/integration/no_engine_boot_test.rb`
+  correctly self-skips (`unless ENV["SYNC_ENGINE"] == "0"`) rather than running or failing — its
+  own guard against the exact "a skip that should be a claim" trap CLAUDE.md §14j records.
+  `test/integration/web/settings_panel_test.rb` (static email `panel@example.com`, 3 tests) is the
+  one file with a REAL, unguarded `FileLayer.current.stat(...)` call that passed clean — because
+  `stat` is a pure local SQL read (§2's "the WAN is never in the metadata path," true even for a
+  fabricated node the server never heard of) and never reaches `device_token_for` at all. This
+  matters: it shows the isolation risk is specifically a WRITE/provisioning-path risk, not a
+  blanket one — read-only tests that build local nodes are safe regardless of server-side
+  ignorance.
+- **Real `chunk_remote` adapter defects: zero.** The adapter's own dedicated suites —
+  `chunk_remote_journey_test.rb` (10 tests), `provisioning_test.rb` (9), `transport_isolation_test.rb`
+  (4), and the `FileLayer::ChunkRemote::MutationContractTest`/`UploadTest` suites — are absent from
+  every failure list in this run (checked by grepping their class names against the full log, not
+  inferred).
+
+**A supplementary probe, to separate the noise from the signal — NOT part of the literal recipe,
+run to see what is underneath it: `LIBRARY_BACKEND=chunk_remote SYNC_ENGINE=1 bin/rails test`**
+(forcing the gem to load, the way `test`/`test-share`/`test-s3` already do, while
+`FileLayer.current` is still genuinely `ChunkRemote` — `LIBRARY_BACKEND` and `SYNC_ENGINE` are
+independent knobs).
+
+**`2504 runs, 9212 assertions, 25 failures, 4 errors, 26 skips`, 8.55s. 29 of 2504 (1.2%)
+non-passing** — run count identical to the literal-recipe run (2504 = 2504), assertion count now
+in the same ballpark as the other three backends' own ~9200 (STATUS.md's own Arc B capture:
+2491/9233 chunk, 2491/9202 share, 2491/9202 s3 — the 2491→2504 shift on all of them is Arc C's own
+13 new tests, `provisioning_test.rb` 9 + `transport_isolation_test.rb` 4). All 29 read and
+classified individually, by class:
+
+| class | count | classification |
+|---|---:|---|
+| `Tools::AddonsControllerTest` | 26 | **isolation problem — confirmed, precisely** |
+| `FileLayer::BuildChunkRemoteTest` | 2 | test-shape (same ambient-env artifact as above) |
+| `ChunkRemoteJourneyTest` | 1 | test-shape (artifact of forcing `SYNC_ENGINE=1`, below) |
+
+- **The isolation problem, textbook, reproduced.** `Tools::AddonsControllerTest`'s class-level
+  `setup do @user = User.create!(email: "addons@example.com", ...) end` — one static email shared
+  by all **110** test methods in the file. The maker-side `User` row (and its
+  `sync_device_token`) rolls back after every test; the SYNC SERVER's row for `addons@example.com`
+  does not. The first test (whichever Minitest's random order runs first) provisions successfully;
+  every later test whose code path reaches `Maker::Project#ensure_library_folder!` →
+  `Maker::LibraryFolder#ensure_segment` → `FileLayer::ChunkRemote#mkdir` → `#transport` →
+  `#device_token_for` re-attempts provisioning for the SAME email and gets the sync server's 409
+  `email_taken`, surfacing as `FileLayer::FetchError` — four raised directly (full backtraces
+  captured, all through the identical call chain above), the rest rescued by the controller into a
+  503 `{"error":"fetch_error","message":"Couldn't reach your library. Try again."}` that the
+  test's own assertion catches as "expected a redirect, got 503" (or, for one test, as a save that
+  silently did nothing: `@user.maker_addon_states.count` unchanged). 84 of the file's 110 tests
+  pass regardless — those whose path never reaches `ensure_library_folder!`. This is EXACTLY the
+  isolation problem Arc A named and Arc C's own plan flagged as a DIFFERENT problem from the
+  process-wide token — now observed directly, for the first time, rather than argued.
+- **The `ChunkRemoteJourneyTest` failure is an artifact of the PROBE, not a regression, and not
+  reachable by the literal recipe or a real deployment.** `LibraryBroadcast.batch` branches on
+  `LibraryBackend.engine_wanted?` (whether the GEM happens to be loaded), not on which adapter
+  `FileLayer.current` actually is — correct in every real deployment, where "engine loaded" and
+  "backend is chunk" are the same fact, but this probe deliberately creates the one combination
+  where they diverge: `chunk_remote` (so `FileLayer.current` is genuinely `ChunkRemote`) with
+  `SYNC_ENGINE=1` forced (so `engine_wanted?` is true). Under that combination,
+  `LibraryBroadcast.batch` takes the EMBEDDED engine's `Sync::LibraryChannel.batch` branch instead
+  of `FileLayer::ChunkRemote#batch`'s own `Thread.current` coalescing — so `move`'s
+  `refresh_or_defer!` never finds a batch frame and pulls on every call, exactly matching the
+  observed "Expected: 1 / Actual: 3." The existing `test-chunk-remote` `bin/ci` gate never forces
+  `SYNC_ENGINE`, so this cannot occur there — confirmed by the same journey suite passing 10/10
+  clean in the literal-recipe run above, with zero mention in that run's failure log.
+
+**Second-order effect — measured, not estimated.** Users/devices on the sync host's own
+`development.sqlite3` (queried directly, `RAILS_ENV=development bin/rails runner`), before and
+after each run:
+
+| | users | devices | DB file |
+|---|---:|---:|---:|
+| before Task 6 (after `bin/sync-server prepare` only) | 50 | 64 | ~303 KB |
+| after literal-recipe run | 66 | 81 | — |
+| after `SYNC_ENGINE=1` probe | 89 | 104 | 372,736 B |
+
+**+39 users / +40 devices across the two runs, ~70 KB, ~1.8 KB/library** — small in absolute terms
+for one measurement session, but **the growth is unbounded across repeated invocations, and it is
+ALREADY HAPPENING today, not merely a hypothetical future cost:** `bin/sync-server prepare` runs
+`bin/rails db:prepare` (never `db:reset`) against the sibling checkout's persistent
+`development.sqlite3`, and `sync:device:issue` (`host/lib/tasks/devices.rake`) is
+`User.find_or_create_by!` for the user but **unconditionally creates a new `Device`** — so the
+existing `test-chunk-remote` `bin/ci` gate, which calls `prepare` on every run, has been adding one
+device per run since Arc A shipped (2026-08-23); the 50 users / 64 devices already present BEFORE
+this arc's own measurement began are that accumulation, not leftover noise to explain away. This is
+the SAME shape CLAUDE.md §15's CI section already names for a different leg — "a review of this
+file found 334 accumulated `tmp.*` directories on the mac runner" — recorded here rather than
+independently rediscovered later as "CI got slow" with nobody connecting it back to this arc.
+**Wall-clock cost is NOT the concern**: both runs finished in ~9s total, indistinguishable from the
+other backend legs, because the sync server is on loopback and even dozens of real HTTP round
+trips cost single-digit milliseconds each — but this is measured against a LOCAL, same-machine
+server exactly as `bin/ci`'s own `test-chunk-remote` gate boots one, so it is not an artifact of a
+kinder network path a real CI run would not also get.
+
+**Conclusion: this does not become a `bin/ci` gate in this arc, and the gate count stays at nine.**
+Neither run is close to green. The literal-recipe run is blocked by a problem an order of magnitude
+larger than the one Arc A predicted (test-shape, ~50 files, architectural — chunk_remote is
+CORRECT to never load the gem); the cleaner `SYNC_ENGINE=1` probe surfaces the isolation problem
+Arc A did predict, confirmed and precisely localized to one file's shared static email, plus one
+probe-only artifact. Making this gate-worthy needs, at minimum: the ~50 files' shared-setup pattern
+either guarded (`skip unless defined?(Sync)`) or given a real per-backend variant, `Tools::
+AddonsControllerTest`'s (and any of the other 15 static-email files that turn out to reach a
+mutating FileLayer call) shared email randomized, and a decision about the unbounded server-side
+growth above — none of which is this task's job to fix, only to measure and report.
+
+**A finding recorded rather than filed as a footnote: `config/boot.rb`'s BUNDLE_GEMFILE/RUBYOPT
+leak into every child process a bundled Ruby entrypoint spawns.** Found while proving Task 4/5's
+admin-provisioning route end to end, and already fixed at the point it bites today
+(`bin/sync-server`'s own `unset_inherited_bundler_env`, called before every `bundle install`/`bin/
+rails` invocation against the `../tinkerex-sync` sibling checkout) — but the mechanism is general,
+not specific to that one script, so it is recorded here and in CLAUDE.md §14j rather than left as a
+comment only the next reader of `bin/sync-server` happens to see. `bin/ci` (via `config/boot.rb`)
+sets `BUNDLE_GEMFILE` to THIS repo's own Gemfile and injects a `RUBYOPT` that force-requires
+`bundler/setup` into every child process it spawns; a second Rails app's own ordinary
+`config/boot.rb` does `ENV["BUNDLE_GEMFILE"] ||= ...`, and that `||=` means an INHERITED value
+wins — so a bundled Ruby process spawning a SECOND Rails app (any sibling checkout, not just
+`tinkerex-sync`) silently boots it against the FIRST app's `Gemfile.lock`. Reproduced directly:
+exporting exactly `BUNDLE_GEMFILE`/`RUBYOPT`/`RUBYLIB` and nothing else turned a working `POST
+/v1/admin/libraries` into a bare 404 (`ActionController::RoutingError`) on an otherwise-identical
+boot — `/up` and `/v1/devices/whoami` kept answering fine, because that much of Rails/
+ActionController is close enough between the two repos' locked versions to boot either way; the
+two Gemfile.locks had simply diverged enough, by the time the admin route existed, for ROUTE
+DRAWING specifically to differ. **This will bite the next script that shells out to a second
+bundled Ruby process from inside a `bin/ci`-launched one, and nothing about `bin/sync-server`'s own
+fix protects that future script** — hence the CLAUDE.md §14j entry rather than trusting this
+paragraph alone to be found.
 
 ## 2026-08-21: Stage 4 is complete — `chunk_remote` is selectable (branch `claude/stage-4-build-arm`)
 

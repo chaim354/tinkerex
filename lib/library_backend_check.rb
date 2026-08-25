@@ -43,6 +43,19 @@ module LibraryBackendCheck
   # or LIBRARY_S3_PREFIX, which are genuinely optional (endpoint = R2/SeaweedFS/MinIO; prefix = a
   # sub-root within the bucket, whose absence means "the whole bucket" and is a valid choice).
   S3_REQUIRED = %w[LIBRARY_S3_BUCKET LIBRARY_S3_ACCESS_KEY_ID LIBRARY_S3_SECRET_ACCESS_KEY].freeze
+  # CHUNK_REMOTE_TOKEN's ROLE NARROWED IN ARC C AND THIS LIST DELIBERATELY DID NOT SHRINK WITH IT.
+  # It used to be THE per-request device credential every user's traffic authenticated with; since
+  # Task 4 that job belongs to `users.sync_device_token` (per-user, lazily provisioned -- see
+  # FileLayer::ChunkRemote::Provisioning), and no runtime request-serving code reads
+  # CHUNK_REMOTE_TOKEN any more. It stays required at boot anyway, for what it still IS: proof, at
+  # deploy time, that at least one real device has been minted on the sync server this URL points
+  # at -- the same role `bin/sync-server`'s own smoke test (`GET /v1/devices/whoami`) uses it for.
+  # Dropping it here would let a deployment boot against a URL nobody has ever proven answers to a
+  # real credential. SYNC_ADMIN_TOKEN, the credential Provisioning actually authenticates
+  # auto-provisioning calls with, is deliberately NOT here: most deployments (every self-host,
+  # single-user one) never call that door at all, so requiring it at boot would refuse a
+  # perfectly-working deployment for a feature it may never use -- the same argument the sync
+  # server's OWN authenticate_admin! makes for refusing the ENDPOINT rather than the boot.
   CHUNK_REMOTE_REQUIRED = %w[CHUNK_REMOTE_URL CHUNK_REMOTE_TOKEN].freeze
 
   # Reads the same ENV vars, with the same defaults, as FileLayer.build — the factory calls this
@@ -87,7 +100,9 @@ module LibraryBackendCheck
     return if missing.empty?
 
     raise Error, "LIBRARY_BACKEND=chunk_remote requires #{missing.join(', ')} — the sync server " \
-                 "this app syncs against, and the device token it authenticates with. Mint one on " \
+                 "this app syncs against, and a device token proving it has been reachable and " \
+                 "accepting real devices (ordinary per-user traffic no longer authenticates with " \
+                 "this specific token -- see CHUNK_REMOTE_REQUIRED's own comment). Mint one on " \
                  "that host with `bin/rails sync:device:issue`."
   end
 

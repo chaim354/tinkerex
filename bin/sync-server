@@ -8,7 +8,9 @@
 # (scripts/r2-cutover/smoke.sh, .github/workflows/client-contract.yml).
 #
 # TWO SUBCOMMANDS, because CI has to background the boot and still know the token:
-#   prepare  migrate the host DB, mint a device token, write tmp/sync-server.env, print it
+#   prepare  migrate the host DB, mint a device token AND a fresh SYNC_ADMIN_TOKEN (Arc C's
+#            admin-provisioning credential, distinct from the device token -- see the `prepare`
+#            case's own comment), write both into tmp/sync-server.env, print it
 #   start    run the server in the FOREGROUND on $SYNC_PORT (the caller backgrounds it)
 #
 # THE HOST DOES HAVE /up (tinkerex-sync host/config/routes.rb), added after this plan was
@@ -53,21 +55,64 @@ require_checkout() {
   fi
 }
 
+# UNPINS THE SYNC HOST FROM WHATEVER BUNDLE INVOKED THIS SCRIPT -- found by diagnosis, not
+# theory, while proving Arc C's provisioning route end to end: `bin/ci` (config/boot.rb) sets
+# BUNDLE_GEMFILE to THIS repo's own Gemfile and injects a RUBYOPT that force-requires
+# bundler/setup into every child process it spawns. `tinkerex-sync/host/config/boot.rb` -- the
+# ordinary Rails-generated one -- does `ENV["BUNDLE_GEMFILE"] ||= ...`, and that `||=` means an
+# INHERITED value wins: the sync host silently boots against MAKER's Gemfile.lock instead of its
+# own. Reproduced directly: exporting exactly these three vars (BUNDLE_GEMFILE, RUBYOPT, RUBYLIB)
+# and nothing else turned a working `POST /v1/admin/libraries` into a bare 404
+# (ActionController::RoutingError) on an otherwise-identical boot -- /up and /v1/devices/whoami
+# kept answering fine, because that much of Rails/ActionController is close enough between the
+# two repos' locked versions to boot either way; the two apps' Gemfile.locks had simply diverged
+# enough, by the time this route existed, for ROUTE DRAWING specifically to differ. This would
+# bite ANY two-Rails-app caller shape, not just this one -- `bin/ci test-chunk-remote` is simply
+# the first thing that made it visible, because it is the first caller that both goes through a
+# bundled Ruby process (bin/ci itself) AND exercises a route added after the two repos' locked
+# gems drifted apart.
+#
+# THE FULL LIST BUNDLER OWNS IS LONGER (bundler/environment_preserver.rb, EnvironmentPreserver
+# ::BUNDLER_KEYS: also PATH, GEM_HOME, GEM_PATH, MANPATH, RB_USER_INSTALL) -- deliberately NOT
+# unset here. Those are how the shell finds `ruby`/`bundle`/`bin/rails` AT ALL; clearing them
+# would trade a silently-wrong bundle for a script that cannot run. The seven unset below are
+# exactly the ones that PIN a Ruby process to one specific Gemfile rather than letting it resolve
+# its own -- unsetting them makes the sync host's own `config/boot.rb` (which only ever sets
+# BUNDLE_GEMFILE with `||=`) free to choose correctly.
+unset_inherited_bundler_env() {
+  unset BUNDLE_GEMFILE BUNDLE_BIN_PATH BUNDLE_LOCKFILE BUNDLER_VERSION BUNDLER_SETUP RUBYOPT RUBYLIB
+}
+
 case "${1:-}" in
   prepare)
     require_checkout prepare
     mkdir -p "$REPO_ROOT/tmp"
-    ( cd "$HOST_DIR" && bundle install --quiet && bin/rails db:prepare )
+    ( cd "$HOST_DIR" && unset_inherited_bundler_env && bundle install --quiet && bin/rails db:prepare )
     # The token is printed ONCE by the task (only a SHA256 digest is stored), so capture it here.
-    token="$(cd "$HOST_DIR" && EMAIL="$EMAIL" bin/rails sync:device:issue \
+    token="$(cd "$HOST_DIR" && unset_inherited_bundler_env && EMAIL="$EMAIL" bin/rails sync:device:issue \
              | awk '/^device_token:/ { print $2 }')"
     if [ -z "$token" ]; then
       echo "sync:device:issue printed no device_token -- refusing to write a blank credential" >&2
       exit 1
     fi
+
+    # SYNC_ADMIN_TOKEN (Arc C): a shared secret BOTH sides of the admin door need to agree on --
+    # the sync server's own authenticate_admin! compares an inbound bearer against
+    # ENV["SYNC_ADMIN_TOKEN"] on ITS side, and FileLayer::ChunkRemote::Provisioning sends one from
+    # ENV["SYNC_ADMIN_TOKEN"] on THIS app's side. Unlike CHUNK_REMOTE_TOKEN above, no sync-host rake
+    # task mints this one -- admin/libraries_controller.rb just string-compares against ENV, nothing
+    # issues or digests it -- so `prepare` generates the shared value itself, once per boot cycle,
+    # the same way a real deployment would generate one and put it in both apps' Kamal secrets
+    # (not this script's concern -- see docs/DEPLOY.md for that story once it exists).
+    admin_token="$(openssl rand -hex 32)"
+    if [ -z "$admin_token" ]; then
+      echo "openssl rand produced no output -- refusing to write a blank admin credential" >&2
+      exit 1
+    fi
     {
       echo "CHUNK_REMOTE_URL=http://127.0.0.1:$PORT"
       echo "CHUNK_REMOTE_TOKEN=$token"
+      echo "SYNC_ADMIN_TOKEN=$admin_token"
     } > "$ENV_FILE"
     # Tokens live only on the box, chmod 600, never in git -- same rule, same words, as
     # ping.env in bin/backup-cron-install: this file holds a live device credential too.
@@ -77,6 +122,21 @@ case "${1:-}" in
   start)
     require_checkout start
     cd "$HOST_DIR"
+    # SYNC_ADMIN_TOKEN REACHES THIS SERVER PROCESS BY ORDINARY ENV INHERITANCE, NOT A LINE HERE --
+    # worth stating because every OTHER var this script writes is read by the CLIENT, and this one
+    # is the first that the SERVER also needs in its own environment. `env VAR=val cmd` (below)
+    # only OVERRIDES the vars it names; everything else, including SYNC_ADMIN_TOKEN, passes through
+    # from whatever shell invoked `bin/sync-server start` -- which is why the documented sequence
+    # is `set -a; . tmp/sync-server.env; set +a` BEFORE this command, in the SAME shell. Skip that
+    # step and this still boots fine: authenticate_admin! (tinkerex-sync) reads a blank
+    # SYNC_ADMIN_TOKEN as "admin provisioning disabled" and 503s just that one door, exactly as
+    # designed -- it does not fail the boot.
+    #
+    # unset_inherited_bundler_env RUNS DIRECTLY HERE, NOT IN A SUBSHELL LIKE `prepare`'S CALLS --
+    # deliberately: this is the LAST thing the script does before `exec`, which replaces this
+    # process outright, so there is no "after" for a subshell to protect the outer script's env
+    # from. See that function's own comment for the full diagnosis this line closes.
+    unset_inherited_bundler_env
     exec env STORAGE_BACKEND=local bin/rails server -p "$PORT" -b 127.0.0.1
     ;;
   *)

@@ -4,6 +4,30 @@
 # and recreated between test runs. Don't rely on the data there!
 
 Rails.application.configure do
+  # ENCRYPTION KEYS COME FROM LITERALS HERE, NOT FROM CREDENTIALS, AND THAT IS WHAT LETS THE SUITE
+  # RUN WITHOUT A PRODUCTION SECRET.
+  #
+  # Arc C turned Active Record encryption on and put the three keys in config/credentials.yml.enc.
+  # That works locally and on all four deployments, which is what its own review checked -- and it
+  # broke CI on the first push, because credentials need config/master.key, .gitignore line 34
+  # (`/config/*.key`) keeps that file OUT of the repo, and ci.yml supplies no RAILS_MASTER_KEY.
+  # Every `encrypts` model raised `Missing Active Record encryption credential:
+  # active_record_encryption.primary_key` in three jobs at once. The reviewer asked exactly the
+  # right question -- "could this decrypt on one deployment and fail on another?" -- enumerated the
+  # four deployments, and did not count CI, which has no master key at all.
+  #
+  # THESE ARE NOT SECRETS AND MUST NOT BE TREATED AS ANY. They encrypt throwaway rows in a database
+  # rebuilt per run; the value of a test key is that everyone has the same one. Reading the real
+  # keys here would put a production credential on the critical path of `bin/rails test` and make a
+  # fresh clone unable to run the suite -- a cost paid on every contributor, forever, to protect
+  # data that does not exist.
+  #
+  # Production is unchanged: it reads credentials, and `RAILS_MASTER_KEY` already reaches all four
+  # deployments through .kamal/secrets-common (docs/DEPLOY.md).
+  config.active_record.encryption.primary_key = "test-only-primary-key-not-a-secret-000000"
+  config.active_record.encryption.deterministic_key = "test-only-deterministic-key-not-secret-00"
+  config.active_record.encryption.key_derivation_salt = "test-only-key-derivation-salt-not-secret"
+
   # Settings specified here will take precedence over those in config/application.rb.
 
   # While tests run files are not watched, reloading is not necessary.
@@ -62,4 +86,17 @@ Rails.application.configure do
 
   # Raise error when a before_action's only/except options reference missing actions.
   config.action_controller.raise_on_missing_callback_actions = true
+
+  # Encrypt fixture values for any column an `encrypts` model declares, before they're inserted
+  # -- config/initializers/active_record_encryption.rb#support_unencrypted_data is FALSE, so a
+  # fixture-loaded plaintext value under an encrypted column would come back from the model as
+  # ActiveRecord::Encryption::Errors::Decryption on first read, not as the plaintext the YAML
+  # said. This app has no `encrypts` attribute yet (Task 4 adds the first one, a per-user
+  # sync-server device token on `users`) and no `users.yml` fixture either -- every test creates
+  # users with `User.create!`, which runs the real encrypted setter, so today this flag changes
+  # nothing observable: `ActiveRecord::Fixture.prepend ActiveRecord::Encryption::EncryptedFixtures`
+  # (activerecord's railtie.rb) touches a fixture row only via `model_class.encrypted_attributes`,
+  # which is empty for every model right now. Set anyway, now, rather than left for Task 4 to
+  # discover the hard way if it ever adds a fixture file that populates an encrypted column.
+  config.active_record.encryption.encrypt_fixtures = true
 end
