@@ -168,6 +168,65 @@ chunk_remote *executes* 25 tests that share and s3 skip (30 − 5), which is whe
 assertions come from. `test-chunk-remote` also runs its 10-test journey file first, against a real
 sync server booted by `bin/sync-server`.
 
+### Guard-claim sweep (same arc, second pass)
+
+The first pass audited for **repo separation**; it did not check whether the retained maker-app
+content was still TRUE. This pass took the cross-cutting claim type first: CLAUDE.md asserts
+~56 times that something is "guarded by `test/x_test.rb`", "pinned by", or "mutation-checked."
+A false one of those is §15's stated dominant failure mode — a green suite over something that
+never worked.
+
+**Mechanically checkable layers came back clean**, which is information, not a null result:
+
+| layer | checked | bad |
+|---|---|---|
+| file paths | 96 | 0 |
+| classes / methods / constants | 315 | 0 |
+| hard numbers (`MAX_MOVES`, `timeout:`, `Host::LEVEL`, …) | 15 | 0 |
+| named test files | 13 | 0 |
+| specific assertions | 40 | 0 |
+
+Worth recording *why* that is not reassuring on its own: **§5's failure was not a dead reference.**
+Every table it named existed; the sentence around them was what was false. No reference sweep
+catches that shape.
+
+**Five mutation checks, all red for the right reason** — including two of this arc's own new
+claims: planting `Sync::LibraryChannel` (caught, right file), a bare `has_many :versions` (caught —
+this was the rewritten §5's claim about bare association spellings), `Storage::ChunkStore` in a
+**newly created** `app/decorators/maker/` (caught, which is the actual proof of "a NEW
+`app/<x>/maker/` is covered the day it is created" — a first attempt used the needle `ManifestChunk`,
+which matches neither `manifest_chunks` nor `ChunkStore`, and went green: **the mutation was wrong,
+not the guard**), and a lowercase `cc-by-nc-sa-4.0` catalog licence (caught, confirming the guard
+downcases where the Python original's `"-NC" in ...` did not).
+
+**Three findings, all in `test/architecture_invariants_test.rb` — the file this repo leans on hardest:**
+
+1. **A test named for a class this repo no longer has.**
+   `test "the maker layer reaches the sync engine through FileLayer::Chunk alone"` described an
+   ALLOWLIST contract the test stopped implementing when Arc D Part 2 made it assert zero with no
+   exceptions. Behaviour right, name outlived its meaning — and it is the first sentence a reader
+   sees when the guard fires. Renamed to `"no maker-layer file names Sync:: or a bare engine model
+   at all"`.
+2. **A test name that OVERCLAIMED, hiding a real gap.**
+   `test "V1::BaseController names no Sync:: or Storage:: constant at all"` — but `sync_references`
+   matched only `str == "Sync"`. It never checked `Storage`. History explains how: `3d144c3` added a
+   dedicated Ripper pass for a bare `Storage` const, `ce2ca7f` renamed `Storage::ChunkStore` to
+   `Sync::Storage::ChunkStore` and retired that pass because the bare `Sync` token then covered it —
+   **true when written**. The class later left with the engine, and the name went on promising
+   coverage no longer provided for a bare spelling. Latent and harmless while nothing spelled it,
+   which is exactly why nothing caught it. `sync_references` now matches `Storage` too; verified
+   safe first (Ripper reports **zero** bare `Storage` const tokens in `app/` + `lib/`, and
+   `ActiveStorage` lexes as a SINGLE token so it cannot collide), then mutation-checked — planting
+   `Storage::ChunkStore` in `V1::BaseController` now fails BOTH tests where it previously passed
+   both.
+3. **`SYNC_SEAM_EXCEPTIONS` is a comment-only ghost** — eight mentions, zero definitions. Two are
+   present-tense and now false ("SYNC_SEAM_EXCEPTIONS is back", "still names only
+   app/models/user.rb"). The correction *was* recorded, but BELOW the assertion while the false
+   claims sit ABOVE it, so a top-to-bottom reader meets them first. Added a read-order warning at
+   the top of the test rather than rewriting the history.
+
+Gates: bare `bin/ci` green in 2m8s, three legs at identical run counts (2349).
+
 **Also fixed here:** this file's own title read "Build status — sync engine", a leftover from when
 that was true.
 
