@@ -104,7 +104,14 @@ client cannot follow. Verify against your own code rather than trusting this lin
           cargo test --manifest-path client/sync-engine/Cargo.toml --test two_device_e2e
 ```
 
-**You will need** a `TINKEREX_CLIENT_DEPLOY_KEY` secret in `tinkerex-sync`. `GITHUB_TOKEN` is
+**You will need** a `TINKEREX_CLIENT_DEPLOY_KEY` secret in `tinkerex-sync`. **The key pair already
+exists and is reusable — do not mint a new one by reflex.** `chaim354/tinkerex-client` still
+carries the read-only deploy key `ci-client-contract` (id `161158035`, added 2026-08-24); only
+`tinkerex`'s copy of the PRIVATE half was deleted on 2026-08-25, once the workflows using it were
+gone. That private half is in the `tinkerex` 1Password vault — add it as `tinkerex-sync`'s
+`TINKEREX_CLIENT_DEPLOY_KEY` and the existing public key keeps working. If you do mint a fresh
+pair instead, delete `ci-client-contract` from `tinkerex-client` so an unused key does not sit
+there indefinitely. `GITHUB_TOKEN` is
 scoped to one repo and cannot check out another, even same-owner private. Use a read-only deploy
 key, not a PAT: `gh repo deploy-key add` gives one repo, read-only, no expiry, and needs no
 browser (GitHub sunset `POST /authorizations` in 2020, so a fine-grained PAT is an irreducibly
