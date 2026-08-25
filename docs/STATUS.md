@@ -227,6 +227,43 @@ downcases where the Python original's `"-NC" in ...` did not).
 
 Gates: bare `bin/ci` green in 2m8s, three legs at identical run counts (2349).
 
+### §14c audited — 56 bullets, ~100 checks, ZERO errors
+
+The largest section (541 lines) and the one whose subject has churned most — openscad retired,
+bundles moved to their own repo, `Host::LEVEL` reached 3, the SDK grew a service layer. It is
+**accurate**. Recorded so the next person does not redo it.
+
+Every ✗ raised during the sweep was the CHECK being weak, not the doc: matching a comment rather
+than code (`resources :boxes` survives only in `routes.rb` comments, exactly as the bullet says;
+`AbortError` and `blobUrl` appear only in comments explaining why they are NOT used), guessing a
+file path (`Addon` lives in `registry.rb`, not an `addon.rb`), or a crude ordering heuristic
+(`Source.current` is `@stub || (PATH.present? ? Local : new(base_url))` — PATH does win).
+
+**The part worth having done: the cross-repo contract, checked against the LIVE bundles**
+(`../tinkerex-addons/addons/manifests.json`). Publishing a bundle IS the addon deploy and Rails is
+never rebuilt, so this is the one surface where §14c could rot with nothing here going red. It
+holds, and it is live rather than theoretical:
+
+| claim | live evidence |
+|---|---|
+| `min_host: 3` is how a bundle requires revising | **boxes** declares `min_host: 3`; `Host::LEVEL = 3` |
+| `library:read` is the ONE enforced permission | **openscad** actually declares it |
+| a `service_timeouts` value over the cap is capped, not refused | openscad asks 90; `MAX_TIMEOUT_DEFAULT = 120` → honoured |
+| every published bundle names `@maker/addon-sdk` | all three import it |
+| `api_version: "1"` | all three match `Registry::API_VERSION` |
+
+Two claims no grep can reach were **probed**: `Rails.application.routes.recognize_path` confirms
+`/tools/boxes` → `tools/addons#show key="boxes"` while `/tools/addon_states/12/params` →
+`tools/addon_params#show` (four segments, not shadowed — the instrument the bullet itself names);
+and `Maker::AddonOrigin.for(user:, node_ids: [])` returns `{}` with **zero** `Registry.manifests`
+calls under a counting double, confirming an addon-source outage cannot slow a Files page for a
+user who has never opened `/tools`.
+
+**Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
+— "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
+contours displaced". Those record past observations, not current state; re-running them is a
+different and much larger job. They are §14c's residual risk.
+
 **Also fixed here:** this file's own title read "Build status — sync engine", a leftover from when
 that was true.
 
