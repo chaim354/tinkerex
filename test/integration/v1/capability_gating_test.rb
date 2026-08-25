@@ -1,25 +1,37 @@
 require "test_helper"
 
 module V1
-  # Spec §6: "The API returns 501 Not Implemented (not 500) -- an honest 'this deployment can't
-  # do that'." The gate is a capability check BEFORE the call, never a rescue: NotImplementedError
-  # is not a StandardError (a bare rescue does not catch it), and a 501 for a chunk-mode
-  # Chunk#write would be a lie anyway, since chunk mode accepts uploads via Sync::Commit.
+  # WHAT IS LEFT OF CAPABILITY GATING AFTER ARC D PART 2, AND WHY MOST OF THIS FILE LEFT WITH THE
+  # ENGINE.
   #
-  # EVERY 501 ASSERTION HERE ALSO ASSERTS THE BODY, and that is not belt-and-braces. A route that
-  # does not exist, a before_action halting for another reason, and an auth failure all produce a
-  # plausible status; only the message proves it was THIS gate. The `chunk mode is completely
-  # ungated` tests are the other half: they run the same request, with the same auth, against a
-  # backend that HAS the capability, so a green 501 above cannot be a broken request.
+  # This suite used to assert that a share deployment answers 501 -- rather than a lie or a 500 --
+  # on every syncable v1 endpoint: /v1/changes, /v1/tree, /v1/commit, /v1/locks, /v1/conflicts,
+  # /v1/trash, /v1/chunks/download, /v1/share_links. Those endpoints are drawn by the sync engine,
+  # and this app no longer loads it, so they are not gated here any more -- they are not ROUTED
+  # here at all. Their gating moved with them: Sync::V1::CapabilityGate plus the
+  # Sync.capability_check seam (§14j), asserted in chaim354/tinkerex-sync's own suite.
+  #
+  # TWO GATES ARE STILL THIS APP'S, and both are in FilesController on the WEB surface rather than
+  # the v1 API -- which is why deleting the v1 half must not be read as deleting the concept:
+  #   * `syncable`      on begin_upload/finalize_upload -- the presigned two-phase flow
+  #   * `port_writable` on create                       -- POST /files, the direct byte door
+  # They are exact opposites by construction (§14a: port_writable is NOT "accepts uploads", it
+  # answers WHICH door), so a deployment always has exactly one of them, and asserting both here is
+  # what proves the pair cannot both be closed.
+  #
+  # EVERY 501 ASSERTION ALSO ASSERTS THE BODY, and that is not belt-and-braces. A missing route, a
+  # before_action halting for an unrelated reason, and an auth failure all produce a plausible
+  # status; only the message proves it was THIS gate.
   class CapabilityGatingTest < ActionDispatch::IntegrationTest
+    PASSWORD = "correct horse battery staple".freeze
+
     setup do
       @root = Pathname.new(Dir.mktmpdir("gate"))
-      # bootstrap_account is test_helper.rb's real device-auth idiom (Device.register! + the
-      # plaintext token). Matched rather than reinvented: the v1 suites all use it.
       @account = bootstrap_account(email: "gate-#{SecureRandom.hex(4)}@example.com")
       @user = User.find(@account["user_id"])
       FileLayer.current = FileLayer::Share.new(root: @root.to_s)
     end
+
     teardown do
       FileLayer.reset!
       FileUtils.remove_entry(@root) if @root&.exist?
@@ -28,229 +40,92 @@ module V1
     def auth = { "Authorization" => "Bearer #{@account['device_token']}" }
     def error = JSON.parse(response.body)["error"].to_s
 
-    # THE headline 501. Before the gate this returned {versions: []} -- "this file has no history"
-    # -- which is a lie: it has none because this DEPLOYMENT has none. An empty list tells a client
-    # the file is fine and unversioned; 501 tells it the truth.
-    test "versions answers 501 in share mode, not an empty list that lies" do
-      node = @user.nodes.create!(node_id: "n1", name: "a.stl", kind: "file", storage_path: "a.stl")
-      get "/v1/nodes/#{node.node_id}/versions", headers: auth
+    def sign_in_web(user)
+      post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
+      assert_redirected_to files_path
+    end
+
+    def web_user
+      User.create!(email: "cap-#{SecureRandom.hex(4)}@example.com",
+                   password: PASSWORD, confirmed_at: Time.current)
+    end
+
+    # --- the two gates this app still owns -------------------------------------------------
+
+    # A share deployment has no changelog and no chunks, so the presigned flow cannot mean
+    # anything here. The refusal must NAME the door that does work -- a bare 501 reads as
+    # "uploads are off", which is exactly wrong (§14a).
+    test "begin_upload answers 501 on a share backend, naming the door that does work" do
+      sign_in_web(web_user)
+      post begin_upload_files_path,
+           params: { name: "a.stl", size: 3, manifest: [ { hash: "0" * 64, offset: 0, length: 3 } ] },
+           as: :json
       assert_response :not_implemented
-      assert_no_match(/"versions":\s*\[\]/, response.body, "an empty list is the lie, not the answer")
-      assert_match(/versioned_unavailable/, error, "the 501 must be THIS gate, not a stray halt")
+      assert_match(/syncable_unavailable/, error, "must be the capability gate, not a routing accident")
+      assert_match(%r{POST /files}, error, "a refusal must name the path the caller SHOULD use")
     end
 
-    test "restore answers 501 in share mode" do
-      post "/v1/nodes/n1/restore", params: { version_id: "v1" }, headers: auth
+    # AND THE MIRROR IMAGE, which is the half that makes the pair meaningful. chunk_remote is
+    # `port_writable: false` -- its bytes go through begin_upload/finalize_upload, never through a
+    # server-side write, because a byte write here would push bytes through Rails (§15). So the
+    # SAME app refuses the OTHER door depending on the deployment, and neither refusal means
+    # "uploads are off".
+    #
+    # NO SYNC SERVER IS NEEDED FOR THIS, deliberately: `require_capability!` is a before_action
+    # that runs BEFORE any port call, and FileLayer::ChunkRemote#capabilities is a constant. The
+    # adapter is constructed with no transport at all, so if this test ever starts needing a live
+    # server that is itself the regression -- the gate would have stopped being a check before the
+    # call, which is the one thing §14a says it must always be.
+    test "POST /files answers 501 on chunk_remote, naming the two-phase flow" do
+      user = web_user
+      sign_in_web(user)
+      FileLayer.current = FileLayer::ChunkRemote.new
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
       assert_response :not_implemented
-      assert_match(/versioned_unavailable/, error)
+      assert_match(/port_writable_unavailable/, error)
+      assert_match(/begin_upload/, error, "the refusal must name the flow that does work")
     end
 
-    # The whole sync surface, each with the body asserted -- several of these paths would answer a
-    # plausible status for an entirely different reason if the gate were missing (a bad param, an
-    # absent node, an empty list).
-    test "the sync surface answers 501 in share mode" do
-      {
-        [ :get,  "/v1/changes" ]                     => :syncable,
-        [ :get,  "/v1/tree" ]                        => :syncable,
-        [ :get,  "/v1/conflicts" ]                   => :syncable,
-        [ :get,  "/v1/locks" ]                       => :syncable,
-        [ :get,  "/v1/trash" ]                       => :syncable,
-        [ :post, "/v1/trash/n1/restore" ]            => :syncable,
-        [ :post, "/v1/commit" ]                      => :syncable,
-        [ :post, "/v1/commit/c1/finalize" ]          => :syncable,
-        [ :post, "/v1/chunks/download" ]             => :syncable,
-        [ :post, "/v1/nodes" ]                       => :syncable,
-        [ :post, "/v1/nodes/symlink" ]               => :syncable,
-        [ :delete, "/v1/nodes/n1" ]                  => :syncable,
-        [ :post, "/v1/nodes/n1/move" ]               => :syncable,
-        [ :post, "/v1/nodes/n1/lock" ]               => :syncable,
-        [ :post, "/v1/nodes/n1/unlock" ]             => :syncable,
-        [ :post, "/v1/nodes/n1/resolve_conflict" ]   => :syncable,
-        [ :get,  "/v1/nodes/n1/versions" ]           => :versioned,
-        [ :post, "/v1/nodes/n1/restore" ]            => :versioned,
-        [ :post, "/v1/share_links" ]                 => :versioned
-      }.each do |(verb, path), capability|
-        send(verb, path, headers: auth)
-        assert_response :not_implemented, "#{verb.upcase} #{path} must not pretend to be a sync endpoint"
-        assert_match(/#{capability}_unavailable/, error,
-                     "#{verb.upcase} #{path} must 501 for the RIGHT missing capability")
-      end
+    # THE GATE IS NOT AUTH AND NOT A MISSING ROUTE, proven: the same POST, unauthenticated,
+    # redirects to login. If POST /files were unrouted this would 404 instead, and the 501 above
+    # would have proved nothing.
+    test "the same request unauthenticated redirects to login -- so the 501 was the gate" do
+      FileLayer.current = FileLayer::ChunkRemote.new
+      post files_path, params: {
+        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
+                                           original_filename: "direct.stl")
+      }
+      assert_redirected_to new_user_session_path
     end
 
-    # 501, not 500, and it must SAY something. A bare status with no body leaves an operator
-    # guessing whether the deployment is broken or merely different.
-    test "a 501 explains itself" do
-      get "/v1/changes", headers: auth
-      assert_response :not_implemented
-      body = JSON.parse(response.body)
-      assert body["error"].present?, "a 501 must name the capability that is absent"
-      assert_match(/syncable/, body["error"], "and name WHICH capability")
-    end
+    # --- ungated on purpose (§14a) -----------------------------------------------------------
 
-    # The counterpart, and the one that catches an over-firing gate: chunk mode keeps ALL of it.
-    # Same auth, same paths -- so a 501 above is the gate and not a broken request.
-    test "chunk mode is completely ungated" do
-      FileLayer.current = FileLayer::Chunk.new
-      node = @user.nodes.create!(node_id: "n2", name: "b.stl", kind: "file")
-
-      get "/v1/nodes/#{node.node_id}/versions", headers: auth
-      assert_response :success
-
-      get "/v1/changes", headers: auth
-      assert_response :success
-
-      get "/v1/tree", headers: auth
-      assert_response :success
-
-      get "/v1/conflicts", headers: auth
-      assert_response :success
-
-      get "/v1/locks", headers: auth
-      assert_response :success
-
-      get "/v1/trash", headers: auth
-      assert_response :success
-    end
-
-    # THE GATE IS NOT AUTH, PROVEN RATHER THAN ASSERTED. Auth is included before the gate, so an
-    # unauthenticated caller gets 401 -- which also means no stranger learns this deployment's
-    # backend by poking a gated endpoint.
-    test "an unauthenticated request is 401, not 501 -- the gate never runs" do
-      get "/v1/changes"
-      assert_response :unauthorized
-      assert_no_match(/unavailable/, response.body)
-    end
-
-    # The maker layer is the WHOLE PRODUCT in share mode. A gate that caught it would defeat the
-    # phase this arc exists for.
-    test "the maker layer is NOT gated in share mode" do
+    test "the maker layer is NOT gated" do
       get "/v1/maker/projects", headers: auth
       assert_response :success
       get "/v1/maker/items", headers: auth
       assert_response :success
-      get "/v1/search?q=a", headers: auth
-      assert_response :success
+      # `/v1/search` was asserted here too and is GONE, not broken: it is Sync::Search, drawn by
+      # the engine, so it left this app with everything else the engine served. Its own suite in
+      # chaim354/tinkerex-sync covers it now.
     end
 
-    # AND THE MAKER LAYER MUST BE REACHABLE, WHICH IS A STRICTLY STRONGER CLAIM THAN THE TEST
-    # ABOVE. Every /v1 endpoint authenticates by device token, so gating enrollment on `syncable`
-    # -- as "a share deployment has no devices" invites -- would make a share deployment's entire
-    # API unauthenticatable, maker included, while the test above kept passing: it holds a token
-    # that bootstrap_account minted directly, in Ruby, without ever calling the endpoint a real
+    # A STRICTLY STRONGER CLAIM THAN THE TEST ABOVE. Every /v1 endpoint authenticates by device
+    # token, so gating enrollment -- as "a share deployment has no devices" invites -- would make
+    # the entire API unauthenticatable, maker included, while the test above kept passing: it holds
+    # a token bootstrap_account minted directly, in Ruby, without ever calling the endpoint a real
     # client must call.
-    test "a share deployment can still enroll a device -- the maker API's only credential" do
-      user = User.create!(email: "enroll-#{SecureRandom.hex(4)}@example.com",
-                          password: "correct horse battery staple", confirmed_at: Time.current)
-      post "/v1/devices/login", params: { email: user.email, password: "correct horse battery staple" }
+    test "a share deployment can still enroll a device -- the API's only credential" do
+      user = web_user
+      post "/v1/devices/login", params: { email: user.email, password: PASSWORD }
       assert_response :created
       token = JSON.parse(response.body)["device_token"]
 
       get "/v1/maker/projects", headers: { "Authorization" => "Bearer #{token}" }
-      assert_response :success, "a token minted in share mode must open the maker layer"
-    end
-
-    # The anonymous redeem side is deliberately ungated: a 501 would tell any stranger holding any
-    # string which backend this deployment runs, and 404 is already both honest and terminal (no
-    # link can exist -- that is the gate on the owner side).
-    test "the anonymous share-link redeem side is 404, not 501 -- it leaks no backend" do
-      get "/v1/share/nonexistent-token"
-      assert_response :not_found
-      assert_no_match(/unavailable/, response.body)
-    end
-
-    # EVERY TEST ABOVE PASSES WITHOUT A CHUNK STORE ONLY BECAUSE THE TEST ENV HAS ONE, and that
-    # made all nine of them unable to fail for the reason they exist. They set FileLayer.current
-    # and never touch STORAGE_BACKEND, which Sync::Storage::ChunkStore defaults to `memory` IN TEST and
-    # `s3` EVERYWHERE ELSE -- so a real share deployment, configured exactly as docs/STATUS.md
-    # documents it (LIBRARY_* set, CHUNK_* unset), built S3ChunkStore.from_env on every v1 request
-    # and answered `KeyError: CHUNK_BUCKET` -> 500. Login, /v1/maker/*, and every endpoint gated
-    # above: 500 rather than the 501 this phase exists to give. The gate was unreachable and the
-    # suite was green.
-    #
-    # So this test sets STORAGE_BACKEND to what PRODUCTION defaults to and leaves CHUNK_* unset --
-    # a share operator's real environment, not a simulation of one -- and asserts the four answers
-    # a stranger, a client, and the API itself must get. Without the before_actions' capability
-    # gate all four are 500.
-    #
-    # It asserts the WHOLE surface rather than just login: `stash_request_base_url` ran before
-    # every action, in two DEFINING copies (V1::BaseController + V1::ShareController's own), so
-    # one endpoint per copy proved that copy.
-    #
-    # STAGE 3a TASK 5 moved the V1::BaseController copy into V1::StashRequestBaseUrl, included
-    # only by V1::CommitsController and V1::ChunksController -- so "one endpoint proves one
-    # endpoint" stopped being true for THIS gate the moment that copy left every other v1
-    # controller's before_action chain. /v1/tree below now proves nothing about the mechanism
-    # this concern guards: TreeController never included it, so there is no KeyError for it to
-    # raise regardless of whether the internal `syncable?` check is even present. The two tests
-    # immediately below close that gap by driving a request through each of the two controllers
-    # that DO include it -- the exact shape CLAUDE.md §14a says was missing the first time this
-    # bug shipped ("the suite was green with and without the fix").
-    class NoChunkStoreTest < ActionDispatch::IntegrationTest
-      setup do
-        @root = Pathname.new(Dir.mktmpdir("gate"))
-        FileLayer.current = FileLayer::Share.new(root: @root.to_s)
-        @storage_backend = ENV["STORAGE_BACKEND"]
-        ENV["STORAGE_BACKEND"] = "s3" # production's default; CHUNK_* deliberately absent
-      end
-      teardown do
-        ENV["STORAGE_BACKEND"] = @storage_backend
-        ENV.delete("STORAGE_BACKEND") if @storage_backend.nil?
-        FileLayer.reset!
-        FileUtils.remove_entry(@root) if @root&.exist?
-      end
-
-      test "a share deployment with no chunk store configured can still enroll a device" do
-        user = User.create!(email: "nochunk-#{SecureRandom.hex(4)}@example.com",
-                            password: "correct horse battery staple", confirmed_at: Time.current)
-        post "/v1/devices/login",
-             params: { email: user.email, password: "correct horse battery staple" }
-        assert_response :created, "the API's only credential must be mintable without a chunk store"
-
-        token = JSON.parse(response.body)["device_token"]
-        get "/v1/maker/projects", headers: { "Authorization" => "Bearer #{token}" }
-        assert_response :success, "the maker layer IS the product in share mode"
-      end
-
-      test "a gated endpoint still answers 501, not the 500 the chunk store used to raise" do
-        account = bootstrap_account(email: "nochunk-gate-#{SecureRandom.hex(4)}@example.com")
-        get "/v1/tree", headers: { "Authorization" => "Bearer #{account['device_token']}" }
-        assert_response :not_implemented
-        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
-                     "the 501 must be the capability gate, not a stray halt")
-      end
-
-      test "the anonymous redeem side 404s without a chunk store -- a stranger gets no 500 page" do
-        get "/v1/share/nonexistent-token"
-        assert_response :not_found
-      end
-
-      # STAGE 3a TASK 5. V1::CommitsController and V1::ChunksController are the two controllers
-      # that now carry V1::StashRequestBaseUrl's own before_action, instead of getting it from
-      # V1::BaseController like every other v1 controller used to. Drive a real request into each
-      # so the internal `return unless capabilities.syncable?` gate stays proven where it now
-      # actually lives -- not on a controller (TreeController, above) that no longer runs it at
-      # all post-refactor. Both are require_capability! :syncable, same as /v1/tree, so the
-      # correct answer is identically 501; the KeyError this pins against is what a REMOVED gate
-      # would raise from INSIDE the before_action, before require_capability! ever gets to render.
-      test "POST /v1/commit still answers 501, not 500, with no chunk store configured" do
-        account = bootstrap_account(email: "nochunk-commit-#{SecureRandom.hex(4)}@example.com")
-        post "/v1/commit",
-             params: { commit_id: SecureRandom.uuid, node_id: SecureRandom.uuid, name: "x.bin",
-                       base_version_id: nil, size: 1, manifest: [] },
-             as: :json, headers: { "Authorization" => "Bearer #{account['device_token']}" }
-        assert_response :not_implemented
-        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
-                     "the 501 must be the capability gate, not the KeyError a rebuilt store raises")
-      end
-
-      test "POST /v1/chunks/download still answers 501, not 500, with no chunk store configured" do
-        account = bootstrap_account(email: "nochunk-dl-#{SecureRandom.hex(4)}@example.com")
-        post "/v1/chunks/download", params: { hashes: [] }, as: :json,
-             headers: { "Authorization" => "Bearer #{account['device_token']}" }
-        assert_response :not_implemented
-        assert_match(/syncable_unavailable/, JSON.parse(response.body)["error"].to_s,
-                     "the 501 must be the capability gate, not the KeyError a rebuilt store raises")
-      end
+      assert_response :success, "a token minted on a share backend must open the maker layer"
     end
   end
 end
