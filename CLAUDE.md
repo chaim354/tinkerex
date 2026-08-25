@@ -73,9 +73,9 @@ intake are in **§14** — that is where a "don't undo this" belongs, not in a t
 |---|---|---|
 | **Rust crates + Tauri app** | `chaim354/tinkerex-client` (separate repo) | fs-provider (local SQLite tree + FastCDC chunk store), the per-OS mount adapters (fs-fuse/fs-cfapi/fs-winfsp/fs-webdav/fs-fskit), sync-client, sync-engine (the daemon: `push`/`pull`/`hydrate`/`sync_once`), the Tauri desktop app, and `maker-app-core`/`juicefs-backend` (leftovers from the abandoned mount path, kept as reference — CLAUDE.md §14e). Extracted from this repo 2026-08-20; own history (166 commits via `git filter-repo`), own CI, own runner registration. `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` has the full inventory and the argument for keeping the `client/` prefix inside that repo's own layout. |
 | **server** | repo root (Rails 8) | The maker host: `Maker::*` models and web layer, the `v1/maker/*` API, `User`/`Node`/`Device`, and the `FileLayer` factory. Draws the engine's v1 routes; ships no `Sync::*` itself. |
-| **sync engine** | `chaim354/tinkerex-sync` (separate repo) | The chunk/version/changelog engine as a mountable Rails engine isolated under `Sync`, plus `FileLayer::Chunk`, its eight tables' consolidated migration, and its own dummy host and suite. Extracted 2026-08-20 (109 commits); consumed here as a private `git:` gem. Invariants: **§14j**. |
+| **sync server** | `chaim354/tinkerex-sync` (separate repo) | The chunk/version/changelog engine, plus `FileLayer::Chunk` and its own host app. **No longer a dependency of this repo** — Arc D Part 2 (2026-08-25) retired embedded `chunk`, so the gem is gone from the Gemfile and `Sync::` is undefined in this process. It runs as a STANDALONE SERVER (the `sync` Kamal accessory) that this app talks to over HTTP as a client, and that devices sync against directly. Invariants: **§14j**. |
 | **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time (`Dockerfile`) and exec'd off `PATH` by `Maker::Previews::Stl` at runtime — a **server-side** tool despite being Rust. Lives under `tools/`, not in the Rust-crates repo: nothing there has a path dependency on it. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk\|share\|s3`. All three boot, index, write, deliver. Invariants: **§14a**. |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk_remote\|share\|s3` (embedded `chunk` retired 2026-08-25 and is now REFUSED; the default is `share`). All three boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
 | **Addons (Tools)** | `app/services/maker/addons/`, `app/controllers/tools/`, `sidecar/` | The `/tools` gallery + per-addon UI; output lands via one path (`Maker::Addons::LibraryOutput`). Two GPL sidecars, HTTP-only. Invariants: **§14c**. |
 | **Project intake** | `app/services/maker/project_intake.rb` | A project's library folder files itself: everything under `Projects/<slug>/` attaches to the project, whatever is loose at the root gets filed into a category subfolder. Invariants: **§14f**. |
@@ -308,20 +308,26 @@ Genuinely open:
     port's own write-time clobber and `Maker::MoveNode`'s destination-folder collision,
     both scoped to one path, not a project-wide name scan.
 
-12. **EMBEDDED `chunk` IS NOT RETIRED, AND `chunk_remote` BEING LIVE MUST NOT BE READ AS SAYING IT
-    IS.** Since 2026-08-24 there is a fourth Unraid destination, `remote`, running
-    `LIBRARY_BACKEND=chunk_remote` against a standalone sync server — with `Sync` **undefined in
-    that Rails process** (`engine_wanted?=false`, checked in the running container), which is the
-    whole point of Stage 5. **Two chunk-family backends are therefore live at once**, `chunk` on
-    the base destination and `chunk_remote` on `remote`, sharing no process. That is the intended
-    intermediate state, not an oversight, and `chunk` remains the base deployment, the default, and
-    what `bin/ci`'s `test` gate runs against.
-    **The number is why the deletion was deferred to its own arc: `68` of `224` test files name
-    `Sync::` or `FileLayer::Chunk`** (66 and 9, overlapping — measured, not estimated). Retiring
-    embedded chunk means rewriting or deleting ~30% of the suite, and doing that in the same arc
-    that first stood the remote server up would change the thing under test and the test of it
-    together, with no green baseline in between. `docs/STATUS.md`'s "Arc D Part 1" entry has the
-    live evidence and the seven defects the backup rehearsal found.
+12. **DONE (2026-08-25) — EMBEDDED `chunk` IS RETIRED, AND THE SYNC ENGINE IS NOT A DEPENDENCY OF
+    THIS APP.** Kept as an item rather than deleted, because these are cited by number and because
+    the entry it replaces said the opposite: for two days this read "chunk IS NOT RETIRED", with
+    the argument for deferring. Arc D Part 2 did it.
+    What that means concretely: `LIBRARY_BACKEND` is **`chunk_remote | share | s3`** and `chunk` is
+    REFUSED (`FileLayer.build` raises rather than aliasing it to chunk_remote — a deployment still
+    carrying that value is misconfigured, and silently serving it a different backend would hand it
+    an empty library that reads as data loss). `FileLayer.build`'s default is **`share`**, the only
+    hermetic backend left. The gem is gone from the Gemfile, and with it the Docker build's
+    read-only deploy key, the engine schema generator and its cross-repo guard, `engine_wanted?`,
+    the `SYNC_ENGINE` knob, `DevBlobsController`, the pooler guard and the three engine jobs.
+    **THE MAKER APP NO LONGER SERVES THE DEVICE SYNC API.** `/v1/changes`, `/v1/tree`, `/v1/commit`,
+    `/v1/commit/:id/finalize`, `/v1/chunks/*`, `/v1/conflicts`, `/v1/locks`, `/v1/trash`,
+    `/v1/nodes` and `/v1/share_links` were drawn by the engine and are simply not routed here. A
+    desktop client syncs against the standalone server (`chaim354/tinkerex-sync`), never against
+    this app — which is the whole point, and is why `client-contract.yml` boots that repo now.
+    The 68-of-224 number this entry used to quote as the cost was the wrong number to plan from:
+    **36 of 43 app-side hits and 11 of 68 test-side hits were PROSE**, and the real coupling was 7
+    wiring sites and 57 test files, 60 of whose references sat in one file that was deleted.
+    Recorded because the misleading number is the reason this was deferred twice.
 
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
@@ -332,22 +338,26 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 ```sh
 # ALL local gates, one command (this is what CI runs, by name):
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
-                       # 9 gates (8 run under CI -- `setup` is local-only, bin/ci --list-ci). The
-                       # sync engine's own suite is NOT one of them any more -- it runs in
-                       # chaim354/tinkerex-sync, which this repo consumes as a git gem.
-# ONE gate needs a DIFFERENT sibling checkout, not that gem: `test-chunk-remote` drives the maker
-# app against a real chaim354/tinkerex-sync HOST app (a standalone Rails server, not the engine).
-# It boots that server itself via bin/sync-server, which needs ../tinkerex-sync checked out as a
-# sibling (same convention as tinkerex-client below) -- a missing checkout fails loudly and names
-# the clone command, it does not fall through to a confusing connection error:
+                       # 7 gates (6 run under CI -- `setup` is local-only, bin/ci --list-ci).
+                       # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote and must report
+                       # IDENTICAL run counts (§15). `test` IS the share leg -- it ran embedded
+                       # chunk until 2026-08-25, and `test-share` was folded into it rather than
+                       # left as the same leg twice. `test-no-engine` is gone: no engine is the
+                       # only mode there is now, and every gate exercises it.
+# ONE gate needs a SIBLING CHECKOUT: `test-chunk-remote` drives the maker app against a real
+# chaim354/tinkerex-sync HOST app, booting it itself via bin/sync-server, which needs
+# ../tinkerex-sync checked out as a sibling (same convention as tinkerex-client below) -- a missing
+# checkout fails loudly and names the clone command rather than falling through to a confusing
+# connection error. It runs the FULL suite there, not just the journey file, because there is no
+# in-process chunk backend left to carry that coverage:
 #   gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
-# WORKING ON THE SYNC ENGINE: clone it and test it there; there is nothing to edit in this repo.
+# WORKING ON THE SYNC SERVER: clone it and test it there; there is nothing to edit in this repo,
+# and since 2026-08-25 it is not a DEPENDENCY of this one either -- no gem, no Gemfile.lock pin,
+# no `bundle update` step, and no engine_schema cross-repo guard. What couples the two now is the
+# WIRE, and the things that check it are `bin/ci test-chunk-remote` here and the conformance
+# corpus there.
 #   gh repo clone chaim354/tinkerex-sync && cd tinkerex-sync && bundle install && bundle exec rake test
-# To pick up a change here afterwards (Gemfile.lock pins an exact revision, so nothing moves until
-# you say so -- and test/engine_schema_test.rb goes RED if the engine's DDL and this repo's
-# db/schema.rb disagree, which is the cross-repo obligation made blocking rather than remembered):
-#   bundle update tinkerex-sync
 
 # SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves
 # every credential (exported shell value wins, else 1Password) and backs each .kamal/secrets*
@@ -377,8 +387,10 @@ bin/rails test
 LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
 # s3 leg additionally needs the five LIBRARY_S3_* stub knobs — see ci.yml's test-s3-backend.
 
-# Boot the server for the live demos (memory chunk store = control-plane only)
-STORAGE_BACKEND=memory bin/rails server -p 3001
+# Boot the SYNC SERVER for the live demos. This used to be `STORAGE_BACKEND=memory bin/rails
+# server` in THIS app, back when it embedded the engine and served /v1/commit itself. It does not
+# any more (§12.12), so the demos below talk to the standalone server:
+bin/sync-server prepare && bin/sync-server start     # foreground on $SYNC_PORT (default 3002)
 
 # --- Everything below needs a checkout of chaim354/tinkerex-client (the Rust crates + the Tauri
 # app moved there 2026-08-20 — docs/superpowers/plans/2026-08-20-stage-1-extract-client.md). Every
@@ -389,18 +401,22 @@ STORAGE_BACKEND=memory bin/rails server -p 3001
 # level first, or adjust the `../tinkerex-client` prefix to wherever you cloned it):
 #   gh repo clone chaim354/tinkerex-client ../tinkerex-client
 
-# Live cross-stack demos (server must be running):
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example e2e)
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example multi_device)
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example roundtrip)      # real bytes
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example daemon_loop)    # outbox→push→pull→hydrate
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3001 cargo run --example nudge)          # ActionCable {head_seq} (~39ms)
+# Live cross-stack demos. THE SERVER HERE IS THE SYNC SERVER (bin/sync-server, default port 3002),
+# not this app: these exercise /v1/commit, /v1/changes and the chunk endpoints, which this app has
+# not served since embedded chunk was retired (§12.12). The port moved 3001 -> 3002 with it.
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example e2e)
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example multi_device)
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example roundtrip)      # real bytes
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example daemon_loop)    # outbox→push→pull→hydrate
+(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example nudge)          # ActionCable {head_seq} (~39ms)
 
-# Server with real S3/SeaweedFS chunk storage (presigned PUT/GET):
-STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
-CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret \
-  bin/rails server -p 3001
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3001 cargo run --example presigned_roundtrip)
+# Sync server with real S3/SeaweedFS chunk storage (presigned PUT/GET). THESE ENV VARS ARE THE
+# SYNC SERVER'S, and setting them on THIS app does nothing at all since 2026-08-25 -- no code here
+# reads STORAGE_BACKEND or any CHUNK_* storage knob any more (§12.12). Set them in that repo's own
+# env, or on the `sync` accessory (config/deploy.yml):
+#   STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
+#   CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret
+(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example presigned_roundtrip)
 
 # Rust crate tests (per-suite counts now live in tinkerex-client's own docs, not here)
 (cd ../tinkerex-client/client/fs-provider && cargo test)   # chunking/posix/convergence/concurrency/caching (hermetic)
@@ -409,8 +425,9 @@ CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret 
 # SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check defaults ON, but the engine
 # suites move chunk bytes through SharedDirIO, not the server's store — so the server can't see
 # them. See config/initializers/finalize_verification.rb.
-STORAGE_BACKEND=memory SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &   # then:
-(cd ../tinkerex-client/client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3001 cargo test --test integration)
+# (Both knobs are the SYNC SERVER's, set in its env -- not this app's.)
+SYNC_PORT=3002 bin/sync-server start &   # then:
+(cd ../tinkerex-client/client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3002 cargo test --test integration)
 
 # External conformance (battle-tested tools vs our real mounts — tinkerex-client's own test-conformance/):
 ../tinkerex-client/client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (macOS+Linux)
@@ -461,17 +478,31 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14a. The FileLayer port
 
-- **`LIBRARY_BACKEND=chunk|share|s3|chunk_remote`, chosen per DEPLOYMENT, not per user.** `chunk_remote`
-  landed 2026-08-21 (Stage 4): the maker app as a SYNC CLIENT against a standalone sync server. Reads
-  answer from a locally-mirrored `nodes` (so §2's "the WAN is never in the metadata path" is true of
-  the maker app for the first time), writes go over the v1 API, and **the engine is not in the
-  process at all** — which is what Arc A made possible. Its capabilities match chunk's except
-  `presignable: FALSE`: it cannot verify that a URL another server signed points off-box, so it
-  streams (`FileLayer::ChunkRemote`'s own header carries the argument). Reads:
-  `stat`/`stat_all`/`read`/`download`/`trashed` — all three adapters answer all five.
-  Metadata writes (`mkdir`/`move`/`delete`/`undelete`) are **all three, since Stage 2**
-  (2026-08-20); only the BYTE write (`write`) stays **Share + S3 only** — chunk's own
-  upload is the two-phase `begin_upload`/`finalize_upload` pair, never `write`.
+- **`LIBRARY_BACKEND=chunk_remote|share|s3`, chosen per DEPLOYMENT, not per user — and `chunk` is
+  REFUSED, not aliased.** Embedded `chunk` was retired 2026-08-25 (Arc D Part 2, §12.12): the gem
+  is gone and `Sync::` is undefined in this process, so `FileLayer.build` raises `ArgumentError` on
+  the old value rather than quietly serving chunk_remote. A deployment still carrying it is
+  misconfigured — its library lives on a sync server it has not been pointed at — and silently
+  substituting a backend would hand it an empty library that reads as data loss. **The default is
+  `share`**, the only hermetic backend left; nothing in production relies on it, since every Kamal
+  destination sets `LIBRARY_BACKEND` explicitly.
+  `chunk_remote` landed 2026-08-21 (Stage 4): the maker app as a SYNC CLIENT against a standalone
+  sync server. Reads answer from a locally-mirrored `nodes` (so §2's "the WAN is never in the
+  metadata path" is true of the maker app), writes go over the v1 API, and **the engine is not in
+  the process at all**. Its capabilities match the retired chunk's except `presignable: FALSE`: it
+  cannot verify that a URL another server signed points off-box, so it streams
+  (`FileLayer::ChunkRemote`'s own header carries the argument). Reads:
+  `stat`/`stat_all`/`read`/`download`/`trashed` — all three adapters answer all five. Metadata
+  writes (`mkdir`/`move`/`delete`/`undelete`) are all three; only the BYTE write (`write`) stays
+  **Share + S3 only** — the chunk family's own upload is the two-phase
+  `begin_upload`/`finalize_upload` pair, never `write`.
+  **MOST OF THIS SECTION STILL SAYS "chunk" AND ALMOST ALWAYS MEANS THE CHUNK FAMILY** — the
+  reasoning about trash layout, tombstone kinds, delivery variants and capability gating transfers
+  to `chunk_remote` unchanged, because it was always about what a changelog-backed, versioned,
+  content-addressed backend can do. Where a bullet is about the EMBEDDED adapter specifically (an
+  in-process store, a presigned URL pointing back at Rails), it no longer describes any live
+  deployment; it is kept because the trap it records — `delete` that tombstones without cascading,
+  a redirect that truncates a multi-chunk file — is the same trap in the remote adapter.
 - **A share/s3 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`.** `STORAGE_BACKEND`
   defaults to `s3` *outside test*, so resolving a chunk store on a v1 request once made a
   share deployment's **entire v1 API answer 500** (`KeyError: CHUNK_BUCKET`) — including
@@ -2276,9 +2307,25 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ### 14j. The maker/sync boundary (Stages 3a and 3b)
 
-**And share/s3 stopped loading it on 2026-08-21.** The gem is `require: false`; `config/application.rb`
-requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **9 gates**, not 8 — `test-chunk-remote`
-(Stage 5 Arc B, 2026-08-24) is the ninth; see §14a for what it drives.
+> **THE BOUNDARY IS NOW A NETWORK, NOT A NAMESPACE (2026-08-25, Arc D Part 2 — §12.12).** This
+> section was written while the sync engine was a GEM IN THIS PROCESS and the boundary was
+> enforced by static analysis: guards counting `Sync::` references, a capability seam so the
+> engine named no host constant, a byte-identical schema check across two repos, a `require:
+> false` gem loaded only when `engine_wanted?`. **None of that machinery exists here any more.**
+> The engine is not a dependency; `Sync::` is undefined; `bin/ci`'s seam guard asserts ZERO
+> references with no allowlist, which is stronger than anything the exception lists below could
+> express. What couples the two repos is the WIRE, and what checks it is `bin/ci
+> test-chunk-remote` (the full suite against a booted server) plus the conformance corpus in
+> `chaim354/tinkerex-sync`.
+>
+> **The rules below are kept, not deleted, and the distinction matters per rule.** Some are now
+> HISTORY — the `SYNC_ENGINE` knob, the `dependent: :destroy` constantize trap, `recurring.yml`'s
+> `command:`-not-`class:` gate, the engine-schema guard — describing machinery that is gone; they
+> stay because they record WHY the separation was done this way and what each mechanism cost.
+> Others still BIND, because they are about the two repos rather than about a gem: the
+> `BUNDLE_GEMFILE` stripping (`bin/sync-server` still spawns a second Rails app), `Device` staying
+> host-owned, the deliberate non-rewriting of `db/migrate/`, and the "a guard that scans a
+> directory dies silently when the directory leaves" lesson. **Read each one asking which it is.**
 
 - **A BUNDLED RUBY PROCESS THAT SPAWNS A SECOND RAILS APP MUST STRIP `BUNDLE_GEMFILE`/`RUBYOPT`
   FIRST, OR THE CHILD SILENTLY BOOTS AGAINST THE WRONG GEMFILE.** Found while proving Arc C Task
