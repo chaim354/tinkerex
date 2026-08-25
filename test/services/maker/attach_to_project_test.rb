@@ -14,11 +14,19 @@ module Maker
   # behind every fixture. The doors themselves are covered per-backend in move_node_test.rb.
   class AttachToProjectTest < ActiveSupport::TestCase
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "atp-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @lamp = @user.maker_projects.create!(name: "Desk Lamp")
       @bench = @user.maker_projects.create!(name: "Bench")
-      @node = @user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
+      @node = create_node!(@user, node_id: "f-1", name: "bracket.stl", kind: "file")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     def service(project = @lamp) = Maker::AttachToProject.new(user: @user, project:)
@@ -34,7 +42,7 @@ module Maker
     # A directory has no place in a project folder, and FileLayer::S3#move refuses one outright
     # (movable_file!) — so allowing it would be a policy that works on share/chunk and 422s on s3.
     test "a directory is refused" do
-      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      dir = create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
       assert_equal :not_a_file, service.refusal_for(dir)
     end
 
@@ -55,7 +63,7 @@ module Maker
       model = @user.maker_models.create!(title: "Widget")
       folder = model.ensure_library_folder!(@user)
 
-      stray = @user.nodes.create!(node_id: "f-stray", name: "stray.stl", kind: "file",
+      stray = create_node!(@user, node_id: "f-stray", name: "stray.stl", kind: "file",
                                   parent_node_id: folder.node_id)
       assert_nil service.refusal_for(stray), "sitting in the folder does not make it a member"
 
@@ -125,7 +133,7 @@ module Maker
     # work, and move_node.rb asked for the split by name.
     test "relocate names each move outcome" do
       @lamp.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
-      @user.nodes.create!(node_id: "f-2", name: "taken.stl", kind: "file",
+      create_node!(@user, node_id: "f-2", name: "taken.stl", kind: "file",
                           parent_node_id: lamp_folder.node_id)
 
       assert_equal :conflict, service.relocate(@node, new_name: "taken.stl")
@@ -217,7 +225,7 @@ module Maker
     # "Attached 0 files from Widget." on the HTML door and `undefined method 'node_id' for nil` on
     # the JSON one. Both reproduced before the fix.
     test "a directory that belongs to a model attaches as itself, not as a bundle" do
-      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      dir = create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
       model = @user.maker_models.create!(title: "Widget")
       model.file_attachments.create!(user: @user, node_id: "d-1", role: "other")
       model.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
@@ -235,7 +243,7 @@ module Maker
       model = @user.maker_models.create!(title: "Widget")
       folder = model.ensure_library_folder!(@user)
       %w[widget.stl instructions.pdf cover.png].each_with_index do |name, i|
-        @user.nodes.create!(node_id: "m-#{i}", name:, kind: "file", parent_node_id: folder.node_id)
+        create_node!(@user, node_id: "m-#{i}", name:, kind: "file", parent_node_id: folder.node_id)
         model.file_attachments.create!(user: @user, node_id: "m-#{i}", role: "other")
       end
 

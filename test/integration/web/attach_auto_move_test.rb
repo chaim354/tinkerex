@@ -17,12 +17,20 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "am-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @lamp = @user.maker_projects.create!(name: "Desk Lamp")
       @bench = @user.maker_projects.create!(name: "Bench")
-      @node = @user.nodes.create!(node_id: "f-1", name: "bracket.stl", kind: "file")
+      @node = create_node!(@user, node_id: "f-1", name: "bracket.stl", kind: "file")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     def lamp_folder
@@ -98,7 +106,7 @@ module Web
     end
 
     test "a directory is never moved" do
-      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      dir = create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
       post attachments_path, params: { project_id: @lamp.slug, node_id: "d-1" }
       assert_nil dir.reload.parent_node_id, "dirs are not relocated (s3 refuses them outright)"
     end
@@ -180,7 +188,7 @@ module Web
     # and this door raised `undefined method 'node_id' for nil`. Reproduced before the fix; the
     # HTML door's version of it said "Attached 0 files from Widget."
     test "a JSON attach of a dir that belongs to a model answers instead of 500-ing" do
-      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      dir = create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
       model = @user.maker_models.create!(title: "Widget")
       model.file_attachments.create!(user: @user, node_id: "d-1", role: "other")
 
@@ -194,7 +202,7 @@ module Web
     end
 
     test "a JSON attach of a dir reports no relocation attempt at all" do
-      @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
       post attachments_path, params: { project_id: @lamp.slug, node_id: "d-1" }, as: :json
       body = JSON.parse(response.body)
       # PRESENT-and-null, not merely absent: an absent key is also what dropping the field
@@ -224,7 +232,7 @@ module Web
     # for real, not by a fake: Node validates name PRESENCE only, so a row whose name carries a
     # separator is storable and MoveNode#leaf! rejects it.
     test "a node whose own name is not a leaf degrades instead of 500-ing" do
-      @user.nodes.create!(node_id: "f-3", name: "sub/dir.stl", kind: "file")
+      create_node!(@user, node_id: "f-3", name: "sub/dir.stl", kind: "file")
 
       post attachments_path, params: { project_id: @lamp.slug, node_id: "f-3" }
 
@@ -356,7 +364,7 @@ module Web
       assert_response :success
       assert_select "dialog.move-conflict", count: 0, message: "nothing in the folder to collide with"
 
-      sibling = @user.nodes.create!(node_id: "f-2", name: "bracket.stl", kind: "file",
+      sibling = create_node!(@user, node_id: "f-2", name: "bracket.stl", kind: "file",
                                     parent_node_id: folder.node_id)
       get file_path("f-1", move_conflict: empty_folder_attachment.id)
       assert_select "dialog.move-conflict", 1, "precondition: a real collision does render"
@@ -417,7 +425,7 @@ module Web
     # computing its suggested name against the library ROOT.
     test "a prompt is not built for a deleted file, or for a project with no folder yet" do
       @lamp.ensure_library_folder!(@user)
-      @user.nodes.create!(node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
+      create_node!(@user, node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
       for_a_tombstone = @lamp.file_attachments.create!(user: @user, node_id: "f-gone", role: "model")
 
       get file_path("f-1", move_conflict: for_a_tombstone.id)
@@ -439,7 +447,7 @@ module Web
     test "with every suggestion taken the prompt still explains itself, minus the button" do
       folder = seed_collision
       (2..Maker::MoveNode::HIGHEST_SUFFIX).each do |i|
-        @user.nodes.create!(node_id: "f-taken-#{i}", name: "bracket (#{i}).stl", kind: "file",
+        create_node!(@user, node_id: "f-taken-#{i}", name: "bracket (#{i}).stl", kind: "file",
                             parent_node_id: folder.node_id)
       end
 
@@ -474,7 +482,7 @@ module Web
     test "relocate onto a name that is ALSO taken says so instead of clobbering" do
       attach!
       folder = @lamp.ensure_library_folder!(@user)
-      @user.nodes.create!(node_id: "f-other", name: "bracket (2).stl", kind: "file",
+      create_node!(@user, node_id: "f-other", name: "bracket (2).stl", kind: "file",
                           parent_node_id: folder.node_id)
 
       post relocate_project_attachments_path(@lamp),
@@ -504,7 +512,7 @@ module Web
     # its own descendant on share and chunk, and a cycle in `nodes` makes Sync::Search's WITH
     # RECURSIVE walk spin unboundedly (fatal on SQLite, which has no statement timeout).
     test "relocate refuses a directory outright" do
-      dir = @user.nodes.create!(node_id: "d-1", name: "cad", kind: "dir")
+      dir = create_node!(@user, node_id: "d-1", name: "cad", kind: "dir")
 
       post relocate_project_attachments_path(@lamp), params: { node_id: "d-1" }
 
@@ -515,8 +523,8 @@ module Web
     test "relocate never touches another user's file, or a tombstoned one" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      theirs = other.nodes.create!(node_id: "of-1", name: "x.stl", kind: "file")
-      mine_gone = @user.nodes.create!(node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
+      theirs = create_node!(other, node_id: "of-1", name: "x.stl", kind: "file")
+      mine_gone = create_node!(@user, node_id: "f-gone", name: "old.stl", kind: "file", deleted: true)
 
       post relocate_project_attachments_path(@lamp), params: { node_id: "of-1" }
       assert_nil theirs.reload.parent_node_id
@@ -575,7 +583,7 @@ module Web
       model = @user.maker_models.create!(title: "Widget")
       folder = model.ensure_library_folder!(@user)
       %w[widget.stl instructions.pdf cover.png].each_with_index do |name, i|
-        @user.nodes.create!(node_id: "m-#{i}", name:, kind: "file", parent_node_id: folder.node_id)
+        create_node!(@user, node_id: "m-#{i}", name:, kind: "file", parent_node_id: folder.node_id)
         model.file_attachments.create!(user: @user, node_id: "m-#{i}", role: "other")
       end
       # The attach itself is allowed and brings the whole bundle (Task 3b) — so the attachment
@@ -726,7 +734,7 @@ module Web
     # A live sibling already holding "bracket.stl" in the project folder.
     def seed_collision
       folder = @lamp.ensure_library_folder!(@user)
-      @user.nodes.create!(node_id: "f-2", name: "bracket.stl", kind: "file",
+      create_node!(@user, node_id: "f-2", name: "bracket.stl", kind: "file",
                           parent_node_id: folder.node_id)
       folder
     end

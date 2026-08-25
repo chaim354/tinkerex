@@ -5,14 +5,22 @@ module Maker
     include ActiveJob::TestHelper
 
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "pij-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @folder = @project.ensure_library_folder!(@user)
     end
 
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
     def file(name, parent: @folder.node_id)
-      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
+      create_node!(@user, node_id: SecureRandom.uuid, name:, kind: "file",
                           parent_node_id: parent, size: 1, content_hash: SecureRandom.hex(8))
     end
 
@@ -36,7 +44,7 @@ module Maker
     # put it and there is nothing to file. This arm is what keeps the nudge off every commit in the
     # library — without it, every synced file anywhere would enqueue a sweep.
     test "a file landing deeper than the project root does NOT enqueue" do
-      sub = @user.nodes.create!(node_id: SecureRandom.uuid, name: "cad", kind: "dir",
+      sub = create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir",
                                 parent_node_id: @folder.node_id)
       node = file("part.step", parent: sub.node_id)
 
@@ -46,7 +54,7 @@ module Maker
     end
 
     test "a file outside every project folder does NOT enqueue" do
-      node = @user.nodes.create!(node_id: SecureRandom.uuid, name: "loose.stl", kind: "file",
+      node = create_node!(@user, node_id: SecureRandom.uuid, name: "loose.stl", kind: "file",
                                  parent_node_id: nil, size: 1, content_hash: SecureRandom.hex(8))
 
       assert_no_enqueued_jobs(only: Maker::ProjectIntakeJob) do
@@ -123,7 +131,12 @@ module Maker
 
     # THE GATE IS ON THE FAN-OUT, NOT ON #perform — the house rule Library::ScanJob states: a
     # `return unless` inside #perform would make an operator's explicit run silently do nothing.
-    test "sweep_all! enqueues for a chunk deployment" do
+    # A NON-SCANNABLE backend, selected explicitly -- this used to ride the ambient backend being
+    # embedded chunk. The rule is `scannable`, not "chunk": on a scanned backend Library::ScanJob
+    # is already the caller and running both would reintroduce the scan overlap this placement
+    # exists to prevent (see the sibling test below).
+    test "sweep_all! enqueues on a non-scannable backend" do
+      FileLayer.current = FileLayer::ChunkRemote.new
       assert_enqueued_with(job: Maker::ProjectIntakeJob) do
         Maker::ProjectIntakeJob.sweep_all!
       end

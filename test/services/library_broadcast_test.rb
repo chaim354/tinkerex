@@ -246,19 +246,4 @@ class LibraryBroadcastTest < ActiveSupport::TestCase
     assert_equal :share_result, result
   end
 
-  # THE UNCHANGED ARM: engine loaded (chunk, or SYNC_ENGINE forced on for a share/s3 CI leg) still
-  # delegates to Sync::LibraryChannel.batch exactly as before this task. No seq is ever set inside
-  # the block, so LibraryChannel's own `ensure` finds nothing to broadcast and this stays a pure
-  # routing check with no ActionCable/Solid Cable side effect to manage.
-  test "with the engine loaded, batch still delegates to Sync::LibraryChannel.batch, unchanged" do
-    user = new_user
-    ran = false
-
-    result = with_file_layer_env(library_backend: "chunk", sync_engine: "1", current: Object.new) do
-      LibraryBroadcast.batch(user) { ran = true; :engine_result }
-    end
-
-    assert ran
-    assert_equal :engine_result, result
-  end
 end

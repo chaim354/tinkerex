@@ -47,15 +47,4 @@ class ConcurrencyLimitsTest < ActiveSupport::TestCase
                  Library::ScanJob.new(user_id: @a.id, root: "/mnt/library").concurrency_key
   end
 
-  # Sync::RetentionJob sweeps every user itself, so there is no per-user key to scope on.
-  test "Sync::RetentionJob limits concurrency globally and BLOCKS rather than discarding" do
-    assert_equal 1, Sync::RetentionJob.concurrency_limit
-    assert Sync::RetentionJob.new.concurrency_key.present?
-    assert_equal Sync::RetentionJob.new.concurrency_key,
-                 Sync::RetentionJob.new(grace: 2.hours).concurrency_key,
-                 "the key is global — an argument must not split it into two semaphores"
-    # Daily cadence: a discarded tick is a whole day of unpruned versions, where a discarded
-    # 15-minute scan is re-taken almost immediately. The two choices are deliberately opposite.
-    assert_equal :block, Sync::RetentionJob.concurrency_on_conflict
-  end
 end

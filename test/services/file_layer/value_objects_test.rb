@@ -74,8 +74,13 @@ module FileLayer
     # keys. If a future adapter's capabilities ever depend on how it was constructed, this test
     # must move to real instances -- the answer would silently become whatever `allocate` left
     # behind, which for a Data-backed field is nil, and nil reads as false.
-    test "every adapter declares dir_deletable, and only chunk allows it" do
-      expected = { FileLayer::Chunk => true, FileLayer::Share => false, FileLayer::S3 => false }
+    # ONLY THE CHUNK-FAMILY BACKEND ALLOWS A DIRECTORY DELETE, and since Arc D Part 2 that is
+    # ChunkRemote rather than the retired embedded Chunk. The reason is unchanged (§14a): the sync
+    # server cascades the whole subtree, while on share the children would be stranded at paths
+    # that no longer exist with their bytes sitting in `.trash`, where the scan refuses to look,
+    # and on s3 a directory node's key does not exist at all.
+    test "every adapter declares dir_deletable, and only the chunk-family backend allows it" do
+      expected = { FileLayer::ChunkRemote => true, FileLayer::Share => false, FileLayer::S3 => false }
       expected.each do |klass, want|
         got = klass.allocate.capabilities.dir_deletable?
         assert_equal want, got, "#{klass} must declare dir_deletable: #{want}"

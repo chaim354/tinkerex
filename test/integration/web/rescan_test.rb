@@ -21,6 +21,9 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "rescan-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -66,7 +69,7 @@ module Web
     # rescans from inside a folder lands back in that folder.
     test "the rescan redirect preserves the current folder" do
       use_scannable_backend
-      @user.nodes.create!(node_id: "dir-1", name: "cad", kind: "dir")
+      create_node!(@user, node_id: "dir-1", name: "cad", kind: "dir")
       post rescan_files_path(folder: "dir-1")
       assert_redirected_to files_path(folder: "dir-1")
     end
@@ -87,14 +90,22 @@ module Web
 
     test "the rescan button carries the filter it was clicked from" do
       use_scannable_backend
-      @user.nodes.create!(node_id: "n-1", name: "a.stl", kind: "file", mtime: 1, size: 1)
+      create_node!(@user, node_id: "n-1", name: "a.stl", kind: "file", mtime: 1, size: 1)
       get files_path(ext: "stl")
       assert_select "form[action=?]", rescan_files_path(ext: "stl")
     end
 
-    # --- Chunk mode: the button is absent AND the POST is gated (does not enqueue) ---
+    # --- A NON-SCANNABLE BACKEND: the button is absent AND the POST is gated ---
+    #
+    # `chunk_remote`, selected EXPLICITLY, where these used to rely on the ambient backend being
+    # embedded chunk. The property is unchanged and is not about chunk specifically: `scannable`
+    # asks whether this backend's catalog comes from POLLING the store (§14b), and a chunk-family
+    # backend's tree is the changelog, so there is nothing to rescan. Constructing the adapter
+    # needs no sync server -- `capabilities` is a constant and the gate runs before any port call.
+    def use_non_scannable_backend = FileLayer.current = FileLayer::ChunkRemote.new
 
-    test "chunk mode does not show the Rescan button" do
+    test "a non-scannable backend does not show the Rescan button" do
+      use_non_scannable_backend
       get files_path
       assert_response :success
       # count: 0, not a body text match -- the user's email contains "rescan".
@@ -107,7 +118,8 @@ module Web
     # can arrive without rendering the page -- so the action itself must refuse. The redirect +
     # alert is the web idiom (FilesController's rescue_from handlers all redirect with a flash);
     # a JSON 501 from require_capability! would show a human raw JSON.
-    test "chunk mode: POST /files/rescan does not enqueue a scan, and redirects with an alert" do
+    test "a non-scannable backend: POST /files/rescan does not enqueue a scan, and alerts" do
+      use_non_scannable_backend
       assert_no_enqueued_jobs do
         post rescan_files_path
       end

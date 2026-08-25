@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "support/chunk_remote_journey"
 
 module FileLayer
   class ChunkRemote
@@ -75,7 +76,19 @@ module FileLayer
         # the flap only appeared in the whole-suite counts, which is the hardest place to see it.
         # LibraryBackend re-reads ENV on every call and nothing mutates it, so this asks the same
         # question of something stable.
-        skip "the v1 sync endpoints are 501 on this backend" unless LibraryBackend.name == "chunk"
+        # THESE RAN ONLY ON THE CHUNK LEG, AND CHUNK IS GONE (Arc D Part 2). The skip used to read
+        # `unless LibraryBackend.name == "chunk"` because the rig below is a LOOPBACK: it pointed
+        # the adapter's transport at this same Rails process, using the embedded engine's own v1
+        # endpoints as a stand-in for a standalone sync server. With the engine retired there is no
+        # in-process server to loop back to, so the only honest place for these is the
+        # `test-chunk-remote` gate, which boots a real one via bin/sync-server.
+        #
+        # SKIPPING ON WHETHER A SERVER IS CONFIGURED, NOT ON `defined?(Sync)` -- §14j's recorded
+        # trap is a guard that skips on the very thing it asserts, which reports success having
+        # asserted nothing. A configured server is a PRECONDITION, and the gate's own CI step
+        # greps its output for skips so this cannot quietly become a no-op there.
+        skip "needs a real sync server (bin/sync-server start); runs in the test-chunk-remote gate" \
+          unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
         @user = User.create!(email: "remote-upload-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
         @device = Device.register!(user: @user, name: "loopback")

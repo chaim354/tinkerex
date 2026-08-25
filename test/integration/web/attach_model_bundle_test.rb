@@ -17,6 +17,9 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "amb-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -30,8 +33,13 @@ module Web
       @cover = model_file("cover.png")
     end
 
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
     def model_file(name)
-      node = @user.nodes.create!(node_id: "m-#{name}", name:, kind: "file",
+      node = create_node!(@user, node_id: "m-#{name}", name:, kind: "file",
                                  parent_node_id: @folder.node_id)
       @model.file_attachments.create!(user: @user, node_id: node.node_id,
                                       role: Maker::FileAttachment.role_for(name))
@@ -128,7 +136,7 @@ module Web
     # The single-file path refuses directories too (for its own reason: S3 cannot move them) —
     # one controller must not answer the directory question two ways.
     test "a directory member is left out of the bundle" do
-      dir = @user.nodes.create!(node_id: "m-sources", name: "sources", kind: "dir",
+      dir = create_node!(@user, node_id: "m-sources", name: "sources", kind: "dir",
                                 parent_node_id: @folder.node_id)
       @model.file_attachments.create!(user: @user, node_id: dir.node_id, role: "other")
 
@@ -172,7 +180,7 @@ module Web
     end
 
     test "a plain library file still MOVES — Task 3's rule is untouched" do
-      loose = @user.nodes.create!(node_id: "f-loose", name: "bracket.stl", kind: "file")
+      loose = create_node!(@user, node_id: "f-loose", name: "bracket.stl", kind: "file")
       post attachments_path, params: { project_id: @project.slug, node_id: "f-loose" }
 
       folder = @user.nodes.present.find_by!(name: @project.slug, kind: "dir")
@@ -195,7 +203,7 @@ module Web
     test "a foreign model's attachment row does not turn this file into a bundle" do
       other = User.create!(email: "amb-other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      loose = @user.nodes.create!(node_id: "f-shared", name: "bracket.stl", kind: "file")
+      loose = create_node!(@user, node_id: "f-shared", name: "bracket.stl", kind: "file")
       other.maker_models.create!(title: "Theirs")
            .file_attachments.create!(user: other, node_id: loose.node_id, role: "model")
 
@@ -213,8 +221,8 @@ module Web
     # the user attached it to last week into this one.
     test "a file already attached to a PROJECT is not mistaken for a bundle" do
       bench = @user.maker_projects.create!(name: "Bench")
-      @user.nodes.create!(node_id: "f-a", name: "a.stl", kind: "file")
-      @user.nodes.create!(node_id: "f-b", name: "b.stl", kind: "file")
+      create_node!(@user, node_id: "f-a", name: "a.stl", kind: "file")
+      create_node!(@user, node_id: "f-b", name: "b.stl", kind: "file")
       bench.file_attachments.create!(user: @user, node_id: "f-a", role: "model")
       bench.file_attachments.create!(user: @user, node_id: "f-b", role: "model")
 
@@ -230,7 +238,7 @@ module Web
       model = @user.maker_models.create!(title: "Kraken")
       folder = model.ensure_library_folder!(@user)
       n.times do |i|
-        @user.nodes.create!(node_id: "k-#{i}", name: "part-#{i}.stl", kind: "file",
+        create_node!(@user, node_id: "k-#{i}", name: "part-#{i}.stl", kind: "file",
                             parent_node_id: folder.node_id)
         model.file_attachments.create!(user: @user, node_id: "k-#{i}", role: "model")
       end

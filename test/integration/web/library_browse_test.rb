@@ -13,6 +13,9 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A real share library, and fixtures that exist on disk -- see test_helper's create_node!
+      # for why (§14a: a bare nodes.create! leaves a NULL storage_path, which cannot exist here).
+      @root = use_fresh_share_library!
       @user = User.create!(email: "browse-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -23,9 +26,14 @@ module Web
       @root_stl = node("root.stl", "file", nil)
     end
 
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
     def node(name, kind, parent)
       id = SecureRandom.uuid
-      @user.nodes.create!(node_id: id, name:, kind:, parent_node_id: parent)
+      create_node!(@user, node_id: id, name:, kind:, parent_node_id: parent)
       id
     end
 
@@ -68,7 +76,7 @@ module Web
     test "a foreign/forged parent falls back to the root, never another user's tree" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      theirs = other.nodes.create!(node_id: SecureRandom.uuid, name: "Secret", kind: "dir")
+      theirs = create_node!(other, node_id: SecureRandom.uuid, name: "Secret", kind: "dir")
       get library_children_path(parent: theirs.node_id)
       assert_response :success
       assert_nil json["parent"], "foreign parent resolved to root"
