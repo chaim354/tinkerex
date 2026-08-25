@@ -1,12 +1,19 @@
-# Build status — sync engine
+# Build status — the maker app (`chaim354/tinkerex`)
 
-**Updated:** 2026-08-25 (**Stage 5 COMPLETE AND DEPLOYED — Arc D Part 2 retired embedded `chunk`. The sync engine is no longer a dependency of this app: the gem is gone, `Sync::` is undefined here, and the maker app no longer serves a device sync API at all. `LIBRARY_BACKEND` is `chunk_remote | share | s3`, three Unraid destinations again with the chunk-family one as the base, and all three backend legs run the FULL suite at identical counts — the chunk_remote one against a real sync server**)
+**Updated:** 2026-08-25 (**CLAUDE.md audited for the repo separation — the sync-engine and desktop-client material moved to those repos' own CLAUDE.md, which they did not have before. 2726 → 2404 lines here; §5 was listing six tables this repo no longer has and §15's CI gate list contradicted `config/ci.rb`. No section renumbered; every cited `§N` verified to still resolve.**)
 
 ## What this file is
 
 The **canonical record**: every arc, newest first, with the numbers that were actually measured.
 Architecture and the invariants a future editor must not undo live in **CLAUDE.md** (§14) — not here.
 Narrate arcs here; put rules there.
+
+**This file covers THIS repo only — the maker app.** The sync engine
+(`chaim354/tinkerex-sync`) and the desktop client (`chaim354/tinkerex-client`) have their own
+repositories, their own CI and, since 2026-08-25, their own CLAUDE.md. Arcs that happened here
+while they lived here are kept below as history; new work on either belongs in its own repo's
+record, not this one. (The title of this file said "sync engine" until 2026-08-25 — a leftover
+from when that was true.)
 
 - **Still open (deliberate, carried forward)** — immediately below.
 - **Latest** — the most recent arc. Exactly one section is ever called that.
@@ -71,7 +78,108 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): Stage 5 COMPLETE — chunk_remote closes 10/10, gets per-user enrolment, goes live, and finally REPLACES embedded chunk — Arcs A–D Part 1 **MERGED + DEPLOYED**, Arc D Part 2 on branch `claude/arc-d-part-2-retire-chunk` (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`, `claude/stage-5-arc-d`, `claude/arc-d-sync-backups`, `claude/arc-d-part-2-retire-chunk`)
+## Latest (2026-08-25): CLAUDE.md audited for the repo separation — and the two sibling repos get their first CLAUDE.md
+
+Branch `claude/audit-claude-md-repo-separation` (this repo) and `claude/add-claude-md` in each of
+`chaim354/tinkerex-sync` and `chaim354/tinkerex-client`.
+
+**The problem.** The client left on 2026-08-20 and the engine stopped being a dependency on
+2026-08-25, but CLAUDE.md still described all three as one system. It is loaded into an agent's
+context every session, so the other repos' rules were a standing tax on every maker-app task — and
+worse than a tax where they had gone stale.
+
+**Three things were provably WRONG, not merely misplaced:**
+
+1. **§5 (Data model) listed six tables this repo does not have.** It presented the authoritative
+   model as `users(head_seq)`, `devices`, `nodes`, `versions`, `manifest_chunks`, `chunks`,
+   `changelog_entries`, `pending_commits` — six of those eight were dropped by
+   `DropRetiredSyncEngineTables` on 2026-08-25. Meanwhile the ~23 `maker_*` tables that ARE this
+   app's data model appeared nowhere in the section.
+2. **§15's CI gate list contradicted §13 and `config/ci.rb`.** It named the three backend legs as
+   `test`, `test-share`, `test-s3` and told an agent to EXCLUDE `test-chunk-remote`. There is no
+   `test-share` gate and no `test-no-engine`; actual `bin/ci --list` is
+   `setup style scan test test-s3 test-chunk-remote system`. `config/ci.rb`'s own comment says
+   `test-chunk-remote` runs the full suite precisely so "the PRIMARY deployment's backend would
+   [not] be the only one without full coverage." This mattered more than the others: §15 is the
+   section an agent reads to decide whether it may open a PR.
+3. **§14j (286 lines) described machinery that no longer exists** — `SYNC_ENGINE`, `engine_wanted?`,
+   `db/engine_schema.rb`, the cross-repo schema guard, the Docker deploy key, the capability seam.
+   Its own header already said most of it was history.
+
+**What was verified before anything was cut** (probe over argument, §14e): no `engines/`, no
+`client/`, no gem in the Gemfile; `app/services/file_layer/chunk.rb` absent here and present in
+`tinkerex-sync`; `lib/postgres_pooler_check.rb`, `db/engine_schema.rb`, `lib/engine_schema.rb`,
+`test/engine_schema_test.rb`, `test/no_engine_boot_test.rb`, `test/v1_auth_parity_test.rb` all
+gone; **zero** real `Sync::` references in `app/`+`lib/`+`config/` (the two hits are prose inside a
+`trash_purge_job.rb` string literal); `User` carries no `Sync::` associations; `LibraryBroadcast
+.batch` has TWO answers, not the three §14a claimed; and `User#next_seq!` is **defined here with no
+caller in this app** — `head_seq` is only READ, by `V1::DevicesController`, to hand a joining device
+its starting cursor.
+
+**The split line, drawn on evidence.** The maker app CALLS eight endpoints on the sync server
+through a ~1000-line adapter and DRAWS only `devices/login`, `devices` and `v1/maker/*`. It is a
+client, not a server, of that protocol — so this file keeps the client half and the server half
+left. §14a was **rewritten `chunk`→`chunk_remote` rather than gutted**: its traps (delete must
+cascade not orphan, the two tombstone kinds, the copy→delete→tombstone landmine) still bind.
+
+**Measured: 2726 → 2404 lines (−334).** Where it went:
+
+| § | before | after | |
+|---|---|---|---|
+| 14j boundary | 286 | 53 | engine internals → `tinkerex-sync` |
+| 13 cheatsheet | 134 | 72 | Rust/mount/demo block → `tinkerex-client` |
+| 12 what's open | 84 | 51 | history compressed; **numbers frozen** |
+| 14a FileLayer port | 346 | 313 | 2 bullets moved out, 6 rewritten, 28 kept verbatim |
+| 5 data model | 17 | 34 | grew — it was false before |
+| 2 core architecture | 22 | 30 | grew — now carries the `LIBRARY_BACKEND` table |
+
+The reduction is smaller than a first estimate of ~1900 lines, and the reason is worth recording:
+**§14c (541) and §14h (347) are 888 lines of pure maker-app truth** — addons/sidecars and the
+Measure view — which correctly stay. The file is long because this app is genuinely intricate, not
+only because it was carrying other repos' rules.
+
+**Reference integrity.** No section was renumbered (§14's own rule; ~500 code citations). Verified
+mechanically: every `§N` cited from `app/`, `lib/`, `config/`, `test/`, `bin/`, `db/` still
+resolves, and every internal `§N` in CLAUDE.md resolves. The `§9a`/`§9b` citations that do not are
+**pre-existing and correct** — they name
+`docs/superpowers/specs/2026-07-27-project-page-overhaul-design.md`, not CLAUDE.md.
+
+**The sibling repos had NO CLAUDE.md at all** and had been running without one since extraction.
+Each now has one, on `claude/add-claude-md` branched from its own `main`, with a header stating
+plainly that it was **inherited on 2026-08-25 and NOT audited against that repo's current code** —
+because the extracted material describes the engine *as a gem embedded in the maker app* and says
+nothing about `host/`, `POST /v1/admin/libraries`, or the conformance corpus. Every *checkable*
+claim in both was verified before commit (all 12 client crates, all 6 conformance scripts, the
+sync engine's `Sync::Hooks`/`Gc`/`SubtreeDelete`/`v1_routes.rb`/`test/dummy`, the admin route, the
+`table_name_prefix` override). Seeding an unaudited file is a deliberate trade: real instructions
+with their trust level stated beats none.
+
+**Gates: bare `bin/ci` green in 2m19s.** The three backend legs, measured on this branch:
+
+| leg | runs | assertions | skips |
+|---|---|---|---|
+| `test` (share) | 2349 | 8639 | 30 |
+| `test-s3` | 2349 | 8639 | 30 |
+| `test-chunk-remote` | 2349 | 8796 | 5 |
+
+**Run counts are identical at 2349**, which is what §15's rule asks. The assertion and skip spread
+is structural and explained, not the ±2 nondeterministic flap recorded under "Still open":
+chunk_remote *executes* 25 tests that share and s3 skip (30 − 5), which is where the extra 157
+assertions come from. `test-chunk-remote` also runs its 10-test journey file first, against a real
+sync server booted by `bin/sync-server`.
+
+**Also fixed here:** this file's own title read "Build status — sync engine", a leftover from when
+that was true.
+
+**Left undone, deliberately:** `docs/SYNC_SERVER.md` opens by calling this Rails app the sync
+engine's source of truth, and `docs/architecture-sync-engine.md` was last updated 2026-06-10 —
+both describe the pre-separation world. Recorded as **§12.13** rather than fixed, to keep this
+change to CLAUDE.md plus its own record. `app/models/user.rb`'s `next_seq!` comment also still
+points at `lib/postgres_pooler_check.rb` and `Sync.engine_present?`, neither of which exists.
+
+---
+
+## 2026-08-25: Stage 5 COMPLETE — chunk_remote closes 10/10, gets per-user enrolment, goes live, and finally REPLACES embedded chunk — Arcs A–D Part 1 **MERGED + DEPLOYED**, Arc D Part 2 on branch `claude/arc-d-part-2-retire-chunk` (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`, `claude/stage-5-arc-d`, `claude/arc-d-sync-backups`, `claude/arc-d-part-2-retire-chunk`)
 
 ### Arc D Part 2 (2026-08-25) — embedded `chunk` is retired; the sync engine leaves this process for good
 

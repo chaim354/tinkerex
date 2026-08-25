@@ -3,22 +3,22 @@
 Project context and architecture for an AI coding agent (Claude Code) and human
 developers. Working name: **Maker Server** (rename freely).
 
-> **How this file is scoped.** It holds what is *permanently* true: architecture, the
-> data model, and the **invariants a future editor must not undo** (§14). It does **not**
-> narrate finished work — every arc (dates, branches, suite counts, per-phase detail)
-> lives in **`docs/STATUS.md`**, which is the canonical record. Keep it that way: this
-> file is loaded into an agent's context on *every* session, so length here is a tax on
-> every future task, and a rule buried in 600 lines of history is a rule nobody reads.
+> **How this file is scoped.** It holds what is *permanently* true about **this repo — the maker
+> app**: architecture, the data model, and the **invariants a future editor must not undo** (§14).
+> It does **not** narrate finished work — every arc (dates, branches, suite counts, per-phase
+> detail) lives in **`docs/STATUS.md`**, which is the canonical record. Keep it that way: this
+> file is loaded into an agent's context on *every* session, so length here is a tax on every
+> future task, and a rule buried in 600 lines of history is a rule nobody reads.
+>
+> **It also does not describe the sibling repos.** The sync engine and the Rust client have their
+> own repositories and their own CLAUDE.md (§3). Rules about how the changelog is built, how
+> commits are sequenced, how chunks are refcounted, or how a mount adapter works belong **there** —
+> what belongs here is only what a *maker-app* task needs. When you find yourself needing the
+> other half, you are probably in the wrong repo; check §3 before adding it back.
 >
 > **Do not renumber the sections.** Code comments cite them by number
-> (`§15` ~141 times, `§9` ~175, `§10` ~107, `§5` ~95 — `grep -rn "§[0-9]" app/ lib/`).
-
-> **Architecture note (2026-06):** the file layer is a **local-first sync engine**
-> (Dropbox/Google-Drive-shaped), *not* a remote-mounted drive. An earlier
-> rclone/JuiceFS **mount** approach was prototyped and abandoned — a synchronous
-> remote filesystem is too slow over the WAN (~1 s/file; see Phase 0 in
-> `docs/STATUS.md`). The detailed, current design lives in `docs/`:
-> `architecture-sync-engine.md`, `sync-protocol.md`, `SYNC_SERVER.md`, `STATUS.md`.
+> (`§15` ~141 times, `§9` ~175, `§10` ~107, `§5` ~95 — `grep -rn "§[0-9]" app/ lib/`). The same
+> applies to §12's item numbers, which are cited as `§12.7`, `§12.12`, "§12 item 11".
 
 ---
 
@@ -42,48 +42,55 @@ commercial rights** — avoid copyleft (GPL/AGPL) in anything we depend on or sh
 
 ---
 
-## 2. Core architecture — local-first sync engine
+## 2. Core architecture — the maker app and its library
 
-The pattern every production system uses (Dropbox, Google Drive, OneDrive):
+**This repo is a Rails 8 web app.** It owns projects, inventory, the model library, previews, the
+`/tools` addon gallery, and the `v1/maker/*` API. It does **not** own file sync.
 
-> **Local metadata + asynchronous sync + on-demand byte hydration.**
+Where the bytes live is chosen per deployment by **`LIBRARY_BACKEND`**, behind one port
+(`app/services/file_layer/` — §14a):
 
-- Each device backs its filesystem with a **local SQLite tree** → `stat`/`readdir`/
-  `open` are instant; **the WAN is never in the metadata path.**
-- The **Rails server** is the source of truth: tree + immutable versions + a per-user
-  **changelog**. Devices stay consistent by pulling entries where `seq > cursor`.
-- Files are split into **content-defined chunks (FastCDC)**, content-addressed and
-  deduped. **Chunk bytes move client ⇄ object storage directly via presigned URLs —
-  never through Rails.**
-- The filesystem surface is a **native mount**, per-OS over the same `Provider`: **Linux**
-  FUSE, **Windows** CfAPI (driverless Cloud Filter, the default), **macOS** WebDAV (native
-  `mount_webdav`). All three live. (macOS FSKit / Windows File-Provider are future polish.)
+| value | bytes live in | catalog comes from |
+|---|---|---|
+| `share` | a mounted directory (NAS over SMB/NFS) | polling the store (`Library::Scanner`) |
+| `s3` | the user's own S3-compatible bucket | polling the store (`Library::S3Observer`) |
+| `chunk_remote` | a **standalone sync server** reached over HTTP | a locally-mirrored `nodes` table |
 
-This is a **sync engine, not a mount**. Versioning + dedup are native (a version = a
-content-addressed manifest sharing chunks).
+**`chunk` — the embedded engine — is REFUSED, not aliased** (retired 2026-08-25; §12.12).
+
+**The one architectural idea worth carrying in your head** is why `chunk_remote` mirrors instead
+of asking: a remote-mounted filesystem does not work over the WAN (synchronous metadata
+round-trips, ~1 s/file — measured, `docs/roads-not-taken.md`). So metadata reads answer from a
+**local** table and the WAN is never in the metadata path. **That is a rule, not a description:**
+§14a forbids closing the resulting staleness with a synchronous pull in a read path. The mirror
+is refreshed by this app's own writes and by one recurring job, and bounded staleness (~2 min) is
+the accepted trade — the same trade `Library::ScanJob`'s poll already makes for share/s3.
+
+The sync engine's own design — chunking, versions, the changelog, conflict records — is
+**`chaim354/tinkerex-sync`'s** concern. The wire between us is specified in
+`docs/sync-protocol.md`; the client half this app implements is §6.
 
 ---
 
-## 3. Components (what's built)
+## 3. Components
 
-Roles only. The **invariants** for the file layer, the scan, the addons, and project
-intake are in **§14** — that is where a "don't undo this" belongs, not in a table cell.
+**In this repo:**
 
 | Component | Path | Role |
 |---|---|---|
-| **Rust crates + Tauri app** | `chaim354/tinkerex-client` (separate repo) | fs-provider (local SQLite tree + FastCDC chunk store), the per-OS mount adapters (fs-fuse/fs-cfapi/fs-winfsp/fs-webdav/fs-fskit), sync-client, sync-engine (the daemon: `push`/`pull`/`hydrate`/`sync_once`), the Tauri desktop app, and `maker-app-core`/`juicefs-backend` (leftovers from the abandoned mount path, kept as reference — CLAUDE.md §14e). Extracted from this repo 2026-08-20; own history (166 commits via `git filter-repo`), own CI, own runner registration. `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md` has the full inventory and the argument for keeping the `client/` prefix inside that repo's own layout. |
-| **server** | repo root (Rails 8) | The maker host: `Maker::*` models and web layer, the `v1/maker/*` API, `User`/`Node`/`Device`, and the `FileLayer` factory. Draws the engine's v1 routes; ships no `Sync::*` itself. |
-| **sync server** | `chaim354/tinkerex-sync` (separate repo) | The chunk/version/changelog engine, plus `FileLayer::Chunk` and its own host app. **No longer a dependency of this repo** — Arc D Part 2 (2026-08-25) retired embedded `chunk`, so the gem is gone from the Gemfile and `Sync::` is undefined in this process. It runs as a STANDALONE SERVER (the `sync` Kamal accessory) that this app talks to over HTTP as a client, and that devices sync against directly. Invariants: **§14j**. |
-| **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time (`Dockerfile`) and exec'd off `PATH` by `Maker::Previews::Stl` at runtime — a **server-side** tool despite being Rust. Lives under `tools/`, not in the Rust-crates repo: nothing there has a path dependency on it. |
-| **FileLayer port** | `app/services/file_layer/` | The seam between the **maker layer** and whatever holds the bytes, chosen per deployment by `LIBRARY_BACKEND=chunk_remote\|share\|s3` (embedded `chunk` retired 2026-08-25 and is now REFUSED; the default is `share`). All three boot, index, write, deliver. Invariants: **§14a**. |
+| **server** | repo root (Rails 8) | The maker host: `Maker::*` models and web layer, the `v1/maker/*` API, `User`/`Node`/`Device`, and the `FileLayer` factory. |
+| **FileLayer port** | `app/services/file_layer/` | The seam between the maker layer and whatever holds the bytes, chosen by `LIBRARY_BACKEND`. All three adapters boot, index, write, deliver. Invariants: **§14a**. |
 | **Library scan** | `app/services/library/` | Share/S3 indexing: `Scanner` + `S3Observer` **observe**, one shared `Reconciler` **decides**. Invariants: **§14b**. |
 | **Addons (Tools)** | `app/services/maker/addons/`, `app/controllers/tools/`, `sidecar/` | The `/tools` gallery + per-addon UI; output lands via one path (`Maker::Addons::LibraryOutput`). Two GPL sidecars, HTTP-only. Invariants: **§14c**. |
-| **Project intake** | `app/services/maker/project_intake.rb` | A project's library folder files itself: everything under `Projects/<slug>/` attaches to the project, whatever is loose at the root gets filed into a category subfolder. Invariants: **§14f**. |
+| **Project intake** | `app/services/maker/project_intake.rb` | A project's library folder files itself. Invariants: **§14f**. |
+| **stl-thumbnailer** | `tools/stl-thumbnailer` | Pure-CPU (no GPU/OpenGL/Mesa) STL→PNG renderer, Rust (`euc`, Apache-2.0). Compiled into the Rails image at build time and exec'd off `PATH` by `Maker::Previews::Stl` — a **server-side** tool despite being Rust, which is why it lives here and not with the client crates. |
 
-**Verified end-to-end:** device A creates a file → daemon pushes (chunks to a cloud
-store) → device B pulls + hydrates + reads, **byte-for-byte identical**; metadata via
-the live server changelog. Multi-device convergence demonstrated. Current per-suite test
-counts: `docs/STATUS.md` for this repo, `tinkerex-client`'s own docs for the Rust crates.
+**Sibling repos — each has its own CLAUDE.md; do not re-document them here:**
+
+| repo | role | how it reaches us |
+|---|---|---|
+| `chaim354/tinkerex-sync` | The chunk/version/changelog engine + its own host app. **Not a dependency of this repo** — no gem, `Sync::` is undefined in this process. | Runs as the **`sync` Kamal accessory**; this app talks to it over HTTP as a client (§6). Devices sync against it directly, never against this app. |
+| `chaim354/tinkerex-client` | Rust crates (`fs-provider`, the per-OS mounts, `sync-client`, `sync-engine`) + the Tauri desktop app. Extracted 2026-08-20. | Syncs against the sync server. Clone as a sibling (`../tinkerex-client`) for the CI legs in §13 that need it. |
 
 ---
 
@@ -94,53 +101,74 @@ counts: `docs/STATUS.md` for this repo, `tinkerex-client`'s own docs for the Rus
 | Backend | **Rails 8** (Solid Queue/Cache/Cable — all three wired; see §14e for what that requires) |
 | Server DB | **Postgres** (managed) / **SQLite** (self-host) — same adapter-agnostic models |
 | Object storage | **S3-compatible** — R2 (managed), SeaweedFS/MinIO/their S3 (self-host) |
-| Chunking | **FastCDC** (`fastcdc-rs`, MIT) — content-defined, deduped |
-| Client | **Tauri** (Rust core), `fs-provider` + per-OS mount + `sync-engine` — all in `chaim354/tinkerex-client` (§3) |
-| Mount | Per-OS, all live: **Linux** FUSE (`fuser`), **Windows** CfAPI (default; WinFsp behind a feature), **macOS** WebDAV. macOS **FSKit** is not a shipping mount path: `fs-fskit`'s Rust bridge (in `tinkerex-client`) is built and unit-tested, but the Swift extension that would actually mount it is stubbed pending a paid Apple Developer membership. Drivers user-installed (keeps copyleft out of our binaries). |
-| Change notification | **ActionCable** → `{head_seq}` on commit |
+| Library backend | **`share` / `s3` / `chunk_remote`** — see §2 |
 | Preview | Server-side thumbnails (vipsthumbnail/pdfium/resvg subprocesses) + Three.js in the browser |
+| Addon bundles | Served by the **`addons` Kamal accessory** (`chaim354/tinkerex-addons`) — publishing the bundle image IS the addon deploy; Rails is never rebuilt (§14c) |
+
+Chunking, the desktop client and the mount adapters are `tinkerex-client`'s stack, not this
+app's.
 
 ---
 
 ## 5. Data model
 
-**Server (authoritative, Postgres/SQLite):** `users(head_seq)`, `devices`,
-`nodes(node_id, parent, name, kind, current_version, deleted)`, `versions(parent
-chain)`, `manifest_chunks`, `chunks(refcount)`, `changelog_entries(seq)`,
-`pending_commits`. Stable cross-device ids are string UUIDs.
+**This app's own tables** (Postgres managed / SQLite self-host, one adapter-agnostic codebase):
 
-**Client (local SQLite mirror):** the tree (`fs-provider`'s `nodes`/`manifest_chunks`,
-each node carrying its server `node_id`), a local content-addressed chunk cache, and
-sync state (cursor + outbox).
+- **Maker layer** — `maker_projects`, `maker_models`, `maker_items`, `maker_inventory_items`,
+  `maker_inventory_transactions`, `maker_boms`, `maker_bom_lines`, `maker_suppliers`,
+  `maker_locations`, `maker_collections`, `maker_collection_items`, `maker_tags`,
+  `maker_taggings`, `maker_tasks`, `maker_build_log_entries`, `maker_notes`, `maker_sheets`,
+  `maker_print_runs`, `maker_previews`, `maker_file_attachments`, `maker_addon_states`,
+  `maker_addon_state_revisions`, `maker_addon_files`.
+- **Identity** — `users`, `user_identities`, `devices`.
+- **The library catalog** — `nodes(node_id, parent, name, kind, current_version, deleted)`. On
+  share/s3 the scan populates it; **on `chunk_remote` it is a MIRROR of the sync server's tree**
+  and `remote_manifest_chunks` holds the manifests `FileLayer::ChunkRemote` reads.
+- **`users.head_seq`** survives and is still written by `User#next_seq!` (and read by
+  `V1::DevicesController`).
 
-Versioning is native: every commit is an immutable version → manifest; chunks are
-refcounted and shared. **Keep versions** (don't prune) so restore always works; GC
-only sweeps refcount-0 chunks. (Departure on share/s3: §14a.)
+**THE EIGHT SYNC-ENGINE TABLES ARE GONE** — `versions`, `manifest_chunks`, `chunks`,
+`changelog_entries`, `pending_commits`, `conflicts`, `file_locks`, `share_links` were dropped on
+2026-08-25 (`DropRetiredSyncEngineTables`) after verifying 0 rows on every live deployment. They
+live in `tinkerex-sync` now. **Do not reintroduce a model, association or query naming any of
+them here** — the guard in `test/architecture_invariants_test.rb` asserts zero such references,
+including the bare `has_many` spellings (`user.versions`, `user.chunks`, …), because a
+`user.versions.find_by(...)` emits no constant token for a const-only check to catch.
 
----
+**Two columns are NOT edges into `versions`, and reading them as such is a recorded mistake:**
+`maker_previews.version_id` and `maker_file_attachments.version_id` hold a backend-polymorphic
+**`content_token`** — a version UUID on chunk_remote, a **content hash** on share/s3.
 
-## 6. Sync protocol (see `docs/sync-protocol.md`)
-
-Three channels: **HTTPS API** (control), **ActionCable** (the "pull" nudge), **direct
-to storage** (chunk bytes via presigned URLs).
-
-- **Push:** `export_tree` → for each file `commit`(begin → upload missing chunks →
-  finalize); dirs via `mkdir`. Server appends one changelog entry, bumps `head_seq`,
-  broadcasts.
-- **Pull:** changelog delta since cursor → `apply_remote` into local SQLite →
-  dehydrate changed placeholders. The delta is **paged** and full-resyncs when the
-  cursor is below the server's `oldest_seq` (pruned-gap detection).
-- **Hydrate:** on read, fetch missing chunks via presigned GET → local cache.
-- **Conflict detection** (replaced v1 last-writer-wins): each commit sends its
-  `base_version_id`; if it's no longer current, the server records a **conflict** (both
-  versions kept) instead of silently dropping an edit, and the client prompts to keep one
-  or split into two files (`Sync::Conflicts`, `GET /v1/conflicts`,
-  `POST /v1/nodes/:id/resolve_conflict`). A base that IS current is a clean fast-forward.
-  Tenant = user, full tree on every device.
+Versioning is native only on `chunk_remote`, where it is the sync server's. **Share and s3 are
+current-state only** — a deliberate departure, §14a.
 
 ---
 
-## 7. Deployment (one protocol, two hosts)
+## 6. Talking to the sync server (`chunk_remote` only)
+
+`docs/sync-protocol.md` is the normative wire spec. **This app implements the CLIENT half and
+serves none of it** — `/v1/changes`, `/v1/tree`, `/v1/commit`, `/v1/chunks/*`, `/v1/conflicts`,
+`/v1/locks`, `/v1/trash`, `/v1/nodes` and `/v1/share_links` are **not routed here** (§12.12). A
+desktop client syncs against `tinkerex-sync`, never against this app.
+
+`FileLayer::ChunkRemote` (~1000 lines, `app/services/file_layer/chunk_remote*`) calls exactly
+eight endpoints: `/v1/tree`, `/v1/changes`, `/v1/commit`, `/v1/commit/:id/finalize`,
+`/v1/chunks/download`, `/v1/nodes`, `/v1/trash/:id/restore`, and `/v1/admin/libraries`.
+
+Three things about that client matter enough to be invariants, and all three are in §14a:
+- **Reads answer from the local mirror**, refreshed by this app's own five write verbs plus
+  `FileLayer::RemoteChangelogPullJob` — **never** by a pull in a read path.
+- **The transport is per-user and holds no cache**, because `FileLayer.current` memoizes one
+  adapter for the whole process.
+- **`presignable` is FALSE** — this app cannot verify that a URL another server signed points
+  off-box, so it streams.
+
+What checks the wire is **`bin/ci test-chunk-remote`**, which boots a real `tinkerex-sync` host
+app and runs the full suite against it, plus that repo's own conformance corpus.
+
+---
+
+## 7. Deployment
 
 | | Managed | Self-host |
 |---|---|---|
@@ -149,28 +177,30 @@ to storage** (chunk bytes via presigned URLs).
 | Storage | R2 | their S3 (SeaweedFS/MinIO) |
 | Tenancy | `user_id` scoping | single user |
 
-Same models, same API, same client — only the hosts/creds differ. Switching DB is
-config-only (the code is adapter-agnostic; tested on SQLite). To use S3 chunk storage set
-`STORAGE_BACKEND=s3` + `CHUNK_*` (see `docs/SYNC_SERVER.md`). **A share/s3 *library*
-deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`** — see §14a.
+Same models, same API, same client — only the hosts/creds differ. Switching DB is config-only
+(the code is adapter-agnostic; tested on SQLite).
 
-**THERE ARE THREE UNRAID DESTINATIONS AND THE CHUNK-FAMILY ONE IS THE BASE.** Arc D Part 1 added a
-FOURTH, `remote`, carrying `LIBRARY_BACKEND=chunk_remote` beside embedded `chunk` — and this section
-had to warn that bare "deploy" excluded it, naming the cost: **an excluded destination drifts**,
-which is how `chunk_remote` reached Stage 5 having never run on hardware. Arc D Part 2 retired
-embedded chunk and folded `remote` into the base, so the base destination IS `chunk_remote` now
-(`config/deploy.yml`) and bare "deploy" covers it. That warning is discharged, not deleted quietly.
+**A share/s3 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`** — see §14a for the 500 that
+caused. Since Arc D Part 2 **no code in this repo reads `STORAGE_BACKEND` or any `CHUNK_*` storage
+knob at all**; those are the sync server's, set on the `sync` accessory or in that repo's env. The
+one `CHUNK_*`-looking variable this app *does* read is **`CHUNK_REMOTE_URL`**, which is just the
+sync server's address.
 
-Bare "deploy" means **the three Unraid backends only** (chunk_remote + share + s3). Deploy OVH
-only on explicit request. `docs/DEPLOY.md`.
+**Bare "deploy" means the three Unraid destinations — `chunk_remote` (the base), `share`, `s3`.**
+Deploy OVH only on explicit request. `docs/DEPLOY.md`.
+
+> **Historical note, kept because the cost was real:** Arc D Part 1 added a fourth destination,
+> `remote`, and bare "deploy" excluded it — **an excluded destination drifts**, which is how
+> `chunk_remote` reached Stage 5 having never run on hardware. Arc D Part 2 folded `remote` into
+> the base, so the base destination IS `chunk_remote` now (`config/deploy.yml`) and bare "deploy"
+> covers it. Discharged, not deleted quietly.
 
 ---
 
 ## 8. Multi-tenancy & security
 
-- **Tenant = user** (one library, the user's own devices). Isolation = ordinary
-  Rails `user_id` scoping — *not* the JuiceFS no-ACL problem (that's why the sync
-  model is simpler than the mount model).
+- **Tenant = user** (one library, the user's own devices). Isolation = ordinary Rails `user_id`
+  scoping.
 - **ON `chunk_remote`, "TENANT = USER" HOLDS ON THE SYNC SERVER TOO, SINCE ARC C (2026-08-24) — IT
   DID NOT BEFORE.** Before Arc C, `FileLayer::ChunkRemote#transport` read one process-wide
   `CHUNK_REMOTE_TOKEN`, so every maker user's writes reached the sync server as the SAME device
@@ -182,164 +212,125 @@ only on explicit request. `docs/DEPLOY.md`.
   the old shared memo reproduces the leak deterministically, `200 of 400` threaded observations
   carrying the wrong user's token (`test/services/file_layer/chunk_remote/transport_isolation_test.rb`).
   Full argument, including why the fix is deliberately NOT thread-local caching either: §14a.
-- **Client holds only a device token** (256-bit, SHA256-digested at rest). No storage
-  credentials — it gets short-lived, per-object **presigned URLs**, SigV4-signed for a
-  per-user key `chunks/<user>/<hash>` (untamperable → cross-user chunk access impossible;
-  storage + dedup are per-user). `/v1/chunks/download` additionally only mints URLs for
-  chunks the requester owns.
-- **Bytes never flow through Rails.** Rails is the control plane + presigned-URL
-  minter only. (§15; the one deliberate departure is the share backend — §14a.)
-- **Registration creates a new account only** (no `find_or_create_by` takeover); a device
-  joins an existing library via **`POST /v1/devices/login`** (email + password → a 256-bit
-  device token) or, from an already-authenticated device, `POST /v1/devices` to add a
-  sibling. **Pairing codes were the earlier mechanism and are gone** (`DevicePairing` /
-  `device_pairings` dropped, `18c623a`) — the route's own comment says devices/login
-  *"Replaces the pairing-code flow."* Web auth is Rails 8 built-in (signup/confirm/login/
-  reset) with an OmniAuth seam. Real OAuth/OIDC email verification is the later upgrade;
-  the device-token mechanism underneath stays. (If multi-user/db-per-tenant is wanted
-  later, the 37signals `active_record_tenanted` pattern slots over the same models.)
+- **Bytes never flow through Rails.** Rails is the control plane only. (§15; the one deliberate
+  departure is the share backend — §14a.)
+- **Registration creates a new account only** (no `find_or_create_by` takeover); a device joins an
+  existing library via **`POST /v1/devices/login`** (email + password → a 256-bit device token) or,
+  from an already-authenticated device, `POST /v1/devices` to add a sibling. **Pairing codes were
+  the earlier mechanism and are gone** (`DevicePairing` / `device_pairings` dropped, `18c623a`).
+  Web auth is Rails 8 built-in (signup/confirm/login/reset) with an OmniAuth seam. Real OAuth/OIDC
+  email verification is the later upgrade; the device-token mechanism underneath stays.
+- **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
+  the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
+  `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.
 
 ---
 
 ## 9. Licensing (don't relitigate)
 
-- **Prefer permissive: MIT / Apache-2.0 / BSD.** Everything we use/ship is permissive
-  (Rails MIT, FastCDC MIT, SQLite PD, our crates Apache).
-- **Avoid GPL/AGPL** in dependencies and shipped artifacts. FUSE drivers (WinFsp GPL,
-  macFUSE) are **user-installed**, never bundled — so no copyleft in our binaries; on
-  Windows prefer native **CfAPI** (no driver). SeaweedFS (Apache) is the self-host S3
-  backend (not MinIO, which is AGPL).
-- **GPL sidecars are invoked over HTTP, never linked** — and shipping them has its own
-  three rules (§14c).
+- **Prefer permissive: MIT / Apache-2.0 / BSD.** Everything we use/ship is permissive (Rails MIT,
+  SQLite PD, our crates Apache).
+- **Avoid GPL/AGPL** in dependencies and shipped artifacts. SeaweedFS (Apache) is the self-host S3
+  backend (not MinIO, which is AGPL). The FUSE-driver side of this rule belongs to
+  `tinkerex-client` — drivers are user-installed, never bundled — and is recorded there.
+- **GPL sidecars are invoked over HTTP, never linked** — and shipping them has its own three rules
+  (§14c).
 
 ---
 
 ## 10. Repo layout
 
 ```
-/                Rails 8 sync server (app/, config/, db/) + docs/ (incl. DEPLOY.md)
+/                Rails 8 maker app (app/, config/, db/) + docs/ (incl. DEPLOY.md)
 /tools           stl-thumbnailer: a Rust STL→PNG renderer, but a SERVER-side tool (compiled
                  into the Rails image, exec'd by Maker::Previews::Stl) — not a client crate,
                  which is why it lives here rather than with the rest of the Rust code.
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. No gate covers these; invariants in §14i.
-/docs            architecture-sync-engine.md, sync-protocol.md, SYNC_SERVER.md,
-                 STATUS.md, DEPLOY.md, roads-not-taken.md, adr/
+/docs            sync-protocol.md, SYNC_SERVER.md, STATUS.md, DEPLOY.md, roads-not-taken.md,
+                 architecture-sync-engine.md, adr/
 ```
 
-**There is no `/engines` here any more either.** The sync engine was extracted to
-`chaim354/tinkerex-sync` on 2026-08-20 and arrives as a private `git:` gem (see the Gemfile's
-own comment for what that costs, and §14j for what moved with it). `db/migrate/` still creates
-its eight tables for THIS app — those migrations were deliberately never rewritten. A LATER
-migration DROPS those tables (`DropRetiredSyncEngineTables`, 2026-08-25), which is not the same
-thing and is not forbidden by that rule: adding a drop runs forward everywhere, where rewriting
-history does not.
+**There is no `/engines` and no `/client` here.** The sync engine went to
+`chaim354/tinkerex-sync` and the Rust crates to `chaim354/tinkerex-client`, both on 2026-08-20;
+since 2026-08-25 neither is a *dependency* of this repo either (§12.12). Clone them as siblings
+(`../tinkerex-sync`, `../tinkerex-client`) for the two §13 legs that need them.
 
-**There is no `/client` here any more.** The Rust crates (fs-provider, fs-fuse, fs-cfapi,
-fs-winfsp, fs-webdav, fs-fskit, sync-client, sync-engine, maker-app the Tauri app, plus
-maker-app-core/juicefs-backend) live in their own repo, `chaim354/tinkerex-client`, which
-keeps the same `client/fs-provider/…` internal layout this repo used to have (a deliberate
-choice — `docs/superpowers/plans/2026-08-20-stage-1-extract-client.md`, Task 3). Clone it
-as a sibling checkout (`../tinkerex-client`) to run anything in §13's cheatsheet that
-touches it.
+**`db/migrate/` still creates the eight engine tables for THIS app, and those migrations were
+deliberately never rewritten.** A LATER migration DROPS them (`DropRetiredSyncEngineTables`,
+2026-08-25), which is not the same thing and is not forbidden by that rule: **adding a drop runs
+forward everywhere, where rewriting history does not** — a rewrite invents timestamps that make
+already-migrated databases fail with "table already exists," fixable only by hand-inserting
+`schema_migrations` rows on every live database.
+
+> **Two docs under `/docs` describe the OTHER repo and are stale here.**
+> `docs/SYNC_SERVER.md` opens by calling this Rails app the sync engine's source of truth, and
+> `docs/architecture-sync-engine.md` was last updated 2026-06-10, before either extraction.
+> `docs/sync-protocol.md` is current and remains the normative wire spec. Fixing the first two is
+> an open item, not a claim that they are accurate.
 
 ---
 
 ## 11. Status
 
-**`docs/STATUS.md` is the canonical record** — current per-suite test counts, every
-completed arc, and the live open-items list. Read it for anything time-bound; do not
-re-narrate it here.
+**`docs/STATUS.md` is the canonical record** — current per-suite test counts, every completed arc,
+and the live open-items list. Read it for anything time-bound; do not re-narrate it here.
 
-Where things stand: the full stack runs **on real hardware**. Rails is deployed via Kamal
-on an Unraid VM with SeaweedFS chunk storage, and the client **mounts + syncs against it
-on all three OSes** over the same `Provider` (macOS WebDAV / Linux FUSE / Windows CfAPI),
-verified live byte-for-byte. All **three `LIBRARY_BACKEND` values are deployed live**. The
-maker web layer (projects, model library, previews, `/tools` addons, current-project, 3D
-viewer, file organization) is server-rendered Hotwire on `Maker::*` models.
+Where things stand: the full stack runs **on real hardware**. Rails is deployed via Kamal on an
+Unraid VM, and all **three `LIBRARY_BACKEND` values are deployed live**. The maker web layer
+(projects, model library, previews, `/tools` addons, current-project, 3D viewer, file
+organization) is server-rendered Hotwire on `Maker::*` models. The desktop client mounts and syncs
+on all three OSes against the sync server — that half's status lives in `tinkerex-client`.
 
 ---
 
 ## 12. What's open
 
-Steps 1–10 of the original plan are **done** — the daemon loop, presigned round-trip,
-delete/move-on-pull, the Windows adapters, writeback/robustness, caching/freshness,
-Postgres validation, the maker app layer, and the maker/file-layer split (all four
-phases). Per-phase detail: `docs/STATUS.md`.
-
-Genuinely open:
+**Item numbers are cited from code and from this file — do not renumber them.**
 
 1. **Real OAuth/OIDC email verification** so the bootstrap proves email ownership. The
-   account-takeover hole is already closed (register is new-account-only; devices join via
-   `POST /v1/devices/login`, email+password → device token — pairing codes were the earlier
-   mechanism and are gone, §8) — this is the remaining upgrade. The device-token mechanism
-   stays underneath.
-2. **At-rest chunk encryption** — deliberately last (`docs/plan-encryption.md`,
-   `docs/parity-roadmap.md`).
-3. **Sharing** — `docs/plan-sharing.md`.
-4. **Selective sync needs an app surface** (the engine side landed).
-5. **Managed-Postgres at scale** — pick a session/transaction-mode pooler endpoint and run
-   a concurrent-commit load test (the boot guard + deadlock fix are in).
+   account-takeover hole is already closed (§8); this is the remaining upgrade.
+2. **At-rest chunk encryption** — deliberately last (`docs/plan-encryption.md`). Largely the sync
+   server's work now.
+3. **Sharing** — `docs/plan-sharing.md`. Needs `share_links`, which lives in the sync server.
+4. **Selective sync needs an app surface** (the engine side landed, in the other repo).
+5. **Managed-Postgres at scale** — pick a session/transaction-mode pooler endpoint and run a
+   concurrent-commit load test.
 6. **Linux and Windows CI coverage is skipped, not passing** — no linux or windows runner is
-   registered in ANY of the three repos (macOS is, in all three; §15 has the measured table and
-   its date). See §15 and `docs/STATUS.md` ("CI runs again").
+   registered in ANY of the three repos (macOS is, in all three). §15 has the measured table and
+   its date.
 7. **RESOLVED 2026-08-20 — the `SQLite3::BusyException` intermittent was an FSYNC problem, and the
    fix is `timeout: 15000`.** Kept as an item rather than deleted because code cites §12 by number.
    It needed sustained **disk I/O**, never CPU: 0 of 12 suite runs on a quiet box against 3 of 8
-   with `dd`+`sync` loops, and ten spin loops at load average 60 did nothing. Captured mid-failure,
-   one worker held **16 connections all with open transactions** (`concurrent_seq_test`'s deliberate
-   16-thread load) and the raising frame was **`User#next_seq!`** — the point every commit,
-   mutation, restore and conflict serializes through. Sightings in unrelated tests were the same
-   root one remove out: 10 workers × up to 16 connections saturate one disk, so an ordinary write's
-   fsync outlasts the wait. Verified A/B under identical load: **5 s → 2 of 8 runs red, 15 s → 0 of
-   8**. The rule that outlives it is in **§14e**.
-
-8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three
-   backends (the port's N+1 is closed; the residual is HTML). Pagination never existed.
-9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the
-   models and v1 API exist. Obvious next slices.
-10. **A chunk-mode device push through the mount gets no eager nudge for project-folder
-    filing.** `Sync::Commit#finalize` never calls it — only the three web upload doors do
-    — so a file arriving via the mount waits for the 15-minute sweep like everything
-    else. Wiring it in would be worse, not better: `#finalize` runs once per file, so a
-    500-file device sync would become 500 synchronous full-project sweeps.
-11. **Whether a project-scoped upload should duplicate-check across the whole project,
-    not just its immediate destination, is an open product question.** Today two files
-    can both be named `dup.stl` under one project — the first filed into its category
-    subfolder, the second left at the root — because the only collision checks are the
-    port's own write-time clobber and `Maker::MoveNode`'s destination-folder collision,
-    both scoped to one path, not a project-wide name scan.
-
-12. **DONE (2026-08-25) — EMBEDDED `chunk` IS RETIRED, AND THE SYNC ENGINE IS NOT A DEPENDENCY OF
-    THIS APP.** Kept as an item rather than deleted, because these are cited by number and because
-    the entry it replaces said the opposite: for two days this read "chunk IS NOT RETIRED", with
-    the argument for deferring. Arc D Part 2 did it.
-    What that means concretely: `LIBRARY_BACKEND` is **`chunk_remote | share | s3`** and `chunk` is
-    REFUSED (`FileLayer.build` raises rather than aliasing it to chunk_remote — a deployment still
-    carrying that value is misconfigured, and silently serving it a different backend would hand it
-    an empty library that reads as data loss). `FileLayer.build`'s default is **`share`**, the only
-    hermetic backend left. The gem is gone from the Gemfile, and with it the Docker build's
-    read-only deploy key, the engine schema generator and its cross-repo guard, `engine_wanted?`,
-    the `SYNC_ENGINE` knob, `DevBlobsController`, the pooler guard and the three engine jobs.
-    **THE MAKER APP NO LONGER SERVES THE DEVICE SYNC API.** `/v1/changes`, `/v1/tree`, `/v1/commit`,
-    `/v1/commit/:id/finalize`, `/v1/chunks/*`, `/v1/conflicts`, `/v1/locks`, `/v1/trash`,
-    `/v1/nodes` and `/v1/share_links` were drawn by the engine and are simply not routed here. A
-    desktop client syncs against the standalone server (`chaim354/tinkerex-sync`), never against
-    this app — which is the whole point, and is why `client-contract.yml` boots that repo now.
-    The 68-of-224 number this entry used to quote as the cost was the wrong number to plan from:
-    **36 of 43 app-side hits and 11 of 68 test-side hits were PROSE**, and the real coupling was 7
-    wiring sites and 57 test files, 60 of whose references sat in one file that was deleted.
-    Recorded because the misleading number is the reason this was deferred twice.
-    **The eight engine tables were dropped on 2026-08-25** (`DropRetiredSyncEngineTables`), after
-    verifying 0 rows in all eight on every live deployment — "nothing reads it" is not the question
-    for a DROP, "nothing is in it" is. §14j's "`db/migrate/` is never REWRITTEN" does not forbid
-    ADDING a drop: rewriting invents timestamps that make already-migrated databases fail with
-    "table already exists", while a drop runs forward on all of them. **`remote_manifest_chunks` is
-    a different, LIVE table and stays** (`FileLayer::ChunkRemote` reads it), as does
-    `users.head_seq` (`User#next_seq!`, `V1::DevicesController`). The migration is irreversible on
-    purpose: a `down` would restate the engine's DDL here, which is the drifting second copy this
-    arc deleted.
+   with `dd`+`sync` loops. Captured mid-failure, one worker held **16 connections all with open
+   transactions** and the raising frame was **`User#next_seq!`**. Verified A/B under identical
+   load: **5 s → 2 of 8 runs red, 15 s → 0 of 8**. The rule that outlives it is in **§14e**.
+8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three backends
+   (the port's N+1 is closed; the residual is HTML). Pagination never existed.
+9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the models
+   and v1 API exist. Obvious next slices.
+10. **A device push through the mount gets no eager nudge for project-folder filing.** The sync
+    server's own finalize never calls it — only the three web upload doors do — so a file arriving
+    via the mount waits for the 15-minute sweep. Wiring it in would be worse, not better: finalize
+    runs once per file, so a 500-file device sync would become 500 synchronous full-project sweeps.
+11. **Whether a project-scoped upload should duplicate-check across the whole project, not just its
+    immediate destination, is an open product question.** Today two files can both be named
+    `dup.stl` under one project — the first filed into its category subfolder, the second left at
+    the root — because the only collision checks are the port's own write-time clobber and
+    `Maker::MoveNode`'s destination-folder collision, both scoped to one path.
+12. **DONE (2026-08-25) — embedded `chunk` is retired and the sync engine is not a dependency of
+    this app.** Kept as an item rather than deleted, because these are cited by number and because
+    the entry it replaces said the opposite: for two days this read "chunk IS NOT RETIRED," with
+    the argument for deferring. Arc D Part 2 did it. Consequences are now stated where they belong
+    — `LIBRARY_BACKEND` in §2 and §14a, the dropped tables in §5, the unrouted endpoints in §6.
+    The one thing worth keeping here is **why it was deferred twice**: the "68 of 224 references"
+    figure quoted as the cost was the wrong number to plan from — **36 of 43 app-side hits and 11
+    of 68 test-side hits were PROSE**, and the real coupling was 7 wiring sites and 57 test files,
+    60 of whose references sat in one file that was deleted. A reference count is not a coupling
+    count.
+13. **`docs/SYNC_SERVER.md` and `docs/architecture-sync-engine.md` describe the pre-separation
+    world** and should be rewritten or moved to `tinkerex-sync` (§10).
 
 Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
@@ -349,135 +340,73 @@ Smaller deliberate leftovers live in `docs/STATUS.md` under "Still open".
 
 ```sh
 # ALL local gates, one command (this is what CI runs, by name):
-bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition
-                       # 7 gates (6 run under CI -- `setup` is local-only, bin/ci --list-ci).
+bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition.
+                       # 7 gates (6 under CI -- `setup` is local-only, bin/ci --list-ci):
+                       #   setup style scan test test-s3 test-chunk-remote system
                        # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote and must report
                        # IDENTICAL run counts (§15). `test` IS the share leg -- it ran embedded
                        # chunk until 2026-08-25, and `test-share` was folded into it rather than
                        # left as the same leg twice. `test-no-engine` is gone: no engine is the
                        # only mode there is now, and every gate exercises it.
-# ONE gate needs a SIBLING CHECKOUT: `test-chunk-remote` drives the maker app against a real
-# chaim354/tinkerex-sync HOST app, booting it itself via bin/sync-server, which needs
-# ../tinkerex-sync checked out as a sibling (same convention as tinkerex-client below) -- a missing
-# checkout fails loudly and names the clone command rather than falling through to a confusing
-# connection error. It runs the FULL suite there, not just the journey file, because there is no
-# in-process chunk backend left to carry that coverage:
-#   gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
-# WORKING ON THE SYNC SERVER: clone it and test it there; there is nothing to edit in this repo,
-# and since 2026-08-25 it is not a DEPENDENCY of this one either -- no gem, no Gemfile.lock pin,
-# no `bundle update` step, and no engine_schema cross-repo guard. What couples the two now is the
-# WIRE, and the things that check it are `bin/ci test-chunk-remote` here and the conformance
-# corpus there.
-#   gh repo clone chaim354/tinkerex-sync && cd tinkerex-sync && bundle install && bundle exec rake test
+# ONE gate needs a SIBLING CHECKOUT. `test-chunk-remote` drives this app against a real
+# chaim354/tinkerex-sync HOST app, booting it via bin/sync-server. A missing checkout fails
+# loudly and names the clone command rather than falling through to a connection error. It runs
+# the FULL suite there, not just a journey file, because there is no in-process chunk backend
+# left to carry that coverage:
+gh repo clone chaim354/tinkerex-sync ../tinkerex-sync
 
-# SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves
-# every credential (exported shell value wins, else 1Password) and backs each .kamal/secrets*
-# file. ALWAYS preflight first — kamal expands `$(…)` through Ruby BACKTICKS, which discard
-# exit status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
-bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh | remote
+# Server tests (SQLite; proves adapter-agnosticism)
+bin/rails test
+# The other two backend legs need their env or they DON'T look like a missing var --
+# LibraryBackendCheck refuses to boot, which reads as a broken backend (see ci.yml verbatim):
+LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
+# The s3 leg additionally needs the five LIBRARY_S3_* stub knobs -- see ci.yml's test-s3-backend.
+
+# Boot a sync server locally (its own repo's app, on $SYNC_PORT, default 3002):
+bin/sync-server prepare && bin/sync-server start
+
+# SECRETS: no `export` before a deploy. `bin/secret VAR op://tinkerex/Item/field` resolves every
+# credential (exported shell value wins, else 1Password) and backs each .kamal/secrets* file.
+# ALWAYS preflight first -- kamal expands `$(...)` through Ruby BACKTICKS, which discard exit
+# status, so an unreadable secret becomes an EMPTY one that deploys silently (§14g):
+bin/secrets-preflight --all      # or: (omit) | s3 | share | ovh
 
 # THE SYNC SERVER runs as a Kamal ACCESSORY, not a service -- that is what gives it the FIXED
-# container name `tinkerex-sync`, which is the whole point: it is the stable network alias the
-# maker app puts in CHUNK_REMOTE_URL. A Kamal *service* gets a per-deploy `<name>-<sha>` name, so
-# `http://tinkerex-sync:3000` does not resolve to one (measured: 000). A standalone service
-# deployed from chaim354/tinkerex-sync's own deploy.yml COLLIDES with this accessory on the
-# `service=tinkerex-sync` label -- pick one shape per box.
+# container name `tinkerex-sync`, the stable network alias this app puts in CHUNK_REMOTE_URL. A
+# Kamal *service* gets a per-deploy `<name>-<sha>` name, so `http://tinkerex-sync:3000` does not
+# resolve to one (measured: 000). A standalone service deployed from tinkerex-sync's own
+# deploy.yml COLLIDES with this accessory on the `service=tinkerex-sync` label -- one shape per box.
 kamal accessory boot sync            # first time
 kamal accessory reboot sync          # pick up a new :latest, or an env change
-kamal deploy -d remote --skip-push   # the fourth destination (LIBRARY_BACKEND=chunk_remote)
 
 # THE SYNC SERVER IS A SECOND DATABASE ON THE BOX and the backup scripts know it as `sync`:
 bin/backup-db sync                                   # ad-hoc, to this Mac
 bin/restore-db sync <archive> --into rehearsal --yes # throwaway volume, live untouched
 bin/backup-status                                    # all four destinations
-
-# Server tests (SQLite; proves adapter-agnosticism)
-bin/rails test
-# The other two backend legs need their env or they DON'T look like a missing var —
-# LibraryBackendCheck refuses to boot, which reads as a broken backend (see ci.yml verbatim):
-LIBRARY_PATH=$(mktemp -d) LIBRARY_BACKEND=share bin/rails test
-# s3 leg additionally needs the five LIBRARY_S3_* stub knobs — see ci.yml's test-s3-backend.
-
-# Boot the SYNC SERVER for the live demos. This used to be `STORAGE_BACKEND=memory bin/rails
-# server` in THIS app, back when it embedded the engine and served /v1/commit itself. It does not
-# any more (§12.12), so the demos below talk to the standalone server:
-bin/sync-server prepare && bin/sync-server start     # foreground on $SYNC_PORT (default 3002)
-
-# --- Everything below needs a checkout of chaim354/tinkerex-client (the Rust crates + the Tauri
-# app moved there 2026-08-20 — docs/superpowers/plans/2026-08-20-stage-1-extract-client.md). Every
-# command below assumes it's checked out as a SIBLING of this repo (`../tinkerex-client`), the
-# convention this repo's own CI uses (see .github/workflows/client-contract.yml and nightly.yml,
-# whose jobs check tinkerex-client out to a `tinkerex-client/` subdirectory and symlink `client`
-# to it — so from a job's-eye view the paths below are unchanged; from a human's shell, cd up one
-# level first, or adjust the `../tinkerex-client` prefix to wherever you cloned it):
-#   gh repo clone chaim354/tinkerex-client ../tinkerex-client
-
-# Live cross-stack demos. THE SERVER HERE IS THE SYNC SERVER (bin/sync-server, default port 3002),
-# not this app: these exercise /v1/commit, /v1/changes and the chunk endpoints, which this app has
-# not served since embedded chunk was retired (§12.12). The port moved 3001 -> 3002 with it.
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example e2e)
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example multi_device)
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example roundtrip)      # real bytes
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example daemon_loop)    # outbox→push→pull→hydrate
-(cd ../tinkerex-client/client/sync-client && SERVER_URL=http://localhost:3002 cargo run --example nudge)          # ActionCable {head_seq} (~39ms)
-
-# Sync server with real S3/SeaweedFS chunk storage (presigned PUT/GET). THESE ENV VARS ARE THE
-# SYNC SERVER'S, and setting them on THIS app does nothing at all since 2026-08-25 -- no code here
-# reads STORAGE_BACKEND or any CHUNK_* storage knob any more (§12.12). Set them in that repo's own
-# env, or on the `sync` accessory (config/deploy.yml):
-#   STORAGE_BACKEND=s3 CHUNK_ENDPOINT=http://192.168.1.8:8333 CHUNK_BUCKET=my-bucket \
-#   CHUNK_REGION=us-east-1 CHUNK_ACCESS_KEY_ID=admin CHUNK_SECRET_ACCESS_KEY=secret
-(cd ../tinkerex-client/client/sync-engine && SERVER_URL=http://localhost:3002 cargo run --example presigned_roundtrip)
-
-# Rust crate tests (per-suite counts now live in tinkerex-client's own docs, not here)
-(cd ../tinkerex-client/client/fs-provider && cargo test)   # chunking/posix/convergence/concurrency/caching (hermetic)
-(cd ../tinkerex-client/client/sync-client && cargo test)
-# sync-engine integration needs a running server (skips cleanly without one).
-# SYNC_VERIFY_FINALIZE=0: finalize's verify-the-bytes-landed check defaults ON, but the engine
-# suites move chunk bytes through SharedDirIO, not the server's store — so the server can't see
-# them. See config/initializers/finalize_verification.rb.
-# (Both knobs are the SYNC SERVER's, set in its env -- not this app's.)
-SYNC_PORT=3002 bin/sync-server start &   # then:
-(cd ../tinkerex-client/client/sync-engine && SYNC_IT_SERVER_URL=http://localhost:3002 cargo test --test integration)
-
-# External conformance (battle-tested tools vs our real mounts — tinkerex-client's own test-conformance/):
-../tinkerex-client/client/test-conformance/webdav-rclone.sh      # rclone ⇄ WebDAV round-trip (macOS+Linux)
-../tinkerex-client/client/test-conformance/fsx-fuse.sh           # fsx data-integrity exerciser ⇄ FUSE (Linux)
-../tinkerex-client/client/test-conformance/pjdfstest-fuse.sh     # pjdfstest POSIX map ⇄ FUSE (Linux, informational)
-
-# Two-device REAL-MOUNT E2E (a file through ONE real kernel mount, read byte-for-byte
-# through ANOTHER device's real mount). Uses STORAGE_BACKEND=local (memory:// can't move bytes).
-# two-device-fuse.sh and two-device-webdav-macos.sh boot their OWN local Rails server (they `cd`
-# to find bin/rails), so run them FROM THIS REPO'S ROOT even though the script itself lives in
-# tinkerex-client — that's also why CI keeps these two in THIS repo's nightly.yml rather than
-# moving them, via the checkout+symlink trick that file documents:
-../tinkerex-client/client/test-conformance/two-device-fuse.sh           # Linux, two real FUSE mounts (CI-automatable)
-../tinkerex-client/client/test-conformance/two-device-webdav-macos.sh   # macOS, two real WebDAV mounts (interactive)
-# two-device-cfapi.ps1 targets the DEPLOYED server (no local Rails needed) and lives entirely in
-# tinkerex-client's own CI now.
-# CI: `gh workflow run nightly.yml` here runs the Rails-coupled two-device legs (along with
-# e2e-linux/e2e-macos/stress-load); the pure-cargo/on-demand slicing rust-client.yml used to offer
-# (`-f target=...`) is now tinkerex-client's own workflow to dispatch.
-
-# fs-fuse on macOS needs FUSE-T + a pkg-config alias + rpath — see tinkerex-client's
-# client/fs-fuse/BUILD.md. Mount it:  ./target/debug/maker-mount ~/MakerDrive /tmp/maker.db /tmp/maker-chunks
 ```
 
-**Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev
-& test run on SQLite); FUSE-T is installed but `fuser` needs an `osxfuse`→`fuse-t`
-pkg-config alias (`tinkerex-client`'s `client/fs-fuse/BUILD.md`); macOS keeps creating
-`" 2"`-suffixed duplicate files in the repo (some sync client?) — they broke a build
-once; `find . -name '* 2.*' -delete` to sweep.
+**Working on the sync engine or the desktop client?** You are in the wrong repo — there is
+nothing to edit here, and since 2026-08-25 neither is a dependency of this one (no gem, no
+`Gemfile.lock` pin, no `bundle update` step, no cross-repo schema guard). What couples them now is
+the **wire**, checked by `bin/ci test-chunk-remote` here and by each sibling's own suite.
 
-**Mount build/runtime notes.** Deps are strictly target-gated so each OS compiles only its
-own. macOS → WebDAV (FUSE-T's **FSKit** build can't mount on macOS 26 — silent fail, the
-System-Settings toggle is greyed). Linux → FUSE (`auto_unmount` needs `user_allow_other` in
-`/etc/fuse.conf` + `/dev/fuse` access). Windows → CfAPI by default; WinFsp needs
-LLVM/libclang to build and `winfsp-x64.dll` on PATH at runtime, and mounts a **drive
-letter**, not a path.
+```sh
+gh repo clone chaim354/tinkerex-sync   ../tinkerex-sync     # then: bundle install && bundle exec rake test
+gh repo clone chaim354/tinkerex-client ../tinkerex-client   # its CLAUDE.md has the cargo/mount cheatsheet
+```
 
----
+**Two CI legs here still reach into `tinkerex-client`, deliberately.** `nightly.yml` runs the
+Rails-coupled two-device real-mount legs (`two-device-fuse.sh`, `two-device-webdav-macos.sh`)
+because those scripts boot their **own local Rails server** — they `cd` upward to find `bin/rails`
+— so they must run from THIS repo's root even though the scripts live in the sibling. Both
+`nightly.yml` and `client-contract.yml` check the sibling out into a subdirectory and symlink
+`client` to it, so from a job's-eye view the paths are unchanged. `client-contract.yml` boots
+`tinkerex-sync` for the same kind of reason.
+
+**Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev & test run
+on SQLite); macOS keeps creating `" 2"`-suffixed duplicate files in the repo (some sync client?) —
+they broke a build once; `find . -name '* 2.*' -delete` to sweep.
 
 ## 14. Invariants and hard-won learnings (don't relitigate)
 
@@ -486,60 +415,56 @@ letter**, not a path.
 > — *what was considered → why rejected → current approach* — live in
 > **`docs/roads-not-taken.md`**. Read it before reviving any of them.
 
-Each line below cost a real bug. `docs/STATUS.md` has the full story for any of them.
+Each line below cost a real bug **in this repo**. `docs/STATUS.md` has the full story for any of
+them. Invariants belonging to the sync engine or the desktop client live in those repos'
+own CLAUDE.md — see §3 and §14j.
 
 ### 14a. The FileLayer port
 
 - **`LIBRARY_BACKEND=chunk_remote|share|s3`, chosen per DEPLOYMENT, not per user — and `chunk` is
-  REFUSED, not aliased.** Embedded `chunk` was retired 2026-08-25 (Arc D Part 2, §12.12): the gem
-  is gone and `Sync::` is undefined in this process, so `FileLayer.build` raises `ArgumentError` on
-  the old value rather than quietly serving chunk_remote. A deployment still carrying it is
-  misconfigured — its library lives on a sync server it has not been pointed at — and silently
-  substituting a backend would hand it an empty library that reads as data loss. **The default is
-  `share`**, the only hermetic backend left; nothing in production relies on it, since every Kamal
-  destination sets `LIBRARY_BACKEND` explicitly.
-  `chunk_remote` landed 2026-08-21 (Stage 4): the maker app as a SYNC CLIENT against a standalone
-  sync server. Reads answer from a locally-mirrored `nodes` (so §2's "the WAN is never in the
-  metadata path" is true of the maker app), writes go over the v1 API, and **the engine is not in
-  the process at all**. Its capabilities match the retired chunk's except `presignable: FALSE`: it
-  cannot verify that a URL another server signed points off-box, so it streams
-  (`FileLayer::ChunkRemote`'s own header carries the argument). Reads:
-  `stat`/`stat_all`/`read`/`download`/`trashed` — all three adapters answer all five. Metadata
-  writes (`mkdir`/`move`/`delete`/`undelete`) are all three; only the BYTE write (`write`) stays
-  **Share + S3 only** — the chunk family's own upload is the two-phase
-  `begin_upload`/`finalize_upload` pair, never `write`.
-  **MOST OF THIS SECTION STILL SAYS "chunk" AND ALMOST ALWAYS MEANS THE CHUNK FAMILY** — the
-  reasoning about trash layout, tombstone kinds, delivery variants and capability gating transfers
-  to `chunk_remote` unchanged, because it was always about what a changelog-backed, versioned,
-  content-addressed backend can do. Where a bullet is about the EMBEDDED adapter specifically (an
-  in-process store, a presigned URL pointing back at Rails), it no longer describes any live
-  deployment; it is kept because the trap it records — `delete` that tombstones without cascading,
-  a redirect that truncates a multi-chunk file — is the same trap in the remote adapter.
+  REFUSED, not aliased.** Embedded `chunk` was retired 2026-08-25 (§12.12): the gem is gone and
+  `Sync::` is undefined in this process, so `FileLayer.build` raises `ArgumentError` on the old
+  value rather than quietly serving chunk_remote. A deployment still carrying it is misconfigured
+  — its library lives on a sync server it has not been pointed at — and silently substituting a
+  backend would hand it an empty library that reads as data loss. **The default is `share`**, the
+  only hermetic backend left; nothing in production relies on it, since every Kamal destination
+  sets `LIBRARY_BACKEND` explicitly.
+  `chunk_remote` is the maker app as a SYNC CLIENT against a standalone sync server. Reads answer
+  from a locally-mirrored `nodes` (so §2's "the WAN is never in the metadata path" is true of this
+  app), writes go over the v1 API, and **the engine is not in the process at all**. Its
+  capabilities are `versioned`/`syncable` true, **`presignable` FALSE** — it cannot verify that a
+  URL another server signed points off-box, so it streams (`FileLayer::ChunkRemote`'s own header
+  carries the argument).
+  Reads — `stat`/`stat_all`/`read`/`download`/`trashed` — are answered by all three adapters, as
+  are the metadata writes `mkdir`/`move`/`delete`/`undelete`. Only the BYTE write (`write`) is
+  **Share + S3 only**: chunk_remote's upload is the two-phase `begin_upload`/`finalize_upload`
+  pair, never `write`.
 - **A share/s3 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`.** `STORAGE_BACKEND`
   defaults to `s3` *outside test*, so resolving a chunk store on a v1 request once made a
   share deployment's **entire v1 API answer 500** (`KeyError: CHUNK_BUCKET`) — including
   login and every gated endpoint, which returned 500 instead of 501. The suite was green
   with **and without** the fix, because the gating tests set `FileLayer.current` and never
   touched `STORAGE_BACKEND` (`memory` in test, `s3` in production).
-- **`Chunk` ANSWERS the four metadata verbs and refuses only the BYTE write.** Until Stage 2
-  (2026-08-20) it refused `mkdir`/`move`/`delete`/`undelete` per-op, each naming its real door,
-  because the maker layer branched around the port (§14d used to count five `port_writable?`
-  copies for exactly this). It no longer can: in remote chunk mode there is no `Sync::*` in the
-  process to branch into. So `mkdir`/`move` → `Sync::Mutation.apply`, `undelete` →
-  `Sync::Trash.restore` (no longer forcing `to_root: true` — see below), and
-  `delete` → **`Sync::SubtreeDelete.call`** — **never**
-  `Sync::Mutation.apply(op: "delete")`, which tombstones only the node it is handed and
-  **orphans every descendant**. That trap is the one thing this bullet always existed to protect
-  and it survives verbatim. **`write` still refuses, and must**: it takes an IO, and a
-  server-side byte write would push bytes through Rails (§15). Chunk's own upload is the port's
-  `begin_upload`/`finalize_upload` pair instead — see below.
+- **`ChunkRemote` ANSWERS the four metadata verbs and refuses only the BYTE write.** Until Stage 2
+  (2026-08-20) the chunk family refused `mkdir`/`move`/`delete`/`undelete` per-op, each naming its
+  real door, because the maker layer branched around the port (§14d used to count five
+  `port_writable?` copies for exactly this). It no longer can: in remote chunk mode there is no
+  `Sync::*` in the process to branch into, so every one of them goes over the wire.
+  **`delete` on a directory must reach the server's CASCADING delete, never a per-node tombstone**
+  — a tombstone applied to the node alone **orphans every descendant**. That is why
+  `dir_deletable` is true here (next bullet) and it is the one trap this bullet has always existed
+  to protect. The cascade itself is the sync server's code and its rules live in that repo's
+  CLAUDE.md; what binds *here* is that this adapter must not invent a per-node substitute.
+  **`write` still refuses, and must**: it takes an IO, and a server-side byte write would push
+  bytes through Rails (§15).
 - **`dir_deletable` (the 6th capability) is NOT `syncable`, though the two agree on all three
   backends today.** It answers one question for one caller, `FilesController#destroy`: may this
-  backend's `delete` be handed a DIRECTORY? Chunk true (`Sync::SubtreeDelete` cascades the whole
+  backend's `delete` be handed a DIRECTORY? chunk_remote true (the sync server's delete cascades the whole
   subtree); share false (children are stranded at paths that no longer exist while their bytes
   sit in `.trash`, which the scan refuses to look at); s3 false (no directory and no rename — a
   dir node's key does not exist). It exists because `#destroy` stopped branching on
-  `port_writable?` once chunk started answering `delete`, which made one call have two answers —
+  `port_writable?` once the chunk family started answering `delete`, which made one call have
+  two answers —
   the shape §14a forbids. Agreement across three backends is three samples, not an identity —
   the same coincidence `scannable` was added to stop encoding twice (`is_a?(Share)`).
 - **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
@@ -547,20 +472,18 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
   except `Maker::Addons::LibraryOutput`, which generates bytes server-side and has no client to
   presign for, so it calls the port's own `put_chunk` instead, and `finalize_upload` records the
-  version. That is what keeps §15 true for a chunk-mode upload. **`put_chunk` is a port verb,
-  implemented differently per adapter, rather than one shared call** — until Arc B (2026-08-23) it
-  *was* one shared call, `Storage::ChunkStore#put`, dialed directly from `LibraryOutput` (then
-  §14c's one sanctioned chunk-internals exception), and that direct call was a `NameError` on any
-  deployment that does not load the sync engine in-process — `chunk_remote` is exactly that
-  deployment, and every addon save there raised, measured against a live standalone server. The
-  fix could not be one shared implementation: `FileLayer::Chunk#put_chunk` writes the embedded
-  store IN-PROCESS, but `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over
-  HTTP, because on embedded chunk a presigned URL for the memory/local store can point BACK AT
-  RAILS ITSELF (no off-box store to presign to locally) — a server-side PUT to it would be a
-  LOOPBACK call into the same Puma pool, §14e's recorded reentrancy bug (14–24 second stalls,
-  outright 404s). Only the adapter knows which situation it is in, so the caller cannot decide,
-  which is why this had to become a port verb instead of a helper either adapter could call. The
-  maker layer now names **zero** chunk-internals references (§14c).
+  version. That is what keeps §15 true for a chunk_remote upload. **`put_chunk` is a PORT VERB
+  rather than one shared call**, and the reason is worth keeping even though only one chunk-family
+  adapter is left: until Arc B (2026-08-23) it *was* one shared call, `Storage::ChunkStore#put`,
+  dialled directly from `LibraryOutput`, and that direct call was a `NameError` on any deployment
+  that does not load the sync engine in-process — `chunk_remote` is exactly that deployment, and
+  **every addon save there raised**, measured against a live standalone server.
+  `FileLayer::ChunkRemote#put_chunk` PUTs to `begun.put_urls[hash]` over HTTP. It could not be one
+  shared implementation with the embedded adapter, because on embedded chunk a presigned URL for a
+  memory/local store can point BACK AT RAILS ITSELF, and a server-side PUT to it is a **loopback
+  call into the same Puma pool** — §14e's recorded reentrancy bug (14–24 second stalls, outright
+  404s). Only the adapter knows which situation it is in, which is why the caller cannot decide.
+  The maker layer now names **zero** chunk-internals references (§14c).
 - **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
   `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
   always done (never nudged live devices; open item, `docs/STATUS.md`). `mkdir`/`move`/
@@ -568,39 +491,27 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
   rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
   working nudge, not a silent gap.
-- **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSES
-  THE RULE THAT USED TO STAND HERE.** The old rule: `Sync::Trash.restore(to_root: true)` NULLs
-  `parent_node_id` when the parent is itself tombstoned, reparenting an orphan to the library ROOT
-  rather than raising, with restoring the folder afterward left to reunite nothing because the
-  child's pointer was already gone. **This bullet's own evidence is what overturned it.** It said,
-  in the same breath: since `delete` cascades a whole directory in one call
-  (`Sync::SubtreeDelete`), restoring a CHILD before its PARENT is the MAINLINE case, not a
-  hand-crafted edge case — one folder delete tombstones every descendant — and a bottom-up restore
-  "permanently scatters that folder's contents to the root, irreversibly," which it then declined
-  to fix ("ordering restores is a caller's job, not this adapter's"). An outcome that silent, on
-  that common a path, and that irreversible is worth refusing even though refusing is less
-  convenient than succeeding: **a refusal is recoverable — restore the folder, then the file; a
-  scatter is not.**
-  `FileLayer::Chunk#undelete` no longer passes `to_root: true` — the call now takes
-  `Sync::Trash.restore`'s own default (`to_root: false`), which raises `Sync::Trash::ParentDeleted`
-  for an orphan, mapped to `UnsupportedOperation` with a message naming the ACTION a user can take
-  ("restore the folder first"), not just the failure. `FileLayer::ChunkRemote` already answered
-  this way — it posts no `to_root` in its restore body and takes the standalone server's own
-  strict default, so the server's 409 was already reaching `Transport#interpret` as this same
-  exception class before chunk changed. Chunk is CONVERGING on chunk_remote's answer, not adopting
-  a third rule; a real journey suite run against a standalone server is what caught the two
-  adapters disagreeing in the first place (§15: probe over argument, again). Pinned across all
-  four backends by the shared mutation contract
+- **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSED
+  AN EARLIER RULE, WHICH IS WHY IT IS RECORDED RATHER THAN ASSUMED.** The old rule reparented an
+  orphan to the library ROOT when its parent was itself tombstoned, rather than raising. The
+  evidence that overturned it was already in the old bullet's own text: since `delete` cascades a
+  whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not a
+  hand-crafted edge case — and a bottom-up restore "permanently scatters that folder's contents to
+  the root, irreversibly." An outcome that silent, on that common a path, and that irreversible is
+  worth refusing even though refusing is less convenient than succeeding: **a refusal is
+  recoverable — restore the folder, then the file; a scatter is not.**
+  `FileLayer::ChunkRemote` posts no `to_root` in its restore body and takes the sync server's own
+  strict default, so the server's 409 reaches `Transport#interpret` as `UnsupportedOperation` with
+  a message naming the ACTION a user can take ("restore the folder first"), not just the failure.
+  Pinned across the backends by the shared mutation contract
   (`test/services/file_layer/adapter_mutation_contract.rb`), gated on `dir_deletable?`: share and
   s3 cannot reach this state through the port AT ALL — directory delete is refused outright on
   both, so there is no door that ever produces a live child under a tombstoned parent for them to
   disagree about.
-  **`Sync::V1::TrashController`** — the sync engine's own DEVICE-facing API, not this repo's web
-  `TrashController` — keeps a direct `Sync::Trash.restore` call with a **caller-supplied**
-  `to_root:`, deliberately, and that is not an oversight to "fix" into agreement: a device client
-  can ask for the strict 409 and prompt its own UI, where a browser Restore click has no such
-  prompt and this app's web `TrashController` chooses the refusal on the user's behalf instead —
-  see its own comment for the actionable message that refusal now carries.
+  The device-facing side of this argument — why the sync server's own trash controller keeps a
+  caller-supplied `to_root:` instead — is that repo's rule now, and lives in its CLAUDE.md. **The
+  web `TrashController` here chooses the refusal on the user's behalf** because a browser Restore
+  click has no prompt to offer; see its own comment for the actionable message.
 - **THE LOCAL MIRROR IS DELIBERATELY STALE BETWEEN PULLS, AND ONLY THE RECURRING JOB MAY CLOSE
   THAT GAP — NEVER A READ PATH.** `FileLayer::ChunkRemote#refresh!` has five TRIGGERING
   operations, all this app's own writes — `mkdir`/`move`/`delete`/`undelete`/`finalize_upload`
@@ -614,27 +525,28 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   mechanism: a per-user recurring pull, `config/recurring.yml`'s `remote_changelog_pull` entry,
   every 2 minutes, gated to `chunk_remote` ONLY — `.pull_all!`'s
   `FileLayer.current.is_a?(FileLayer::ChunkRemote)` check, a CLASS check rather than a new
-  `Capabilities` member, because `syncable` is true for chunk AND chunk_remote alike and cannot
-  tell "this app's `nodes` table is a mirror of a REMOTE changelog" from "chunk shares this app's
-  own database with the engine in-process." **Do not "fix" staleness by adding a synchronous pull
+  `Capabilities` member, because `syncable` was true for embedded chunk AND chunk_remote
+  alike and could not
+  tell "this app's `nodes` table is a mirror of a REMOTE changelog" from "the engine shares this
+  app's own database in-process." (Only chunk_remote is left, but the class check stays: a future
+  syncable backend would face the same ambiguity.) **Do not "fix" staleness by adding a synchronous pull
   to `FilesController#index` or any other read** — that is precisely the WAN-in-the-metadata-path
   §2 exists to forbid, made on every request rather than once every 2 minutes, and it is what the
   journey suite's own rewritten test now pins against (a plain read asserted NOT to see a
   server-side node) rather than for. Bounded staleness (~2 minutes) is the trade, the same one
   `Library::ScanJob`'s poll already makes for share/s3.
-- **`LibraryBroadcast.batch` HAS THREE ANSWERS NOW, NOT TWO, AND THE SPLIT IS "IS THERE A
-  CHANGELOG TO COALESCE AGAINST", NOT "IS THE ENGINE LOADED."** Engine present (chunk) delegates
-  to `Sync::LibraryChannel.batch`, unchanged. Engine absent used to be a bare `yield`
-  unconditionally — right for share/s3 (no changelog at all, nothing to coalesce, so `yield` is
-  the SAME behaviour with the bookkeeping removed, not a degraded one) but wrong for
-  `chunk_remote`, which has no engine in-process yet DOES have a changelog, reached over HTTP:
-  left alone, an eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation on top of
-  the mutation's own request — a batch of 3 moves cost 3 pulls, measured, two WAN round trips per
-  file. `FileLayer::ChunkRemote#batch` (Arc B gap (c)) is that backend's own coalescing: a
-  `Thread.current` frame, DELIBERATELY never an ivar on `self` — `FileLayer.current` memoizes ONE
-  adapter instance for the whole process, shared across every Puma thread, so per-batch state
+- **`LibraryBroadcast.batch` HAS TWO ANSWERS, AND THE SPLIT IS "IS THERE A CHANGELOG TO COALESCE
+  AGAINST", NOT "IS THE ENGINE LOADED."** It had three while the engine could be in-process; that
+  branch is gone with the gem. Share and s3 get a bare `yield` — they have no changelog at all,
+  nothing to coalesce, so `yield` is the SAME behaviour with the bookkeeping removed, not a
+  degraded one. `chunk_remote` has no engine in-process yet DOES have a changelog, reached over
+  HTTP: left alone, an eager `Maker::ProjectIntake` sweep paid one changelog PULL per mutation on
+  top of the mutation's own request — a batch of 3 moves cost 3 pulls, measured, two WAN round
+  trips per file. `FileLayer::ChunkRemote#batch` (Arc B gap (c)) is that backend's own coalescing:
+  a `Thread.current` frame, DELIBERATELY never an ivar on `self` — `FileLayer.current` memoizes
+  ONE adapter instance for the whole process, shared across every Puma thread, so per-batch state
   living on the object would let one request's batch leak into a concurrent request's unrelated
-  mutation. `#move` alone dirties it, through a new `#refresh_or_defer!` that marks the open batch
+  mutation. `#move` alone dirties it, through a `#refresh_or_defer!` that marks the open batch
   dirty instead of pulling; the batch's own `ensure` block pulls exactly once, on ANY exit, not
   only success, because every move that ran before an exception has already committed on the
   SERVER. **`mkdir` is DELIBERATELY NOT deferred, and must not be made "uniform" with `move`** —
@@ -680,19 +592,10 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   shape of the bug, `Thread.current` included.** Full story, including the lazy-provisioning half
   (`Provisioning#call`, `user.with_lock` across the admin HTTP call, exactly-once under concurrency
   proved with two real threads and a deliberately-slow fake): `docs/STATUS.md`, "Arc C."
-- **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
-  `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
-  sharing one `(parent, name)` where share and s3 both refuse that clobber in their own
-  `#undelete` — pre-existing, not introduced by moving the call behind the port. And undeleting
-  an ALREADY-LIVE node is an idempotent success on chunk (`Sync::Trash.restore` early-returns)
-  but `FileLayer::NotFound` on share/s3 (their lookup is scoped `deleted: true`, and there are no
-  `.trash` bytes to move back for a node that never left) — structural, not arbitrary: unifying
-  it means either chunk raising about a file that IS restored, or share/s3 claiming a byte move
-  they never performed.
 - **`port_writable` IS NOT "accepts uploads"** — the single most-misread name here. It
   answers *which upload flow the UI drives*: true → POST bytes to the port (share, s3);
-  false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk).
-  Chunk mode accepts uploads all day — that flow **is** how a chunk upload happens — so
+  false → drive the port's own `begin_upload`/`finalize_upload` presigned flow (chunk_remote).
+  `chunk_remote` accepts uploads all day — that flow **is** how a chunk upload happens — so
   the "can this deployment take uploads" reading **hides the upload button in the
   product's main deployment**. It is also not `!syncable?` and not `scannable`; the full
   argument is at `app/services/file_layer/capabilities.rb`.
@@ -700,7 +603,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `NotImplementedError` is a **`ScriptError`, not a `StandardError`**, so `rescue => e` and
   ActiveJob's `retry_on` silently do **not** catch it — a rescue-based gate doesn't have a
   gap, it doesn't work, failing to exactly the 500 that was forbidden. A 501 from
-  `Chunk#write` would also be *factually wrong* (the caller used the wrong door), and a
+  `ChunkRemote#write` would also be *factually wrong* (the caller used the wrong door), and a
   controller rescue would launder an s3 **misconfiguration** into a routine response.
   Keep `NotImplementedError` un-rescued and loud. **`test/architecture_invariants_test.rb`
   enforces this** — it is no longer a grep you are trusted to remember to run.
@@ -710,38 +613,33 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   endpoint), and **`V1::ShareController`** (the anonymous redeem side of public file links —
   nothing to do with `FileLayer::Share`; a 501 would disclose the backend to any stranger).
   Two gates are not the capability they look like: **`chunks#download` → `syncable`, NOT
-  `presignable`** (S3 is presignable with no chunk to hydrate), and **v1 `trash` →
-  `syncable`** (it's the *chunk* trash). `begin_upload`/`finalize_upload` gate on
+  `presignable`** (S3 is presignable with no chunks to hydrate), and **v1 `trash` →
+  `syncable`** (it's the *sync server's* trash, not the share `.trash` directory). `begin_upload`/`finalize_upload` gate on
   `syncable`, not `!port_writable?`.
 - **`S3` is the one backend where `presignable` is TRUE and `versioned` is FALSE** — that
   combination is its point. §15 (bytes out of Rails) **survives** there (a bucket has a URL
-  signer); §5 (keep versions) does **not**. The other two agree (chunk true/true, share
+  signer); §5 (keep versions) does **not**. The other two agree (chunk_remote true/true, share
   false/false), so S3 is the counterexample that forbids collapsing one into the other.
 - **Two deliberate invariant departures, scoped to storage we don't own — do NOT "fix"
   these back.** §5 can't hold on a plain share (the user's overwrite in Finder destroys the
-  old bytes) → share/s3 are **current-state only**, restore stays chunk-mode. §15 can't hold
+  old bytes) → share/s3 are **current-state only**, restore stays chunk_remote-only. §15 can't hold
   for a mounted directory, which has nothing to presign → share streams via **`send_file`**.
 - **`send_file` + `x_sendfile_header` is the whole X-Accel story — there is no nginx here.**
   Deployment is kamal-proxy (Go) and `x_sendfile_header` is **nil**, so `Rack::Sendfile`
   no-ops and `Rack::Files` is the only branch that runs. The knob stays **commented** in
   `production.rb`: enabling it would **silently serve empty bodies** for every share download.
-- **`Delivery`'s three variants are three MECHANISMS** — `Redirect(url)` (chunk
-  single-chunk + s3) / `SendFile(path)` (share) / `Stream(enum)` (chunk multi-chunk) — and
+- **`Delivery`'s three variants are three MECHANISMS** — `Redirect(url)` (s3) /
+  `SendFile(path)` (share) / `Stream(enum)` (chunk_remote) — and
   `FilesController` consumes them **without ever constructing a path**. `disposition:` is
   **required, not defaulted**: nil makes `ContentDisposition.format` emit a header with no
   disposition type, which browsers resolve as **inline** — a silent cross-backend
   divergence, on S3 only, where the value is signed into the URL.
-- **`Chunk#download`'s `is_a?(S3ChunkStore)` is deliberately NOT `presignable?`** — memory
-  and local stores presign to URLs **Rails itself serves**, so redirecting sends the browser
-  back through us. The `chunks.size == 1` half is load-bearing too: a redirect names ONE
-  object, so redirecting a multi-chunk file hands the browser its first chunk with a 200 and
-  the right filename — **silent truncation**.
 - **`stat_all(user, node_ids:) -> Hash keyed by node_id` is a port verb**, and **a missing
   node is an ABSENT KEY, not a raise** — `stat` is asked about one node so `NotFound` is its
   whole answer, but a bulk caller holds a **list**, and a row tombstoned mid-page must not
   404 the page. The shared contract pins three things, and **only the third fails for a
   loop** (`node_ids.map { stat }` is behaviorally identical): the query count must be
-  **constant in N**, asserted as constant rather than a literal (chunk needs 2, share/s3 1).
+  **constant in N**, asserted as constant rather than a literal (chunk_remote needs 2, share/s3 1).
 - **THE TWO TOMBSTONE KINDS — the thing most likely to get "simplified" away.** A **scan**
   tombstone **keeps** `storage_path`; a **trash** tombstone **NULLs it** and is revivable
   only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new,
@@ -794,8 +692,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   temp-then-rename is atomic over an existing destination and `put_object` overwrites by definition,
   so a replace **skips** work rather than adding it. **The two adapters resolve "the file being
   replaced" DIFFERENTLY and must keep doing so** — the port asks by `storage_path` (what it derived
-  the destination from), chunk's `LibraryOutput#existing_at` asks by `(parent, name)` because chunk
-  nodes have no `storage_path` at all. A test fixture built with `nodes.create!` has a NULL
+  the destination from), chunk_remote's `LibraryOutput#existing_at` asks by `(parent, name)` because
+  chunk_remote nodes have no `storage_path` at all. A test fixture built with `nodes.create!` has a NULL
   `storage_path`, which cannot exist on share/s3: the lookup misses, a second node is created, and
   the leg splits chunk-green / share-red.
 - **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
@@ -871,7 +769,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   **Assume every path that writes is exposed until you have checked it** (`observable!`).
 - **`observable!` CANNOT COVER CHUNK, SO THE DOOR DOES — `Library::ReservedNames.reserved?`.**
   The bullet above says "every path that writes"; on chunk there **is no path through an
-  adapter** (not `port_writable`), so `Sync::Commit` is driven directly and no `observable!`
+  adapter** (not `port_writable`), so the commit path is driven directly and no `observable!`
   exists to reach. Probed through the real doors: a `.DS_Store`/`.trash`/`.maker-tmp-x` output
   was **302 + a live node on chunk** and **422 on share/s3** — §14a's one-condition-two-answers,
   with the main deployment on the wrong side. **THREE web doors mint a leaf name and all three
@@ -886,7 +784,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   it is **composed from `Scanner::TRASH_PREFIX`/`TEMP_PREFIX`/`OsClutter`, never a fourth copy of
   the strings**; and it is **NOT folded into `valid_leaf_name?`**, because that one is also called
   by `Maker::MoveNode#call` on a name that usually **already exists**, and a real macOS device
-  mount pushes `.DS_Store` nodes through `Sync::Commit#finalize` by design — folding would make a
+  mount pushes `.DS_Store` nodes through the sync server's own finalize by design — folding would make a
   population the product creates permanently unmovable to close a hole about *minting* a name.
 - **A LISTING IS NOT A SNAPSHOT.** `list_objects_v2` paginates, and a failure on page 7 of
   40 is a **well-formed lie** that reads exactly like the user deleting 82% of their library.
@@ -1051,7 +949,8 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Storage::ChunkStore#put` call, the one sanctioned exception between the phase-1 decoupling and
   Arc B), and it would have gone on reading "exactly one, and it is library_output.rb" indefinitely
   had Arc B Task 2 not driven the count back to zero by giving `put_chunk` a port-verb
-  implementation on both `FileLayer::Chunk` and `FileLayer::ChunkRemote` (§14a). A NEW
+  implementation on `FileLayer::ChunkRemote` (§14a; the embedded adapter had one too, and
+  went with the engine). A NEW
   `app/<x>/maker/` is covered the day it is created. Change the code and the test tells you; if a
   new direct exception ever becomes genuinely unavoidable, update the test and this bullet
   together, deliberately.
@@ -1104,7 +1003,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **An addon save validates its filenames AT THE DOOR, backend-neutrally** —
   `Maker::MoveNode.valid_leaf_name?` in `parse_files`, not inside any adapter. Share and S3 each
   refuse a traversing name in their own `leaf!`; **chunk has no name check anywhere** (
-  `Sync::Commit.begin` validates the manifest exhaustively and the name not at all, and `Node`
+  the sync server's commit validates the manifest exhaustively and the name not at all, and `Node`
   validates `name` for **presence only**), so `"../../escape.txt"` created a live node on the
   main deployment, bound for the changelog and every device mount. A guard that exists on two
   backends and silently does not on the third is this repo's recorded failure shape — the fix is
@@ -1170,7 +1069,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `Maker::MoveNode.collision?` has always had for this and was being passed nil.** Skipping the query
   instead ("this state owns that (parent, name), so wave it through") is a DIFFERENT rule, and the
   difference is a live defect on chunk: two live siblings sharing one `(parent, name)` are reachable
-  there, since `Sync::Commit` validates a manifest exhaustively and the name not at all (§14a), so a
+  there, since the sync server validates a manifest exhaustively and the name not at all (§14a), so a
   device push can land one. With the check skipped that save answered **302, rewrote the node this
   state does NOT own, and ADOPTED it into `state.files`** — §14a's orphaning shape with the sign
   flipped, introduced by the very commit that added the exemption. `resolve_placements`' cheaper
@@ -1469,7 +1368,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   API.** `/v1/*` is Bearer-token; the web app is cookies. Consequence: web controllers are not
   limited to what the JSON API exposes.
 - **The `port_writable?` two-door branch is now written out ONCE** (`Maker::Addons::LibraryOutput`)
-  — it was five, not three, until Stage 2 (2026-08-20) gave `FileLayer::Chunk` its four metadata
+  — it was five, not three, until Stage 2 (2026-08-20) gave the chunk family its four metadata
   verbs and the other four callers (`Maker::LibraryFolder#mkdir`, `FilesController#destroy`,
   `TrashController#restore`, `Maker::MoveNode`) stopped branching, because the port started
   answering instead of refusing. **`LibraryOutput` keeps its branch, and it has the argument the
@@ -1488,19 +1387,18 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `put_chunk` becoming a port verb removed that call without touching this branch at all.
 - **A verb more than one controller performs gets a named service** — `Maker::MoveNode`,
   `Maker::AttachToProject`, `Maker::LibraryFolder` — rather than being re-inlined per action.
-- **Controllers reach `Sync::` through exactly one door, `FileLayer::Chunk` — enforced by a
-  test, not a convention.** `test/architecture_invariants_test.rb`'s seam guard asserts ZERO
-  real (non-comment) `Sync::` constant references outside the sync engine's own code, the v1
-  API, the reaper/retention jobs, `channels/`, and `chunk.rb` itself — Ripper-token-checked,
-  because a bare `/Sync::/` regex false-positives on `app/jobs/library/trash_purge_job.rb`'s own
-  operator-facing error string, which names "Sync::Gc" in prose with zero real references. This
-  was not always true: before Stage 2, controllers reached directly into `Sync::` wherever the
-  port refused an operation (`FilesController#destroy` → `Sync::SubtreeDelete`,
-  `TrashController#restore` → `Sync::Trash.restore`, `FilesController`'s own `Sync::Commit`
-  upload flow, among others) — the arc that closed it is in `docs/STATUS.md`. The tripwire is
-  still about **new** work: **if a maker-layer change needs to touch sync, the changelog,
-  conflicts, locks, or the mounts, the boundary is wrong — stop** — the difference is that a
-  violation now fails `bin/ci` instead of waiting to be noticed.
+- **NOTHING HERE REACHES `Sync::` AT ALL — the seam guard asserts ZERO, WITH NO ALLOWLIST.**
+  `test/architecture_invariants_test.rb` is Ripper-token-checked rather than a `/Sync::/` regex,
+  because a regex false-positives on `app/jobs/library/trash_purge_job.rb`'s own operator-facing
+  error string, which names "Sync::Gc" in prose with zero real references. The guard once carried
+  an exception list (the v1 API, the reaper jobs, `channels/`, and `chunk.rb` itself, which was the
+  one sanctioned door); Arc D Part 2 removed the engine from this process entirely, so the
+  allowlist went with it and the assertion is now unconditional — **stronger than what it
+  replaced, and it must stay that way.** Before Stage 2 the controllers reached into `Sync::`
+  wherever the port refused an operation (`FilesController#destroy`, `TrashController#restore`,
+  `FilesController`'s own upload flow); the arc that closed it is in `docs/STATUS.md`. The tripwire
+  is about **new** work: **if a maker-layer change needs to touch sync, the changelog, conflicts,
+  locks, or the mounts, the boundary is wrong — stop** (§14j). A violation fails `bin/ci`.
 - **ONE file-type vocabulary.** `FilesHelper::EXT_FAMILIES` is **derived** from `ROLE_BY_EXT`,
   grouped by role and labelled by `ROLE_LABELS`. Add an extension in **`ROLE_BY_EXT` only**.
   Two consequences: every extension must satisfy `FilesController::EXT_RE`
@@ -1585,42 +1483,28 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 - **A remote-mounted filesystem does NOT work over the WAN.** rclone/JuiceFS mount =
   synchronous metadata round-trips → ~1 s/file (Phase 0, measured). Every production system
   uses **local metadata + async sync + on-demand hydration**. That pivot is the whole reason
-  this architecture exists. Do not go back to a remote mount.
-- **JuiceFS was abandoned** here: chatty WAN metadata, no internal ACL (multi-tenancy needs a
-  gateway/volume-per-tenant), and FUSE-driver licensing. `client/juicefs-backend` +
-  `maker-app-core` are leftovers — reference only.
-- **Edge-SQLite (Cloudflare D1, Turso) can't back JuiceFS** — no driver + chatty-metadata
+  this architecture exists, and it is why `chunk_remote` mirrors rather than asks (§2). Do not
+  go back to a remote mount. (`docs/roads-not-taken.md`; JuiceFS itself was abandoned for chatty
+  WAN metadata, no internal ACL, and FUSE-driver licensing.)
+- **Edge-SQLite (Cloudflare D1, Turso) can't back a mount** — no driver + chatty-metadata
   latency. They *would* fit the coarse-manifest model, but we use Rails + Postgres/SQLite to
   stay self-hostable (D1/DO are Cloudflare-locked → break self-host).
 - **The sync model makes multi-tenancy SIMPLE** (coarse API + `user_id` scoping) — the
   opposite of the mount model's credential gymnastics. Tenant = user for v1.
-- **Permissive licensing is a hard constraint** (§9). Block-delta + versioning is available
-  permissively: **fastcdc-rs (MIT)**, **desync (BSD-3)**, **restic/chunker (BSD-2)**.
+- **Permissive licensing is a hard constraint** (§9).
 - **DB: Postgres managed, SQLite self-host, one adapter-agnostic codebase.** No PG-only SQL in
-  the hot path. **`next_seq!` must be the FIRST statement** in `Sync::Commit#finalize` /
-  `Mutation#apply` / `Restore` / `Conflicts` / **`SubtreeDelete`** — five callers, not the four this
-  line listed until 2026-08-20, and the missing one is the cascade, which takes a seq PER NODE
-  (`subtree_delete.rb:20,23`) and so has the most to lose from a lock upgrade. Otherwise concurrent
-  commits deadlock on a
-  `FOR KEY SHARE`→`FOR UPDATE` lock upgrade. A **statement-mode pooler breaks it** — the boot
-  guard refuses to start behind one.
-- **EVERY REFCOUNT WRITE GOES THROUGH `Sync::Gc.touch_refcounts!`, never a bare `update_all`** —
-  because `update_all` does not maintain timestamps, and `Gc.sweep_orphans!`'s grace window
-  filters on `updated_at`. With the column only ever written at `insert_all` time the filter
-  tested the chunk's **CREATION age, not its ZEROING age**, so for any chunk older than the
-  window — i.e. **every real chunk** — the protection the sweep's own contract promises did not
-  exist. Four sites (`gc`, `commit`, `restore`, `conflicts`). Two ordering rules go with it, and
-  neither is decoration: `sweep_orphans!` **deletes compare-and-swap**
-  (`where(id:, refcount: ..0).delete_all == 1` before the byte delete), because it takes NO user
-  lock and its batch is a snapshot a concurrent `Commit#finalize` can re-reference **0 → 1 while
-  uploading nothing** (it deduped against the row) — leaving a live version pointing at a chunk
-  with no row and no bytes; and `prune_version!` is **claim-then-decrement** (delete the version
-  row, decrement only if it removed 1), so two overlapping retention passes cannot decrement
-  twice for one removal. The `WHERE refcount > 0` guard prevents a NEGATIVE refcount, which was
-  never the bug. Failure mode throughout: **silent permanent data loss**, managed/tiered only
-  (`keep_all` never decrements). Beware the test shape that hid it — every sweep test hand-set
-  `updated_at` via `update_column`, and the "within grace" one used a chunk created moments
-  earlier, so it passed either way.
+  the hot path.
+  **`User#next_seq!` SURVIVES HERE WITH NO CALLER IN THIS APP, AND THAT IS NOT DEAD CODE TO
+  SWEEP.** `users.head_seq` is still served to a joining device by `V1::DevicesController` as
+  its starting changelog cursor. The method's lock-ordering rule — take `FOR UPDATE` on the user
+  row FIRST, before any FK insert takes `FOR KEY SHARE`, or two concurrent commits deadlock on
+  the upgrade — governs the sync server's commit path and lives in **that repo's** CLAUDE.md now.
+  Its five callers are all there. Do not reintroduce that rule, or a pooler boot guard for it,
+  here: nothing in this process takes the lock. (`lib/postgres_pooler_check.rb` is gone; a
+  comment in `app/models/user.rb` still points at it and at `Sync.engine_present?`, and is stale.)
+  **A statement-mode pooler still breaks the sync server** — that constraint did not disappear,
+  it relocated.
+
 - **`config.active_storage.variant_processor = :disabled`, and it must stay that way.**
   `load_defaults 8.1` sets it to `:vips`, which loads `ImageProcessing::Vips` → `ruby-vips` at
   boot. This app deliberately ships **no `ruby-vips`**: every thumbnail shells out to the
@@ -1721,6 +1605,17 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   `config.enable_reloading = true`'s per-request interlock adds overhead a page firing several
   near-simultaneous asset requests can expose — `RAILS_MAX_THREADS=16` fixed it; production
   (eager-loaded) and the test env (`enable_reloading = false`) don't carry that overhead.
+- **A GUARD THAT SKIPS ON THE THING IT ASSERTS IS VACUOUS.** A boot test that skipped when
+  `defined?(Sync)` meant the mutation which loaded the engine skipped every test and reported
+  **success**. Skip on whether the leg was **invoked**, so absence is the claim rather than the
+  precondition. Found by mutation-checking, not by reading.
+- **A GUARD THAT SCANS A DIRECTORY DIES SILENTLY WHEN THE DIRECTORY LEAVES.** Two architecture
+  guards were `assert_empty offenders` over a glob of `engines/tinkerex-sync/**`; the extraction
+  made that glob `[]`, which satisfies `assert_empty` perfectly, so "the sync engine never reaches
+  into the maker layer" went on **passing over nothing** — its sibling failed only by luck, because
+  its stale-exception check happened to name a file that had ceased to exist. **Assert the scanned
+  set is NON-EMPTY before trusting what it reports.** This generalises past the extraction: any
+  guard whose subject is a path can be silently retired by a move.
 
 ### 14f. Project-folder intake
 
@@ -1731,7 +1626,7 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   on chunk each round of that fight is a changelog entry broadcast to every device.
 - **A SWEEP OVER `nodes`, NOT A HOOK PER DOOR — because there are SEVEN doors and no
   funnel.** `FilesController#create` (share/s3), `#finalize_upload` (chunk),
-  `Library::Reconciler` (the scan), `Sync::Commit#finalize` (a device push),
+  `Library::Reconciler` (the scan), a device push landing on the sync server,
   `Maker::Addons::LibraryOutput`, `Maker::MoveNode`, and a trash restore can all land a
   file under `Projects/<slug>/`. Hooking each is seven sites that must agree, and an
   EIGHTH would silently skip the rule — this repo's recorded failure shape (the five
@@ -2317,291 +2212,58 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 
 ---
 
-### 14j. The maker/sync boundary (Stages 3a and 3b)
+### 14j. The maker/sync boundary
 
-> **THE BOUNDARY IS NOW A NETWORK, NOT A NAMESPACE (2026-08-25, Arc D Part 2 — §12.12).** This
-> section was written while the sync engine was a GEM IN THIS PROCESS and the boundary was
-> enforced by static analysis: guards counting `Sync::` references, a capability seam so the
-> engine named no host constant, a byte-identical schema check across two repos, a `require:
-> false` gem loaded only when `engine_wanted?`. **None of that machinery exists here any more.**
-> The engine is not a dependency; `Sync::` is undefined; `bin/ci`'s seam guard asserts ZERO
-> references with no allowlist, which is stronger than anything the exception lists below could
-> express. What couples the two repos is the WIRE, and what checks it is `bin/ci
-> test-chunk-remote` (the full suite against a booted server) plus the conformance corpus in
-> `chaim354/tinkerex-sync`.
+> **THE BOUNDARY IS A NETWORK, NOT A NAMESPACE (2026-08-25, Arc D Part 2 — §12.12).** This
+> section used to run to 286 lines describing a boundary enforced by static analysis, back when
+> the sync engine was a **gem in this process**: guards counting `Sync::` references, a capability
+> seam so the engine named no host constant, a byte-identical schema check across two repos, a
+> `require: false` gem loaded only when `engine_wanted?`. **None of that machinery exists here any
+> more.** The engine is not a dependency; `Sync::` is undefined; `bin/ci`'s seam guard asserts
+> ZERO references with **no allowlist**, which is stronger than anything those exception lists
+> could express.
 >
-> **The rules below are kept, not deleted, and the distinction matters per rule.** Some are now
-> HISTORY — the `SYNC_ENGINE` knob, the `dependent: :destroy` constantize trap, `recurring.yml`'s
-> `command:`-not-`class:` gate, the engine-schema guard — describing machinery that is gone; they
-> stay because they record WHY the separation was done this way and what each mechanism cost.
-> Others still BIND, because they are about the two repos rather than about a gem: the
-> `BUNDLE_GEMFILE` stripping (`bin/sync-server` still spawns a second Rails app), `Device` staying
-> host-owned, the deliberate non-rewriting of `db/migrate/`, and the "a guard that scans a
-> directory dies silently when the directory leaves" lesson. **Read each one asking which it is.**
+> **The engine-side rules moved to `chaim354/tinkerex-sync`'s own CLAUDE.md** — `isolate_namespace`
+> and the `sync_` table-prefix trap, the route drawer, `Sync::Hooks`, host obligations, the dummy
+> app, refcount GC and `next_seq!` ordering. Do not re-derive them here; if you need one, you are
+> working in the wrong repo.
+>
+> **What couples the two repos now is the WIRE**, and what checks it is `bin/ci test-chunk-remote`
+> here (the full suite against a booted sync-server host app) plus the conformance corpus there.
+
+Four rules survive on **this** side of the boundary:
 
 - **A BUNDLED RUBY PROCESS THAT SPAWNS A SECOND RAILS APP MUST STRIP `BUNDLE_GEMFILE`/`RUBYOPT`
-  FIRST, OR THE CHILD SILENTLY BOOTS AGAINST THE WRONG GEMFILE.** Found while proving Arc C Task
-  4/5's admin-provisioning route end to end (docs/STATUS.md, "Arc C"). `bin/ci` (via
-  `config/boot.rb`'s `require "bundler/setup"`) sets `BUNDLE_GEMFILE` to THIS repo's own Gemfile
-  and a `RUBYOPT` that force-requires `bundler/setup`, PROCESS-WIDE — every child process it
-  spawns inherits both. A second Rails app's own ORDINARY `config/boot.rb` does
-  `ENV["BUNDLE_GEMFILE"] ||= ...`, and `||=` means an INHERITED value wins, so a bundled Ruby
-  process (`bin/ci`, or anything else that has run `bundler/setup`) spawning a SECOND Rails app —
-  `bin/sync-server start`ing `../tinkerex-sync/host`, today's only instance, but the mechanism is
-  general — silently boots that child against the FIRST app's `Gemfile.lock`, not its own.
-  Reproduced directly: exporting exactly `BUNDLE_GEMFILE`/`RUBYOPT`/`RUBYLIB` and nothing else
-  turned a working `POST /v1/admin/libraries` into a bare 404 (`ActionController::RoutingError`)
-  on an otherwise-identical boot — `/up` and `/v1/devices/whoami` kept answering fine, because
-  that much of Rails/ActionController is close enough between the two repos' locked versions to
-  boot either way; the two `Gemfile.lock`s had simply diverged enough, by the time the admin route
-  existed, for ROUTE DRAWING specifically to differ. `bin/sync-server`'s own
-  `unset_inherited_bundler_env` (called before every `bundle install`/`bin/rails` invocation
-  against the sibling checkout, in both its `prepare` and `start` cases) is the fix in place today
-  — it unsets `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/
-  `BUNDLER_SETUP`/`RUBYOPT`/`RUBYLIB` (deliberately NOT the longer list Bundler itself owns —
-  `PATH`/`GEM_HOME`/`GEM_PATH`/etc. — which is how the shell finds `ruby`/`bundle` at all;
-  clearing those would trade a silently-wrong bundle for a script that cannot run). **This
-  protects only `bin/sync-server`.** The next script that shells out to a second bundled Ruby
-  process from inside a `bin/ci`-launched one gets no protection from this fix and will hit the
-  identical failure shape — silent, plausible-looking, and specifically the kind that only shows
-  up once the two apps' locked gems have drifted far enough for something like route drawing to
-  differ, which is exactly what made it invisible for as long as it was.
-- **`SYNC_ENGINE` EXISTS SO BOTH PATHS ARE EXECUTED, NOT SO ONE CAN BE ARGUED.** The three backend
-  legs set `SYNC_ENGINE=1` and keep the engine loaded even on share/s3, so all three still report
-  **identical** counts and §15's ambient-backend guard is untouched. A **fourth leg**
-  (`test-no-engine`) sets `SYNC_ENGINE=0` and is the only place the engine is genuinely absent.
-  Neither alone works: without the override the counts diverge and a real guard is retired to
-  accommodate one expected case; without the fourth leg the conditional is executed by **nothing**,
-  which is §14a's recorded bug verbatim. An **empty** value reads as unset, not false — kamal's
-  `env.clear` blanks rather than removes (§14c). **A THIRD, INDEPENDENT KNOB — `LIBRARY_BACKEND` —
-  is easy to conflate with this one and must not be: `SYNC_ENGINE` controls whether the GEM loads,
-  `LIBRARY_BACKEND` controls which ADAPTER `FileLayer.current` builds, and `LibraryBroadcast.batch`
-  branches on the FORMER (`engine_wanted?`) rather than the latter.** Every real deployment has
-  them moving together (engine loaded ⟺ backend is `chunk`), so this has never mattered before —
-  but forcing `SYNC_ENGINE=1` under `LIBRARY_BACKEND=chunk_remote` (a combination no real
-  deployment creates, only a test probe) makes `LibraryBroadcast.batch` take the EMBEDDED engine's
-  `Sync::LibraryChannel.batch` branch even though `FileLayer.current` is genuinely `ChunkRemote`,
-  which skips `FileLayer::ChunkRemote#batch`'s own coalescing entirely. Measured consequence:
-  `docs/STATUS.md`, "Arc C" — a chunk_remote-specific test asserting the coalescing (Arc B gap (c))
-  failed under exactly this combination, an artifact of the probe, not a regression.
-- **`V1::BaseController` STANDS ON `ActionController::API`, REVERSING PHASE B'S DIRECTION, AND BOTH
-  DIRECTIONS CANNOT BE TRUE OF ONE CLASS.** Phase B had it inherit `Sync::V1::BaseController` so the
-  fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure. A superclass resolves when
-  the class body loads, so with no engine the maker app's own API had no base class and could not
-  eager-load. The **engine's** base is unchanged and still right for a bare mount (§14j's original
-  argument holds — an engine inheriting a host class cannot load standalone). It deliberately does
-  **not** include `CapabilityGate`: checked, not assumed — no controller under `app/controllers/v1/`
-  calls `require_capability!`.
-- **DEVICE AUTH IS DUPLICATED BY STRUCTURAL NECESSITY, AND `test/v1_auth_parity_test.rb` IS WHAT
-  MAKES THAT SAFE.** Neither side can require the other in the case that matters. The test compares
-  the two method bodies (normalised past comments and namespace) and fails when they drift — the
-  same answer `engine_schema_test.rb` uses. Its one real dependency, `Device`, is host-owned anyway.
-- **`dependent: :destroy` CONSTANTIZES; A STRING `class_name:` DOES NOT SAVE YOU.** Probed, not
-  reasoned. `User`'s seven `Sync::` associations are declared only when the engine is wanted,
-  because an ordinary `user.destroy` otherwise raised `Missing model class Sync::Version` on
-  share/s3 — and **nothing at boot showed it**.
-- **`recurring.yml` USES `command:`, NOT `class:`, FOR THE THREE ENGINE JOBS.** Solid Queue resolves
-  a `class:` at load and reads ONE file with no merge mechanism, so the gate has to live in the
-  entry — the same shape `library_scan` already used.
-- **A GUARD THAT SKIPS ON THE THING IT ASSERTS IS VACUOUS.** `no_engine_boot_test.rb` first skipped
-  when `defined?(Sync)` — so the mutation that makes `engine_wanted?` always true loaded the engine,
-  skipped every test, and reported **success**. Found by mutation-checking, not by reading. It now
-  skips on whether the leg was **invoked** (`ENV["SYNC_ENGINE"] == "0"`), so absence is the claim
-  rather than the precondition.
-
-**The engine left this repository on 2026-08-20.** It is `chaim354/tinkerex-sync`, consumed here as
-a private `git:` gem. Everything below still describes the boundary it must keep; what changed is
-where the code sits and, for two of these rules, who can still enforce them.
-
-- **A GUARD THAT SCANS A DIRECTORY DIES SILENTLY WHEN THE DIRECTORY LEAVES, AND ONLY ONE OF THE
-  PAIR SAID SO.** Both engine-side guards were `assert_empty offenders` over a glob of
-  `engines/tinkerex-sync/**`; extraction made that glob `[]`, which satisfies `assert_empty`
-  perfectly. "the sync engine never reaches into the maker layer" went on **passing over nothing**.
-  Its sibling failed only by luck — its stale-exception check named a file that had ceased to
-  exist. Both now live in the engine repo's own `test/architecture_test.rb`, beside a third that
-  asserts the file list is **non-empty** before the other two are trusted. **Do not rebuild them
-  here against the installed gem:** a guard reading a vendored copy reports on whatever revision
-  `Gemfile.lock` pins, so it would go green on a stale pin while the engine's own `main` was broken.
-- **`db/engine_schema.rb` NOW EXISTS TWICE ON PURPOSE, AND A TEST IS WHAT MAKES THAT SAFE.** This
-  repo still owns `db/migrate/` and therefore `db/schema.rb` (see the migrations bullet below —
-  they were never rewritten), so the generator here is still what turns this app's real schema into
-  the consolidated migration; the gem ships its own copy because a fresh host cannot read this
-  repository at all. `test/engine_schema_test.rb` asserts the two are byte-identical, so a
-  migration touching one of the eight tables goes **red here** until the gem is updated and
-  `bundle update tinkerex-sync` is run. The cross-repo obligation is real work, and a schema change
-  is exactly when it must be impossible to forget.
-- **THE DOCKER BUILD IS THE ONE PLACE A PRIVATE `git:` GEM COSTS SOMETHING, AND IT PAYS WITH A
-  READ-ONLY DEPLOY KEY, NOT A TOKEN.** `bundle install` runs in an image with no keychain and no
-  `gh`. A PAT would carry the whole account's access in to read one repo — and GitHub has had no
-  API for minting one since `POST /authorizations` was sunset in 2020, while `gh repo deploy-key
-  add` creates exactly the narrower thing. Four properties, each load-bearing:
-  - **The Gemfile stays on `https://`; only the build rewrites to SSH.** Deploy keys are SSH-only,
-    but switching the Gemfile would break every developer and the CI runner, which both already
-    resolve the https URL through an ordinary credential helper.
-  - **The secret is BASE64.** An OpenSSH key is multi-line and kamal resolves secrets through
-    Dotenv, which handles one line reliably and several only by luck — and would fail as an
-    unreadable key rather than as anything naming the cause.
-  - **`GIT_CONFIG_COUNT/KEY/VALUE` on that ONE command, never `git config --global`**, which writes
-    `/root/.gitconfig` — part of the layer, so it is the one way to leak a secret mount back out.
-  - **The decoded key is written and deleted inside a single `RUN`**, so no layer records it.
-  Verified by building, not by reading: the image was built, the gem is at
-  `bundler/gems/tinkerex-sync-<sha>`, Rails boots and mounts the engine — and a grep of the whole
-  filesystem for the key's own blob finds **nothing** (`/root/.ssh` holds only a `known_hosts`
-  entry, which is a public host key).
-
-- **THE `Sync::` NAMESPACE WAS NEVER THE BOUNDARY.** The engine's own models are **bare top-level
-  constants** — `Version`, `Chunk`, `ManifestChunk`, `PendingCommit`, `ChangelogEntry`, `Conflict`,
-  `FileLock` — so every audit built from a `Sync::` grep measured one visible slice. The guard in
-  `architecture_invariants_test.rb` now matches those names **and their `has_many` association
-  spellings** (`user.versions`, `user.chunks`, …), because the const check alone was **wider, not
-  stronger**: `user.versions.find_by(...)` emits no `:on_const` token at all, so it would not have
-  caught `Node#current_version` — the very violation Stage 3a Task 2 fixed, in a file it was
-  scanning.
-- **`Device` STAYS WITH THE HOST, and is deliberately absent from the guard's model list.** Its
-  token is the ONLY credential the whole v1 API accepts, **including all fourteen `v1/maker/*`
-  controllers** — an engine that owned it would leave the maker API unable to authenticate without
-  the engine mounted. Pinned by a mutation that must stay **GREEN**: `Device.register!` in a maker
-  file is not a violation. In Stage 4 the standalone sync server carries its own `devices` table,
-  the same way `nodes` works under the wire-only contract.
-- **THE ENGINE PUBLISHES; THE HOST SUBSCRIBES (`Sync::Hooks`).** `V1::CommitsController#finalize`
-  used to call `Maker::Previews::Enqueue` and `Maker::ProjectIntakeJob` directly — not shared data
-  the engine needs, but host **business logic**, which an engine cannot require and still run
-  standalone. Three properties, each load-bearing: it fires **after** the commit transaction commits
-  (§14e's `enqueue_after_transaction_commit` bug is what happens otherwise), a **raising subscriber
-  never fails the commit** (that "best-effort" claim was previously unenforced — nothing rescued
-  around it), and a host that **registers nothing still works**. Guarded in both directions now: no
-  maker→engine references, and **no engine→`Maker::` references at all** (currently zero, asserted
-  with no exception list). **BOTH SCANS DERIVE THEIR FILE SET FROM ONE METHOD** (`engine_side_files`),
-  because they did not at first and had already drifted apart within this same arc: the reverse list
-  never learned about `app/services/sharing/**` moving engine-side, and the forward scan exempted the
-  fourteen `v1/maker/*` controllers through a blanket `app/controllers/v1/**` glob — two tests in one
-  file, disagreeing about which side the same files sit on. Both holes were found by planting live
-  violations and watching the suite stay green, which is the only way either would have been found.
-- **`share_links` IS THE ENGINE'S, and `Sync::Gc` is why.** `Sync::Gc.apply_retention!` reads
-  `share_links` to protect versions live links point at (`gc.rb:106-114`); **split the two and
-  nightly retention silently destroys the bytes behind URLs users have already sent to other
-  people** — no build break, no red test. It is engine-side by construction anyway: share links
-  need a real `versions` row (`require_capability! :versioned`), so they **cannot exist on share or
-  s3 at all**. `lib/schema_map.rb` had filed them under "Sync control plane" all along.
-- **`maker_previews.version_id` AND `maker_file_attachments.version_id` ARE NOT EDGES INTO
-  `versions`.** That column is a backend-polymorphic `content_token` — a version UUID on chunk, a
-  **content hash** on share/s3 — and `versions` holds **zero rows** for those nodes on the other two
-  backends, since only `Sync::Commit`/`Restore`/`Conflicts` ever create one. `schema_map.rb` drew
-  them as references and was corrected; drawing them back would make Stage 3b move two maker tables
-  it must not move.
-- **THE ENGINE IS A MOUNTED RAILS ENGINE, ISOLATED UNDER `Sync`** (at `engines/tinkerex-sync/`
-  until the 2026-08-20 extraction; its own repository since). A gem
-  squatting `Version`, `Chunk`, `Conflict` and `FileLock` at top level cannot be given to anyone, so
-  Stage 3b moved all fifteen top-level engine names under one. **`isolate_namespace` sets
-  `table_name_prefix` to `sync_`, which would make every model look for a `sync_versions` table that
-  does not exist** — the override must be defined **BEFORE** `isolate_namespace` runs, because that
-  method's own `on_load(:active_record)` hook re-defines it later in boot and clobbers a lexically
-  lower one regardless of position. `Sync::Version.table_name` must read `"versions"`; check it, do
-  not assume it.
-- **THE BOUNDARY IS A DIRECTORY, NOT A GLOB LIST, AND THAT IS WHY THE GUARD SURVIVED THE MOVE.**
-  `SYNC_SIDE_GLOBS` listed paths under `app/` and `lib/`; when Phase B moved 51 files into the
-  engine, those globs matched **three**, two of them host controllers — and a `Maker::` reference
-  planted in the engine's own `gc.rb` left the suite **green**. A directory beat a list — and then
-  the directory itself left, which is the sharper version of the same lesson: see the silent-death
-  bullet at the top of this section. **Everything in `app/` and `lib/` is host now, full stop.**
-- **THE ENGINE SHIPS THE BASE CONTROLLER AND THE HOST INHERITS IT, NEVER THE REVERSE.**
-  `V1::BaseController < Sync::V1::BaseController` keeps all fourteen `v1/maker/*` controllers on the
-  shared v1 infrastructure while the engine's own twelve get a base they can carry into a standalone
-  mount. An engine inheriting a host class cannot load without that specific app, which defeats
-  shipping it.
-- **STAGE 3b TASK 9 CLOSED THE TWO NAMED HOST DEPENDENCIES ABOVE, THROUGH A HOST-CONFIGURABLE
-  PREDICATE, NOT A DIRECT REFERENCE.** `Sync::V1::CapabilityGate`
-  (`engines/tinkerex-sync/app/controllers/concerns/sync/v1/capability_gate.rb`) is the engine's own
-  `require_capability!`, replacing `Sync::V1::BaseController`'s `include ::LibraryCapabilities`; and
-  `Sync::V1::ShareController` asks the same seam instead of
-  `::FileLayer.current.capabilities.versioned?` directly. Both ask
-  `Sync.capability_available?`/`Sync.capability_unavailable_message`
-  (`lib/tinkerex_sync/sync_module.rb`) — two `mattr_accessor`s defaulting to **"available,
-  always,"** the correct permanent answer for a bare mount (this engine IS the sync engine; the
-  capability question exists only because a HOST can configure a share/s3 backend that lacks
-  versions/a changelog, §14a). `config/initializers/sync_capabilities.rb` wires both, once, to
-  `FileLayer.current.capabilities` and `LibraryCapabilities::CAPABILITY_ABSENT`, so this app's 501
-  bodies stay byte-identical (`test/integration/v1/capability_gating_test.rb`, unchanged, still
-  green). Regression-guarded by a Ripper check
-  (`test/architecture_invariants_test.rb`, "the sync engine's capability gate never names
-  ::FileLayer or ::LibraryCapabilities directly") — not a one-time grep, because that is exactly
-  how the guard that should have caught THIS pattern went blind after Phase B moved 51 files.
-- **THE THIRD HOST DEPENDENCY WAS FOUND BY TASK 9a AND CLOSED IMMEDIATELY AFTER: `V1::StashRequestBaseUrl`.**
-  It was a pure **relocation**, not a host/engine split like `LibraryCapabilities` needed, because
-  its own header already recorded that its only two `include`rs are the two controllers Phase B
-  moved into the engine — so no host controller had used it since. It is now
-  `Sync::V1::StashRequestBaseUrl`, engine-side, with its one `FileLayer.current.capabilities.syncable?`
-  swapped for `Sync.capability_available?(:syncable)`. **"Two" was always an undercount**, which is
-  why the regression guard is a Ripper pass over host constant NAMES rather than a list of the
-  specific references known at the time. The engine now names no host constant at all.
-- **THE ENGINE HAS ITS OWN DUMMY HOST, AND THAT IS THE ONLY THING THAT PROVES ANY OF THIS.**
-  It had a `bin/ci` gate here too (8 gates, not 7) until the extraction; that gate is **deleted, not
-  adapted** — its own comment said to do exactly that — so `bin/ci` is back to **7** and the engine's
-  suite runs in its own repo. Everything above is static analysis; the engine's `test/dummy`
-  actually boots the engine in a process that has never loaded the maker layer. The single assertion
-  worth keeping: **`Sync::Version.table_name` reads `"versions"` there** — `isolate_namespace`'s
-  `sync_` prefix is the failure the whole namespace decision had to work around, and nothing else
-  catches it. `FileLayer` IS defined in that process, correctly: the engine ships `FileLayer::Chunk`
-  (the sanctioned adapter), so `FileLayer.current`/`.build`/`::Share` are all absent — the engine
-  ships the adapter, the host ships the factory.
-- **`HOST_MODELS` UNDERCOUNTED, AND ONLY BOOTING FOUND IT.** Beyond `User`/`Node`/`Device`, a host
-  must supply `::ApplicationRecord`, `::ApplicationJob` and `::ApplicationCable::Channel` (every
-  `Sync::` class names one explicitly, because Phase A qualified them so `isolate_namespace` could
-  not misresolve them) — **and `limits_concurrency`**, which `Sync::RetentionJob` calls and which is
-  **solid_queue's extension, not core ActiveJob**. The gemspec's own comment claimed "engine jobs are
-  plain ActiveJob"; two of three are. solid_queue stays out of the gemspec anyway — the host picks
-  its queue adapter — so this is a documented host obligation, and the dummy's shim says out loud
-  that it proves nothing about real concurrency enforcement.
-- **THE ENGINE OWNS ITS ROUTES, AS A DRAWER RATHER THAN A MOUNT, AND THAT IS NOT THE CONVENTIONAL
-  SHAPE FOR A REASON.** `Sync.draw_v1_routes(mapper)` lives in `lib/tinkerex_sync/v1_routes.rb`; the
-  host and the dummy each call it once inside their own `namespace :v1`. **`mount Sync::Engine` cannot
-  express this**: the sync paths are not a contiguous block under a prefix of their own, they are
-  INTERLEAVED with the host's inside one namespace — `devices/login` and `resources :devices` above
-  them, the whole `namespace :maker` between them — and a mount owns an entire prefix. Introducing a
-  `/v1/sync/` prefix to make a mount possible would break every deployed desktop client.
-  **NOT at `config/routes.rb`**: `Rails::Engine` reserves that path and evaluates it itself, so the
-  drawer loaded twice there (`already initialized constant Sync::V1_ROUTES`) — caught by diffing
-  `bin/rails routes`, not by reading. Living under `lib/` says structurally that this engine is not
-  mounted. Guarded by `test/engine_routes_test.rb`, which asks the DRAWER what it defines rather
-  than hard-coding a list — a list there would be the third copy of the thing the drawer exists to
-  stop there being two of.
-- **THE POOLER GUARD IS ENGINE-GATED, and its wiring is tested, not just its halves.**
-  `postgres_pooler_check` protects `User#next_seq!`'s row lock and nothing else, so a share or s3
-  deployment — which has no changelog and never calls it — was being refused a boot for a rule that
-  cannot apply to it. `Sync.engine_present?` is the seam Stage 3b replaces. Both halves were covered
-  and the **default parameter wiring them together was not**: severing it left the entire suite
-  green, silently reintroducing the bug. Test the wire, not only the ends.
-- **`db/migrate/` IS NEVER REWRITTEN FOR THE EXTRACTION, AND `db/engine_schema.rb` IS WHY THAT
-  DOES NOT COST A SECOND SOURCE OF TRUTH.** Four already-run migrations mix host and engine DDL in
-  one `change` (`20260611010000_create_sync_engine.rb` — `users`/`devices`/`nodes` **and** five
-  engine tables, including `users.head_seq`, which has no separate migration of its own;
-  `..._add_mode_to_nodes.rb` and `..._add_mtime_to_nodes.rb`, each `nodes` **and**
-  `pending_commits`; `20260819120000_drop_redundant_prefix_indexes.rb`, across 7 engine + 3 maker
-  tables). Splitting them — new timestamps for the engine halves — was rejected on a concrete
-  failure, not merely the tail-wagging-the-dog argument: a database that already ran the original
-  (every environment this app has, including three live Unraid backends) has no
-  `schema_migrations` row for a newly-invented timestamp, so the split engine half reports PENDING
-  and then fails with "table already exists" the moment it runs — fixable only by hand-inserting
-  `schema_migrations` rows on every live database, the exact backup/restore-adjacent operational
-  risk §14i exists to keep out of casual reach (Stage 3b plan, Task 5).
-  So the eight engine tables' DDL now has TWO checked-in descriptions on purpose: the real one,
-  spread across those four files plus six purely-engine migrations inside `db/migrate/` (untouched,
-  forever); and `db/engine_schema.rb`, ONE consolidated, standalone `ActiveRecord::Migration`
-  Phase B copies into the gem near-verbatim. The second is GENERATED — by `lib/engine_schema.rb`,
-  which extracts each table's `create_table`/`add_foreign_key` lines as literal TEXT out of
-  `db/schema.rb` rather than re-deriving and re-rendering them (no parser step for a bug to hide
-  in) — and `test/engine_schema_test.rb` fails the moment a fresh regeneration stops matching what
-  is checked in, so a migration touching one of the eight tables without a
-  `bin/rails engine_schema:generate` in the same commit goes RED, not silently stale. That test's
-  strong check does not stop at text: it RUNS the generated migration against a throwaway
-  `:memory:` database (seeded with nothing but a stand-in `users` table — every one of the eight
-  extracted `add_foreign_key` lines names that HOST table, which the engine does not define; Task
-  6 already commits to `User`/`Node`/`Device` as host requirements, and whether the gem's real
-  migration keeps those eight FK lines or moves them to a host-side migration is Phase B's
-  decision, deliberately left open here) and diffs the result — sorted, so physical column order
-  never enters it — against what this app's own already-migrated database reports for the same
-  eight tables. Two independently-obtained descriptions agreeing is the proof; a text match alone
-  would not have caught a wrong block boundary that still renders as plausible-looking Ruby.
+  FIRST, OR THE CHILD SILENTLY BOOTS AGAINST THE WRONG GEMFILE.** `bin/ci` (via `config/boot.rb`'s
+  `require "bundler/setup"`) sets `BUNDLE_GEMFILE` to THIS repo's Gemfile and a `RUBYOPT` that
+  force-requires `bundler/setup`, **process-wide** — every child inherits both. A second Rails
+  app's own ordinary `config/boot.rb` does `ENV["BUNDLE_GEMFILE"] ||= …`, and `||=` means the
+  INHERITED value wins. Reproduced directly: exporting exactly `BUNDLE_GEMFILE`/`RUBYOPT`/`RUBYLIB`
+  and nothing else turned a working `POST /v1/admin/libraries` into a bare 404 on an
+  otherwise-identical boot, while `/up` and `/v1/devices/whoami` kept answering — enough of Rails
+  is close between the two locked versions to boot either way, and ROUTE DRAWING was where they had
+  diverged. `bin/sync-server`'s `unset_inherited_bundler_env` is the fix, clearing
+  `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/`BUNDLER_SETUP`/`RUBYOPT`/
+  `RUBYLIB` — deliberately **not** `PATH`/`GEM_HOME`/`GEM_PATH`, which is how the shell finds `ruby`
+  at all. **This protects only `bin/sync-server`.** The next script that shells out to a second
+  bundled Ruby process from inside a `bin/ci`-launched one gets no protection and will hit the
+  identical failure: silent, plausible-looking, and invisible until the two lockfiles drift far
+  enough for something like route drawing to differ.
+- **`V1::BaseController` STANDS ON `ActionController::API`.** It briefly inherited the engine's
+  base controller so the fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure — a
+  superclass resolves when the class body loads, so with no engine this app's own API had no base
+  class and could not eager-load. It deliberately does **not** include a capability gate: checked,
+  not assumed — no controller under `app/controllers/v1/` calls `require_capability!`.
+- **`Device` IS HOST-OWNED AND STAYS HERE.** Its token is the ONLY credential the whole v1 API
+  accepts, including all fourteen `v1/maker/*` controllers, so an app that did not own it could not
+  authenticate its own API without the sync server reachable. The sync server carries its own
+  `devices` table; the two are separate populations joined only by the per-user
+  `users.sync_device_token` (§8).
+- **DEVICE AUTH IS DUPLICATED ACROSS THE TWO REPOS BY STRUCTURAL NECESSITY.** Neither side can
+  require the other in the case that matters. There was a parity test comparing the two method
+  bodies while they shared a process; it went with the extraction, and **nothing checks that
+  agreement now.** If you change device-token verification here, change it there in the same
+  breath — that obligation has no guard behind it.
 
 ## 15. Working agreements for the coding agent
 
@@ -2618,9 +2280,10 @@ where the code sits and, for two of these rules, who can still enforce them.
   served via `url_for`, so the blob routes are load-bearing. Verify by driving a real request:
   `recognize_path` reports the engine's route for a proc endpoint and is the wrong instrument.
   Rich text is text-only on the server too (`Maker::TextOnlyRichText`), not just in the editor.
-- **Local-first**: metadata reads hit local SQLite, never the WAN.
-- Content-addressed chunks + immutable versions everywhere; **keep versions** for restore.
+- **Local-first**: metadata reads hit local tables, never the WAN (§2, §14a).
 - Adapter-agnostic server code (SQLite + Postgres) without perf compromise.
+- **Versioning and restore are the sync server's** on `chunk_remote`; share and s3 are
+  current-state only, deliberately (§14a). Do not add a version table here.
 - **MUTATION-CHECK EVERY GUARD YOU WRITE.** After a test that exists to *forbid* something goes
   green, break the thing it guards and confirm it goes **RED** — then restore. A guard that has
   never failed has not been shown to work. This is the cheapest defence against this repo's
@@ -2638,8 +2301,11 @@ where the code sits and, for two of these rules, who can still enforce them.
   Two fixes, both cheap: separate the two events in time (`travel_to(3.days.ago)` around the setup,
   so a `now()`-style regression fails by three orders of magnitude instead of by nothing), or assert
   a **content** column that is nil until something writes it rather than a timestamp at all.
-- Write tests; verify end-to-end against the live server when wiring sync. Prefer a **probe
-  over an argument** — §14e.
+- Write tests; prefer a **probe over an argument** — §14e.
+- **Do not add sync-engine or desktop-client knowledge to this file.** If a change here needs to
+  reason about how the changelog is built, how commits are sequenced, how chunks are refcounted, or
+  how a mount adapter works, the boundary is wrong — stop, and check whether the work belongs in
+  `tinkerex-sync` or `tinkerex-client` instead (§3, §14j).
 
 ### Finishing work: commit, push, and open the PR without asking
 
@@ -2647,11 +2313,20 @@ On a **`claude/*` or other non-default branch**, when the work is complete and t
 green, **commit, push, and open a PR — do not stop to ask.** That is standing authorization;
 treat it as the default close-out for a task, and use `/finish-branch` to run it.
 
-- **Green means bare `bin/ci`** — every gate `bin/ci --list-ci` names (not a hand-copied list
-  here: one already went stale once by omitting `test-no-engine`, and a list is exactly the drift
-  this file's own §15 warns against elsewhere). **The three backend test legs** — `test`,
-  `test-share`, `test-s3`, NOT `test-no-engine` or `test-chunk-remote`, which are separate focused
-  suites by design (config/ci.rb's own comment on each) — **must report identical run counts.**
+- **Green means bare `bin/ci`** — every gate `bin/ci --list-ci` names, not a hand-copied list
+  here. (This bullet itself carried a stale list for a while: it named a `test-share` gate that
+  does not exist and excluded `test-chunk-remote` from the rule below, contradicting both §13 and
+  `config/ci.rb`'s own comment. Read the tool, not the prose.)
+- **The three backend legs are `test` (share), `test-s3` and `test-chunk-remote`, and all three
+  must report identical run counts.** `test-chunk-remote` is included *because* it runs the full
+  suite — `config/ci.rb` says so in as many words: there is no in-process chunk backend any more,
+  so if it ran less, **the primary deployment's backend would be the only one without full
+  coverage.** It needs `../tinkerex-sync` checked out (§13).
+  **`bin/ci` PRINTS the three counts and never COMPARES them** — the rule has always relied on a
+  human reading them, and `docs/STATUS.md` ("Still open") records a small pre-existing flap (±2
+  assertions, ±1 skip) that varies between runs of the *same* leg, so it is nondeterminism rather
+  than a backend dependency. A ±2 difference is the known flap; a structural one means a test
+  depends on the ambient `LIBRARY_BACKEND` and is a real bug.
 - **Merging always needs an explicit go-ahead.** Never merge, never `--admin`-merge, never
   push to `main`.
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
@@ -2681,11 +2356,8 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   | `tinkerex-sync` | `charless-MBP-maker-mac` |
   | `tinkerex-client` | `charless-MBP-maker-mac` |
 
-  **`flasher-maker-linux` and `CHAIMDESK-maker-windows` are still registered NOWHERE**, so the
-  linux/windows conclusion below is unchanged. What changed is the count: this line used to read
-  "Only ONE runner is registered", which was true when the other two repos had none and stopped
-  being true as each got its own — `tinkerex-client`'s in particular, which is why its `Rust
-  client` workflow now actually runs (~90 s) instead of queueing forever.
+  **`flasher-maker-linux` and `CHAIMDESK-maker-windows` are registered NOWHERE**, so the
+  linux/windows conclusion below is unchanged.
 
   **Verify rather than trusting this table** — that is the whole reason it names a date. It needs
   an **admin-scoped** token: `administration` is not a permission a workflow `GITHUB_TOKEN` can be
@@ -2701,7 +2373,8 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   `.ruby-version`, so `bundle install --quiet` suffices. `test/ci_hygiene_test.rb` fails if it
   reappears, and guards four other workflow invariants besides.
 - Self-hosted machines are persistent: make dep-install steps idempotent and don't assume the
-  clean toolchain of a hosted image.
+  clean toolchain of a hosted image. (`config/ci.rb`'s own review found **334 accumulated
+  `tmp.*` directories** on the mac runner — a gate that makes a tmpdir must clean it up.)
 
 ### Keeping the docs honest
 
@@ -2710,6 +2383,11 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
 - **What belongs HERE is an invariant** — something a future editor could undo by accident.
   Put it in §14, one line, with the consequence named. If it needs a paragraph of story to
   justify, the story goes in STATUS.md and the rule comes here.
+- **AND IT MUST BE AN INVARIANT OF *THIS* REPO.** A rule about the sync engine or the desktop
+  client goes in that repo's CLAUDE.md, however hard-won it was here. This file is loaded on every
+  session; a rule nobody working in this repo can act on is pure tax. (Both sibling files carry an
+  explicit "inherited, not audited" header — if you verify a section there, rewrite it and drop
+  the warning for that section.)
 - Update this file **and** `docs/STATUS.md` when the architecture moves — **in the branch that
   moves it**, per the close-out rule in §15. A STATUS entry written later is written from
   memory, and the measured numbers that make one worth reading are the first thing lost.
