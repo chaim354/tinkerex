@@ -164,6 +164,17 @@ only on explicit request. `docs/DEPLOY.md`.
 - **Tenant = user** (one library, the user's own devices). Isolation = ordinary
   Rails `user_id` scoping — *not* the JuiceFS no-ACL problem (that's why the sync
   model is simpler than the mount model).
+- **ON `chunk_remote`, "TENANT = USER" HOLDS ON THE SYNC SERVER TOO, SINCE ARC C (2026-08-24) — IT
+  DID NOT BEFORE.** Before Arc C, `FileLayer::ChunkRemote#transport` read one process-wide
+  `CHUNK_REMOTE_TOKEN`, so every maker user's writes reached the sync server as the SAME device
+  belonging to the SAME sync-server user — two maker users on one `chunk_remote` deployment shared
+  one remote library and could see each other's files. `users.sync_device_token` (encrypted,
+  per-row) plus `FileLayer::ChunkRemote::Provisioning` (`POST /v1/admin/libraries`, gated by a
+  distinct `SYNC_ADMIN_TOKEN` operator credential a device token can never satisfy) give each
+  maker user their OWN remote library, lazily, on first library use — mutation-checked: restoring
+  the old shared memo reproduces the leak deterministically, `200 of 400` threaded observations
+  carrying the wrong user's token (`test/services/file_layer/chunk_remote/transport_isolation_test.rb`).
+  Full argument, including why the fix is deliberately NOT thread-local caching either: §14a.
 - **Client holds only a device token** (256-bit, SHA256-digested at rest). No storage
   credentials — it gets short-lived, per-object **presigned URLs**, SigV4-signed for a
   per-user key `chunks/<user>/<hash>` (untamperable → cross-user chunk access impossible;
@@ -556,6 +567,39 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
   comment says outright that the RELOAD is the return value, never trusting what `move` hands
   back — which is what makes deferring safe there and only there; a future editor "simplifying"
   the deferral onto all five verbs reintroduces a crash on the very first folder a sweep creates.
+- **`ChunkRemote#transport` IS PER-USER (Arc C, 2026-08-24) AND DELIBERATELY HOLDS NO CACHE AT
+  ALL — NOT AN IVAR, AND NOT `Thread.current` EITHER, WHICH IS THE PART EASY TO GET WRONG BY
+  ANALOGY WITH `#batch` TWO BULLETS UP.** Before Arc C this method was `@transport ||=
+  Transport.new(token: ENV.fetch("CHUNK_REMOTE_TOKEN"))` — one token, because there was only ever
+  one device in the whole deployment. That was THE cross-tenant defect this arc closes:
+  `FileLayer.current` is ONE adapter instance memoized for the whole process
+  (`FileLayer.current ||= build`) and shared across every Puma thread, so an ivar memo here is not
+  a per-request cache, it is PROCESS-WIDE STATE — the first user to call this method after boot
+  would hand every OTHER user's request that same user's token until the process restarts.
+  **Mutation-checked, freshly, for this entry: restoring the one-line `@transport ||=` shape and
+  rerunning `transport_isolation_test.rb` reproduces the leak deterministically — `200 of 400`
+  threaded observations (8 threads, 50 iterations each, a `CountDownLatch` forcing simultaneous
+  start) carried the WRONG user's token, matching "roughly half, once the first caller wins the
+  race" exactly rather than approximately.** The reasoning does NOT stop at "don't use an ivar" —
+  `#batch` two bullets up uses `Thread.current` for a similar-LOOKING problem, and copying that
+  shape here would be strictly WORSE, not merely unnecessary. `#batch`'s frame exists to coalesce
+  STATE ACROSS SEVERAL CALLS within one logical operation (deferring `refresh!` until a batch
+  closes) — there is real work worth caching. A per-user `Transport` has NOTHING to cache:
+  `Transport.new` is four ivar assignments and opens no connection (every request is its own fresh
+  `Net::HTTP.start` block), so building one fresh on every call costs nothing measurable. And Puma
+  REUSES threads across unrelated requests, so a `Thread.current`-cached transport would go on
+  serving a LATER request for a DIFFERENT user with the FIRST user's token until that specific
+  thread happened to rotate back to the first user — a smaller, sneakier version of the identical
+  leak, and one that would also serve a since-rotated token forever once it did. Building fresh
+  every call has no cache to go stale and no shared slot for a second user to land in — which is
+  why the constructor-injected `transport:` (a DIFFERENT ivar, same name, checked FIRST and
+  returned unconditionally for every user) is the one exception and stays exactly that
+  unconditional: an injected transport is a test's explicit "give every caller this one object,"
+  not a cache anything resolves into. **The mutation-check for this method is "put `@transport ||=`
+  back," never "add a different kind of cache" — any caching keyed on less than the user is the
+  shape of the bug, `Thread.current` included.** Full story, including the lazy-provisioning half
+  (`Provisioning#call`, `user.with_lock` across the admin HTTP call, exactly-once under concurrency
+  proved with two real threads and a deliberately-slow fake): `docs/STATUS.md`, "Arc C."
 - **Two divergences `Chunk#undelete` records rather than closes.** `Sync::Trash.restore` has no
   `destination_vacant!`-style check anywhere in it, so chunk's revive can land two live nodes
   sharing one `(parent, name)` where share and s3 both refuse that clobber in their own
@@ -2180,6 +2224,33 @@ Each line below cost a real bug. `docs/STATUS.md` has the full story for any of 
 requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **9 gates**, not 8 — `test-chunk-remote`
 (Stage 5 Arc B, 2026-08-24) is the ninth; see §14a for what it drives.
 
+- **A BUNDLED RUBY PROCESS THAT SPAWNS A SECOND RAILS APP MUST STRIP `BUNDLE_GEMFILE`/`RUBYOPT`
+  FIRST, OR THE CHILD SILENTLY BOOTS AGAINST THE WRONG GEMFILE.** Found while proving Arc C Task
+  4/5's admin-provisioning route end to end (docs/STATUS.md, "Arc C"). `bin/ci` (via
+  `config/boot.rb`'s `require "bundler/setup"`) sets `BUNDLE_GEMFILE` to THIS repo's own Gemfile
+  and a `RUBYOPT` that force-requires `bundler/setup`, PROCESS-WIDE — every child process it
+  spawns inherits both. A second Rails app's own ORDINARY `config/boot.rb` does
+  `ENV["BUNDLE_GEMFILE"] ||= ...`, and `||=` means an INHERITED value wins, so a bundled Ruby
+  process (`bin/ci`, or anything else that has run `bundler/setup`) spawning a SECOND Rails app —
+  `bin/sync-server start`ing `../tinkerex-sync/host`, today's only instance, but the mechanism is
+  general — silently boots that child against the FIRST app's `Gemfile.lock`, not its own.
+  Reproduced directly: exporting exactly `BUNDLE_GEMFILE`/`RUBYOPT`/`RUBYLIB` and nothing else
+  turned a working `POST /v1/admin/libraries` into a bare 404 (`ActionController::RoutingError`)
+  on an otherwise-identical boot — `/up` and `/v1/devices/whoami` kept answering fine, because
+  that much of Rails/ActionController is close enough between the two repos' locked versions to
+  boot either way; the two `Gemfile.lock`s had simply diverged enough, by the time the admin route
+  existed, for ROUTE DRAWING specifically to differ. `bin/sync-server`'s own
+  `unset_inherited_bundler_env` (called before every `bundle install`/`bin/rails` invocation
+  against the sibling checkout, in both its `prepare` and `start` cases) is the fix in place today
+  — it unsets `BUNDLE_GEMFILE`/`BUNDLE_BIN_PATH`/`BUNDLE_LOCKFILE`/`BUNDLER_VERSION`/
+  `BUNDLER_SETUP`/`RUBYOPT`/`RUBYLIB` (deliberately NOT the longer list Bundler itself owns —
+  `PATH`/`GEM_HOME`/`GEM_PATH`/etc. — which is how the shell finds `ruby`/`bundle` at all;
+  clearing those would trade a silently-wrong bundle for a script that cannot run). **This
+  protects only `bin/sync-server`.** The next script that shells out to a second bundled Ruby
+  process from inside a `bin/ci`-launched one gets no protection from this fix and will hit the
+  identical failure shape — silent, plausible-looking, and specifically the kind that only shows
+  up once the two apps' locked gems have drifted far enough for something like route drawing to
+  differ, which is exactly what made it invisible for as long as it was.
 - **`SYNC_ENGINE` EXISTS SO BOTH PATHS ARE EXECUTED, NOT SO ONE CAN BE ARGUED.** The three backend
   legs set `SYNC_ENGINE=1` and keep the engine loaded even on share/s3, so all three still report
   **identical** counts and §15's ambient-backend guard is untouched. A **fourth leg**
@@ -2187,7 +2258,17 @@ requires it only when `LibraryBackend.engine_wanted?`. `bin/ci` has **9 gates**,
   Neither alone works: without the override the counts diverge and a real guard is retired to
   accommodate one expected case; without the fourth leg the conditional is executed by **nothing**,
   which is §14a's recorded bug verbatim. An **empty** value reads as unset, not false — kamal's
-  `env.clear` blanks rather than removes (§14c).
+  `env.clear` blanks rather than removes (§14c). **A THIRD, INDEPENDENT KNOB — `LIBRARY_BACKEND` —
+  is easy to conflate with this one and must not be: `SYNC_ENGINE` controls whether the GEM loads,
+  `LIBRARY_BACKEND` controls which ADAPTER `FileLayer.current` builds, and `LibraryBroadcast.batch`
+  branches on the FORMER (`engine_wanted?`) rather than the latter.** Every real deployment has
+  them moving together (engine loaded ⟺ backend is `chunk`), so this has never mattered before —
+  but forcing `SYNC_ENGINE=1` under `LIBRARY_BACKEND=chunk_remote` (a combination no real
+  deployment creates, only a test probe) makes `LibraryBroadcast.batch` take the EMBEDDED engine's
+  `Sync::LibraryChannel.batch` branch even though `FileLayer.current` is genuinely `ChunkRemote`,
+  which skips `FileLayer::ChunkRemote#batch`'s own coalescing entirely. Measured consequence:
+  `docs/STATUS.md`, "Arc C" — a chunk_remote-specific test asserting the coalescing (Arc B gap (c))
+  failed under exactly this combination, an artifact of the probe, not a regression.
 - **`V1::BaseController` STANDS ON `ActionController::API`, REVERSING PHASE B'S DIRECTION, AND BOTH
   DIRECTIONS CANNOT BE TRUE OF ONE CLASS.** Phase B had it inherit `Sync::V1::BaseController` so the
   fourteen `v1/maker/*` controllers rode the engine's v1 infrastructure. A superclass resolves when
