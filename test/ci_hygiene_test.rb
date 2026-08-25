@@ -218,6 +218,18 @@ class CiHygieneTest < ActiveSupport::TestCase
     #
     # macos jobs are exempt: the preflight job itself runs on macos, so if that family were absent
     # the gate could not start either and gating a macos job on it would be circular.
+    #
+    # THE SCAN MUST BE NON-EMPTY, EVEN THOUGH THE SUBJECT SET MAY LEGITIMATELY BE EMPTY.
+    # This repo has no linux/windows jobs since the sync<->client suites moved out
+    # (docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md), so `ungated` below is
+    # expected to be empty and assert_empty alone would pass over NOTHING. §14e: a guard whose
+    # subject is a path is silently retired by a move. Assert what was actually looked at.
+    scanned = []
+    each_job { |file, name, _job| scanned << "#{file}:#{name}" }
+    assert_operator scanned.size, :>=, 2,
+                    "this guard scanned #{scanned.size} job(s) — it can no longer fail for the " \
+                    "reason it exists. Point WORKFLOW_DIR at the real workflows."
+
     ungated = []
     each_job do |file, name, job|
       families = Array(job["runs-on"]).map { |l| l.to_s.downcase } & FAMILIES
