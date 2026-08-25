@@ -154,17 +154,14 @@ config-only (the code is adapter-agnostic; tested on SQLite). To use S3 chunk st
 `STORAGE_BACKEND=s3` + `CHUNK_*` (see `docs/SYNC_SERVER.md`). **A share/s3 *library*
 deployment sets NO `STORAGE_BACKEND` and NO `CHUNK_*`** — see §14a.
 
-**THERE ARE FOUR UNRAID DESTINATIONS SINCE 2026-08-24, AND BARE "DEPLOY" STILL MEANS THREE.**
-`remote` (`config/deploy.remote.yml`, `LIBRARY_BACKEND=chunk_remote`) joined chunk/share/s3 on
-the same box, talking to the standalone sync server that runs as the `sync` **accessory**. It is
-deliberately NOT in the bare-"deploy" set — that set is what one word triggers, and widening it
-silently is not a change to make on the way past. **The cost of leaving it out is real and should
-be named rather than discovered: an excluded destination drifts**, which is exactly how
-`chunk_remote` reached Stage 5 having never run on hardware. Whether `remote` joins the set is a
-decision to take deliberately; until it is taken, deploy it explicitly (`kamal deploy -d remote`).
-`.claude/commands/deploy.md` says the same thing and must keep saying the same thing.
+**THERE ARE THREE UNRAID DESTINATIONS AND THE CHUNK-FAMILY ONE IS THE BASE.** Arc D Part 1 added a
+FOURTH, `remote`, carrying `LIBRARY_BACKEND=chunk_remote` beside embedded `chunk` — and this section
+had to warn that bare "deploy" excluded it, naming the cost: **an excluded destination drifts**,
+which is how `chunk_remote` reached Stage 5 having never run on hardware. Arc D Part 2 retired
+embedded chunk and folded `remote` into the base, so the base destination IS `chunk_remote` now
+(`config/deploy.yml`) and bare "deploy" covers it. That warning is discharged, not deleted quietly.
 
-Bare "deploy" means **the three Unraid backends only** (chunk + share + s3). Deploy OVH
+Bare "deploy" means **the three Unraid backends only** (chunk_remote + share + s3). Deploy OVH
 only on explicit request. `docs/DEPLOY.md`.
 
 ---

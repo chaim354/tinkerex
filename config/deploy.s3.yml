@@ -35,7 +35,9 @@ env:
     - RAILS_MASTER_KEY
     - LIBRARY_S3_SECRET_ACCESS_KEY
   clear:
-    STORAGE_BACKEND: memory
+    # STORAGE_BACKEND: memory WAS HERE to neutralise the chunk-store env inherited from
+    # deploy.yml, which Kamal's deep_merge cannot delete. That env is gone (Arc D Part 2)
+    # and nothing in this app reads the name any more, so there is nothing to neutralise.
     LIBRARY_BACKEND: s3
     LIBRARY_S3_ENDPOINT: http://192.168.1.8:8333
     LIBRARY_S3_BUCKET: my-bucket
