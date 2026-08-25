@@ -55,8 +55,6 @@ module Web
         assert_equal @folder.node_id, node.reload.parent_node_id,
                      "#{node.name} must stay in the model folder"
       end
-      assert_empty @user.changelog_entries.where(op: "move"),
-                   "a model bundle relocates NO bytes — that is what makes it backend-neutral"
     end
 
     test "the notice says the whole model came along" do

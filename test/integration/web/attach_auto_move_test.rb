@@ -72,8 +72,6 @@ module Web
       post attachments_path, params: { project_id: @lamp.slug, node_id: "f-1" }
 
       assert_equal folder.node_id, @node.reload.parent_node_id
-      assert_empty @user.changelog_entries.where(op: "move"),
-                   "nothing to move — the sync engine must not be told otherwise"
     end
 
     test "the project page's nested picker moves too — one rule, every attach path" do
@@ -545,8 +543,6 @@ module Web
 
       assert_equal "bracket (2).stl", @node.reload.name
       # FIRST, so a regression's failure message names the sync consequence rather than the wording.
-      assert_equal 1, @user.changelog_entries.where(op: "move").count,
-                   "the second submit had nothing to move — the sync engine must not be told twice"
       assert_match(/already in/i, flash[:notice])
     end
 
@@ -562,8 +558,6 @@ module Web
 
       assert_match(/already in/i, flash[:notice])
       assert_equal folder.node_id, @node.reload.parent_node_id
-      assert_empty @user.changelog_entries.where(op: "move"),
-                   "nothing to move — the sync engine must not be told otherwise"
     end
 
     # --- #relocate obeys the SAME policy #create does -----------------------------
@@ -637,7 +631,6 @@ module Web
       @node.reload
       assert_equal "bracket.stl", @node.name
       assert_nil @node.parent_node_id
-      assert_empty @user.changelog_entries.where(op: "move")
       assert_match(/name isn't allowed/i, flash[:alert])
     end
 
@@ -653,7 +646,6 @@ module Web
 
       assert_response :redirect
       assert_equal "bracket.stl", @node.reload.name
-      assert_empty @user.changelog_entries.where(op: "move")
     end
 
     # Harmless on POSIX; on a Windows CfAPI client — the DEFAULT Windows backend — a backslash is a

@@ -108,7 +108,6 @@ module Maker
       @bench.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
       assert_equal :attached_elsewhere, service.relocate(@node)
       assert_nil @node.reload.parent_node_id
-      assert_empty @user.changelog_entries.where(op: "move")
     end
 
     test "relocate moves an attached file under the requested name" do
@@ -137,7 +136,6 @@ module Maker
       assert_equal :moved, service.relocate(@node)
       assert_equal :already_there, service.relocate(@node),
                    "same folder, same name — a no-op the sync engine must not be told about"
-      assert_equal 1, @user.changelog_entries.where(op: "move").count
     end
 
     # --- #call: the attach door -----------------------------------------------------
@@ -247,7 +245,6 @@ module Maker
       assert_equal model, result.model
       assert_equal %w[m-0 m-1 m-2], result.attachments.map(&:node_id).sort
       assert_equal folder.node_id, @user.nodes.find_by(node_id: "m-0").parent_node_id
-      assert_empty @user.changelog_entries.where(op: "move")
       # The role is derived PER FILE: a bundle is a PDF and a PNG and an STL, so copying the
       # triggering file's role would label the instructions "model".
       assert_equal %w[image instructions model],

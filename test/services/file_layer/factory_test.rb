@@ -9,12 +9,28 @@ module FileLayer
     # "Defaults" means LIBRARY_BACKEND is UNSET — so unset it. Reading the ambient process ENV
     # made this test assert whatever the environment happened to say, which is not the claim in
     # its name: under LIBRARY_BACKEND=share it failed while the default was still perfectly fine.
-    test "defaults to the chunk adapter when LIBRARY_BACKEND is unset" do
-      with_backend(nil) { assert_instance_of FileLayer::Chunk, FileLayer.current }
+    # THE DEFAULT IS share, AND IT USED TO BE chunk. Embedded chunk was retired in Arc D Part 2,
+    # so the old default named an adapter that no longer exists — every context that did not set
+    # LIBRARY_BACKEND got NameError from inside FileLayer.build, several frames from anything that
+    # mentioned a backend. share is the only HERMETIC backend left (chunk_remote resolves against a
+    # standalone sync server), and nothing in production depends on this either way since all Kamal
+    # destinations set LIBRARY_BACKEND explicitly.
+    test "defaults to the share adapter when LIBRARY_BACKEND is unset" do
+      Dir.mktmpdir do |dir|
+        with_backend(nil) do
+          with_library_path(dir) { assert_instance_of FileLayer::Share, FileLayer.current }
+        end
+      end
     end
 
-    test "LIBRARY_BACKEND=chunk selects the chunk adapter" do
-      with_backend("chunk") { assert_instance_of FileLayer::Chunk, FileLayer.current }
+    # `chunk` IS NOW AN UNKNOWN BACKEND, and this asserts that it is REFUSED rather than quietly
+    # treated as an alias for chunk_remote. A deployment still carrying LIBRARY_BACKEND=chunk is
+    # misconfigured — its library lives on a sync server it has not been pointed at — and silently
+    # serving it a different backend would hand it an empty library that looks like data loss.
+    test "LIBRARY_BACKEND=chunk is refused now that embedded chunk is retired" do
+      with_backend("chunk") do
+        assert_raises(ArgumentError) { FileLayer.current }
+      end
     end
 
     test "an unknown backend refuses to build rather than silently defaulting" do
@@ -96,11 +112,15 @@ module FileLayer
     # Pinned rather than ambient: memoization is backend-agnostic, so the backend should be the
     # test's choice, not the environment's.
     test "current is memoized and reset! clears it" do
-      with_backend("chunk") do
-        first = FileLayer.current
-        assert_same first, FileLayer.current
-        FileLayer.reset!
-        assert_not_same first, FileLayer.current
+      Dir.mktmpdir do |dir|
+        with_backend("share") do
+          with_library_path(dir) do
+            first = FileLayer.current
+            assert_same first, FileLayer.current
+            FileLayer.reset!
+            assert_not_same first, FileLayer.current
+          end
+        end
       end
     end
 

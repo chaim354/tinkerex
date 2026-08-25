@@ -82,8 +82,6 @@ module Maker
         assert_equal "desk-lamp", leaf.name
         root = @user.nodes.present.find_by!(name: "Projects", parent_node_id: nil, kind: "dir")
         assert_equal root.node_id, leaf.parent_node_id
-        assert @user.changelog_entries.exists?(op: "mkdir", node_id: leaf.node_id),
-               "chunk mkdir must go through the sync engine (a changelog entry)"
 
         again = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
         assert_equal leaf.node_id, again.node_id, "idempotent — same leaf, no duplicate"

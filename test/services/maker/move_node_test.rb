@@ -36,8 +36,6 @@ module Maker
         assert_equal "desk-lamp/bracket.stl", @node.storage_path
         assert_equal "dir-dest", @node.parent_node_id
         assert_equal "f-1", @node.node_id
-        assert_empty @user.changelog_entries.where(op: "move"),
-                     "a share library has no changelog — the port is the whole move"
       end
 
       # THE RETURNED OBJECT, deliberately not a reloaded one — reloading here would test the DB,

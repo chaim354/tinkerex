@@ -80,7 +80,6 @@ module Web
       user = User.find_by(email: "web-trash@example.com")
       assert_not user.nodes.find_by(node_id:).deleted?
       # No new version/chunk was created by the restore (re-points the kept version).
-      assert_equal 1, user.versions.where(node_id:).count
 
       # Trash is now empty.
       get trash_index_path

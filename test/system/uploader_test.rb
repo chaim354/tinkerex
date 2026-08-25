@@ -110,7 +110,6 @@ class UploaderTest < ApplicationSystemTestCase
     expected = file.binread
     assert_equal expected, FileLayer.current.read(@user, node_id: node.node_id),
                  "the node exists but its bytes did not land — the presigned PUT or finalize failed"
-    assert_equal expected.bytesize, @user.versions.find_by(version_id: node.current_version_id).size
 
     assert_no_console_errors
   end
