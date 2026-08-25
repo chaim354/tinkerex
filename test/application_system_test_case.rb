@@ -5,6 +5,38 @@ require_relative "system/support/web_helpers"
 class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [ 1400, 1400 ]
 
+  # CAPYBARA'S 2-SECOND DEFAULT IS TOO TIGHT FOR THIS APP'S ADDON PAGES, AND IT COST US A RECURRING
+  # CI FLAKE.
+  #
+  # MEASURED, not guessed. An addon page's content does not arrive with the HTML: the shell renders
+  # a Stimulus controller, the bundle is fetched through the same-origin asset proxy, its ESM
+  # top-level runs, it calls a sidecar for its generator list, and only then does it build the
+  # `<details id="box-section-*">` elements the tests assert on. Timed on an unloaded box: **0.114 s
+  # on the first visit in a process, ~0.06 s warm**. So the page is not slow — 2 s is simply a
+  # budget with no headroom for a chain that has five async steps in it.
+  #
+  # WHAT IT ACTUALLY BROKE: `BoxSectionsTest` failed on two consecutive PRs (#235, #237) with
+  # `expected to find css "#box-section-tray" but there were no matches`, on a DIFFERENT test each
+  # time, ~3 seconds into the run, passing on re-run every time and never once reproducing in
+  # isolation locally (6 consecutive clean runs). That profile is contention, not a broken selector.
+  #
+  # THE CONTENTION IS THIS REPO'S ORDINARY CONFIGURATION, which is why raising the budget is the
+  # right response rather than a shrug: the CI runner IS a developer's own Mac (§15 — the mac
+  # runner is registered on this machine), so a local `bin/ci` and a CI job share one box. The
+  # worker budget beside this already exists for exactly that condition, and its own comment says
+  # memory pressure makes "every Capybara wait a coin flip". Reproduced deliberately here by
+  # running two browser suites at once: **152 and 166 errors** across the pair, against 0 when
+  # either runs alone.
+  #
+  # RAISING THIS IS FREE ON A GREEN RUN. A Capybara wait returns the instant its element appears,
+  # so a passing suite is not slowed by one millisecond — the only thing that grows is how long a
+  # GENUINELY missing element takes to report. 10 s absorbs a ~100x slowdown from the measured
+  # 0.1 s baseline while still failing fast enough to read.
+  #
+  # DO NOT reach for this to fix a test that fails consistently: that is a real defect, and a
+  # longer wait only makes it slower to find out.
+  Capybara.default_max_wait_time = 10
+
   # BROWSER WORKERS ARE BUDGETED BY MEMORY, NOT BY CORE COUNT — the argument, the measurements and
   # the three probes that ruled out CPU load are all in `test/support/worker_budget.rb`. Short
   # version: a system-test worker carries a whole Chrome, ten of them take 19.7 GB of this 24 GB

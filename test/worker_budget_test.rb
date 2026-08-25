@@ -42,10 +42,48 @@ class WorkerBudgetTest < ActiveSupport::TestCase
     stub_total(24 * (1024**3)) { assert_equal 6, WorkerBudget.browser_workers }
   end
 
+  # --- what the availability check buys, and what it must not break -------------------------
+
+  # THE WHOLE POINT OF CONSULTING `available`. A box with plenty of RAM that is already busy — a
+  # second browser suite, a developer's browser, anything — must not plan as though the machine
+  # were empty. Before this, both suites divided the SAME 24 GB and took six workers each; twelve
+  # Chromes produced 152 and 166 errors where either alone produces zero (measured 2026-08-25).
+  test "a busy box takes fewer workers than its total memory alone would allow" do
+    stub_total(24 * (1024**3), available: 8 * (1024**3)) do
+      assert_equal 2, WorkerBudget.browser_workers,
+                   "24 GB installed but 8 GB free must budget as 8 GB, not as 24 GB"
+    end
+  end
+
+  # AND AN IDLE BOX IS UNAFFECTED, which is what keeps this from being a slowdown for everyone.
+  test "an idle box is unchanged: all of its memory is available" do
+    stub_total(24 * (1024**3), available: 24 * (1024**3)) do
+      assert_equal 6, WorkerBudget.browser_workers
+    end
+  end
+
+  # UNREADABLE AVAILABILITY FALLS BACK TO TOTAL, matching the sibling rule one test up for an
+  # unreadable TOTAL: a machine we cannot measure behaves as it did before this existed, rather
+  # than inheriting a number derived from a box it may look nothing like.
+  test "an unreadable available figure falls back to the total, not to zero" do
+    stub_total(24 * (1024**3), available: nil) do
+      assert_equal 6, WorkerBudget.browser_workers
+    end
+  end
+
   private
-    def stub_total(bytes)
+    # PINS AVAILABILITY TO THE STUBBED TOTAL, WHICH IS NOT OPTIONAL SINCE browser_workers STARTED
+    # CONSULTING IT. `browser_workers` takes min(total, available); left unstubbed, `available`
+    # reports THIS MACHINE'S real free memory and every assertion below silently measures the box
+    # the suite happens to run on instead of the number it names. That is not hypothetical: it
+    # turned "1 TB of RAM gives you all 64 cores" into 2 on the first run after the change, because
+    # ~8 GB was actually free. `total` is the right stand-in — a machine with nothing else running
+    # has all of its memory available, which is exactly the world these assertions describe.
+    def stub_total(bytes, available: bytes)
       WorkerBudget.singleton_class.alias_method :__real_total, :total_memory_bytes
       WorkerBudget.define_singleton_method(:total_memory_bytes) { bytes }
+      WorkerBudget.singleton_class.alias_method :__real_avail, :available_memory_bytes
+      WorkerBudget.define_singleton_method(:available_memory_bytes) { available }
       # Pin the processor count too, so a machine with fewer than 6 cores doesn't make the
       # scaling assertions fail for a reason they are not about.
       WorkerBudget.singleton_class.alias_method :__real_cores, :processor_count
@@ -53,6 +91,7 @@ class WorkerBudgetTest < ActiveSupport::TestCase
       yield
     ensure
       WorkerBudget.singleton_class.alias_method :total_memory_bytes, :__real_total
+      WorkerBudget.singleton_class.alias_method :available_memory_bytes, :__real_avail
       WorkerBudget.singleton_class.alias_method :processor_count, :__real_cores
     end
 end
