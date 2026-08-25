@@ -54,6 +54,16 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   # DO NOT move this call into `test_helper.rb` behind a "are we running system tests?" test. There
   # is no reliable one — the runner does not announce itself — and the load-order property above is
   # both simpler and enforced by the file layout rather than by a guess.
+  # ANNOUNCE THIS SUITE BEFORE ASKING FOR THE BUDGET, AND THE ORDER IS THE WHOLE POINT.
+  #
+  # `browser_workers` now asks whether ANOTHER browser suite is live rather than inferring it from
+  # free memory (see worker_budget.rb for why the memory proxy was permanently tripped on this
+  # box). Two suites started at the same instant could otherwise both check before either had
+  # registered, and both plan for an empty machine — exactly the 152/166-error condition the
+  # budget exists to prevent. Writing our pidfile first closes that window: the loser of the race
+  # sees the winner. Our own pid is excluded from the check, so this never throttles us.
+  WorkerBudget.register!
+
   parallelize(workers: WorkerBudget.browser_workers)
 
   include WebHelpers
