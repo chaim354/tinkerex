@@ -141,8 +141,19 @@ Give the user: the image SHA now running, a per-backend table (container, image,
 direct evidence that the change is live. If anything was skipped or only partly rolled, say so
 explicitly.
 
-Optionally offer to add a STATUS.md entry — deploys are usually worth recording there, but that is
-the user's call, not automatic.
+**RECORD THE DEPLOY IN `docs/STATUS.md`, AND DO IT AS THE LAST STEP OF THE DEPLOY — NOT AS A
+SEPARATE PR LATER.** This used to read "optionally offer", which quietly guaranteed the opposite of
+what CLAUDE.md §15 wants: a deploy happens AFTER the merge, so its record can never live in the
+work's own PR, and "offer it afterwards" turns every deploy into a second merge whose only content
+is one paragraph. Deferred records are the failure §15 already documents.
+
+- **Amend the arc's EXISTING entry**; do not append a new section per deploy. One arc is one entry.
+- **Commit it straight to `main`** — see §15's named exception. Doc-only, after a verified deploy.
+- Record what you PROVED, not that kamal exited 0: the image SHA, a per-backend table, and the
+  evidence the change is live. If a destination was skipped or only partly rolled, say so.
+- **Take the pre-deploy baseline from `docker ps` on the box, never from a STATUS commit claiming a
+  deploy happened.** That mistake produced a false "this deploy will drop eight tables" warning on
+  2026-08-25; the migration was already an ancestor of the running image.
 
 ## Never
 

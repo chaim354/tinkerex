@@ -135,6 +135,39 @@ names the constant directly, which is the argument for writing one that does.
 once per change instead of twice: roughly **350s → 125s of the dev box per change, ~64%**.
 Three legs identical at 2364 runs.
 
+**On the real runner, measured after merge: `system-test` 84s median → 49s, run wall-clock 175s →
+141s.** Both worse than the local figures above (35s / 86s) and worth recording as such — same
+code, busier box. Per change, counting the dropped second run: **~350s → 141s.**
+
+### Deployed 2026-08-25 — image `9faa778`, all three Unraid backends
+
+| backend | container | `/up` (.local / .home) |
+|---|---|---|
+| chunk_remote | `tinkerex-web-9faa778…` | 200 / 200 |
+| share | `tinkerex-web-share-9faa778…` | 200 / 200 |
+| s3 | `tinkerex-web-s3-9faa778…` | 200 / 200 |
+
+`tinkerex-sync` untouched; OVH not deployed. **Nothing in this arc changes runtime code** — the
+deploy carried two earlier commits: `2019d7e` (the device-push nudge) and `08891f0`. Verified live
+rather than inferred: `nudge_parents` at `changelog_sync.rb:95` in the deployed source,
+`Maker::ProjectIntakeJob.respond_to?(:nudge)` true in the running process, `FileLayer.current` =
+`FileLayer::ChunkRemote` on the base destination.
+
+**A PRE-DEPLOY SCARE THAT WAS MY OWN BASELINE ERROR, RECORDED BECAUSE THE METHOD WAS WRONG, NOT
+JUST THE ANSWER.** The deploy was flagged as carrying `DropRetiredSyncEngineTables` — an
+irreversible eight-table drop — and it was not: `26952fb` is an **ancestor of the image already
+running**. The baseline had been read from a STATUS commit message ("Record the Arc D Part 2
+deploy") instead of from the SHA on the box, which one `docker ps` answers. **Take the deployed
+baseline from the running container, never from a doc that claims a deploy happened.** The check
+was run anyway and is itself worth keeping: all three backends confirm none of the eight tables
+exist, so the earlier deploy landed as recorded.
+
+**Observed, not changed:** `ENABLE_TEST_SIGNUP` is `true` on all three (base `config/deploy.yml`),
+opening `POST /v1/test/users` — unverified signup minting confirmed accounts. Deliberate for the
+LAN-only Unraid boxes. `config/deploy.ovh.yml:96` documents that **OVH inherits it too**, because
+Kamal deep-merges `env.clear`, and accepts it as a prod-*like* box; the fix is one line the day it
+holds anything real. Flagged, not touched.
+
 ### The third lever was measured and DECLINED — read this before re-opening it
 
 `MeasurePrintTest` is 77 of 179 system tests and ~45% of the suite's test-time, and its own header
