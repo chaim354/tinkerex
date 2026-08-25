@@ -43,10 +43,26 @@ available() {
   esac
 }
 
+# DOES ANY WORKFLOW IN THIS REPO ACTUALLY SCHEDULE A JOB ON THIS FAMILY?
+#
+# DERIVED, NOT DECLARED. The header above refuses to hand-maintain a job list because it would be
+# a fourth thing to drift; the same objection applies to hand-maintaining "which families this
+# repo uses". A grep over the workflow dir cannot go stale.
+#
+# Deliberately crude: it matches the family name anywhere in a `runs-on` line, which over-reports
+# rather than under-reports. Over-reporting restores the OLD wording (a warning about skipped
+# coverage) and is safe; under-reporting would hide a real gap, which is the failure this whole
+# script exists to prevent.
+#
+# `[[:space:]]`, not `\s`: the runner is macOS and BSD grep -E does not honour `\s`.
+targeted() {
+  grep -rhE '^[[:space:]]*runs-on:' .github/workflows/ 2>/dev/null | grep -q "$1"
+}
+
 if [ "${1:-}" = "--summary" ]; then
   absent=""
   for family in $FAMILIES; do
-    available "$family" || absent="$absent \`$family\`"
+    targeted "$family" && ! available "$family" && absent="$absent \`$family\`"
   done
 
   echo "## CI runner preflight"
@@ -56,7 +72,9 @@ if [ "${1:-}" = "--summary" ]; then
   echo "| Runner family | Status |"
   echo "|---|---|"
   for family in $FAMILIES; do
-    if available "$family"; then
+    if ! targeted "$family"; then
+      echo "| \`$family\` | — no job in this repo targets it |"
+    elif available "$family"; then
       echo "| \`$family\` | ✅ available |"
     else
       echo "| \`$family\` | ⛔ **absent — its jobs were SKIPPED** |"
@@ -72,7 +90,12 @@ if [ "${1:-}" = "--summary" ]; then
     echo "> Register the runner (\`ci/runners/README.md\`) and add the family to the \`CI_RUNNERS\`"
     echo "> repo variable, or accept the gap knowingly."
   else
-    echo "> Full fleet declared; no coverage skipped."
+    echo "> No coverage skipped: every family this repo schedules jobs on is declared available."
+    echo ">"
+    echo "> A \`—\` row is NOT a passing row. It means this repo has no job for that family at all"
+    echo "> — the sync↔client suites that did left on 2026-08-25"
+    echo "> (\`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md\`). That coverage now lives"
+    echo "> in \`tinkerex-sync\` and \`tinkerex-client\`, and this run says nothing about it."
   fi
   exit 0
 fi
