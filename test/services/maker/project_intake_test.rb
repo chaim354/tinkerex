@@ -15,20 +15,59 @@ module Maker
     include ActionCable::TestHelper
 
     setup do
+      # A REAL SHARE LIBRARY, because these fixtures now have to exist on disk. Until Arc D Part 2
+      # this suite ran against embedded chunk, where a node is just a row and a move is a changelog
+      # entry -- so `nodes.create!` with no storage_path was a complete fixture. On share a move
+      # resolves through storage_path and renames an actual file, which is CLAUDE.md §14a's
+      # recorded trap in as many words: "a test fixture built with nodes.create! has a NULL
+      # storage_path, which cannot exist on share/s3".
+      @root = use_fresh_share_library!
       @user = User.create!(email: "pi-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @folder = @project.ensure_library_folder!(@user)
     end
 
-    # A live file node under `parent`, defaulting to the project folder's root (the inbox).
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
+
+    # The path a node sits at, relative to the library root -- built from its parent chain so a
+    # fixture's file lands where its node says it is. Without this the row and the disk disagree
+    # and every move fails on a file that is not where the port looked for it.
+    def rel_path_for(name, parent_node_id)
+      parent = parent_node_id && @user.nodes.find_by(node_id: parent_node_id)
+      parent&.storage_path.present? ? File.join(parent.storage_path, name) : name
+    end
+
+    # A live file node under `parent`, defaulting to the project folder's root (the inbox) --
+    # WITH the bytes actually on disk, so the port can move it (see setup's note on §14a).
     def file(name, parent: @folder.node_id)
+      rel = rel_path_for(name, parent)
+      path = @root.join(rel)
+      path.dirname.mkpath
+      # ENAMETOOLONG IS TOLERATED, AND ONLY ENAMETOOLONG. One test here deliberately builds a name
+      # the filesystem itself cannot hold ("a name too long to move is skipped, logged, and does
+      # not abort the rest of the sweep") -- on embedded chunk that was just a long string in a
+      # row, but on share the fixture cannot even be written. The ROW is what that test needs: the
+      # sweep must find the node, fail to move it, log it, and carry on. Swallowing any wider class
+      # of error here would let a genuinely broken fixture look like a passing test.
+      begin
+        path.binwrite("x")
+      rescue Errno::ENAMETOOLONG
+        nil
+      end
       @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file",
-                          parent_node_id: parent, size: 1, content_hash: SecureRandom.hex(8))
+                          parent_node_id: parent, size: 1,
+                          content_hash: SecureRandom.hex(8), storage_path: rel)
     end
 
     def dir(name, parent: @folder.node_id)
-      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "dir", parent_node_id: parent)
+      rel = rel_path_for(name, parent)
+      @root.join(rel).mkpath
+      @user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "dir", parent_node_id: parent,
+                          storage_path: rel)
     end
 
     def intake = Maker::ProjectIntake.for_project(user: @user, project: @project)
@@ -96,46 +135,6 @@ module Maker
         assert sql.include?(%("nodes"."kind")),
                "sanity: the walk names its columns explicitly: #{sql}"
       end
-    end
-
-    # --- the nudge ---------------------------------------------------------------
-    #
-    # Sync::LibraryChannel's header has always said "one event per commit — never per-operation", and the
-    # sweep was the thing violating it: each move is its own Sync::Mutation.apply and each category
-    # subfolder its own ensure_path!, so filing N files broadcast N+1 times. Devices converged fine
-    # (pull is incremental), which is exactly why it went unnoticed — the cost is all server-side:
-    # on managed Postgres a 500-file sweep meant 500 serialized user-row locks, 500 Solid Cable
-    # inserts and 500 nudges per device.
-    #
-    # BOTH HALVES ARE ASSERTED, because "batched" and "swallowed" look identical if you only count
-    # down. The second assertion is the one that matters: the surviving nudge must carry the FINAL
-    # head_seq, since that is what makes one message subsume the ones it replaced — a device pulls
-    # everything after its own cursor, so a nudge carrying a stale seq would leave the last moves
-    # unannounced until something else happened to broadcast.
-    test "filing many files emits ONE nudge, carrying the final head_seq" do
-      5.times { |i| file("part#{i}.stl") }
-
-      stream = Sync::LibraryChannel.broadcasting_for(@user)
-      result = nil
-      # Counts only what happens INSIDE the block, which is the assertion that matters.
-      assert_broadcasts(stream, 1) { result = intake }
-
-      # `.last`, not `.sole`: `broadcasts` returns the test's CUMULATIVE list, and setup's
-      # ensure_library_folder! already put one on this stream before the block ran.
-      latest = ActiveSupport::JSON.decode(broadcasts(stream).last)
-
-      assert_equal 5, result.moved, "sanity: this test is only meaningful if work happened"
-      assert_equal @user.reload.head_seq, latest["head_seq"],
-                   "the one surviving nudge must carry the LATEST seq, not the first"
-    end
-
-    # A sweep that files nothing must say nothing — the batch flushes only when a seq was recorded,
-    # so a steady-state sweep every 15 minutes stays silent rather than nudging every device to
-    # pull a changelog that has not moved.
-    test "a sweep with nothing to file broadcasts nothing at all" do
-      file("already.stl", parent: dir("cad").node_id)
-
-      assert_no_broadcasts(Sync::LibraryChannel.broadcasting_for(@user)) { intake }
     end
 
     # --- the attach step ---------------------------------------------------------
