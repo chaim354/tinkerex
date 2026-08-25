@@ -175,7 +175,8 @@ schedule in `tinkerex-client`, give them a notification path.
 
 ## What `tinkerex` keeps
 
-`ci.yml` only, six jobs, all `[self-hosted, macos]`, each invoking `bin/ci <gate>`. Its
+`ci.yml` only — seven jobs, all `[self-hosted, macos]`: `preflight` plus one per gate, each
+invoking `bin/ci <gate>`. Its
 `test-chunk-remote` gate still boots a real `tinkerex-sync` via `bin/sync-server` and runs the
 full suite against it — that is `tinkerex`'s half of the wire contract and it is not moving.
 `TINKEREX_SYNC_DEPLOY_KEY` stays for it. `TINKEREX_CLIENT_DEPLOY_KEY` was deleted; recreate it in

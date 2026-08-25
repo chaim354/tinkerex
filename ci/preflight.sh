@@ -55,8 +55,19 @@ available() {
 # script exists to prevent.
 #
 # `[[:space:]]`, not `\s`: the runner is macOS and BSD grep -E does not honour `\s`.
+#
+# WHERE THE WORKFLOWS ARE, resolved from THIS SCRIPT's location rather than $PWD: the workflow
+# invokes it from the repo root, but a test or a developer need not. CI_WORKFLOW_DIR overrides it,
+# and that override is not a testing convenience -- it is what lets test/ci_preflight_test.rb
+# ESTABLISH the precondition the "absent -- its jobs were SKIPPED" branch reports on. This repo has
+# no linux/windows job left, so without an override that branch is unreachable from a test, and a
+# guard whose precondition is never established cannot fail for the reason it exists (CLAUDE.md
+# §15). Pointing a probe at the REAL .github/workflows/ instead would break ci_hygiene_test (an
+# ungated linux job) and collide between parallel test workers.
+WORKFLOW_DIR="${CI_WORKFLOW_DIR:-"$(cd "$(dirname "$0")/.." && pwd)/.github/workflows"}"
+
 targeted() {
-  grep -rhE '^[[:space:]]*runs-on:' .github/workflows/ 2>/dev/null | grep -q "$1"
+  grep -rhE '^[[:space:]]*runs-on:' "$WORKFLOW_DIR" 2>/dev/null | grep -q "$1"
 }
 
 if [ "${1:-}" = "--summary" ]; then

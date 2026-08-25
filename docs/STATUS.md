@@ -78,7 +78,115 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-25): CLAUDE.md cut roughly in half — area invariants split to `docs/invariants/`, case history moved here
+## Latest (2026-08-25): the cross-repo CI leaves, and two green signals turn out to be vacuous (branch `claude/optimize-claude-md`)
+
+Follow-on to the CLAUDE.md work below, same branch: with the sync engine and the Rust client in
+their own repos, the *testing and CI* story had not caught up. **The local gate story was never
+what broke.** Baseline before touching anything — bare `bin/ci` green in **2m13s**, all nine
+steps, three backend legs at **identical run counts (2357)**, 0 failures, 0 errors. Nothing
+structural was wrong with `config/ci.rb` or `ci.yml`.
+
+What the separation broke was the three workflows that reach across repos. Four findings, all
+measured:
+
+**F1 — `nightly.yml` pointed the Rust client at a server that no longer serves sync.** Probed:
+`recognize_path("/v1/commit", :post)` raises `ActionController::RoutingError`; the only non-maker
+`/v1` routes left here are `POST /v1/test/users`, `/v1/devices/login`, `/v1/devices`. But
+`e2e-macos` still booted `bin/rails server -p 3001` from THIS repo with
+`SYNC_IT_SERVER_URL=http://localhost:3001`, and `two-device-fuse.sh` / `two-device-webdav-macos.sh`
+did the same. All three get through signup and device login, then 404 on the first commit.
+**The last green nightly is pre-separation:** it ran `2026-08-25T08:30Z`, Arc D Part 2 merged
+`2026-08-25T11:54:51Z` — 3h24m later. The identical fix HAD been applied to `client-contract.yml`
+(check out `tinkerex-sync`, boot `bin/sync-server`, with a comment saying "pointing the client at
+this app would 404 on its first commit") and withheld from the workflow that actually runs.
+
+**F2 — `client-contract.yml` had never run once, and reported ✅ on every PR.** Its only
+substantive job is `if: needs.preflight.outputs.linux == 'true'` and `CI_RUNNERS` is `macos`, so
+every run was `preflight: success` + `engine-integration: skipped` → workflow **success**, in ~8s.
+Verified against run `32879690329`. Its own header called it "the fast, per-PR proof… precisely
+what Stages 3 and 4 of the sync/maker repo split lean on most", and §14j says the wire is now the
+only thing coupling the repos. That check did not exist in practice.
+
+**F3 — nightly failures notified nobody.** Four consecutive red nights, 08-21 → 08-24, all
+`Input required and not supplied: token` — `TINKEREX_CLIENT_TOKEN`, referenced from extraction day
+and never created. A scheduled workflow has no PR to turn red.
+
+**F4 — docs-only changes still ran CI.** `ci.yml`'s PR filter correctly excludes `!docs/**` and
+`!**.md`, but `client-contract.yml` had **no paths filter at all** and ran on `e4dfe51`, a
+`docs/STATUS.md`-only commit. `ci.yml`'s `push: main` leg was unfiltered too.
+
+**Bonus, found while scoping the handoff:** `two-device-fuse.sh` is referenced by **two workflows
+in two repos** — this repo's `nightly.yml` and `tinkerex-client`'s own `rust-client.yml` — both
+linux-gated, so it has never run in either. And `tinkerex-client` has **no `bin/rails`**, which
+that script's line 71 calls. So its own copy could only ever have worked when invoked from this
+repo's root. The handoff corrects a broken job slot rather than adding a job.
+
+### What was done
+
+`nightly.yml` and `client-contract.yml` deleted. Both tested sync↔client with **no code from this
+repo involved**; the corrected recipes went to
+`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md` **before** the deletion, so nothing
+survives only in git history. `ci.yml` is now the only workflow here — seven jobs, all macos:
+`preflight` plus one per gate, each invoking `bin/ci <gate>`. This repo's half of the wire contract is `bin/ci test-chunk-remote`,
+which is not moving. `push: main` gained the PR leg's paths filter, so a docs-only merge now runs
+zero jobs.
+
+### Two guards repaired, both mutation-checked
+
+`PATHS_THAT_MUST_RUN_CI` named `.github/workflows/nightly.yml` and **went red on the delete with
+its own message** — "no longer exists — fix the list, not the filter" — which is the guard working
+as designed; retargeted to `ci.yml`.
+
+The bigger one: `test "every linux or windows job is preflight-gated…"` would have scanned **zero**
+such jobs after the deletion and `assert_empty`'d over nothing — §14e's "a guard that scans a
+directory dies silently when the directory leaves", arriving exactly on schedule. Strengthened
+**before** the deletion so the mutation-check was meaningful: it now asserts the overall job set is
+non-empty. Pointed `WORKFLOW_DIR` at an empty dir → **RED**, "this guard scanned 0 job(s)". Before
+that commit the same mutation passed.
+
+`ci/preflight.sh --summary` now distinguishes **"runner absent, jobs skipped"** from **"no job in
+this repo targets this family"**, DERIVED by grepping `runs-on` across the workflow dir rather than
+a hand-maintained list — the same objection the file's own header makes to listing jobs — and
+biased to over-report, so a wrong answer restores the warning rather than hiding a gap.
+Mutation-checked both ways: planting a linux job flips the row to the SKIPPED warning, removing it
+restores the em-dash row. The `family=true|false` output, which is the gating contract, is byte-for-byte unchanged.
+
+**That change turned `test/ci_preflight_test.rb` red, and the fix is the more interesting half.**
+Its `--summary` test asserted `⛔` for linux and windows — a branch this repo can no longer reach,
+because no job here targets those families. Dropping the assertion would have left the suite green
+over the branch that protects against five weeks of dark CI. Instead the script's workflow dir
+became overridable (`CI_WORKFLOW_DIR`) so the test can **establish its precondition**: it plants a
+throwaway workflow with a linux job and asserts the warning fires. Deliberately not the real
+`.github/workflows/` — a probe file there would fail `ci_hygiene_test` (an ungated linux job is
+exactly what it forbids) and race between parallel workers. Five summary tests now, one per state
+plus one asserting the real workflow dir has no unregistered-family job, which is what pins §12.6's
+new claim. Mutation-checked both directions: `targeted()` forced true → 2 failures, forced false →
+2 failures, restored → 9/9 and 38 assertions. Resolving the grep from the script's own location
+also fixed a latent `$PWD` dependency — it had been reading `.github/workflows/` relative to the
+caller's cwd.
+
+### Stale claims found in files the change itself falsified
+
+Editing `ci.yml` exposed three of its own comments: the PR block asserted "the `push: main` leg
+below is unfiltered" (true until this commit made it false), the setup-ruby note cited
+`nightly.yml`'s `e2e-macos` as its worked example, and the `preflight` job's comment said
+`nightly.yml` and `client-contract.yml` "each carry their OWN copy of this same job". Also
+corrected: CLAUDE.md §13's "Two CI legs here still reach into `tinkerex-client`, deliberately"
+paragraph (a mechanism that no longer exists, in a file loaded every session), §12.6, §15's CI
+bullet, `ci/runners/README.md` (five references — the runner SETUP stays, the siblings still need
+it), `config/ci.rb`'s "client-contract.yml precedent", and two comments in `ci_hygiene_test.rb`.
+
+### Not closed, deliberately
+
+§12.6 is unchanged — no linux or windows runner is registered anywhere, and this work does not
+change that; it only stops this repo *pretending* to schedule against them. **`bin/ci` still
+PRINTS the three leg counts and never COMPARES them** (§15), so the identical-counts rule remains
+a human reading three numbers. And the siblings' half of the handoff is unexecuted: the recipes
+are written, no commit was made in `tinkerex-sync` or `tinkerex-client`.
+
+Gates: bare `bin/ci` green, three legs at identical run counts.
+
+## 2026-08-25: CLAUDE.md cut roughly in half — area invariants split to `docs/invariants/`, case history moved here
 
 Branch `claude/optimize-claude-md`. A direct continuation of the audit below, which fixed what
 CLAUDE.md *said*; this one fixes what it **costs**. The file is loaded into an agent's context on

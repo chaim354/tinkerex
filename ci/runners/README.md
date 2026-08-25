@@ -26,7 +26,8 @@ Most of the CI that used to run here moved with it: `build-app.yml`, `install-ap
 `cross-os-e2e.yml`, and `rust-client.yml` now live in `tinkerex-client`'s own workflows. The
 handful that stayed behind went too on 2026-08-25, when `nightly.yml` and `client-contract.yml`
 were deleted (`docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). **`ci.yml` is the
-only workflow left in this repo**, and every one of its jobs runs on `macos`.
+only workflow left in this repo** — `preflight` plus one job per `bin/ci` gate — and every one
+of its jobs runs on `macos`.
 
 **Self-hosted runners register PER REPOSITORY, not per org** — a runner registered against
 `chaim354/tinkerex` is invisible to `chaim354/tinkerex-client` and vice versa. So each physical box

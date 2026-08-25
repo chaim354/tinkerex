@@ -429,7 +429,7 @@ SUCCESS having run only `preflight`. `nightly.yml` still booted THIS app's Rails
 Rust client at it, three hours after Arc D Part 2 stopped routing `/v1/commit` here. Corrected
 recipes went to the siblings in
 `docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`. **`ci.yml` is the only workflow
-left**, six jobs, all macos, each invoking `bin/ci <gate>`. This repo's half of the wire contract
+left** — seven jobs, all macos: `preflight` plus one per gate, each invoking `bin/ci <gate>`. This repo's half of the wire contract
 is `bin/ci test-chunk-remote`, which is not moving.
 
 **Env gotchas in this build box (may differ on yours):** no local Postgres/libpq (dev & test run
