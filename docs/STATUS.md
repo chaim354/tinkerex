@@ -168,6 +168,170 @@ chunk_remote *executes* 25 tests that share and s3 skip (30 − 5), which is whe
 assertions come from. `test-chunk-remote` also runs its 10-test journey file first, against a real
 sync server booted by `bin/sync-server`.
 
+### Guard-claim sweep (same arc, second pass)
+
+The first pass audited for **repo separation**; it did not check whether the retained maker-app
+content was still TRUE. This pass took the cross-cutting claim type first: CLAUDE.md asserts
+~56 times that something is "guarded by `test/x_test.rb`", "pinned by", or "mutation-checked."
+A false one of those is §15's stated dominant failure mode — a green suite over something that
+never worked.
+
+**Mechanically checkable layers came back clean**, which is information, not a null result:
+
+| layer | checked | bad |
+|---|---|---|
+| file paths | 96 | 0 |
+| classes / methods / constants | 315 | 0 |
+| hard numbers (`MAX_MOVES`, `timeout:`, `Host::LEVEL`, …) | 15 | 0 |
+| named test files | 13 | 0 |
+| specific assertions | 40 | 0 |
+
+Worth recording *why* that is not reassuring on its own: **§5's failure was not a dead reference.**
+Every table it named existed; the sentence around them was what was false. No reference sweep
+catches that shape.
+
+**Five mutation checks, all red for the right reason** — including two of this arc's own new
+claims: planting `Sync::LibraryChannel` (caught, right file), a bare `has_many :versions` (caught —
+this was the rewritten §5's claim about bare association spellings), `Storage::ChunkStore` in a
+**newly created** `app/decorators/maker/` (caught, which is the actual proof of "a NEW
+`app/<x>/maker/` is covered the day it is created" — a first attempt used the needle `ManifestChunk`,
+which matches neither `manifest_chunks` nor `ChunkStore`, and went green: **the mutation was wrong,
+not the guard**), and a lowercase `cc-by-nc-sa-4.0` catalog licence (caught, confirming the guard
+downcases where the Python original's `"-NC" in ...` did not).
+
+**Three findings, all in `test/architecture_invariants_test.rb` — the file this repo leans on hardest:**
+
+1. **A test named for a class this repo no longer has.**
+   `test "the maker layer reaches the sync engine through FileLayer::Chunk alone"` described an
+   ALLOWLIST contract the test stopped implementing when Arc D Part 2 made it assert zero with no
+   exceptions. Behaviour right, name outlived its meaning — and it is the first sentence a reader
+   sees when the guard fires. Renamed to `"no maker-layer file names Sync:: or a bare engine model
+   at all"`.
+2. **A test name that OVERCLAIMED, hiding a real gap.**
+   `test "V1::BaseController names no Sync:: or Storage:: constant at all"` — but `sync_references`
+   matched only `str == "Sync"`. It never checked `Storage`. History explains how: `3d144c3` added a
+   dedicated Ripper pass for a bare `Storage` const, `ce2ca7f` renamed `Storage::ChunkStore` to
+   `Sync::Storage::ChunkStore` and retired that pass because the bare `Sync` token then covered it —
+   **true when written**. The class later left with the engine, and the name went on promising
+   coverage no longer provided for a bare spelling. Latent and harmless while nothing spelled it,
+   which is exactly why nothing caught it. `sync_references` now matches `Storage` too; verified
+   safe first (Ripper reports **zero** bare `Storage` const tokens in `app/` + `lib/`, and
+   `ActiveStorage` lexes as a SINGLE token so it cannot collide), then mutation-checked — planting
+   `Storage::ChunkStore` in `V1::BaseController` now fails BOTH tests where it previously passed
+   both.
+3. **`SYNC_SEAM_EXCEPTIONS` is a comment-only ghost** — eight mentions, zero definitions. Two are
+   present-tense and now false ("SYNC_SEAM_EXCEPTIONS is back", "still names only
+   app/models/user.rb"). The correction *was* recorded, but BELOW the assertion while the false
+   claims sit ABOVE it, so a top-to-bottom reader meets them first. Added a read-order warning at
+   the top of the test rather than rewriting the history.
+
+Gates: bare `bin/ci` green in 2m8s, three legs at identical run counts (2349).
+
+### §14c audited — 56 bullets, ~100 checks, ZERO errors
+
+The largest section (541 lines) and the one whose subject has churned most — openscad retired,
+bundles moved to their own repo, `Host::LEVEL` reached 3, the SDK grew a service layer. It is
+**accurate**. Recorded so the next person does not redo it.
+
+Every ✗ raised during the sweep was the CHECK being weak, not the doc: matching a comment rather
+than code (`resources :boxes` survives only in `routes.rb` comments, exactly as the bullet says;
+`AbortError` and `blobUrl` appear only in comments explaining why they are NOT used), guessing a
+file path (`Addon` lives in `registry.rb`, not an `addon.rb`), or a crude ordering heuristic
+(`Source.current` is `@stub || (PATH.present? ? Local : new(base_url))` — PATH does win).
+
+**The part worth having done: the cross-repo contract, checked against the LIVE bundles**
+(`../tinkerex-addons/addons/manifests.json`). Publishing a bundle IS the addon deploy and Rails is
+never rebuilt, so this is the one surface where §14c could rot with nothing here going red. It
+holds, and it is live rather than theoretical:
+
+| claim | live evidence |
+|---|---|
+| `min_host: 3` is how a bundle requires revising | **boxes** declares `min_host: 3`; `Host::LEVEL = 3` |
+| `library:read` is the ONE enforced permission | **openscad** actually declares it |
+| a `service_timeouts` value over the cap is capped, not refused | openscad asks 90; `MAX_TIMEOUT_DEFAULT = 120` → honoured |
+| every published bundle names `@maker/addon-sdk` | all three import it |
+| `api_version: "1"` | all three match `Registry::API_VERSION` |
+
+Two claims no grep can reach were **probed**: `Rails.application.routes.recognize_path` confirms
+`/tools/boxes` → `tools/addons#show key="boxes"` while `/tools/addon_states/12/params` →
+`tools/addon_params#show` (four segments, not shadowed — the instrument the bullet itself names);
+and `Maker::AddonOrigin.for(user:, node_ids: [])` returns `{}` with **zero** `Registry.manifests`
+calls under a counting double, confirming an addon-source outage cannot slow a Files page for a
+user who has never opened `/tools`.
+
+### §14h audited — 45 bullets, ~60 checks, ONE error found and fixed
+
+The Measure view, 347 lines and the second-largest section. Unlike §14c there was no prior signal
+either way.
+
+**The error: §14h[0] said "all five names move together."** Five matches neither real count, and
+the bullet's own closing clause already said "three remembered edits" — an internal contradiction
+inside one bullet. Measured: `Geometry::REVISIONED_BY` names **3** modules (`LbrnGeometry`,
+`DxfGeometry`, `SvgGeometry`, with `FORMAT_REVISION` 4/1/1 over `SHARED_REVISION = 0`), and **4**
+formats answer `payload_revision(kind)` (`Lbrn2`, `Mage`, `Dxf`, `Svg` — `.mage` and `.lbrn2` both
+read `LbrnGeometry`). Corrected to say three constants propagating to four formats, with the old
+wording recorded rather than silently replaced. Low stakes on its own; the MECHANISM it describes
+is right and is guarded by `GeometryTest`, which does enumerate the declaring modules from the code
+as claimed.
+
+Everything else held. As in §14c, every other ✗ was the CHECK being weak — `innerHTML` and
+`doc.write` appear only in comments saying they are NEVER used; `width="215.9mm"` is composed as
+`${paper.w}mm` from a paper table rather than written literally; the two nested `<g>`s are built
+through an `el()` helper my pattern missed; `layer_name`'s nil-for-a-file-colour lives in
+`LbrnMetadata` (`"color_name" => (c.present? ? nil : Lbrn2.layer_name(idx))`), not in `Lbrn2`.
+
+**One probe was INCONCLUSIVE and is recorded as such** rather than counted as a pass. To test
+"every reported number comes from full-resolution points; thinning is drawing-only," a payload was
+built for three fixtures and each shape's reported `b` compared against the bbox of its own thinned
+`p`. All three came back with a zero difference — which proves nothing, because **RDP preserves
+extreme points by construction** (a corner is the farthest point from any chord spanning it), so a
+simplified contour's bbox normally equals the full-resolution bbox. The claim was instead confirmed
+DECISIVELY by code order in `geometry.rb`: `"b"` is built from `x0,y0,x1,y1` (L135) and `d` is
+`Geometry.diameter(points, ...)` (L145) — both from the full-resolution `points` — while only
+`"p"` is `Geometry.simplify(points)` (L138). Worth recording because a probe that cannot fail is
+the same trap this file warns about elsewhere, and it nearly went into the ledger as a pass.
+
+Suites green throughout: 91 runs / 953 assertions (measure system), 267 runs / 963 assertions
+(previews unit), 12 runs / 96 assertions (geometry).
+
+### The remaining sections audited — §14a share/s3, §14b, §14d, §14e, §14f, §14g, §14i
+
+~83 further checks across 106 bullets. **Zero errors.** With §14c and §14h that completes §14:
+roughly **310 checks over the whole file, four findings, all fixed** (one numerical slip in §14h[0];
+three in `test/architecture_invariants_test.rb`).
+
+Two count claims were checked properly rather than by grep, because both are the kind that rot
+quietly:
+
+- **§14d's "the `port_writable?` two-door branch is written out ONCE"** is TRUE, but only once the
+  section's own exclusion clause is applied. Raw grep finds ~20 hits; comments strip to **four**
+  Ruby-code sites: `capabilities.rb:72` (the definition), `models_controller.rb:101` (passing the
+  value into a view), `uploads_controller.rb:110` (`require_port_writable!` — a one-armed GATE), and
+  `library_output.rb:54` (`port_writable? ? write_port : write_chunk`). The doc excludes
+  "`require_capability!` gates and views that pick an upload FORM," which leaves exactly one
+  two-door branch. The exclusion clause is load-bearing, not decoration.
+- **§14b's "both job gates key on `scannable?`, not `is_a?(FileLayer::Share)`"** is TRUE.
+  `scan_job.rb:129` DOES contain a live `adapter.is_a?(FileLayer::Share)`, but it builds ARGS
+  (passing `root:` only for the backend that has a filesystem root), not the gate; the gate is
+  `scannable?` and line 109 is a comment recording that it once was the `is_a?`.
+
+**The pattern behind nearly every false alarm is worth recording, because it explains WHY this file
+stays accurate.** Almost every failing check was a comment matching where code was expected —
+`# NO ARGV.unshift("--ensure-latest") HERE` in `bin/brakeman`, `# ... NOT the ruby-vips FFI gem` in
+the Gemfile, `# never Project#ensure_library_folder!` in `project_intake.rb`, `# BUILT AS NODES,
+NEVER doc.write` in `print_sheet.js`, `innerHTML` appearing only in a comment forbidding it.
+**The code comments restate CLAUDE.md's rules verbatim at the point of enforcement.** That is what
+keeps the two in step: a change to the code lands on the sentence that explains the rule. It is
+also why a naive grep cannot tell "the code does X" from "a comment says never do X," and why the
+audit had to read context every time rather than trust a match count.
+
+Gates: bare `bin/ci` green in 2m10s, three backend legs at identical run counts (2349).
+
+**Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
+— "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
+contours displaced". Those record past observations, not current state; re-running them is a
+different and much larger job. They are §14c's residual risk.
+
 **Also fixed here:** this file's own title read "Build status — sync engine", a leftover from when
 that was true.
 

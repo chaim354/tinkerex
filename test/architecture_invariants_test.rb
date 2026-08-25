@@ -101,7 +101,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     rel = Pathname.new(file).relative_path_from(ROOT)
     Ripper.lex(File.read(file)).filter_map do |(pos, type, str, _)|
       hit = case type
-      when :on_const then str == "Sync"
+      # `Storage` sits beside `Sync` here because it is the OTHER namespace that left with the
+      # engine (Storage::ChunkStore). It was named in the V1::BaseController test's TITLE while
+      # this helper checked only `Sync`, so that test promised a coverage it did not provide --
+      # and a `Storage::ChunkStore` reference in a controller is caught by no other guard: §14c's
+      # chunk-internals scan covers `app/**/maker` only. Safe to flag: `ActiveStorage` lexes as a
+      # SINGLE :on_const token, so it cannot collide, and app/ + lib/ hold zero bare `Storage`
+      # const tokens today (checked with Ripper, not grep).
+      when :on_const then str == "Sync" || str == "Storage"
       when :on_ident then ENGINE_ASSOCIATIONS.include?(str)
       end
       "#{rel}:#{pos.first}" if hit
@@ -615,7 +622,16 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # WHAT STAYS HERE IS THE OTHER DIRECTION, and it is unaffected by the move: the maker layer
   # reaching INTO the engine is a fact about THIS repo's files, which are still here to be scanned.
 
-  test "the maker layer reaches the sync engine through FileLayer::Chunk alone" do
+  test "no maker-layer file names Sync:: or a bare engine model at all" do
+    # READ ORDER WARNING: the comment block below is a CHRONOLOGICAL NARRATIVE and several of its
+    # paragraphs are written in the present tense about states that no longer hold. In particular
+    # "SYNC_SEAM_EXCEPTIONS is back" (Stage 3a Task 1) and "still names only app/models/user.rb"
+    # (Stage 3b Phase A Task 2) describe a constant that **NO LONGER EXISTS** -- Arc D Part 2
+    # deleted it, and this test now asserts ZERO with NO allowlist. That correction is recorded
+    # below the assertion rather than here, which is the wrong way round for anyone reading top
+    # to bottom; this note is the fix for the read order, not a replacement for the history.
+    # (Found by auditing CLAUDE.md's guard claims, 2026-08-25: `grep SYNC_SEAM_EXCEPTIONS` returns
+    # eight hits and zero definitions.)
     # CLAUDE.md §14d's tripwire, made real: "if a maker-layer change needs to touch sync, the
     # changelog, conflicts, locks, or the mounts, the boundary is wrong -- stop." Tasks 3-6 gave
     # FileLayer::Chunk all four metadata verbs specifically so the maker layer never has to reach
