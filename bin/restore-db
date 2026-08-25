@@ -52,7 +52,25 @@ case "$DEST" in
   chunk) FILTER='^tinkerex-web-[0-9a-f]'; VOLUME=tinkerex_storage       ;;
   share) FILTER='^tinkerex-web-share-';   VOLUME=tinkerex_storage_share ;;
   s3)    FILTER='^tinkerex-web-s3-';      VOLUME=tinkerex_storage_s3    ;;
-  *) echo "usage: bin/restore-db <chunk|share|s3> <archive.tar.gz> [--yes] [--into SUFFIX] [--no-pre-backup]" >&2; exit 64 ;;
+  # ANCHORED ($), for the reason ops/backup-db.sh's container_for says at length: `sync` is a Kamal
+  # ACCESSORY with a fixed container name, and unanchored this would also match the exited
+  # `tinkerex-sync-web-<sha>` containers the STANDALONE deployment of chaim354/tinkerex-sync leaves
+  # behind — restoring THIS database using THAT image's sqlite3.
+  sync)  FILTER='^tinkerex-sync$';        VOLUME=tinkerex_sync_storage  ;;
+  *) echo "usage: bin/restore-db <chunk|share|s3|sync> <archive.tar.gz> [--yes] [--into SUFFIX] [--no-pre-backup]" >&2; exit 64 ;;
+esac
+
+# THE SECOND ROW COUNT IS PER-DESTINATION, AND ON `sync` THE MAKER SPELLING DOES NOT MERELY READ
+# ODDLY -- IT ERRORS. The archive pre-check counts two tables as evidence the snapshot holds real
+# rows rather than an empty schema. `nodes` exists in both databases; the partner does not. Against
+# a sync archive `SELECT count(*) FROM maker_projects` printed `Error: in prepare, no such table:
+# maker_projects` on stderr and left the line reading "3 nodes,  projects" -- a failed command
+# substitution yields an empty string, so the sentence stayed grammatically intact with a hole in
+# it and the script carried on at exit 0. Observed during Arc D Task 3's rehearsal, not predicted.
+# `versions` is the sync side's equivalent evidence: it is what every file resolves through.
+case "$DEST" in
+  sync) COUNT_TABLE=versions;       COUNT_LABEL=versions ;;
+  *)    COUNT_TABLE=maker_projects; COUNT_LABEL=projects ;;
 esac
 REHEARSAL=false
 if [ -n "$INTO" ]; then REHEARSAL=true; VOLUME="$VOLUME-$INTO"; fi
@@ -94,7 +112,7 @@ if $FROM_BOX; then
       tar -xzf \"/b/$NAME\" -C /tmp/v ./db-snapshot/production.sqlite3
       c=\$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"PRAGMA integrity_check;\" | head -1)
       [ \"\$c\" = ok ] || { echo \"integrity_check: \$c\" >&2; exit 65; }
-      echo \"    integrity_check ok — \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM nodes;\") nodes, \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM maker_projects;\") projects\"
+      echo \"    integrity_check ok — \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM nodes;\") nodes, \$(sqlite3 /tmp/v/db-snapshot/production.sqlite3 \"SELECT count(*) FROM $COUNT_TABLE;\") $COUNT_LABEL\"
     '"
 else
   WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
@@ -102,7 +120,7 @@ else
     || { echo "archive has no db-snapshot/production.sqlite3 — not a bin/backup-db archive" >&2; exit 65; }
   CHECK=$(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'PRAGMA integrity_check;' | head -1)
   [ "$CHECK" = ok ] || { echo "integrity_check: $CHECK" >&2; exit 65; }
-  echo "    integrity_check ok — $(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'SELECT count(*) FROM nodes;') nodes, $(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'SELECT count(*) FROM maker_projects;') projects"
+  echo "    integrity_check ok — $(sqlite3 "$WORK/db-snapshot/production.sqlite3" 'SELECT count(*) FROM nodes;') nodes, $(sqlite3 "$WORK/db-snapshot/production.sqlite3" "SELECT count(*) FROM $COUNT_TABLE;") $COUNT_LABEL"
 fi
 
 # ---- 2. confirm --------------------------------------------------------------------------------
@@ -217,12 +235,43 @@ if $REHEARSAL; then
     | sed "s/^/    nodes readable in scratch volume as $owner: /"
   echo "    remove it with: ssh $HOST 'docker volume rm $VOLUME'"
 else
-  for _ in $(seq 30); do
-    code=$(ssh "$HOST" "curl -s -o /dev/null -w '%{http_code}' -H 'Host: $DEST.tinkerex.local' http://localhost/up" || true)
-    [ "$code" = 200 ] && break
-    sleep 2
-  done
-  echo "    /up -> ${code:-no answer}"
-  ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) bin/rails runner 'puts \"#{Node.count} nodes, #{Maker::Project.count} projects\"'" \
-    | sed 's/^/    /'
+  # BOTH HALVES BELOW ARE DESTINATION-AWARE, AND `sync` BREAKS BOTH OF THE ORIGINALS.
+  #
+  # THE HEALTH PROBE: the three maker deployments answer through kamal-proxy on a `<dest>.tinkerex
+  # .local` host header, which is what makes a Host-header curl the right instrument for them. The
+  # `sync` accessory has NO PROXY REGISTRATION AT ALL — it declares no `port:` and no `proxy:`
+  # (config/deploy.yml's `sync:` block), because the only thing that talks to it is another
+  # container on the kamal network reaching the alias `tinkerex-sync` directly. Left as a Host
+  # curl this loop would 404 thirty times, sleep a full 60 seconds and print "no answer" for a
+  # server that is perfectly healthy — a restore reporting failure over a working database, which
+  # is the worst direction for a script someone runs mid-incident.
+  #
+  # THE ROW COUNT: `Maker::Project` DOES NOT EXIST on the sync server. It is a different Rails app
+  # (chaim354/tinkerex-sync) with no maker layer in it whatsoever — the whole point of Arc D — so
+  # the original line raises NameError and the restore's final proof step dies having restored
+  # perfectly well. `Node` is the one model BOTH apps define, which is why it stays in both arms;
+  # the second count differs because the two databases hold different things, and `Sync::Version`
+  # is the sync side's equivalent evidence that real rows came back rather than an empty schema.
+  case "$DEST" in
+    sync)
+      for _ in $(seq 30); do
+        code=$(ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:3000/up" || true)
+        [ "$code" = 200 ] && break
+        sleep 2
+      done
+      echo "    /up (in-container) -> ${code:-no answer}"
+      ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) bin/rails runner 'puts \"#{Node.count} nodes, #{Sync::Version.count} versions\"'" \
+        | sed 's/^/    /'
+      ;;
+    *)
+      for _ in $(seq 30); do
+        code=$(ssh "$HOST" "curl -s -o /dev/null -w '%{http_code}' -H 'Host: $DEST.tinkerex.local' http://localhost/up" || true)
+        [ "$code" = 200 ] && break
+        sleep 2
+      done
+      echo "    /up -> ${code:-no answer}"
+      ssh "$HOST" "docker exec \$(docker ps -qf name='$FILTER' | head -1) bin/rails runner 'puts \"#{Node.count} nodes, #{Maker::Project.count} projects\"'" \
+        | sed 's/^/    /'
+      ;;
+  esac
 fi

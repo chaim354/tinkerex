@@ -309,14 +309,42 @@ accessories:
         STORAGE_BACKEND: local
         CABLE_ADAPTER: async
         RAILS_LOG_TO_STDOUT: "1"
+        # WITHOUT THIS LINE EVERY CHUNK BYTE IN THE LIBRARY IS DESTROYED BY ANY CONTAINER
+        # REPLACEMENT, AND THE CATALOG SURVIVES TO GO ON CLAIMING THE FILES EXIST.
+        #
+        # Sync::Storage::LocalChunkStore defaults to `Rails.root.join("tmp", "chunk-store")` —
+        # `/rails/host/tmp/chunk-store`, which is the container's EPHEMERAL layer, not the volume
+        # mounted below. So a `kamal accessory reboot sync`, an image bump, or any redeploy took
+        # the bytes with it while `versions`/`manifest_chunks`/`chunks` sat safely on the volume
+        # still resolving every file to content that no longer existed. Silent: nothing errors at
+        # reboot, and the failure only appears later, per file, on read.
+        #
+        # MEASURED, NOT REASONED (2026-08-24). The comment below used to assert that the volume held
+        # "both the SQLite catalog AND every chunk byte". That was written from the design rather
+        # than from the box and was simply FALSE — probed by finding the two-box proof's own chunk
+        # at /rails/host/tmp/chunk-store/chunks/3/d6d45e31… while `docker inspect` listed exactly
+        # one mount, /rails/host/storage. It surfaced only because Arc D Task 3's backup rehearsal
+        # printed `chunk bytes (files) 0` next to `chunks 1`; no amount of re-reading this file
+        # would have found it, which is CLAUDE.md §14e's probe-over-argument rule paying out again.
+        #
+        # UNDER THE STORAGE VOLUME RATHER THAN A SECOND VOLUME OF ITS OWN, DELIBERATELY. Two
+        # volumes could be captured by two archives, and a catalog restored to a different instant
+        # than its bytes is a library that resolves versions to chunks the store does not have —
+        # the exact corruption content-addressing exists to make impossible. One volume means
+        # ops/backup-db.sh's single `sync` archive holds the catalog and the bytes it references,
+        # taken together, and `bin/restore-db sync` puts both back at one point in time.
+        CHUNK_LOCAL_DIR: /rails/host/storage/chunk-store
       secret:
         - SECRET_KEY_BASE
         - SYNC_ADMIN_TOKEN
-    # THE LIBRARY, NOT A CACHE — with STORAGE_BACKEND=local this is both the SQLite catalog AND every
-    # chunk byte; losing it loses the files. Matches the path the image's own Dockerfile creates
-    # (`host/storage`) and the volume name chaim354/tinkerex-sync's own (currently unused) standalone
-    # deploy.yml already chose, so the name stays recognizable if that alternate deployment shape is
-    # ever revisited instead of this accessory.
+    # THE LIBRARY, NOT A CACHE — with STORAGE_BACKEND=local plus the CHUNK_LOCAL_DIR above, this
+    # volume holds both the SQLite catalog and every chunk byte; losing it loses the files. (Read
+    # that env comment before trusting this sentence: it was true of the DESIGN and false of the
+    # BOX until 2026-08-24, and it is the line that has to be re-checked if CHUNK_LOCAL_DIR ever
+    # moves.) Matches the path the image's own Dockerfile creates (`host/storage`) and the volume
+    # name chaim354/tinkerex-sync's own (currently unused) standalone deploy.yml already chose, so
+    # the name stays recognizable if that alternate deployment shape is ever revisited instead of
+    # this accessory.
     volumes:
       - "tinkerex_sync_storage:/rails/host/storage"
 
