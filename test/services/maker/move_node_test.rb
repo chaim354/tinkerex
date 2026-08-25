@@ -5,7 +5,6 @@ module Maker
   # the same reason: the branch IS the thing under test, so a single ambient-backend run would
   # exercise whichever door CI happened to pick and call the other one covered.
   class MoveNodeTest < ActiveSupport::TestCase
-
     # Share branch: port_writable → FileLayer.current.move, which renames the real file AND
     # updates the node row. Exercises the same code path s3 takes.
     class ShareBranch < MoveNodeTest

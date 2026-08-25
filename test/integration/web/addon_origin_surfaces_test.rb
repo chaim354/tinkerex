@@ -41,6 +41,11 @@ module Web
     end
 
     setup do
+      # A hermetic library for this suite. It pinned embedded chunk until Arc D Part 2; with that
+      # backend retired it would otherwise run on the AMBIENT one, which on the s3 leg means real
+      # Aws calls (the stub is opt-in per file) and on chunk_remote means a live sync server.
+      # What these tests are about is the web layer, not which backend holds the bytes.
+      @root = use_fresh_share_library!
       @user = User.create!(email: "origins-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
@@ -58,6 +63,11 @@ module Web
       @state.files.create!(node_id: @from_addon.node_id, role: "output", position: 0)
       @source = CountingAddonSource.new(manifests: [ MANIFEST ])
       Maker::Addons::Source.stub = @source
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     teardown { Maker::Addons::Source.reset! }

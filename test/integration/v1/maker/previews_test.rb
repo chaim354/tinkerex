@@ -3,6 +3,16 @@ require "test_helper"
 module V1
   module Maker
     class PreviewsTest < ActionDispatch::IntegrationTest
+      # `use_fresh_share_library!` is called inside a test below rather than in setup, so this
+      # teardown is what stops the adapter leaking into the next test in this forked worker.
+      # It matters more than it used to: FileLayer.build's default arm is `share` since Arc D
+      # Part 2, and share raises KeyError on a missing LIBRARY_PATH where the old `chunk`
+      # default needed nothing -- so a leaked reset surfaces as a KeyError in an unrelated test.
+      teardown do
+        FileLayer.reset!
+        FileUtils.remove_entry(@root) if @root&.exist?
+      end
+
       setup do
       end
 

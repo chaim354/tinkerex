@@ -9,7 +9,6 @@ module Web
   # branch backwards shows a CNC job a "Laser settings" table with empty Speed/Power/Passes
   # columns and no tooling at all — wrong, and silent. Only driving the page catches it.
   class SettingsPanelTest < ActionDispatch::IntegrationTest
-
     PASSWORD = "correct horse battery staple".freeze
 
     setup do

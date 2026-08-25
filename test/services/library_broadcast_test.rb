@@ -244,5 +244,4 @@ class LibraryBroadcastTest < ActiveSupport::TestCase
     assert ran, "the block must still run"
     assert_equal :share_result, result
   end
-
 end

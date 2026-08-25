@@ -9,12 +9,22 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A hermetic library for this suite. It pinned embedded chunk until Arc D Part 2; with that
+      # backend retired it would otherwise run on the AMBIENT one, which on the s3 leg means real
+      # Aws calls (the stub is opt-in per file) and on chunk_remote means a live sync server.
+      # What these tests are about is the web layer, not which backend holds the bytes.
+      @root = use_fresh_share_library!
       @user = User.create!(email: "cover-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @user.nodes.create!(node_id: "n-photo", name: "hero.png", kind: "file")
       @user.nodes.create!(node_id: "n-part", name: "arm.stl", kind: "file")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     def attach(node_id, role)

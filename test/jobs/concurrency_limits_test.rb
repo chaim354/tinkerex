@@ -46,5 +46,4 @@ class ConcurrencyLimitsTest < ActiveSupport::TestCase
     assert_equal Library::ScanJob.new(user_id: @a.id).concurrency_key,
                  Library::ScanJob.new(user_id: @a.id, root: "/mnt/library").concurrency_key
   end
-
 end

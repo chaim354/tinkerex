@@ -100,7 +100,6 @@ module FileLayer
     end
 
     test "pull_all! enqueues nothing on chunk" do
-
       assert_no_enqueued_jobs(only: RemoteChangelogPullJob) { RemoteChangelogPullJob.pull_all! }
     end
 

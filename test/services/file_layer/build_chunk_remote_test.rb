@@ -10,13 +10,26 @@ module FileLayer
   # something that does not work yet. These tests pin both halves of that: that it is selectable now,
   # and that selecting it without configuration fails at boot rather than on someone's first request.
   class BuildChunkRemoteTest < ActiveSupport::TestCase
+    # RESTORES THE PRIOR VALUES; IT USED TO DELETE THE KEYS. That was harmless for as long as
+    # FileLayer.build defaulted to embedded `chunk`, which needs no configuration at all -- a
+    # later test in the same worker calling FileLayer.current just got a Chunk adapter and never
+    # noticed the env had been emptied out from under it. Arc D Part 2 made the default `share`,
+    # which reads ENV.fetch("LIBRARY_PATH") and RAISES without it, so the same deletion turned
+    # into `KeyError: key not found: "LIBRARY_PATH"` in ~40 unrelated tests -- in files this arc
+    # never touched, several frames from anything mentioning a backend.
+    #
+    # A pre-existing bug that a changed default merely exposed, which is worth saying plainly:
+    # the fix belongs here, in the helper that failed to clean up, not in the default. Found by
+    # trapping ENV#delete and ENV#[]= with a backtrace after reasoning about it twice and being
+    # wrong both times -- §14e's probe-over-argument rule, again.
     def build_with(env)
       previous = FileLayer.instance_variable_get(:@current)
+      prior = env.keys.to_h { |k| [ k, ENV[k] ] }
       FileLayer.reset!
       env.each { |k, v| ENV[k] = v }
       yield
     ensure
-      env.each_key { |k| ENV.delete(k) }
+      prior.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
       FileLayer.reset!
       FileLayer.instance_variable_set(:@current, previous)
     end

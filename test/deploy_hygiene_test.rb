@@ -20,7 +20,13 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # ["chunk.tinkerex.local"] before .home was added and ["chunk.tinkerex.local",
   # "chunk.tinkerex.home"] after). That inheritance looks wrong for an internet-facing host with
   # FORCE_SSL=1, but it is a separate question from this guard and predates it.
-  UNRAID_DESTINATIONS = { nil => "chunk", "share" => "share", "s3" => "s3", "remote" => "remote" }.freeze
+  # THREE AGAIN, AND THE BASE ONE IS THE CHUNK-FAMILY DESTINATION. `remote` was a fourth entry
+  # (Arc D Part 1, LIBRARY_BACKEND=chunk_remote beside embedded chunk); Part 2 retired embedded
+  # chunk and folded remote into the base, so the base's hostnames are still `chunk.tinkerex.*` --
+  # it IS the chunk backend, now remote-backed -- and there is no separate `remote` config file to
+  # read. Kamal raises rather than returning nil for a missing destination file, which is how this
+  # surfaced: four errors naming config/deploy.remote.yml.
+  UNRAID_DESTINATIONS = { nil => "chunk", "share" => "share", "s3" => "s3" }.freeze
 
   test "every Unraid destination registers BOTH a .local and a .home hostname" do
     # kamal-proxy routes on the Host header, so a name that is not in this list is a 404 — including
@@ -303,7 +309,7 @@ class DeployHygieneTest < ActiveSupport::TestCase
 
   # nil is the base destination (`kamal deploy` with no -d), whose file is plain `.kamal/secrets`.
   SECRETS_FILES = { nil => "secrets", "s3" => "secrets.s3", "share" => "secrets.share",
-                    "ovh" => "secrets.ovh", "remote" => "secrets.remote" }.freeze
+                    "ovh" => "secrets.ovh" }.freeze
 
   # Key/value pairs a secrets file DEFINES, parsed without executing anything.
   def secret_definitions(name)
