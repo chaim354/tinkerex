@@ -96,34 +96,31 @@ module FileLayer
           unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
         @user = User.create!(email: "remote-mutation-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
-        @device = Device.register!(user: @user, name: "loopback")
-        @transport = LoopbackTransport.new(integration_session, @device.plaintext_token)
-        @fetch = LoopbackFetch.new(integration_session)
       end
 
-      # The test holds the transport rather than reaching for `adapter.transport`, which is private
-      # and should stay private -- widening an adapter's API so a test can borrow its wire is how a
-      # seam stops meaning anything.
-      def adapter = @adapter ||= ChunkRemote.new(transport: @transport, chunk_fetch: @fetch)
+      # THE REAL ADAPTER AGAINST THE REAL SERVER, where this used to build one over a LOOPBACK
+      # transport pointed at this same Rails process. That worked while the embedded engine served
+      # /v1/commit and friends here; it does not now, and reconstructing a fake would test the fake.
+      # FileLayer.current is already a ChunkRemote configured from the env bin/sync-server wrote.
+      def adapter = FileLayer.current
 
-      # Seeds through the ENGINE's own commit path, then pulls -- so the adapter is reading a tree
-      # the server really produced rather than rows this test hand-wrote.
+      # SEEDS THROUGH THE PORT'S OWN UPLOAD VERBS, so the adapter reads a tree the SERVER really
+      # produced rather than rows this test hand-wrote -- the same property the old Sync::Commit
+      # seeding had, obtained the way a real client obtains it. `refresh!` is implicit: every one
+      # of these verbs pulls the changelog on the way out (§14a), so the local mirror already
+      # reflects the commit by the time this returns.
       def make_file(name:, bytes:)
-        node_id = SecureRandom.uuid
         hash = Digest::SHA256.hexdigest(bytes)
-        Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
-        cid = SecureRandom.uuid
-        Sync::Commit.begin(
-          user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
-          name:, base_version_id: nil, size: bytes.bytesize,
-          mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
-          manifest: [ { "hash" => hash, "offset" => 0, "length" => bytes.bytesize } ]
-        )
-        Sync::Commit.finalize(user: @user, commit_id: cid)
-        # The adapter reads its MIRROR, so a row the engine just wrote is invisible until pulled --
-        # which is the honest shape of a sync client and not a workaround.
-        ChangelogSync.new(@user, transport: @transport).call
-        node_id
+        begun = adapter.begin_upload(@user, name:, size: bytes.bytesize,
+                                     manifest: [ { hash:, offset: 0, length: bytes.bytesize } ])
+        begun.missing.each { |h| adapter.put_chunk(@user, begun:, hash: h, bytes:) }
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+        # THE NODE_ID, NOT THE NODE. adapter_mutation_contract.rb's own header says make_file
+        # "returns its node_id", and make_dir beside this already does -- hand back a Node and
+        # every contract call passes an AR object where a String belongs, so live_node!'s
+        # find_by(node_id: <Node>) misses and the failure reads `FileLayer::NotFound: node
+        # #<Node id: 1, ...>` rather than anything about the shape of the return value.
+        begun.node_id
       end
 
       def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id

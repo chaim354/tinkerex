@@ -59,8 +59,14 @@ module FileLayer
     # §14a gives: a boot that depends on a third party being reachable turns a blip into a crash
     # loop. Here that would be sharper still -- a sync server being down is precisely the condition
     # chunk_remote is built to survive, since reads answer from the local mirror.
+    # THE ABSENT KNOBS ARE SET TO nil EXPLICITLY, WHICH `build_with` TURNS INTO A DELETE. Naming
+    # only LIBRARY_BACKEND leaves the others AMBIENT, and on the test-chunk-remote leg the ambient
+    # env has both -- so this asserted a refusal that could not happen and failed as "Error expected
+    # but nothing was raised". A test about a MISSING knob has to make it missing rather than
+    # assume the surrounding environment does not supply it.
     test "it refuses to boot without a server URL and an admin token, naming BOTH at once" do
-      build_with("LIBRARY_BACKEND" => "chunk_remote") do
+      build_with("LIBRARY_BACKEND" => "chunk_remote",
+                 "CHUNK_REMOTE_URL" => nil, "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
         assert_match(/CHUNK_REMOTE_URL/, err.message)
         assert_match(/SYNC_ADMIN_TOKEN/, err.message,
@@ -69,7 +75,8 @@ module FileLayer
     end
 
     test "a URL without an admin token is still refused, and names only what is missing" do
-      build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example") do
+      build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example",
+                 "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
         assert_match(/SYNC_ADMIN_TOKEN/, err.message)
         assert_no_match(/CHUNK_REMOTE_URL,/, err.message, "it named a knob that was set")

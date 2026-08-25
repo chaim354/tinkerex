@@ -89,11 +89,33 @@ module FileLayer
         # greps its output for skips so this cannot quietly become a no-op there.
         skip "needs a real sync server (bin/sync-server start); runs in the test-chunk-remote gate" \
           unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
-        @user = User.create!(email: "remote-upload-#{SecureRandom.hex(4)}@example.com",
+        @user = User.create!(email: "remote-mutation-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
-        @device = Device.register!(user: @user, name: "loopback")
-        @transport = LoopbackTransport.new(integration_session, @device.plaintext_token)
-        @adapter = ChunkRemote.new(transport: @transport, chunk_fetch: LoopbackFetch.new(integration_session))
+      end
+
+      # THE REAL ADAPTER AGAINST THE REAL SERVER, where this used to build one over a LOOPBACK
+      # transport pointed at this same Rails process. That worked while the embedded engine served
+      # /v1/commit and friends here; it does not now, and reconstructing a fake would test the fake.
+      # FileLayer.current is already a ChunkRemote configured from the env bin/sync-server wrote.
+      def adapter = FileLayer.current
+
+      # SEEDS THROUGH THE PORT'S OWN UPLOAD VERBS, so the adapter reads a tree the SERVER really
+      # produced rather than rows this test hand-wrote -- the same property the old Sync::Commit
+      # seeding had, obtained the way a real client obtains it. `refresh!` is implicit: every one
+      # of these verbs pulls the changelog on the way out (§14a), so the local mirror already
+      # reflects the commit by the time this returns.
+      def make_file(name:, bytes:)
+        hash = Digest::SHA256.hexdigest(bytes)
+        begun = adapter.begin_upload(@user, name:, size: bytes.bytesize,
+                                     manifest: [ { hash:, offset: 0, length: bytes.bytesize } ])
+        begun.missing.each { |h| adapter.put_chunk(@user, begun:, hash: h, bytes:) }
+        adapter.finalize_upload(@user, commit_id: begun.commit_id)
+        # THE NODE_ID, NOT THE NODE. adapter_mutation_contract.rb's own header says make_file
+        # "returns its node_id", and make_dir beside this already does -- hand back a Node and
+        # every contract call passes an AR object where a String belongs, so live_node!'s
+        # find_by(node_id: <Node>) misses and the failure reads `FileLayer::NotFound: node
+        # #<Node id: 1, ...>` rather than anything about the shape of the return value.
+        begun.node_id
       end
 
       def manifest_for(bytes)
@@ -102,8 +124,8 @@ module FileLayer
 
       test "begin_upload reports the chunks the server does not have" do
         bytes = "brand new content"
-        begun = @adapter.begin_upload(@user, name: "new.stl", size: bytes.bytesize,
-                                      manifest: manifest_for(bytes), device: @device)
+        begun = adapter.begin_upload(@user, name: "new.stl", size: bytes.bytesize,
+                                      manifest: manifest_for(bytes))
 
         assert begun.commit_id.present?
         assert begun.node_id.present?, "the node_id is minted client-side and must come back"
@@ -114,11 +136,16 @@ module FileLayer
       test "a chunk the server already holds is NOT reported missing" do
         bytes = "already there"
         hash = Digest::SHA256.hexdigest(bytes)
-        Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
-        @user.chunks.create!(chunk_hash: hash, size: bytes.bytesize, refcount: 1)
+        # SEEDED THROUGH THE PORT, so the bytes reach the SERVER. Writing them into an in-process
+        # store proved nothing once that store stopped being the server's -- and the claim here is
+        # precisely that the SERVER already holds this chunk.
+        pre = adapter.begin_upload(@user, name: "dedup-seed.stl", size: bytes.bytesize,
+                                   manifest: manifest_for(bytes))
+        pre.missing.each { |h| adapter.put_chunk(@user, begun: pre, hash: h, bytes:) }
+        adapter.finalize_upload(@user, commit_id: pre.commit_id)
 
-        begun = @adapter.begin_upload(@user, name: "dedup.stl", size: bytes.bytesize,
-                                      manifest: manifest_for(bytes), device: @device)
+        begun = adapter.begin_upload(@user, name: "dedup.stl", size: bytes.bytesize,
+                                      manifest: manifest_for(bytes))
         assert_not_includes begun.missing, hash, "dedup is the whole point of a content-addressed store"
       end
 
@@ -127,11 +154,11 @@ module FileLayer
         # which the generic 422 rule would flatten into UnsupportedOperation and discard the hashes --
         # the one piece of information the caller needs to recover (upload those, finalize again).
         bytes = "never uploaded"
-        begun = @adapter.begin_upload(@user, name: "missing.stl", size: bytes.bytesize,
-                                      manifest: manifest_for(bytes), device: @device)
+        begun = adapter.begin_upload(@user, name: "missing.stl", size: bytes.bytesize,
+                                      manifest: manifest_for(bytes))
 
         err = assert_raises(FileLayer::ChunksMissing) do
-          @adapter.finalize_upload(@user, commit_id: begun.commit_id)
+          adapter.finalize_upload(@user, commit_id: begun.commit_id)
         end
         assert_includes err.hashes, Digest::SHA256.hexdigest(bytes)
       end
@@ -139,36 +166,38 @@ module FileLayer
       test "a full round trip: begin, put the bytes, finalize, then read them back" do
         bytes = "round trip payload"
         hash = Digest::SHA256.hexdigest(bytes)
-        begun = @adapter.begin_upload(@user, name: "trip.stl", size: bytes.bytesize,
-                                      manifest: manifest_for(bytes), device: @device)
+        begun = adapter.begin_upload(@user, name: "trip.stl", size: bytes.bytesize,
+                                      manifest: manifest_for(bytes))
 
         # The caller puts bytes at storage itself, through the port's own `#put_chunk` verb --
         # neither this app nor the sync server touches them, which is §15 in remote mode. This is
         # the exact call `Maker::Addons::LibraryOutput#write_chunk` makes in production (Arc B Task
         # 2); driving it here rather than poking `Sync::Storage::ChunkStore` directly is what makes
         # this "full round trip" test actually exercise the real port verb, not a stand-in for it.
-        @adapter.put_chunk(@user, begun:, hash:, bytes:)
+        adapter.put_chunk(@user, begun:, hash:, bytes:)
 
-        finalized = @adapter.finalize_upload(@user, commit_id: begun.commit_id)
+        finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
         assert finalized.version_id.present?
         assert_equal "trip.stl", finalized.info.name,
                      "info comes from the mirror, so finalize must have pulled before building it"
         assert_equal bytes.bytesize, finalized.info.size
 
         # AND THE BYTES COME BACK. An earlier draft of this line was
-        # `assert_equal bytes, @adapter.read(...) rescue nil`, which asserts nothing at all -- the
+        # `assert_equal bytes, adapter.read(...) rescue nil`, which asserts nothing at all -- the
         # rescue swallowed the very failure it was written to catch. Kept as a note because that is
         # the shape this repo keeps finding: an assertion that cannot fail is worse than none.
-        assert_equal bytes, @adapter.read(@user, node_id: begun.node_id)
+        assert_equal bytes, adapter.read(@user, node_id: begun.node_id)
       end
 
       test "finalize pulls, so the mirror carries the new version" do
         bytes = "mirrored"
         hash = Digest::SHA256.hexdigest(bytes)
-        begun = @adapter.begin_upload(@user, name: "mirror.stl", size: bytes.bytesize,
-                                      manifest: manifest_for(bytes), device: @device)
-        Sync::Storage::ChunkStore.current.put!(@user.id, hash, bytes)
-        finalized = @adapter.finalize_upload(@user, commit_id: begun.commit_id)
+        begun = adapter.begin_upload(@user, name: "mirror.stl", size: bytes.bytesize,
+                                      manifest: manifest_for(bytes))
+        # PUT THROUGH THE PORT against the commit just begun -- the same door a real client uses,
+        # and the only one that reaches the standalone server.
+        begun.missing.each { |h| adapter.put_chunk(@user, begun:, hash: h, bytes:) }
+        finalized = adapter.finalize_upload(@user, commit_id: begun.commit_id)
 
         node = @user.nodes.find_by(node_id: begun.node_id)
         assert_equal finalized.version_id, node.current_version_id
