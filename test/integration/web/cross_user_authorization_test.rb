@@ -21,9 +21,6 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
-
       # The victim owns everything.
       @owner = User.create!(email: "victim@example.com", password: PASSWORD,
                             confirmed_at: Time.current)

@@ -7,7 +7,6 @@ module Maker
   # if these constants ever stop resolving, preview retries break silently.
   class FileBytesTest < ActiveSupport::TestCase
     setup do
-      Sync::Storage::ChunkStore.reset!
       FileLayer.reset!
       @user = User.create!(email: "shim-#{SecureRandom.hex(4)}@example.com")
       @device = Device.register!(user: @user, name: "t")
@@ -37,24 +36,26 @@ module Maker
       assert_equal "v1", captured[:content_token]
     end
 
-    # Pinned, not ambient: this is the only test in this class that is ABOUT a specific adapter —
-    # it says so in its name and it stages chunk-shaped fixtures. The rest exercise the shim
-    # itself (constants, delegation) and are correctly backend-agnostic, so they stay that way.
-    test "read still returns real bytes end-to-end through the chunk adapter" do
-      pin_file_layer_backend("chunk")
-      node_id = SecureRandom.uuid
-      hash = Digest::SHA256.hexdigest("real bytes")
-      Sync::Storage::ChunkStore.current.put!(@user.id, hash, "real bytes")
-      cid = SecureRandom.uuid
-      Sync::Commit.begin(
-        user: @user, device: @device, commit_id: cid, node_id:, parent_node_id: nil,
-        name: "k.stl", base_version_id: nil, size: 10,
-        mtime: Process.clock_gettime(Process::CLOCK_REALTIME, :nanosecond),
-        manifest: [ { "hash" => hash, "offset" => 0, "length" => 10 } ]
-      )
-      Sync::Commit.finalize(user: @user, commit_id: cid)
+    # THE ONE TEST HERE THAT IS ABOUT A REAL ADAPTER RATHER THAN THE SHIM. It used to stage
+    # chunk-shaped fixtures through Sync::Commit and said so in its name; with the engine retired
+    # it stages a real file in a real share library instead. The claim is unchanged and is the one
+    # worth keeping: FileBytes is a thin shim over the port, and the other tests here prove
+    # delegation with a double, which cannot catch the shim delegating correctly to a port that
+    # then cannot actually produce bytes.
+    test "read still returns real bytes end-to-end through a real adapter" do
+      root = use_fresh_share_library!
+      begin
+        node_id = SecureRandom.uuid
+        root.join("k.stl").binwrite("real bytes")
+        @user.nodes.create!(node_id:, name: "k.stl", kind: "file", deleted: false,
+                            storage_path: "k.stl", size: 10,
+                            content_hash: Digest::SHA256.hexdigest("real bytes"))
 
-      assert_equal "real bytes", Maker::FileBytes.read(@user, node_id:)
+        assert_equal "real bytes", Maker::FileBytes.read(@user, node_id:)
+      ensure
+        FileLayer.reset!
+        FileUtils.remove_entry(root) if root&.exist?
+      end
     end
 
     test "an unknown node still raises the constant callers rescue" do

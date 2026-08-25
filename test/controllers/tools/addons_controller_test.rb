@@ -47,9 +47,17 @@ module Tools
           "widgetkit/../../secret" => "PWNED"
         }
       )
-      @user = User.create!(email: "addons@example.com", password: PASSWORD, confirmed_at: Time.current)
+      # A PER-TEST EMAIL, NOT A FIXED ONE, AND THE REASON IS THE SYNC SERVER'S DATABASE.
+      # On the chunk_remote leg a user's first library write lazily provisions a remote library
+      # (FileLayer::ChunkRemote::Provisioning). The maker database rolls back after every test
+      # method; the SYNC SERVER's does not -- so a fixed address provisions on the first test and
+      # then 409s `email_taken` on every one after it, because the local sync_device_token that
+      # call produced was rolled back while the remote User it created was not. Forty failures,
+      # all reading "the sync server refused". Same fix, same reasoning, as
+      # test/support/chunk_remote_journey.rb's own per-test email.
+      @user = User.create!(email: "addons-#{SecureRandom.hex(4)}@example.com",
+                           password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-      Sync::Storage::ChunkStore.reset!
       # Mirrors GeneratorsControllerTest/BoxesControllerTest: on the s3 CI leg, FileLayer.current
       # otherwise resolves to a REAL FileLayer::S3 pointed at CI's stub (non-existent) bucket
       # creds, so an unstubbed save 403s against actual AWS instead of exercising the save path.

@@ -8,10 +8,17 @@ module Web
     include ActiveJob::TestHelper
 
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
+      # A fresh library root per test, for the reason test_helper's own comment gives: the ambient
+      # LIBRARY_PATH outlives the per-test database rollback, so Share's clobber refusal rejects
+      # the second test to upload a given name.
+      @root = use_fresh_share_library!
       @user = sign_in
       @node_id = upload("measure.lbrn2", file_fixture_bytes("real-export.lbrn2"))
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     PASSWORD = "correct horse battery staple".freeze
@@ -25,24 +32,7 @@ module Web
 
     def file_fixture_bytes(name) = File.binread(Rails.root.join("test/fixtures/files", name))
 
-    # Mirror the browser uploader: hash -> begin_upload -> PUT bytes -> finalize_upload. Copied
-    # from files_flow_test.rb's own helper rather than reinvented.
-    def upload(name, bytes)
-      hash = Digest::SHA256.hexdigest(bytes)
-      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-      post begin_upload_files_path, params: { name:, size: bytes.bytesize, manifest: }, as: :json
-      assert_response :success
-      begun = JSON.parse(response.body)
-
-      (begun["put_urls"] || {}).each_value do |url|
-        put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
-        assert_response :ok
-      end
-
-      post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-      assert_response :success
-      begun["node_id"]
-    end
+    def upload(name, bytes) = port_upload(name, bytes)
 
     # THE REAL ROW #geometry WOULD LOOK UP — same node_id, same version_id (content_token) the
     # action resolves via FileLayer.current.stat. find_or_create_by!, not create!: the row may

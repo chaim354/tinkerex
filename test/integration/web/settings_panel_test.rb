@@ -9,9 +9,17 @@ module Web
   # branch backwards shows a CNC job a "Laser settings" table with empty Speed/Power/Passes
   # columns and no tooling at all — wrong, and silent. Only driving the page catches it.
   class SettingsPanelTest < ActionDispatch::IntegrationTest
-    setup { pin_file_layer_backend("chunk") }
-
     PASSWORD = "correct horse battery staple".freeze
+
+    setup do
+      # A real share library so FileLayer.current can answer `stat` for these fixtures.
+      @root = use_fresh_share_library!
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
 
     def sign_in(email = "panel@example.com")
       user = User.find_by(email:) ||
@@ -26,7 +34,13 @@ module Web
     def node_with_metadata(user, name, metadata)
       # In chunk mode the content_token IS the current version id, so a node needs one or the
       # page has nothing to key a thumbnail to.
-      node = user.nodes.create!(node_id: SecureRandom.uuid, name:, kind: "file", storage_path: name,
+      # content_hash IS THE CONTENT TOKEN ON SHARE, and it has to be set explicitly rather than
+      # left to the fixture's defaults: the panel finds its thumbnail by the node's CURRENT token,
+      # so a nil one keys the preview row to nil and the page silently renders no panel at all --
+      # which reads as "the panel is broken" rather than "the fixture is incomplete". On embedded
+      # chunk the current version id played this role, which is what the note above was about.
+      node = create_node!(user, node_id: SecureRandom.uuid, name:, kind: "file", storage_path: name,
+                                content_hash: SecureRandom.hex(8),
                                 current_version_id: SecureRandom.uuid)
       # The page finds its thumbnail by the node's CURRENT content_token, not by node_id alone
       # (that is what keeps a stale render off the page), so the row has to be keyed to whatever

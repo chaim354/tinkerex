@@ -47,31 +47,34 @@ GATES = {
             "bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error"
   end,
 
-  # THE THREE FILELAYER BACKENDS. The suites are identical; what the share and s3 legs buy is
-  # narrower than it looks and is argued at length in ci.yml — they catch tests that silently depend
-  # on the AMBIENT LIBRARY_BACKEND. The share leg found nine of them on the way in.
+  # THE THREE FILELAYER BACKENDS, WHICH ARE NOW share / s3 / chunk_remote. `test` ran embedded
+  # chunk (the old default) and `test-share` ran share; Arc D Part 2 retired embedded chunk, so
+  # those two would be the same leg twice and `test` becomes the share one. What the multiple legs
+  # buy is narrower than it looks and is argued at length in ci.yml -- they catch tests that
+  # silently depend on the AMBIENT LIBRARY_BACKEND. The share leg found nine of them on the way in.
+  #
+  # ALL THREE RUN THE FULL SUITE, which is new: the chunk-family leg used to be ten journey tests
+  # against a real server while embedded chunk carried the full suite in-process. There is no
+  # in-process chunk backend any more, so if `test-chunk-remote` did not run everything, the
+  # PRIMARY deployment's backend would be the only one without full coverage.
+  #
+  # A fresh empty dir per run. LIBRARY_PATH must exist and be writable or the boot guard refuses to
+  # boot -- it touch-probes rather than asking File.writable?, which tests POSIX mode bits, not
+  # effective access, and is wrong under exactly the NFS/SMB ACLs this backend targets.
+  #
+  # AND IT CLEANS UP AFTER ITSELF. Our runners are SELF-HOSTED and therefore PERSISTENT (§15) --
+  # nothing reclaims a stray tmpdir between runs the way a fresh hosted image would. A review of
+  # this file found 334 accumulated `tmp.*` directories on the mac runner, some holding real
+  # share-fixture bytes dated weeks back: kilobytes per run, but unbounded, and this codebase
+  # treats unbounded accumulation as a bug everywhere else it appears (Library::TrashPurgeJob).
+  #
+  # `trap ... EXIT` fires however the shell leaves -- pass, fail, or interrupt -- so a red run does
+  # not leak either. `${d:?}` is the guard that matters: if `mktemp -d` failed and `d` is empty, the
+  # trap aborts instead of handing `rm -rf` an empty argument.
   "test" => ->(ci) do
-    ci.step "Tests: Rails (chunk backend)", "bin/rails db:test:prepare test"
-  end,
-
-  "test-share" => ->(ci) do
-    # A fresh empty dir per run. LIBRARY_PATH must exist and be writable or the boot guard refuses
-    # to start — it TOUCH-PROBES, because File.writable? reads POSIX mode bits rather than effective
-    # access and is wrong under exactly the NFS/SMB ACLs this backend targets.
-    #
-    # AND IT CLEANS UP AFTER ITSELF, which the first version did not. Our runners are SELF-HOSTED and
-    # therefore PERSISTENT (§15) — nothing reclaims a stray tmpdir between runs the way a fresh
-    # hosted image would. A review of this file found 334 accumulated `tmp.*` directories on the mac
-    # runner, some holding real share-fixture bytes dated weeks back: kilobytes per run, but
-    # unbounded, and this codebase treats unbounded accumulation as a bug everywhere else it appears
-    # (Sync::ChunkReaper, Library::TrashPurgeJob).
-    #
-    # `trap ... EXIT` fires however the shell leaves — pass, fail, or interrupt — so a red run does
-    # not leak either. `${d:?}` is the guard that matters: if `mktemp -d` failed and `d` is empty, the
-    # trap aborts instead of handing `rm -rf` an empty argument.
     ci.step "Tests: Rails (share backend)",
             'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
-            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" SYNC_ENGINE=1 bin/rails db:test:prepare test'
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test'
   end,
 
   "test-s3" => ->(ci) do
@@ -82,28 +85,17 @@ GATES = {
     ci.step "Tests: Rails (s3 backend)",
             "env LIBRARY_BACKEND=s3 LIBRARY_S3_BUCKET=ci-not-a-real-bucket " \
             "LIBRARY_S3_REGION=us-east-1 LIBRARY_S3_ACCESS_KEY_ID=ci " \
-            "LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library SYNC_ENGINE=1 " \
+            "LIBRARY_S3_SECRET_ACCESS_KEY=ci LIBRARY_S3_PREFIX=library " \
             "bin/rails db:test:prepare test"
   end,
 
-  # THE FOURTH BACKEND LEG, AND THE ONLY ONE WHERE THE ENGINE IS GENUINELY ABSENT.
-  #
-  # The three legs above now set SYNC_ENGINE=1, so they keep the engine loaded even on share and s3
-  # and go on reporting IDENTICAL run and assertion counts -- §15's guard against a test quietly
-  # depending on the ambient LIBRARY_BACKEND is unchanged by any of this. That guard is worth more
-  # than the convenience of letting the counts drift.
-  #
-  # But it means those legs no longer execute the no-engine path at all, and a conditional nobody
-  # runs is CLAUDE.md §14a's recorded bug verbatim: a boot guard that passed the entire suite and
-  # took production down. So this leg boots share with SYNC_ENGINE=0 and runs ONE focused file that
-  # asserts what "no engine" is supposed to mean. Its counts differ from the other three by design,
-  # which is why it is a separate suite rather than the same suite with a flag.
-  "test-no-engine" => ->(ci) do
-    ci.step "Tests: share with NO sync engine loaded",
-            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
-            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" SYNC_ENGINE=0 ' \
-            "bin/rails db:test:prepare test TEST=test/integration/no_engine_boot_test.rb"
-  end,
+  # `test-no-engine` WAS HERE AND IS GONE. It booted share with SYNC_ENGINE=0 and ran one focused
+  # file, because the other legs forced the engine loaded (SYNC_ENGINE=1) so their counts would
+  # stay identical, and a conditional nobody executes is CLAUDE.md §14a's recorded bug verbatim.
+  # Arc D Part 2 removed the engine from this app entirely: "no engine loaded" is not a leg any
+  # more, it is the only mode there is, and every gate above exercises it. Its one test file went
+  # with it -- what remains of that claim is build_chunk_remote_test's structural assertion that
+  # Sync is not even defined here, which goes red if the gem is ever re-added.
 
   # THE chunk_remote JOURNEY, AGAINST A REAL STANDALONE tinkerex-sync HOST.
   #
@@ -191,13 +183,30 @@ GATES = {
           echo "the device token was rejected"; exit 1; }
 
       set +e
+      # TWO RUNS, AND THE SPLIT IS THE SKIP ASSERTION -- IT IS NOT A CONVENIENCE.
+      #
+      # The journey file runs FIRST, alone, and must report ZERO skips. That check is this gate's
+      # real guard and the reason the gate exists in this shape: nothing inside the suite can
+      # vouch for its own skips (CLAUDE.md §14j -- "a guard that skips on the thing it asserts is
+      # vacuous"), and measured under a deliberately broken skip_unless_remote_server the journey
+      # suite still reported `9 runs, 1 assertions, 0 failures, 8 skips` and exit 0. This step is
+      # the one place that KNOWS a server is up -- it just probed /up and whoami -- so it is what
+      # can call a skip illegitimate.
+      #
+      # THE FULL SUITE RUNS SECOND AND MAY LEGITIMATELY SKIP, which is exactly why it cannot share
+      # the check. It carries ~30 honest skips -- renderers whose toolchain is absent on this box,
+      # suites gated on an optional binary -- so grepping ITS output for skips would fail every
+      # run, and "loosen the guard until it passes" would have quietly destroyed the one assertion
+      # that has already caught a vacuous skip once. Running the file twice is a few seconds; the
+      # alternative is a guard that means nothing.
       LIBRARY_BACKEND=chunk_remote bin/rails db:test:prepare \
         test TEST=test/integration/chunk_remote_journey_test.rb 2>&1 | tee tmp/journey-ci.txt
-      code=${PIPESTATUS[0]}
+      journey_code=${PIPESTATUS[0]}
+
+      LIBRARY_BACKEND=chunk_remote bin/rails test 2>&1 | tee tmp/chunk-remote-full.txt
+      full_code=${PIPESTATUS[0]}
       set -e
 
-      # THE SKIP ASSERTION IS THE REAL GUARD -- see this gate's own comment in config/ci.rb for why
-      # nothing inside the suite itself can stand in for this check.
       if grep -qE ', [1-9][0-9]* skips' tmp/journey-ci.txt; then
         echo "::error::the journey suite SKIPPED with a sync server configured and reachable."
         echo "A skip here means skip_unless_remote_server stopped discriminating, and the suite"
@@ -205,13 +214,24 @@ GATES = {
         echo "impossible."
         exit 1
       fi
-      exit "$code"
+      [ "$journey_code" -eq 0 ] || exit "$journey_code"
+      exit "$full_code"
     SCRIPT
-    ci.step "Tests: chunk_remote journey (real sync server)", "bash", "-c", script
+    ci.step "Tests: chunk_remote (journey + full suite, real sync server)", "bash", "-c", script
   end,
 
+  # THE SYSTEM GATE NOW NEEDS A LIBRARY_PATH, AND IT DID NOT BEFORE. It sets no LIBRARY_BACKEND,
+  # so it takes FileLayer.build's DEFAULT -- which was embedded `chunk` (needs no configuration at
+  # all) and is `share` since Arc D Part 2 (reads ENV.fetch("LIBRARY_PATH") and raises without it).
+  # Left alone, 82 of these tests failed with `KeyError: key not found: "LIBRARY_PATH"` several
+  # frames from anything mentioning a backend.
+  #
+  # Same mktemp + trap discipline as the `test` gate above, and for the same reason: self-hosted
+  # runners are PERSISTENT, so a stray tmpdir per run accumulates unbounded.
   "system" => ->(ci) do
-    ci.step "Tests: System (real browser)", "bin/rails db:test:prepare test:system"
+    ci.step "Tests: System (real browser)",
+            'd=$(mktemp -d); trap \'rm -rf "${d:?}"\' EXIT; ' \
+            'env LIBRARY_BACKEND=share LIBRARY_PATH="$d" bin/rails db:test:prepare test:system'
   end
 }.freeze
 

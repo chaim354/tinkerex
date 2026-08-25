@@ -27,9 +27,18 @@ module V1
       UUID = "6f2a1c3e-0b47-4d51-9a8e-2c7b5d0f1e93".freeze
 
       setup do
-        Sync::Storage::ChunkStore.reset!
+      # A hermetic library for this suite. It pinned embedded chunk until Arc D Part 2; with that
+      # backend retired it would otherwise run on the AMBIENT one, which on the s3 leg means real
+      # Aws calls (the stub is opt-in per file) and on chunk_remote means a live sync server.
+      # What these tests are about is the web layer, not which backend holds the bytes.
+      @root = use_fresh_share_library!
         @token = bootstrap_token(email: "rev@example.com", device_name: "laptop")
         @user  = User.find_by(email: "rev@example.com")
+      end
+
+      teardown do
+        FileLayer.reset!
+        FileUtils.remove_entry(@root) if @root&.exist?
       end
 
       def auth(t) = { "Authorization" => "Bearer #{t}" }

@@ -145,57 +145,10 @@ jobs:
         run: bundle install --quiet
       - name: Ensure resvg (SVG→PNG for the preview tests)
         run: ci/ensure-resvg.sh
-      - name: Run the suite (chunk backend)
+      - name: Run the suite (share backend — the hermetic default since embedded chunk was retired)
         env:
           RAILS_ENV: test
         run: bin/ci test
-
-  # The whole suite, run again with the share backend selected.
-  #
-  # This is NOT what stops the two adapters diverging — the shared adapter contract already does
-  # that, and it runs against BOTH in the `test:` job above (chunk_test.rb and share_test.rb each
-  # include FileLayerAdapterContract and construct their adapter explicitly, so they need no ENV).
-  #
-  # What this leg catches is narrower and otherwise invisible: tests that silently depend on the
-  # AMBIENT backend. It earned its place immediately — it found nine of them (seven preview-job
-  # tests, the maker file-bytes shim, and a previews API test), all building chunk-shaped fixtures
-  # while taking their adapter from the environment, including one whose name claimed an adapter
-  # it never pinned. Those are now pinned; this leg is what keeps the habit from creeping back.
-  #
-  # WHY THE WHOLE SUITE RATHER THAN A SCOPED SUBSET: it is cheap enough to justify — a tmpdir, no
-  # external services — and a subset would be redundant with `test:` above. The thing under test here
-  # is the AMBIENT ENV, not any particular file, so narrowing the file list narrows nothing that
-  # matters while creating a list somebody has to keep current.
-  test-share-backend:
-    runs-on: [self-hosted, macos]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
-        run: bundle install --quiet
-      - name: Ensure resvg (SVG→PNG for the preview tests)
-        run: ci/ensure-resvg.sh
-      - name: Run the suite (share backend)
-        env:
-          RAILS_ENV: test
-        run: bin/ci test-share
-
-  # The sibling of test-share-backend, buying the same narrow thing for the same reason.
-  #
-  # As with the share leg, this is NOT what stops the adapters diverging: both shared contracts
-  # already do that and they run in `test:` above. `test/services/file_layer/s3_test.rb` includes
-  # FileLayerAdapterContract AND FileLayerWritableContract, constructing its adapter explicitly with
-  # an injected stub client, so it needs no ENV — S3 inheriting the WRITE contract was the whole
-  # point of the file-layer split's Phase 3. The headline E2E
-  # (test/integration/library/s3_library_test.rb) likewise pins its own adapter.
-  #
-  # HONEST RESULT, unlike the share leg's: this one found ZERO ambient-dependent tests on the way
-  # in — all three legs report an identical count. The share leg earned its place immediately by
-  # finding nine; this one is a regression guard from birth, which is the outcome to expect once the
-  # habit it enforces is already established. It stays because it costs a tmpdir-free run with no
-  # external services, and because "nothing depends on the ambient backend" is exactly the kind of
-  # claim that decays silently without a leg asserting it.
-  #
-  # NO EXTERNAL SERVICE, deliberately — see the comment on the `test-s3` gate in config/ci.rb.
   test-s3-backend:
     runs-on: [self-hosted, macos]
     steps:
@@ -208,39 +161,6 @@ jobs:
         env:
           RAILS_ENV: test
         run: bin/ci test-s3
-
-  # The browser tier. Its own job so its cost stays visible as it grows, rather than inflating the
-  # unit-test job. See test/system/README.md for what earns a place in it.
-  # The ONLY job where the sync engine is genuinely not in the process. The three backend jobs
-  # above pin SYNC_ENGINE=1 so their counts stay identical (§15); this one is what actually executes
-  # config/application.rb's conditional require. See config/ci.rb's own comment for why both exist.
-  test-no-engine:
-    runs-on: [self-hosted, macos]
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install gems (the runner's own Ruby — see ci/runners/README.md)
-        run: bundle install --quiet
-      - name: Run the no-engine boot suite
-        env:
-          RAILS_ENV: test
-        run: bin/ci test-no-engine
-
-  # THE chunk_remote JOURNEY, AGAINST A REAL STANDALONE tinkerex-sync HOST -- config/ci.rb's
-  # `test-chunk-remote` gate, which owns the whole boot/probe/run/skip-check script; see its own
-  # comment there for the mechanism. This job exists only for the two things a gate cannot do for
-  # itself: check out a SECOND repository, and hand it credentials.
-  #
-  # USED TO BE .github/workflows/sync-contract.yml, kept OUT of bin/ci while the suite was
-  # deliberately red (Stage 5 Arc B measured, then closed, four real gaps -- docs/STATUS.md). Now
-  # 10/10 against a real server, it moved in here rather than being left running the same suite a
-  # second way -- one definition, same as every other gate.
-  #
-  # SECOND CHECKOUT: the sync engine is a separate private repo, and secrets.GITHUB_TOKEN is scoped
-  # to THIS repo only. A READ-ONLY DEPLOY KEY, NOT A PAT -- same reasoning as §14j's Docker-build
-  # key: a PAT carries the whole account's reach to read one repo, and GitHub has had no API to
-  # mint one since POST /authorizations was sunset in 2020, so it is also an irreducibly manual,
-  # by-hand-in-a-browser step. `gh repo deploy-key add` creates exactly the narrower thing --
-  # tinkerex-sync's `ci-sync-contract` key, unchanged by the workflow's rename.
   test-chunk-remote:
     runs-on: [self-hosted, macos]
     steps:

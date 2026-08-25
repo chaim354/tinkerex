@@ -69,34 +69,6 @@ module Maker
                    "proportional, never grow, as more of the path already exists"
     end
 
-    # Chunk branch: real chunk backend; folders created via Sync::Mutation (changelog entries).
-    class ChunkBranch < LibraryFolderTest
-      setup do
-        pin_file_layer_backend("chunk")
-        Sync::Storage::ChunkStore.reset!
-        @user = User.create!(email: "lf-#{SecureRandom.hex(4)}@example.com",
-                             confirmed_at: Time.current, omniauth_signup: true)
-      end
-
-      test "ensure_path! creates nested dirs via sync-mutation, idempotently" do
-        leaf = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
-        assert_equal "dir", leaf.kind
-        assert_equal "desk-lamp", leaf.name
-        root = @user.nodes.present.find_by!(name: "Projects", parent_node_id: nil, kind: "dir")
-        assert_equal root.node_id, leaf.parent_node_id
-        assert @user.changelog_entries.exists?(op: "mkdir", node_id: leaf.node_id),
-               "chunk mkdir must go through the sync engine (a changelog entry)"
-
-        again = Maker::LibraryFolder.ensure_path!(@user, [ "Projects", "desk-lamp" ])
-        assert_equal leaf.node_id, again.node_id, "idempotent — same leaf, no duplicate"
-        assert_equal 1, @user.nodes.where(name: "Projects", parent_node_id: nil, kind: "dir").count
-      end
-
-      test "walking an already-existing path costs one query per segment, never the port" do
-        assert_already_existing_path_costs_one_query_per_segment
-      end
-    end
-
     # Share branch: port_writable → FileLayer.current.mkdir (also exercises the s3 code path).
     class ShareBranch < LibraryFolderTest
       setup do

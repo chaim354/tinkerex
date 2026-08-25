@@ -11,12 +11,22 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
+      # A hermetic library for this suite. It pinned embedded chunk until Arc D Part 2; with that
+      # backend retired it would otherwise run on the AMBIENT one, which on the s3 leg means real
+      # Aws calls (the stub is opt-in per file) and on chunk_remote means a live sync server.
+      # What these tests are about is the web layer, not which backend holds the bytes.
+      @root = use_fresh_share_library!
       @user = User.create!(email: "back-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
       @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
       @user.nodes.create!(node_id: "n-part", name: "part.stl", kind: "file",
                           parent_node_id: "dir-cad", mtime: 1_000_000_000, size: 5)
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     def back_href

@@ -1,6 +1,6 @@
 # Build status — sync engine
 
-**Updated:** 2026-08-24 (**Stage 5 Arc A+B+C+D Part 1: `chunk_remote` is now a LIVE DEPLOYMENT — a fourth Unraid destination talking to a standalone sync server over HTTP, with the engine absent from the maker process entirely, proven by round-trip on hardware. Embedded `chunk` is NOT retired; the deletion is deferred to its own arc and costs 68 of 224 test files — see "Arc D Part 1" below**)
+**Updated:** 2026-08-25 (**Stage 5 COMPLETE — Arc D Part 2 retired embedded `chunk`. The sync engine is no longer a dependency of this app: the gem is gone, `Sync::` is undefined here, and the maker app no longer serves a device sync API at all. `LIBRARY_BACKEND` is `chunk_remote | share | s3`, three Unraid destinations again with the chunk-family one as the base, and all three backend legs run the FULL suite at identical counts — the chunk_remote one against a real sync server**)
 
 ## What this file is
 
@@ -71,7 +71,147 @@ reading the last entry.
 
 ---
 
-## Latest (2026-08-24): Stage 5 Arc A+B+C+D — chunk_remote closes 10/10, gets per-user enrolment, and then GOES LIVE as a fourth deployment — Arc A+B+C+D Part 1 **MERGED + DEPLOYED** (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`, `claude/stage-5-arc-d`, `claude/arc-d-sync-backups`)
+## Latest (2026-08-25): Stage 5 COMPLETE — chunk_remote closes 10/10, gets per-user enrolment, goes live, and finally REPLACES embedded chunk — Arcs A–D Part 1 **MERGED + DEPLOYED**, Arc D Part 2 on branch `claude/arc-d-part-2-retire-chunk` (branches `claude/stage-5-arc-a`, `claude/stage-5-arc-b`, `claude/stage-5-arc-c`, `claude/stage-5-arc-d`, `claude/arc-d-sync-backups`, `claude/arc-d-part-2-retire-chunk`)
+
+### Arc D Part 2 (2026-08-25) — embedded `chunk` is retired; the sync engine leaves this process for good
+
+**THE END STATE THE WHOLE OF STAGE 5 WAS FOR.** `LIBRARY_BACKEND` is now
+**`chunk_remote | share | s3`**, the gem is gone from the Gemfile, `Sync::` is undefined here, and
+the three Unraid destinations are three again with the chunk-family one as the BASE. The maker app
+no longer serves a device sync API at all.
+
+#### The headline number was the wrong number to plan from
+
+CLAUDE.md §12 said this cost **68 of 224 test files**. True, and misleading — most of those hits
+are *prose*. Measured before touching anything:
+
+| | files | with a **non-comment** reference |
+|---|---|---|
+| `app/`+`lib/`+`config/` naming `Sync::` | 43 | **7** |
+| `test/**_test.rb` naming `Sync::` or `FileLayer::Chunk` | 68 | **57** |
+| …of which, in `chunk_test.rb` alone | — | **60 of the total references** |
+
+So the real work was 7 wiring sites and 57 test files, 60 of whose references sat in one file that
+was deleted outright. **This is why the arc was deferred twice on a number that overstated it**,
+and it is the argument for measuring the actual coupling before planning around a documented one.
+
+#### The test work and the coverage problem were the same work
+
+Arc C measured the full suite against a real remote server at **818/2504 failing, ~all a test-shape
+problem, zero real adapter defects**. That was not a separate obstacle: the failures were tests
+reaching into `Sync::`, which does not exist in a `chunk_remote` process, so removing those
+references *is* what makes the full suite run there. Done in this order the arc **gained**
+chunk-family coverage rather than losing it — from ten journey tests to the whole 2346.
+
+**Reproduced at the start**: `LIBRARY_BACKEND=share SYNC_ENGINE=0 bin/rails test` gave **824 errors
+/ 8 failures**. `bin/ci`'s share leg passed only because it forced `SYNC_ENGINE=1`.
+
+#### The burndown, and the one that went the wrong way
+
+| step | errors | failures |
+|---|---|---|
+| start | 824 | 8 |
+| chunk pins + store resets removed | 149 | 125 |
+| engine-only suites deleted | **233** | 78 |
+| `FileLayer.build` default fixed | 52 | 110 |
+| seeding converted, suites split | 0 | 0 |
+
+**The third row is the useful one.** Deleting files made errors go *up*, because
+`FileLayer.build` defaulted to `ENV.fetch("LIBRARY_BACKEND", "chunk")` — every context that never
+set the env fell through to a backend that no longer existed and raised `NameError` several frames
+from anything naming a backend. The default is `share` now: the only hermetic backend left
+(chunk_remote resolves against a standalone server), and nothing in production depends on it since
+every Kamal destination sets `LIBRARY_BACKEND` explicitly.
+
+**The root cause of the bulk was one line, not 47 files.** `pin_file_layer_backend` was called 60
+times across 47 files and **every single call passed `"chunk"`** — there was no other value in the
+suite. Those files ran against the embedded engine whatever leg was executing, which is exactly why
+the share/s3 legs had to force the engine loaded to keep their counts identical.
+
+#### Four defects found by running, not reading
+
+1. **`build_chunk_remote_test`'s `build_with` deleted the env keys it set instead of restoring
+   them.** Harmless while the default was `chunk` (needs no configuration) — a later test in the
+   same worker just got a Chunk adapter and never noticed. With the default `share` (which reads
+   `ENV.fetch("LIBRARY_PATH")`) the same deletion became `KeyError` in **~40 unrelated tests**, in
+   files this arc never touched. A pre-existing bug a changed default exposed; the fix belongs in
+   the helper, not the default. Found by trapping `ENV#delete`/`ENV#[]=` with a backtrace **after
+   reasoning about it twice and being wrong both times** — `factory_test` and
+   `library_backend_check_test` both look like the culprit and both restore correctly.
+2. **`previews_test`'s fixtures had `current_version_id` but no `content_hash`.** On share the
+   current content token IS `content_hash`, and that is what the controller compares a POSTed
+   `version_id` against — so "is this the current version?" was unanswerable and a **superseded
+   POST was ACCEPTED rather than refused**. That is the precise bug that endpoint exists to
+   prevent, and it would have shipped looking like a passing suite.
+3. **A self-inflicted one, caught by an assertion whose comment predicted it.** The sweep pointing
+   fixtures at `create_node!` also rewrote the `nodes.create!` *inside* `file_menu_test`'s own
+   `create_file!`, so it wrote real bytes and then overwrote them with the helper's `"x"`
+   placeholder. The collision test caught it by reading bytes back through the port — which its own
+   comment says exists because a name/parent check alone cannot prove the original survived.
+4. **`make_file` returned a `Node` where the shared contract's header says it returns a
+   `node_id`** (`make_dir` beside it already did). Every contract call passed an AR object where a
+   String belonged, surfacing as `FileLayer::NotFound: node #<Node id: 1, ...>`.
+
+#### What was removed
+
+`User`'s seven engine associations · `LibraryBroadcast`'s engine arm (two answers now, not three)
+· `Sync.draw_v1_routes` · the three engine jobs from `recurring.yml` · `sync_hooks.rb`,
+`sync_capabilities.rb`, `postgres_pooler_check.rb` · `DevBlobsController` and its route ·
+`db/engine_schema.rb`, `lib/engine_schema.rb` and their cross-repo guard · `engine_wanted?` and the
+`SYNC_ENGINE` knob · the gem · the Dockerfile's deploy-key mount and https→SSH rewrite ·
+`config/deploy.remote.yml` · the base's `STORAGE_BACKEND`/`CHUNK_*` block (nothing in this app reads
+those names — checked by grep, not assumed) · `test-share` and `test-no-engine` gates ·
+`chunk_test.rb`, `sync_flow_test.rb`, `dev_blobs_test.rb`, `engine_schema_test.rb`,
+`commit_finalize_hook_test.rb`, `engine_routes_test.rb`, `v1_auth_parity_test.rb`,
+`no_engine_boot_test.rb`, and three `ChunkBranch`/`ChunkTest` nested classes.
+
+**`db/migrate/` is untouched**, per §14j: rewriting it breaks every already-migrated database,
+which is every environment this app has.
+
+#### CI: three legs, all running the full suite
+
+`bin/ci` went 9 gates → **7**. `test` IS the share leg (it ran embedded chunk; `test-share` was
+folded in rather than left as the same leg twice). `test-no-engine` is deleted — no engine is the
+only mode there is, and every gate exercises it. `test-chunk-remote` runs the **full** suite against
+a server `bin/sync-server` boots.
+
+**That gate runs the journey file twice over, deliberately.** Once alone, which must report ZERO
+skips, then the full suite, which may legitimately skip ~5. The skip assertion is the gate's real
+guard — nothing inside a suite can vouch for its own skips (§14j), and under a deliberately broken
+`skip_unless_remote_server` the journey suite reported `9 runs, 1 assertions, 0 failures, 8 skips`
+and exit 0. Sharing one run would have meant loosening that grep until it passed.
+
+```
+share         2346 runs, 8636 assertions, 0 failures, 0 errors, 30 skips
+s3            2346 runs, 8636 assertions, 0 failures, 0 errors, 30 skips
+chunk_remote  2346 runs, 8793 assertions, 0 failures, 0 errors,  5 skips   (+ journey 10/10, 0 skips)
+system         179 runs, 1498 assertions, 0 failures, 0 errors,  1 skip
+```
+
+Three backend legs at **identical 2346 runs** (§15).
+
+#### The consequence that is not reversible by config
+
+**The maker app no longer serves the device sync API.** `/v1/changes`, `/v1/tree`, `/v1/commit`,
+`/v1/commit/:id/finalize`, `/v1/chunks/*`, `/v1/conflicts`, `/v1/locks`, `/v1/trash`, `/v1/nodes`
+and `/v1/share_links` were drawn by the engine and are not routed here. A desktop client syncs
+against the standalone server, never against this app — the whole point, and why
+`client-contract.yml` now checks out `chaim354/tinkerex-sync` and boots it via `bin/sync-server`
+instead of booting this app.
+
+#### Still open after Arc D Part 2
+
+- **`client-contract.yml` has not executed.** It is linux-gated and no linux runner is registered
+  (§15), so it is SKIPPED, not passing. It also references `secrets.TINKEREX_SYNC_DEPLOY_KEY`, which
+  exists as a Kamal secret for the (now-removed) Docker build but may not exist as a GitHub Actions
+  repo secret — the same shape as the `TINKEREX_CLIENT_DEPLOY_KEY` gap that workflow's own comment
+  records: referenced for four days, never created, invisible because the job never ran.
+- **Two cross-repo obligations, deliberately not discharged here.** `commit_finalize_hook_test`
+  asserted the HTTP response shape when a hook subscriber raises, and `concurrency_limits_test`
+  pinned the three engine jobs' `limits_concurrency`. tinkerex-sync's suite covers the Hooks
+  MECHANISM and the transaction boundary but not the response shape, and it cannot test
+  `limits_concurrency` at all because solid_queue is the host's (§14j). Both should move there.
+- **The deploy has not run.** The three Unraid destinations still run the pre-Arc-D-Part-2 image.
 
 ### Arc D Part 1 (2026-08-24) — `chunk_remote` becomes a LIVE deployment, and `chunk` is NOT retired
 

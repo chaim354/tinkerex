@@ -29,23 +29,22 @@ class LibraryBroadcastTest < ActiveSupport::TestCase
   # test_helper's `pin_file_layer_backend`, because that helper calls `FileLayer.build`, which for
   # "chunk_remote" demands a real `CHUNK_REMOTE_URL`/`CHUNK_REMOTE_TOKEN` this test has no use for --
   # every adapter below is handed a fake transport instead.
-  def with_file_layer_env(library_backend:, sync_engine:, current:)
+  # `sync_engine:` IS GONE FROM THIS HELPER along with the knob it set: LibraryBroadcast no longer
+  # branches on whether the engine is loaded, because it never is (Arc D Part 2).
+  def with_file_layer_env(library_backend:, current:)
     prior_backend = ENV["LIBRARY_BACKEND"]
-    prior_sync_engine = ENV["SYNC_ENGINE"]
     prior_current = FileLayer.instance_variable_get(:@current)
 
     ENV["LIBRARY_BACKEND"] = library_backend
-    ENV["SYNC_ENGINE"] = sync_engine
     FileLayer.current = current
     yield
   ensure
     prior_backend.nil? ? ENV.delete("LIBRARY_BACKEND") : ENV["LIBRARY_BACKEND"] = prior_backend
-    prior_sync_engine.nil? ? ENV.delete("SYNC_ENGINE") : ENV["SYNC_ENGINE"] = prior_sync_engine
     FileLayer.instance_variable_set(:@current, prior_current)
   end
 
   def with_chunk_remote_current(adapter, &block)
-    with_file_layer_env(library_backend: "chunk_remote", sync_engine: "0", current: adapter, &block)
+    with_file_layer_env(library_backend: "chunk_remote", current: adapter, &block)
   end
 
   # Records every POST and answers an always-empty, never-gapped changelog, so ChangelogSync#call
@@ -238,27 +237,11 @@ class LibraryBroadcastTest < ActiveSupport::TestCase
     user = new_user
     ran = false
 
-    result = with_file_layer_env(library_backend: "share", sync_engine: "0", current: Object.new) do
+    result = with_file_layer_env(library_backend: "share", current: Object.new) do
       LibraryBroadcast.batch(user) { ran = true; :share_result }
     end
 
     assert ran, "the block must still run"
     assert_equal :share_result, result
-  end
-
-  # THE UNCHANGED ARM: engine loaded (chunk, or SYNC_ENGINE forced on for a share/s3 CI leg) still
-  # delegates to Sync::LibraryChannel.batch exactly as before this task. No seq is ever set inside
-  # the block, so LibraryChannel's own `ensure` finds nothing to broadcast and this stays a pure
-  # routing check with no ActionCable/Solid Cable side effect to manage.
-  test "with the engine loaded, batch still delegates to Sync::LibraryChannel.batch, unchanged" do
-    user = new_user
-    ran = false
-
-    result = with_file_layer_env(library_backend: "chunk", sync_engine: "1", current: Object.new) do
-      LibraryBroadcast.batch(user) { ran = true; :engine_result }
-    end
-
-    assert ran
-    assert_equal :engine_result, result
   end
 end

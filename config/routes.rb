@@ -258,13 +258,6 @@ Rails.application.routes.draw do
   post "tools/:key",             to: "tools/addons#create"
   get  "tools/:key",             to: "tools/addons#show",  as: :tools_addon
 
-  # DEV/TEST ONLY chunk-bytes endpoint backing the MemoryChunkStore's presigned URLs.
-  # NOT mounted in production (there STORAGE_BACKEND=s3 presigns straight to storage).
-  unless Rails.env.production?
-    get "dev/blobs/*key", to: "dev_blobs#show",   format: false, as: :dev_blob
-    put "dev/blobs/*key", to: "dev_blobs#update", format: false
-  end
-
   # TEST/DEV-ONLY confirmed-account signup seam for the Rust integration tests. Mounted when
   # the explicit ENABLE_TEST_SIGNUP flag is set (off by default) OR in any non-production env —
   # so a self-hosted NON-production test/dev deploy (e.g. the Unraid box, which runs as
@@ -312,7 +305,14 @@ Rails.application.routes.draw do
     # would 501 on those backends anyway (every one gates on `syncable` or `versioned`). The
     # difference is that a route that does not exist 404s, which is the honest answer for a
     # deployment whose engine is not in the process at all.
-    Sync.draw_v1_routes(self) if LibraryBackend.engine_wanted?
+    # THE SYNC ENGINE'S v1 ROUTES ARE GONE, AND WITH THEM THIS APP'S DEVICE-SYNC API.
+    # `Sync.draw_v1_routes(self)` used to add /v1/changes, /v1/tree, /v1/commit,
+    # /v1/commit/:id/finalize, /v1/chunks/*, /v1/conflicts, /v1/locks, /v1/trash, /v1/nodes and
+    # /v1/share_links here. Since Arc D Part 2 this app does not load the engine at all, so a
+    # desktop client syncs against the STANDALONE sync server (chaim354/tinkerex-sync), never
+    # against the maker app. What remains under /v1 is this app's own: the maker layer and the
+    # device endpoints, which stay host-owned because a device token is the only credential the
+    # whole API accepts (§14j).
 
 
     namespace :maker do

@@ -8,51 +8,6 @@ module Web
     include ActiveJob::TestHelper # a port upload enqueues a preview job; keep it recorded, not run
     PASSWORD = "correct horse battery staple".freeze
 
-    class ChunkTest < CurrentProjectFilesUploadTest
-      setup do
-        pin_file_layer_backend("chunk")
-        Sync::Storage::ChunkStore.reset!
-        @user = User.create!(email: "fu-#{SecureRandom.hex(4)}@example.com",
-                             password: PASSWORD, confirmed_at: Time.current)
-        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-        @project = @user.maker_projects.create!(name: "Desk Lamp")
-        @folder = @project.ensure_library_folder!(@user)
-      end
-
-      test "with a current project the uploader is wired to upload into it and attach" do
-        patch current_project_path, params: { project_id: @project.id }
-        get files_path
-        assert_response :success
-        assert_select "[data-uploader-parent-node-id-value=?]", @folder.node_id
-        assert_select "[data-uploader-attach-url-value=?]", project_attachments_path(@project)
-        assert_select "[data-uploader-redirect-url-value=?]", files_path(folder: @folder.node_id)
-        assert_select "a", text: /library root instead/i
-      end
-
-      test "the override link preserves the browsed folder, not the project folder" do
-        other = @user.nodes.create!(node_id: SecureRandom.uuid, name: "Loose", kind: "dir")
-        patch current_project_path, params: { project_id: @project.id }
-        get files_path(folder: other.node_id)
-        assert_response :success
-        assert_select "a[href=?]", files_path(folder: other.node_id, upload: "library"),
-                      text: /library root instead/i
-      end
-
-      test "the ?upload=library override renders the plain (root) uploader" do
-        patch current_project_path, params: { project_id: @project.id }
-        get files_path(upload: "library")
-        # plain uploader has no attach-url wiring
-        assert_select "[data-uploader-attach-url-value]", count: 0
-        assert_select "[data-controller='uploader']"
-      end
-
-      test "with no current project the plain uploader renders" do
-        get files_path
-        assert_select "[data-uploader-attach-url-value]", count: 0
-        assert_select "[data-controller='uploader']"
-      end
-    end
-
     class ShareTest < CurrentProjectFilesUploadTest
       setup do
         @root = Pathname.new(Dir.mktmpdir("files-upload"))

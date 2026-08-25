@@ -94,6 +94,86 @@ module ActiveSupport
     #
     # Call it in setup. The teardown below restores the prior value whether or not it was called,
     # so nothing leaks into the next test in the worker.
+    # SEEDS A FILE THROUGH THE PORT-WRITABLE DOOR, FOR ANY TEST THAT JUST NEEDS A FILE TO EXIST.
+    #
+    # ONE DEFINITION, deliberately. Before Arc D Part 2 this was an `upload` helper copied between
+    # files_flow_test.rb and lbrn_geometry_test.rb -- the second one's own comment said "copied
+    # from files_flow_test.rb's own helper rather than reinvented" -- and both drove the presigned
+    # two-phase chain (hash -> begin_upload -> PUT -> finalize_upload). That chain is
+    # `syncable`-gated: with embedded chunk retired it answers 501 on share, and its body tells the
+    # caller to "Upload through POST /files" instead, which is what this does.
+    #
+    # THE NODE ID COMES OUT OF THE Location HEADER. #create answers `redirect_to
+    # file_path(info.node_id)`, so the id is already on the wire -- exact, and it cannot be
+    # confused by the several suites that upload the same NAME twice on purpose (the clobber and
+    # replace paths). Looking the node up by name was tried first and is wrong for a second reason
+    # besides ambiguity: a REFUSED upload also redirects, to the index, so the lookup reported
+    # "not found" for a write that was rejected, several frames from the assertion that cared.
+    # Hence the explicit Location shape check and the flash in the message -- that is how the
+    # "already exists" clobber refusal behind a whole suite's failures was found at all.
+    def port_upload(name, bytes, parent_node_id: nil)
+      body = { file: Rack::Test::UploadedFile.new(StringIO.new(bytes), "application/octet-stream",
+                                                  original_filename: name) }
+      body[:parent_node_id] = parent_node_id if parent_node_id
+      post files_path, params: body
+      assert_response :redirect, "POST /files failed: #{response.body[0, 300]}"
+      loc = response.headers["Location"].to_s
+      assert_match(%r{/files/[^/]+\z}, loc,
+                   "upload of #{name.inspect} was refused: #{flash[:alert] || flash[:notice]}")
+      loc.split("/").last
+    end
+
+    # A NODE ROW **PLUS THE FILE IT CLAIMS TO BE**, for suites whose fixtures used to be rows alone.
+    #
+    # CLAUDE.md §14a records the trap this exists to close, in as many words: "a test fixture built
+    # with nodes.create! has a NULL storage_path, which cannot exist on share/s3". On embedded
+    # chunk that was harmless -- a node IS a row there and a move is a changelog entry -- so whole
+    # suites seeded with bare `nodes.create!` and pinned chunk to match. On share a move resolves
+    # through storage_path and renames an ACTUAL FILE, so those fixtures produce moves that fail on
+    # a file that was never there.
+    #
+    # NO-OPS WHEN THERE IS NO @root, deliberately, so a suite that has not opted into a real share
+    # library keeps exactly its old behaviour rather than silently half-materialising. Pair it with
+    # `use_fresh_share_library!` in setup (and its FileLayer.reset! in teardown).
+    def create_node!(user, **attrs)
+      node = user.nodes.create!(**attrs)
+      root = defined?(@root) ? @root : nil
+      return node unless root
+
+      parent = attrs[:parent_node_id] && user.nodes.find_by(node_id: attrs[:parent_node_id])
+      rel = parent&.storage_path.present? ? File.join(parent.storage_path, node.name) : node.name
+      path = root.join(rel)
+      if node.kind == "dir"
+        path.mkpath
+      else
+        path.dirname.mkpath
+        # Only ENAMETOOLONG is tolerated: some suites deliberately build a name the filesystem
+        # cannot hold, and the ROW is what those tests need. Anything wider would let a genuinely
+        # broken fixture look like a passing test.
+        begin
+          path.binwrite("x")
+        rescue Errno::ENAMETOOLONG
+          nil
+        end
+      end
+      node.update!(storage_path: rel)
+      node
+    end
+
+    # A LIBRARY ROOT THAT IS FRESH FOR THIS ONE TEST. The ambient LIBRARY_PATH is a single tmpdir
+    # for the whole run while the database rolls back per test, so files outlive the rows that
+    # named them and Share's clobber refusal (§14a) rejects the second test to write a given name.
+    # `FileLayer.current =` rather than pin_file_layer_backend for the reason share_delivery_test.rb
+    # records: the pin rebuilds from ENV and would additionally need LIBRARY_PATH, which its
+    # teardown does not restore. A direct assignment sets no @file_layer_backend_pinned either, so
+    # the caller MUST pair this with `FileLayer.reset!` in teardown or the adapter leaks into the
+    # next test in this forked worker.
+    def use_fresh_share_library!
+      root = Pathname.new(Dir.mktmpdir("test-library"))
+      FileLayer.current = FileLayer::Share.new(root: root.to_s)
+      root
+    end
+
     def pin_file_layer_backend(name)
       # Capture the prior value ONCE. A second call in the same test would otherwise overwrite it
       # with the first pin's value, and teardown would "restore" that into the next test in this
@@ -109,32 +189,6 @@ module ActiveSupport
         ENV["LIBRARY_BACKEND"] = @file_layer_backend_prior
         FileLayer.reset!
       end
-    end
-
-    # Run a block with Sync::Hooks' subscriber list swapped out (Stage 3a Task 4).
-    #
-    # Sync::Hooks.subscribers is a class-level ivar that config/initializers/sync_hooks.rb
-    # populates ONCE at boot, so it OUTLIVES any single test in this worker process — a test that
-    # wants to fault-inject a raising subscriber, or assert "no subscribers registered" behaviour,
-    # cannot get there with a bare `Sync::Hooks.reset!`: that would silently break every LATER
-    # test in this worker that depends on the real subscriber (e.g. sync_flow_test.rb's
-    # "eagerly enqueues a thumbnail"), for a reason nothing in that later test's own file could
-    # explain. Same class of leak `pin_file_layer_backend` above exists to prevent, one line up.
-    #
-    # BLOCK-SCOPED rather than setup/teardown: unlike the backend pin, which every test in a
-    # chunk-shaped file needs identically, these tests want precise control of exactly when a
-    # fault-injecting subscriber is present, often for only part of one test method. `ensure`
-    # restores the prior list — captured by VALUE (`.dup`) into a local, not an ivar, so nothing
-    # here depends on (or interferes with) whether the caller also touches `@file_layer_backend_*`
-    # — whether or not the block raises, so a failing assertion inside the block still leaves the
-    # next test in this worker with the real subscriber(s) registered.
-    def pin_sync_hooks_subscribers
-      prior = Sync::Hooks.subscribers.dup
-      Sync::Hooks.reset!
-      yield
-    ensure
-      Sync::Hooks.reset!
-      prior.each { |subscriber| Sync::Hooks.on_commit_finalized(&subscriber) }
     end
 
     # Simulates a genuinely CONCURRENT writer landing the identical (user, attachable_type,

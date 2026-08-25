@@ -29,7 +29,9 @@ module Library
         user = user!
         File.binwrite(File.join(dir, "explicit.stl"), "bytes")
 
-        with_env("LIBRARY_BACKEND" => "chunk") do
+        with_env("LIBRARY_BACKEND" => "chunk_remote",
+               "CHUNK_REMOTE_URL" => "http://sync.invalid",
+               "SYNC_ADMIN_TOKEN" => "test-token") do
           Library::ScanJob.perform_now(user_id: user.id, root: dir)
         end
 
@@ -113,7 +115,9 @@ module Library
     # which is why the positive test below is not optional.
     test "scan_all! no-ops when the deployment is not share-backed" do
       user!
-      with_env("LIBRARY_BACKEND" => "chunk") do
+      with_env("LIBRARY_BACKEND" => "chunk_remote",
+               "CHUNK_REMOTE_URL" => "http://sync.invalid",
+               "SYNC_ADMIN_TOKEN" => "test-token") do
         assert_no_enqueued_jobs { Library::ScanJob.scan_all! }
       end
     end
@@ -186,9 +190,11 @@ module Library
     # SAY so rather than no-op. `perform` is a command: the one thing it may never do is silently
     # nothing (that is the failure this whole task exists to remove, and putting it back here
     # would just relocate it from scan_all! to perform).
-    test "a rootless scan in chunk mode raises rather than silently doing nothing" do
+    test "a rootless scan on a non-scannable backend raises rather than silently doing nothing" do
       user = user!
-      with_env("LIBRARY_BACKEND" => "chunk") do
+      with_env("LIBRARY_BACKEND" => "chunk_remote",
+               "CHUNK_REMOTE_URL" => "http://sync.invalid",
+               "SYNC_ADMIN_TOKEN" => "test-token") do
         err = assert_raises(ArgumentError) { Library::ScanJob.perform_now(user_id: user.id) }
         assert_match(/not a scanned backend/, err.message)
       end

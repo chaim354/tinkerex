@@ -514,11 +514,6 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
   # This appearing here is the repointed guard EARNING ITS KEEP on its first run: it is a real new
   # host->engine dependency that Phase B introduced, and it was invisible for as long as the file
   # set still pointed at app/ and lib/.
-  SYNC_SEAM_EXCEPTIONS = %w[
-    app/models/user.rb
-    app/controllers/dev_blobs_controller.rb
-    app/services/library_broadcast.rb
-  ].freeze
 
   # THE OTHER DIRECTION, WHICH NOTHING GUARDED UNTIL STAGE 3a TASK 4 CLOSED THE LAST ONE. Every
   # guard in this file until now asked "does maker code reach into the engine?". The reverse --
@@ -670,37 +665,31 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
     hits = maker_layer_files.flat_map { |file| sync_references(file) }
     offending_files = hits.map { |hit| hit.split(":").first }.uniq.sort
 
-    # NAMED, NOT COUNTED, in both directions -- a mutation that swaps one offender for another
-    # while holding the count steady is caught only by asserting WHICH files, matching this file's
-    # own "assert the files, not merely a count" rule from the chunk-internals test above.
-    extra = offending_files - SYNC_SEAM_EXCEPTIONS # a NEW violation, not on the list
-    stale = SYNC_SEAM_EXCEPTIONS - offending_files # a LISTED file that no longer violates
-
-    assert_empty extra,
-                 "NEW maker-layer file(s) reaching into Sync:: or a bare engine model directly, " \
-                 "not on the exception list:\n  #{extra.join("\n  ")}\n" \
-                 "Route this through FileLayer::Chunk instead (CLAUDE.md §14a/§14d). If this is " \
-                 "real, scoped relocation work in progress (the shape Task 6 was), add the file " \
-                 "to SYNC_SEAM_EXCEPTIONS and say so in the PR -- do not let this test go red " \
-                 "silently past that."
-    assert_empty stale,
-                 "SYNC_SEAM_EXCEPTIONS lists file(s) that no longer reach into Sync:: or a bare " \
-                 "engine model directly:\n  #{stale.join("\n  ")}\n" \
-                 "Whatever fixed it -- remove the entry. If SYNC_SEAM_EXCEPTIONS is empty once " \
-                 "you do, remove the constant entirely and simplify this test's two assertions " \
-                 "above to a single `assert_empty offending_files`."
-    # THE LIST MUST DIE WITH ITS LAST ENTRY, NOT LINGER EMPTY. Without this, a dutiful editor
-    # could shrink SYNC_SEAM_EXCEPTIONS to `[]` one fix at a time (the two assertions above stay
-    # green the whole way) and leave it sitting there -- an allowlist for nothing, which the next
-    # reader has to re-derive is pointless before trusting it. This fails THAT state too, so
-    # whoever removes the last entry (3b, per the comment above SYNC_SEAM_EXCEPTIONS -- Task 6
-    # left exactly one, user.rb) is told, in the same run, to delete the constant and its comment,
-    # not just leave `[].freeze` behind.
-    assert_not_empty SYNC_SEAM_EXCEPTIONS,
-                     "SYNC_SEAM_EXCEPTIONS is empty, which means 3b relocated User's engine " \
-                     "associations (app/models/user.rb, the one entry Task 6 left behind): " \
-                     "delete this constant and its comment, and simplify this test to " \
-                     "`assert_empty maker_layer_files.flat_map { |file| sync_references(file) }`."
+    # ZERO, WITH NO ALLOWLIST -- WHICH IS A STRONGER CLAIM THAN THIS TEST HAS EVER MADE.
+    #
+    # This was `extra`/`stale`/`assert_not_empty SYNC_SEAM_EXCEPTIONS`: a named allowlist, checked
+    # in both directions so a mutation could not swap one offender for another, plus a third
+    # assertion that the list must DIE WITH ITS LAST ENTRY rather than linger empty. That third
+    # assertion is what fired when Arc D Part 2 removed the wiring, and its message said exactly
+    # what to do here -- delete the constant, collapse to one assert_empty. Doing what a guard
+    # tells you when it goes red is the whole point of having written it that way.
+    #
+    # The rule it enforces is unchanged in spirit and wider in fact: CLAUDE.md §14d's tripwire,
+    # "if a maker-layer change needs to touch sync, the changelog, conflicts, locks, or the
+    # mounts, the boundary is wrong -- stop." It used to mean "route it through FileLayer::Chunk".
+    # There is no FileLayer::Chunk any more and no engine in this process, so the honest answer to
+    # a new hit here is not "use the port" but "that work belongs in chaim354/tinkerex-sync".
+    #
+    # NAMED, NOT COUNTED, still: the message lists the files, matching this file's own rule from
+    # the chunk-internals test above that a count alone cannot tell one offender from another.
+    assert_empty offending_files,
+                 "maker-layer file(s) reaching into Sync:: or a bare engine model directly:\n" \
+                 "  #{offending_files.join("\n  ")}\n" \
+                 "The sync engine is not a dependency of this app (Arc D Part 2) -- these " \
+                 "constants do not resolve here at all, so this is a NameError waiting for the " \
+                 "code path to run, not a style violation. If the work genuinely belongs to the " \
+                 "engine, it belongs in chaim354/tinkerex-sync; if it belongs to this app, it " \
+                 "goes through FileLayer.current like every other library operation."
   end
 
   # STAGE 3a TASK 5 (boundary design §3; docs/superpowers/plans/2026-08-20-stage-3a-decouple-the-engine.md).
@@ -789,22 +778,20 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
            "`class BaseController < ActionController::API` -- found #{superclass_line.inspect}. " \
            "Inheriting the engine's base again makes share/s3 unable to load the maker v1 API."
 
-    # NOT MATCHED BY LINE NUMBER, DELIBERATELY -- a hardcoded literal shifts the moment a line is
-    # added above it, the exact "assert a spelling, not a behaviour" trap CLAUDE.md §14e warns
-    # about for timestamps and applies here to line numbers. The check above already proves the
-    # superclass declaration is real and correctly spelled, which guarantees Ripper counts it as
-    # one of `hits` (it names the const `Sync`); asserting the TOTAL is exactly 1 is therefore
-    # sufficient to prove that one hit IS that line and nothing else snuck in beside it.
+    # ZERO, AND THE MESSAGE USED TO SAY "EXACTLY ONE" -- a stale claim sitting beside a correct
+    # assertion, which is the shape CLAUDE.md §15 warns about and is worth naming rather than
+    # quietly correcting. It described Phase B, when this class inherited Sync::V1::BaseController
+    # and that superclass line was the one sanctioned reference. §14j reversed that direction (an
+    # engine base class here made the maker v1 API unloadable without the engine), and Arc D Part 2
+    # removed the engine entirely, so the count has been 0 for two stages while the sentence
+    # explaining it still described one.
     assert_equal 0, hits.size,
-                 "V1::BaseController must reference Sync:: or Storage:: in EXACTLY one place -- " \
-                 "its own `class BaseController < Sync::V1::BaseController` declaration -- " \
+                 "V1::BaseController must reference NO Sync:: or Storage:: constant at all -- " \
                  "found #{hits.size}:\n  #{hits.join("\n  ")}\n" \
-                 "All fourteen v1/maker/* controllers inherit this class. A SECOND reference " \
-                 "(a rescue_from, a before_action, a stray call) belongs on the sync controller " \
-                 "that actually raises/needs it instead -- see V1::CommitsController, " \
-                 "V1::ChunksController, and app/controllers/concerns/v1/stash_request_base_url.rb " \
-                 "for the existing shape -- or, if it is truly shared v1 infrastructure, on " \
-                 "Sync::V1::BaseController itself, which this class already inherits."
+                 "All fourteen v1/maker/* controllers inherit this class, and the sync engine is " \
+                 "not a dependency of this app (Arc D Part 2), so such a reference does not " \
+                 "resolve here -- it is a NameError waiting for the code path to run. Work that " \
+                 "genuinely needs those constants belongs in chaim354/tinkerex-sync."
   end
 
   test "NotImplementedError is never rescued" do

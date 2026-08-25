@@ -54,7 +54,6 @@ module FileLayer
     # inside #perform would make an operator's (or a caller's) explicit run silently do nothing,
     # which is the exact failure mode the gate below exists to avoid at the FAN-OUT instead.
     test "perform has no gate and pulls even when the ambient backend is not chunk_remote" do
-      pin_file_layer_backend("chunk")
       user = create_user("b")
       transport = FakeTransport.new
 
@@ -101,8 +100,6 @@ module FileLayer
     end
 
     test "pull_all! enqueues nothing on chunk" do
-      pin_file_layer_backend("chunk")
-
       assert_no_enqueued_jobs(only: RemoteChangelogPullJob) { RemoteChangelogPullJob.pull_all! }
     end
 

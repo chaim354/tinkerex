@@ -3,8 +3,6 @@ require "test_helper"
 module Maker
   class ExtractPdfMetadataJobTest < ActiveSupport::TestCase
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
       @user  = User.create!(email: "pdf-#{SecureRandom.hex(3)}@example.com")
       @model = @user.maker_models.create!(title: "Honeycomb Storage Wall")
       @node  = @user.nodes.create!(node_id: "pdf1", name: "152592-honeycomb-x.pdf", kind: "file")

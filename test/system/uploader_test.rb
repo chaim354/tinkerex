@@ -1,4 +1,5 @@
 require "application_system_test_case"
+require "support/chunk_remote_journey"
 
 # The chunk two-phase presigned upload, driven through a real browser.
 #
@@ -34,12 +35,19 @@ require "application_system_test_case"
 # the "skip the PUT" mutation a reader would try first.
 class UploaderTest < ApplicationSystemTestCase
   setup do
-    # PINNED, not ambient: this test is chunk-shaped by construction (the two-phase flow IS
-    # Sync::Commit), and under LIBRARY_BACKEND=share the view renders the other branch entirely —
-    # a multipart form with no Stimulus controller — so the test would look for markup that is
-    # legitimately absent. ci.yml runs the whole suite under all three backends.
-    pin_file_layer_backend("chunk")
-    Sync::Storage::ChunkStore.reset!
+    # CHUNK-SHAPED BY CONSTRUCTION, SO IT RUNS ONLY WHERE A CHUNK-FAMILY BACKEND EXISTS. The
+    # two-phase presigned flow is `syncable`-gated; under a share backend /files renders the OTHER
+    # branch entirely -- a multipart form with no Stimulus controller -- so this would hunt for
+    # markup that is legitimately absent and fail for a reason unrelated to what it tests.
+    #
+    # It used to pin embedded chunk. That backend is retired (Arc D Part 2) and its replacement,
+    # chunk_remote, resolves against a standalone sync server -- so the honest gate is "is one
+    # configured", and this runs in `bin/ci test-chunk-remote`, which boots one. SKIPPING ON THE
+    # PRECONDITION, not on the claim: §14j's recorded trap is a guard that skips on the very thing
+    # it asserts, which reports success having asserted nothing.
+    skip "needs a chunk-family backend (bin/ci test-chunk-remote boots one)" \
+      unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
+
     @user = sign_in_as("uploader@example.com")
   end
 
@@ -112,7 +120,6 @@ class UploaderTest < ApplicationSystemTestCase
     expected = file.binread
     assert_equal expected, FileLayer.current.read(@user, node_id: node.node_id),
                  "the node exists but its bytes did not land — the presigned PUT or finalize failed"
-    assert_equal expected.bytesize, @user.versions.find_by(version_id: node.current_version_id).size
 
     assert_no_console_errors
   end

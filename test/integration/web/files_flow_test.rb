@@ -1,28 +1,35 @@
 require "test_helper"
 
 module Web
-  # Exercises the server-rendered web UI end to end through the SAME presign + Sync::Commit
-  # machinery the desktop client uses, with the memory chunk store backed by the dev blob
-  # endpoint (so bytes actually round-trip without S3, while never going through v1/Rails).
+  # Exercises the server-rendered web UI end to end -- the file list, the detail page, blob
+  # delivery, notes, delete and restore -- against a real library backend.
+  #
+  # THIS IS A WEB-LAYER SUITE, AND IT PINS A HERMETIC BACKEND ON PURPOSE. Until Arc D Part 2 it
+  # pinned embedded `chunk` and seeded through Sync::Commit's two-phase presigned flow; with the
+  # engine retired, neither exists. What these tests are actually ABOUT is the web layer -- that a
+  # PNG blob is served inline, that a PDF page embeds the viewer, that notes render -- and none of
+  # that is a claim about which backend holds the bytes. Backend behaviour is the adapter
+  # contracts' job (adapter_contract.rb and friends), which run against all of them.
+  #
+  # A FRESH ROOT PER TEST, VIA `FileLayer.current =`, NOT ENV. Two reasons, both learned the hard
+  # way here: the ambient LIBRARY_PATH is ONE tmpdir for the whole run while the database rolls
+  # back per test, so leftovers on DISK outlive the rows that named them and the Share adapter's
+  # clobber refusal (§14a) then rejects the second test to upload `pic.png` with "already exists";
+  # and `pin_file_layer_backend` rebuilds from ENV, so it would additionally need LIBRARY_PATH,
+  # which its teardown does not restore. Same idiom, same reasoning, as share_delivery_test.rb --
+  # including that a direct assignment does not set @file_layer_backend_pinned, so the
+  # `FileLayer.reset!` in teardown is load-bearing rather than decoration.
   class FilesFlowTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
-    # For the finalize_upload broadcast test below -- same idiom chunk_test.rb, library_channel_test.rb
-    # and project_intake_test.rb already use for assert_broadcast_on/assert_no_broadcasts.
     include ActionCable::TestHelper
-    # This suite's FIXTURES are chunk-shaped -- it uploads through Sync::Commit's two-phase flow
-    # and asserts ManifestChunk rows -- so it is a chunk test and now has to SAY so. It did not
-    # need to before Phase 4 Task 3: #blob reached for Sync::Storage::ChunkStore.current directly, which
-    # ignores LIBRARY_BACKEND, so it passed on the share/s3 legs by being blind to the backend
-    # rather than by being right. Routing #blob through FileLayer.current is what made the
-    # dependency real, and the share leg reported it immediately (ActionController::MissingFile --
-    # the Share adapter looking for these chunks' bytes on a disk that has none).
-    #
-    # That is the honest signal test_helper documents at pin_file_layer_backend, not a regression:
-    # nothing about the assertions below changed, only the declaration of which deployment they
-    # are about.
+
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
+      @root = use_fresh_share_library!
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
     end
 
     # Sign in via the real password auth. Creates a confirmed account if needed, then
@@ -36,23 +43,9 @@ module Web
       user
     end
 
-    # Mirror the browser uploader: hash -> begin_upload -> PUT bytes -> finalize_upload.
-    def upload(name, bytes)
-      hash = Digest::SHA256.hexdigest(bytes)
-      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-      post begin_upload_files_path, params: { name:, size: bytes.bytesize, manifest: }, as: :json
-      assert_response :success
-      begun = JSON.parse(response.body)
-
-      (begun["put_urls"] || {}).each_value do |url|
-        put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
-        assert_response :ok
-      end
-
-      post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-      assert_response :success
-      begun["node_id"]
-    end
+    # Delegates to test_helper's `port_upload` -- ONE definition, shared with the other suites
+    # that need a file to exist. This was a local helper duplicated into lbrn_geometry_test.rb.
+    def upload(name, bytes) = port_upload(name, bytes)
 
     test "requires login" do
       get files_path
@@ -349,148 +342,19 @@ module Web
       assert_response :success
       assert_select "a", text: "notes.txt"
 
-      # A version + content-addressed chunk were recorded through Sync::Commit.
+      # THE VERSION AND CHUNK ROWS ARE NOT ASSERTED HERE ANY MORE, AND THAT IS NOT A WEAKENING OF
+      # THIS TEST -- it is the assertion moving to the layer that owns it. Those rows are the sync
+      # engine's, which since Arc D Part 2 lives in another process entirely; what this test is
+      # about is the WEB round trip (upload -> the file appears in the list -> the bytes come back
+      # byte-for-byte), and that is asserted in full above and below. Whether a commit produced a
+      # version and a content-addressed chunk is the sync server's own suite's question.
       user = User.find_by(email: "web@example.com")
       assert_equal 1, user.nodes.present.where(kind: "file").count
-      assert user.versions.where(node_id:).exists?
-      assert user.chunks.where(chunk_hash: Digest::SHA256.hexdigest(bytes)).exists?
 
       # Download returns the exact bytes.
       get blob_file_path(node_id, download: 1)
       assert_response :success
       assert_equal bytes, response.body.b
-    end
-
-    test "dedup: re-uploading identical content uploads no new chunk" do
-      sign_in
-      bytes = "duplicate me".b
-      upload("a.txt", bytes)
-
-      # Second begin for the same content should report nothing missing (chunk exists).
-      hash = Digest::SHA256.hexdigest(bytes)
-      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-      post begin_upload_files_path, params: { name: "b.txt", size: bytes.bytesize, manifest: }, as: :json
-      assert_response :success
-      assert_empty JSON.parse(response.body)["put_urls"]
-    end
-
-    # ---- begin_upload / finalize_upload: the two port-verb error paths (Task 8) -------------
-    #
-    # Neither of these had ANY test coverage at this layer before Task 8 -- only the underlying
-    # Sync::Commit.begin/.finalize had unit tests, and V1::CommitsController's OWN chunks_missing
-    # response was covered, but never this controller's. Both responses moved from a per-action
-    # `rescue Sync::Commit::*` to FileLayer::Chunk re-raising through the port's own vocabulary
-    # (see Chunk#begin_upload/#finalize_upload's own comments); these drive the REAL HTTP request
-    # to prove the response BODY, not just the exception class, survived the move unchanged.
-    test "begin_upload answers 422 for a manifest with a malformed chunk hash" do
-      sign_in
-      assert_no_difference -> { Sync::PendingCommit.count } do
-        post begin_upload_files_path,
-             params: { name: "bad.stl", size: 5,
-                       manifest: [ { hash: "not-a-real-hash", offset: 0, length: 5 } ] },
-             as: :json
-      end
-      assert_response :unprocessable_entity
-      assert_match(/invalid chunk hash/, JSON.parse(response.body)["error"])
-    end
-
-    test "finalize_upload answers 422 chunks_missing when the bytes were never PUT" do
-      sign_in
-      hash = SecureRandom.hex(32)
-      manifest = [ { hash:, offset: 0, length: 5 } ]
-      post begin_upload_files_path, params: { name: "ghost.stl", size: 5, manifest: }, as: :json
-      assert_response :success
-      begun = JSON.parse(response.body)
-      refute_empty begun["put_urls"], "the store must not already know this hash"
-
-      # Deliberately no PUT of the bytes here.
-      post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-      assert_response :unprocessable_entity
-      body = JSON.parse(response.body)
-      assert_equal "chunks_missing", body["error"]
-      assert_equal [ hash ], body["missing"]
-      assert_not User.find_by!(email: "web@example.com").nodes.exists?(node_id: begun["node_id"]),
-                 "a rejected finalize must not create the node"
-    end
-
-    # Drives the REAL request end to end -- FilesController#finalize_upload now reads `result.seq`
-    # off FileLayer::UploadFinalized and calls Sync::LibraryChannel.broadcast_change itself (Task 8: the
-    # port method does NOT self-broadcast, unlike mkdir/move/delete/undelete; see
-    # Chunk#finalize_upload's own comment for why). A wrong field read there (or a dropped call)
-    # would still return 200 -- only listening on the real stream can catch it, which is why this
-    # is asserted here rather than only at the adapter level.
-    test "finalize_upload broadcasts the new head_seq over the real request" do
-      user = sign_in
-      before = user.reload.head_seq
-      bytes = "bcast via http".b
-      hash = Digest::SHA256.hexdigest(bytes)
-      manifest = [ { hash:, offset: 0, length: bytes.bytesize } ]
-      post begin_upload_files_path, params: { name: "bcast.stl", size: bytes.bytesize, manifest: }, as: :json
-      assert_response :success
-      begun = JSON.parse(response.body)
-      begun["put_urls"].each_value do |url|
-        put url, params: bytes, headers: { "CONTENT_TYPE" => "application/octet-stream" }
-        assert_response :ok
-      end
-
-      assert_broadcast_on(Sync::LibraryChannel.broadcasting_for(user), head_seq: before + 1) do
-        post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
-      end
-      assert_response :success
-    end
-
-    # ---- begin_upload: the name is a name ------------------------------------------------
-    #
-    # THE CHUNK WEB UPLOAD DOOR HAD NO NAME CHECK OF ANY KIND — not the reserved-namespace one, and
-    # not even the traversal one §14c records as closed at the addon door. `#begin_upload` took
-    # `params.require(:name)` and handed it straight to Sync::Commit.begin, which validates the
-    # MANIFEST exhaustively and the name not at all; Node validates `name` for presence only. So on
-    # the product's MAIN deployment this door was strictly weaker than the addon door beside it.
-    #
-    # PROBED THROUGH THE REAL TWO-PHASE FLOW, not reasoned about: begin=200, finalize=200, and a
-    # live node named "../../escape.txt" — in the changelog and bound for every device's real
-    # mount. That is the same defect the addon door's own test calls "the main deployment created a
-    # live node called '../../escape.txt'", still open one controller over.
-    #
-    # THE GUARD IS AT `begin`, NOT `finalize`, because that is where the name enters: finalize is
-    # handed a commit_id and never sees a name at all. A check there would be validating a decision
-    # already recorded.
-    #
-    # Whole suite pins chunk (see setup) — and chunk is exactly the exposed backend here, since
-    # begin_upload is `syncable`-gated and does not exist on share/s3 at all. There is no other leg
-    # for this door, which is why nothing cross-backend could have caught it.
-    #
-    # Mutation-checked (§15): dropping either guard from #begin_upload turns its own rows red — the
-    # traversal rows for valid_leaf_name?, the reserved rows for Library::ReservedNames.
-    test "begin_upload refuses a name that is not a storable leaf" do
-      sign_in
-      [ "../../escape.txt", "a/b.txt", "a\\b.txt", "..", ".", "nul\0byte", "x" * 300 ].each do |bad|
-        assert_no_difference -> { Sync::PendingCommit.count }, "#{bad.inspect} began a commit" do
-          post begin_upload_files_path,
-               params: { name: bad, size: 1, manifest: [] }, as: :json
-        end
-        assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
-      end
-    end
-
-    test "begin_upload refuses a name the library scan will never index" do
-      sign_in
-      %w[.DS_Store ._resource __MACOSX .Trashes .Spotlight-V100 .trash .maker-tmp-x].each do |bad|
-        assert_no_difference -> { Sync::PendingCommit.count }, "#{bad.inspect} began a commit" do
-          post begin_upload_files_path,
-               params: { name: bad, size: 1, manifest: [] }, as: :json
-        end
-        assert_response :unprocessable_entity, "#{bad.inspect} was not refused"
-      end
-    end
-
-    # The positive control, driven through the WHOLE two-phase flow rather than begin alone: a
-    # near-miss name must still upload end to end. Without this, a guard widened to a prefix match
-    # would pass every row above and quietly refuse real files.
-    test "begin_upload accepts a name that merely starts with a reserved prefix" do
-      user = sign_in
-      node_id = upload(".trashcan.svg", "<svg/>".b)
-      assert user.nodes.present.exists?(node_id:, name: ".trashcan.svg")
     end
 
     test "image preview renders an <img> to the blob endpoint" do
@@ -591,91 +455,17 @@ module Web
       user = User.find_by(email: "web@example.com")
       assert user.nodes.find_by(node_id:).deleted?, "node should be tombstoned"
       assert_equal 0, user.nodes.present.count
-      # Version is retained (keep-versions rule).
-      assert user.versions.where(node_id:).exists?
+      # The keep-versions rule (§5) is the sync engine's and is asserted in its own repo; on a
+      # share-backed library there is no version row to retain, which is §14a's recorded departure
+      # rather than a gap here.
 
-      # The sync engine, and nothing else here, appends a changelog entry and advances head_seq --
-      # so this is what distinguishes "the sync engine deleted it" from "the port did". A
-      # syncing device learns about this delete ONLY through this entry.
-      entry = user.changelog_entries.where(node_id:).order(:seq).last
-      assert_equal "delete", entry.op
-      assert_operator user.head_seq, :>, before
-    end
-
-    # DELETING A DIRECTORY MUST TAKE ITS CHILDREN, and before this it did not: #destroy called
-    # Sync::Mutation.apply(op: "delete"), which tombstones ONLY the node it is handed. The
-    # directory went, the child stayed live pointing at a deleted parent, and /v1/tree -- which
-    # serves `nodes.present` -- kept serving it, while a changelog-following device dropped the
-    # whole subtree client-side. The two views of one library disagreed, permanently, from a
-    # button the UI renders for every directory.
-    #
-    # The child's own `delete` entry is asserted rather than just its tombstone: a device converges
-    # via the changelog, so a cascade that skipped the entry would leave the same divergence with a
-    # tidier database.
-    test "deleting a directory tombstones its children too, and tells the changelog about each" do
-      sign_in
-      user = User.find_by(email: "web@example.com")
-      user.nodes.create!(node_id: "dir-1", name: "cad", kind: "dir")
-      user.nodes.create!(node_id: "kid-1", name: "a.stl", kind: "file", parent_node_id: "dir-1")
-      user.nodes.create!(node_id: "kid-2", name: "b.stl", kind: "file", parent_node_id: "dir-1")
-
-      delete file_path("dir-1")
-      assert_redirected_to files_path
-
-      assert_equal 0, user.nodes.present.count,
-                   "a live child under a deleted parent is what /v1/tree would serve"
-      %w[dir-1 kid-1 kid-2].each do |id|
-        assert user.nodes.find_by(node_id: id).deleted?, "#{id} should be tombstoned"
-        assert user.changelog_entries.exists?(node_id: id, op: "delete"),
-               "#{id} needs its own changelog entry -- it is how a device learns"
-      end
-    end
-
-    # THE OTHER HALF OF CAPABILITY GATING, and the half a plan forgets. A gate that hides a
-    # feature in share mode is half-right; a gate that hides it in the product's MAIN deployment
-    # is a straightforward bug, and it is the easy one to ship -- `port_writable` reads like
-    # "accepts uploads", which chunk mode very much does (that is what Sync::Commit IS).
-    #
-    # So this is the counterpart to share_delivery_test.rb's "does not offer a version": the same
-    # two surfaces, asserted present rather than absent. Without it, a gate that fired everywhere
-    # would leave both suites green while the product lost its upload button and its versions.
-    test "chunk mode keeps version history and the upload control" do
-      sign_in
-      node_id = upload("v.stl", "bytes")
-
-      get file_path(node_id)
-      assert_response :success
-      assert_match(/Current version/i, response.body,
-                   "chunk is the versioned backend -- the gate must not fire here")
-      assert_match(/5 Bytes/i, response.body, "size must survive the move from Version to the port")
-
-      get files_path
-      assert_match(/upload/i, response.body,
-                   "chunk mode uploads via the two-phase flow -- port_writable: false does NOT " \
-                   "mean 'no uploads', and reading it that way hides this button in production")
-      # WHICH upload control, not just that one exists. Both branches of the view say "Upload a
-      # file", so /upload/i alone stays green with the branch INVERTED -- chunk mode would render
-      # the direct form, POST /files, and take a 501. Verified by mutation: only the share side
-      # caught it. This is the chunk-side half.
-      assert_match(/data-controller="uploader"/, response.body,
-                   "chunk mode must drive the two-phase flow, not POST the bytes to the port")
-    end
-
-    # The other direction of the upload branch. Chunk mode CAN accept uploads -- it does so all
-    # day via the two-phase presigned flow -- it just cannot take the bytes through Rails (§15).
-    # So the direct endpoint is an honest 501, and it must NAME the flow that does work: a bare
-    # 501 here would read as "uploads are off", which is exactly wrong.
-    test "the direct upload answers 501 in chunk mode, naming the two-phase flow" do
-      sign_in
-      post files_path, params: {
-        file: Rack::Test::UploadedFile.new(StringIO.new("bytes"), "application/octet-stream",
-                                           original_filename: "direct.stl")
-      }
-      assert_response :not_implemented
-      assert_match(/port_writable_unavailable/, response.body,
-                   "the 501 must be the capability gate, not a routing or auth accident")
-      assert_match(/begin_upload/, response.body,
-                   "a refusal must name the path the caller SHOULD use -- as Chunk#write does")
+      # THE CHANGELOG ASSERTION LEFT WITH THE ENGINE. It existed to distinguish "the sync engine
+      # deleted it" from "the port did" -- a distinction that no longer exists here, because since
+      # Arc D Part 2 there is only ONE door: the port. On a share-backed library there is no
+      # changelog at all (§14a), and on chunk_remote the entry is appended by the sync SERVER, in
+      # another process, where its own suite asserts it. What this test still proves, and all it
+      # ever needed to prove about the web layer, is above: the node is tombstoned and it is gone
+      # from the list.
     end
 
     # THE GATE IS NOT AUTH AND NOT A MISSING ROUTE, proven: the same POST, unauthenticated,

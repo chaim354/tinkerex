@@ -2,31 +2,16 @@ source "https://rubygems.org"
 
 # Bundle edge Rails instead: gem "rails", github: "rails/rails", branch: "main"
 
-# THE SYNC ENGINE, from its own repository (chaim354/tinkerex-sync) since 2026-08-20. It lived at
-# engines/tinkerex-sync/ as a `path:` source through Stage 3b -- deliberately, so that the eventual
-# extraction was a filter-repo of ONE self-contained directory rather than a design problem. That
-# is done, the directory is gone, and this repo no longer carries a copy of the engine.
+# THE SYNC ENGINE IS NO LONGER A DEPENDENCY OF THIS APP (Arc D Part 2). chaim354/tinkerex-sync
+# arrived here as a private git: gem for as long as one deployment -- embedded `chunk` -- ran the
+# engine in this Rails process. That backend is retired: the chunk-family deployment is now
+# `chunk_remote`, which talks to a STANDALONE sync server over HTTP exactly as share and s3 talk
+# to their own storage, so there is nothing left to load in-process.
 #
-# A PRIVATE git: SOURCE NEEDS CREDENTIALS WHEREVER `bundle install` RUNS. That cost was accepted
-# here, not discovered: local shells and the self-hosted runner already resolve it through the
-# operator's git credential helper, and the DOCKER BUILD -- which has neither a keychain nor a
-# logged-in gh -- gets an explicit build secret instead (see the Dockerfile's own comment and
-# config/deploy.yml's `builder.secrets`). A fresh clone on a machine with no GitHub credentials
-# cannot `bundle install` this repo. That is the honest consequence of depending on a private
-# repository, not a bug to be worked around.
-#
-# Gemfile.lock PINS THE EXACT REVISION, so `branch: "main"` is where updates come FROM, never what
-# a build resolves to -- `bundle update tinkerex-sync` is the deliberate act that moves it, and a
-# deploy in between builds the same commit every time.
-#
-# `require:` is spelled out because Bundler derives the require path from the HYPHENATED gem name
-# ("tinkerex-sync"), while the entry point is lib/tinkerex_sync.rb -- the usual Ruby convention that
-# a hyphen in a gem name means a `/` in the path, which is not the shape here.
-# `require: false` -- config/application.rb loads it, and only when LIBRARY_BACKEND wants it.
-# The gem stays here UNCONDITIONALLY: a conditional `gem` line would make Gemfile.lock depend on
-# the environment that resolved it, and BUNDLE_DEPLOYMENT=1 refuses a lock that does not match.
-gem "tinkerex-sync", git: "https://github.com/chaim354/tinkerex-sync.git", branch: "main",
-                     require: false
+# WHAT THIS ALSO REMOVES, deliberately and worth knowing before adding it back: the Docker build's
+# read-only deploy key and its https->SSH rewrite (§14j), the engine_schema generator and its
+# byte-identical cross-repo guard, and every /v1 sync endpoint this app used to serve. A desktop
+# client syncs against the sync server now, never against the maker app.
 gem "rails", "~> 8.1.1"
 # The modern asset pipeline for Rails [https://github.com/rails/propshaft]
 gem "propshaft"

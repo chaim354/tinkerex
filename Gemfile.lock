@@ -1,12 +1,3 @@
-GIT
-  remote: https://github.com/chaim354/tinkerex-sync.git
-  revision: 6e3c4757c19f528cb1ac1acb058d6d1c25379c62
-  branch: main
-  specs:
-    tinkerex-sync (0.1.0)
-      aws-sdk-s3 (~> 1)
-      rails (>= 8.1, < 9)
-
 GEM
   remote: https://rubygems.org/
   specs:
@@ -529,7 +520,6 @@ DEPENDENCIES
   sqlite3 (>= 2.1)
   stimulus-rails
   thruster
-  tinkerex-sync!
   turbo-rails
   tzinfo-data
   web-console
@@ -693,7 +683,6 @@ CHECKSUMS
   thruster (0.1.23-arm64-darwin) sha256=2f1b73119ffec813cdb104d64dd39bfc3771b5308eb0f4dc2428077141140022
   thruster (0.1.23-x86_64-linux) sha256=9cd7265bf54e954575c8442e42d050ed8eb55df4f9d7da8fd6f94fcc0339baa5
   timeout (0.6.1) sha256=78f57368a7e7bbadec56971f78a3f5ecbcfb59b7fcbb0a3ed6ddc08a5094accb
-  tinkerex-sync (0.1.0)
   tsort (0.2.0) sha256=9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f
   turbo-rails (2.0.23) sha256=ee0d90733aafff056cf51ff11e803d65e43cae258cc55f6492020ec1f9f9315f
   tzinfo (2.0.6) sha256=8daf828cc77bcf7d63b0e3bdb6caa47e2272dcfaf4fbfe46f8c3a9df087a829b

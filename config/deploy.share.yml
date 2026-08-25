@@ -40,7 +40,9 @@ env:
   secret:
     - RAILS_MASTER_KEY
   clear:
-    STORAGE_BACKEND: memory
+    # STORAGE_BACKEND: memory WAS HERE to neutralise the chunk-store env inherited from
+    # deploy.yml, which Kamal's deep_merge cannot delete. That env is gone (Arc D Part 2)
+    # and nothing in this app reads the name any more, so there is nothing to neutralise.
     LIBRARY_BACKEND: share
     LIBRARY_PATH: /library
     # Box Generator sidecar (the one `boxes` accessory booted by the default config), shared across

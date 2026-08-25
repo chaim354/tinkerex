@@ -13,48 +13,6 @@ production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
     schedule: every hour at minute 12
-
-  # Version retention + chunk GC. Applies RETENTION_POLICY across all users (defaults to
-  # keep_all → no-op on self-host; set RETENTION_POLICY=tiered for managed thinning), then
-  # sweeps refcount-0 chunks from the DB + object storage. Runs nightly, off-peak.
-  version_retention:
-    # `command:` not `class:` -- share/s3 do not load the engine, so Solid Queue cannot
-    # resolve this constant there. Same shape as library_scan below, whose gate is also
-    # in the entry because this file has no conditional or merge mechanism.
-    command: "Sync::RetentionJob.perform_later if LibraryBackend.engine_wanted?"
-    queue: background
-    schedule: every day at 4am
-
-  # Storage-orphan chunk reaper (G4). Lists the object-storage keyspace and deletes chunk
-  # bytes left by commits that uploaded but never finalized — objects with NO DB row, which
-  # the refcount-based version_retention sweep cannot see. Runs on a CONSERVATIVE weekly
-  # cadence because list_objects_v2 is billed per request on S3/R2; the grace window inside
-  # the reaper (24h default) protects in-flight uploads, so weekly is plenty timely for a
-  # cost leak. Off-peak, on a different day/hour from version_retention.
-  orphan_chunk_reaper:
-    # `command:` not `class:` -- share/s3 do not load the engine, so Solid Queue cannot
-    # resolve this constant there. Same shape as library_scan below, whose gate is also
-    # in the entry because this file has no conditional or merge mechanism.
-    command: "Sync::ChunkReaperJob.perform_later if LibraryBackend.engine_wanted?"
-    queue: background
-    schedule: every sunday at 5am
-
-  # Targeted pending-commit-TTL reaper — the cheap, FREQUENT complement to orphan_chunk_reaper
-  # above. It does NO bucket list (so it is not billed per request): it finds expired,
-  # never-finalized pending_commits and deletes precisely the chunk hashes their manifests
-  # uploaded. Its live-pending guard is NARROWER than G4's, deliberately (G4 filters no rows by
-#   age; this one excludes the expired rows it destroys) -- see Sync::PendingCommitReaper.
-#   Because it is DB-only +
-  # targeted deletes, it runs HOURLY so the common abandoned-upload leak is reclaimed promptly
-  # instead of waiting up to a week for the list-based backstop.
-  pending_commit_reaper:
-    # `command:` not `class:` -- share/s3 do not load the engine, so Solid Queue cannot
-    # resolve this constant there. Same shape as library_scan below, whose gate is also
-    # in the entry because this file has no conditional or merge mechanism.
-    command: "Sync::PendingCommitReaperJob.perform_later if LibraryBackend.engine_wanted?"
-    queue: background
-    schedule: every hour at minute 42
-
   # Reconcile share-backed libraries with what's actually on disk. Changes made outside the app
   # (someone drops files on the NAS in Finder) surface within this interval — inotify does not
   # reliably fire for other machines' writes over SMB/NFS, so polling is the honest mechanism

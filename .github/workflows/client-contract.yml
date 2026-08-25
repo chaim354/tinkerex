@@ -104,6 +104,24 @@ jobs:
       # self-hosted and PERSISTENT (`clean: false`, CLAUDE.md §15): a workspace checked out before
       # this migration landed can have a REAL client/ directory still sitting on disk, which `ln -s`
       # would refuse to overwrite.
+      # THIRD CHECKOUT: THE SYNC SERVER, WHICH IS WHAT THE CLIENT NOW TALKS TO. Until Arc D Part 2
+      # this job booted THIS Rails app and ran the sync-engine integration suite against it, because
+      # the maker app served /v1/commit, /v1/changes, /v1/chunks/* and the rest through the embedded
+      # engine. It does not any more -- those routes left with the gem -- so pointing the client at
+      # this app would 404 on its first commit. The wire contract under test is the SYNC SERVER's.
+      #
+      # Same deploy-key mechanism as the client checkout above, for the same reason: GITHUB_TOKEN is
+      # scoped to this repo only and cannot check out a different private one. bin/sync-server
+      # expects the sibling at ../tinkerex-sync; the path below plus the symlink puts it there from
+      # the script's point of view.
+      - name: Check out tinkerex-sync
+        uses: actions/checkout@v7
+        with:
+          repository: chaim354/tinkerex-sync
+          ssh-key: ${{ secrets.TINKEREX_SYNC_DEPLOY_KEY }}
+          path: tinkerex-sync
+          clean: false
+
       - name: Symlink client/ to the second checkout
         run: |
           rm -rf client
@@ -115,8 +133,6 @@ jobs:
           bundler-cache: true
       - name: FUSE dev headers (sync-engine pulls fs-fuse on Linux)
         run: sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::=--force-confold libfuse-dev pkg-config
-      - name: Prepare the dev database (SQLite)
-        run: bin/rails db:prepare
       # STORAGE_BACKEND=local (not memory): two_device_e2e moves bytes via PresignedIO, the
       # production transport, and the memory store presigns RELATIVE /dev/blobs/... paths that a
       # Rust HTTP client can't follow — the filesystem-backed local store (see
@@ -128,16 +144,26 @@ jobs:
       # server's store, so the server legitimately can't see them. That transport is also the
       # seam the offline/corrupting/counting fault tests wrap. two_device_e2e's own genuine,
       # verify-ON proof runs in nightly.yml's e2e-linux/e2e-macos jobs.
+      # bin/sync-server IS REUSED RATHER THAN A SECOND BOOT RECIPE BEING HAND-ROLLED. It already
+      # knows how to prepare and boot the sibling host, and -- load-bearing here -- it strips the
+      # inherited BUNDLE_GEMFILE/RUBYOPT before doing so. §14j records why: a bundled Ruby process
+      # spawning a second Rails app has those set PROCESS-WIDE, the child's own boot.rb uses `||=`
+      # so the inherited value WINS, and the child silently boots against the wrong Gemfile.lock.
+      # That surfaced once as a bare 404 on an existing admin route while /up answered fine.
       - name: Boot the sync server + run the integration suite (one step keeps the server alive)
         env:
-          SYNC_IT_SERVER_URL: http://localhost:3001
+          SYNC_IT_SERVER_URL: http://localhost:3002
+          SYNC_PORT: "3002"
         run: |
-          (fuser -k 3001/tcp 2>/dev/null || pkill -f 'puma' 2>/dev/null) || true
+          ln -sfn "$PWD/tinkerex-sync" ../tinkerex-sync
+          (fuser -k 3002/tcp 2>/dev/null || true)
           sleep 1
-          STORAGE_BACKEND=local CHUNK_PUBLIC_URL=http://localhost:3001 ENABLE_TEST_SIGNUP=true SYNC_VERIFY_FINALIZE=0 bin/rails server -p 3001 &
+          bin/sync-server prepare
+          set -a; . tmp/sync-server.env; set +a
+          bin/sync-server start &
           SRV=$!
-          for i in $(seq 1 60); do curl -sf http://localhost:3001/up >/dev/null && { echo "server up"; break; }; sleep 1; done
-          curl -sf http://localhost:3001/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
+          for i in $(seq 1 60); do curl -sf http://localhost:3002/up >/dev/null && { echo "server up"; break; }; sleep 1; done
+          curl -sf http://localhost:3002/up >/dev/null || { echo "server failed to start"; kill $SRV 2>/dev/null; exit 1; }
           set +e
           cargo test --manifest-path client/sync-engine/Cargo.toml --test integration
           code=$?

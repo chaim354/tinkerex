@@ -12,8 +12,6 @@ module Web
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
       email = "csp@example.com"
       User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
       post user_session_path, params: { user: { email:, password: PASSWORD } }

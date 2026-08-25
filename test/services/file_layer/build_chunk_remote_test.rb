@@ -10,13 +10,26 @@ module FileLayer
   # something that does not work yet. These tests pin both halves of that: that it is selectable now,
   # and that selecting it without configuration fails at boot rather than on someone's first request.
   class BuildChunkRemoteTest < ActiveSupport::TestCase
+    # RESTORES THE PRIOR VALUES; IT USED TO DELETE THE KEYS. That was harmless for as long as
+    # FileLayer.build defaulted to embedded `chunk`, which needs no configuration at all -- a
+    # later test in the same worker calling FileLayer.current just got a Chunk adapter and never
+    # noticed the env had been emptied out from under it. Arc D Part 2 made the default `share`,
+    # which reads ENV.fetch("LIBRARY_PATH") and RAISES without it, so the same deletion turned
+    # into `KeyError: key not found: "LIBRARY_PATH"` in ~40 unrelated tests -- in files this arc
+    # never touched, several frames from anything mentioning a backend.
+    #
+    # A pre-existing bug that a changed default merely exposed, which is worth saying plainly:
+    # the fix belongs here, in the helper that failed to clean up, not in the default. Found by
+    # trapping ENV#delete and ENV#[]= with a backtrace after reasoning about it twice and being
+    # wrong both times -- §14e's probe-over-argument rule, again.
     def build_with(env)
       previous = FileLayer.instance_variable_get(:@current)
+      prior = env.keys.to_h { |k| [ k, ENV[k] ] }
       FileLayer.reset!
       env.each { |k, v| ENV[k] = v }
       yield
     ensure
-      env.each_key { |k| ENV.delete(k) }
+      prior.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
       FileLayer.reset!
       FileLayer.instance_variable_set(:@current, previous)
     end
@@ -46,8 +59,14 @@ module FileLayer
     # §14a gives: a boot that depends on a third party being reachable turns a blip into a crash
     # loop. Here that would be sharper still -- a sync server being down is precisely the condition
     # chunk_remote is built to survive, since reads answer from the local mirror.
+    # THE ABSENT KNOBS ARE SET TO nil EXPLICITLY, WHICH `build_with` TURNS INTO A DELETE. Naming
+    # only LIBRARY_BACKEND leaves the others AMBIENT, and on the test-chunk-remote leg the ambient
+    # env has both -- so this asserted a refusal that could not happen and failed as "Error expected
+    # but nothing was raised". A test about a MISSING knob has to make it missing rather than
+    # assume the surrounding environment does not supply it.
     test "it refuses to boot without a server URL and an admin token, naming BOTH at once" do
-      build_with("LIBRARY_BACKEND" => "chunk_remote") do
+      build_with("LIBRARY_BACKEND" => "chunk_remote",
+                 "CHUNK_REMOTE_URL" => nil, "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
         assert_match(/CHUNK_REMOTE_URL/, err.message)
         assert_match(/SYNC_ADMIN_TOKEN/, err.message,
@@ -56,18 +75,27 @@ module FileLayer
     end
 
     test "a URL without an admin token is still refused, and names only what is missing" do
-      build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example") do
+      build_with("LIBRARY_BACKEND" => "chunk_remote", "CHUNK_REMOTE_URL" => "http://sync.example",
+                 "SYNC_ADMIN_TOKEN" => nil) do
         err = assert_raises(LibraryBackendCheck::Error) { FileLayer.build }
         assert_match(/SYNC_ADMIN_TOKEN/, err.message)
         assert_no_match(/CHUNK_REMOTE_URL,/, err.message, "it named a knob that was set")
       end
     end
 
-    test "chunk_remote does not want the sync engine in its process" do
-      # The property Arc A made possible and this backend depends on: a maker app talking to a sync
-      # server over HTTP has no more use for the engine in-process than a share deployment does.
-      assert_not LibraryBackend.engine_wanted?(env: { "LIBRARY_BACKEND" => "chunk_remote" }),
-                 "chunk_remote must not load the engine -- it talks to one instead of being one"
+    # THE PROPERTY THIS BACKEND WAS BUILT FOR, NOW TRUE BY CONSTRUCTION RATHER THAN BY PREDICATE.
+    # It used to read `assert_not LibraryBackend.engine_wanted?(...)`; that predicate is gone with
+    # the gem (Arc D Part 2), so the honest assertion is the structural one -- the engine is not in
+    # this process at all, for any backend, because it is not a dependency of this app.
+    #
+    # NOT A TAUTOLOGY, AND WORTH KEEPING FOR EXACTLY THE REASON IT WAS WRITTEN: re-adding the gem
+    # for any reason -- a stray Gemfile line, a transitive dependency, a well-meant "just for the
+    # tests" -- silently puts Sync:: back in the process and returns this app to the shape Stage 5
+    # spent four arcs leaving. This goes RED the moment that happens.
+    test "the sync engine is not in this process at all" do
+      assert_not defined?(Sync),
+                 "the sync engine must not be loadable here -- chunk_remote talks to one over " \
+                 "HTTP instead of being one, and no other backend has any use for it"
     end
   end
 end

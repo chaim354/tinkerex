@@ -75,8 +75,16 @@ registry:
 env:
   secret:
     - RAILS_MASTER_KEY
+    # REQUIRED BY THE BASE DESTINATION NOW THAT IT IS chunk_remote: FileLayer::ChunkRemote
+    # provisions each maker user their own remote library through POST /v1/admin/libraries, gated
+    # by this operator credential (§8). LibraryBackendCheck refuses to boot without it, so a
+    # missing value fails loudly at start rather than on the first library write.
+    #
+    # BOTH SIDES MUST RESOLVE THE SAME 1PASSWORD ITEM -- this app SENDS it and the `sync` accessory
+    # RECEIVES it -- or the far side answers 503. That shared reference is what guarantees the
+    # match; see .kamal/secrets and the accessory's own comment.
+    - SYNC_ADMIN_TOKEN
     # SeaweedFS S3 secret key — sourced from ENV in .kamal/secrets (never committed).
-    - CHUNK_SECRET_ACCESS_KEY
   clear:
     # Run the Solid Queue Supervisor inside the web server's Puma process to do jobs.
     # When you start using multiple servers, you should split out job processing to a dedicated machine.
@@ -109,38 +117,16 @@ env:
     # warning fires whenever it's on (config/initializers/test_signup_warning.rb).
     ENABLE_TEST_SIGNUP: true
 
-    # --- Chunk storage (object store). Bytes move client ⇄ storage via presigned URLs
-    # the server mints (local HMAC signing). Clients hit CHUNK_ENDPOINT directly, so it
-    # must be reachable from each client device. Set STORAGE_BACKEND=memory for a
-    # control-plane-only smoke test.
+    # THE EMBEDDED CHUNK STORE'S ENV IS GONE (Arc D Part 2). STORAGE_BACKEND, CHUNK_ENDPOINT,
+    # CHUNK_BUCKET, CHUNK_REGION and CHUNK_ACCESS_KEY_ID configured Sync::Storage::ChunkStore,
+    # which shipped inside the sync engine gem. This app does not load that gem any more and NO
+    # CODE HERE READS ANY OF THOSE NAMES -- checked by grep across app/, lib/, config/ and bin/,
+    # not assumed. The library's bytes live on the `sync` accessory's own volume now, reached over
+    # CHUNK_REMOTE_URL below.
     #
-    # NOTE: the server ALSO needs to reach CHUNK_ENDPOINT now — verify-on-finalize
-    # (config.x.verify_finalize, on by default) does an exists?-check that the chunk bytes
-    # actually landed before creating the version. Signing alone no longer suffices. If the
-    # store is unreachable from the server, commits fail loudly rather than creating versions
-    # pointing at bytes that never arrived. Set SYNC_VERIFY_FINALIZE=0 to opt out.
-    STORAGE_BACKEND: s3
-    # THIS ADDRESS IS PINNED ON THE CONTAINER, AND A UNIFI DHCP RESERVATION CANNOT HOLD IT.
-    # SeaweedFS is the `miniweeed` container on Unraid's `br0`, which is a **macvlan** network:
-    # Docker's own IPAM assigns the address and the container never sends a DHCP request, so the
-    # router never sees it and a reservation is never consulted. Unpinned, that IPAM hands out
-    # addresses in container START ORDER — so a reboot moved SeaweedFS from .8 to .2 and gave .8
-    # to Redis, at which point this endpoint pointed at Redis and every chunk read/write failed.
-    # The fix is `IPAMConfig.ipv4_address` per container (Unraid's "Fixed IP address" field, or
-    # `ipv4_address:` under a compose `networks:` map). Verified 2026-08-17: .2:8333 answers an
-    # S3 403 (auth required), .8:8333 refuses the connection.
-    CHUNK_ENDPOINT: http://192.168.1.2:8333
-    CHUNK_BUCKET: my-bucket
-    CHUNK_REGION: us-east-1
-    # Authoritative source = 1Password item "seaweednew" (op://tinkerex/seaweednew/access key).
-    # The secret is sourced from the SAME item in .kamal/secrets — keep them together or you
-    # get InvalidAccessKeyId.
-    #
-    # The older "seaweedfs" item belongs to the RETIRED instance at 192.168.1.7 (port now
-    # closed). Its identity does not exist on the current server, so signing with it fails the
-    # client's presigned PUT with InvalidAccessKeyId — which is how this was found.
-    CHUNK_ACCESS_KEY_ID: 2ER1TJXNXU15ECJ3YRQK
-
+    # This also removes the reason deploy.share.yml and deploy.s3.yml carried STORAGE_BACKEND:
+    # memory. Kamal's deep_merge has no delete, so those overlays could not remove the base's
+    # chunk-store env and NEUTRALISED it instead; with nothing to neutralise, that line goes too.
     # The Box Generator addon's Python sidecar (the `boxes` accessory below), reachable by its
     # container name on the shared kamal docker network. Internal-only; never published. Unset ->
     # the addon shows as unavailable (graceful). All three app deployments share the one accessory.
@@ -173,6 +159,13 @@ env:
     # the accessory's image EXPOSEs and binds 3000 (chaim354/tinkerex-sync's own Dockerfile; that
     # repo's own currently-unused standalone deploy.yml independently confirms it via `app_port:
     # 3000`) — unlike ADDON_SOURCE_URL above, whose target is an nginx image on the HTTP default.
+    # THE BASE DESTINATION IS THE CHUNK-FAMILY ONE AGAIN, and it is `chunk_remote`. It used to be
+    # embedded `chunk` and there was a FOURTH destination, `remote`, carrying chunk_remote beside
+    # it (config/deploy.remote.yml, now deleted). Arc D Part 2 retired embedded chunk, so the base
+    # cannot keep naming it -- and folding remote into base restores exactly three Unraid
+    # destinations, which means a bare "deploy" covers the chunk-family box again rather than
+    # leaving it to drift, the cost §7 had to name when it was excluded.
+    LIBRARY_BACKEND: chunk_remote
     CHUNK_REMOTE_URL: http://tinkerex-sync:3000
 
     # Set number of processes dedicated to Solid Queue (default: 1)
@@ -215,15 +208,11 @@ asset_path: /rails/public/assets
 builder:
   arch: amd64
 
-  # THE SYNC ENGINE IS A PRIVATE git: DEPENDENCY, so `bundle install` inside the image needs a
-  # credential that the build host has and the container does not (see the Dockerfile's own
-  # comment, and the Gemfile's). kamal passes this as a BuildKit secret -- a mount that exists for
-  # one RUN and never lands in a layer -- resolved from .kamal/secrets-common, which is the right
-  # file because EVERY destination builds the same image and so needs it (§14g: only universally
-  # required keys may live there; test/deploy_hygiene_test.rb enforces that, and reads this very
-  # list to decide what "universally required" means).
-  secrets:
-    - TINKEREX_SYNC_DEPLOY_KEY
+  # `secrets:` WAS HERE, holding TINKEREX_SYNC_DEPLOY_KEY alone -- the read-only key the build
+  # used to fetch the private sync-engine gem. With that gem gone (Arc D Part 2) the list was
+  # empty, and an empty `secrets:` is not the same as no `secrets:`: kamal reads it as nil and
+  # refuses the whole config with "builder/secrets: should be an array" -- caught by
+  # bin/secrets-preflight, which is exactly the class of silent-empty this repo keeps it for.
 
   # # Build image via remote server (useful for faster amd64 builds on arm64 computers)
   # remote: ssh://docker@docker-builder-server

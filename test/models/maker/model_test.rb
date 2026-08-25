@@ -2,7 +2,19 @@ require "test_helper"
 
 module Maker
   class ModelTest < ActiveSupport::TestCase
-    setup { @user = User.create!(email: "model-#{SecureRandom.hex(4)}@example.com") }
+    setup do
+      # A hermetic library: one test here calls ensure_library_folder!, which goes through the port
+      # and really creates Models/<slug>. This suite pinned embedded chunk until Arc D Part 2; on
+      # the ambient backend it would make real Aws calls on the s3 leg (the stub is opt-in per
+      # file) or need a live sync server on chunk_remote.
+      @root = use_fresh_share_library!
+      @user = User.create!(email: "model-#{SecureRandom.hex(4)}@example.com")
+    end
+
+    teardown do
+      FileLayer.reset!
+      FileUtils.remove_entry(@root) if @root&.exist?
+    end
 
     test "valid with a title" do
       assert @user.maker_models.build(title: "Articulated Dragon").valid?
@@ -96,8 +108,6 @@ module Maker
     end
 
     test "ensure_library_folder! creates Models/<slug> and stores its node_id" do
-      pin_file_layer_backend("chunk")
-      Sync::Storage::ChunkStore.reset!
       m = @user.maker_models.create!(title: "Desk Dragon")
       folder = m.ensure_library_folder!(@user)
       assert_equal m.folder_node_id, folder.node_id

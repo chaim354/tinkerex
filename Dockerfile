@@ -37,55 +37,18 @@ RUN apt-get update -qq && \
 
 # Install application gems
 COPY Gemfile Gemfile.lock vendor ./
-
-# THE SYNC ENGINE IS A PRIVATE git: DEPENDENCY (chaim354/tinkerex-sync -- see the Gemfile's own
-# comment), which makes this the one build step in the image that needs a credential. It is a
-# READ-ONLY DEPLOY KEY scoped to that single repository -- not a personal access token, which would
-# carry the whole account's access into a build container to read one repo. GitHub has no API for
-# minting a PAT anyway (POST /authorizations was sunset in 2020), while `gh repo deploy-key add`
-# creates exactly this, so the better-scoped option was also the only automatable one.
+# THE PRIVATE-GEM PLUMBING IS GONE (Arc D Part 2). This RUN used to mount a base64 read-only
+# DEPLOY KEY, rewrite https->SSH for github.com through GIT_CONFIG_* scoped to this one command,
+# decode the key and delete it inside the same layer, and scrub bundler's git cache -- all so
+# `bundle install` could fetch chaim354/tinkerex-sync as a private `git:` gem. The sync engine is
+# not a dependency of this app any more, so there is no private source to authenticate to and an
+# ordinary bundle install is the whole of it.
 #
-# THE GEMFILE STAYS ON https:// AND ONLY THIS BUILD REWRITES IT TO SSH. Deploy keys are SSH-only,
-# but switching the Gemfile itself would break every developer and the CI runner, both of which
-# already resolve the https URL through an ordinary git credential helper. The rewrite is scoped to
-# this one command instead, so nothing outside the image changes.
-#
-# GIT_CONFIG_* RATHER THAN `git config --global`, and that is the point rather than a style choice:
-# `git config --global` writes /root/.gitconfig, which IS part of the layer. The secret mount itself
-# never lands in a layer (unlike an ARG or an ENV, both of which survive in `docker history`), so
-# writing a config file is the one way to leak it back out. GIT_CONFIG_COUNT/KEY/VALUE hand git the
-# same setting through the environment of ONE command; there is no file to forget to delete.
-#
-# THE SECRET IS BASE64, AND THAT IS NOT DECORATION. An OpenSSH private key is multi-line; kamal
-# resolves secrets through Dotenv, where a raw multi-line value from a `$(...)` substitution is at
-# best quoting-dependent and at worst silently truncated at the first newline -- which would fail
-# here as an unreadable key rather than as anything naming the real cause. One base64 line has no
-# such failure mode. `bin/secrets-preflight` cannot see the difference either way, so the encoding
-# is what makes the plumbing honest rather than lucky.
-#
-# THE DECODED KEY IS WRITTEN AND DELETED INSIDE ONE RUN, so it is never in a layer: a layer records
-# the filesystem diff at the END of the command, and `set -e` plus the trap means the delete happens
-# on the failure path too. The secret MOUNT is never in a layer at all; the decoded copy is the only
-# thing that could be, which is why it is handled this carefully.
-#
-# StrictHostKeyChecking=accept-new is trust-on-first-use against github.com, re-established every
-# build because the container is fresh. Pinning GitHub's host keys instead was considered and
-# rejected: they rotate (the RSA key was replaced in 2023), and a stale pin fails the build closed
-# with a message that looks like an attack rather than an expiry.
-#
-# The `rm -rf` below clears bundler's git cache and the cloned engine's own .git, where a remote
-# URL would otherwise be recorded.
-RUN --mount=type=secret,id=TINKEREX_SYNC_DEPLOY_KEY \
-    set -e; \
-    trap 'rm -f /tmp/deploy_key' EXIT; \
-    install -m 600 /dev/null /tmp/deploy_key; \
-    base64 -d < /run/secrets/TINKEREX_SYNC_DEPLOY_KEY > /tmp/deploy_key; \
-    GIT_SSH_COMMAND="ssh -i /tmp/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
-    GIT_CONFIG_COUNT=1 \
-    GIT_CONFIG_KEY_0="url.git@github.com:.insteadOf" \
-    GIT_CONFIG_VALUE_0="https://github.com/" \
-    bundle install; \
-    rm -f /tmp/deploy_key; \
+# What went with it: the TINKEREX_SYNC_DEPLOY_KEY secret in .kamal/secrets-common and the
+# `builder: secrets:` entry in config/deploy.yml. The 1Password item and the GitHub deploy key
+# itself are left in place deliberately -- client-contract.yml still needs a deploy key to check
+# that repo out in CI, and deleting a credential is not reversible from here.
+RUN bundle install; \
     rm -rf ~/.bundle/ "${BUNDLE_PATH}"/ruby/*/cache "${BUNDLE_PATH}"/ruby/*/bundler/gems/*/.git; \
     # -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
     bundle exec bootsnap precompile -j 1 --gemfile

@@ -54,15 +54,6 @@ class User < ApplicationRecord
   # The rows these point at cannot exist on share/s3 anyway: only Sync::Commit/Restore/Conflicts
   # ever create a version, and none of them runs there. So this drops associations to tables that
   # are empty by construction, not a feature.
-  if LibraryBackend.engine_wanted?
-    has_many :versions, class_name: "Sync::Version", dependent: :destroy
-    has_many :chunks, class_name: "Sync::Chunk", dependent: :destroy
-    has_many :changelog_entries, class_name: "Sync::ChangelogEntry", dependent: :destroy
-    has_many :pending_commits, class_name: "Sync::PendingCommit", dependent: :destroy
-    has_many :conflicts, class_name: "Sync::Conflict", dependent: :destroy
-    has_many :file_locks, class_name: "Sync::FileLock", dependent: :destroy
-    has_many :share_links, class_name: "Sync::ShareLink", dependent: :destroy
-  end
   has_many :maker_items, class_name: "Maker::Item", dependent: :destroy
   has_many :maker_tags, class_name: "Maker::Tag", dependent: :destroy
   has_many :maker_taggings, class_name: "Maker::Tagging", dependent: :destroy

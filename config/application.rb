@@ -15,7 +15,8 @@ Bundler.require(*Rails.groups)
 # class body executes, and initializers run long after the engine would have had to be in the
 # railtie chain to contribute routes, paths or its own initializers.
 require_relative "../lib/library_backend"
-require "tinkerex_sync" if LibraryBackend.engine_wanted?
+# THE SYNC ENGINE USED TO BE REQUIRED HERE, conditionally, when LIBRARY_BACKEND wanted it. It is
+# not a dependency of this app any more (Arc D Part 2 -- see the Gemfile for what went with it).
 
 module Tinkerex
   class Application < Rails::Application
