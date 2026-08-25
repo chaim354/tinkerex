@@ -306,14 +306,33 @@ on all three OSes against the sync server — that half's status lives in `tinke
    with `dd`+`sync` loops. Captured mid-failure, one worker held **16 connections all with open
    transactions** and the raising frame was **`User#next_seq!`**. Verified A/B under identical
    load: **5 s → 2 of 8 runs red, 15 s → 0 of 8**. The rule that outlives it is in **§14e**.
-8. **`FilesController#index` render cost** — ~160 ms at 2000 nodes, identical on all three backends
-   (the port's N+1 is closed; the residual is HTML). Pagination never existed.
+8. **`FilesController#index` render cost — BOUNDED UNDER ONE OF THE THREE SORTS, not unbounded.**
+   `FOLDER_PAGE = 250` pages the folder view **only under the name sort** (PR #135,
+   `files_controller.rb`): `type` is computed and `modified` reads the **port's** mtime, so neither
+   is a column an `ORDER BY` could page on without duplicating adapter logic or changing which
+   authority answers "Modified". Those two still load the whole folder. The residual is per-row ERB
+   — identical on all three backends, so it is HTML generation, not query cost.
+   *(This item read "Pagination never existed" until 2026-08-25. That was false from 2026-08-05
+   onward: PR #135 added the paging and the entry was never updated. Recovered from unmerged
+   PR #142 and re-verified against the code.)*
 9. **No web UI at all** for inventory, BOM, suppliers, locations, collections, tags — the models
    and v1 API exist. Obvious next slices.
-10. **A device push through the mount gets no eager nudge for project-folder filing.** The sync
-    server's own finalize never calls it — only the three web upload doors do — so a file arriving
-    via the mount waits for the 15-minute sweep. Wiring it in would be worse, not better: finalize
-    runs once per file, so a 500-file device sync would become 500 synchronous full-project sweeps.
+10. **A device push through the mount gets no eager nudge — but NOT for the reason this item gave
+    for months, and the mechanism to fix it is already built and sitting callerless.**
+    `Maker::ProjectIntakeJob.nudge` exists (PR #135, 2026-08-05) and **enqueues** a delayed sweep
+    rather than running one, with `limits_concurrency` collapsing a burst into a single sweep — so
+    the old objection here ("a 500-file device sync would become 500 synchronous full-project
+    sweeps") was answered before it was written down, and must not be repeated as a reason to
+    refuse. What actually stopped it: its caller was `V1::CommitsController#finalize`, `984a3dc`
+    moved that call behind the engine's `Sync::Hooks` seam, and the engine then left the repo
+    (§12.12). **This app registers no hook subscriber and serves no finalize**, so nothing reaches
+    the method. `grep -rn "ProjectIntakeJob.nudge" app/` returns the definition and its own error
+    log line — nothing else. Re-wiring it is real design work, not a one-liner: the signal would
+    have to cross the wire from the standalone sync server, which is a protocol question, not a
+    maker-layer one. Until then a file arriving via the mount waits for the 15-minute sweep.
+    *(This item claimed the fix would be "worse, not better" until 2026-08-25; unmerged PR #142
+    claimed it CLOSED. Both were stale — the first ignored PR #135, the second predates the
+    extraction that removed the caller.)*
 11. **Whether a project-scoped upload should duplicate-check across the whole project, not just its
     immediate destination, is an open product question.** Today two files can both be named
     `dup.stl` under one project — the first filed into its category subfolder, the second left at

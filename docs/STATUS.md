@@ -327,6 +327,43 @@ audit had to read context every time rather than trust a match count.
 
 Gates: bare `bin/ci` green in 2m10s, three backend legs at identical run counts (2349).
 
+### Three stale doc PRs salvaged and closed — and §12 turned out to have its own rot
+
+Checking three 19-day-old doc PRs (#139, #141, #142) found that **none could merge** — all three
+conflicted, #142 in `CLAUDE.md` — while **all three held content `main` did not have.** Salvaged
+into `main` rather than rebased, since their bases predate the repo separation.
+
+| PR | recovered |
+|---|---|
+| #139 | The **deploy record** for the overwrite arc — image SHAs, what was verified inside the running container, and two process mistakes: `gh pr merge --delete-branch` silently CLOSED a stacked PR, and `op item get 'ghcr.io'` resolves to nothing because items live in the `tinkerex` vault. `main` had the arc; it did not have the deploy. |
+| #141 | **A whole arc** — the file chooser revived from *closed* PR #76 (branch deleted, 241 commits behind), two rejected designs with their reasons, the additive cross-repo contract, and two real name-validation defects. Demoted from "Latest" to its date. |
+| #142 | **An entire unrecorded arc**: PR #135 (CSP collection + five hot paths) had **no entry at all** while the code it shipped ran in production. Plus an audit ledger and an OPEN-WORK re-verification. |
+
+**§12 had two stale items, and only checking these PRs surfaced them.** The separation audit
+compressed §12's entries without verifying them against code, and the accuracy audit was scoped to
+§14 — so both passes walked past them:
+
+- **§12.8 said "Pagination never existed." That was FALSE from 2026-08-05.** `FOLDER_PAGE = 250`
+  pages the folder view under the name sort (`files_controller.rb:741`, used at 197/200). Corrected
+  with #142's text, re-verified against the code.
+- **§12.10's reasoning was stale, and #142's replacement was stale in the OPPOSITE direction.** The
+  item refused an eager nudge on the grounds that "a 500-file device sync would become 500
+  synchronous full-project sweeps" — an objection PR #135 had already answered by making
+  `Maker::ProjectIntakeJob.nudge` *enqueue* a delayed sweep with `limits_concurrency` collapsing the
+  burst. #142 therefore recorded the item CLOSED. But `984a3dc` then moved the call behind the
+  engine's `Sync::Hooks` seam and the engine left the repo, so today **`nudge` is live, correct and
+  callerless** — `grep -rn "ProjectIntakeJob.nudge" app/` returns the definition and its own error
+  log line, nothing else, and this app registers no hook subscriber. The item is open again for a
+  reason it has never previously been open for. Rewritten to say exactly that.
+
+**The instructive part: the doc said OPEN while it was closed, and the PR said CLOSED while it was
+open again.** Both were true when written. Neither was true on 2026-08-25. That is §14e's
+stale-open-list rule firing in both directions on one item inside three weeks, and it is why the
+correction names its own history rather than quietly replacing the text.
+
+`docs/OPEN-WORK.md` and `docs/AUDIT-2026-08-03.md` took #142's corrections and each gained a header
+saying it **predates the repo separation** — both still describe an in-process engine.
+
 **Not verified, and named rather than glossed:** the historical MEASUREMENTS baked into the prose
 — "0.467 s standalone", "14–24 second stalls", "728 KB → 200 KB gzipped", "1148 of 5259 thinned
 contours displaced". Those record past observations, not current state; re-running them is a
@@ -6645,7 +6682,271 @@ Invariants: **CLAUDE.md §14h**. Spec and plan:
 
 ---
 
-## 2026-08-05: a re-save asks before it overwrites — the other half of the autosort bug (branch `claude/addon-save-overwrite`; bundles on `claude/save-overwrite-confirmation`)
+## 2026-08-05: CSP violations are now collected, and five hot paths stop doing avoidable work (PR #135, branch `claude/audit-csp-and-perf`)
+
+> **Recorded 2026-08-06, a day late — and the lateness is the reason this note exists.** The arc
+> merged as `2b9ca85` and then went unnarrated while three later arcs were written up, so both
+> standing open-lists kept advertising two gaps it had already closed (`CLAUDE.md` §12 items 8 and
+> 10, and this file's own carried "device push has no fast path" bullet). §14e's rule — *a stale
+> open-list is worse than none* — is about exactly this, and it cost a reader a re-derivation
+> before it was caught. Write the entry with the merge.
+
+Item **9** plus the **performance tier** (18, 19, 20, 21, 22, 23) of `docs/AUDIT-2026-08-03.md` §5.
+Nothing here is correctness; the CSP half is the one that unblocks a decision.
+
+### CSP (item 9) — report-only had been measuring nothing
+
+The policy had run report-only for weeks with **no `report-uri`**, so every violation existed only in
+the console of whichever visitor happened to trigger it. The initializer's own plan — *"read the
+violations from the browser console on the grid page, the editor, the file browser and all three
+`/tools` addons"* — is one person, one browser, four pages, and blind to what a real visitor's
+extension or a republished addon bundle does. **The "collect, then flip to enforcing" step therefore
+had no data to flip on.** `CspReportsController` now collects them: unauthenticated **by necessity**
+(the violations most worth catching are on the sign-in pages), rate-limited, body-capped, and logging
+a **fixed allowlist of fields** rather than the attacker-supplied JSON whole. Violations surface as
+`[csp-violation]` log lines.
+
+**The `report_uri` is a literal that also appears in `config/routes.rb`, and not for want of trying
+to derive it.** The CSP block is `instance_exec`'d inside
+`ActionDispatch::ContentSecurityPolicy#initialize` — i.e. while `config/initializers` runs — and
+routes are not drawn until the finisher, so `routes.url_helpers.csp_violation_report_path` is
+undefined and **the app dies at boot**. Same family as §14a's `Library` boot guard, and found the
+same way: by booting. `test/integration/csp_report_test.rb` guards the duplication instead.
+
+The flip to `content_security_policy_report_only = false` is **deliberately not in this arc** — it
+now has an instrument, and wants a week of real traffic through it.
+
+### Addon assets (18)
+
+Every asset was a fresh TCP connection + GET to the accessory (`Net::HTTP.start` per call, **no
+keep-alive**) plus a full-body buffer, **per module per page view** — 12 modules for `boxes`, a
+180 KB `makerjs.js` re-proxied on every navigation of `generators`. Now cached server-side and marked
+`private`/`max-age`, **both bounded by `Registry::TTL`**: the index was *already* cached for five
+minutes, so this adds **no staleness the system did not have** — the index and the assets it names
+now expire together. `Source#cacheable?` keeps the dev/local source **uncached**, because a stale copy
+there would hide an addon author's own edit.
+
+Not the content-hash scheme the audit ultimately wants: that needs a **per-publish version to key
+on**, and the manifest contract has none — a change to a format that lives in another repo.
+
+### Folder paging (19), scoped deliberately
+
+Flat mode was capped at `FLAT_LIMIT` on the reasoning that *"a folder is self-limiting and a
+whole-library view is not"* — true of a tidy library, **false of a NAS directory with 10k children**,
+where the measured 2000-child page is **225–307 ms of which 175–278 ms is ERB**, on 5 queries and
+~0 ms of database. `FOLDER_PAGE = 250`, SQL-ordered.
+
+**Only under the name sort**, and the exclusion is not laziness: `type` is *computed* (extension, with
+a symlink special case `FilesHelper` pins to the rendered cell) and `modified` reads the **port's**
+mtime rather than `nodes.mtime`, so neither can become an `ORDER BY` without either duplicating Ruby
+logic across two adapters or silently changing which authority answers "Modified". Those two keep the
+full-folder load, and a test asserts that limit so it stays deliberate.
+
+**A hard cap was rejected**: a truncated *search* is "your top matches", but a truncated *folder*
+hides children in the primary navigation surface with no way to reach them.
+
+### Intake sweep (20, 21, 23) — and the device-push nudge
+
+The subtree walk materialized a full `Node` for every file under every project folder every 15
+minutes — ~10⁵ AR instantiations per user at NAS scale to answer a question that reads **four
+columns**; it now selects those four and re-loads whole records only for the inbox, which
+`Maker::MoveNode` requires. Filing N files broadcast **N+1** times against `LibraryChannel`'s own
+"never per-operation" contract (500 serialized locks, 500 Solid Cable rows and 500 nudges per device
+for a 500-file sweep); `LibraryChannel.batch` collapses a sweep to **one** nudge carrying the final
+`head_seq`. `EAGER_MAX_MOVES` gains an **S3 default of 5** (`EAGER_MAX_MOVES_S3`), because
+`FileLayer::S3#move` is three sequential network calls per file — 25 was measured on chunk and the old
+comment *said so* while leaving the number the same on all three.
+
+**§12 item 10 closed, in the shape that item said a fix would need.** `ProjectIntakeJob.nudge`
+**enqueues** rather than sweeping, and the job's `limits_concurrency to: 1, key: user_id,
+on_conflict: :discard` collapses a 500-file burst into **one** sweep — not the 500 synchronous sweeps
+§12.10 rejected. It fires only when a file lands at a project folder's **root** (§14f's sort rule),
+one indexed `exists?` per finalize, and lives in `V1::CommitsController`, **not `Sync::Commit`**,
+because a maker call inside the sync engine inverts the layering. **Residual, stated plainly:** the
+*enqueues* are not deduplicated, only the *sweep* is — 500 root-landing files write 500 job rows of
+which 499 are discarded when they become ready, reclaimed by Solid Queue's hourly finished-job clear.
+Deduplicating the enqueue itself means coupling to Solid Queue's schema to save a row rather than a
+sweep.
+
+### Previews (22)
+
+Rendering buffered whole files up to `FileLayer::MAX_BYTES` (**256 MiB**) — a cap meant for an
+**upload**. On S3 the first index of a large library made that a **full billed download per renderable
+object**, the same egress §14a's identity ladder refused to pay for hashing. Now
+`PREVIEW_MAX_BYTES` = 32 MB, judged against `nodes.size` **before any read**, and resolved as
+`unsupported` — a terminal, non-retrying state — rather than `failed`.
+
+### Two tests initially passed against deliberately broken code
+
+Both this repo's recorded shape, both caught by **mutation rather than review**: the intake-walk test
+matched on `IN (` while a single-directory frontier renders `= ?`, so it asserted over an **empty
+set**; and the pagination test used `Alpha`/`beta`, which order identically in bytes *and* downcased,
+so removing `LOWER()` from the SQL order sailed through. `Zeta`/`apple` is the pair that actually
+conflicts (`Z` is 90, `a` is 97) and makes a missing `LOWER()` scatter rows across page boundaries.
+
+One comment was **corrected rather than left standing**: skipping the Ruby sort on a paged folder is
+*not* the correctness condition first written — the mutation proved it a no-op, since
+`folder_page_order` reproduces `sort_key` exactly and the sort is stable. The real guard is `LOWER()`
+in that order, and the comment now says so.
+
+### Verified
+
+Bare `bin/ci` green, **exit 0**. All gates; the three backend legs **identical** at **1942 runs /
+6732 assertions**, system tests 44 / 246. Branched from `origin/main` at `e8e224d` (includes PR #134).
+Every guard mutation-checked per §15 — reverted, confirmed red on its own test, restored.
+
+**What it closes in the standing lists:** `CLAUDE.md` §12 item **10** outright; §12 item **8**
+narrowed (the folder view is bounded under the name sort; the other two sorts and the per-row ERB cost
+remain). Both corrected 2026-08-06 alongside this entry.
+
+### Recovered 2026-08-25, and one claim in it had gone stale in the meantime
+
+*This entry sat in unmerged PR #142 for 19 days while the code it describes ran in production. Its
+own opening note — "the lateness is the reason this note exists" — turned out to understate the
+problem: the entry was never merged at all, so this arc had **no record in the canonical file**
+while `csp-violation-report`, `FOLDER_PAGE = 250` and `Maker::ProjectIntakeJob.nudge` were all
+live. Both standing open-lists went on advertising gaps it had closed, exactly as it predicted.*
+
+**The one claim NOT imported:** PR #142 recorded the device-push item as **CLOSED**, because
+`nudge` was then called from `V1::CommitsController#finalize`. That was true when written and is
+**no longer true** — `984a3dc` moved the call behind the engine's `Sync::Hooks` seam and the engine
+left the repo, so `nudge` is live, correct and **callerless**, and this app registers no subscriber.
+The item is open again for a different reason than it was ever open before; `CLAUDE.md` §12.10 now
+says so in those terms. **The SQLite second-capture text was also dropped** — §12.7 was diagnosed on
+2026-08-20 (an fsync stall, fixed by `timeout: 15000`), which subsumes it.
+
+---
+
+## 2026-08-06: the file chooser, revived from a closed PR and handed to the addon bundles (PR #140, branch `claude/file-chooser-ui-location-3df3a9`; bundles PR tinkerex-addons#3) — **DEPLOYED 2026-08-06**
+
+**Started as a question, not a task:** *"is the new file chooser UI still in a branch or worktree?"*
+The answer was worse than a branch — **PR #76 had been closed unmerged** (2026-08-04), its branch was
+**241 commits behind**, and its one consumer no longer existed: `0880f09` wired
+`app/views/tools/boxes/new.html.erb`, which **#125 deleted** when boxes moved to the addons repo.
+Meanwhile `main` still shipped `Tools::LibraryFolders#folder_options` — a `<select>` listing **every
+folder in the library**, which stops being a picker somewhere around the fiftieth.
+
+The reusable half still applied. It was ported, two real defects in it were fixed, and the half PR #76
+never had — **the addon bundles** — was built.
+
+### The addon problem, and why the obvious two answers are wrong
+
+Since #125 the addon UIs are ESM bundles in a **separate repo**, so `shared/_folder_field` cannot
+reach them: a Rails partial has nowhere to render inside a bundle's own layout. Two candidates were
+rejected on their merits before the third was built —
+
+- **Host renders the field into a slot.** The bundle owns its layout; the host has no idea where a
+  destination field belongs in it.
+- **Bundle imports the module by specifier.** That makes `lib/file_chooser.js`'s *path* part of the
+  addon API — unmovable without republishing every bundle.
+
+**A function on the mount context** is what landed: `ctx.chooseFolder(opts) -> Promise<{nodeId, kind,
+path} | null>`. That forced the modal out of `filechooser_controller.js` into
+**`app/javascript/lib/file_chooser.js`** as a plain promise-returning class — a bundle is not a
+Stimulus controller and must not have to become one — leaving the controller as only the form-field
+face of it. That split is most of the diff.
+
+**ADDITIVE, AND THAT IS THE LOAD-BEARING PART.** `ctx.folders`/`defaultFolder` stay, and so does
+`folder_options`. The two repos deploy **independently** — publishing the bundle image *is* the addon
+deploy, Rails is never rebuilt, and `bin/rollback` can restore an older bundle at any moment — so a
+bundle is routinely running against a host of the other vintage. `folder_field.js` (per addon, the
+same duplication idiom as `save.js`) feature-detects on `ctx.chooseFolder`. Neither side drops its
+half until the other has nothing reachable that reads it. **Consequence: the two PRs needed no
+lockstep merge and no deploy ordering** — unlike the entry below, where Rails had to go first.
+
+### Two defects fixed, not merely ported
+
+- **A new door with weaker name validation than the shared one.** `create_folder` checked blank +
+  `include?("/")` — the exact defect `Maker::MoveNode.valid_leaf_name?` was extracted to close (§14c).
+  Share and S3 refuse a non-leaf in their own `leaf!`, but **chunk has no name check anywhere
+  downstream** and chunk is the main deployment, so `..`, a backslash, a NUL byte and an unbounded
+  length all became live dir nodes bound for the changelog and every device mount.
+- **The modal's two halves could name different folders.** It seeded its selection as
+  `{nodeId: <the field's value>, path: <the ROOT label>}`. Invisible until the **second** open, where
+  pressing Choose without navigating wrote the subfolder's `node_id` to the hidden input and
+  `/ (library root)` to the button — the form submitted the right folder under a label saying root.
+  Only ever on a reopen, which is why a suite whose every case opened once could not see it.
+
+Also kept distinct at every layer, host and bundle: **cancel resolves `null`, choosing the root
+resolves `{nodeId: ""}`**. Collapsing them moves the destination to root on every Esc.
+
+`/tools/openscad` — the one Rails-rendered save form left on `main` — also dropped `folder_options`
+for a new `folder_path_label` (O(depth) parent hops). The chooser fetches one level at a time, so
+keeping the full pluck would have left the flat picker's cost on the page that removed it.
+
+### Verification
+
+Bare `bin/ci` green; three legs identical at **1970 runs / 6869 assertions**, system tests
+**55 / 329**. (Stated absolutely, not as a delta against the entry below — this file's own header
+says these counts do not chain and a baseline must come from running the merge-base.)
+
+**The browser tier is doing the real work here.** Stimulus registration (`pin_all_from` +
+`eagerLoadControllersFrom`), the `innerHTML`-built modal, the `fetch`-fed columns, the cross-repo
+context object and the CSP are invisible to every Ruby test — and `script_src :self` is report-only,
+so a chooser reaching for an inline handler would log a violation in one visitor's console and break
+for real the day that policy is enforced. `assert_no_console_errors` is what makes that check exist.
+Three new system files: the modal through the form field, the fixture bundle through
+`ctx.chooseFolder`, and the **real boxes bundle** through the snapshot `bin/check-fixture-drift`
+guards — including the rollback arm, mounting the shipped `folder_field.js` against a context with no
+`chooseFolder`, because that branch is the one no ordinary run ever executes.
+
+Five mutations run and restored: the name guard (weakened, `a\b` becomes a real node), the selection
+seeding (restored, the reopen test fails), and each shape of `mountFolderField` forced so the other
+bundle test goes red.
+
+### DEPLOYED live, 2026-08-06
+
+| | version | evidence |
+|---|---|---|
+| Rails, all three Unraid backends | **`ef0bf90f91aa873a4dd98109afc932e0902fc086`** | `/up` **200** on chunk, share, s3 |
+| Addon bundle accessory | **`d9c4ec66734ae0bfec723397c2c4a8c543143885`** / `sha256:72ad7f1d…` | `docker inspect` digest matches the pushed manifest |
+
+OVH was **not** deployed; bare "deploy" means Unraid (§7).
+
+**Proved the change shipped, not that containers booted.** `/library/children` answers **302** (the
+auth redirect) on all three backends against a **404 control** on `/library/no-such-route` — the
+route is really in the table. `lib/file_chooser.js`, `shared/_folder_field.html.erb` and
+`library_browse_controller.rb` are all in the running image, and `addon_controller.js` inside it
+carries `chooseFolder` + `defaultFolderLabel` **alongside** the legacy `folders`. From the Rails
+container, `http://tinkerex-addons/boxes/folder_field.js` returns **200 / 3429 b** over the Kamal
+network, and `Rails.cache.read(["maker/addons/asset", "boxes", "editor.js"])` is **nil** — nothing
+stale held, so the next request serves the new bundle rather than waiting out the 5-minute TTL.
+
+**No mixed-version window exists here**, and it is worth knowing why: each `editor.js` carries its own
+markup *and* its own logic, so a stale asset cache serves a consistent **old** bundle, never a
+half-new one. The only cross-file dependency is new-`editor.js` → `folder_field.js`, which is in the
+image before either can be served.
+
+### Two process notes
+
+- **`bin/build-push` does not roll anything.** It pushes the image; the accessory pins `:latest` and
+  keeps running whatever it started with until **`kamal accessory reboot addons`** from the *tinkerex*
+  repo. Merging the addons repo is a third step removed from users seeing a change.
+- **The `/deploy` skill is out of date on secrets.** It still documents `export
+  KAMAL_REGISTRY_PASSWORD=…` before deploying; §14g's rule is the opposite — no export,
+  `bin/secrets-preflight` first, because kamal turns an unreadable secret into a silently **empty**
+  one. Preflight was used instead (base/share/s3, all resolved, service-account auth). The skill text
+  is worth correcting.
+
+### Left open
+
+**`generators` has no host fixture**, deliberately — `bin/check-fixture-drift` snapshots only `boxes`,
+and adding one means copying makerjs and its pins into this repo. Its `folder_field.js` is
+byte-identical to the covered copy, but its `generators.js` wiring is verified **by reading, not by
+running**. `boxes-next` likewise has no fixture; it stays byte-identical to `boxes`.
+
+The chooser's **file-pick mode** is still built and unwired — the project "Attach a file" flow
+(`app/views/projects/attachments/new.html.erb`) remains search-only, and is the natural first
+consumer.
+
+*(Recovered 2026-08-25 from unmerged PR #141, which could no longer merge — 19 days
+stale and conflicting on this file. Demoted from "Latest" to its date, since exactly one
+section is ever called Latest and a newer arc holds it. The work itself shipped: the
+bundles' `folder_field.js` is live in all three addons.)*
+
+---
+
+## 2026-08-05: a re-save asks before it overwrites — the other half of the autosort bug (PR #138, branch `claude/addon-save-overwrite`; bundles PR tinkerex-addons#2) — **DEPLOYED 2026-08-06**
 
 Follow-up to the entry below, and the answer to the question it left open: **why did v3 and v5 sort
 but not v4?** Because **v4 was saved twice.** Reproduced exactly —
@@ -6717,6 +7018,50 @@ which this deliberately does not attempt — it closes the destination the file 
 without a library-wide scan on every save.
 
 ---
+
+### MERGED + DEPLOYED live, 2026-08-06
+
+Both PRs merged (#136, then **#138** — see the note below on why it is not #137) and shipped to the
+**three Unraid backends** in one image. OVH was NOT deployed; bare "deploy" means Unraid (§7).
+
+| | before | after |
+|---|---|---|
+| Rails image | `2b9ca85` | **`475685f2f47beae5c7b91929b6b8afd9733b4388`** |
+| chunk / share / s3 | — | all `Up`, `/up` **200** each |
+| Addon bundles | `8a2ea18` | **`84b7893c982b402634368edff8e13c3ff350ad38`** |
+
+**Verified by looking inside the running image, not by the exit code** — booting is compatible with
+having shipped the old code. In the live `share` container: `within_own_folder` ×4
+(`attach_to_project.rb`), `render_would_replace` ×2 and `intake_project_folder` ×1
+(`addons_controller.rb`), `destination_for` ×1 (`project_intake.rb`), `replace` ×12 (`share.rb`).
+On the accessory: all three `save.js` serve **200** over the Kamal network and `generators/save.js`
+contains the `would_replace`/`overwrite` logic. `bin/check-fixture-drift` passed as part of the
+publish; `bin/secrets-preflight --all` passed before the build.
+
+**ORDER MATTERS AND IT IS RAILS FIRST.** The bundles branch on a 409 the server only sends once the
+Rails image is live; publishing bundles first makes a re-save get a 422 the dialog does not
+recognise — it falls through to "Save failed.", the old behaviour, harmless but pointless.
+
+**TWO PROCESS MISTAKES, RECORDED BECAUSE BOTH COST TIME AND NEITHER IS OBVIOUS:**
+
+- **`gh pr merge --delete-branch` CLOSED THE STACKED PR.** #137 was based on #136's branch; deleting
+  that branch on merge made GitHub **close** #137 rather than retarget it, and a closed PR's base
+  cannot be changed. Recovery was a rebase onto the new `main` (dropping the commit #136 had landed
+  **squashed**, i.e. under a different SHA) and a fresh PR, #138 — same seven commits, no content
+  lost. **Do not delete a branch another PR is based on until the stack is retargeted.**
+- **`op item get 'ghcr.io'` RESOLVES TO NOTHING.** Items live in the **`tinkerex` vault**
+  (§14g) — the reference is `op://tinkerex/ghcr.io/password`. The unqualified lookup returned an
+  empty string, and a `2>/dev/null` on it hid the reason; `bin/build-push`'s own `:?` guard is what
+  caught it. Same family as §14g's "an unreadable secret becomes an empty one".
+
+**The originally reported file is still stranded, and no deploy fixes it.**
+`harbor-number-v4.svg` exists twice — once in `Projects/harbor-signs/design/`, once at that
+project's root. The fix stops it happening again; it does not reconcile the pair that already
+exists. Delete or rename the `design/` copy and the next sweep files the newer one, or re-save from
+the addon and take the new overwrite prompt.
+
+*(Recovered 2026-08-25 from unmerged PR #139, which could no longer merge — 19 days stale and
+conflicting on this file. The arc was in `main`; the DEPLOY record was not.)*
 
 ## 2026-08-05: an addon-saved file did not autosort — two defects on one path (branch `claude/file-mover-autosort-bug-c83346`)
 
